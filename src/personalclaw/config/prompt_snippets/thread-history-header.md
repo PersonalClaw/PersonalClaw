@@ -1,0 +1,2 @@
+[THREAD CONVERSATION HISTORY — this is the PRIMARY context.
+When the user says 'just now', 'earlier', 'the task', 'try again', or refers to something discussed — ALWAYS look here first. Do NOT say 'there is no previous context' if content exists below. Do NOT re-execute past actions unprompted.]

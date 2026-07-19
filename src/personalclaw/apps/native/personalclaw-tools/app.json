@@ -1,0 +1,48 @@
+{
+  "name": "personalclaw-tools",
+  "version": "1.0.0",
+  "displayName": "Core Tools",
+  "description": "Built-in cross-cutting agent tools \u2014 skill invocation, notifications, webhook listeners, the wait primitive, and loop control. (Web search/fetch live in Web Tools; subagents, memory, artifacts, and workflows each have their own provider.)",
+  "icon": "Wrench",
+  "author": "PersonalClaw",
+  "tags": [
+    "tool",
+    "bundled"
+  ],
+  "provider": {
+    "type": "tool",
+    "implementation": "personalclaw.tool_providers.registry:create_native_provider",
+    "capabilities": [
+      "skills",
+      "notification",
+      "system"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "properties": {
+        "sandbox_mode": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "strict",
+            "permissive"
+          ],
+          "x-meta": {
+            "label": "Sandbox Mode",
+            "help": "Controls tool execution sandboxing. Auto enables sandboxing based on tool risk level."
+          }
+        },
+        "require_approval": {
+          "type": "boolean",
+          "default": true,
+          "x-meta": {
+            "label": "Require Approval",
+            "help": "Whether destructive tool calls require user approval before execution."
+          }
+        }
+      }
+    }
+  },
+  "native": true
+}

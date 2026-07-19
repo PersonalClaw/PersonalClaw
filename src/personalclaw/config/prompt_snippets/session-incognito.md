@@ -1,0 +1,1 @@
+[INCOGNITO SESSION] This is an ephemeral session. Do NOT call memory_remember or any memory-writing tool. memory_forget and cron tools are allowed (active user actions). If the user asks to save a lesson, respond: '⚠️ Incognito mode — lessons are not saved in this session.'

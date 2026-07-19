@@ -1,0 +1,52 @@
+# Docker build-context excludes. The compose build context is this directory
+# (deploy/compose/compose.build.yaml: `context: ../..` → PersonalClaw/), and
+# docker/podman only read the .dockerignore at the CONTEXT ROOT — so this file
+# must live here to take effect.
+#
+# NOTE: .dockerignore uses Go filepath patterns, NOT gitignore semantics — a
+# bare `node_modules` matches only at the context root; `**/node_modules` is
+# required to also catch web/node_modules.
+
+# Git
+.git
+.gitignore
+
+# Secrets — never ship the credential store into a build context
+# (.env.example is the documented template and carries no secrets)
+.env
+.env.local
+
+# Python virtualenv + tool caches
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.mypy_cache
+.hypothesis
+.coverage
+htmlcov
+eval_results
+
+# Node deps + FE build artifacts (Dockerfile.web COPYs web/ and re-runs
+# `npm run build` inside the container — dist is rebuilt, deps reinstalled)
+**/node_modules
+web/dist
+web/coverage
+web/test-results
+web/playwright-report
+
+# Python build artifacts (image installs from src/ + pyproject, not from dist)
+build
+dist
+**/*.egg-info
+
+# Desktop app (Electron; not part of any container build)
+desktop
+
+# OS / editor / local-dev junk
+.DS_Store
+*.swp
+playwright-responses
+.playwright-mcp
+.personalclaw-dev*
+.dev-home

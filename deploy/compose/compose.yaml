@@ -1,0 +1,80 @@
+# PersonalClaw — published-image compose (default).
+#
+# Pulls pre-built images from the registry. Use it to run a release without
+# checking out the source tree, or to validate a published image.
+#
+#   docker compose -f deploy/compose/compose.yaml up -d
+#
+# To build locally instead, overlay compose.build.yaml:
+#   docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.build.yaml up -d --build
+#
+# Tag selection: set PERSONALCLAW_IMAGE_TAG in your environment (or .env) to
+# pin a specific release. Defaults to "latest".
+services:
+  personalclaw-gateway:
+    image: ghcr.io/personalclaw/personalclaw-gateway:${PERSONALCLAW_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:10000:10000"
+    volumes:
+      - personalclaw_home:/data:z
+    env_file:
+      - ../../.env
+    environment:
+      PERSONALCLAW_HOME: /data
+      PERSONALCLAW_PORT: "10000"
+      PERSONALCLAW_WORKSPACE: /data/workspace
+      PERSONALCLAW_BIND_HOST: "0.0.0.0"
+      # NOTE: PERSONALCLAW_BYPASS_LOCAL_NETWORKS is intentionally NOT set here.
+      # It comes from `.env` via env_file above. Declaring it in this
+      # `environment:` block would override env_file with compose's own
+      # `${VAR:-0}` interpolation — and compose interpolates from this
+      # directory (which has no .env), so it would always resolve to "0" and
+      # silently defeat the value you set in the repo-root .env. Skip token
+      # auth for loopback/RFC1918 clients by setting it to "1" in `.env`.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:10000/api/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  personalclaw-web:
+    image: ghcr.io/personalclaw/personalclaw-web:${PERSONALCLAW_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      # HTTP (:3000) 308-redirects to HTTPS; the app + its SSE/WS streams run on
+      # HTTPS (:3443) with HTTP/2. The HTTPS cert is self-signed out of the box
+      # (mount a real cert over /etc/nginx/certs/personalclaw.{crt,key} to override).
+      - "127.0.0.1:3000:80"
+      - "127.0.0.1:3443:443"
+    environment:
+      # Render nginx.conf.template at start and inject the container's DNS as
+      # the nginx resolver so the gateway hostname is re-resolved per request
+      # (survives gateway container recreation without a 502). Scope envsubst
+      # to NGINX_LOCAL_RESOLVERS so nginx's own $host/$uri vars are untouched.
+      NGINX_ENTRYPOINT_LOCAL_RESOLVERS: "1"
+      NGINX_ENVSUBST_FILTER: "NGINX_LOCAL_RESOLVERS"
+    depends_on:
+      personalclaw-gateway:
+        condition: service_healthy
+
+  personalclaw-slack:
+    image: ghcr.io/personalclaw/personalclaw-gateway:${PERSONALCLAW_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: ["personalclaw", "slack"]
+    profiles:
+      - with-slack
+    volumes:
+      - personalclaw_home:/data:z
+    env_file:
+      - ../../.env
+    environment:
+      PERSONALCLAW_HOME: /data
+      PERSONALCLAW_WORKSPACE: /data/workspace
+    depends_on:
+      - personalclaw-gateway
+
+volumes:
+  personalclaw_home:
+    driver: local

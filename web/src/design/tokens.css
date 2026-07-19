@@ -1,0 +1,470 @@
+@import "tailwindcss";
+@import "./fonts.css";
+
+/* ════════════════════════════════════════════════════════════════════════
+   PersonalClaw — design token core (Tailwind v4 @theme)
+   A neutral surface/content ramp + one ownable warm accent (coral/terracotta,
+   the default scheme). Everything here is token-driven + theme-customizable
+   (schemes + per-token overrides). Dark is default; .light overrides.
+   ════════════════════════════════════════════════════════════════════════ */
+@theme {
+  /* ── fonts (PersonalClaw default = DM Sans; selectable via Appearance) ── */
+  --font-sans: "DM Sans", system-ui, sans-serif;
+  --font-display: "DM Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* ── color: surfaces (dark) ── */
+  --color-canvas: #0f0f0f;
+  --color-surface: #131314;
+  --color-surface-low: #1b1b1b;
+  --color-surface-container: #1e1f20;
+  --color-surface-high: #282a2c;
+  --color-surface-highest: #333537;
+  --color-rail: #1f1f1f;
+
+  /* ── color: content/ink ── */
+  --color-on-surface: #e3e3e3;
+  --color-on-surface-low: #9a9b9c;
+  --color-on-surface-var: #c4c7c5;
+  --color-outline: #8e918f;
+  --color-outline-variant: #444746;
+
+  /* ── color: CORAL brand (PersonalClaw accent, dark) ── */
+  --color-primary: #ff6b5b;
+  --color-on-primary: #3f1008;
+  --color-primary-container: #5a1d12;
+  --color-on-primary-container: #ffe0d6;
+  --color-primary-emphasis: #ff9a86;
+  --color-secondary: #ffb454; /* warm amber secondary */
+
+  /* ── color: semantic ── */
+  --color-ok: #0ebc5f;
+  --color-warn: #ff8d41;
+  --color-danger: #f55e57;
+  --color-info: #4e8ff8;
+  /* Aliases for the longer-form names used across many components (status pills,
+     Settings, Knowledge, artifacts, …). Without these the var() references fell back
+     to off-theme hardcoded hex (e.g. gold #d4a017 instead of the warn orange). */
+  --color-success: var(--color-ok);
+  --color-warning: var(--color-warn);
+  --color-error: var(--color-danger);
+  /* Ink for text/icons ON a solid danger surface (destructive buttons/badges). */
+  --color-on-danger: #ffffff;
+
+  /* ── brand gradient stops (coral-weighted spectrum) ── */
+  --grad-1: #c85a48;
+  --grad-2: #ff6b5b;
+  --grad-3: #ff9a7a;
+  --grad-4: #ffb454;
+  --glow-a: #ff6b5b;
+  --glow-b: #ff9a7a;
+
+  /* ── shape (base × user's --radius-scale slider × the density-owned --radius-density
+     multiplier, so the P19 data-ui density can crisp corners WITHOUT fighting the
+     user's roundness slider — both compose; --radius-scale is set inline by the token
+     system, --radius-density only by the [data-ui] CSS blocks below). ── */
+  --radius-scale: 1;
+  --radius-density: 1;
+  --radius-xs: calc(4px * var(--radius-scale) * var(--radius-density));
+  --radius-sm: calc(8px * var(--radius-scale) * var(--radius-density));
+  --radius-md: calc(12px * var(--radius-scale) * var(--radius-density));
+  --radius-lg: calc(16px * var(--radius-scale) * var(--radius-density));
+  --radius-lgi: calc(20px * var(--radius-scale) * var(--radius-density));
+  --radius-xl: calc(28px * var(--radius-scale) * var(--radius-density));
+  --radius-xli: calc(32px * var(--radius-scale) * var(--radius-density));
+  --radius-2xl: calc(48px * var(--radius-scale) * var(--radius-density));
+  --radius-pill: 9999px;
+  /* Squircle (iOS-style superellipse feel) for large sheets/modals — softer than
+     the hard --radius-xl, softer superellipse feel. */
+  --radius-squircle: calc(34px * var(--radius-scale) * var(--radius-density));
+
+  /* ── customizable motion/glow multipliers (read by canvas via runtime.ts) ── */
+  --anim-speed: 1;
+  --wave-amount: 1;
+  --glow: 1;
+  /* seconds per outward pulse of the gateway-status dot (customizable in Design
+     settings via --status-pulse-speed). A calm default; the Tailwind ping
+     default (1s) pulsed too fast. */
+  --status-pulse-speed: 2.4s;
+  --surface-angle: 45deg;
+  --surface-distance: 1;
+  --dot-density: 1;
+
+  /* ── main content max-width (Chat composer + conversation column) ── */
+  --content-width: 820px;
+
+  /* ── spacing (4px base × the customizable --space-scale multiplier, mirroring
+     --radius-scale) — so the P19 `data-ui` density axis can tighten the WHOLE app's
+     spacing by re-scaling one var (comfortable=1, dense≈0.8, cli≈0.7). ── */
+  --space-scale: 1;
+  --spacing-xs: calc(4px * var(--space-scale));
+  --spacing-s: calc(8px * var(--space-scale));
+  --spacing-m: calc(12px * var(--space-scale));
+  --spacing-l: calc(16px * var(--space-scale));
+  --spacing-xl: calc(20px * var(--space-scale));
+  --spacing-2xl: calc(24px * var(--space-scale));
+  --spacing-3xl: calc(28px * var(--space-scale));
+
+  /* ── motion (PersonalClaw curves — smooth, not Material) ── */
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized-decel: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ease-emphasized-accel: cubic-bezier(0.3, 0, 0.8, 0.15);
+
+  /* ── elevation (soft ambient, no hard drop) ── */
+  --shadow-composer: 0 2px 8px -2px rgb(0 0 0 / 0.16);
+  --shadow-menu: 0 0 20px rgb(0 0 0 / 0.28);
+  --shadow-sheet: 0 16px 40px rgb(0 0 0 / 0.42);
+  /* composer rest/lift shadows (lift adds a primary-tinted glow) */
+  --shadow-rest: 0 2px 8px -2px rgb(0 0 0 / 0.16);
+  --shadow-lift: 0 22px 55px -14px rgb(0 0 0 / 0.6),
+    0 0 48px -6px color-mix(in srgb, var(--color-primary) 50%, transparent);
+
+  /* ── elevation model (brand-identity-rebrand §3.1): neumorphic GROUND vs
+        glass SKY. Neumorphic = soft dual shadow (ambient + faint inset highlight),
+        no hard border. Glass = frosted translucent overlay + 1px inset top
+        highlight. Tunable via the "Elevation & glass" registry group. ── */
+  --neu-extrude: 0 1px 2px rgb(0 0 0 / 0.28), 0 6px 16px -6px rgb(0 0 0 / 0.34),
+    inset 0 1px 0 rgb(255 255 255 / 0.04);
+  --glass-blur: 16px;
+  --glass-alpha: 0.72;         /* translucency of the frosted surface */
+  --glass-bg: color-mix(in srgb, var(--color-surface-container) calc(var(--glass-alpha) * 100%), transparent);
+  --glass-highlight: inset 0 1px 0 rgb(255 255 255 / 0.10);
+
+  /* ── composer focus ring gradient — stops 1/3/4 follow the brand gradient;
+        stop-2 is the highlight (own token: near-white on dark / ink on light) ── */
+  --ring-stop-1: var(--grad-1);
+  --ring-stop-2: #fdf8ff;
+  --ring-stop-3: var(--grad-2);
+  --ring-stop-4: var(--grad-4);
+}
+
+/* ── light mode overrides (coral brand, light) ── */
+.light {
+  --color-canvas: #f0f4f8;
+  --color-surface: #ffffff;
+  --color-surface-low: #f4f6f9;
+  --color-surface-container: #ffffff;
+  --color-surface-high: #eef1f5;
+  --color-surface-highest: #e6eaef;
+  --color-rail: #f0f4f8;
+  --color-on-surface: #1f1f1f;
+  --color-on-surface-low: #444746;
+  --color-on-surface-var: #5f6368;
+  --color-outline: #8e918f;
+  --color-outline-variant: #e1e3e1;
+  --color-primary: #e85a3f;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #ffe0d6;
+  --color-on-primary-container: #3f1008;
+  --color-primary-emphasis: #c8452e;
+  --shadow-composer: 0 2px 8px -2px rgb(96 110 130 / 0.18);
+  --shadow-menu: 0 0 20px rgb(96 110 130 / 0.16);
+  --shadow-sheet: 0 16px 40px rgb(96 110 130 / 0.22);
+  /* light: the highlight stop flips to a dark/ink tone instead of white
+     (stops 1/3/4 follow --grad-* which already carry light values) */
+  --ring-stop-2: #1a1430;
+  color-scheme: light;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   P19 — data-ui density axis (orthogonal to data-theme palette + data-mode
+   dark/light). Set on <html> by appearance.tsx from the "UI density" token.
+   Each level re-scales the SPINE multipliers (--space-scale, --radius-scale)
+   the spacing/radius tokens already ride, so density falls out app-wide for
+   free — no per-component density px. `comfortable` is the default (:root
+   values stand). Composes with the appearance-owned --content-width /
+   --expressiveness (dense + full-width + bold coexist).
+   ════════════════════════════════════════════════════════════════════════ */
+[data-ui="dense"] {
+  --space-scale: 0.8;    /* tighter gaps/padding app-wide */
+  --radius-density: 0.85;/* slightly crisper corners (composes with the user's slider) */
+}
+[data-ui="cli"] {
+  --space-scale: 0.68;   /* terminal-tight spacing */
+  --radius-density: 0.3; /* near-square, utilitarian */
+  --font-sans: "JetBrains Mono", ui-monospace, monospace;  /* monospaced surface */
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Base + type scale (fractional variable weights = the type signature)
+   ════════════════════════════════════════════════════════════════════════ */
+@layer base {
+  /* App shell, not a scrolling document: lock the root box so decorative
+     animations (rotating logo, breathing bloom) can never toggle a viewport
+     scrollbar — the cause of the 1–2px width/height flicker loop. Scrolling
+     happens in inner panes that opt in with overflow-y-auto. */
+  html, body, #root { height: 100%; overflow: hidden; }
+  body {
+    margin: 0;
+    background: var(--color-canvas);
+    color: var(--color-on-surface);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    /* NB: no `overscroll-behavior: none` here — it suppressed the browser's
+       two-finger swipe-to-navigate (history back/forward) gesture for the whole
+       document as a side effect. The scrollbar-flicker it was meant to stop is
+       already handled by `overflow: hidden` on the root box above (no viewport
+       scroll container ever exists). If an inner scroll pane ever rubber-bands
+       into history navigation, scope `overscroll-behavior: contain` (NOT none)
+       to that specific `.overflow-y-auto` pane. */
+  }
+
+  /* Keyboard focus indicator — many controls (IconButton, pills, tabs) set
+     outline-none with no replacement, leaving keyboard users with no visible
+     focus. A global :focus-visible ring (keyboard-only; mouse clicks don't
+     trigger it) makes the whole app navigable by keyboard without per-component
+     work. Components can still override locally where they need a custom ring. */
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Hide the scrollbar on short in-flow scroll strips (header control rows, the
+     Files/loop tab strips) where a native horizontal bar in a ~40px bar reads as
+     chrome noise. Content still scrolls (wheel / trackpad / drag / keyboard). Use
+     ONLY where the overflow is a graceful fallback, never where the scrollbar is
+     the primary way a user discovers there's more to see. */
+  .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+
+  /* Hide scrollbars app-wide (user tenet 2026-07-07): no visible scrollbar
+     anywhere — every scroll pane still scrolls (wheel / trackpad / drag /
+     keyboard), only the bar chrome is gone. Applied at the root so it covers all
+     elements incl. the inner overflow-y-auto panes without per-component opt-in
+     (this generalizes the .no-scrollbar utility above to *). Firefox/IE via
+     scrollbar-width/-ms-overflow-style; WebKit/Blink via the pseudo-element. */
+  * { scrollbar-width: none; -ms-overflow-style: none; }
+  *::-webkit-scrollbar { display: none; }
+
+  /* NE type roles — apply via data-type="display-l" etc. */
+  [data-type="display-l"]  { font-size: 2.625rem; line-height: 3rem;    font-variation-settings: "wght" 280; letter-spacing: 0; }
+  [data-type="display-m"]  { font-size: 2.25rem;  line-height: 2.75rem; font-variation-settings: "wght" 320; }
+  [data-type="display-s"]  { font-size: 2rem;     line-height: 2.375rem;font-variation-settings: "wght" 360; }
+  [data-type="headline-l"] { font-size: 1.75rem;  line-height: 2.25rem; font-variation-settings: "wght" 350; }
+  [data-type="headline-m"] { font-size: 1.5rem;   line-height: 1.75rem; font-variation-settings: "wght" 380; }
+  [data-type="headline-s"] { font-size: 1.25rem;  line-height: 1.5rem;  font-variation-settings: "wght" 470; }
+  [data-type="title-l"]    { font-size: 1.25rem;  line-height: 1.5rem;  font-variation-settings: "wght" 470; }
+  [data-type="title-m"]    { font-size: 0.9375rem;line-height: 1.25rem; font-variation-settings: "wght" 500; }
+  [data-type="body-l"]     { font-size: 1.0625rem;line-height: 1.5rem;  font-variation-settings: "wght" 400; }
+  [data-type="body-m"]     { font-size: 0.9375rem;line-height: 1.25rem; font-variation-settings: "wght" 400; }
+  [data-type="label-l"]    { font-size: 1.0625rem;line-height: 1.5rem;  font-variation-settings: "wght" 470; }
+  [data-type="label-m"]    { font-size: 0.9375rem;line-height: 1.25rem; font-variation-settings: "wght" 470; }
+  /* -s sub-scale (0.8125rem) — small metadata/caption text. These roles were
+     already referenced app-wide (Apps store cards, panels) but had no definition,
+     so they silently rendered at the inherited size; defining them applies the
+     intended caption sizing. label-s = mid-weight chip/meta, body-s = caption prose. */
+  [data-type="label-s"]    { font-size: 0.8125rem;line-height: 1.125rem;font-variation-settings: "wght" 470; }
+  [data-type="body-s"]     { font-size: 0.8125rem;line-height: 1.125rem;font-variation-settings: "wght" 400; }
+}
+
+/* Blinking caret at the reveal head while the Code cockpit animates a file write
+   (autonomous-writing effect). */
+@keyframes reveal-blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
+.reveal-caret { animation: reveal-blink 0.9s step-end infinite; }
+
+/* Gateway-connectivity status dot: an outward-expanding pulse ring (same shape as
+   Tailwind's `ping` — scale to 2 + fade — but the duration is customizable via
+   --status-pulse-speed, set in Design settings, instead of Tailwind's fixed 1s). */
+@keyframes status-pulse {
+  0%   { transform: scale(1);   opacity: 0.55; }
+  75%, 100% { transform: scale(2.2); opacity: 0; }
+}
+.status-pulse {
+  animation: status-pulse var(--status-pulse-speed, 2.4s) cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+/* Skeleton shimmer — placeholder blocks while a (cache-miss) fetch is in flight,
+   so a page renders its shape instantly instead of a bare "Loading…". */
+@keyframes skeleton-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.skeleton {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-surface-container) 0%,
+    var(--color-surface-high) 50%,
+    var(--color-surface-container) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+/* Text shimmer — a moving sheen across live, in-progress text (e.g. the planner's
+   current sentence ticking in the Investigation rail) so it reads as actively
+   streaming rather than static. The text itself is the gradient (clipped), with a
+   bright band sweeping through the muted base color. */
+@keyframes text-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.text-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-on-surface-low) 0%,
+    var(--color-on-surface-low) 35%,
+    var(--color-on-surface) 50%,
+    var(--color-on-surface-low) 65%,
+    var(--color-on-surface-low) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: text-shimmer 2.2s linear infinite;
+}
+
+/* Coral variant of the text shimmer — the streaming indicator's state label
+   ("Thinking" / "Working" / "Responding") wears a running coral glow so the
+   agent's live state reads as alive, not a static caption (Glow-Is-Alive). */
+.text-shimmer-primary {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-on-surface-var) 0%,
+    var(--color-on-surface-var) 35%,
+    var(--color-primary-emphasis) 50%,
+    var(--color-on-surface-var) 65%,
+    var(--color-on-surface-var) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: text-shimmer 2.2s linear infinite;
+}
+
+/* Blueprint construction — the streaming-widget placeholder sketches a wireframe
+   (strokes drawing in) while the real visual streams; WidgetFrame cross-fades to
+   the rendered iframe when the widget completes. --bp-len is each path's length. */
+@keyframes blueprint-draw {
+  from { stroke-dashoffset: var(--bp-len, 600); }
+  to   { stroke-dashoffset: 0; }
+}
+.blueprint-stroke {
+  stroke-dasharray: var(--bp-len, 600);
+  stroke-dashoffset: var(--bp-len, 600);
+  animation: blueprint-draw 1.4s var(--ease-emphasized-decel) forwards;
+}
+@keyframes blueprint-breathe {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 0.95; }
+}
+.blueprint-breathe { animation: blueprint-breathe 3s ease-in-out 1.6s infinite; }
+/* soft scanning band sweeping the blueprint left→right */
+@keyframes blueprint-scan {
+  from { transform: translateX(-60%); }
+  to   { transform: translateX(260%); }
+}
+.blueprint-scan {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--color-primary) 14%, transparent),
+    transparent
+  );
+  animation: blueprint-scan 2.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  /* blueprint strokes snap to drawn; the scan band never sweeps */
+  .blueprint-scan { display: none; }
+}
+
+/* ── elevation model (brand rebrand §3.1) ── */
+/* Glass SKY — frosted translucent overlay for transient/floating UI. The ONLY
+   place backdrop-filter lives (outermost overlay), so nested-blur can't recur.
+   Solid fallback first; the @supports layer adds the frost where available. */
+.glass {
+  background: var(--color-surface-container);
+  box-shadow: var(--shadow-menu), var(--glass-highlight);
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass {
+    background: var(--glass-bg);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+    backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  }
+}
+/* Reduced-motion / transparency: drop the GPU-costly blur, keep a solid surface. */
+@media (prefers-reduced-motion: reduce) {
+  .glass { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--color-surface-container); }
+}
+
+/* Squircle — softer superellipse-ish corner for large sheets/modals. On
+   Chromium the native `corner-shape: superellipse` gives a true squircle;
+   elsewhere it degrades to the rounded --radius-squircle (progressive
+   enhancement, §9). */
+.squircle { border-radius: var(--radius-squircle); }
+@supports (corner-shape: superellipse) {
+  .squircle { corner-shape: superellipse; border-radius: var(--radius-xl); }
+}
+
+/* highlight.js — NE-tokenized syntax colors (uses the JSON-syntax palette feel) */
+@layer base {
+  .hljs { color: var(--color-on-surface); background: transparent; }
+  .hljs-comment, .hljs-quote { color: var(--color-on-surface-low); font-style: italic; }
+  .hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-name, .hljs-tag { color: var(--color-primary); }
+  .hljs-string, .hljs-attr, .hljs-template-tag, .hljs-addition { color: var(--color-ok); }
+  .hljs-number, .hljs-literal, .hljs-variable, .hljs-template-variable, .hljs-type { color: var(--color-primary-emphasis); }
+  .hljs-title, .hljs-section, .hljs-function .hljs-title { color: var(--color-secondary); }
+  .hljs-attribute, .hljs-meta, .hljs-symbol, .hljs-bullet, .hljs-link { color: var(--color-warn); }
+  .hljs-deletion { color: var(--color-danger); }
+  .hljs-emphasis { font-style: italic; }
+  .hljs-strong { font-weight: 600; }
+}
+
+/* Editorial type scale for the `document` content type (sanitized LLM-authored
+   HTML rendered in-DOM — see content/renderers.tsx DocumentPreview). Theme-aware
+   via tokens; scoped to .doc so it never leaks into app chrome or chat prose. */
+@layer base {
+  .doc { color: var(--color-on-surface); font-size: 1rem; line-height: 1.7; }
+  .doc > :first-child { margin-top: 0; }
+  .doc h1, .doc h2, .doc h3, .doc h4, .doc h5, .doc h6 {
+    line-height: 1.25; margin: 1.8em 0 0.6em; font-variation-settings: "wght" 640; color: var(--color-on-surface);
+  }
+  .doc h1 { font-size: 1.9rem; letter-spacing: -0.01em; }
+  .doc h2 { font-size: 1.45rem; letter-spacing: -0.005em; }
+  .doc h3 { font-size: 1.2rem; }
+  .doc h4 { font-size: 1.02rem; }
+  .doc p, .doc li { margin: 0.6em 0; }
+  .doc ul, .doc ol { padding-left: 1.4em; margin: 0.6em 0; }
+  .doc ul { list-style: disc; } .doc ol { list-style: decimal; }
+  .doc a { color: var(--color-primary); text-decoration: underline; text-underline-offset: 2px; }
+  .doc img { max-width: 100%; height: auto; border-radius: 8px; }
+  .doc blockquote {
+    margin: 1em 0; padding: 0.2em 0 0.2em 1em; border-left: 3px solid var(--color-outline-variant);
+    color: var(--color-on-surface-low);
+  }
+  .doc pre { overflow: auto; background: var(--color-surface-low); padding: 1em; border-radius: 10px; margin: 1em 0; }
+  .doc code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.875em; }
+  .doc :not(pre) > code { background: var(--color-surface-high); padding: 0.12em 0.36em; border-radius: 5px; }
+  .doc table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.92em; }
+  .doc th, .doc td { border: 1px solid var(--color-outline-variant); padding: 0.5em 0.7em; text-align: left; }
+  .doc th { background: var(--color-surface-high); font-variation-settings: "wght" 600; }
+  .doc hr { border: none; border-top: 1px solid var(--color-outline-variant); margin: 2em 0; }
+  .doc figure { margin: 1.2em 0; } .doc figcaption { color: var(--color-on-surface-low); font-size: 0.85em; text-align: center; margin-top: 0.4em; }
+}
+
+/* DAG hover lineage (DagView) — hovering a node lights its full transitive
+   lineage (ancestors + descendants + the edges between) and dims the rest.
+   Pure class toggles on the rendered SVG (no React re-render), so a large
+   graph stays jank-free; opacity transitions keep enter/leave smooth. */
+@layer base {
+  .dag-node, .dag-edge { transition: opacity 160ms ease; }
+  svg.dag-hovering .dag-node:not(.dag-lit),
+  svg.dag-hovering .dag-edge:not(.dag-lit) { opacity: 0.18; }
+  /* Emphasize lineage edges: primary tone + heavier stroke. A cycle (bad) edge
+     keeps its danger tone — the cycle signal must not be repainted away. */
+  svg.dag-hovering .dag-edge.dag-lit:not(.dag-edge-bad) path {
+    stroke: var(--color-primary); stroke-width: 2.5; opacity: 1;
+    marker-end: url(#dag-arrow-active);
+  }
+  svg.dag-hovering .dag-edge.dag-lit.dag-edge-bad path { stroke-width: 2.5; opacity: 1; }
+}

@@ -1,0 +1,48 @@
+_entity: prompt
+use_case: knowledge_insights
+name: task-knowledge-insights
+kind: user
+category: internal
+description: Extract structured insights (title/summary/key_points/topics/action_items)
+  from content (JSON out).
+tags:
+- system
+- bundled
+variables:
+- name: content
+  type: textarea
+  description: The content to analyze (capped).
+  required: true
+content: 'Analyze the following content and extract structured insights.
+
+
+  Return valid JSON with these keys:
+
+  - title: a concise, specific title for this content (3-8 words, no trailing punctuation)
+
+  - summary: a 2-4 sentence overview of the content (string)
+
+  - key_points: the most important takeaways (list of short strings, max 6)
+
+  - topics: subject tags describing what this is about (list of lowercase kebab-case
+  strings, max 6)
+
+  - action_items: concrete to-dos or follow-ups explicitly implied by the content
+  (list of strings; empty list if none)
+
+
+  Rules:
+
+  - Be specific to THIS content; never generic.
+
+  - Omit a key''s items rather than inventing them — an empty list is fine.
+
+  - Keep each list entry to a single concise phrase or sentence.
+
+
+  Content:
+
+  {{content}}
+
+
+  JSON:'

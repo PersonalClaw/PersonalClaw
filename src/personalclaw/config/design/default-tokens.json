@@ -1,0 +1,329 @@
+{
+  "$schema": "./tokens.schema.json",
+  "meta": {
+    "name": "PersonalClaw Default Design System",
+    "version": "1.0.0",
+    "description": "The comprehensive default token set every Design loop builds on. Every look-and-feel axis is a named, overridable variable: color (primitive scales + semantic roles in light & dark), typography, spacing, sizing, radius, borders, shadow/elevation, opacity, blur, motion, z-index layers, breakpoints, gradients, and per-component tokens. A Design loop records the user's chosen overrides in kind_config.token_overrides and resolves them on top of these defaults.",
+    "scheme_default": "light"
+  },
+
+  "color": {
+    "primitive": {
+      "comment": "Raw color scales (50→950), the palette nothing references directly — semantic roles below map onto these. Mirrors the Tailwind/Radix 11-step convention so contrast pairs are predictable.",
+      "neutral": {
+        "50": "#f8fafc", "100": "#f1f5f9", "200": "#e2e8f0", "300": "#cbd5e1",
+        "400": "#94a3b8", "500": "#64748b", "600": "#475569", "700": "#334155",
+        "800": "#1e293b", "900": "#0f172a", "950": "#020617"
+      },
+      "brand": {
+        "50": "#fff7ed", "100": "#ffedd5", "200": "#fed7aa", "300": "#fdba74",
+        "400": "#fb923c", "500": "#f97316", "600": "#ea580c", "700": "#c2410c",
+        "800": "#9a3412", "900": "#7c2d12", "950": "#431407"
+      },
+      "accent": {
+        "50": "#eff6ff", "100": "#dbeafe", "200": "#bfdbfe", "300": "#93c5fd",
+        "400": "#60a5fa", "500": "#3b82f6", "600": "#2563eb", "700": "#1d4ed8",
+        "800": "#1e40af", "900": "#1e3a8a", "950": "#172554"
+      },
+      "success": {
+        "50": "#f0fdf4", "100": "#dcfce7", "200": "#bbf7d0", "300": "#86efac",
+        "400": "#4ade80", "500": "#22c55e", "600": "#16a34a", "700": "#15803d",
+        "800": "#166534", "900": "#14532d", "950": "#052e16"
+      },
+      "warning": {
+        "50": "#fffbeb", "100": "#fef3c7", "200": "#fde68a", "300": "#fcd34d",
+        "400": "#fbbf24", "500": "#f59e0b", "600": "#d97706", "700": "#b45309",
+        "800": "#92400e", "900": "#78350f", "950": "#451a03"
+      },
+      "danger": {
+        "50": "#fef2f2", "100": "#fee2e2", "200": "#fecaca", "300": "#fca5a5",
+        "400": "#f87171", "500": "#ef4444", "600": "#dc2626", "700": "#b91c1c",
+        "800": "#991b1b", "900": "#7f1d1d", "950": "#450a0a"
+      },
+      "info": {
+        "50": "#ecfeff", "100": "#cffafe", "200": "#a5f3fc", "300": "#67e8f9",
+        "400": "#22d3ee", "500": "#06b6d4", "600": "#0891b2", "700": "#0e7490",
+        "800": "#155e75", "900": "#164e63", "950": "#083344"
+      }
+    },
+    "semantic": {
+      "comment": "Role tokens components reference. Each role resolves per-scheme; a Design loop overrides roles, not primitives, so light/dark stay in lockstep.",
+      "light": {
+        "bg.base": "{color.primitive.neutral.50}",
+        "bg.surface": "#ffffff",
+        "bg.raised": "#ffffff",
+        "bg.sunken": "{color.primitive.neutral.100}",
+        "bg.overlay": "rgba(15, 23, 42, 0.45)",
+        "bg.inset": "{color.primitive.neutral.100}",
+        "fg.default": "{color.primitive.neutral.900}",
+        "fg.muted": "{color.primitive.neutral.600}",
+        "fg.subtle": "{color.primitive.neutral.500}",
+        "fg.on-brand": "#ffffff",
+        "fg.on-accent": "#ffffff",
+        "border.default": "{color.primitive.neutral.200}",
+        "border.strong": "{color.primitive.neutral.300}",
+        "border.subtle": "{color.primitive.neutral.100}",
+        "border.focus": "{color.primitive.accent.500}",
+        "brand.default": "{color.primitive.brand.500}",
+        "brand.hover": "{color.primitive.brand.600}",
+        "brand.active": "{color.primitive.brand.700}",
+        "brand.subtle": "{color.primitive.brand.100}",
+        "accent.default": "{color.primitive.accent.600}",
+        "accent.hover": "{color.primitive.accent.700}",
+        "success.default": "{color.primitive.success.600}",
+        "success.subtle": "{color.primitive.success.100}",
+        "warning.default": "{color.primitive.warning.500}",
+        "warning.subtle": "{color.primitive.warning.100}",
+        "danger.default": "{color.primitive.danger.600}",
+        "danger.subtle": "{color.primitive.danger.100}",
+        "info.default": "{color.primitive.info.600}",
+        "info.subtle": "{color.primitive.info.100}",
+        "focus.ring": "rgba(59, 130, 246, 0.5)"
+      },
+      "dark": {
+        "bg.base": "{color.primitive.neutral.950}",
+        "bg.surface": "{color.primitive.neutral.900}",
+        "bg.raised": "{color.primitive.neutral.800}",
+        "bg.sunken": "{color.primitive.neutral.950}",
+        "bg.overlay": "rgba(2, 6, 23, 0.65)",
+        "bg.inset": "{color.primitive.neutral.800}",
+        "fg.default": "{color.primitive.neutral.50}",
+        "fg.muted": "{color.primitive.neutral.400}",
+        "fg.subtle": "{color.primitive.neutral.500}",
+        "fg.on-brand": "#ffffff",
+        "fg.on-accent": "#ffffff",
+        "border.default": "{color.primitive.neutral.800}",
+        "border.strong": "{color.primitive.neutral.700}",
+        "border.subtle": "{color.primitive.neutral.900}",
+        "border.focus": "{color.primitive.accent.400}",
+        "brand.default": "{color.primitive.brand.500}",
+        "brand.hover": "{color.primitive.brand.400}",
+        "brand.active": "{color.primitive.brand.300}",
+        "brand.subtle": "{color.primitive.brand.900}",
+        "accent.default": "{color.primitive.accent.400}",
+        "accent.hover": "{color.primitive.accent.300}",
+        "success.default": "{color.primitive.success.400}",
+        "success.subtle": "{color.primitive.success.900}",
+        "warning.default": "{color.primitive.warning.400}",
+        "warning.subtle": "{color.primitive.warning.900}",
+        "danger.default": "{color.primitive.danger.400}",
+        "danger.subtle": "{color.primitive.danger.900}",
+        "info.default": "{color.primitive.info.400}",
+        "info.subtle": "{color.primitive.info.900}",
+        "focus.ring": "rgba(96, 165, 250, 0.55)"
+      }
+    }
+  },
+
+  "typography": {
+    "family": {
+      "sans": "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+      "serif": "Georgia, Cambria, 'Times New Roman', Times, serif",
+      "mono": "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+      "display": "Inter, ui-sans-serif, system-ui, sans-serif"
+    },
+    "weight": {
+      "thin": 100, "extralight": 200, "light": 300, "regular": 400,
+      "medium": 500, "semibold": 600, "bold": 700, "extrabold": 800, "black": 900
+    },
+    "size": {
+      "comment": "Modular scale (~1.2 minor third) in rem.",
+      "2xs": "0.625rem", "xs": "0.75rem", "sm": "0.875rem", "base": "1rem",
+      "lg": "1.125rem", "xl": "1.25rem", "2xl": "1.5rem", "3xl": "1.875rem",
+      "4xl": "2.25rem", "5xl": "3rem", "6xl": "3.75rem", "7xl": "4.5rem", "8xl": "6rem"
+    },
+    "lineHeight": {
+      "none": 1, "tight": 1.15, "snug": 1.3, "normal": 1.5, "relaxed": 1.65, "loose": 2
+    },
+    "letterSpacing": {
+      "tighter": "-0.05em", "tight": "-0.025em", "normal": "0em",
+      "wide": "0.025em", "wider": "0.05em", "widest": "0.1em"
+    },
+    "paragraphSpacing": { "sm": "0.5rem", "base": "0.75rem", "lg": "1rem" },
+    "textStyle": {
+      "comment": "Composed roles — a single token bundling family/size/weight/line-height/tracking.",
+      "display-lg": { "family": "{typography.family.display}", "size": "{typography.size.6xl}", "weight": 800, "lineHeight": 1.05, "letterSpacing": "-0.025em" },
+      "display": { "family": "{typography.family.display}", "size": "{typography.size.5xl}", "weight": 800, "lineHeight": 1.1, "letterSpacing": "-0.025em" },
+      "h1": { "family": "{typography.family.sans}", "size": "{typography.size.4xl}", "weight": 700, "lineHeight": 1.15, "letterSpacing": "-0.02em" },
+      "h2": { "family": "{typography.family.sans}", "size": "{typography.size.3xl}", "weight": 700, "lineHeight": 1.2, "letterSpacing": "-0.015em" },
+      "h3": { "family": "{typography.family.sans}", "size": "{typography.size.2xl}", "weight": 600, "lineHeight": 1.25, "letterSpacing": "-0.01em" },
+      "h4": { "family": "{typography.family.sans}", "size": "{typography.size.xl}", "weight": 600, "lineHeight": 1.3, "letterSpacing": "0em" },
+      "body-lg": { "family": "{typography.family.sans}", "size": "{typography.size.lg}", "weight": 400, "lineHeight": 1.65, "letterSpacing": "0em" },
+      "body": { "family": "{typography.family.sans}", "size": "{typography.size.base}", "weight": 400, "lineHeight": 1.5, "letterSpacing": "0em" },
+      "body-sm": { "family": "{typography.family.sans}", "size": "{typography.size.sm}", "weight": 400, "lineHeight": 1.5, "letterSpacing": "0em" },
+      "caption": { "family": "{typography.family.sans}", "size": "{typography.size.xs}", "weight": 500, "lineHeight": 1.4, "letterSpacing": "0.01em" },
+      "overline": { "family": "{typography.family.sans}", "size": "{typography.size.2xs}", "weight": 600, "lineHeight": 1.3, "letterSpacing": "0.1em" },
+      "code": { "family": "{typography.family.mono}", "size": "{typography.size.sm}", "weight": 400, "lineHeight": 1.6, "letterSpacing": "0em" }
+    }
+  },
+
+  "spacing": {
+    "comment": "4px base grid. 0→96 named in rem; negative/auto handled by consumers.",
+    "0": "0px", "px": "1px", "0.5": "0.125rem", "1": "0.25rem", "1.5": "0.375rem",
+    "2": "0.5rem", "2.5": "0.625rem", "3": "0.75rem", "3.5": "0.875rem", "4": "1rem",
+    "5": "1.25rem", "6": "1.5rem", "7": "1.75rem", "8": "2rem", "9": "2.25rem",
+    "10": "2.5rem", "11": "2.75rem", "12": "3rem", "14": "3.5rem", "16": "4rem",
+    "20": "5rem", "24": "6rem", "28": "7rem", "32": "8rem", "40": "10rem",
+    "48": "12rem", "56": "14rem", "64": "16rem", "80": "20rem", "96": "24rem"
+  },
+
+  "sizing": {
+    "comment": "Element + container dimensions.",
+    "icon": { "xs": "0.75rem", "sm": "1rem", "md": "1.25rem", "lg": "1.5rem", "xl": "2rem" },
+    "control": { "sm": "1.75rem", "md": "2.25rem", "lg": "2.75rem", "xl": "3.25rem" },
+    "container": { "xs": "20rem", "sm": "24rem", "md": "28rem", "lg": "32rem", "xl": "36rem", "2xl": "42rem", "prose": "65ch", "screen": "100vw" }
+  },
+
+  "radius": {
+    "none": "0px", "xs": "0.125rem", "sm": "0.25rem", "md": "0.375rem",
+    "lg": "0.5rem", "xl": "0.75rem", "2xl": "1rem", "3xl": "1.5rem", "full": "9999px"
+  },
+
+  "border": {
+    "width": { "0": "0px", "hairline": "0.5px", "thin": "1px", "thick": "2px", "heavy": "4px" },
+    "style": { "solid": "solid", "dashed": "dashed", "dotted": "dotted" }
+  },
+
+  "shadow": {
+    "comment": "Elevation ladder — light-scheme values; dark scheme uses the .dark variants.",
+    "none": "none",
+    "xs": "0 1px 2px 0 rgba(15, 23, 42, 0.05)",
+    "sm": "0 1px 3px 0 rgba(15, 23, 42, 0.1), 0 1px 2px -1px rgba(15, 23, 42, 0.1)",
+    "md": "0 4px 6px -1px rgba(15, 23, 42, 0.1), 0 2px 4px -2px rgba(15, 23, 42, 0.1)",
+    "lg": "0 10px 15px -3px rgba(15, 23, 42, 0.1), 0 4px 6px -4px rgba(15, 23, 42, 0.1)",
+    "xl": "0 20px 25px -5px rgba(15, 23, 42, 0.1), 0 8px 10px -6px rgba(15, 23, 42, 0.1)",
+    "2xl": "0 25px 50px -12px rgba(15, 23, 42, 0.25)",
+    "inner": "inset 0 2px 4px 0 rgba(15, 23, 42, 0.06)",
+    "focus": "0 0 0 3px rgba(59, 130, 246, 0.5)",
+    "dark": {
+      "xs": "0 1px 2px 0 rgba(0, 0, 0, 0.4)",
+      "sm": "0 1px 3px 0 rgba(0, 0, 0, 0.5), 0 1px 2px -1px rgba(0, 0, 0, 0.5)",
+      "md": "0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.5)",
+      "lg": "0 10px 15px -3px rgba(0, 0, 0, 0.6), 0 4px 6px -4px rgba(0, 0, 0, 0.6)",
+      "xl": "0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.6)",
+      "2xl": "0 25px 50px -12px rgba(0, 0, 0, 0.8)"
+    }
+  },
+
+  "elevation": {
+    "comment": "Semantic elevation → shadow + surface role pairing.",
+    "0": { "shadow": "{shadow.none}", "surface": "bg.base" },
+    "1": { "shadow": "{shadow.sm}", "surface": "bg.surface" },
+    "2": { "shadow": "{shadow.md}", "surface": "bg.raised" },
+    "3": { "shadow": "{shadow.lg}", "surface": "bg.raised" },
+    "4": { "shadow": "{shadow.xl}", "surface": "bg.raised" }
+  },
+
+  "opacity": {
+    "0": 0, "5": 0.05, "10": 0.1, "20": 0.2, "30": 0.3, "40": 0.4, "50": 0.5,
+    "60": 0.6, "70": 0.7, "80": 0.8, "90": 0.9, "95": 0.95, "100": 1,
+    "disabled": 0.45, "hover": 0.08, "pressed": 0.12
+  },
+
+  "blur": {
+    "none": "0", "sm": "4px", "md": "8px", "lg": "16px", "xl": "24px", "2xl": "40px"
+  },
+
+  "motion": {
+    "duration": {
+      "instant": "0ms", "fast": "120ms", "normal": "200ms", "moderate": "300ms",
+      "slow": "450ms", "slower": "600ms"
+    },
+    "easing": {
+      "linear": "linear",
+      "standard": "cubic-bezier(0.2, 0, 0, 1)",
+      "decelerate": "cubic-bezier(0, 0, 0, 1)",
+      "accelerate": "cubic-bezier(0.3, 0, 1, 1)",
+      "emphasized": "cubic-bezier(0.2, 0, 0, 1)",
+      "spring": "cubic-bezier(0.34, 1.56, 0.64, 1)"
+    },
+    "transition": {
+      "colors": "color, background-color, border-color, fill, stroke {motion.duration.fast} {motion.easing.standard}",
+      "transform": "transform {motion.duration.normal} {motion.easing.standard}",
+      "opacity": "opacity {motion.duration.fast} {motion.easing.standard}",
+      "all": "all {motion.duration.normal} {motion.easing.standard}"
+    }
+  },
+
+  "zIndex": {
+    "comment": "Stacking layers — never hardcode magic z values, reference a layer.",
+    "hide": -1, "base": 0, "raised": 10, "dropdown": 1000, "sticky": 1100,
+    "overlay": 1200, "drawer": 1300, "modal": 1400, "popover": 1500,
+    "toast": 1600, "tooltip": 1700, "max": 2147483647
+  },
+
+  "breakpoint": {
+    "xs": "0px", "sm": "640px", "md": "768px", "lg": "1024px", "xl": "1280px", "2xl": "1536px"
+  },
+
+  "gradient": {
+    "brand": "linear-gradient(135deg, {color.primitive.brand.500}, {color.primitive.brand.700})",
+    "accent": "linear-gradient(135deg, {color.primitive.accent.500}, {color.primitive.accent.700})",
+    "subtle": "linear-gradient(180deg, {color.primitive.neutral.50}, {color.primitive.neutral.100})",
+    "sheen": "linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0))"
+  },
+
+  "component": {
+    "comment": "Per-component tokens — resolve from semantic roles so an override cascades. A Design loop adds new component blocks here as it generates components.",
+    "button": {
+      "radius": "{radius.lg}",
+      "paddingX": "{spacing.4}",
+      "paddingY": "{spacing.2}",
+      "fontWeight": "{typography.weight.semibold}",
+      "fontSize": "{typography.size.sm}",
+      "height": "{sizing.control.md}",
+      "gap": "{spacing.2}",
+      "transition": "{motion.transition.colors}",
+      "primary": { "bg": "brand.default", "bgHover": "brand.hover", "bgActive": "brand.active", "fg": "fg.on-brand" },
+      "secondary": { "bg": "bg.surface", "bgHover": "bg.sunken", "fg": "fg.default", "border": "border.strong" },
+      "ghost": { "bg": "transparent", "bgHover": "bg.sunken", "fg": "fg.default" },
+      "danger": { "bg": "danger.default", "fg": "fg.on-brand" }
+    },
+    "input": {
+      "radius": "{radius.lg}",
+      "paddingX": "{spacing.3}",
+      "paddingY": "{spacing.2}",
+      "height": "{sizing.control.md}",
+      "fontSize": "{typography.size.sm}",
+      "bg": "bg.surface",
+      "fg": "fg.default",
+      "placeholder": "fg.subtle",
+      "border": "border.default",
+      "borderFocus": "border.focus",
+      "ringFocus": "{shadow.focus}"
+    },
+    "card": {
+      "radius": "{radius.xl}",
+      "padding": "{spacing.6}",
+      "bg": "bg.surface",
+      "border": "border.subtle",
+      "shadow": "{shadow.sm}",
+      "gap": "{spacing.4}"
+    },
+    "badge": {
+      "radius": "{radius.full}",
+      "paddingX": "{spacing.2}",
+      "paddingY": "{spacing.0.5}",
+      "fontSize": "{typography.size.xs}",
+      "fontWeight": "{typography.weight.medium}"
+    },
+    "tooltip": {
+      "radius": "{radius.md}",
+      "paddingX": "{spacing.2}",
+      "paddingY": "{spacing.1}",
+      "fontSize": "{typography.size.xs}",
+      "bg": "fg.default",
+      "fg": "bg.surface",
+      "shadow": "{shadow.md}"
+    },
+    "modal": {
+      "radius": "{radius.2xl}",
+      "padding": "{spacing.6}",
+      "bg": "bg.surface",
+      "shadow": "{shadow.2xl}",
+      "maxWidth": "{sizing.container.lg}",
+      "overlayBg": "bg.overlay",
+      "overlayBlur": "{blur.sm}"
+    }
+  }
+}

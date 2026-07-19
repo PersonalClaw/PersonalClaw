@@ -1,0 +1,103 @@
+# Build context is the repo root:
+#   docker build -f deploy/docker/Dockerfile.backend .
+
+# ── Base image (single pull, reused across stages) ──────────────────────────
+ARG PYTHON_IMAGE=mirror.gcr.io/library/python:3.13-slim
+FROM ${PYTHON_IMAGE} AS base
+
+# ── Stage 1: install dependencies only (cached until pyproject.toml changes) ─
+FROM base AS deps
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m venv /opt/venv && \
+    /opt/venv/bin/pip install --upgrade pip wheel
+
+# Install only third-party dependencies (not the package itself) using a stub
+# package so the dependency layer stays cached across source changes.
+COPY pyproject.toml setup.py ./
+RUN mkdir -p src/personalclaw && \
+    echo '__version__ = "0.1.0"' > src/personalclaw/__init__.py && \
+    /opt/venv/bin/pip install --no-cache-dir \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        ".[slack,eval,httpx,anthropic,openai,embeddings,stt,tts,mcp]" && \
+    /opt/venv/bin/pip uninstall -y personalclaw && \
+    rm -rf src/ build/ *.egg-info
+
+# ── Stage 2: install package with full source ───────────────────────────────
+FROM deps AS builder
+
+COPY src/ ./src/
+COPY pyproject.toml setup.py ./
+RUN rm -rf build/ *.egg-info && \
+    /opt/venv/bin/pip install --no-cache-dir --no-deps --no-build-isolation .
+
+# ── Stage 3: test ────────────────────────────────────────────────────────────
+FROM builder AS test
+
+RUN /opt/venv/bin/pip install --no-cache-dir \
+        black isort flake8 mypy pytest pytest-asyncio hypothesis
+
+COPY tests/ ./tests/
+
+RUN /opt/venv/bin/python -m black --check src/personalclaw tests && \
+    /opt/venv/bin/python -m isort --check-only src/personalclaw tests && \
+    /opt/venv/bin/python -m flake8 src/personalclaw tests && \
+    /opt/venv/bin/python -m mypy src/personalclaw || true && \
+    /opt/venv/bin/python -m pytest
+
+# ── Stage 4: runtime ─────────────────────────────────────────────────────────
+FROM base AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        tini \
+        curl \
+        ffmpeg \
+        git \
+        nodejs \
+        npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Bundle the public ACP agent adapters + their underlying CLIs so the
+# acp:claude-code / acp:codex providers work out-of-box (no per-host `npm i -g`,
+# no cold `npx` fetch on first spawn). These are the canonical @agentclientprotocol
+# adapters (the renamed home of the former @zed-industries/* adapters; both build
+# on @agentclientprotocol/sdk). Private/enterprise ACP runtimes are intentionally
+# NOT bundled (they ship only where their own toolchain is present). `|| true`
+# keeps the image build resilient to a transient registry blip (the bundle's npx
+# fallback still covers a missing adapter at runtime).
+RUN npm install -g --no-fund --no-audit \
+        @agentclientprotocol/claude-agent-acp \
+        @agentclientprotocol/codex-acp \
+        @anthropic-ai/claude-code \
+        @openai/codex \
+    && npm cache clean --force || true
+
+RUN groupadd --gid 10001 personalclaw && \
+    useradd --uid 10001 --gid 10001 --create-home --shell /bin/false personalclaw
+
+COPY --from=builder /opt/venv /opt/venv
+
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PERSONALCLAW_HOME=/data \
+    PERSONALCLAW_PORT=10000
+
+RUN mkdir -p /data && chown personalclaw:personalclaw /data
+VOLUME ["/data"]
+
+USER personalclaw
+WORKDIR /data
+
+EXPOSE 10000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:10000/api/healthz || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["personalclaw", "gateway"]

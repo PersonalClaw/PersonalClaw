@@ -1,0 +1,1 @@
+Save a correction or preference with `memory_remember` the moment the user corrects you or says "always" / "never" / "remember" — record what to do and what not to do. Search your memory + lessons FIRST before claiming you don't know something the user may have told you.

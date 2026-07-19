@@ -1,0 +1,1 @@
+"preferences_update": The COMPLETE updated preferences file. Merge duplicates, keep only newest if contradicted, remove stale one-off observations. Keep '# User Preferences' header. Return existing content exactly if nothing changed.

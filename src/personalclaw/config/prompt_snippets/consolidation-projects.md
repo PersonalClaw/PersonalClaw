@@ -1,0 +1,1 @@
+"projects_update": The COMPLETE updated projects file. Only active projects, remove stale entries, update facts. Keep '# Active Projects' header. Return existing if unchanged.

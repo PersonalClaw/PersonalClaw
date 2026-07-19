@@ -1,0 +1,105 @@
+{
+  "name": "run-prompt-action",
+  "version": "1.0.0",
+  "displayName": "Run Prompt",
+  "description": "Run a saved Prompt on a trigger's cadence \u2014 the native equivalent of a recurring saved command. The prompt is resolved, rendered through the prompt engine (includes/loops/conditionals), framed as an autonomous run, and executed as an unattended turn. Works on schedule, lifecycle, and event triggers.",
+  "icon": "Play",
+  "author": "PersonalClaw",
+  "tags": [
+    "action",
+    "bundled",
+    "native"
+  ],
+  "provider": {
+    "type": "action",
+    "entity": "agent",
+    "implementation": "personalclaw.action_providers.run_prompt_provider:create_provider",
+    "capabilities": [
+      "execute"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "properties": {
+        "prompt_id": {
+          "type": "string",
+          "x-meta": {
+            "label": "Prompt",
+            "widget": "prompt",
+            "help": "The saved Prompt to run. Leave empty to run the project's loop.md (then the user-global loop.md) as a default recurring prompt."
+          }
+        },
+        "vars": {
+          "type": "object",
+          "x-meta": {
+            "label": "Variables",
+            "help": "Optional render-time variable values for the prompt's {{var}} placeholders.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "cwd": {
+          "type": "string",
+          "x-meta": {
+            "label": "Working Directory",
+            "help": "Directory to run in (and where a project loop.md is looked up when no Prompt is set).",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "agent": {
+          "type": "string",
+          "x-meta": {
+            "label": "Agent",
+            "help": "Agent to run the prompt as. Empty uses the default agent.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "session": {
+          "type": "string",
+          "x-meta": {
+            "label": "Session",
+            "help": "Pin a session for continuity across fires. Empty runs a fresh ephemeral session each time.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "max_turns": {
+          "type": "integer",
+          "x-meta": {
+            "label": "Max Turns",
+            "help": "Optional turn cap for the run.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "model": {
+          "type": "string",
+          "x-meta": {
+            "label": "Model",
+            "help": "Optional model override for the run.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "dry_run": {
+          "type": "boolean",
+          "x-meta": {
+            "label": "Dry Run",
+            "help": "Observe-mode replay: write-capable tools return a synthetic observation instead of executing. Useful for testing a trigger safely.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "native": true
+}

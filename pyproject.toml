@@ -1,0 +1,191 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# ── Project metadata (PEP 621) ────────────────────────────────────────────────
+[project]
+name = "personalclaw"
+version = "0.1.0"
+description = "Personal AI agent — chat via Slack, dashboard, or CLI with pluggable LLM providers"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+
+authors = [
+    { name = "PersonalClaw contributors" },
+]
+
+keywords = ["ai", "agent", "llm", "mcp", "acp"]
+
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: POSIX",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# Runtime dependencies
+dependencies = [
+    "aiohttp>=3.9,<4",
+    "slack-sdk>=3.27,<4",
+    "websockets>=12,<16",
+    "cron-descriptor>=1.4,<2",
+    "croniter>=2.0,<3",
+    # numpy is a CORE dep — it's the vector-math substrate for the Tier-1 native
+    # memory app (native-vector-memory), which ships INSIDE core, so its deps are
+    # baked in (not shed). It's small + NOT excluded from the desktop bundle
+    # (unlike faiss/torch). vector_memory.py + memory_record.py still guard the
+    # import so a stripped env degrades to stdlib rather than crashing.
+    "numpy>=1.21,<2",
+    "snowballstemmer>=1.0",
+    "pysqlite3-binary>=0.5.4; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # Knowledge document readers (readers.py): .docx / .pdf / .pptx / .html.
+    # Pure-Python, no native/torch weight — safe as core deps (incl. desktop bundle).
+    "python-docx>=0.8.6,<2",
+    "pdfplumber>=0.11,<1",
+    "python-pptx>=0.6.21,<2",
+    "html2text>=2020.1.16",
+    # Web fetch/extract core (web/extract.py): boilerplate-free main-content extraction
+    # (trafilatura, ~0.91 F1 vs html2text ~0.66) + HTML sanitization of untrusted pages
+    # (nh3). Shared by web_fetch and the knowledge web-url connector.
+    "trafilatura>=2,<3",
+    "nh3>=0.2",
+    "openpyxl>=3.1,<4",
+    # Knowledge media thumbnails (media.py): downscale uploaded images to WebP.
+    "Pillow>=10,<13",
+    "openai>=1.0",
+    "anthropic>=0.20",
+    "httpx>=0.27",
+    "PyYAML>=6,<7",
+]
+
+[project.optional-dependencies]
+# Provider SDK extras — install only what your provider requires
+anthropic = ["anthropic>=0.20"]
+openai    = ["openai>=1.0"]
+bedrock   = ["boto3>=1.34"]        # Amazon Bedrock Converse provider
+httpx     = ["httpx>=0.27"]        # Ollama + vLLM providers
+oauth2    = ["cryptography>=42"]   # OIDC / OAuth2 auth mode
+
+# Feature extras.
+# NOTE — the local-model substrate extras (stt/tts/embeddings) are the install path
+# for the bundled MODEL APPS, not stale residue. Those apps (apps/faster-whisper,
+# apps/piper-tts, apps/sentence-transformers) declare no Python deps in their app.json
+# (there is no per-app pip step); they `import faster_whisper` / `piper` /
+# `sentence_transformers` directly and probe availability(), so the package must be
+# present in the interpreter. `personalclaw[models]` (below) is how a server/container
+# install provides it. Keep each extra aligned with the app that consumes it.
+slack = ["slack-sdk>=3.27,<4"]
+stt   = ["faster-whisper>=1.0"]    # substrate for apps/faster-whisper (in-process Whisper STT)
+tts   = ["huggingface-hub>=0.23", "piper-tts>=1.2"]  # substrate for apps/piper-tts: voice downloads (ONNX from rhasspy/piper-voices) + the piper synthesis runtime (provides the `piper` binary)
+eval  = ["jinja2>=3.0"]
+embeddings = ["sentence-transformers>=3.0", "faiss-cpu>=1.7"]  # substrate for apps/sentence-transformers (local embeddings). numpy is core (native-vector-memory); faiss stays here — excluded from the desktop bundle, degrades to SQLite-only.
+mcp   = ["mcp>=1.2"]               # external MCP servers in the native agent loop (stdio + SSE/HTTP)
+js-render = ["playwright>=1.40"]   # web_fetch render=True path for client-rendered (JS) pages (a headless browser; run `playwright install chromium` after install)
+
+# Every local-model feature, for installs that run models in-process (dev
+# server + container). Desktop deliberately omits these (torch is too large to
+# bundle — see personalclaw-backend.spec excludes); its bundles probe as
+# unavailable and the UI guides the user to the server/container build.
+models = ["personalclaw[embeddings]", "personalclaw[stt]", "personalclaw[tts]"]
+
+# Development and testing — superset of test + every local-model feature, so a
+# dev install (and the `make serve` dev gateway) can download/run the native
+# embedding/STT/TTS models the same way the container can.
+dev = [
+    "personalclaw[test]",
+    "personalclaw[models]",
+    "personalclaw[mcp]",
+    "personalclaw[bedrock]",
+    "black>=24",
+    "isort>=5",
+    "flake8>=7",
+    "mypy>=1.5",
+    "build>=1.0",
+]
+test = [
+    "pytest>=7",
+    "pytest-asyncio>=0.23",
+    "pytest-xdist>=3",
+    "pytest-timeout>=2",
+    "pytest-cov>=4",
+    "hypothesis>=6",
+]
+
+[project.scripts]
+personalclaw = "personalclaw.cli:main"
+
+# Entry-point provider groups loaded via importlib.metadata in
+# personalclaw.provider_registry.discover_providers(). LLM models, agents,
+# skills, tasks, tools and other entities are resolved through the bundled-app
+# extension registry (providers/registry.py + each bundle's app.json) and
+# import-time self-registration, so they are intentionally not declared here.
+[project.entry-points."personalclaw.message_source_providers"]
+filesystem = "personalclaw.inbox_providers.filesystem_source"
+# Channel-specific sources (e.g. Slack) are contributed by their app bundle's
+# transport via ChannelTransportProvider.message_source(), NOT declared here.
+
+# ── Setuptools ────────────────────────────────────────────────────────────────
+[tool.setuptools]
+zip-safe = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+personalclaw = [
+    "py.typed",
+    "model_tokens.json",
+    "model_pricing.json",
+    "config/defaults.json",
+    "config/prompts/*.md",
+    "config/prompt_snippets/*.md",
+    "config/design/*.json",
+    "eval/scenarios/*.json",
+    "tests_fixtures/*/*",
+    "skills/bundled/*/SKILL.md",
+    "workflows/bundled/*/WORKFLOW.md",
+    "apps/native/*/app.json",
+]
+
+# ── Tool configs ──────────────────────────────────────────────────────────────
+[tool.black]
+line-length = 100
+
+[tool.isort]
+known_first_party = ["personalclaw"]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+mypy_path = "src"
+check_untyped_defs = true
+show_error_codes = true
+pretty = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+xfail_strict = true
+pythonpath = ["src"]
+addopts = [
+    "--verbose",
+    "--ignore=build",
+    "-n", "auto",
+    "--dist", "worksteal",
+    "--timeout=120",
+    "--cov", "personalclaw",
+    "--cov-report", "term-missing",
+    "--color=yes",
+]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+parallel = true
+
+[tool.coverage.paths]
+source = [
+    "src/personalclaw/",
+    "build/lib/*/site-packages/",
+]

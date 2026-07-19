@@ -1,0 +1,98 @@
+{
+  "name": "run-workflow-action",
+  "version": "1.0.0",
+  "displayName": "Run Workflow",
+  "description": "Run a saved Workflow on a trigger's cadence \u2014 the workflow's steps become the turn's active instruction and are driven end-to-end as an unattended run (invoke, not just surface). Works on schedule, lifecycle, and event triggers.",
+  "icon": "Workflow",
+  "author": "PersonalClaw",
+  "tags": [
+    "action",
+    "bundled",
+    "native"
+  ],
+  "provider": {
+    "type": "action",
+    "entity": "agent",
+    "implementation": "personalclaw.action_providers.run_workflow_provider:create_provider",
+    "capabilities": [
+      "execute"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "required": [
+        "workflow_id"
+      ],
+      "properties": {
+        "workflow_id": {
+          "type": "string",
+          "x-meta": {
+            "label": "Workflow",
+            "widget": "workflow",
+            "help": "The saved Workflow to run."
+          }
+        },
+        "cwd": {
+          "type": "string",
+          "x-meta": {
+            "label": "Working Directory",
+            "help": "Optional directory to run the workflow in.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "agent": {
+          "type": "string",
+          "x-meta": {
+            "label": "Agent",
+            "help": "Agent to run the workflow as. Empty uses the default agent.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "session": {
+          "type": "string",
+          "x-meta": {
+            "label": "Session",
+            "help": "Pin a session for continuity across fires. Empty runs a fresh ephemeral session each time.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "max_turns": {
+          "type": "integer",
+          "x-meta": {
+            "label": "Max Turns",
+            "help": "Optional turn cap for the run.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "model": {
+          "type": "string",
+          "x-meta": {
+            "label": "Model",
+            "help": "Optional model override for the run.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "dry_run": {
+          "type": "boolean",
+          "x-meta": {
+            "label": "Dry Run",
+            "help": "Observe-mode replay: write-capable tools return a synthetic observation instead of executing. Useful for testing a trigger safely.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "native": true
+}

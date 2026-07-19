@@ -1,0 +1,11 @@
+{
+  "name": "personalclaw",
+  "private": true,
+  "workspaces": ["web", "desktop"],
+  "scripts": {
+    "dev": "npm run dev --workspace=web",
+    "build": "npm run build --workspace=web",
+    "typecheck:web": "npm run typecheck --workspace=web",
+    "test:web": "npm run test --workspace=web"
+  }
+}

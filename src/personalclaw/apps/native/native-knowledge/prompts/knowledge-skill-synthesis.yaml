@@ -1,0 +1,43 @@
+_entity: prompt
+use_case: knowledge_skill_synthesis
+name: task-knowledge-skill-synthesis
+kind: user
+category: internal
+description: Turn an intent's goal + gathered outcomes into a reusable SKILL.md (DESCRIPTION/TRIGGERS/PROCEDURE
+  delimited sections).
+tags:
+- system
+- bundled
+variables:
+- name: goal
+  type: textarea
+  description: The intent's goal (what the user tracks).
+  required: true
+- name: digest
+  type: textarea
+  description: A compact digest of what the intent has gathered so far.
+  required: true
+content: 'You are turning a user''s standing knowledge interest into a reusable agent
+  skill (a SKILL.md procedure). The skill should help an agent act on NEW items related
+  to this interest the way the gathered examples suggest.
+
+
+  INTENT (what the user tracks):
+
+  {{goal}}
+
+
+  WHAT IT HAS GATHERED SO FAR:
+
+  {{digest}}
+
+
+  Respond in EXACTLY this format, with these three header lines verbatim:
+
+  DESCRIPTION: <one concise line>
+
+  TRIGGERS: <comma-separated keywords>
+
+  PROCEDURE:
+
+  <markdown steps the agent should follow>'

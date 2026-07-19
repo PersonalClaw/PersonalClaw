@@ -1,0 +1,77 @@
+# Editor / OS junk
+*~
+*#
+*.swp
+*.log
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+
+# Test / lint caches
+.coverage
+.coverage.*
+.cache/
+.pytest_cache/
+.mypy_cache/
+.hypothesis/
+htmlcov/
+
+# Virtualenvs (lives at the repo root: .venv/)
+venv/
+.venv/
+
+# IDE / editor configs
+.vscode/
+.idea/
+*.sublime-*
+*.iml
+*.code-workspace
+pyrightconfig.json
+
+# Environment / secrets (.env.example stays tracked)
+.env
+.env.local
+
+# Frontend
+node_modules/
+web/dist/
+*.tsbuildinfo
+web/test-results/
+web/playwright-report/
+
+# Static assets generated from frontend build (tracked as a symlink is fine;
+# a real directory here would be a stale copy — see docs on web build/serve)
+src/personalclaw/static/dist
+
+# Desktop app build artifacts (Electron + bundled PyInstaller backend)
+desktop/dist/
+desktop/out/
+desktop/backend-dist/
+*.dmg
+
+# Local dev / runtime state
+.personalclaw-dev*/
+.mcp.json
+runs.json
+TASK_PROGRESS.md
+dev-seed.sh
+# Dev-session screenshots dropped at repo root (the app icon lives in desktop/)
+/*.png
+
+# Eval harness output
+eval_results/
+
+# Local tooling
+.claude/
+.playwright-mcp/
+playwright-responses/
+
+# Bare local dev gateway home (make serve creates $(CURDIR)/.dev-home)
+/.dev-home/

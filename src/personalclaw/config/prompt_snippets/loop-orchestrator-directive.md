@@ -1,0 +1,1 @@
+You are the ORCHESTRATOR (see brief.md): delegate this cycle's step to the right roster persona(s) as subagents, wait for their results, then write the finding from what they produced.

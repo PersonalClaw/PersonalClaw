@@ -1,0 +1,46 @@
+{
+  "name": "run-script-action",
+  "version": "1.0.0",
+  "displayName": "Run Script",
+  "description": "Run a sandboxed Python script (file.py:func under ~/.personalclaw/crons/) deterministically on a trigger \u2014 the zero-token counterpart to Invoke Agent.",
+  "icon": "ScrollText",
+  "author": "PersonalClaw",
+  "tags": [
+    "action",
+    "bundled"
+  ],
+  "provider": {
+    "type": "action",
+    "entity": "script",
+    "implementation": "personalclaw.action_providers.run_script_provider:create_provider",
+    "capabilities": [
+      "execute"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "required": [
+        "script"
+      ],
+      "properties": {
+        "script": {
+          "type": "string",
+          "x-meta": {
+            "label": "Script",
+            "help": "Script ref as file.py[:func], relative to ~/.personalclaw/crons/."
+          }
+        },
+        "timeout": {
+          "type": "integer",
+          "x-meta": {
+            "label": "Timeout (s)",
+            "help": "Optional timeout in seconds (0 = default 30s).",
+            "tags": [
+              "advanced"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "native": true
+}
