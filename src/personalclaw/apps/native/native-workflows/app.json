@@ -1,0 +1,38 @@
+{
+  "name": "native-workflows",
+  "version": "1.0.0",
+  "displayName": "Native Workflows",
+  "description": "Filesystem-backed workflow SOPs surfaced by scope + semantic match.",
+  "icon": "Workflow",
+  "author": "PersonalClaw",
+  "tags": [
+    "workflow",
+    "bundled"
+  ],
+  "provider": {
+    "type": "workflow",
+    "implementation": "personalclaw.workflows.native:create_provider",
+    "capabilities": [
+      "crud",
+      "scoped",
+      "semantic-match"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "properties": {
+        "storage_dir": {
+          "type": "string",
+          "default": "",
+          "x-meta": {
+            "label": "Storage Directory",
+            "help": "Directory for workflow data. Empty = default (~/.personalclaw/workflows).",
+            "tags": [
+              "advanced"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "native": true
+}

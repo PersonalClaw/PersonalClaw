@@ -1,0 +1,79 @@
+{
+  "name": "invoke-agent-action",
+  "version": "1.0.0",
+  "displayName": "Invoke Agent Hook",
+  "description": "Spawn a child agent when a lifecycle event fires \u2014 e.g. a coder's Stop hook spawns a code-reviewer. Bounded by a recursion-depth cap, a concurrency cap, and the subagent approval gate; always fire-and-forget so the lifecycle never blocks. Attach to an agent to activate.",
+  "icon": "Bot",
+  "author": "PersonalClaw",
+  "tags": [
+    "action",
+    "bundled",
+    "native"
+  ],
+  "provider": {
+    "type": "action",
+    "entity": "agent",
+    "implementation": "personalclaw.action_providers.invoke_agent_provider:create_provider",
+    "capabilities": [
+      "execute"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "required": [
+        "task_template"
+      ],
+      "properties": {
+        "task_template": {
+          "type": "string",
+          "x-meta": {
+            "label": "Task",
+            "help": "Prompt for the spawned agent. Supports $EVENT, $CONTEXT, and $<payload-key>."
+          }
+        },
+        "agent": {
+          "type": "string",
+          "x-meta": {
+            "label": "Agent",
+            "help": "Child agent name (e.g. code-reviewer). Empty uses the default agent."
+          }
+        },
+        "max_turns": {
+          "type": "integer",
+          "x-meta": {
+            "label": "Max Turns",
+            "help": "Optional turn cap for the child agent.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "model": {
+          "type": "string",
+          "x-meta": {
+            "label": "Model",
+            "help": "Optional model override for the child agent.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "approval_mode": {
+          "type": "string",
+          "enum": [
+            "",
+            "auto"
+          ],
+          "default": "",
+          "x-meta": {
+            "label": "Approval",
+            "help": "Set 'auto' to skip the spawn approval gate for this hook. Empty inherits the global auto_approve_subagent_spawn.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "native": true
+}

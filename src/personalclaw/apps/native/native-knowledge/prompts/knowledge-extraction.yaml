@@ -1,0 +1,25 @@
+_entity: prompt
+use_case: knowledge_extraction
+name: task-knowledge-extraction
+kind: user
+category: internal
+description: Extract entities + relations + category + summary from a knowledge text
+  chunk (JSON out).
+tags:
+- system
+- bundled
+variables:
+- name: chunk
+  type: textarea
+  description: The text chunk to extract from (capped).
+  required: true
+content: "Extract structured information from this text chunk.\n\nReturn valid JSON\
+  \ with:\n- title: short descriptive title for this chunk (5-10 words, specific to\
+  \ content)\n- entities: list of {\"name\": str, \"type\": str, \"description\":\
+  \ str}\n  Types: person|service|api|concept|org|technology\n- relations: list of\
+  \ {\"source\": str, \"target\": str, \"type\": str, \"description\": str}\n  Types:\
+  \ owns|uses|works_on|part_of|calls|depends_on\n- category: one of design_doc|runbook|meeting_notes|code_doc|presentation|report|policy|personal_notes|external_reference\n\
+  - summary: 2-3 sentence summary of key information\n\nRules:\n- Title must be specific\
+  \ to THIS chunk's content, not generic\n- Use canonical entity names (e.g. \"DynamoDB\"\
+  \ not \"dynamo\")\n- Only extract explicitly mentioned entities\n- Relations must\
+  \ reference entities in your entities list\n\nText chunk:\n{{chunk}}\n\nJSON:"

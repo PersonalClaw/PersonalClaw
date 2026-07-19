@@ -1,0 +1,20 @@
+{
+  "name": "personalclaw-artifacts",
+  "version": "1.0.0",
+  "displayName": "Artifacts Tools",
+  "description": "Operate the Artifacts entity \u2014 save, fetch, update, list, version, and delete named versioned artifacts (widgets, React components, docs).",
+  "icon": "FileCode",
+  "author": "PersonalClaw",
+  "tags": [
+    "tool",
+    "bundled"
+  ],
+  "provider": {
+    "type": "tool",
+    "implementation": "personalclaw.tool_providers.registry:create_artifacts_provider",
+    "capabilities": [
+      "artifacts"
+    ]
+  },
+  "native": true
+}

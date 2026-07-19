@@ -1,0 +1,61 @@
+_entity: prompt
+use_case: knowledge_intent_match
+name: task-knowledge-intent-match
+kind: user
+category: internal
+description: Decide if a knowledge item is relevant to a user's NL intent and, if
+  so, extract a takeaway + typed fields (JSON out).
+tags:
+- system
+- bundled
+variables:
+- name: goal
+  type: textarea
+  description: The user's natural-language intent (what they want tracked).
+  required: true
+- name: field_types
+  type: text
+  description: The allowed field types, comma-joined (', '.join(FIELD_TYPES)).
+  required: true
+- name: content
+  type: textarea
+  description: The item content to evaluate (capped).
+  required: true
+content: 'You are evaluating whether a saved knowledge item is relevant to a user''s
+  standing interest, and if so, extracting the structured payload they''d want.
+
+
+  USER''S INTENT (natural language):
+
+  {{goal}}
+
+
+  TASK:
+
+  1. Decide if THIS content is genuinely relevant to that intent. Be strict — tangential
+  or no-match content is NOT relevant.
+
+  2. If relevant, write a one- or two-sentence `takeaway` capturing what the user
+  gets from this item with respect to their intent.
+
+  3. If relevant, extract a SMALL set of structured `fields` (0-6) that best capture
+  the useful specifics. You choose the field names. Each field has a `type` from:
+  {{field_types}}. Use `number` for quantities, `date` for dates (ISO 8601), `url`
+  for links, `boolean` for yes/no, `tags` for a list of short labels (value = array
+  of strings), `string` otherwise.
+
+
+  Return ONLY JSON of this shape:
+
+  {"relevant": true|false, "takeaway": "...", "fields": [{"name": "...", "type": "string",
+  "value": ...}]}
+
+  If not relevant, return {"relevant": false}.
+
+
+  CONTENT:
+
+  {{content}}
+
+
+  JSON:'

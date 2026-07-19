@@ -1,0 +1,37 @@
+{
+  "name": "bash-action",
+  "version": "1.0.0",
+  "displayName": "Bash Hooks",
+  "description": "Run shell commands on agent lifecycle events. Supports the ACP exit-code-2 contract for blocking PreToolUse calls.",
+  "icon": "SquareTerminal",
+  "author": "PersonalClaw",
+  "tags": [
+    "action",
+    "bundled"
+  ],
+  "provider": {
+    "type": "action",
+    "entity": "shell",
+    "implementation": "personalclaw.action_providers.bash_provider:create_provider",
+    "capabilities": [
+      "execute",
+      "blocking"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "required": [
+        "command"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "x-meta": {
+            "label": "Command",
+            "help": "Shell command run via /bin/sh -c. Receives PERSONALCLAW_HOOK_EVENT + PERSONALCLAW_HOOK_CONTEXT env vars and the event JSON on STDIN. Exit code 2 blocks a PreToolUse call."
+          }
+        }
+      }
+    }
+  },
+  "native": true
+}

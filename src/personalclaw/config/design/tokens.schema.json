@@ -1,0 +1,110 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://personalclaw.dev/schemas/design-tokens.json",
+  "title": "PersonalClaw Design Tokens",
+  "description": "Schema for a PersonalClaw design-system token set. The bundled default-tokens.json is the canonical full set; a Design loop's kind_config.token_overrides is a partial document with the same shape, deep-merged over the defaults. Token values may be literals (hex/rgb/rem/etc.) or {dot.path} references resolved against the merged tree.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "meta": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "description": { "type": "string" },
+        "scheme_default": { "type": "string", "enum": ["light", "dark"] }
+      },
+      "additionalProperties": true
+    },
+    "color": {
+      "type": "object",
+      "description": "primitive: raw color scales (50..950). semantic: per-scheme (light/dark) role tokens that reference primitives.",
+      "properties": {
+        "primitive": { "type": "object", "additionalProperties": { "$ref": "#/$defs/colorScaleOrValue" } },
+        "semantic": {
+          "type": "object",
+          "properties": {
+            "light": { "$ref": "#/$defs/roleMap" },
+            "dark": { "$ref": "#/$defs/roleMap" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": true
+    },
+    "typography": {
+      "type": "object",
+      "properties": {
+        "family": { "type": "object", "additionalProperties": { "type": "string" } },
+        "weight": { "type": "object", "additionalProperties": { "type": ["number", "string"] } },
+        "size": { "type": "object", "additionalProperties": { "type": "string" } },
+        "lineHeight": { "type": "object", "additionalProperties": { "type": ["number", "string"] } },
+        "letterSpacing": { "type": "object", "additionalProperties": { "type": "string" } },
+        "paragraphSpacing": { "type": "object", "additionalProperties": { "type": "string" } },
+        "textStyle": { "type": "object", "additionalProperties": { "$ref": "#/$defs/textStyle" } }
+      },
+      "additionalProperties": true
+    },
+    "spacing": { "$ref": "#/$defs/scalarMap" },
+    "sizing": { "type": "object", "additionalProperties": { "$ref": "#/$defs/scalarMap" } },
+    "radius": { "$ref": "#/$defs/scalarMap" },
+    "border": {
+      "type": "object",
+      "properties": {
+        "width": { "$ref": "#/$defs/scalarMap" },
+        "style": { "$ref": "#/$defs/scalarMap" }
+      },
+      "additionalProperties": true
+    },
+    "shadow": { "type": "object", "additionalProperties": true },
+    "elevation": { "type": "object", "additionalProperties": { "type": "object" } },
+    "opacity": { "type": "object", "additionalProperties": { "type": ["number", "string"] } },
+    "blur": { "$ref": "#/$defs/scalarMap" },
+    "motion": {
+      "type": "object",
+      "properties": {
+        "duration": { "$ref": "#/$defs/scalarMap" },
+        "easing": { "$ref": "#/$defs/scalarMap" },
+        "transition": { "$ref": "#/$defs/scalarMap" }
+      },
+      "additionalProperties": true
+    },
+    "zIndex": { "type": "object", "additionalProperties": { "type": ["number", "string"] } },
+    "breakpoint": { "$ref": "#/$defs/scalarMap" },
+    "gradient": { "$ref": "#/$defs/scalarMap" },
+    "component": {
+      "type": "object",
+      "description": "Per-component token blocks. Each component is an object of token values (literals or {refs}); a Design loop may add new component blocks as it generates components.",
+      "additionalProperties": { "type": "object" }
+    }
+  },
+  "$defs": {
+    "scalarMap": {
+      "type": "object",
+      "additionalProperties": { "type": ["string", "number"] }
+    },
+    "roleMap": {
+      "type": "object",
+      "description": "Map of semantic role name (e.g. 'bg.surface', 'fg.default') → literal or {ref}.",
+      "additionalProperties": { "type": "string" }
+    },
+    "colorScaleOrValue": {
+      "anyOf": [
+        { "type": "string" },
+        { "type": "object", "additionalProperties": { "type": "string" } }
+      ]
+    },
+    "textStyle": {
+      "type": "object",
+      "properties": {
+        "family": { "type": "string" },
+        "size": { "type": "string" },
+        "weight": { "type": ["number", "string"] },
+        "lineHeight": { "type": ["number", "string"] },
+        "letterSpacing": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  }
+}

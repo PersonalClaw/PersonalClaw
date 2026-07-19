@@ -1,0 +1,3 @@
+[AGENT SYSTEM PROMPT]
+{{agent_prompt}}
+[END AGENT SYSTEM PROMPT]

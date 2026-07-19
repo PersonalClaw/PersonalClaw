@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-16T00:00:00Z",
+  "title": "Design System: PersonalClaw",
+  "extensions": {
+    "colorMeta": {
+      "coral-primary": { "role": "primary", "displayName": "Warm Coral", "canonical": "#ff6b5b", "tonalRamp": ["#2a0b06", "#5a1d12", "#8a2f1c", "#c14a35", "#ff6b5b", "#ff9a86", "#ffc4b5", "#ffe0d6"] },
+      "amber-secondary": { "role": "secondary", "displayName": "Warm Amber", "canonical": "#ffb454", "tonalRamp": ["#2b1a02", "#59370a", "#8a5713", "#c07f26", "#ffb454", "#ffc678", "#ffd9a3", "#ffedd2"] },
+      "canvas-night": { "role": "neutral", "displayName": "Night Canvas", "canonical": "#0f0f0f", "tonalRamp": ["#0f0f0f", "#131314", "#1b1b1b", "#1e1f20", "#282a2c", "#333537", "#444746", "#8e918f"] },
+      "ink": { "role": "neutral", "displayName": "Ink", "canonical": "#e3e3e3", "tonalRamp": ["#2a2a2a", "#444746", "#5f6368", "#8e918f", "#9a9b9c", "#c4c7c5", "#e3e3e3", "#f4f4f4"] },
+      "ok-green": { "role": "semantic", "displayName": "OK Green", "canonical": "#0ebc5f" },
+      "warn-orange": { "role": "semantic", "displayName": "Warn Orange", "canonical": "#ff8d41" },
+      "danger-red": { "role": "semantic", "displayName": "Danger Red", "canonical": "#f55e57" },
+      "info-blue": { "role": "semantic", "displayName": "Info Blue", "canonical": "#4e8ff8" }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Page heroes and empty-state headlines; light fractional weight (wght 280) is the neural-expressive signature." },
+      "body": { "displayName": "Body", "purpose": "Default reading text; 65–75ch max for prose." },
+      "label": { "displayName": "Label", "purpose": "Buttons, chips, form labels — body size, one weight step firmer (wght 470)." },
+      "mono": { "displayName": "Mono", "purpose": "Code, terminal panes, IDs, and the cli density mode." }
+    },
+    "shadows": [
+      { "name": "rest", "value": "0 2px 8px -2px rgb(0 0 0 / 0.16)", "purpose": "Composer and grounded cards at rest." },
+      { "name": "menu", "value": "0 0 20px rgb(0 0 0 / 0.28)", "purpose": "Popovers and dropdowns." },
+      { "name": "sheet", "value": "0 16px 40px rgb(0 0 0 / 0.42)", "purpose": "Modals and large sheets." },
+      { "name": "neu-extrude", "value": "0 1px 2px rgb(0 0 0 / 0.28), 0 6px 16px -6px rgb(0 0 0 / 0.34), inset 0 1px 0 rgb(255 255 255 / 0.04)", "purpose": "Neumorphic ground material — controls that sit in the surface." },
+      { "name": "lift", "value": "0 22px 55px -14px rgb(0 0 0 / 0.6), 0 0 48px -6px color-mix(in srgb, #ff6b5b 50%, transparent)", "purpose": "Composer focus — the one shadow allowed to carry brand color." }
+    ],
+    "motion": [
+      { "name": "spatial-default", "value": "spring(stiffness 380, damping 30)", "purpose": "Gentle settle for position/scale." },
+      { "name": "spatial-fast", "value": "spring(stiffness 800, damping 34)", "purpose": "Press feedback; snappy with slight overshoot." },
+      { "name": "effects", "value": "0.2s cubic-bezier(0.2, 0, 0, 1)", "purpose": "Opacity/color — critically damped, never bounces." },
+      { "name": "bounce-playful", "value": "spring(stiffness 600, damping 16→42 via bounciness)", "purpose": "Menu open, success bloom — sanctioned personality moments, user-tunable." }
+    ],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one shared button — coral pill, springy press, pointer sheen at high expressiveness.",
+      "html": "<button class=\"ds-btn-primary\">Start loop</button>",
+      "css": ".ds-btn-primary { background: var(--color-primary, #ff6b5b); color: var(--color-on-primary, #3f1008); height: 40px; padding: 0 20px; border: none; border-radius: 9999px; font-family: 'DM Sans', system-ui, sans-serif; font-size: 0.9375rem; font-variation-settings: 'wght' 470; cursor: pointer; transition: background 0.1s cubic-bezier(0.2,0,0,1), transform 0.15s cubic-bezier(0.2,0,0,1); } .ds-btn-primary:hover { background: var(--color-primary-emphasis, #ff9a86); transform: scale(1.025); } .ds-btn-primary:active { transform: scale(0.95); } .ds-btn-primary:focus-visible { outline: 2px solid var(--color-primary, #ff6b5b); outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Tonal pill for non-primary actions.",
+      "html": "<button class=\"ds-btn-secondary\">Cancel</button>",
+      "css": ".ds-btn-secondary { background: var(--color-surface-high, #282a2c); color: var(--color-on-surface, #e3e3e3); height: 40px; padding: 0 20px; border: none; border-radius: 9999px; font-family: 'DM Sans', system-ui, sans-serif; font-size: 0.9375rem; font-variation-settings: 'wght' 470; cursor: pointer; transition: background 0.1s cubic-bezier(0.2,0,0,1), transform 0.15s cubic-bezier(0.2,0,0,1); } .ds-btn-secondary:hover { background: var(--color-surface-highest, #333537); transform: scale(1.025); } .ds-btn-secondary:active { transform: scale(0.95); }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Transparent-to-tonal for tertiary actions.",
+      "html": "<button class=\"ds-btn-ghost\">Learn more</button>",
+      "css": ".ds-btn-ghost { background: transparent; color: var(--color-on-surface, #e3e3e3); height: 40px; padding: 0 20px; border: none; border-radius: 9999px; font-family: 'DM Sans', system-ui, sans-serif; font-size: 0.9375rem; font-variation-settings: 'wght' 470; cursor: pointer; transition: background 0.1s cubic-bezier(0.2,0,0,1); } .ds-btn-ghost:hover { background: var(--color-surface-high, #282a2c); }"
+    },
+    {
+      "name": "Icon Button",
+      "kind": "button",
+      "refersTo": "icon-button",
+      "description": "Round pill hit area; idle ink-variant, hover fills tonal and brightens.",
+      "html": "<button class=\"ds-icon-btn\" aria-label=\"Settings\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M12 1v6m0 6v10M4.2 4.2l4.3 4.3m7 7 4.3 4.3M1 12h6m6 0h10M4.2 19.8l4.3-4.3m7-7 4.3-4.3\"/></svg></button>",
+      "css": ".ds-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; background: transparent; color: var(--color-on-surface-var, #c4c7c5); border: none; border-radius: 9999px; cursor: pointer; transition: background 0.1s, color 0.1s, transform 0.15s cubic-bezier(0.2,0,0,1); } .ds-icon-btn:hover { background: var(--color-surface-high, #282a2c); color: var(--color-on-surface, #e3e3e3); transform: scale(1.06); } .ds-icon-btn:active { transform: scale(0.92); }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Tonal container on canvas; depth by ramp step, hairline border optional.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-title\">Goal loop</div><div class=\"ds-card-body\">Nightly digest of agent activity across sessions.</div></div>",
+      "css": ".ds-card { background: var(--color-surface-container, #1e1f20); border: 1px solid var(--color-outline-variant, #444746); border-radius: 16px; padding: 16px; font-family: 'DM Sans', system-ui, sans-serif; } .ds-card-title { color: var(--color-on-surface, #e3e3e3); font-size: 0.9375rem; font-variation-settings: 'wght' 500; margin-bottom: 4px; } .ds-card-body { color: var(--color-on-surface-var, #c4c7c5); font-size: 0.9375rem; line-height: 1.33; }"
+    },
+    {
+      "name": "Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Tonal fill, hairline stroke; coral focus ring.",
+      "html": "<input class=\"ds-input\" placeholder=\"Search sessions…\" />",
+      "css": ".ds-input { background: var(--color-surface-low, #1b1b1b); color: var(--color-on-surface, #e3e3e3); border: 1px solid var(--color-outline-variant, #444746); border-radius: 12px; height: 40px; padding: 0 14px; font-family: 'DM Sans', system-ui, sans-serif; font-size: 0.9375rem; width: 240px; transition: border-color 0.1s; } .ds-input::placeholder { color: var(--color-on-surface-low, #9a9b9c); } .ds-input:focus-visible { outline: 2px solid var(--color-primary, #ff6b5b); outline-offset: 2px; border-color: var(--color-primary, #ff6b5b); }"
+    },
+    {
+      "name": "Status Chip",
+      "kind": "chip",
+      "refersTo": "chip-status",
+      "description": "Semantic status pill — tonal tint of the semantic hue, never full saturation.",
+      "html": "<span class=\"ds-chip-ok\">running</span>",
+      "css": ".ds-chip-ok { display: inline-flex; align-items: center; gap: 6px; background: color-mix(in srgb, var(--color-ok, #0ebc5f) 14%, transparent); color: var(--color-ok, #0ebc5f); border-radius: 9999px; padding: 3px 10px; font-family: 'DM Sans', system-ui, sans-serif; font-size: 0.8125rem; font-variation-settings: 'wght' 470; } .ds-chip-ok::before { content: ''; width: 6px; height: 6px; border-radius: 9999px; background: currentColor; }"
+    },
+    {
+      "name": "Nav Item",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "Rail row — tonal fill + coral text when active.",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-item ds-active\" href=\"#\">Chat</a><a class=\"ds-nav-item\" href=\"#\">Loops</a><a class=\"ds-nav-item\" href=\"#\">Knowledge</a></nav>",
+      "css": ".ds-nav { display: flex; flex-direction: column; gap: 2px; width: 180px; background: var(--color-rail, #1f1f1f); padding: 8px; border-radius: 16px; } .ds-nav-item { display: flex; align-items: center; height: 36px; padding: 0 12px; border-radius: 9999px; color: var(--color-on-surface-var, #c4c7c5); text-decoration: none; font-family: 'DM Sans', system-ui, sans-serif; font-size: 0.9375rem; font-variation-settings: 'wght' 470; transition: background 0.1s, color 0.1s; } .ds-nav-item:hover { background: var(--color-surface-high, #282a2c); color: var(--color-on-surface, #e3e3e3); } .ds-nav-item.ds-active { background: var(--color-primary-container, #5a1d12); color: var(--color-on-primary-container, #ffe0d6); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Friendly Machine in the Night Studio",
+    "overview": "PersonalClaw's dashboard is a capable engine with a soft shell, working in a studio after hours. The room is dark and calm — near-black canvas, tonal surface layers instead of hard borders — and the machine's warmth shows through one coral voice that glows, blooms, and sweeps through gradient accents wherever the agent is alive. Two influences blend: a neural-expressive signature (fractional variable-font weights, ambient glow, gradient energy) and Google's playful expressive element language (pill shapes, tonal surfaces, springy overshoot), both re-tinted through PersonalClaw's own coral identity. Personality is budgeted and tunable; reduced motion collapses all of it.",
+    "keyCharacteristics": [
+      "Dark-first tonal layering; light mode is an override, dark is home.",
+      "One warm coral accent carrying all 'agent is alive' moments; amber as its gradient partner.",
+      "DM Sans variable at fractional weights (280–500) — weight, not size, does the expressive work.",
+      "Pill controls, springy interaction, squircle sheets; radius/spacing ride user-tunable scale tokens.",
+      "Spatial springs may overshoot; opacity/color effects are critically damped."
+    ],
+    "rules": [
+      { "name": "The One Voice Rule", "body": "Coral is the only accent allowed to mean 'the agent' — selection, focus, primary action, live activity. If coral appears where nothing is active, actionable, or alive, remove it.", "section": "colors" },
+      { "name": "The Tone-Not-Line Rule", "body": "Depth and grouping come from the surface ramp; borders are 1px hairlines or nothing. Never a colored side-stripe.", "section": "colors" },
+      { "name": "The Weight-First Rule", "body": "Emphasis is a variable-weight step (400 → 470 → 500), never uppercase-with-tracking and never a new font.", "section": "typography" },
+      { "name": "The Glow-Is-Alive Rule", "body": "Coral-tinted glow appears only when the agent is active or the user is focused into an input — never as static decoration.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do route every color, radius, spacing, and shadow through the token system; the whole app must survive a scheme retint and the density/roundness sliders.",
+      "Do use the surface ramp for hierarchy: one tonal step per nesting level, hairline dividers at #444746.",
+      "Do keep body text at #e3e3e3 and reserve #9a9b9c for metadata.",
+      "Do scale every playful moment through expressiveness/bounciness and provide a reduced-motion path.",
+      "Do express emphasis with fractional variable weight and put the coral gradient only where the agent is alive."
+    ],
+    "donts": [
+      "Don't ship hacker terminal cosplay — no green-on-black palettes, scanlines, CRT effects, or ASCII chrome.",
+      "Don't hardcode hex, px radii, or spacing in components.",
+      "Don't use colored side-stripes, gradient text, nested cards, or glassmorphism outside the sanctioned glass-sky overlay material.",
+      "Don't bounce opacity or color — overshoot belongs to spatial properties only.",
+      "Don't put coral on inactive states or decorative fills; semantic colors never decorate.",
+      "Don't use uppercase tracked eyebrows or display sizes inside panels — weight steps carry hierarchy."
+    ]
+  }
+}

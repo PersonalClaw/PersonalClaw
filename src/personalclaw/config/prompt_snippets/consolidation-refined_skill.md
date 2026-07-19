@@ -1,0 +1,1 @@
+"refined_skill": Object or null. If an existing "auto/..." skill was loaded during this session AND the agent found a better procedure than the one documented in that skill, return: {"name": "auto/<existing-slug>", "description": "<updated>", "triggers": "<updated>", "procedure_md": "<refined markdown>"}. Return null if nothing was refined. Do not fabricate refinements.

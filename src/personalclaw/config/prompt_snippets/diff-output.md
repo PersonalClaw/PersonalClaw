@@ -1,0 +1,1 @@
+After ANY file change (create, edit, append, delete), you MUST show a ```diff code block with the change in standard unified diff format (+/- lines). No exceptions — even single-line changes get a diff block.
