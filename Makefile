@@ -108,8 +108,13 @@ serve-web:
 ## later `npm run build` is live immediately — matching what the runtime resolver
 ## frontend.ensure_dev_dist_symlink() creates. A `cp -R` here would leave a frozen
 ## real directory that shadows the runtime symlink and silently serves a stale SPA.
+# Install + build from the WORKSPACE ROOT (never `cd web`): the root package.json
+# owns the npm workspace (web, desktop) and its single package-lock.json. Running
+# npm inside a workspace member trips npm's optional-dependency bug (npm/cli#4828)
+# and skips platform-native binaries (rollup/esbuild/lightningcss) → a broken build.
 web-build:
-	cd $(WEB_DIR) && npm install && npm run build
+	npm ci
+	npm run build --workspace $(WEB_DIR)
 	mkdir -p $(PKG)/static
 	rm -rf $(PKG)/static/dist
 	ln -s ../../../$(WEB_DIR)/dist $(PKG)/static/dist
@@ -128,7 +133,7 @@ desktop: pyinstaller
 	rm -rf $(DESKTOP_DIR)/backend-dist
 	mkdir -p $(DESKTOP_DIR)/backend-dist
 	cp -R $(PYI_BUNDLE_DIR) $(DESKTOP_DIR)/backend-dist/
-	cd $(DESKTOP_DIR) && npm install
+	npm ci  # workspace root install (see web-build note); covers the desktop member
 
 ## desktop-dist: build a signed .dmg in desktop/dist/
 desktop-dist: desktop
