@@ -57,6 +57,19 @@ Useful Makefile targets (see `make help` for the full list):
 
 Frontend tests run from `web/`: `npm test` (vitest).
 
+**Frontend builds run from the repo root**, never from inside `web/`. The root
+`package.json` owns an npm **workspace** (`web`, `desktop`) with a single
+root `package-lock.json` — workspace members carry no lockfile of their own
+(they're gitignored). Running `npm ci`/`npm install` inside a member trips npm's
+optional-dependency bug ([npm/cli#4828](https://github.com/npm/cli/issues/4828))
+and silently skips the platform-native binaries (rollup/esbuild/lightningcss),
+producing a broken build. Use `make web-build` (or `npm ci && npm run build
+--workspace web`). If a build ever fails with `Cannot find module
+@rollup/rollup-<platform>` or a missing `*.node` binary, the escape hatch is
+`rm -rf node_modules package-lock.json && npm install` from the root, then
+re-commit the regenerated lockfile. (End users never hit this — `pip`/`uv`/Docker
+installs ship a prebuilt `web/dist`.)
+
 Two runtime facts that save debugging time:
 
 - **Backend `.py` changes need a gateway restart** to take effect; frontend

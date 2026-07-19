@@ -43,6 +43,11 @@ pyrightconfig.json
 node_modules/
 web/dist/
 *.tsbuildinfo
+# Workspace members must NOT carry their own lockfiles — the root package-lock.json
+# is the single source of truth for the npm workspace (web, desktop). Stray member
+# lockfiles trip npm's optional-dependency bug (npm/cli#4828) → broken native builds.
+web/package-lock.json
+desktop/package-lock.json
 web/test-results/
 web/playwright-report/
 

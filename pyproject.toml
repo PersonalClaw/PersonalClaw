@@ -58,6 +58,9 @@ dependencies = [
     "anthropic>=0.20",
     "httpx>=0.27",
     "PyYAML>=6,<7",
+    # cli.py loads .env (CWD + PERSONALCLAW_HOME) so credentials resolve via
+    # os.environ without hand-copying .env — an unconditional import at startup.
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]

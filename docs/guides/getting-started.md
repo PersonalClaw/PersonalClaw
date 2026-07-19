@@ -34,7 +34,7 @@ SDK extras like `boto3` for Bedrock install on demand or via
 The web UI is a React SPA built once with Vite:
 
 ```bash
-make web-build          # from the repo root  (or: cd web && npm ci && npm run build)
+make web-build          # from the repo root  (or: npm ci && npm run build --workspace web)
 ```
 
 `make web-build` compiles `web/dist` and links it where the gateway serves it
