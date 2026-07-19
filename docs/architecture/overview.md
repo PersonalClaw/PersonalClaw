@@ -6,6 +6,27 @@ scheduling, an inbox, and an app platform — all behind a local web dashboard.
 This document is the map; each subsystem has its own reference doc (linked
 throughout).
 
+```mermaid
+flowchart TB
+    subgraph proc["The gateway process (gateway.py)"]
+        DASH["Dashboard server\n(aiohttp: REST · WS · SPA)"]
+        BG["Background services\ncron · heartbeat · inbox · subagents"]
+        CT["Channel transports\n(vendor-blind seam)"]
+    end
+    DASH --> SESS["Sessions\n(chat · loop · webhook · subagent)"]
+    SESS --> CE["Context engine\n(ingest · assemble · compact · after_turn)"]
+    CE --> CAP["Capability seams (pluggable)"]
+    CAP --> LLM["LLM providers"]
+    CAP --> MEMK["Memory · Knowledge"]
+    CAP --> TOOLS["Tools · Search · Speech"]
+    CAP --> ACT["Actions · Inbox · Artifacts"]
+    PROV["providers/loader.py\n(loads enabled apps)"] --> CAP
+    SDK["sdk/ (stable app surface)"] -. "apps import ONLY this" .-> PROV
+    SEC["Security: auth · sandbox · egress guard · SEL · scanner"] --- proc
+```
+
+
+
 Paths below are relative to the core package `PersonalClaw/src/personalclaw/`
 unless noted.
 

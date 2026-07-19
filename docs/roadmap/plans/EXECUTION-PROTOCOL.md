@@ -79,7 +79,11 @@ On any trigger: write the BLOCKED ledger line, leave the working tree clean (sta
 
 - One concern per commit; the task id in the message: `feat(inbox): T2.3 typed kind registry` / `fix`, `refactor`, `docs`, `test` prefixes as appropriate.
 - Never commit: secrets, `~/.personalclaw` content, `.dev-home`, generated `web/dist` (CI builds it), lockfile changes unrelated to the task.
-- Feature-branch workflow (no force pushes — the self-updater depends on clean history). Do not push or open PRs unless the session was told to.
+- **Branch naming (enforced):** `feature-<slug>`, `bugfix-<slug>`, `improvement-<slug>` — one concern per branch, branched from `main`. Do not push or open PRs unless the session was told to.
+- **One conceptual commit per branch (amend, don't stack):** a feature/bugfix/improvement branch carries a **single, consistent working commit** for its concept. A fix or refinement to that concept is folded into the same commit with `git commit --amend` (not a follow-up commit), and the branch is re-published with `git push --force-with-lease` (never a bare `git push --force`). This keeps each branch reviewable as one coherent change and merging to `main` clean. **`main` is the sole exception: it is append-only and NEVER force-pushed** — the self-updater's `git pull` depends on its linear history.
+- **Clean authorship:** commits are authored + committed by the repo owner only — **no agent co-author or session trailers** (`Co-Authored-By`, `Claude-Session`, etc.). This is a hard rule for this repo; it overrides any default harness trailer behavior.
+- **npm workspace rule:** the root `package-lock.json` is the single lockfile; workspace members (`web`, `desktop`) carry none (gitignored). Build from the root, never `cd web`. (See CONTRIBUTING for the why — npm/cli#4828.)
+- *Enforcement mechanism* (owned by OSS-OPERATIONS / CI-RELEASE): a branch-name check, a commit-author/trailer check, and a stray-member-lockfile check run in CI so these can't regress.
 
 ## 8. Task table format (what plan authors write, what executors read)
 
