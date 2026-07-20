@@ -14,6 +14,7 @@ dashboard you own. Local-first, provider-agnostic, zero telemetry, MIT.
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
 [![Zero telemetry](https://img.shields.io/badge/telemetry-none-brightgreen.svg)](#privacy)
 [![Self-hosted](https://img.shields.io/badge/self--hosted-local--first-ff6b5b.svg)](#)
+[![Pre-1.0](https://img.shields.io/badge/status-pre--1.0%20%C2%B7%20breaking%20changes%20expected-orange.svg)](#-pre-10-heads-up)
 
 <img src="docs/screenshots/dark/01-dashboard.png" alt="PersonalClaw dashboard" width="80%" />
 
@@ -29,6 +30,30 @@ dashboard you own. Local-first, provider-agnostic, zero telemetry, MIT.
 <p><strong>📸 <a href="SHOWCASE.md">See the full visual showcase »</a></strong> — dashboard, chat, goal loops, knowledge, memory, tasks, skills, automation, agents, and settings, in light and dark.</p>
 
 </div>
+
+---
+
+## <a name="-pre-10-heads-up"></a>⚠️ Pre-1.0 — breaking changes expected
+
+PersonalClaw is at **v0.1.0** and moving fast toward a deeper architecture (see the
+[roadmap](docs/roadmap/roadmap.md)). It follows a **clean-break** engineering doctrine:
+when a design is replaced, the old path is removed in the same change rather than carried
+along behind compatibility shims. The upshot for you as an early user:
+
+- **The next few minor (0.x) releases may introduce breaking changes with no automatic
+  migration of your existing data** — sessions, memory, knowledge, config, and app state
+  under `~/.personalclaw` may need to be recreated after an update.
+- **Back up before every update.** Run `personalclaw snapshot` to create a portable state
+  archive first (restore with `personalclaw restore`), and keep the archive somewhere safe.
+- **Don't make this your only system of record yet.** Treat anything you put in
+  PersonalClaw as reproducible or backed up elsewhere until backward compatibility becomes
+  the default posture — which is exactly what the post-1.0
+  [lifecycle doctrine](docs/roadmap/plans/LIFECYCLE-DOCTRINE.md) introduces (gated,
+  migration-backed changes). Until then, run it as a power-user's second machine, not your
+  primary driver.
+
+This warning will be relaxed once migration-backed change discipline lands and 0.x
+stabilizes. We'd rather tell you plainly now than surprise you on an update.
 
 ---
 
