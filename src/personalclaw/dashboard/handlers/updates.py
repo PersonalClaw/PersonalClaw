@@ -683,13 +683,13 @@ async def api_log_level(request: web.Request) -> web.Response:
     if level_name not in _LOG_LEVELS:
         return web.json_response({"error": f"invalid level: {level_name}"}, status=400)
     # Apply to the personalclaw logger AND the app-bundle logger roots (they
-    # log under their own namespaces — constants.APP_LOGGER_ROOTS), AND to the
+    # log under their own namespaces — installed_logger_roots()), AND to the
     # persistent RotatingFileHandler(s), whose boot-time level would otherwise
     # keep filtering gateway.log at the old verbosity ("live" change was
     # SSE-only before this).
-    from personalclaw.constants import APP_LOGGER_ROOTS
+    from personalclaw.apps.catalog import installed_logger_roots
 
-    for _lname in ("personalclaw", *APP_LOGGER_ROOTS):
+    for _lname in ("personalclaw", *installed_logger_roots()):
         _lg = logging.getLogger(_lname)
         _lg.setLevel(_LOG_LEVELS[level_name])
         for _h in _lg.handlers:

@@ -28,7 +28,6 @@ classifiers = [
 # Runtime dependencies
 dependencies = [
     "aiohttp>=3.9,<4",
-    "slack-sdk>=3.27,<4",
     "websockets>=12,<16",
     "cron-descriptor>=1.4,<2",
     "croniter>=2.0,<3",
@@ -72,13 +71,13 @@ httpx     = ["httpx>=0.27"]        # Ollama + vLLM providers
 oauth2    = ["cryptography>=42"]   # OIDC / OAuth2 auth mode
 
 # Feature extras.
-# NOTE — the local-model substrate extras (stt/tts/embeddings) are the install path
-# for the bundled MODEL APPS, not stale residue. Those apps (apps/faster-whisper,
-# apps/piper-tts, apps/sentence-transformers) declare no Python deps in their app.json
-# (there is no per-app pip step); they `import faster_whisper` / `piper` /
-# `sentence_transformers` directly and probe availability(), so the package must be
-# present in the interpreter. `personalclaw[models]` (below) is how a server/container
-# install provides it. Keep each extra aligned with the app that consumes it.
+# NOTE — these extras are a convenience install path for apps whose Python deps are
+# heavy or commonly pre-provisioned in a server/container image. Apps can ALSO declare
+# `dependencies.pythonDependencies` in their app.json, which the app-install pipeline
+# pip-installs into the shared venv (apps/app_manager.py::_install_python_deps). The
+# slack-channel app declares slack-sdk that way, so a Store install pulls it
+# automatically; this `[slack]` extra remains for pip/uv users who pre-install it (or
+# run headless without the Store). Keep each extra aligned with the app that consumes it.
 slack = ["slack-sdk>=3.27,<4"]
 stt   = ["faster-whisper>=1.0"]    # substrate for apps/faster-whisper (in-process Whisper STT)
 tts   = ["huggingface-hub>=0.23", "piper-tts>=1.2"]  # substrate for apps/piper-tts: voice downloads (ONNX from rhasspy/piper-voices) + the piper synthesis runtime (provides the `piper` binary)

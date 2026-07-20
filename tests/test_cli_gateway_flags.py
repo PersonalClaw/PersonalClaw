@@ -22,7 +22,7 @@ def _ns(**kwargs) -> argparse.Namespace:
     """
     defaults = {
         "command": "gateway",
-        "slack_only": False,
+        "headless": False,
         "no_crons": False,
         "seed": None,
         "seed_replace": False,
@@ -53,8 +53,8 @@ class TestNoFlags:
             "approval_mode": None,
         }
 
-    def test_legacy_flags_pass_through(self):
-        result = _resolve_gateway_args(_ns(slack_only=True, no_crons=True, no_open=True))
+    def test_headless_flag_passes_through(self):
+        result = _resolve_gateway_args(_ns(headless=True, no_crons=True, no_open=True))
         assert result["no_dashboard"] is True
         assert result["no_crons"] is True
         assert result["no_open"] is True
@@ -302,14 +302,14 @@ class TestIsReadOnlyTool:
     @pytest.mark.parametrize(
         "title",
         [
-            "read_or_write",       # read prefix masking write
-            "read_and_delete",     # read prefix masking delete
-            "find_and_replace",    # find prefix masking replace
-            "search_replace",      # search prefix masking replace
-            "get_or_create",       # get prefix masking create
-            "list_and_remove",     # list prefix masking remove
-            "fetch_and_update",    # fetch prefix masking update
-            "query_and_modify",    # query prefix masking modify
+            "read_or_write",  # read prefix masking write
+            "read_and_delete",  # read prefix masking delete
+            "find_and_replace",  # find prefix masking replace
+            "search_replace",  # search prefix masking replace
+            "get_or_create",  # get prefix masking create
+            "list_and_remove",  # list prefix masking remove
+            "fetch_and_update",  # fetch prefix masking update
+            "query_and_modify",  # query prefix masking modify
         ],
     )
     def test_compound_read_write_verbs_rejected(self, title):

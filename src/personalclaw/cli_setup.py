@@ -6,15 +6,12 @@ import socket
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from personalclaw.app_cli import run_app_setup_steps
 from personalclaw.atomic_write import atomic_write
 from personalclaw.cli_chat import _ensure_default_agent_in_config
-from personalclaw.orchestrator_skill import generate_orchestrator_skill
 from personalclaw.config import AppConfig
 from personalclaw.config.loader import (
     _WORKSPACE_DIR_NAME,
-    CRED_OWNER_ID,
-    CRED_SLACK_APP_TOKEN,
-    CRED_SLACK_BOT_TOKEN,
     DASHBOARD_PORT,
     _default_workspace_base,
     _workspace_dir_file,
@@ -23,6 +20,7 @@ from personalclaw.config.loader import (
     env_path,
 )
 from personalclaw.constants import DATA_WARNING
+from personalclaw.orchestrator_skill import generate_orchestrator_skill
 from personalclaw.skills import SkillsLoader
 
 
@@ -71,6 +69,7 @@ def _setup(
     mode: str = "",
     provider: str = "",
     credential: str = "",
+    only_app: str = "",
 ) -> None:
     """Install agent config and optionally configure credentials.
 
@@ -78,7 +77,14 @@ def _setup(
     ``docker`` (Compose-based), or ``none`` (manual / CI).
     ``provider`` wires a named registry entry as the default chat provider.
     ``credential`` registers a named credential in the credential store.
+    ``only_app`` runs ONLY that installed app's ``cli.setup`` step, skipping the
+    core steps and every other app (``personalclaw setup --app <name>``).
     """
+    # `--app <name>`: run just that app's setup step, nothing else.
+    if only_app:
+        run_app_setup_steps(only_app=only_app)
+        return
+
     from personalclaw.agent import rebuild_agent_config  # circular import: agent imports cli
     from personalclaw.cli import _project_dir_file  # circular import: cli -> cli_setup -> cli
 
@@ -130,16 +136,12 @@ def _setup(
         print("\nDone! Try: personalclaw gateway")
         return
 
-    # 3. Slack channel-app credentials + slash command. These two steps are the
-    # slack-channel APP's setup surfaced through the core CLI: they read/write
-    # ONLY app-owned homes (the generic cred store .env + ProviderSettings) —
-    # core config.json holds no Slack config. Extracting them into app-owned
-    # CLI contributions (a `setup` hook apps register) is post-publication
-    # roadmap work; until then core keeps this thin passthrough.
-    _setup_slack_tokens()
-
-    # 3b. Slash command name
-    _setup_slash_command()
+    # 3. App-contributed setup steps. Each installed + enabled app whose manifest
+    # declares `cli.setup` runs its own interactive step here (alphabetical),
+    # after the core credential/model steps. This is the generic seam that
+    # replaced core's former hardcoded channel-app setup — a channel app now ships
+    # its own token/config prompts via `cli.setup` (see PROVIDER-BOUNDARY-COMPLETION).
+    run_app_setup_steps()
 
     # 4. Timezone
     _setup_timezone()
@@ -176,9 +178,7 @@ def _setup_noninteractive(
         )
     elif mode == "service":
         print(
-            "  Deployment mode: service\n"
-            "  Quick-start:\n"
-            "    personalclaw service install\n"
+            "  Deployment mode: service\n" "  Quick-start:\n" "    personalclaw service install\n"
         )
     elif mode == "none":
         pass  # no deployment hints — CI / manual setup
@@ -217,8 +217,6 @@ def _setup_noninteractive(
             print(f"  ⚠️  --credential {cred_name!r}: no value provided and env var not set")
 
 
-
-
 def _setup_workspace_dir() -> None:
     """Prompt user for workspace directory, falling back to platform default."""
     platform_default = _default_workspace_base() / _WORKSPACE_DIR_NAME
@@ -244,62 +242,6 @@ def _setup_workspace_dir() -> None:
         print(f"  Falling back to platform default: {platform_default}\n")
 
 
-def _setup_slack_tokens() -> None:
-    """Prompt for the slack-channel app's tokens and owner ID, write to
-    config_dir/.env (the generic credential store — the same keys the app reads
-    via ``CRED_SLACK_*``)."""
-    cred_path = env_path()
-    existing: dict[str, str] = {}
-    if cred_path.exists():
-        for line in cred_path.read_text(encoding="utf-8").splitlines():
-            if "=" in line and not line.startswith("#"):
-                k, _, v = line.partition("=")
-                existing[k.strip()] = v.strip()
-
-    print("── Slack Channel App Credentials ──\n")
-    print(
-        "  Create a Slack app at https://api.slack.com/apps → 'From a manifest',\n"
-        "  using the slack-channel app's slack-manifest.yaml (replace {{USERNAME}}),\n"
-        "  then paste its tokens below.\n"
-    )
-
-    answer = input("  Configure Slack tokens? [Y/n]: ").strip().lower()
-    if answer in ("n", "no"):
-        print("  ⏭  Skipped. The Slack channel will be disabled.\n")
-        return
-
-    def _mask(val: str) -> str:
-        return val[:8] + "…" if len(val) > 12 else val
-
-    cur_app = existing.get(CRED_SLACK_APP_TOKEN, "")
-    cur_bot = existing.get(CRED_SLACK_BOT_TOKEN, "")
-    cur_owner = existing.get(CRED_OWNER_ID, "")
-
-    hint_app = f" [{_mask(cur_app)}]" if cur_app else ""
-    hint_bot = f" [{_mask(cur_bot)}]" if cur_bot else ""
-    hint_owner = f" [{cur_owner}]" if cur_owner else ""
-
-    app_token = input(f"  App Token (xapp-...){hint_app}: ").strip() or cur_app
-    bot_token = input(f"  Bot Token (xoxb-...){hint_bot}: ").strip() or cur_bot
-    owner_id = input(f"  Your Slack Member ID{hint_owner}: ").strip() or cur_owner
-
-    if not app_token or not bot_token:
-        print("  ⚠️  Missing tokens — the Slack channel will be disabled.\n")
-        return
-
-    # Preserve any extra keys already in .env
-    existing[CRED_SLACK_APP_TOKEN] = app_token
-    existing[CRED_SLACK_BOT_TOKEN] = bot_token
-    if owner_id:
-        existing[CRED_OWNER_ID] = owner_id
-
-    cred_path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [f"{k}={v}" for k, v in existing.items()]
-    cred_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    cred_path.chmod(0o600)
-    print(f"  ✅ Credentials saved to {cred_path}\n")
-
-
 _CUSTOM_DOMAIN = "personalclaw.localhost"
 
 
@@ -317,31 +259,6 @@ def _detect_system_timezone() -> str:
     except Exception:
         pass
     return ""
-
-
-def _setup_slash_command() -> None:
-    """Prompt for a custom slash command name, saved to the slack-channel APP's
-    own config store (the SlackSettings home, via the generic ProviderSettings
-    seam) — core config.json holds no Slack config."""
-    from personalclaw.providers.settings import ProviderSettings
-
-    current = ProviderSettings.load("slack-channel").get("command") or "personalclaw"
-
-    print("── Slash Command ──\n")
-    raw = input(f"  Slash command name [{current}]: ").strip()
-    if raw:
-        raw = raw.lstrip("/").strip()
-    if not raw:
-        raw = current
-    if not all(c.isalnum() or c in "-_" for c in raw):
-        print("  ⚠️  Command name should only contain letters, numbers, hyphens, or underscores.")
-        raw = current
-    if len(raw) > 32:
-        print("  ⚠️  Command name too long (max 32 chars).")
-        raw = current
-
-    ProviderSettings.update("slack-channel", {"command": raw})
-    print(f"  ✅ Slash command: /{raw}\n")
 
 
 def _setup_timezone() -> None:

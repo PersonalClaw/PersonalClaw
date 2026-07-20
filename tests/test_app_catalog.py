@@ -295,3 +295,53 @@ def test_catalog_no_permissions_crons_is_empty_not_missing(tmp_path):
     catalog.add_local_source(str(src))
     entry = next(a for a in catalog.available_catalog()["localApps"] if a["name"] == "plain-app")
     assert entry["permissions"] == {} and entry["crons"] == []
+
+
+# ── P13–P16: installed_logger_roots() — the runtime replacement for the removed
+#    constants.APP_LOGGER_ROOTS. Derives app log-namespace roots from ENABLED
+#    installed apps' manifests (JSON only), de-duped, () when no apps dir. ──
+
+def _install_app(root: Path, name: str, *, logger_roots: list[str], enabled: bool = True) -> None:
+    """Write an installed app under ``apps/<name>/`` — installed.json (enabled state) +
+    app.json (manifest with loggerRoots) — mirroring what manager.list_apps() reads."""
+    d = root / "apps" / name
+    d.mkdir(parents=True)
+    (d / "installed.json").write_text(json.dumps({
+        "name": name, "version": "1.0.0", "displayName": name.title(),
+        "enabled": enabled, "origin": "registry", "resources": "gateway",
+        "lifecycle": "gateway",
+    }), encoding="utf-8")
+    (d / "app.json").write_text(json.dumps({
+        "name": name, "version": "1.0.0", "displayName": name.title(),
+        "description": f"{name} fixture", "loggerRoots": logger_roots,
+    }), encoding="utf-8")
+
+
+def test_installed_logger_roots_empty_when_no_apps_dir(tmp_path):
+    # P16: fresh install — no apps/ dir yet → () (callers degrade to just 'personalclaw').
+    assert not (tmp_path / "apps").exists()
+    assert catalog.installed_logger_roots() == ()
+
+
+def test_installed_logger_roots_collects_enabled_manifest_roots(tmp_path):
+    # P13: an ENABLED app that declares loggerRoots contributes them.
+    _install_app(tmp_path, "slack-app", logger_roots=["slack_runtime"])
+    assert catalog.installed_logger_roots() == ("slack_runtime",)
+
+
+def test_installed_logger_roots_skips_disabled_and_dedups(tmp_path):
+    # P14: disabled apps contribute nothing; roots are de-duped preserving first-seen order.
+    _install_app(tmp_path, "alpha-app", logger_roots=["alpha_rt", "shared_rt"])
+    _install_app(tmp_path, "beta-app", logger_roots=["shared_rt", "beta_rt"])  # shared_rt dup
+    _install_app(tmp_path, "off-app", logger_roots=["ghost_rt"], enabled=False)  # skipped
+    roots = catalog.installed_logger_roots()
+    assert roots == ("alpha_rt", "shared_rt", "beta_rt")
+    assert "ghost_rt" not in roots  # disabled app's root never plumbed
+
+
+def test_installed_logger_roots_ignores_apps_without_roots(tmp_path):
+    # P15: an installed app with no loggerRoots (the common case) contributes nothing —
+    # the roots list only carries apps that actually declare a non-personalclaw namespace.
+    _install_app(tmp_path, "plain-app", logger_roots=[])
+    _install_app(tmp_path, "logging-app", logger_roots=["custom_rt"])
+    assert catalog.installed_logger_roots() == ("custom_rt",)
