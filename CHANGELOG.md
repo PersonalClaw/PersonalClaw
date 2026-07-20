@@ -10,6 +10,30 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 
+### Added
+
+- **App-contributed CLI seams** — an app can now hook into `personalclaw setup` and
+  `personalclaw doctor` via manifest `cli.setup` / `cli.doctor` (`module:function`),
+  and declare its log namespaces via `loggerRoots`. `personalclaw setup --app <name>`
+  runs just one app's setup step. Core names no channel vendor in its CLI.
+
+### Changed
+
+- **Provider-boundary completion (Slack residue retired from core):** the Slack
+  channel app now ships its own token/slash-command setup and doctor probe (via the
+  new `cli.setup`/`cli.doctor` seams) instead of living hardcoded in core's CLI; app
+  logger roots are derived from installed manifests (`constants.APP_LOGGER_ROOTS`
+  removed); `slack-sdk` is no longer a core runtime dependency (kept as the `[slack]`
+  extra, and the slack-channel app declares it via manifest `pythonDependencies`, which
+  the app-install pipeline installs). A residue-sweep test + a machine-checked keeps
+  table (`docs/architecture/provider-boundary-keeps.txt`) prevent vendor residue from
+  regrowing in core.
+
+### Removed
+
+- **`personalclaw gateway --slack-only`** — the legacy alias for `--headless` is
+  removed. Use `--headless`.
+
 ## [0.1.0] — 2026-07-19
 
 Initial public release — the first end-to-end PersonalClaw: a self-hosted, local-first,
