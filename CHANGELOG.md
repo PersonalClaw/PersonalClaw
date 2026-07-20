@@ -10,6 +10,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 
+### Added
+
+- **App-contributed CLI seams**
+
+### Changed
+
+- **Provider-boundary completion (Slack residue retired from core):**
+
+### Removed
+
+- **`personalclaw gateway --slack-only`**
+
 ## [0.1.0] — 2026-07-19
 
 Initial public release — the first end-to-end PersonalClaw: a self-hosted, local-first,

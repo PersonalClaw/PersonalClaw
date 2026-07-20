@@ -7,9 +7,3 @@ DATA_WARNING = (
 )
 
 CHAT_TURN_TIMEOUT = 600.0
-
-# Top-level logger namespaces used by bundled app backends (they log under
-# their OWN root, not ``personalclaw``). Log-level plumbing (CLI boot +
-# the runtime /api/logs/level endpoint) applies levels/handlers to each of
-# these too, or an app's operational logs would be invisible.
-APP_LOGGER_ROOTS = ("slack_runtime",)

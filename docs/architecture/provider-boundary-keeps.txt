@@ -1,0 +1,17 @@
+# Provider-boundary keeps — the machine-checked allowlist of DELIBERATE vendor
+# residue in core (plan 32: PROVIDER-BOUNDARY-COMPLETION). Each line is a core file
+# that the residue-sweep test (tests/test_provider_boundary_residue.py) would
+# otherwise flag for a vendor credential-key / secret-detection literal, plus a
+# one-line judgment for why it stays. This file IS the keeps table — the test fails
+# if a listed file no longer contains a marker (stale entry) or if a marker appears
+# in a file NOT listed here (un-approved regrowth). See docs/architecture/provider-boundary.md.
+#
+# Format: <repo-relative path> — <judgment>
+#
+src/personalclaw/config/loader.py — the CRED_SLACK_* credential-store KEY NAMES ("SLACK_APP_TOKEN", …) existing installs already hold; the loader is the credential store's home (bottom layer, below all apps). Renaming breaks existing installs for zero gain. Re-exported to apps via sdk/channel.py.
+src/personalclaw/sdk/channel.py — re-exports the CRED_SLACK_* key names from config/loader as the app-facing surface, so the slack app imports them via the SDK (no inverted import direction).
+src/personalclaw/sandbox.py — the SLACK_* env-var denylist: credential env vars (SLACK_BOT_TOKEN/APP_TOKEN/USER_TOKEN) that must never reach a sandboxed child. Secret-detection data; renaming breaks the control.
+src/personalclaw/security.py — the xox[bpas]- token-detection regexes: secret-DETECTION data that redacts/blocks leaked Slack credentials. Renaming breaks the control.
+src/personalclaw/gateway.py — reads the CRED_SLACK_* keys (imported from config/loader) to hand the reference channel transport its token at boot; the credential-key names are the documented keep above, not vendor logic (Socket-Mode lives in the slack-channel app).
+src/personalclaw/cli_setup.py — the remote dashboard-URL prompt reads the CRED_SLACK_* keep key names to detect whether a channel is configured (a channel delivers the remote token). Reads the documented keep, not vendor logic. DISCOVERY: a generic "is any channel configured" helper would remove this reference — future work with the channel-abstraction seam (plan 40 CHANNEL-EXPANSION), out of scope for plan 32's enumerated residue.
+src/personalclaw/cli_doctor.py — the auth-mode section reads the CRED_SLACK_* keep key names to warn when a non-loopback bind has no channel to deliver a token. Same class + same DISCOVERY as cli_setup.py above.

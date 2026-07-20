@@ -148,7 +148,7 @@ def _resolve_gateway_args(args: argparse.Namespace) -> dict:
             sys.exit(2)
 
     return {
-        "no_dashboard": getattr(args, "slack_only", False),
+        "no_dashboard": getattr(args, "headless", False),
         "no_crons": getattr(args, "no_crons", False),
         "no_open": no_open,
         "port_override": port,
@@ -226,11 +226,12 @@ Examples:
     sub.add_parser("doctor", help="Verify PersonalClaw setup")
 
     # gateway
-    gw_parser = sub.add_parser("gateway", help="Start the PersonalClaw server (dashboard + channels)")
+    gw_parser = sub.add_parser(
+        "gateway", help="Start the PersonalClaw server (dashboard + channels)"
+    )
     gw_parser.add_argument(
         "--headless",
-        "--slack-only",  # legacy alias (the flag predates channel apps)
-        dest="slack_only",
+        dest="headless",
         action="store_true",
         help="Headless mode — serve channels only; skip the dashboard web server and SSH tunnel instructions",
     )
@@ -343,6 +344,12 @@ Examples:
         metavar="NAME[=VALUE]",
         help="Store a named credential (value from arg or env var)",
     )
+    setup_parser.add_argument(
+        "--app",
+        default="",
+        metavar="NAME",
+        help="Run only the named installed app's cli.setup step (skip core + other apps)",
+    )
 
     # cron
     cron_parser = sub.add_parser(
@@ -424,11 +431,11 @@ Examples:
 
     # snapshot / restore
     snap_parser = sub.add_parser("snapshot", help="Create a portable backup of PersonalClaw state")
-    snap_parser.add_argument("output_dir", nargs="?",
-                             default=None)
+    snap_parser.add_argument("output_dir", nargs="?", default=None)
     snap_parser.add_argument("--keep", type=int, default=7, help="Keep N most recent snapshots")
-    snap_parser.add_argument("--list", action="store_true", dest="list_snapshots",
-                             help="List existing snapshots")
+    snap_parser.add_argument(
+        "--list", action="store_true", dest="list_snapshots", help="List existing snapshots"
+    )
 
     rest_parser = sub.add_parser("restore", help="Restore PersonalClaw state from a snapshot")
     rest_parser.add_argument("snapshot", nargs="?", help="Path to snapshot .tar.gz")
@@ -436,7 +443,9 @@ Examples:
     rest_parser.add_argument("--dry-run", action="store_true")
     rest_parser.add_argument("--components", help="Comma-separated components to restore")
     rest_parser.add_argument("--list-components", action="store_true")
-    rest_parser.add_argument("--force", action="store_true", help="Restore even if gateway is running")
+    rest_parser.add_argument(
+        "--force", action="store_true", help="Restore even if gateway is running"
+    )
 
     # security
     sec_parser = sub.add_parser("security", help="Security audit and deny list")
@@ -462,9 +471,7 @@ Examples:
     eval_parser.add_argument(
         "--all", action="store_true", dest="all_scenarios", help="Run all scenarios"
     )
-    eval_parser.add_argument(
-        "--judge", action="store_true", help="Enable LLM judge scoring"
-    )
+    eval_parser.add_argument("--judge", action="store_true", help="Enable LLM judge scoring")
 
     sec_sub = sec_parser.add_subparsers(dest="sec_action")
     sec_sub.add_parser("audit", help="Scan conversation history for suspicious tool usage")
@@ -519,12 +526,8 @@ Examples:
         help="Manage the PersonalClaw gateway as a system service (requires sudo on Linux)",
     )
     svc_sub = svc_parser.add_subparsers(dest="service_action")
-    svc_sub.add_parser(
-        "install", help="Install and start the gateway service (sudo on Linux)"
-    )
-    svc_sub.add_parser(
-        "uninstall", help="Stop and remove the gateway service (sudo on Linux)"
-    )
+    svc_sub.add_parser("install", help="Install and start the gateway service (sudo on Linux)")
+    svc_sub.add_parser("uninstall", help="Stop and remove the gateway service (sudo on Linux)")
     svc_sub.add_parser("status", help="Show service status (systemctl/launchctl)")
 
     # logs — tail the gateway log. Reads from the systemd journal when running
@@ -571,7 +574,6 @@ Examples:
 
     # mcp-core (MCP server — spawned by ACP agent, not user-facing)
     sub.add_parser("mcp-core", help=argparse.SUPPRESS)
-
 
     # learn
     learn_parser = sub.add_parser(
@@ -620,11 +622,15 @@ Examples:
     agent_create = agent_sub.add_parser("create", help="Create a PersonalClaw agent")
     agent_create.add_argument("--name", required=True, help="Agent name")
     agent_create.add_argument(
-        "--provider-agent", default="personalclaw",
-        dest="provider_agent", help="Provider agent name",
+        "--provider-agent",
+        default="personalclaw",
+        dest="provider_agent",
+        help="Provider agent name",
     )
     agent_create.add_argument(
-        "--default-dir", default="", dest="default_dir",
+        "--default-dir",
+        default="",
+        dest="default_dir",
         help="Default working directory path (blank = workspace root)",
     )
     agent_create.add_argument("--memory-store", default="default", help="Memory store name")
@@ -632,10 +638,12 @@ Examples:
     agent_update.add_argument("name", help="Agent name to update")
     agent_update.add_argument(
         "--provider-agent",
-        dest="provider_agent", help="New provider agent name",
+        dest="provider_agent",
+        help="New provider agent name",
     )
     agent_update.add_argument(
-        "--default-dir", dest="default_dir",
+        "--default-dir",
+        dest="default_dir",
         help="New default working directory path",
     )
     agent_update.add_argument("--memory-store", help="New memory store name")
@@ -682,9 +690,10 @@ Examples:
         "--target", default="", help="Install directory (default: ~/.agents/skills/)"
     )
     skills_install.add_argument(
-        "--force", action="store_true",
+        "--force",
+        action="store_true",
         help="Install despite an overridable WARNING verdict from the supply-chain scan. "
-             "A DANGEROUS verdict is never overridable.",
+        "A DANGEROUS verdict is never overridable.",
     )
     skills_remove = skills_sub.add_parser("remove", help="Remove a locally installed skill")
     skills_remove.add_argument("name", help="Skill directory name to remove")
@@ -695,8 +704,9 @@ Examples:
         "--dry-run", action="store_true", help="Report what would change without writing"
     )
     skills_sub.add_parser(
-        "verify", help="Check installed skills' file hashes against their install baseline "
-                       "(.pclaw-lock.json) — detects a skill mutated/tampered after install"
+        "verify",
+        help="Check installed skills' file hashes against their install baseline "
+        "(.pclaw-lock.json) — detects a skill mutated/tampered after install",
     )
 
     args = parser.parse_args()
@@ -747,7 +757,9 @@ Examples:
     # not ``personalclaw`` — so the level + file handler below are applied to each
     # loaded app's logger root too, or an app's operational logs would be invisible.
     # Noisy third-party libs stay at WARNING (pinned below).
-    from personalclaw.constants import APP_LOGGER_ROOTS as _APP_LOGGER_ROOTS
+    from personalclaw.apps.catalog import installed_logger_roots as _installed_logger_roots
+
+    _APP_LOGGER_ROOTS = _installed_logger_roots()
     for _lname in _APP_LOGGER_ROOTS:
         logging.getLogger(_lname).setLevel(level)
     for _noisy in ("slack_sdk", "aiohttp", "urllib3", "asyncio"):
@@ -757,7 +769,9 @@ Examples:
     _log_file = config_dir() / "gateway.log"
     _fh = RotatingFileHandler(_log_file, maxBytes=2 * 1024 * 1024, backupCount=3)
     _fh.setLevel(level)
-    _fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S"))
+    _fh.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S")
+    )
     logging.getLogger("personalclaw").addHandler(_fh)
     for _lname in _APP_LOGGER_ROOTS:
         logging.getLogger(_lname).addHandler(_fh)
@@ -774,6 +788,7 @@ Examples:
             mode=getattr(args, "mode", ""),
             provider=getattr(args, "provider", ""),
             credential=getattr(args, "credential", ""),
+            only_app=getattr(args, "app", ""),
         )
     elif args.command == "doctor":
         _doctor()
@@ -819,11 +834,13 @@ Examples:
         _config_cmd(args)
     elif args.command == "snapshot":
         from personalclaw.snapshot import snapshot_main
+
         rc = snapshot_main(parsed=args)
         if rc:
             raise SystemExit(rc)
     elif args.command == "restore":
         from personalclaw.snapshot import restore_main
+
         rc = restore_main(parsed=args)
         if rc:
             raise SystemExit(rc)
@@ -874,6 +891,8 @@ def _handle_skills(args) -> None:  # noqa: ANN001
     import shutil
     from pathlib import Path
 
+    from personalclaw.agent import _all_skill_paths
+
     # skills.sh moved to a standalone app (apps/skills-sh/); it registers via the app
     # loader when installed, so core no longer eager-imports it here.
     from personalclaw.skills.marketplace import (
@@ -881,7 +900,6 @@ def _handle_skills(args) -> None:  # noqa: ANN001
         get_default_skills_registry,
         list_local_skills,
     )
-    from personalclaw.agent import _all_skill_paths
 
     cmd = getattr(args, "skills_command", None)
 
@@ -918,6 +936,7 @@ def _handle_skills(args) -> None:  # noqa: ANN001
         target = Path(target_str) if target_str else DEFAULT_SKILLS_INSTALL_PATH
         force = bool(getattr(args, "force", False))
         from personalclaw.skills.marketplace import SkillInstallRefused
+
         registry = get_default_skills_registry()
         try:
             registry.get(marketplace_name)
@@ -936,7 +955,9 @@ def _handle_skills(args) -> None:  # noqa: ANN001
             else:
                 print("   This is a dangerous verdict — it cannot be force-installed.")
             for f in exc.report.findings[:8]:
-                print(f"     - [{f.severity.value}] {f.rule} in {f.path or '(content)'}: {f.evidence[:80]}")
+                print(
+                    f"     - [{f.severity.value}] {f.rule} in {f.path or '(content)'}: {f.evidence[:80]}"
+                )
         except Exception as exc:
             print(f"❌ Install failed: {exc}")
         return

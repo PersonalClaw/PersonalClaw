@@ -23,7 +23,7 @@ process everything else talks to.
 
 | Flag | Effect |
 |---|---|
-| `--headless` (legacy alias `--slack-only`) | Serve channels only; skip the dashboard web server and SSH tunnel instructions. |
+| `--headless` | Serve channels only; skip the dashboard web server and SSH tunnel instructions. |
 | `--no-crons` | Skip the cron scheduler — use when another instance handles cron execution. |
 | `--no-open` | Do not auto-open the dashboard URL in the browser on startup. |
 | `--port PORT` | Override the dashboard port — an integer, or `auto` for an OS-assigned ephemeral port. Falls back to config when omitted. |

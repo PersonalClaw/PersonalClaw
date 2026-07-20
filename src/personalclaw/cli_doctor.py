@@ -34,11 +34,10 @@ def _doctor_providers() -> list[str]:
     """
     issues: list[str] = []
     try:
-        from personalclaw.llm.registry import get_default_registry
-
         # Import the provider modules to trigger their registry.register_type()
         # calls so that all built-in types are visible.
         import personalclaw.llm.acp_agent  # noqa: F401
+        from personalclaw.llm.registry import get_default_registry
 
         registry = get_default_registry()
         entries = registry.list_entries()
@@ -79,8 +78,11 @@ def _probe_acp_agent(entry: object, label: str, issues: list[str]) -> None:
         return
 
     icon = {
-        "ready": "✅", "not_found": "❌", "needs_login": "🔑",
-        "timeout": "⏳", "error": "❌",
+        "ready": "✅",
+        "not_found": "❌",
+        "needs_login": "🔑",
+        "timeout": "⏳",
+        "error": "❌",
     }.get(status.state, "⚠️")
     print(f"  {label}: {icon} {status.detail}")
     if not status.ready:
@@ -285,13 +287,13 @@ def _doctor() -> None:
         else:
             try:
                 subprocess.run(
-                    [str(venv_py), "-c", "import websockets, slack_sdk, aiohttp"],
+                    [str(venv_py), "-c", "import websockets, aiohttp"],
                     capture_output=True,
                     timeout=5,
                 ).check_returncode()
-                print("  deps:        ✅ websockets, slack_sdk, aiohttp available")
+                print("  deps:        ✅ websockets, aiohttp available")
             except Exception:
-                print("  deps:        ❌ missing modules (websockets/slack_sdk/aiohttp)")
+                print("  deps:        ❌ missing modules (websockets/aiohttp)")
                 issues.append("python deps")
     else:
         # Non-venv install: fall back to checking the system python.
@@ -307,13 +309,13 @@ def _doctor() -> None:
             print(f"  fallback:    ⚠️  {sys_py} ({ver})")
             try:
                 subprocess.run(
-                    [sys_py, "-c", "import websockets, slack_sdk, aiohttp"],
+                    [sys_py, "-c", "import websockets, aiohttp"],
                     capture_output=True,
                     timeout=5,
                 ).check_returncode()
-                print("  deps:        ✅ websockets, slack_sdk, aiohttp available")
+                print("  deps:        ✅ websockets, aiohttp available")
             except Exception:
-                print("  deps:        ❌ missing modules" " (websockets/slack_sdk/aiohttp)")
+                print("  deps:        ❌ missing modules (websockets/aiohttp)")
                 issues.append("python deps")
         else:
             print("  python:      ⚠️  python3 not found on PATH")
@@ -325,6 +327,7 @@ def _doctor() -> None:
     # binary/install here — it just reports whether an embedding model is selected.
     print("\nVector Memory")
     from personalclaw.embedding_providers.registry import _active_embedding_spec
+
     if _active_embedding_spec():
         print("  embeddings:  ✅ enabled")
     else:
@@ -347,7 +350,9 @@ def _doctor() -> None:
         # app) plus remote OpenAI-family providers. With none installed/bound, STT is
         # simply unconfigured — report it, but don't fail the doctor (a fresh core is
         # expected to boot without media backends).
-        print("  status:      ⏹  no STT model configured (install an STT app or bind one in Settings → Models)")
+        print(
+            "  status:      ⏹  no STT model configured (install an STT app or bind one in Settings → Models)"
+        )
     else:
         print(f"  model:       ✅ {resolved[0].name}:{resolved[1]}")
 
@@ -376,25 +381,15 @@ def _doctor() -> None:
             print("               Fix: pip install faster-whisper")
             issues.append("faster_whisper missing")
 
-    # ── Slack channel app (optional) ──
-    # Presence check only: the slack-channel app's token/owner credentials in the
-    # generic cred store. Live workspace validation (auth.test / origin binding)
-    # is owned by the app and surfaced via its "Test" action on the Channels
-    # page — core's doctor does not import the app's runtime.
-    print("\nSlack Channel App")
-    creds = cfg.load_credentials()
-    has_slack = bool(creds.get("SLACK_APP_TOKEN") and creds.get("SLACK_BOT_TOKEN"))
-    if has_slack:
-        has_owner = bool(creds.get("PERSONALCLAW_OWNER_ID"))
-        print("  tokens:      ✅ configured")
-        if has_owner:
-            print(f"  owner:       ✅ {creds['PERSONALCLAW_OWNER_ID']}")
-        else:
-            print("  owner:       ⚠️  PERSONALCLAW_OWNER_ID not set")
-        print("  workspace:   ℹ️  use the Channels page → Slack → Test to verify the token")
-    else:
-        print("  status:      ⏭  not configured (dashboard-only mode)")
-        print("  setup:       run 'personalclaw setup' to add Slack tokens")
+    # ── App-contributed doctor probes ──
+    # Each installed + enabled app whose manifest declares `cli.doctor` renders its
+    # own section here (bounded by a hard timeout + exception guard). This is the
+    # generic seam that replaced core's former hardcoded channel-app section — a
+    # channel app now ships its own probe via `cli.doctor` (see
+    # PROVIDER-BOUNDARY-COMPLETION). Core's doctor names no vendor.
+    from personalclaw.app_cli import run_app_doctor_probes
+
+    issues.extend(run_app_doctor_probes())
 
     # ── Provider Health ──
     print("\nProvider Health")

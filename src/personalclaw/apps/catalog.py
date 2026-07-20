@@ -668,6 +668,36 @@ def _installed_names() -> set[str]:
     return {a.get("name", "") for a in list_apps()}
 
 
+def installed_logger_roots() -> tuple[str, ...]:
+    """Top-level logger namespaces that ENABLED installed apps log under (their own
+    root, not ``personalclaw``) — read from each app's manifest ``loggerRoots``.
+
+    This is the runtime replacement for the hard-coded ``constants.APP_LOGGER_ROOTS``:
+    the set of app log roots is derived from what's actually installed + enabled, so
+    log-level plumbing (CLI boot + the /api/logs/level endpoint) applies the level +
+    file handler to each app's logger too — no source edit when an app ships a new root.
+
+    Manifest-only (reads ``list_apps()``'s scanned manifest dict — no app import/exec),
+    enabled apps only, de-duped preserving first-seen order. Returns ``()`` when no apps
+    dir exists yet (a fresh install), so callers degrade to just ``personalclaw``."""
+    from personalclaw.apps.manager import apps_dir, list_apps
+
+    if not apps_dir().is_dir():
+        return ()
+    seen: set[str] = set()
+    out: list[str] = []
+    for app in list_apps():
+        if not app.get("enabled", True):
+            continue
+        manifest = app.get("manifest") or {}
+        for root in manifest.get("loggerRoots") or []:
+            r = str(root).strip()
+            if r and r not in seen:
+                seen.add(r)
+                out.append(r)
+    return tuple(out)
+
+
 def available_bundled() -> list[CatalogEntry]:
     """Native manifests not currently in the Library — installable from
     their on-disk path.

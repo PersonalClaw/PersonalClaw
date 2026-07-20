@@ -1,6 +1,6 @@
 """Tests for start_api_server and _register_mcp_routes.
 
-Ensures --slack-only mode has working MCP tool endpoints (spawn, lessons,
+Ensures --headless mode has working MCP tool endpoints (spawn, lessons,
 crons, send-message, notifications).
 """
 
@@ -15,7 +15,7 @@ from personalclaw.dashboard.state import DashboardState
 
 
 def _make_state(tmp_path, **kwargs):
-    """DashboardState with mocked services (mirrors --slack-only init)."""
+    """DashboardState with mocked services (mirrors --headless init)."""
     monkeypatch_dir = tmp_path
     import personalclaw.dashboard.state as _st
 
@@ -230,11 +230,15 @@ class TestApiPersonalclawConfig:
 
     @pytest.mark.asyncio
     async def test_put_happy_path(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: tmp_path / "config.json")
+        monkeypatch.setattr(
+            "personalclaw.config.loader.config_path", lambda: tmp_path / "config.json"
+        )
         monkeypatch.setattr("personalclaw.dashboard.handlers.sel", lambda: MagicMock())
         (tmp_path / "config.json").write_text('{"agent": {"max_subagents": 3}}')
         async with TestClient(TestServer(self._make_app(tmp_path))) as c:
-            resp = await c.put("/api/config/personalclaw", json={"agent": {"subagent_max_turns": 50}})
+            resp = await c.put(
+                "/api/config/personalclaw", json={"agent": {"subagent_max_turns": 50}}
+            )
             assert resp.status == 200
             import json
 
@@ -244,16 +248,22 @@ class TestApiPersonalclawConfig:
 
     @pytest.mark.asyncio
     async def test_put_rejects_bool(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: tmp_path / "config.json")
+        monkeypatch.setattr(
+            "personalclaw.config.loader.config_path", lambda: tmp_path / "config.json"
+        )
         monkeypatch.setattr("personalclaw.dashboard.handlers.sel", lambda: MagicMock())
         (tmp_path / "config.json").write_text('{"agent": {}}')
         async with TestClient(TestServer(self._make_app(tmp_path))) as c:
-            resp = await c.put("/api/config/personalclaw", json={"agent": {"subagent_max_turns": True}})
+            resp = await c.put(
+                "/api/config/personalclaw", json={"agent": {"subagent_max_turns": True}}
+            )
             assert resp.status == 400
 
     @pytest.mark.asyncio
     async def test_put_rejects_out_of_range(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: tmp_path / "config.json")
+        monkeypatch.setattr(
+            "personalclaw.config.loader.config_path", lambda: tmp_path / "config.json"
+        )
         monkeypatch.setattr("personalclaw.dashboard.handlers.sel", lambda: MagicMock())
         (tmp_path / "config.json").write_text('{"agent": {}}')
         async with TestClient(TestServer(self._make_app(tmp_path))) as c:
@@ -263,7 +273,9 @@ class TestApiPersonalclawConfig:
     @pytest.mark.asyncio
     async def test_put_accepts_zero_max_subagents_as_auto(self, tmp_path, monkeypatch):
         """max_subagents=0 is the 'auto-size from host' sentinel — accepted + saved."""
-        monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: tmp_path / "config.json")
+        monkeypatch.setattr(
+            "personalclaw.config.loader.config_path", lambda: tmp_path / "config.json"
+        )
         monkeypatch.setattr("personalclaw.dashboard.handlers.sel", lambda: MagicMock())
         (tmp_path / "config.json").write_text('{"agent": {}}')
         async with TestClient(TestServer(self._make_app(tmp_path))) as c:
@@ -283,16 +295,22 @@ class TestApiPersonalclawConfig:
 
     @pytest.mark.asyncio
     async def test_put_corrupt_config_returns_500(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: tmp_path / "config.json")
+        monkeypatch.setattr(
+            "personalclaw.config.loader.config_path", lambda: tmp_path / "config.json"
+        )
         monkeypatch.setattr("personalclaw.dashboard.handlers.sel", lambda: MagicMock())
         (tmp_path / "config.json").write_text("NOT JSON{{{")
         async with TestClient(TestServer(self._make_app(tmp_path))) as c:
-            resp = await c.put("/api/config/personalclaw", json={"agent": {"subagent_max_turns": 50}})
+            resp = await c.put(
+                "/api/config/personalclaw", json={"agent": {"subagent_max_turns": 50}}
+            )
             assert resp.status == 500
 
     @pytest.mark.asyncio
     async def test_put_rejects_unrecognized_keys(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: tmp_path / "config.json")
+        monkeypatch.setattr(
+            "personalclaw.config.loader.config_path", lambda: tmp_path / "config.json"
+        )
         monkeypatch.setattr("personalclaw.dashboard.handlers.sel", lambda: MagicMock())
         (tmp_path / "config.json").write_text('{"agent": {}}')
         async with TestClient(TestServer(self._make_app(tmp_path))) as c:

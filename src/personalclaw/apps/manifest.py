@@ -286,6 +286,43 @@ class SetupConfig:
 
 
 @dataclass
+class CliConfig:
+    """App-contributed CLI seams (residue #3, #4 — Plan 32).
+
+    An app may hook into the two core CLI commands without living in core:
+
+    - ``setup`` — a ``"module:function"`` entry point (relative to the app dir)
+      run during ``personalclaw setup`` after the core steps. The function
+      receives a :class:`personalclaw.sdk.cli.SetupContext` and runs its own
+      interactive step (e.g. collecting provider tokens).
+    - ``doctor`` — a ``"module:function"`` entry point run during
+      ``personalclaw doctor``; it returns a ``list[DoctorLine]`` that the doctor
+      renderer prints as a per-app section.
+
+    Both are optional and default to empty (the app contributes nothing).
+    Static data only — the module path is stored, never imported, at parse time.
+    """
+
+    setup: str = ""  # "module:function" run during `personalclaw setup`
+    doctor: str = ""  # "module:function" returning list[DoctorLine] for `doctor`
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {}
+        if self.setup:
+            d["setup"] = self.setup
+        if self.doctor:
+            d["doctor"] = self.doctor
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "CliConfig":
+        return cls(
+            setup=str(data.get("setup", "")),
+            doctor=str(data.get("doctor", "")),
+        )
+
+
+@dataclass
 class MarketplaceDependencies:
     """Marketplace-managed dependencies (MCP servers, skills, agents)."""
 
@@ -556,6 +593,7 @@ _KNOWN_FIELDS = frozenset({
     "license", "minPersonalClawVersion", "prompts",
     "mcpServers", "crons", "ui", "backend", "permissions", "setup", "tags",
     "platform", "dependencies", "provider", "providers", "native",
+    "cli", "loggerRoots",
     # Legacy fields (stripped — no runtime consumer): parsed to extra for
     # forward-compat but no longer modeled as typed attributes.
     "agents", "skills", "sops",
@@ -616,6 +654,18 @@ class AppManifest:
 
     # --- Setup ---
     setup: SetupConfig = field(default_factory=SetupConfig)
+
+    # --- CLI seams (Plan 32) ---
+    # App-contributed hooks into the two core CLI commands: a setup step and a
+    # doctor probe. Both are optional "module:function" entry points resolved
+    # from the installed app dir at command time (never imported at parse time).
+    cli: CliConfig = field(default_factory=CliConfig)
+
+    # --- Logger roots (Plan 32) ---
+    # Logger namespaces this app logs under (e.g. ["slack_runtime"]). Static data
+    # read WITHOUT importing app code so core log setup + the log-level handler
+    # can apply levels to the app's loggers. Replaces constants.APP_LOGGER_ROOTS.
+    loggerRoots: list[str] = field(default_factory=list)  # noqa: N815
 
     # --- Dependencies ---
     dependencies: Dependencies = field(default_factory=Dependencies)
@@ -765,6 +815,11 @@ class AppManifest:
         setup_d = self.setup.to_dict()
         if setup_d:
             d["setup"] = setup_d
+        cli_d = self.cli.to_dict()
+        if cli_d:
+            d["cli"] = cli_d
+        if self.loggerRoots:
+            d["loggerRoots"] = self.loggerRoots
         deps_d = self.dependencies.to_dict()
         if deps_d:
             d["dependencies"] = deps_d
@@ -828,6 +883,9 @@ class AppManifest:
             else SetupConfig()
         )
 
+        cli_raw = data.get("cli", {})
+        cli = CliConfig.from_dict(cli_raw) if isinstance(cli_raw, dict) else CliConfig()
+
         deps_raw = data.get("dependencies", {})
         deps = (
             Dependencies.from_dict(deps_raw)
@@ -872,6 +930,8 @@ class AppManifest:
             backend=backend,
             permissions=permissions,
             setup=setup,
+            cli=cli,
+            loggerRoots=[str(r) for r in data.get("loggerRoots", []) if r],
             dependencies=deps,
             platform=platform_cfg,
             provider=provider_cfg,
