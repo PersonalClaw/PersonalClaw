@@ -9,7 +9,7 @@
     "dist": "electron-builder --mac --config.electronVersion=$(node -p \"require('electron/package.json').version\")"
   },
   "devDependencies": {
-    "electron": "^33.0.0",
+    "electron": "^43.2.0",
     "electron-builder": "^26.15.3"
   },
   "build": {

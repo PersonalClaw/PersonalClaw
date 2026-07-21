@@ -4,6 +4,12 @@
     "useDefineForClassFields": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
+    // @types/node 26 + TS 7 no longer auto-resolve Node globals (`process`) or
+    // `node:*` module specifiers in this bundler-mode config, so the source-scanning
+    // test (design/tokenLint.test.ts) failed to type-check. Declaring `node` restores
+    // them. All test files import their vitest APIs explicitly (no ambient vitest
+    // globals are relied on), so scoping `types` to node is safe.
+    "types": ["node"],
     "skipLibCheck": true,
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
