@@ -86,7 +86,8 @@ COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PERSONALCLAW_HOME=/data \
-    PERSONALCLAW_PORT=10000
+    PERSONALCLAW_PORT=10000 \
+    PERSONALCLAW_INSTALL_KIND=container
 
 RUN mkdir -p /data && chown personalclaw:personalclaw /data
 VOLUME ["/data"]

@@ -124,13 +124,44 @@ one permission it can't technically enforce. See the [security model](docs/archi
 
 ## Quickstart
 
+Install with one command — every path installs the **same release artifact** (no
+per-channel special builds), and you don't need to install Python or Node yourself:
+
 ```bash
-git clone https://github.com/PersonalClaw/PersonalClaw.git personalclaw && cd personalclaw
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
-make web-build
+uv tool install personalclaw && personalclaw setup     # recommended — uv brings Python 3.12
+```
+
+Or use the bootstrap one-liner (installs `uv` if it's missing, then the above):
+
+```bash
+curl -fsSL https://personalclaw.dev/install | sh
+```
+
+Then start the gateway:
+
+```bash
 personalclaw gateway
 ```
+
+### Install matrix
+
+| Path | Command | Best for |
+|---|---|---|
+| **uv tool** *(recommended)* | `uv tool install personalclaw` | anyone — `uv` provides Python 3.12 |
+| **Bootstrap** | `curl -fsSL https://personalclaw.dev/install \| sh` | the fastest start |
+| pipx | `pipx install personalclaw` | isolated Python tools |
+| pip | `pip install personalclaw` | inside an existing Python 3.12+ venv |
+| **Docker Compose** | see below | self-hosters · Windows |
+| Git checkout | [CONTRIBUTING](CONTRIBUTING.md#development-setup) | contributors / development |
+
+### Docker Compose
+
+```bash
+cp .env.example .env && docker compose -f deploy/compose/compose.yaml up -d
+```
+
+Brings up the gateway + a TLS web proxy with a persistent volume — details, backups,
+and updates in the [container guide](docs/guides/containers.md).
 
 The dashboard opens at `http://localhost:10000`. Install a model-provider app from the
 Store, add your API key under **Settings → Providers**, and bind a chat model under

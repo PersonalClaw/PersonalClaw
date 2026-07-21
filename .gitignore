@@ -13,6 +13,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+dist-client/
 
 # Test / lint caches
 .coverage
@@ -26,6 +27,7 @@ htmlcov/
 # Virtualenvs (lives at the repo root: .venv/)
 venv/
 .venv/
+.venv-client/
 
 # IDE / editor configs
 .vscode/

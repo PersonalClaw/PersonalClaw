@@ -148,18 +148,35 @@ async def _kill_session(sess: _TerminalSession) -> None:
         except (asyncio.CancelledError, Exception):
             pass
     if sess.proc is not None and sess.proc.returncode is None:
-        try:
-            os.killpg(sess.proc.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
+        _signal_session(sess, signal.SIGTERM)
         try:
             await asyncio.wait_for(sess.proc.wait(), timeout=5)
         except asyncio.TimeoutError:
-            try:
-                os.killpg(sess.proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            _signal_session(sess, signal.SIGKILL)
             await sess.proc.wait()
+
+
+def _signal_session(sess: _TerminalSession, sig: int) -> None:
+    """Signal the PTY child's whole process group, falling back to the process.
+
+    The child is spawned with ``start_new_session=True`` so it leads its own group
+    and ``killpg`` reaps the shell plus anything it launched. But ``killpg`` can raise
+    beyond ``ProcessLookupError``: on some hosts (observed on macOS CI runners) it
+    returns ``EPERM`` (``PermissionError``) when the group is no longer ours to signal.
+    A teardown must never propagate that — swallow the not-found/not-permitted cases
+    and fall back to signalling the process directly so the child is still stopped."""
+    if sess.proc is None:
+        return
+    try:
+        os.killpg(sess.proc.pid, sig)
+        return
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+    # Group signal unavailable — signal just the child process.
+    try:
+        sess.proc.send_signal(sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
 
 
 async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.Response:

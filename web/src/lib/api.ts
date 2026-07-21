@@ -579,7 +579,7 @@ export interface PortabilityManifest {
 export interface PortabilityPreviewResult { ok: boolean; error?: string; manifest?: PortabilityManifest }
 export interface PortabilityImportResult { ok: boolean; error?: string; summary?: { mode: string; items: string[] }; manifest?: PortabilityManifest }
 // Update + changelog.
-export interface UpdateCheck { available: boolean; changes: string; checked: boolean; auto_update: boolean; version?: string; latest?: string }
+export interface UpdateCheck { available: boolean; changes: string; checked: boolean; auto_update: boolean; version?: string; latest?: string; kind?: 'git' | 'pip' | 'container' | 'desktop'; current?: string; update_available?: boolean; commits_behind?: number | null; apply_method?: string; instructions?: string[]; update_dev_mode?: boolean; release_notes?: string }
 
 // settings entity payloads
 export interface NotificationSettings {
@@ -1798,6 +1798,7 @@ export const api = {
   // its update_progress state so a reload doesn't resurrect it).
   cancelUpdate: () => post<{ ok?: boolean }>('/api/update/cancel'),
   setAutoUpdate: (enabled: boolean) => post<{ ok?: boolean }>('/api/update/auto', { enabled }),
+  setUpdateDevMode: (enabled: boolean) => post<{ ok?: boolean }>('/api/update/dev-mode', { enabled }),
   // restart-only (no git pull) — apply committed backend changes.
   // probe first for the active-work count powering the confirm gate.
   restartProbe: () => post<{ ok: boolean; running_agents: number; sessions: number }>('/api/system/restart?probe=1'),

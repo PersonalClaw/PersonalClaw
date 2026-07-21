@@ -35,7 +35,16 @@ export function UpdatesPanel() {
   const apply = async () => {
     if (!(await confirm({ title: 'Apply the available update?', body: 'The backend will update and may restart.', confirmLabel: 'Apply update' }))) return
     setApplying(true); setMsg('')
-    try { const r = await api.applyUpdate(); setMsg(r.error || 'Update started — the backend may restart.') }
+    try {
+      const r = await api.applyUpdate()
+      // Container/desktop kinds return a structured instructions payload rather
+      // than applying in place — surface the commands instead of a restart note.
+      if ((r as { status?: string }).status === 'instructions') {
+        setMsg((r as { detail?: string }).detail || 'This install updates out-of-band — see the commands below.')
+      } else {
+        setMsg(r.error || 'Update started — the backend may restart.')
+      }
+    }
     catch (e) { setMsg(e instanceof Error ? e.message : 'Update failed') }
     setApplying(false)
   }
@@ -43,8 +52,19 @@ export function UpdatesPanel() {
     setInfo((p) => p && { ...p, auto_update: v })
     api.setAutoUpdate(v).then(() => { setSaved(true); window.setTimeout(() => setSaved(false), 1600) }).catch(() => {})
   }
+  const toggleDevMode = (v: boolean) => {
+    setInfo((p) => p && { ...p, update_dev_mode: v })
+    api.setUpdateDevMode(v).then(() => { setSaved(true); window.setTimeout(() => setSaved(false), 1600) }).catch(() => {})
+  }
 
   if (!info) return <FormSkeleton sections={3} />
+  const kind = info.kind ?? 'git'
+  const isContainer = kind === 'container'
+  const isDesktop = kind === 'desktop'
+  const isGit = kind === 'git'
+  // Only git+pip apply in place; container shows commands, desktop self-updates.
+  const canApplyInApp = isGit || kind === 'pip'
+  const kindLabel = { git: 'Git checkout', pip: 'pip / uv install', container: 'Container', desktop: 'Desktop app' }[kind] ?? kind
   return (
     <div>
       <PanelHeader title="Updates" hint="Keep the PersonalClaw core current — check for updates, auto-update, and read the changelog. Apps update individually from the Store." />
@@ -57,20 +77,36 @@ export function UpdatesPanel() {
               {info.available ? (
                 <>
                   <div className="text-on-surface text-[0.9rem]" style={{ fontVariationSettings: '"wght" 550' }}>Update available{info.latest ? ` — ${info.latest}` : ''}</div>
-                  <div className="text-on-surface-low text-[0.78rem]">{info.changes || 'A new version is ready to install.'}</div>
+                  <div className="text-on-surface-low text-[0.78rem]">
+                    {info.changes || 'A new version is ready to install.'}
+                    {isGit && typeof info.commits_behind === 'number' && info.commits_behind > 0 ? ` (${info.commits_behind} commit${info.commits_behind === 1 ? '' : 's'} behind)` : ''}
+                  </div>
                 </>
               ) : (
                 <div className="flex items-center gap-1.5 text-[0.9rem]" style={{ color: 'var(--color-success)' }}>
                   <CheckCircle2 size={15} /> <span className="text-on-surface">{info.checked ? 'Up to date' : 'No update check yet'}</span>
                 </div>
               )}
+              <div className="text-on-surface-low mt-0.5 text-[0.7rem]">Install type: {kindLabel}{info.current ? ` · v${info.current}` : ''}</div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <Button busy={checking} onClick={check} label="Check"><RefreshCw size={14} /> Check</Button>
-              {info.available && <Button busy={applying} primary onClick={apply} label="Update"><DownloadCloud size={14} /> Update</Button>}
+              {info.available && canApplyInApp && <Button busy={applying} primary onClick={apply} label="Update"><DownloadCloud size={14} /> Update</Button>}
             </div>
           </div>
           {msg && <div className="mt-2 text-on-surface-low text-[0.78rem]">{msg}</div>}
+
+          {/* Container: no in-place apply — show the exact pull+recreate commands. */}
+          {isContainer && info.available && (
+            <div className="mt-3 rounded-md bg-surface-high px-3 py-2">
+              <div className="text-on-surface-low mb-1 text-[0.72rem]">Update this container install by pulling the new image and recreating:</div>
+              <pre className="overflow-auto text-[0.75rem] leading-relaxed text-on-surface"><code>{(info.instructions?.length ? info.instructions : ['docker compose -f deploy/compose/compose.yaml pull', 'docker compose -f deploy/compose/compose.yaml up -d']).join('\n')}</code></pre>
+            </div>
+          )}
+          {/* Desktop: the shell (electron-updater) owns updates. */}
+          {isDesktop && info.available && (
+            <div className="mt-3 rounded-md bg-surface-high px-3 py-2 text-on-surface-low text-[0.75rem]">The desktop app updates itself on the next launch.</div>
+          )}
         </div>
       </Section>
 
@@ -79,6 +115,12 @@ export function UpdatesPanel() {
           <Row label="Auto-update" hint="Download and apply updates automatically when available.">
             <div className="flex items-center gap-2"><SavedToast show={saved} /><Toggle on={info.auto_update} onChange={toggleAuto} label="Auto-update" /></div>
           </Row>
+          {/* Dev-mode toggle: git checkouts only (track every commit vs. ride release tags). */}
+          {isGit && (
+            <Row label="Developer update mode" hint="Track every new commit on your branch instead of only tagged releases (contributors).">
+              <div className="flex items-center gap-2"><Toggle on={!!info.update_dev_mode} onChange={toggleDevMode} label="Developer update mode" /></div>
+            </Row>
+          )}
         </div>
       </Section>
 

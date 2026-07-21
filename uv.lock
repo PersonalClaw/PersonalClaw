@@ -2172,14 +2172,12 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
-    { name = "anthropic" },
     { name = "cron-descriptor" },
     { name = "croniter" },
     { name = "html2text" },
     { name = "httpx" },
     { name = "nh3" },
     { name = "numpy" },
-    { name = "openai" },
     { name = "openpyxl" },
     { name = "pdfplumber" },
     { name = "pillow" },
@@ -2271,7 +2269,6 @@ tts = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.9,<4" },
-    { name = "anthropic", specifier = ">=0.20" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.20" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=26,<27" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.34" },
@@ -2293,7 +2290,6 @@ requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.5" },
     { name = "nh3", specifier = ">=0.2" },
     { name = "numpy", specifier = ">=1.21,<2" },
-    { name = "openai", specifier = ">=1.0" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.0" },
     { name = "openpyxl", specifier = ">=3.1,<4" },
     { name = "pdfplumber", specifier = ">=0.11,<1" },

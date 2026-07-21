@@ -18,6 +18,8 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 ### Changed
 
 - **Provider-boundary completion (Slack residue retired from core):**
+- **LLM SDKs demoted out of core dependencies (`openai`, `anthropic`):**
+- **Self-update is now install-kind aware (git · pip · container · desktop):**
 
 ### Removed
 

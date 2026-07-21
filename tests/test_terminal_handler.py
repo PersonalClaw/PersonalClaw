@@ -149,6 +149,21 @@ class TestKillSession:
         # Should not raise
 
     @pytest.mark.asyncio
+    async def test_handles_permission_error_on_killpg_and_falls_back(self):
+        """os.killpg can raise EPERM (observed on macOS CI runners) when the group is
+        no longer ours to signal. Teardown must not propagate it — it falls back to
+        signalling the child process directly."""
+        import signal
+
+        sess = _make_session(alive=True)
+        with (
+            patch("os.close"),
+            patch("os.killpg", side_effect=PermissionError(1, "Operation not permitted")),
+        ):
+            await terminal._kill_session(sess)  # must not raise
+        sess.proc.send_signal.assert_any_call(signal.SIGTERM)
+
+    @pytest.mark.asyncio
     async def test_sigkill_on_timeout(self):
         import signal
 
