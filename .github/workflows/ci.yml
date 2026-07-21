@@ -1,6 +1,6 @@
 # CI — PR + feature-branch push. Fast verification gate (≤10-min budget).
 # Jobs are the stable ids other roadmap plans reference (CI-RELEASE-ENGINEERING C1):
-# lint · test · web · rails. Heavier matrix/coverage/audit live in full.yml (main + nightly).
+# lint · test · web · rails · client. Heavier matrix/coverage/audit live in full.yml (main + nightly).
 name: CI
 
 on:
@@ -102,3 +102,28 @@ jobs:
           for t in tests/test_lifecycle_gates.py tests/test_stability_inventory.py; do
             if [ -f "$t" ]; then uv run pytest "$t" -n0; fi
           done
+
+  client:
+    # personalclaw-client (packages/personalclaw-client-py) is versioned + published
+    # independently (release.yml → PyPI env release-client). It has its own deps
+    # (aiohttp, py3.9+) and is NOT part of the core uv workspace, so it gets its own
+    # job: build the wheel and run its test suite so a break is caught pre-merge
+    # (plan 34 T2.3). No PERSONALCLAW_HOME — the runner's $HOME is ephemeral, so the
+    # data-dir test resolves ~/.personalclaw as intended.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Build the client (proves packaging metadata is valid)
+        run: |
+          uv python install 3.12
+          uv pip install --system build
+          python -m build packages/personalclaw-client-py --outdir dist-client
+      - name: Test the client (its own deps)
+        run: |
+          uv venv .venv-client
+          uv pip install --python .venv-client "packages/personalclaw-client-py[dev]"
+          .venv-client/bin/python -m pytest packages/personalclaw-client-py/tests
