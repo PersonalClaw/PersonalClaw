@@ -171,3 +171,53 @@ async def test_fetch_latest_release_offline_returns_cache(monkeypatch, tmp_path)
     monkeypatch.setattr(aiohttp, "ClientSession", _BoomSession)
     got = await uk.fetch_latest_release()
     assert got["tag"] == "v0.1.2"  # degraded to the cached view, no raise
+
+
+# ── C2 wire-shape conformance (Tier-S once clients read it) ──────────────────
+
+
+@pytest.mark.asyncio
+async def test_c2_wire_shape_conformance(monkeypatch) -> None:
+    """build_update_status emits exactly the C2 contract keys (+ additive extras),
+    with the per-kind apply_method / commits_behind / instructions semantics the
+    plan pins. Locks the Tier-S wire shape against silent drift."""
+
+    async def _rel() -> dict:
+        return {"tag": "v0.2.0", "name": "0.2.0", "body": "notes"}
+
+    monkeypatch.setattr(uk, "fetch_latest_release", _rel)
+    monkeypatch.delenv("PERSONALCLAW_PROJECT_DIR", raising=False)
+
+    required = {
+        "kind",
+        "current",
+        "latest",
+        "update_available",
+        "commits_behind",
+        "apply_method",
+        "instructions",
+    }
+
+    # container: apply_method=instructions, commits_behind=null, instructions non-empty
+    monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
+    c = await uk.build_update_status("0.1.0")
+    assert required <= set(c)
+    assert c["apply_method"] == "instructions"
+    assert c["commits_behind"] is None
+    assert isinstance(c["instructions"], list) and c["instructions"]
+
+    # desktop: apply_method=desktop_delegate
+    monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "desktop")
+    d = await uk.build_update_status("0.1.0")
+    assert d["apply_method"] == "desktop_delegate"
+
+    # pip: apply_method=pip_upgrade, commits_behind=null, instructions=[]
+    monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
+    p = await uk.build_update_status("0.1.0")
+    assert p["apply_method"] == "pip_upgrade"
+    assert p["commits_behind"] is None
+    assert p["instructions"] == []
+    # current/latest are normalized (no leading v)
+    assert p["current"] == "0.1.0"
+    assert p["latest"] == "0.2.0"
+    assert p["update_available"] is True
