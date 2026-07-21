@@ -26,6 +26,12 @@ FROM mirror.gcr.io/library/nginx:1.27-alpine AS runtime
 # Copy built SPA
 COPY --from=builder /app/dist /usr/share/nginx/html
 
+# Mark this as a container install (plan 34 T3.1). The gateway's
+# detect_install_kind() reads PERSONALCLAW_INSTALL_KIND and only the BACKEND
+# container runs that Python process — but set it here too so every container in
+# the deployment self-identifies consistently (e.g. `docker exec … env`).
+ENV PERSONALCLAW_INSTALL_KIND=container
+
 # Install our proxy-aware config as a TEMPLATE. The official nginx image's
 # entrypoint (20-envsubst-on-templates.sh) renders /etc/nginx/templates/*.template
 # into /etc/nginx/conf.d/ at container start, substituting ${NGINX_LOCAL_RESOLVERS}
