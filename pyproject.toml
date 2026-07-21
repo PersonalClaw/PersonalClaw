@@ -28,15 +28,15 @@ classifiers = [
 # Runtime dependencies
 dependencies = [
     "aiohttp>=3.9,<4",
-    "websockets>=12,<16",
-    "cron-descriptor>=1.4,<2",
-    "croniter>=2.0,<3",
+    "websockets>=12,<17",
+    "cron-descriptor>=1.4,<3",
+    "croniter>=2.0,<7",
     # numpy is a CORE dep — it's the vector-math substrate for the Tier-1 native
     # memory app (native-vector-memory), which ships INSIDE core, so its deps are
     # baked in (not shed). It's small + NOT excluded from the desktop bundle
     # (unlike faiss/torch). vector_memory.py + memory_record.py still guard the
     # import so a stripped env degrades to stdlib rather than crashing.
-    "numpy>=1.21,<2",
+    "numpy>=1.21,<3",
     "snowballstemmer>=1.0",
     "pysqlite3-binary>=0.5.4; sys_platform == 'linux' and platform_machine == 'x86_64'",
     # Knowledge document readers (readers.py): .docx / .pdf / .pptx / .html.
