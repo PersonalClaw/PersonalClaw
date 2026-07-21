@@ -249,3 +249,33 @@ Format: one line per task/event — `DONE` / `DEVIATION` / `DISCOVERY` / `BLOCKE
 
 - **DONE T2.2 (bootstrap `install.sh` — content produced)** — Wrote the actual bootstrap script at `deploy/website/install.sh` (staged in-repo for the website repo, plan 36): POSIX sh (`set -eu`, validated with `sh -n` AND `dash -n`), OS/arch detect, `uv` presence check → official `astral.sh/uv/install.sh` if absent (curl→wget fallback; PATH fix-up for `~/.local/bin`/`~/.cargo/bin`), `uv tool install --upgrade personalclaw` (idempotent — re-runs upgrade), prints next steps + offers `personalclaw setup` (TTY-guarded so `curl | sh` never hangs), and a `--container` flag that prints the compose snippet. Verified: `--help`, `--container`, and unknown-arg (exit 1) paths work; the PATH loop is `set -e`-safe. Added `deploy/website/README.md` consolidating both cross-repo instruction blocks (install.sh → website `/install`; openai/anthropic `pythonDependencies` → apps repo manifests from T1.4) + the owner V-row/T2.1 checklist. **Apply:** copy `install.sh` to the website repo's static-assets path, serve at `/install` as `text/plain`, wire the plan-33 weekly smoke + shellcheck.
   - Evidence: `sh -n deploy/website/install.sh` + `dash -n` both clean; `--container` prints the compose snippet; `--help` prints usage; `--bogus` exits 1. The script is chmod +x. No core-repo behavior touched (staging + docs only).
+
+---
+
+## Execution log — Closeout summary (S1–S4 complete; S5 out of scope)
+
+**All core-repo + staged deliverables for Sessions S1–S4 are implemented and validated locally.** Commits on `main` (owner authorship + DCO, one conceptual commit per task):
+
+| Task | Commit | Deliverable |
+|---|---|---|
+| T1.1–T1.3 | `6b0104e` | `[project.urls]`, single-source `__version__` + consistency test, drop `zip-safe`; fixed the TOML nesting bug that had zeroed the wheel's `Requires-Dist` |
+| T1.4 | `71db09f` | Demote `openai`/`anthropic` to extras; `_sdk_deps.require_sdk`/`MissingSDKError` at the 4 lazy-import sites |
+| T1.5 | `eb5f0c4` | `scripts/verify_wheel.py` (contract C4) + wired into `release.yml` |
+| T2.3 | `13e46fd` | `personalclaw-client` packaging metadata + a `client` CI job |
+| T2.4 | `2b880d7` | getting-started uv-first install matrix + extras table; CONTRIBUTING framed as contributor path |
+| T3.1 + T3.2 | `b93c337` | `PERSONALCLAW_INSTALL_KIND=container` in both Dockerfiles; `docs/guides/containers.md` |
+| T3.3 | `843c3cd` | README install matrix + 2-line compose snippet |
+| T4.1 | `ded75c0` | `updates_kind.detect_install_kind()` (C1) + tests |
+| T4.2 | `aac5a84` | tag-driven check + ETag cache + C2 payload (`build_update_status`) |
+| T4.3 + T4.5(config) | `880131d` | per-kind apply (git/pip/container/desktop) + `dashboard.update_dev_mode` round-trip |
+| T4.4 | `b22cc8f` | per-kind Updates panel + `POST /api/update/dev-mode` |
+| T4.5 (changelog) | `a65d2fd` | CHANGELOG entry for the kind-aware self-update (clean-break, snapshot advice) |
+| T2.2 | `5bc4c98` | `deploy/website/install.sh` bootstrap + cross-repo instruction README |
+
+**Validation at closeout:** `make lint` green (black/isort/flake8/mypy — 453 source files); full pytest suite green under the CI no-global-home contract (**7696 passed, 0 failed** — the only in-loop "failures" are the loop's `PERSONALCLAW_HOME`/`BYPASS_LOCAL_NETWORKS` env overrides, which CI does not set); web gate green (`typecheck:web` + `build` + 70 vitest); built wheel proven Node-free-servable by `scripts/verify_wheel.py`.
+
+**DEVIATIONS (recorded above, restated):** (1) S4 self-update is a **clean break** — no `update_kind_aware` gate (C5/T4.5) because `lifecycle/gates.py` does not exist (LIFECYCLE-DOCTRINE deferred; owner decision 2026-07-20); the old git-only updater is replaced directly, CHANGELOG advises `personalclaw snapshot`. (2) Work committed on the loop's base branch (engine manages branching) rather than a self-created `feature-distribution` branch.
+
+**OWNER real-world steps remaining (no core-repo code):** T2.1 (first PyPI publish via `release.yml` env `release` + verify `uv tool`/`pipx` on a clean machine); V1 (clean-VM/empty-container wheel install → onboarding → first chat, Node absent); V2 (follow the new getting-started on a clean machine); V3 (container clean-VM: two commands → TLS dashboard → session+memory → `compose down && up` → state intact); V4 (per-kind self-update walkthroughs). Cross-repo hand-apply (staged in `deploy/website/README.md`): `install.sh` → website `/install` (plan 36); openai/anthropic `pythonDependencies` → apps-repo provider manifests.
+
+**S5 (Homebrew tap / Nix flake): OUT of scope for this loop (owner decision 2026-07-21). STOPPED at S4 — did not enter S5.**
