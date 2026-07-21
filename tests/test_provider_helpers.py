@@ -13,6 +13,10 @@ Guards two bugs found during the provider-integrity validation sweep:
 from __future__ import annotations
 
 import asyncio
+import sys
+import types
+
+import pytest
 
 import personalclaw.sdk.model  # noqa: F401 — ensure package import order
 from personalclaw.llm.capabilities import Capability
@@ -22,6 +26,35 @@ from personalclaw.sdk.provider_helpers import (
     BrandedProviderSpec,
     register_branded_app,
 )
+
+
+class _FakeAsyncAnthropic:
+    """Stand-in for ``anthropic.AsyncAnthropic`` so provider construction never
+    builds a real HTTP/SSL client. Records the resolved api_key/base_url, which is
+    exactly what the credential-routing tests assert on (``prov._client.api_key``)."""
+
+    def __init__(self, *, api_key: str, base_url: str | None = None) -> None:
+        self.api_key = api_key
+        self.base_url = base_url
+        self.messages = types.SimpleNamespace()
+
+    async def close(self) -> None:  # pragma: no cover - lifecycle no-op
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _fake_anthropic(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inject a fake ``anthropic`` module for every test in this file.
+
+    These are UNIT tests of credential/option wiring — they must not construct a
+    real ``anthropic.AsyncAnthropic``, whose eager httpx/SSL-context setup fails on
+    runners without a configured trust store (macOS + uv's python-build-standalone →
+    ``X509: NO_CERTIFICATE_OR_CRL_FOUND``). ``AnthropicProvider`` lazy-imports
+    ``anthropic`` inside ``__init__``, so swapping the module in ``sys.modules``
+    replaces the client cleanly."""
+    fake = types.ModuleType("anthropic")
+    fake.AsyncAnthropic = _FakeAsyncAnthropic  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "anthropic", fake)
 
 
 def _run(coro):

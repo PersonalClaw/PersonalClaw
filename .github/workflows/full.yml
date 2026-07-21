@@ -60,10 +60,14 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
       - name: pip-audit
+        # Install into a uv-managed venv, not `--system`: the runner's /usr is
+        # PEP-668 externally-managed and uv refuses `--system` there (the whole step
+        # then errored out under `bash -e` before pip-audit ever ran, silently
+        # disabling the scan). Report-only, so a finding never gates (|| true).
         run: |
-          uv pip install --system -e .
-          uv pip install --system pip-audit
-          python -m pip_audit || true
+          uv venv --python 3.12 .venv-audit
+          uv pip install --python .venv-audit/bin/python -e . pip-audit
+          .venv-audit/bin/python -m pip_audit || true
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
