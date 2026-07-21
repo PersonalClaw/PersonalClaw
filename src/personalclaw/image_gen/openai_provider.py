@@ -133,8 +133,13 @@ class OpenAIImageProvider(ImageGenProvider):
         n: int = 1,
         **opts: Any,
     ) -> list[ImageResult]:
-        client = self._client()
+        # Resolve/validate the model BEFORE building the client: a missing contributed
+        # default is a request error independent of SDK availability, so it must raise
+        # regardless of whether the openai SDK is installed (it is now an optional
+        # extra — DISTRIBUTION T1.4). Constructing the client first would mask this
+        # behind "SDK not installed" in a stripped install.
         model_id = self._default_model(model)
+        client = self._client()
         kwargs: dict[str, Any] = {"model": model_id, "prompt": prompt, "n": max(1, n)}
         if size:
             kwargs["size"] = size
@@ -159,8 +164,10 @@ class OpenAIImageProvider(ImageGenProvider):
         n: int = 1,
         **opts: Any,
     ) -> list[ImageResult]:
-        client = self._client()
+        # Validate the model before building the client (see generate()): a missing
+        # contributed default raises regardless of SDK availability (T1.4).
         model_id = self._default_model(model)
+        client = self._client()
         kwargs: dict[str, Any] = {"model": model_id, "prompt": prompt, "n": max(1, n)}
         if size:
             kwargs["size"] = size
