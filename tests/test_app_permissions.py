@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -31,9 +30,9 @@ class TestCheckerLogic:
     def test_api_prefix_allows_declared_only(self):
         c = _checker(api=["/api/notes", "/api/tags/*"])
         assert c.can_use_api("/api/notes")
-        assert c.can_use_api("/api/notes/123")      # under the declared prefix
-        assert c.can_use_api("/api/tags/anything")   # wildcard
-        assert not c.can_use_api("/api/secrets")     # undeclared
+        assert c.can_use_api("/api/notes/123")  # under the declared prefix
+        assert c.can_use_api("/api/tags/anything")  # wildcard
+        assert not c.can_use_api("/api/secrets")  # undeclared
 
     def test_no_api_scope_denies_all_gateway_api(self):
         c = _checker()
@@ -65,6 +64,7 @@ class TestCheckerLogic:
 
 # ── middleware enforcement (HTTP) ──
 
+
 async def _ok(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
@@ -76,10 +76,18 @@ async def _client(tmp_path, *, app_identity: str, permissions: dict):
     name = "demo"
     appdir = tmp_path / "apps" / name
     appdir.mkdir(parents=True)
-    (appdir / "app.json").write_text(json.dumps({
-        "name": name, "version": "1.0.0", "displayName": "Demo", "description": "x",
-        "permissions": permissions,
-    }), encoding="utf-8")
+    (appdir / "app.json").write_text(
+        json.dumps(
+            {
+                "name": name,
+                "version": "1.0.0",
+                "displayName": "Demo",
+                "description": "x",
+                "permissions": permissions,
+            }
+        ),
+        encoding="utf-8",
+    )
 
     @web.middleware
     async def stub_identity(request, handler):
@@ -96,8 +104,10 @@ async def _client(tmp_path, *, app_identity: str, permissions: dict):
                 raise web.HTTPForbidden(text="denied")
         return await handler(request)
 
-    with patch("personalclaw.config.loader.config_dir", return_value=tmp_path), \
-         patch.object(manager, "config_dir", return_value=tmp_path):
+    with (
+        patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
+        patch.object(manager, "config_dir", return_value=tmp_path),
+    ):
         app = web.Application(middlewares=[stub_identity, app_permission_middleware])
         app.router.add_get("/api/notes", _ok)
         app.router.add_get("/api/secrets", _ok)
@@ -122,8 +132,10 @@ async def test_middleware_no_app_identity_passes(tmp_path):
 
 
 def test_checker_for_unknown_app_is_none(tmp_path):
-    with patch("personalclaw.config.loader.config_dir", return_value=tmp_path), \
-         patch.object(manager, "config_dir", return_value=tmp_path):
+    with (
+        patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
+        patch.object(manager, "config_dir", return_value=tmp_path),
+    ):
         assert checker_for("ghost") is None
         assert checker_for("") is None
 
@@ -135,6 +147,7 @@ def test_checker_for_unknown_app_is_none(tmp_path):
 # _dev_user_middleware must adopt the token's app claim exactly like token_auth
 # does, so enforcement behaves identically in both auth modes.
 
+
 @asynccontextmanager
 async def _none_mode_client(tmp_path, *, permissions: dict):
     """Mirror server.py's none-mode chain: _dev_user_middleware (with the app-claim
@@ -144,10 +157,18 @@ async def _none_mode_client(tmp_path, *, permissions: dict):
     name = "demo"
     appdir = tmp_path / "apps" / name
     appdir.mkdir(parents=True)
-    (appdir / "app.json").write_text(json.dumps({
-        "name": name, "version": "1.0.0", "displayName": "Demo", "description": "x",
-        "permissions": permissions,
-    }), encoding="utf-8")
+    (appdir / "app.json").write_text(
+        json.dumps(
+            {
+                "name": name,
+                "version": "1.0.0",
+                "displayName": "Demo",
+                "description": "x",
+                "permissions": permissions,
+            }
+        ),
+        encoding="utf-8",
+    )
 
     @web.middleware
     async def dev_user_middleware(request, handler):
@@ -174,8 +195,10 @@ async def _none_mode_client(tmp_path, *, permissions: dict):
                 raise web.HTTPForbidden(text="denied")
         return await handler(request)
 
-    with patch("personalclaw.config.loader.config_dir", return_value=tmp_path), \
-         patch.object(manager, "config_dir", return_value=tmp_path):
+    with (
+        patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
+        patch.object(manager, "config_dir", return_value=tmp_path),
+    ):
         app = web.Application(middlewares=[dev_user_middleware, app_permission_middleware])
         app.router.add_get("/api/notes", _ok)
         app.router.add_get("/api/secrets", _ok)

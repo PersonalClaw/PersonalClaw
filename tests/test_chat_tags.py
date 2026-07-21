@@ -94,7 +94,14 @@ class TestNormalizeColumn:
 
     def test_existing_values_preserved_when_keys_absent(self, tmp_path):
         state = self._state_with_tags(tmp_path)
-        existing = {"id": "c1", "name": "Keep", "tag_ids": ["t1"], "mode": "all", "order": 7, "include_untagged": True}
+        existing = {
+            "id": "c1",
+            "name": "Keep",
+            "tag_ids": ["t1"],
+            "mode": "all",
+            "order": 7,
+            "include_untagged": True,
+        }
         col = _normalize_column(state, {"name": "Updated"}, existing=existing)
         assert col is not None
         assert col["id"] == "c1"
@@ -143,7 +150,9 @@ class TestTagVocabulary:
         state = _make_state(tmp_path)
         app = _make_tags_app(state)
         async with TestClient(TestServer(app)) as client:
-            resp = await client.post("/api/chat/tags", json={"name": "Spike", "color": "#22c55e", "status": False})
+            resp = await client.post(
+                "/api/chat/tags", json={"name": "Spike", "color": "#22c55e", "status": False}
+            )
             assert resp.status == 201
             tag = await resp.json()
             assert tag["name"] == "Spike"
@@ -177,7 +186,9 @@ class TestTagVocabulary:
         state = _make_state(tmp_path)
         app = _make_tags_app(state)
         async with TestClient(TestServer(app)) as client:
-            resp = await client.post("/api/chat/tags", data="not json", headers={"Content-Type": "application/json"})
+            resp = await client.post(
+                "/api/chat/tags", data="not json", headers={"Content-Type": "application/json"}
+            )
             assert resp.status == 400
 
     @pytest.mark.asyncio
@@ -187,8 +198,10 @@ class TestTagVocabulary:
         app = _make_tags_app(state)
         async with TestClient(TestServer(app)) as client:
             tag = await (await client.post("/api/chat/tags", json={"name": "Old"})).json()
-            resp = await client.patch(f"/api/chat/tags/{tag['id']}",
-                                      json={"name": "New", "color": "#00ff00", "order": 9, "status": True})
+            resp = await client.patch(
+                f"/api/chat/tags/{tag['id']}",
+                json={"name": "New", "color": "#00ff00", "order": 9, "status": True},
+            )
             assert resp.status == 200
             data = await resp.json()
             assert data["name"] == "New"
@@ -232,8 +245,11 @@ class TestTagVocabulary:
         app = _make_tags_app(state)
         async with TestClient(TestServer(app)) as client:
             tag = await (await client.post("/api/chat/tags", json={"name": "X"})).json()
-            resp = await client.patch(f"/api/chat/tags/{tag['id']}",
-                                      data="not json", headers={"Content-Type": "application/json"})
+            resp = await client.patch(
+                f"/api/chat/tags/{tag['id']}",
+                data="not json",
+                headers={"Content-Type": "application/json"},
+            )
             assert resp.status == 400
 
     @pytest.mark.asyncio
@@ -247,9 +263,12 @@ class TestTagVocabulary:
             session = _ChatSession("s1")
             session.tags = [tag["id"], other["id"]]
             state._sessions["s1"] = session
-            col = await (await client.post(
-                "/api/chat/tag-columns", json={"name": "Col", "tag_ids": [tag["id"], other["id"]], "mode": "any"}
-            )).json()
+            col = await (
+                await client.post(
+                    "/api/chat/tag-columns",
+                    json={"name": "Col", "tag_ids": [tag["id"], other["id"]], "mode": "any"},
+                )
+            ).json()
             with patch("personalclaw.dashboard.chat_tags._save_session_to_history"):
                 resp = await client.delete(f"/api/chat/tags/{tag['id']}")
             assert resp.status == 200
@@ -326,7 +345,9 @@ class TestSessionTags:
         app = _make_tags_app(state)
         async with TestClient(TestServer(app)) as client:
             resp = await client.put(
-                "/api/chat/sessions/s1/tags", data="not json", headers={"Content-Type": "application/json"}
+                "/api/chat/sessions/s1/tags",
+                data="not json",
+                headers={"Content-Type": "application/json"},
             )
             assert resp.status == 400
 
@@ -390,7 +411,9 @@ class TestColumns:
         app = _make_tags_app(state)
         async with TestClient(TestServer(app)) as client:
             resp = await client.post(
-                "/api/chat/tag-columns", data="not json", headers={"Content-Type": "application/json"}
+                "/api/chat/tag-columns",
+                data="not json",
+                headers={"Content-Type": "application/json"},
             )
             assert resp.status == 400
 
@@ -401,8 +424,9 @@ class TestColumns:
         app = _make_tags_app(state)
         async with TestClient(TestServer(app)) as client:
             col = await (await client.post("/api/chat/tag-columns", json={"name": "Old"})).json()
-            resp = await client.patch(f"/api/chat/tag-columns/{col['id']}",
-                                      json={"name": "New", "include_untagged": True})
+            resp = await client.patch(
+                f"/api/chat/tag-columns/{col['id']}", json={"name": "New", "include_untagged": True}
+            )
             assert resp.status == 200
             data = await resp.json()
             assert data["name"] == "New"
@@ -435,7 +459,9 @@ class TestColumns:
         async with TestClient(TestServer(app)) as client:
             col = await (await client.post("/api/chat/tag-columns", json={"name": "Col"})).json()
             resp = await client.patch(
-                f"/api/chat/tag-columns/{col['id']}", data="not json", headers={"Content-Type": "application/json"}
+                f"/api/chat/tag-columns/{col['id']}",
+                data="not json",
+                headers={"Content-Type": "application/json"},
             )
             assert resp.status == 400
 
@@ -492,7 +518,9 @@ class TestColumns:
         app = _make_tags_app(state)
         async with TestClient(TestServer(app)) as client:
             resp = await client.put(
-                "/api/chat/tag-columns/order", data="not json", headers={"Content-Type": "application/json"}
+                "/api/chat/tag-columns/order",
+                data="not json",
+                headers={"Content-Type": "application/json"},
             )
             assert resp.status == 400
 
@@ -516,17 +544,28 @@ class TestDrop:
         state = _make_state(tmp_path)
         app = _make_tags_app(state)
         async with TestClient(TestServer(app)) as client:
-            todo = await (await client.post("/api/chat/tags", json={"name": "ToDo", "status": True})).json()
-            done = await (await client.post("/api/chat/tags", json={"name": "Done", "status": True})).json()
-            spike = await (await client.post("/api/chat/tags", json={"name": "spike", "status": False})).json()
+            todo = await (
+                await client.post("/api/chat/tags", json={"name": "ToDo", "status": True})
+            ).json()
+            done = await (
+                await client.post("/api/chat/tags", json={"name": "Done", "status": True})
+            ).json()
+            spike = await (
+                await client.post("/api/chat/tags", json={"name": "spike", "status": False})
+            ).json()
             session = _ChatSession("s1")
             session.tags = [todo["id"], spike["id"]]
             state._sessions["s1"] = session
-            col = await (await client.post(
-                "/api/chat/tag-columns", json={"name": "Col", "tag_ids": [done["id"]], "mode": "any"}
-            )).json()
+            col = await (
+                await client.post(
+                    "/api/chat/tag-columns",
+                    json={"name": "Col", "tag_ids": [done["id"]], "mode": "any"},
+                )
+            ).json()
             with patch("personalclaw.dashboard.chat_tags._save_session_to_history"):
-                resp = await client.post("/api/chat/sessions/s1/drop", json={"column_id": col["id"]})
+                resp = await client.post(
+                    "/api/chat/sessions/s1/drop", json={"column_id": col["id"]}
+                )
             data = await resp.json()
             assert data["ok"] is True
             assert done["id"] in data["tags"]
@@ -539,13 +578,17 @@ class TestDrop:
         state = _make_state(tmp_path)
         app = _make_tags_app(state)
         async with TestClient(TestServer(app)) as client:
-            todo = await (await client.post("/api/chat/tags", json={"name": "ToDo", "status": True})).json()
+            todo = await (
+                await client.post("/api/chat/tags", json={"name": "ToDo", "status": True})
+            ).json()
             session = _ChatSession("s1")
             session.tags = [todo["id"]]
             state._sessions["s1"] = session
-            col = await (await client.post(
-                "/api/chat/tag-columns", json={"name": "Col", "tag_ids": [], "mode": "any"}
-            )).json()
+            col = await (
+                await client.post(
+                    "/api/chat/tag-columns", json={"name": "Col", "tag_ids": [], "mode": "any"}
+                )
+            ).json()
             resp = await client.post("/api/chat/sessions/s1/drop", json={"column_id": col["id"]})
             data = await resp.json()
             assert data["ok"] is False
@@ -578,7 +621,9 @@ class TestDrop:
         app = _make_tags_app(state)
         async with TestClient(TestServer(app)) as client:
             resp = await client.post(
-                "/api/chat/sessions/s1/drop", data="not json", headers={"Content-Type": "application/json"}
+                "/api/chat/sessions/s1/drop",
+                data="not json",
+                headers={"Content-Type": "application/json"},
             )
             assert resp.status == 400
 
@@ -589,14 +634,21 @@ class TestDrop:
         state = _make_state(tmp_path)
         app = _make_tags_app(state)
         async with TestClient(TestServer(app)) as client:
-            todo = await (await client.post("/api/chat/tags", json={"name": "ToDo", "status": True})).json()
-            done = await (await client.post("/api/chat/tags", json={"name": "Done", "status": True})).json()
+            todo = await (
+                await client.post("/api/chat/tags", json={"name": "ToDo", "status": True})
+            ).json()
+            done = await (
+                await client.post("/api/chat/tags", json={"name": "Done", "status": True})
+            ).json()
             session = _ChatSession("s1")
             session.tags = [todo["id"]]
             state._sessions["s1"] = session
-            col = await (await client.post(
-                "/api/chat/tag-columns", json={"name": "Col", "tag_ids": [todo["id"], done["id"]], "mode": "any"}
-            )).json()
+            col = await (
+                await client.post(
+                    "/api/chat/tag-columns",
+                    json={"name": "Col", "tag_ids": [todo["id"], done["id"]], "mode": "any"},
+                )
+            ).json()
             resp = await client.post("/api/chat/sessions/s1/drop", json={"column_id": col["id"]})
             data = await resp.json()
             assert data["ok"] is False
@@ -678,19 +730,29 @@ class TestDropOnMixedColumn:
         state = _make_state(tmp_path)
         app = _make_tags_app(state)
         async with TestClient(TestServer(app)) as client:
-            todo = await (await client.post("/api/chat/tags", json={"name": "ToDo", "status": True})).json()
-            done = await (await client.post("/api/chat/tags", json={"name": "Done", "status": True})).json()
-            spike = await (await client.post("/api/chat/tags", json={"name": "spike", "status": False})).json()
+            todo = await (
+                await client.post("/api/chat/tags", json={"name": "ToDo", "status": True})
+            ).json()
+            done = await (
+                await client.post("/api/chat/tags", json={"name": "Done", "status": True})
+            ).json()
+            spike = await (
+                await client.post("/api/chat/tags", json={"name": "spike", "status": False})
+            ).json()
             session = _ChatSession("s1")
             session.tags = [todo["id"]]
             state._sessions["s1"] = session
             # Column is "Done AND spike" — exactly one status tag in the filter.
-            col = await (await client.post(
-                "/api/chat/tag-columns",
-                json={"name": "Col", "tag_ids": [done["id"], spike["id"]], "mode": "all"},
-            )).json()
+            col = await (
+                await client.post(
+                    "/api/chat/tag-columns",
+                    json={"name": "Col", "tag_ids": [done["id"], spike["id"]], "mode": "all"},
+                )
+            ).json()
             with patch("personalclaw.dashboard.chat_tags._save_session_to_history"):
-                resp = await client.post("/api/chat/sessions/s1/drop", json={"column_id": col["id"]})
+                resp = await client.post(
+                    "/api/chat/sessions/s1/drop", json={"column_id": col["id"]}
+                )
             data = await resp.json()
             assert data["ok"] is True
             assert done["id"] in data["tags"]

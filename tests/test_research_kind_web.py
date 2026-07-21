@@ -44,9 +44,11 @@ def test_brief_names_the_real_tools():
 
 
 def test_brief_surfaces_breadth_depth_and_max_uses():
-    brief = kinds.get("research").build_brief(_research_loop(breadth=4, depth=3, max_uses_per_cycle=20))
+    brief = kinds.get("research").build_brief(
+        _research_loop(breadth=4, depth=3, max_uses_per_cycle=20)
+    )
     assert "4" in brief and "3" in brief  # breadth / depth values
-    assert "20" in brief                  # max-uses ceiling
+    assert "20" in brief  # max-uses ceiling
     assert "breadth" in brief.lower() and "depth" in brief.lower()
 
 

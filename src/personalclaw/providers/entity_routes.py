@@ -97,9 +97,7 @@ def _type_error(body: dict[str, Any], defaults: dict[str, Any]) -> str:
     return ""
 
 
-def _put_type_guard(
-    body: dict[str, Any], defaults: dict[str, Any]
-) -> web.Response | None:
+def _put_type_guard(body: dict[str, Any], defaults: dict[str, Any]) -> web.Response | None:
     """The shared 400 for a mistyped known key on an entity-settings PUT."""
     bad = _type_error(body, defaults)
     if not bad:
@@ -231,9 +229,7 @@ async def handle_inbox_settings_put(request: web.Request) -> web.Response:
     # clamped: a raw PUT of -5 used to slip to the consumer's max(1, …) and
     # become a silent ONE-DAY retention window — a mass-cleanup hazard.
     if "retention_days" in known and not (1 <= known["retention_days"] <= 3650):
-        return web.json_response(
-            {"error": "retention_days must be between 1 and 3650"}, status=400
-        )
+        return web.json_response({"error": "retention_days must be between 1 and 3650"}, status=400)
     current = load_inbox_settings()
     current.update(known)
     _save_entity_settings("inbox", current)
@@ -275,9 +271,7 @@ async def handle_notifications_settings_put(request: web.Request) -> web.Respons
         )
     for key in ("quiet_hours_start", "quiet_hours_end"):
         if key in known and _parse_hhmm(known[key]) is None:
-            return web.json_response(
-                {"error": f"{key} must be a 24-hour HH:MM time"}, status=400
-            )
+            return web.json_response({"error": f"{key} must be a 24-hour HH:MM time"}, status=400)
     current = load_notifications_settings()
     current.update(known)
     _save_entity_settings("notifications", current)

@@ -1,10 +1,10 @@
 """Tests for context_management module."""
 
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
-import time
 
 
 @pytest.fixture
@@ -127,7 +127,7 @@ def test_orchestration_tracker_failure_limit():
     t = OrchestrationTracker()
     assert t.record_failure("task-a") is False  # 1
     assert t.record_failure("task-a") is False  # 2
-    assert t.record_failure("task-a") is True   # 3 — limit reached
+    assert t.record_failure("task-a") is True  # 3 — limit reached
     assert t.failure_count("task-a") == 3
 
 
@@ -212,18 +212,25 @@ def test_plan_memory_summary_with_lessons(tmp_path):
     with patch("personalclaw.context_management.config_dir", return_value=tmp_path):
         # Write global plan lessons (as if consolidation generated them)
         plan_lessons_path().parent.mkdir(parents=True, exist_ok=True)
-        plan_lessons_path().write_text("- Always run tests before committing\n- Lint failures can be skipped for hotfixes")
+        plan_lessons_path().write_text(
+            "- Always run tests before committing\n- Lint failures can be skipped for hotfixes"
+        )
         # Write session events
-        append_plan_event("sess-2", {"type": "task_failed", "stage": 1, "task": "lint", "error": "timeout", "attempt": 2})
-        append_plan_event("sess-2", {"type": "user_guidance", "question": "skip lint?", "answer": "yes, skip it"})
+        append_plan_event(
+            "sess-2",
+            {"type": "task_failed", "stage": 1, "task": "lint", "error": "timeout", "attempt": 2},
+        )
+        append_plan_event(
+            "sess-2", {"type": "user_guidance", "question": "skip lint?", "answer": "yes, skip it"}
+        )
         summary = summarize_plan_memory_for_context("sess-2")
     assert "Plan lessons from past sessions" in summary
     assert "Always run tests" in summary
 
 
 def test_plan_memory_empty_session(tmp_path):
-    from personalclaw.context_management import summarize_plan_memory_for_context
     import personalclaw.context_management as _cm
+    from personalclaw.context_management import summarize_plan_memory_for_context
 
     _cm._plan_lessons_cache = (0.0, "")  # reset cache from prior tests
     with patch("personalclaw.context_management.config_dir", return_value=tmp_path):
@@ -234,8 +241,8 @@ def test_build_plan_consolidation_prompt(tmp_path):
     from personalclaw.context_management import (
         append_plan_event,
         build_plan_consolidation_prompt,
-        save_plan_lessons,
         plan_lessons_path,
+        save_plan_lessons,
     )
 
     with patch("personalclaw.context_management.config_dir", return_value=tmp_path):
@@ -245,8 +252,14 @@ def test_build_plan_consolidation_prompt(tmp_path):
         # Simulate events from multiple sessions
         append_plan_event("s1", {"type": "task_failed", "task": "lint check", "error": "timeout"})
         append_plan_event("s2", {"type": "task_failed", "task": "lint check", "error": "timeout"})
-        append_plan_event("s1", {"type": "user_guidance", "question": "skip?", "answer": "Yes, skip lint for hotfixes"})
-        append_plan_event("s2", {"type": "plan_completed", "success": True, "summary": "3-stage review worked well"})
+        append_plan_event(
+            "s1",
+            {"type": "user_guidance", "question": "skip?", "answer": "Yes, skip lint for hotfixes"},
+        )
+        append_plan_event(
+            "s2",
+            {"type": "plan_completed", "success": True, "summary": "3-stage review worked well"},
+        )
 
         prompt = build_plan_consolidation_prompt()
         assert "lint check" in prompt
@@ -355,11 +368,15 @@ def test_looks_like_plan_true():
 def test_looks_like_plan_true_numbered_bold():
     from personalclaw.context_management import looks_like_plan
 
-    assert looks_like_plan("1. **Analysis**: check\n2. **Implementation**: code\n3. **Test**: verify") is True
+    assert (
+        looks_like_plan("1. **Analysis**: check\n2. **Implementation**: code\n3. **Test**: verify")
+        is True
+    )
 
 
 def test_looks_like_plan_true_stage_keyword():
     from personalclaw.context_management import looks_like_plan
+
     assert looks_like_plan("Stage 1: Setup\n- Install deps\nStage 2: Build\n- Compile") is True
 
 
@@ -386,9 +403,13 @@ async def test_rephrase_plan_not_a_plan_returns_none():
     client = AsyncMock()
     client.send_message = AsyncMock(return_value=None)
 
-    with patch("personalclaw.llm_helpers.stream_and_collect", new_callable=AsyncMock) as mock_stream:
+    with patch(
+        "personalclaw.llm_helpers.stream_and_collect", new_callable=AsyncMock
+    ) as mock_stream:
         mock_stream.return_value = "NOT_A_PLAN"
-        result = await rephrase_plan("some analysis text", ["No header"], client, might_not_be_plan=True)
+        result = await rephrase_plan(
+            "some analysis text", ["No header"], client, might_not_be_plan=True
+        )
     assert result is None
 
 
@@ -398,9 +419,13 @@ async def test_rephrase_plan_is_a_plan_returns_reformatted():
     from personalclaw.context_management import rephrase_plan
 
     reformatted = "📋 Plan for: task\n\nStage 1: Do it\n- step\n\n[OPTION: Go | Go All | Cancel]"
-    with patch("personalclaw.llm_helpers.stream_and_collect", new_callable=AsyncMock) as mock_stream:
+    with patch(
+        "personalclaw.llm_helpers.stream_and_collect", new_callable=AsyncMock
+    ) as mock_stream:
         mock_stream.return_value = reformatted
-        result = await rephrase_plan("Phase 1: Do it", ["No header"], AsyncMock(), might_not_be_plan=True)
+        result = await rephrase_plan(
+            "Phase 1: Do it", ["No header"], AsyncMock(), might_not_be_plan=True
+        )
     assert result == reformatted
 
 
@@ -410,7 +435,7 @@ async def test_rephrase_plan_is_a_plan_returns_reformatted():
 def test_validate_plan_format_valid():
     from personalclaw.context_management import validate_plan_format
 
-    plan = '📋 Plan for: "test"\n\nStage 1: Setup\n- task\n\nStage 2: Build\n- task\n\n[OPTION: Go | Go All | Cancel]'
+    plan = '📋 Plan for: "test"\n\nStage 1: Setup\n- task\n\nStage 2: Build\n- task\n\n[OPTION: Go | Go All | Cancel]'  # noqa: E501
     has_plan, valid, issues = validate_plan_format(plan)
     assert has_plan and valid and not issues
 
@@ -425,7 +450,9 @@ def test_validate_plan_format_no_header():
 def test_validate_plan_format_no_stages():
     from personalclaw.context_management import validate_plan_format
 
-    has_plan, valid, issues = validate_plan_format('📋 Plan for: "test"\n\n[OPTION: Go | Go All | Cancel]')
+    has_plan, valid, issues = validate_plan_format(
+        '📋 Plan for: "test"\n\n[OPTION: Go | Go All | Cancel]'
+    )
     assert has_plan and not valid
     assert any("Stage" in i for i in issues)
 

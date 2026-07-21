@@ -24,8 +24,8 @@ from typing import Any
 
 from personalclaw.action_providers.base import (
     ActionContext,
-    ActionResult,
     ActionProvider,
+    ActionResult,
 )
 from personalclaw.action_providers.services import get_action_services
 from personalclaw.action_providers.template import render_template
@@ -50,9 +50,7 @@ class SendMessageActionProvider(ActionProvider):
     ) -> ActionResult:
         text = render_template(action_config.get("text_template", ""), ctx).strip()
         if not text:
-            return ActionResult(
-                success=False, error="send-message hook is missing 'text_template'"
-            )
+            return ActionResult(success=False, error="send-message hook is missing 'text_template'")
         title = (action_config.get("title") or "").strip()
 
         services = get_action_services()
@@ -82,7 +80,9 @@ class SendMessageActionProvider(ActionProvider):
             try:
                 state.notify("info", title or "Agent message", text)
             except Exception as exc:  # noqa: BLE001
-                return ActionResult(success=False, error=f"send-message: no channel + notify failed: {exc}")
+                return ActionResult(
+                    success=False, error=f"send-message: no channel + notify failed: {exc}"
+                )
             return ActionResult(
                 success=True, exit_code=0, stdout="no channel provider; delivered as notification"
             )
@@ -97,7 +97,9 @@ class SendMessageActionProvider(ActionProvider):
                     )
                 target = await delivery.open_dm(owner)
             if not target:
-                return ActionResult(success=False, error="send-message: could not resolve a delivery target")
+                return ActionResult(
+                    success=False, error="send-message: could not resolve a delivery target"
+                )
             await delivery.deliver_text(target, body)
         except Exception as exc:  # noqa: BLE001 - error result, never raise
             return ActionResult(success=False, error=f"send-message failed: {exc}")

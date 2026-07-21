@@ -15,6 +15,7 @@ from personalclaw.security import redact_credentials, redact_exfiltration_urls
 if TYPE_CHECKING:
     from personalclaw.knowledge.llm_pool import LLMPool
 
+
 def _insights_prompt(content: str) -> str:
     """Render the insights-extraction prompt (bundled ``task-knowledge-insights``,
     bindable in Settings → Prompts) for a piece of content.
@@ -25,9 +26,13 @@ def _insights_prompt(content: str) -> str:
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
     from personalclaw.security import fence_untrusted
 
-    return render_use_case_prompt(
-        "knowledge_insights", {"content": fence_untrusted(content, source="ingested")}
-    ) or ""
+    return (
+        render_use_case_prompt(
+            "knowledge_insights", {"content": fence_untrusted(content, source="ingested")}
+        )
+        or ""
+    )
+
 
 INSIGHTS_TIMEOUT = 180.0
 

@@ -136,7 +136,9 @@ def _parse_title(text: str) -> str:
     return title[:60]
 
 
-async def _generate_title_via_provider(state: DashboardState, messages: list[dict[str, str]]) -> str:
+async def _generate_title_via_provider(
+    state: DashboardState, messages: list[dict[str, str]]
+) -> str:
     """Generate a title using the shared background agent session."""
 
     prompt = _build_title_prompt(messages)
@@ -151,6 +153,7 @@ async def _generate_title_via_provider(state: DashboardState, messages: list[dic
 
 # ── Auto-tagging (same LLM call as the title — no second roundtrip) ─────────
 
+
 def _build_tags_suffix(state: DashboardState) -> str:
     """The tag-proposal instructions appended to the title prompt.
 
@@ -158,7 +161,8 @@ def _build_tags_suffix(state: DashboardState) -> str:
     parser already only reads the first line).
     """
     existing = ", ".join(
-        str(t.get("name", "")) for t in sorted(state._tags, key=lambda t: t.get("order", 0))
+        str(t.get("name", ""))
+        for t in sorted(state._tags, key=lambda t: t.get("order", 0))
         if t.get("name")
     )
     return (
@@ -283,17 +287,15 @@ async def _maybe_auto_title(state: DashboardState, session: _ChatSession) -> Non
     user_count = sum(1 for m in session.messages if m.get("role") == "user")
     if user_count < 1 or user_count > _TITLE_MAX_ATTEMPTS:
         if user_count > _TITLE_MAX_ATTEMPTS and not session._titled:
-            first_user = next((m["content"] for m in session.messages if m.get("role") == "user"), "")
+            first_user = next(
+                (m["content"] for m in session.messages if m.get("role") == "user"), ""
+            )
             _apply_title(state, session, first_user[:60] or session.key)
         return
     logger.info("Auto-title: attempting for session %s (turn %d)", session.key, user_count)
     # Piggyback tag proposal on the title call only when it can actually apply:
     # flag on, user hasn't tagged, session isn't restricted.
-    want_tags = (
-        not session.is_restricted
-        and not session.tags
-        and _auto_tag_enabled()
-    )
+    want_tags = not session.is_restricted and not session.tags and _auto_tag_enabled()
     try:
         prompt = _build_title_prompt(session.messages)
         if not prompt:

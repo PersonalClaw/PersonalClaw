@@ -19,23 +19,26 @@ import pytest
 
 from personalclaw.apps import app_manager, manager, prompt_registry
 from personalclaw.apps.manifest import AppManifest
-from personalclaw.providers import prompt_use_cases as puc
-from personalclaw.providers.loader import BUNDLED_DIR
 from personalclaw.prompt_providers.base import PromptVariable
 from personalclaw.prompt_providers.engine import render
 from personalclaw.prompt_providers.runtime import render_use_case_prompt
+from personalclaw.providers import prompt_use_cases as puc
+from personalclaw.providers.loader import BUNDLED_DIR
 
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
     """Isolated config dir + fresh prompt-provider + app-prompt registries."""
     import personalclaw.config.loader as cfg
+
     monkeypatch.setattr(cfg, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
     import personalclaw.prompt_providers.registry as preg
+
     preg._providers.clear()
     prompt_registry.clear()
     from personalclaw.providers import registry as reg
+
     monkeypatch.setattr(reg, "_registry", None, raising=False)
     # Seeding is intentionally exercised here, so the skip flag must be OFF.
     monkeypatch.delenv("PERSONALCLAW_SKIP_PROMPT_SEED", raising=False)
@@ -57,10 +60,18 @@ _APPS_DIR = Path(__file__).resolve().parents[2] / "apps"
     "use_cases,prompt_names",
     [
         (
-            ["knowledge_extraction", "knowledge_insights",
-             "knowledge_intent_match", "knowledge_skill_synthesis"],
-            ["task-knowledge-extraction", "task-knowledge-insights",
-             "task-knowledge-intent-match", "task-knowledge-skill-synthesis"],
+            [
+                "knowledge_extraction",
+                "knowledge_insights",
+                "knowledge_intent_match",
+                "knowledge_skill_synthesis",
+            ],
+            [
+                "task-knowledge-extraction",
+                "task-knowledge-insights",
+                "task-knowledge-intent-match",
+                "task-knowledge-skill-synthesis",
+            ],
         ),
     ],
 )
@@ -105,8 +116,7 @@ def test_web_extract_renders_byte_identical_to_pre_migration_literal():
         PromptVariable(name="url", default=""),
         PromptVariable(name="content", type="textarea", required=True),
     ]
-    values = {"instructions": "name + price", "title": "T", "url": "http://x",
-              "content": "BODY"}
+    values = {"instructions": "name + price", "title": "T", "url": "http://x", "content": "BODY"}
     expected = render(expected_content, variables, values)
     assert render_use_case_prompt("web_extract", values) == expected
 
@@ -158,8 +168,7 @@ def test_knowledge_skill_synthesis_renders_byte_identical():
         "TRIGGERS: <comma-separated keywords>\n"
         "PROCEDURE:\n<markdown steps the agent should follow>"
     )
-    rendered = render_use_case_prompt("knowledge_skill_synthesis",
-                                      {"goal": goal, "digest": digest})
+    rendered = render_use_case_prompt("knowledge_skill_synthesis", {"goal": goal, "digest": digest})
     assert rendered == expected
 
 
@@ -171,8 +180,13 @@ def test_no_apps_installed_leaves_core_vocabulary_intact():
     assert puc.all_prompt_use_cases() == tuple(p.use_case for p in BUNDLED_PROMPTS)
     # The migrated use-cases are NOT in the core catalog.
     core = {p.use_case for p in BUNDLED_PROMPTS}
-    for uc in ("web_extract", "knowledge_extraction", "knowledge_insights",
-               "knowledge_intent_match", "knowledge_skill_synthesis"):
+    for uc in (
+        "web_extract",
+        "knowledge_extraction",
+        "knowledge_insights",
+        "knowledge_intent_match",
+        "knowledge_skill_synthesis",
+    ):
         assert uc not in core
 
 
@@ -184,7 +198,8 @@ def _prompt_app(tmp_path: Path, *, with_snippet: bool = True) -> Path:
     pdir = d / "prompts"
     pdir.mkdir(parents=True)
     prompts = ["prompts/greet.yaml"]
-    (pdir / "greet.yaml").write_text(textwrap.dedent("""\
+    (pdir / "greet.yaml").write_text(
+        textwrap.dedent("""\
         _entity: prompt
         use_case: app_greet
         name: app-greet
@@ -194,20 +209,32 @@ def _prompt_app(tmp_path: Path, *, with_snippet: bool = True) -> Path:
         content: |-
           Hello {{who}}.
           {{> app-sig}}
-    """), encoding="utf-8")
+    """),
+        encoding="utf-8",
+    )
     if with_snippet:
         prompts.append("prompts/sig.yaml")
-        (pdir / "sig.yaml").write_text(textwrap.dedent("""\
+        (pdir / "sig.yaml").write_text(
+            textwrap.dedent("""\
             _entity: snippet
             name: app-sig
             description: A fixture app-owned snippet.
             content: '-- from the promptly app'
-        """), encoding="utf-8")
-    (d / "app.json").write_text(json.dumps({
-        "name": "promptly", "version": "1.0.0", "displayName": "Promptly",
-        "description": "ships its own prompt + snippet",
-        "prompts": prompts,
-    }), encoding="utf-8")
+        """),
+            encoding="utf-8",
+        )
+    (d / "app.json").write_text(
+        json.dumps(
+            {
+                "name": "promptly",
+                "version": "1.0.0",
+                "displayName": "Promptly",
+                "description": "ships its own prompt + snippet",
+                "prompts": prompts,
+            }
+        ),
+        encoding="utf-8",
+    )
     return d
 
 
@@ -252,8 +279,9 @@ def test_seed_is_non_clobbering_of_user_edits(tmp_path):
     prov = get_prompt_provider("native")
 
     # Simulate a user edit, then re-seed (e.g. a restart) — the edit must survive.
-    prov.update_prompt("app-greet", PromptTemplate(name="app-greet", kind="user",
-                                                   content="EDITED {{who}}"))
+    prov.update_prompt(
+        "app-greet", PromptTemplate(name="app-greet", kind="user", content="EDITED {{who}}")
+    )
     manifest = AppManifest.from_json_file(manager.app_dir("promptly") / "app.json")
     seed_app_prompts(manifest, manager.app_dir("promptly"))
     assert prov.get_prompt("app-greet").content == "EDITED {{who}}"

@@ -1,4 +1,5 @@
 """Tests for live channel thread sync (bidirectional mirroring)."""
+
 from unittest.mock import MagicMock
 
 from personalclaw.dashboard.state import DashboardState, _ChatSession

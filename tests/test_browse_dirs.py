@@ -112,7 +112,8 @@ class TestBrowseDirs:
 
     @pytest.mark.asyncio
     async def test_file_path_says_file_not_directory(self, tmp_path, mock_sel):
-        f = tmp_path / "a_file.txt"; f.write_text("x")
+        f = tmp_path / "a_file.txt"
+        f.write_text("x")
         async with TestClient(TestServer(_make_app())) as client:
             resp = await client.get(f"/api/browse-dirs?path={f}")
             assert resp.status == 404
@@ -166,6 +167,7 @@ class TestCreateDir:
         # create under them too (consistency + a dir there would be unreachable in
         # the picker, and is_sensitive_path doesn't cover /etc & friends).
         import os
+
         async with TestClient(TestServer(_make_app())) as client:
             # _SYSTEM_ROOTS now matches the Code engine's validation list, so creating
             # under any OS-managed tree (not just /etc) is refused — so a stray folder

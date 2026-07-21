@@ -20,8 +20,8 @@ from aiohttp.test_utils import make_mocked_request
 from personalclaw.dashboard import model_downloads as M
 from personalclaw.dashboard.handlers import model_downloads as H
 
-
 # ── catalog/provider stubs (no network) ──
+
 
 @pytest.fixture(autouse=True)
 def _stub_providers(monkeypatch):
@@ -32,7 +32,9 @@ def _stub_providers(monkeypatch):
     (a real registered provider isn't needed for the job-runner mechanics).
     """
     monkeypatch.setattr(M, "_provider", lambda name: object())
-    monkeypatch.setattr(M, "_model_exists", lambda provider, model: model in {"good", "slow", "boom", "already"})
+    monkeypatch.setattr(
+        M, "_model_exists", lambda provider, model: model in {"good", "slow", "boom", "already"}
+    )
     monkeypatch.setattr(M, "_expected_size_bytes", lambda provider, model: 4 * 1024 * 1024)
     monkeypatch.setattr(M, "_is_downloaded", lambda provider, model: model == "already")
     monkeypatch.setattr(M, "_dir_size", lambda path: 0)
@@ -53,6 +55,7 @@ async def _settle():
 
 
 # ── registry ──
+
 
 @pytest.mark.asyncio
 async def test_start_runs_to_done():
@@ -112,8 +115,8 @@ async def test_cancel_detaches_job():
     reg = M.ModelDownloadRegistry()
     job, _ = reg.start("piper-tts", "slow")
     assert reg.cancel(job.id) is True
-    assert reg.get(job.id) is None       # dropped from registry
-    assert reg.cancel(job.id) is False    # unknown now
+    assert reg.get(job.id) is None  # dropped from registry
+    assert reg.cancel(job.id) is False  # unknown now
     await _settle()
 
 
@@ -132,6 +135,7 @@ async def test_progress_frames_reach_subscriber():
 
 # ── HTTP handlers ──
 
+
 def _req(method, path, reg, *, body=None, match_info=None):
     app = web.Application()
 
@@ -142,8 +146,10 @@ def _req(method, path, reg, *, body=None, match_info=None):
     app["state"] = _State()
     req = make_mocked_request(method, path, match_info=match_info or {}, app=app)
     if body is not None:
+
         async def _json():
             return body
+
         req.json = _json  # type: ignore[assignment]
     return req
 
@@ -156,7 +162,12 @@ def _body(resp):
 async def test_handler_start_returns_202_and_lists():
     reg = M.ModelDownloadRegistry()
     resp = await H.api_model_download_start(
-        _req("POST", "/api/models/downloads", reg, body={"provider": "sentence-transformers", "model": "good"})
+        _req(
+            "POST",
+            "/api/models/downloads",
+            reg,
+            body={"provider": "sentence-transformers", "model": "good"},
+        )
     )
     assert resp.status == 202
     jid = _body(resp)["id"]
@@ -171,7 +182,12 @@ async def test_handler_start_returns_202_and_lists():
 async def test_handler_start_rejects_bad_body():
     reg = M.ModelDownloadRegistry()
     resp = await H.api_model_download_start(
-        _req("POST", "/api/models/downloads", reg, body={"provider": "sentence-transformers", "model": "nope"})
+        _req(
+            "POST",
+            "/api/models/downloads",
+            reg,
+            body={"provider": "sentence-transformers", "model": "nope"},
+        )
     )
     assert resp.status == 400
 

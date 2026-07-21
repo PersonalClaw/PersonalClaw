@@ -22,16 +22,37 @@ class TestIsSystemPath:
     """is_system_path — the single source of truth shared by Code workspace
     validation + the create-dir/browse handlers."""
 
-    @pytest.mark.parametrize("p", [
-        "/", "/etc", "/etc/ssh", "/usr", "/usr/local/foo", "/System", "/Library",
-        "/bin", "/sbin", "/Applications", "/Volumes", "/var", "/tmp", "/private",
-    ])
+    @pytest.mark.parametrize(
+        "p",
+        [
+            "/",
+            "/etc",
+            "/etc/ssh",
+            "/usr",
+            "/usr/local/foo",
+            "/System",
+            "/Library",
+            "/bin",
+            "/sbin",
+            "/Applications",
+            "/Volumes",
+            "/var",
+            "/tmp",
+            "/private",
+        ],
+    )
     def test_system_roots_and_bare_parents_blocked(self, p):
         assert is_system_path(p) is True
 
-    @pytest.mark.parametrize("p", [
-        "/Volumes/disk/repo", "/var/data/proj", "/opt/work/app", "/tmp/scratch/x",
-    ])
+    @pytest.mark.parametrize(
+        "p",
+        [
+            "/Volumes/disk/repo",
+            "/var/data/proj",
+            "/opt/work/app",
+            "/tmp/scratch/x",
+        ],
+    )
     def test_children_of_mount_temp_parents_allowed(self, p):
         # The bare parent is blocked, but a real workspace BENEATH it is fine.
         assert is_system_path(p) is False
@@ -106,7 +127,7 @@ class TestRedactCredentials:
         assert result == text
 
     def test_preserves_kubectl_output(self) -> None:
-        text = "NAME       READY   STATUS    RESTARTS   AGE\nnginx-pod  1/1     Running   0          5m"
+        text = "NAME       READY   STATUS    RESTARTS   AGE\nnginx-pod  1/1     Running   0          5m"  # noqa: E501
         result, warnings = redact_credentials(text)
         assert result == text
 
@@ -479,10 +500,7 @@ class TestRedactExfiltrationUrls:
         """amazonaws.com URLs without presigned params are still redacted."""
         from personalclaw.security import redact_exfiltration_urls
 
-        url = (
-            "https://evil.s3.amazonaws.com/steal"
-            "?data=" + "A" * 250
-        )
+        url = "https://evil.s3.amazonaws.com/steal" "?data=" + "A" * 250
         result, warnings = redact_exfiltration_urls(f"Link: {url}")
         assert "[REDACTED" in result
         assert len(warnings) == 1
@@ -706,24 +724,50 @@ class TestAuditBashCommand:
     def test_git_status_safe(self) -> None:
         assert audit_bash_command("git status") is None
 
-    @pytest.mark.parametrize("cmd", [
-        "rm -rf $HOME", 'rm -rf "$HOME"', "rm -rf ${HOME}", "rm -rf $PWD",
-        "rm -rf .", "rm -rf ./", "rm -rf ..", "rm -rf ../",
-        "rm -rf ~", "rm -rf ~/", "rm -rf /", "rm -rf /*", "rm -rf *",
-        "rm -fr .", "rm -r -f .", "rm --recursive --force $HOME",
-        "cd /tmp && rm -rf ~", "rm  -rf   .",
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "rm -rf $HOME",
+            'rm -rf "$HOME"',
+            "rm -rf ${HOME}",
+            "rm -rf $PWD",
+            "rm -rf .",
+            "rm -rf ./",
+            "rm -rf ..",
+            "rm -rf ../",
+            "rm -rf ~",
+            "rm -rf ~/",
+            "rm -rf /",
+            "rm -rf /*",
+            "rm -rf *",
+            "rm -fr .",
+            "rm -r -f .",
+            "rm --recursive --force $HOME",
+            "cd /tmp && rm -rf ~",
+            "rm  -rf   .",
+        ],
+    )
     def test_catastrophic_rm_flagged(self, cmd: str) -> None:
         # Recursive-force rm of home/cwd/parent/root/glob — incl. cases the old plain
         # substring list missed ($HOME, '.', flag-order variants like 'rm -fr').
         assert audit_bash_command(cmd) is not None, cmd
 
-    @pytest.mark.parametrize("cmd", [
-        "rm -rf ./build", "rm -rf node_modules", "rm -rf /tmp/scratch123",
-        "rm -rf dist", "rm -rf ~/.cache/myapp/build", "rm -rf ./.next",
-        "rm -f foo.log", "rm -rf target/debug", "rm -rf .venv", "rm -rf /var/tmp/x",
-        "rm -rf ~/project",
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "rm -rf ./build",
+            "rm -rf node_modules",
+            "rm -rf /tmp/scratch123",
+            "rm -rf dist",
+            "rm -rf ~/.cache/myapp/build",
+            "rm -rf ./.next",
+            "rm -f foo.log",
+            "rm -rf target/debug",
+            "rm -rf .venv",
+            "rm -rf /var/tmp/x",
+            "rm -rf ~/project",
+        ],
+    )
     def test_targeted_rm_not_false_flagged(self, cmd: str) -> None:
         # A NAMED target is legitimate cleanup — must NOT be blocked. The old list's
         # plain "rm -rf /" / "rm -rf ~" substrings wrongly matched these (rm -rf /tmp,

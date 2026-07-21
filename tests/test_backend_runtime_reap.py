@@ -47,9 +47,10 @@ def _spawn_orphan_proc(tmp_path: Path, app: str = "myapp") -> tuple[int, Path]:
     # The background child must NOT inherit the capture pipe (subprocess.run
     # would block on stdout EOF forever) — detach its fds to /dev/null.
     out = subprocess.run(  # noqa: S603 — test fixture
-        ["/bin/sh", "-c",
-         f'"{sys.executable}" "{entry}" >/dev/null 2>&1 </dev/null & echo $!'],
-        capture_output=True, text=True, check=True,
+        ["/bin/sh", "-c", f'"{sys.executable}" "{entry}" >/dev/null 2>&1 </dev/null & echo $!'],
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return int(out.stdout.strip()), entry
 
@@ -141,6 +142,7 @@ def test_reap_orphans_spares_owned_process(tmp_path):
     try:
         sup = BackendSupervisor()
         from personalclaw.apps.backend_runtime import RunningBackend
+
         # register the process as owned
         sup._procs["myapp"] = RunningBackend(name="myapp", port=1234, pid=proc.pid, proc=proc)
         for _ in range(50):

@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 from uuid import uuid4
 
 from snowballstemmer import stemmer as _snowball_stemmer
@@ -31,6 +31,12 @@ except ImportError:
 
 from personalclaw.config.loader import config_dir
 from personalclaw.memory_providers.base import MemoryProvider
+
+if TYPE_CHECKING:
+    from personalclaw.memory_record import (
+        MemoryCapabilities,
+        MemoryRecord,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -57,10 +63,13 @@ def _path_home_pclaw():
     """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
     try:
         from personalclaw.config.loader import config_dir as _cd
+
         return _cd()
     except Exception:
         from pathlib import Path as _P
+
         return _P.home() / ".personalclaw"
+
 
 # ── Constants ──
 
@@ -114,17 +123,17 @@ _SEMANTIC_KEYWORD_WEIGHT = 0.4  # weight for keyword score in hybrid semantic re
 # frequent. Weights tuned for
 # PClaw's available per-row signals). Sum = 1.0.
 _DREAM_WEIGHTS = {
-    "relevance": 0.30,        # avg importance of the cluster
-    "frequency": 0.24,        # how many episodic rows clustered (repetition)
+    "relevance": 0.30,  # avg importance of the cluster
+    "frequency": 0.24,  # how many episodic rows clustered (repetition)
     "query_diversity": 0.15,  # distinct conversations it surfaced across
-    "recency": 0.15,          # recency-decayed (fresh patterns weigh more)
-    "consolidation": 0.10,    # times revisited (visit_count)
+    "recency": 0.15,  # recency-decayed (fresh patterns weigh more)
+    "consolidation": 0.10,  # times revisited (visit_count)
     "conceptual_richness": 0.06,  # lexical richness heuristic (distinct-word ratio)
 }
 # Promotion gates — ALL must pass (a memory must be relevant AND recurrent AND
 # cross-context, not just one). Conservative defaults; the caller can override.
 _DREAM_MIN_SCORE = 0.45
-_DREAM_MIN_FREQUENCY = 3       # min cluster members (was the sole gate, min_count)
+_DREAM_MIN_FREQUENCY = 3  # min cluster members (was the sole gate, min_count)
 _DREAM_MIN_UNIQUE_QUERIES = 2  # min distinct conversations (cross-context evidence)
 _DREAM_RECENCY_HALFLIFE_DAYS = 30.0
 
@@ -140,7 +149,9 @@ def _conceptual_richness(text: str) -> float:
     return distinct_ratio * length_factor
 
 
-def dream_score(members: list[dict], *, now_ts: float, halflife_days: float = _DREAM_RECENCY_HALFLIFE_DAYS) -> dict:
+def dream_score(
+    members: list[dict], *, now_ts: float, halflife_days: float = _DREAM_RECENCY_HALFLIFE_DAYS
+) -> dict:
     """Compute the 6-signal weighted promotion score for an episodic cluster.
 
     ``members`` are episodic rows (dicts with importance/created_at/visit_count/
@@ -148,6 +159,7 @@ def dream_score(members: list[dict], *, now_ts: float, halflife_days: float = _D
     so the caller can apply gates + record why something promoted (shadow-trial
     transparency). Pure + testable; no DB or embedding access."""
     import statistics
+
     n = len(members)
     if n == 0:
         return {"score": 0.0, "signals": {}, "frequency": 0, "unique_queries": 0}
@@ -156,7 +168,9 @@ def dream_score(members: list[dict], *, now_ts: float, halflife_days: float = _D
     # clamped at write_episodic, but keeping dream_score self-bounding means the
     # score stays in [0,1] for ANY caller (a negative importance would otherwise
     # drag the weighted sum below 0).
-    relevance = min(1.0, max(0.0, statistics.fmean(float(m.get("importance") or 0.5) for m in members)))
+    relevance = min(
+        1.0, max(0.0, statistics.fmean(float(m.get("importance") or 0.5) for m in members))
+    )
     frequency = min(1.0, n / 8.0)  # saturates at 8 members
     unique_convos = len({m.get("conversation_id") for m in members if m.get("conversation_id")})
     query_diversity = min(1.0, unique_convos / 4.0)  # saturates at 4 distinct convos
@@ -173,9 +187,12 @@ def dream_score(members: list[dict], *, now_ts: float, halflife_days: float = _D
     richness = statistics.fmean(_conceptual_richness(m.get("text", "")) for m in members)
 
     signals = {
-        "relevance": relevance, "frequency": frequency,
-        "query_diversity": query_diversity, "recency": recency,
-        "consolidation": consolidation, "conceptual_richness": richness,
+        "relevance": relevance,
+        "frequency": frequency,
+        "query_diversity": query_diversity,
+        "recency": recency,
+        "consolidation": consolidation,
+        "conceptual_richness": richness,
     }
     score = sum(_DREAM_WEIGHTS[k] * v for k, v in signals.items())
     return {"score": score, "signals": signals, "frequency": n, "unique_queries": unique_convos}
@@ -188,6 +205,7 @@ def _parse_iso_ts(value: object) -> float:
         return 0.0
     try:
         from datetime import datetime
+
         return datetime.fromisoformat(str(value)).timestamp()
     except (ValueError, TypeError):
         return 0.0
@@ -358,9 +376,7 @@ def _migrate_v6(db: sqlite3.Connection) -> None:
                 if "duplicate column" not in str(exc).lower():
                     raise
         # Backfill tier for existing rows (NULL → the table's natural tier).
-        db.execute(
-            f"UPDATE {table} SET tier = ? WHERE tier IS NULL", (default_tier,)
-        )
+        db.execute(f"UPDATE {table} SET tier = ? WHERE tier IS NULL", (default_tier,))
     db.execute("CREATE INDEX IF NOT EXISTS idx_semantic_scope ON semantic_memory(scope)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_episodic_scope ON episodic_memories(scope)")
 
@@ -508,11 +524,13 @@ class VectorMemoryStore(MemoryProvider):
     def init(self) -> None:
         """Create DB, apply migrations, set permissions."""
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(str(self._db_path), check_same_thread=False, isolation_level=None)
+        self._db = sqlite3.connect(
+            str(self._db_path), check_same_thread=False, isolation_level=None
+        )
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA busy_timeout=5000")
-        self._db.isolation_level = ''  # Restore implicit transaction handling
+        self._db.isolation_level = ""  # Restore implicit transaction handling
 
         # Apply migrations
         self._db.execute(
@@ -546,7 +564,9 @@ class VectorMemoryStore(MemoryProvider):
         try:
             self.load_faiss_index()
         except Exception:
-            logger.warning("FAISS index not loaded (faiss-cpu may not be installed yet)", exc_info=True)
+            logger.warning(
+                "FAISS index not loaded (faiss-cpu may not be installed yet)", exc_info=True
+            )
 
     def capabilities(self) -> "MemoryCapabilities":
         """Declare what this provider can do (L2 contract — M0 introduces it).
@@ -582,11 +602,15 @@ class VectorMemoryStore(MemoryProvider):
         for rec in records:
             if rec.kind == MemoryKind.EPISODIC:
                 # write_episodic mints the id internally; capture it to apply axes.
-                before = {r["id"] for r in self.db.execute(
-                    "SELECT id FROM episodic_memories").fetchall()}
+                before = {
+                    r["id"] for r in self.db.execute("SELECT id FROM episodic_memories").fetchall()
+                }
                 ok = self.write_episodic(
-                    rec.text, embedding=rec.embedding, conversation_id=rec.conversation_id,
-                    tags=rec.tags, importance=rec.importance,
+                    rec.text,
+                    embedding=rec.embedding,
+                    conversation_id=rec.conversation_id,
+                    tags=rec.tags,
+                    importance=rec.importance,
                     source=rec.source or "service",
                 )
                 if ok:
@@ -598,8 +622,12 @@ class VectorMemoryStore(MemoryProvider):
                         self._apply_axes("episodic_memories", "id", new_id, rec)
             else:
                 # fact / lesson / preference / note → semantic row keyed by id
-                err = self.set_semantic(rec.id, rec.value if rec.value is not None else rec.text,
-                                        rec.confidence, rec.source or "service")
+                err = self.set_semantic(
+                    rec.id,
+                    rec.value if rec.value is not None else rec.text,
+                    rec.confidence,
+                    rec.source or "service",
+                )
                 if err is None:
                     self._apply_axes("semantic_memory", "key", rec.id, rec)
 
@@ -614,9 +642,14 @@ class VectorMemoryStore(MemoryProvider):
         tier = rec.tier.value if rec.tier else None
         scope = rec.scope.value if rec.scope else MemoryScope.GLOBAL.value
         # Nothing non-default to persist → leave the row's migration defaults.
-        if (scope == MemoryScope.GLOBAL.value and rec.scope_ref is None
-                and rec.category is None and not rec.visit_count and tier is None
-                and not rec.recall_count):
+        if (
+            scope == MemoryScope.GLOBAL.value
+            and rec.scope_ref is None
+            and rec.category is None
+            and not rec.visit_count
+            and tier is None
+            and not rec.recall_count
+        ):
             return
         # recall_count is a heat input on semantic_memory (since migration v3);
         # the episodic table has no such column, so only persist it for semantic.
@@ -624,8 +657,15 @@ class VectorMemoryStore(MemoryProvider):
             self.db.execute(
                 f"UPDATE {table} SET tier = COALESCE(?, tier), scope = ?, scope_ref = ?, "
                 f"category = ?, visit_count = ?, recall_count = ? WHERE {id_col} = ?",
-                (tier, scope, rec.scope_ref, rec.category, rec.visit_count,
-                 rec.recall_count, row_id),
+                (
+                    tier,
+                    scope,
+                    rec.scope_ref,
+                    rec.category,
+                    rec.visit_count,
+                    rec.recall_count,
+                    row_id,
+                ),
             )
         else:
             self.db.execute(
@@ -656,7 +696,6 @@ class VectorMemoryStore(MemoryProvider):
         """Filtered record query. ``scope``/``scope_ref`` are accepted for the
         M5+ axis (records default to global today, so a scope filter other than
         'global' yields nothing until M5+ populates the columns)."""
-        from personalclaw.memory_record import MemoryScope
 
         recs = self.iter_records(kinds=kinds, include_deleted=include_deleted)
         if scope is not None:
@@ -734,8 +773,13 @@ class VectorMemoryStore(MemoryProvider):
         return any(fnmatch(key, p) for p in self._prefixes)
 
     def validate_semantic(
-        self, key: str, value: object, confidence: float, source: str,
-        *, value_json: str | None = None,
+        self,
+        key: str,
+        value: object,
+        confidence: float,
+        source: str,
+        *,
+        value_json: str | None = None,
     ) -> tuple[SemanticRejectCode, str] | None:
         """Pre-flight check for set_semantic. Returns (code, message) or None."""
         err = self._validate_key(key)
@@ -745,20 +789,34 @@ class VectorMemoryStore(MemoryProvider):
             prefixes = ", ".join(self._prefixes)
             return SemanticRejectCode.ALLOWLIST, f"Key must match an allowed prefix ({prefixes})"
         if key.startswith("system.") and source != "user_explicit":
-            return SemanticRejectCode.RESERVED_PREFIX, "Reserved key prefix requires user_explicit source"
+            return (
+                SemanticRejectCode.RESERVED_PREFIX,
+                "Reserved key prefix requires user_explicit source",
+            )
         if source != "user_explicit" and confidence < self._confidence_threshold:
-            return SemanticRejectCode.CONFIDENCE, f"Confidence {confidence:.2f} below threshold {self._confidence_threshold}"
+            return (
+                SemanticRejectCode.CONFIDENCE,
+                f"Confidence {confidence:.2f} below threshold {self._confidence_threshold}",
+            )
         vj = value_json if value_json is not None else json.dumps(value)
         vj_bytes = len(vj.encode("utf-8"))
         if vj_bytes > _MAX_VALUE_BYTES:
-            return SemanticRejectCode.VALUE_SIZE, f"Value too large ({vj_bytes} bytes, max {_MAX_VALUE_BYTES})"
+            return (
+                SemanticRejectCode.VALUE_SIZE,
+                f"Value too large ({vj_bytes} bytes, max {_MAX_VALUE_BYTES})",
+            )
         if _contains_injection(vj):
             return SemanticRejectCode.INJECTION, "Value contains blocked content patterns"
         return None
 
     def log_reject_event(
-        self, code: SemanticRejectCode, key: str, value: object, source: str,
-        *, value_json: str | None = None,
+        self,
+        code: SemanticRejectCode,
+        key: str,
+        value: object,
+        source: str,
+        *,
+        value_json: str | None = None,
     ) -> None:
         """Emit an audit event for a validation rejection."""
         if code in _AUDITABLE_REJECT_CODES:
@@ -819,13 +877,20 @@ class VectorMemoryStore(MemoryProvider):
         records: list[MemoryRecord] = []
         # Every kind that lives in the semantic_memory table (keyed by prefix):
         # facts + lesson/procedural/self_persona/commitment all ride it.
-        sem_kinds = {MemoryKind.SEMANTIC.value, MemoryKind.LESSON.value,
-                     MemoryKind.PREFERENCE.value, MemoryKind.NOTE.value,
-                     MemoryKind.PROCEDURAL.value, MemoryKind.SELF_PERSONA.value,
-                     MemoryKind.COMMITMENT.value}
+        sem_kinds = {
+            MemoryKind.SEMANTIC.value,
+            MemoryKind.LESSON.value,
+            MemoryKind.PREFERENCE.value,
+            MemoryKind.NOTE.value,
+            MemoryKind.PROCEDURAL.value,
+            MemoryKind.SELF_PERSONA.value,
+            MemoryKind.COMMITMENT.value,
+        }
         if want is None or (want & sem_kinds):
             where = "" if include_deleted else " WHERE is_deleted = 0"
-            for r in self.db.execute(f"SELECT * FROM semantic_memory{where} ORDER BY key").fetchall():
+            for r in self.db.execute(
+                f"SELECT * FROM semantic_memory{where} ORDER BY key"
+            ).fetchall():
                 rec = MemoryRecord.from_semantic_row(r)
                 if want is None or rec.kind.value in want:
                     records.append(rec)
@@ -918,9 +983,9 @@ class VectorMemoryStore(MemoryProvider):
         # are self-consistent at the DB level (so tier-filtered queries see them),
         # not only defaulted on read. A later put()/_apply_axes may refine it.
         self.db.execute(
-            "INSERT INTO semantic_memory (key, value_json, confidence, source, created_at, updated_at, is_deleted, tier) "
+            "INSERT INTO semantic_memory (key, value_json, confidence, source, created_at, updated_at, is_deleted, tier) "  # noqa: E501
             "VALUES (?, ?, ?, ?, ?, ?, 0, 'semantic') "
-            "ON CONFLICT(key) DO UPDATE SET value_json=?, confidence=?, source=?, updated_at=?, is_deleted=0",
+            "ON CONFLICT(key) DO UPDATE SET value_json=?, confidence=?, source=?, updated_at=?, is_deleted=0",  # noqa: E501
             (key, value_json, confidence, source, now, now, value_json, confidence, source, now),
         )
         self.db.commit()
@@ -1082,7 +1147,9 @@ class VectorMemoryStore(MemoryProvider):
             scored_rows: list[tuple[float, dict]] = []
             for r in all_rows:
                 # Keyword score (always available)
-                key_words = _stem_words(set(re.findall(r"\w+", r["key"].replace("_", " ").replace(".", " "))))
+                key_words = _stem_words(
+                    set(re.findall(r"\w+", r["key"].replace("_", " ").replace(".", " ")))
+                )
                 val_words = _stem_words(set(re.findall(r"\w+", r["value_json"].lower())))
                 key_overlap = len(query_words & key_words)
                 val_overlap = len(query_words & val_words)
@@ -1115,7 +1182,9 @@ class VectorMemoryStore(MemoryProvider):
             # No query: recent entries
             rows = self.db.execute(
                 "SELECT key, value_json FROM semantic_memory WHERE is_deleted = 0 "
-                "AND " + _NON_FACT_KEY_CLAUSE + " ORDER BY recall_count DESC, updated_at DESC LIMIT ?",
+                "AND "
+                + _NON_FACT_KEY_CLAUSE
+                + " ORDER BY recall_count DESC, updated_at DESC LIMIT ?",
                 (max_rows,),
             ).fetchall()
 
@@ -1252,9 +1321,7 @@ class VectorMemoryStore(MemoryProvider):
         - supersede → un-delete the old key + clear its superseded_by pointer.
         Unknown/structural events (e.g. conflict_skip) aren't reversible.
         """
-        row = self.db.execute(
-            "SELECT * FROM memory_events WHERE id = ?", (event_id,)
-        ).fetchone()
+        row = self.db.execute("SELECT * FROM memory_events WHERE id = ?", (event_id,)).fetchone()
         if row is None:
             return (False, f"event {event_id} not found")
         ev = dict(row)
@@ -1276,7 +1343,7 @@ class VectorMemoryStore(MemoryProvider):
             if old is None:
                 return (False, "update event has no prior value to restore")
             self.db.execute(
-                "UPDATE semantic_memory SET value_json = ?, is_deleted = 0, updated_at = ? WHERE key = ?",
+                "UPDATE semantic_memory SET value_json = ?, is_deleted = 0, updated_at = ? WHERE key = ?",  # noqa: E501
                 (old, now, key),
             )
         elif etype == "delete":
@@ -1337,7 +1404,8 @@ class VectorMemoryStore(MemoryProvider):
         if skipped:
             logger.warning(
                 "Skipped %d embeddings with mismatched dimension (expected %d)",
-                skipped, self._embedding_dim,
+                skipped,
+                self._embedding_dim,
             )
         logger.info("Built FAISS index with %d vectors", len(self._faiss_id_map))
         return len(self._faiss_id_map)
@@ -1364,11 +1432,13 @@ class VectorMemoryStore(MemoryProvider):
     def count_episodic_to_reembed(self) -> int:
         """How many non-deleted episodic memories carry re-embeddable text."""
         row = self.db.execute(
-            "SELECT COUNT(*) AS n FROM episodic_memories WHERE is_deleted = 0 AND text IS NOT NULL AND text != ''"
+            "SELECT COUNT(*) AS n FROM episodic_memories WHERE is_deleted = 0 AND text IS NOT NULL AND text != ''"  # noqa: E501
         ).fetchone()
         return int(row["n"]) if row else 0
 
-    def reembed_all(self, on_progress: "Callable[[int, int], None] | None" = None) -> dict[str, int]:
+    def reembed_all(
+        self, on_progress: "Callable[[int, int], None] | None" = None
+    ) -> dict[str, int]:
         """Re-embed every episodic memory with the currently wired ``embed_fn``.
 
         Used after an embedding-model switch: ``clear_embeddings`` has nulled the
@@ -1416,7 +1486,8 @@ class VectorMemoryStore(MemoryProvider):
         if not _HAS_FAISS or self._faiss_index is None:
             return
         try:
-            faiss.write_index(self._faiss_index, str(self._faiss_path))
+            # faiss is an untyped optional C-extension; index is object|None here.
+            faiss.write_index(self._faiss_index, str(self._faiss_path))  # type: ignore[call-overload]  # noqa: E501
             # Save id map alongside
             id_map_path = self._faiss_path.with_suffix(".ids.json")
             id_map_path.write_text(json.dumps(self._faiss_id_map), encoding="utf-8")
@@ -1497,8 +1568,8 @@ class VectorMemoryStore(MemoryProvider):
                 embedding_blob = struct.pack(f"{len(normed)}f", *normed)
 
             # Dedup via FAISS
-            if self._faiss_index is not None and self._faiss_index.ntotal > 0:  # type: ignore[attr-defined]
-                distances, indices = self._faiss_index.search(vec.reshape(1, -1), 5)  # type: ignore[attr-defined]
+            if self._faiss_index is not None and self._faiss_index.ntotal > 0:  # type: ignore[attr-defined]  # noqa: E501
+                distances, indices = self._faiss_index.search(vec.reshape(1, -1), 5)  # type: ignore[attr-defined]  # noqa: E501
                 for dist, idx in zip(distances[0], indices[0]):
                     if idx == -1:
                         break
@@ -1603,7 +1674,7 @@ class VectorMemoryStore(MemoryProvider):
             if norm > 0:
                 vec = vec / norm
             k = min(limit * 2, self._faiss_index.ntotal)  # type: ignore[attr-defined]
-            distances, indices = self._faiss_index.search(vec.reshape(1, -1), k)  # type: ignore[attr-defined]
+            distances, indices = self._faiss_index.search(vec.reshape(1, -1), k)  # type: ignore[attr-defined]  # noqa: E501
 
             now = datetime.now(tz=timezone.utc)
             candidates: list[dict] = []
@@ -1750,7 +1821,10 @@ class VectorMemoryStore(MemoryProvider):
         return True
 
     def get_episodic_context(
-        self, query_embedding: list[float] | None = None, query_text: str = "", cap: int = 3000,
+        self,
+        query_embedding: list[float] | None = None,
+        query_text: str = "",
+        cap: int = 3000,
     ) -> str:
         """Format episodic search results for prompt injection.
 
@@ -1802,7 +1876,7 @@ class VectorMemoryStore(MemoryProvider):
             "(SELECT COUNT(*) FROM episodic_memories WHERE is_deleted=0) AS ep_active, "
             "(SELECT COUNT(*) FROM episodic_memories WHERE is_deleted=1) AS ep_deleted, "
             "(SELECT COUNT(*) FROM memory_events) AS events_count, "
-            "(SELECT COUNT(*) FROM episodic_memories WHERE is_deleted=0 AND embedding IS NOT NULL) AS ep_with_vec"
+            "(SELECT COUNT(*) FROM episodic_memories WHERE is_deleted=0 AND embedding IS NOT NULL) AS ep_with_vec"  # noqa: E501
         ).fetchone()
         faiss_size = len(self._faiss_id_map) if self._faiss_id_map else 0
         return {
@@ -1988,7 +2062,9 @@ class VectorMemoryStore(MemoryProvider):
                     self.supersede_semantic(old_key, key, source)
                     logger.info(
                         "Lesson contradiction: %r superseded %r (sim %.2f)",
-                        key, old_key, sim,
+                        key,
+                        old_key,
+                        sim,
                     )
             except Exception:
                 logger.debug("contradiction judge failed — keeping both", exc_info=True)
@@ -2292,8 +2368,13 @@ class VectorMemoryStore(MemoryProvider):
     # ── Episodic Promotion ──
 
     def promote_episodic_patterns(
-        self, min_count: int = 5, min_sim: float = 0.75, max_promotions: int | None = None,
-        *, min_score: float = _DREAM_MIN_SCORE, min_unique_queries: int = _DREAM_MIN_UNIQUE_QUERIES,
+        self,
+        min_count: int = 5,
+        min_sim: float = 0.75,
+        max_promotions: int | None = None,
+        *,
+        min_score: float = _DREAM_MIN_SCORE,
+        min_unique_queries: int = _DREAM_MIN_UNIQUE_QUERIES,
     ) -> int:
         """Scan episodic memories for repeated patterns and promote to semantic facts.
 
@@ -2339,6 +2420,7 @@ class VectorMemoryStore(MemoryProvider):
         # weighted score) — ranked by score so the best patterns promote first (the
         # per-run cap then bites the weakest, not an arbitrary dict order).
         import time as _time
+
         now_ts = _time.time()
         scored = []
         for members in clusters.values():
@@ -2346,8 +2428,12 @@ class VectorMemoryStore(MemoryProvider):
                 continue  # frequency gate (fast reject before scoring)
             ds = dream_score(members, now_ts=now_ts)
             if ds["unique_queries"] < min_unique_queries or ds["score"] < min_score:
-                logger.debug("Promotion skipped (gate): score=%.3f uniq=%d n=%d",
-                             ds["score"], ds["unique_queries"], len(members))
+                logger.debug(
+                    "Promotion skipped (gate): score=%.3f uniq=%d n=%d",
+                    ds["score"],
+                    ds["unique_queries"],
+                    len(members),
+                )
                 continue
             scored.append((ds["score"], members, ds))
         scored.sort(key=lambda t: -t[0])
@@ -2364,8 +2450,13 @@ class VectorMemoryStore(MemoryProvider):
                 promoted += 1
                 for m in members:
                     self._delete_episodic_row(m["id"])
-                logger.info("Promoted %d episodic → %s (dream_score=%.3f): %s",
-                            len(members), key, score, value[:60])
+                logger.info(
+                    "Promoted %d episodic → %s (dream_score=%.3f): %s",
+                    len(members),
+                    key,
+                    score,
+                    value[:60],
+                )
                 if max_promotions is not None and promoted >= max_promotions:
                     logger.info("Promotion run hit per-run cap (%d)", max_promotions)
                     break

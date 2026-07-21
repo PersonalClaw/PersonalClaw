@@ -30,6 +30,13 @@ def ensure_nodes_registered() -> None:
 
 
 __all__ = [
-    "NodeSpec", "PipelineGraph", "PipelineGraphError", "graph_for",
-    "Edge", "NodeContext", "NodeOutput", "ProcessingNode", "ensure_nodes_registered",
+    "NodeSpec",
+    "PipelineGraph",
+    "PipelineGraphError",
+    "graph_for",
+    "Edge",
+    "NodeContext",
+    "NodeOutput",
+    "ProcessingNode",
+    "ensure_nodes_registered",
 ]

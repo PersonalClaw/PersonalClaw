@@ -76,7 +76,7 @@ def test_apps_only_import_sdk():
     assert not violations, (
         "Apps must import core only via personalclaw.sdk.* — found deep-core imports:\n"
         + "\n".join(f"  {f}: {mods}" for f, mods in sorted(violations.items()))
-        + "\nPromote the needed symbol to a personalclaw.sdk submodule instead of reaching around the boundary."
+        + "\nPromote the needed symbol to a personalclaw.sdk submodule instead of reaching around the boundary."  # noqa: E501
     )
 
 

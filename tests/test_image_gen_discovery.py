@@ -49,8 +49,8 @@ class _UnavailableImg(_FakeImg):
 class TestImageGenDiscovery:
     @pytest.mark.asyncio
     async def test_surfaces_models_bare_id_image_gen_capable(self, monkeypatch):
-        from personalclaw.image_gen import registry as ig
         from personalclaw.dashboard.handlers.model_registry import _discover_image_gen_models
+        from personalclaw.image_gen import registry as ig
 
         monkeypatch.setattr(ig, "_ensure_registered", lambda: None)
         monkeypatch.setattr(ig, "list_providers", lambda: [_FakeImg()])
@@ -65,8 +65,8 @@ class TestImageGenDiscovery:
 
     @pytest.mark.asyncio
     async def test_skips_unavailable_provider(self, monkeypatch):
-        from personalclaw.image_gen import registry as ig
         from personalclaw.dashboard.handlers.model_registry import _discover_image_gen_models
+        from personalclaw.image_gen import registry as ig
 
         monkeypatch.setattr(ig, "_ensure_registered", lambda: None)
         monkeypatch.setattr(ig, "list_providers", lambda: [_FakeImg(), _UnavailableImg()])
@@ -83,7 +83,9 @@ class TestImageGenDiscovery:
         monkeypatch.setattr(ig, "_providers", {"MyOpenAI": prov}, raising=False)
         monkeypatch.setattr(ig, "_ensure_registered", lambda: None)
         # the FE would store "MyOpenAI:gpt-image-1" (provider + bare id)
-        monkeypatch.setattr(uc, "active_model_refs", lambda u: ["MyOpenAI:gpt-image-1"] if u == "image_gen" else [])
+        monkeypatch.setattr(
+            uc, "active_model_refs", lambda u: ["MyOpenAI:gpt-image-1"] if u == "image_gen" else []
+        )
 
         resolved = ig.active_image_gen()
         assert resolved is not None

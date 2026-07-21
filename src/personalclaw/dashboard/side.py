@@ -53,11 +53,19 @@ def _resolve_owned_session(request: web.Request):
     if request_app:
         if not session._app or session._app != request_app:
             sel().log_api_access(
-                caller=request_app, operation="chat.side", outcome="denied",
-                source="app_isolation", resources=f"session={name}",
+                caller=request_app,
+                operation="chat.side",
+                outcome="denied",
+                source="app_isolation",
+                resources=f"session={name}",
                 error="app does not own this session",
             )
-            return state, name, None, web.json_response({"error": "app does not own this session"}, status=403)
+            return (
+                state,
+                name,
+                None,
+                web.json_response({"error": "app does not own this session"}, status=403),
+            )
     return state, name, session, None
 
 
@@ -104,7 +112,9 @@ async def api_side_turn(request: web.Request) -> web.Response:
     if not isinstance(question, str) or not question.strip():
         return web.json_response({"error": "question must be a non-empty string"}, status=400)
     if len(question) > _MAX_SIDE_QUESTION:
-        return web.json_response({"error": f"question too long (max {_MAX_SIDE_QUESTION})"}, status=400)
+        return web.json_response(
+            {"error": f"question too long (max {_MAX_SIDE_QUESTION})"}, status=400
+        )
 
     if session._side is None or not session._side.open:
         session._side = SideState(open=True)
@@ -119,8 +129,10 @@ async def api_side_turn(request: web.Request) -> web.Response:
     task.add_done_callback(state._background_tasks.discard)
 
     sel().log_api_access(
-        caller=request.get("app", "") or "dashboard", operation="chat.side_turn",
-        outcome="allowed", source="dashboard",
+        caller=request.get("app", "") or "dashboard",
+        operation="chat.side_turn",
+        outcome="allowed",
+        source="dashboard",
         resources=f"session={name},q_len={len(question)}",
     )
     return web.json_response({"ok": True, "run_id": run_id})
@@ -155,16 +167,20 @@ async def _run_side_turn(
     try:
         prompt = build_side_message(session, side, question)
         provider, _is_new, _resumed = await state.sessions.get_or_create(
-            side_key, agent=session.agent, model=session.model or None,
+            side_key,
+            agent=session.agent,
+            model=session.model or None,
         )
         try:
+
             def _on_chunk(text: str) -> None:
                 nonlocal accumulated
                 accumulated += text
                 _emit(text, done=False)
 
             await stream_and_collect(
-                provider, prompt,
+                provider,
+                prompt,
                 approval_policy=ToolApprovalPolicy.REJECT_ALL,
                 on_chunk=_on_chunk,
             )
@@ -186,6 +202,7 @@ async def _run_side_turn(
             # side turn doesn't add to session.messages.
             try:
                 from personalclaw.dashboard.chat_persistence import _save_session_to_history
+
                 _save_session_to_history(state, session, force=True)
             except Exception:
                 logger.debug("side buffer persist failed for %s", name, exc_info=True)

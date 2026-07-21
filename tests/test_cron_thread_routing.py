@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from personalclaw.schedule import ScheduleJob, ScheduleDefinition, make_agent_action
+from personalclaw.schedule import ScheduleDefinition, ScheduleJob, make_agent_action
 from personalclaw.subagent import SubagentInfo
 
 # ── Helpers (same pattern as test_cron_slack_delivery.py) ──
@@ -70,9 +70,10 @@ def _run_callback(gateway, job, stream_result="done"):
     async def fake_stream(client, msg, **kwargs):
         return stream_result
 
-    with patch("personalclaw.gateway.stream_and_collect", fake_stream), patch(
-        "personalclaw.gateway.ScheduleService"
-    ) as mock_cron_cls:
+    with (
+        patch("personalclaw.gateway.stream_and_collect", fake_stream),
+        patch("personalclaw.gateway.ScheduleService") as mock_cron_cls,
+    ):
 
         def capture_cron(on_job=None, **kw):
             nonlocal captured_callback
@@ -262,7 +263,9 @@ class TestSubagentDoneCancelsBeforeRelease:
     async def test_cron_injection_cancels_before_release(self) -> None:
         gateway = _make_gateway()
         call_order: list[str] = []
-        gateway.sessions.cancel_current = AsyncMock(side_effect=lambda k: call_order.append("cancel"))
+        gateway.sessions.cancel_current = AsyncMock(
+            side_effect=lambda k: call_order.append("cancel")
+        )
         gateway.sessions.release = MagicMock(side_effect=lambda k: call_order.append("release"))
         subagent_done = _capture_subagent_done(gateway)
         info = SubagentInfo(id="s1", task="work", parent_session_key="cron:j1")
@@ -270,8 +273,11 @@ class TestSubagentDoneCancelsBeforeRelease:
         info.done = True
         p1, p2 = self._patches()
         with (
-            patch("personalclaw.gateway.stream_and_collect", new_callable=AsyncMock, return_value="ok"),
-            p1, p2,
+            patch(
+                "personalclaw.gateway.stream_and_collect", new_callable=AsyncMock, return_value="ok"
+            ),
+            p1,
+            p2,
         ):
             await subagent_done(info)
         assert call_order == ["cancel", "release"]
@@ -282,7 +288,9 @@ class TestSubagentDoneCancelsBeforeRelease:
         gateway._channel_delivery.open_dm = AsyncMock(return_value="D123")
         gateway._channel_delivery.deliver_subagent_reply = AsyncMock()
         call_order: list[str] = []
-        gateway.sessions.cancel_current = AsyncMock(side_effect=lambda k: call_order.append("cancel"))
+        gateway.sessions.cancel_current = AsyncMock(
+            side_effect=lambda k: call_order.append("cancel")
+        )
         gateway.sessions.release = MagicMock(side_effect=lambda k: call_order.append("release"))
         subagent_done = _capture_subagent_done(gateway)
         info = SubagentInfo(id="s3", task="work", parent_session_key="slack:U000")
@@ -290,8 +298,11 @@ class TestSubagentDoneCancelsBeforeRelease:
         info.done = True
         p1, p2 = self._patches()
         with (
-            patch("personalclaw.gateway.stream_and_collect", new_callable=AsyncMock, return_value="ok"),
-            p1, p2,
+            patch(
+                "personalclaw.gateway.stream_and_collect", new_callable=AsyncMock, return_value="ok"
+            ),
+            p1,
+            p2,
         ):
             await subagent_done(info)
         assert call_order == ["cancel", "release"]
@@ -307,8 +318,11 @@ class TestSubagentDoneCancelsBeforeRelease:
         info.done = True
         p1, p2 = self._patches()
         with (
-            patch("personalclaw.gateway.stream_and_collect", new_callable=AsyncMock, return_value="ok"),
-            p1, p2,
+            patch(
+                "personalclaw.gateway.stream_and_collect", new_callable=AsyncMock, return_value="ok"
+            ),
+            p1,
+            p2,
         ):
             await subagent_done(info)
         gateway.sessions.release.assert_called_once_with("cron:j1")
@@ -322,7 +336,9 @@ class TestDashboardInjectionRoutesRunChat:
 
     def _patches(self):
         return (
-            patch("personalclaw.gateway.redact_exfiltration_urls", side_effect=lambda s: (s, False)),
+            patch(
+                "personalclaw.gateway.redact_exfiltration_urls", side_effect=lambda s: (s, False)
+            ),
             patch("personalclaw.gateway.redact_credentials", side_effect=lambda s: (s, False)),
         )
 
@@ -343,7 +359,8 @@ class TestDashboardInjectionRoutesRunChat:
         p1, p2 = self._patches()
         with (
             patch("personalclaw.gateway._run_chat", new_callable=AsyncMock),
-            p1, p2,
+            p1,
+            p2,
         ):
             await subagent_done(info)
 
@@ -387,13 +404,16 @@ class TestDashboardInjectionRoutesRunChat:
         _mock_run_chat = AsyncMock(return_value=None)
         with (
             patch("personalclaw.gateway._run_chat", _mock_run_chat),
-            p1, p2,
+            p1,
+            p2,
         ):
             await subagent_done(info)
 
         # _run_chat should have been triggered
         assert _mock_run_chat.called, "_run_chat must be called after busy session becomes idle"
-        assert session.task is not _done_future, "session.task must be reassigned to the new _run_chat task"
+        assert (
+            session.task is not _done_future
+        ), "session.task must be reassigned to the new _run_chat task"
 
     @pytest.mark.asyncio
     async def test_busy_slot_timeout_queues_result(self) -> None:
@@ -414,7 +434,8 @@ class TestDashboardInjectionRoutesRunChat:
         p1, p2 = self._patches()
         with (
             patch("personalclaw.gateway.INJECTION_TIMEOUT", 0.01),
-            p1, p2,
+            p1,
+            p2,
         ):
             await subagent_done(info)
 
@@ -440,7 +461,8 @@ class TestDashboardInjectionRoutesRunChat:
         p1, p2 = self._patches()
         with (
             patch("personalclaw.gateway._run_chat", _mock_run_chat),
-            p1, p2,
+            p1,
+            p2,
         ):
             await subagent_done(info)
             # Let the task's done callbacks fire

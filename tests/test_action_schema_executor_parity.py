@@ -54,10 +54,11 @@ def _provider_paths(key: str) -> tuple[Path, Path]:
     if key == "webhook":
         if not _WORKSPACE_APPS.is_dir():  # standalone core clone — workspace app absent
             pytest.skip("webhook-action app dir not present (standalone clone)")
-        return (_WORKSPACE_APPS / "webhook-action" / "app.json",
-                _WORKSPACE_APPS / "webhook-action" / "provider.py")
-    return (_NATIVE_APPS / f"{key}-action" / "app.json",
-            _ACTION_PKG / _NATIVE_KEYS[key])
+        return (
+            _WORKSPACE_APPS / "webhook-action" / "app.json",
+            _WORKSPACE_APPS / "webhook-action" / "provider.py",
+        )
+    return (_NATIVE_APPS / f"{key}-action" / "app.json", _ACTION_PKG / _NATIVE_KEYS[key])
 
 
 _PROVIDERS = {**{k: None for k in _NATIVE_KEYS}, "webhook": None}

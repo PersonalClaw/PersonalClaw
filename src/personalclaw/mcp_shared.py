@@ -27,8 +27,8 @@ _excluded_tools: set[str] | None = None
 # Two separate negative caches with different TTLs so the long-TTL
 # HTTP-error path doesn't keep fail-open active when only a brief
 # startup race triggered the failure.
-_last_failure_time: float = 0.0           # gateway unreachable / non-404 HTTP error
-_last_startup_race_time: float = 0.0      # no session key or 404 — recovers fast
+_last_failure_time: float = 0.0  # gateway unreachable / non-404 HTTP error
+_last_startup_race_time: float = 0.0  # no session key or 404 — recovers fast
 _failure_count: int = 0
 # Long TTL applies only when the gateway is genuinely unreachable
 # (HTTP errors other than 404, connection refused, timeout).  Kept short
@@ -84,9 +84,8 @@ def _resolve_excluded_tools() -> set[str]:
     # Silent during the cache window — only the structured audit event is
     # emitted to keep gateway.log readable.  Two windows: a long one for
     # genuine HTTP/network failure, a short one for benign startup races.
-    if (
-        (_last_failure_time and (now - _last_failure_time) < _NEGATIVE_CACHE_TTL)
-        or (_last_startup_race_time and (now - _last_startup_race_time) < _STARTUP_RACE_CACHE_TTL)
+    if (_last_failure_time and (now - _last_failure_time) < _NEGATIVE_CACHE_TTL) or (
+        _last_startup_race_time and (now - _last_startup_race_time) < _STARTUP_RACE_CACHE_TTL
     ):
         sel().log_api_access(
             caller=os.environ.get("PERSONALCLAW_SESSION_KEY", "mcp"),
@@ -111,6 +110,7 @@ def _resolve_excluded_tools() -> set[str]:
         # Resolve session key (same logic as mcp_core._resolve_session_key)
         session_key = os.environ.get("PERSONALCLAW_SESSION_KEY", "")
         if not session_key:
+
             def _get_ppid(pid: int) -> int:
                 try:
                     if platform.system() == "Linux":
@@ -340,7 +340,11 @@ def run_mcp_stdio_loop(
     call_tool_fn: Callable[[str, dict[str, Any]], str],
 ) -> None:
     """Generic MCP stdio server loop — reads JSON-RPC from stdin, writes to stdout."""
-    from personalclaw.validation import ValidationError, build_tool_response, validate_jsonrpc_request
+    from personalclaw.validation import (
+        ValidationError,
+        build_tool_response,
+        validate_jsonrpc_request,
+    )
 
     while True:
         req = _read_message(sys.stdin)

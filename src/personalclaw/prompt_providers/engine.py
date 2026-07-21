@@ -17,7 +17,7 @@ Grammar (ordered passes over the text):
   6. functions     {{ upper(x) }} / {{ upper(trim(x)) }}  built-in registry (call-style, nestable)
   7. variables     {{ name }} / {{ a.b.c }} / {{ a.0 }}   dot-path + numeric list index
                    {{ name::type }} / {{ name::select::[a,b] }}  inline typed-variable decl
-                                                           (type consumed at render; extracted for the UI)
+                                                           (type used at render; for the UI)
 
 Built-in functions (call-style only, no pipes): string — upper lower capitalize
 title trim replace length truncate split substring; array — join first last count
@@ -35,13 +35,14 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from personalclaw.prompt_providers.base import (
     PromptRenderError,
     PromptSnippet,
     PromptTemplate,
     PromptVariable,
+    VariableType,
 )
 
 MAX_INCLUDE_DEPTH = 5
@@ -67,11 +68,23 @@ _FUNC_RE = re.compile(r"^([a-zA-Z_]\w*)\s*\((.*)\)$", re.DOTALL)
 _TYPE_DECL_RE = re.compile(r"^([a-zA-Z_][\w.]*)\s*::\s*(.+)$")
 # Canonical UI type names + the legacy aliases OpenForge/PromptForge accept.
 _TYPE_ALIASES = {
-    "string": "text", "str": "text", "text": "text",
-    "longtext": "textarea", "long_text": "textarea", "multiline": "textarea", "textarea": "textarea",
-    "numeric": "number", "integer": "number", "int": "number", "float": "number", "number": "number",
-    "bool": "boolean", "boolean": "boolean",
-    "select": "select", "multiselect": "select", "enum": "select",
+    "string": "text",
+    "str": "text",
+    "text": "text",
+    "longtext": "textarea",
+    "long_text": "textarea",
+    "multiline": "textarea",
+    "textarea": "textarea",
+    "numeric": "number",
+    "integer": "number",
+    "int": "number",
+    "float": "number",
+    "number": "number",
+    "bool": "boolean",
+    "boolean": "boolean",
+    "select": "select",
+    "multiselect": "select",
+    "enum": "select",
 }
 
 
@@ -83,7 +96,7 @@ def _strip_type_suffix(expr: str) -> str:
     return m.group(1) if m else expr
 
 
-def parse_type_decl(suffix: str) -> tuple[str, list[str]]:
+def parse_type_decl(suffix: str) -> tuple[VariableType, list[str]]:
     """Parse a `::` suffix into ``(canonical_type, options)``.
 
     Forms: ``text``, ``number``, ``select::[a, b]``, or a bare ``[a, b]`` (→ select).
@@ -95,14 +108,15 @@ def parse_type_decl(suffix: str) -> tuple[str, list[str]]:
     bracket = re.search(r"\[(.*)\]", s)
     if bracket:
         options = [o.strip() for o in bracket.group(1).split(",") if o.strip()]
-        type_part = s[:bracket.start()].rstrip(": ").strip()
+        type_part = s[: bracket.start()].rstrip(": ").strip()
     canonical = _TYPE_ALIASES.get(type_part.lower(), "") if type_part else ""
     if options and not canonical:
         canonical = "select"
-    return (canonical or "text", options)
+    return (cast(VariableType, canonical or "text"), options)
 
 
 # ── value coercion (typed variables) ────────────────────────────────────────
+
 
 def _coerce(var: PromptVariable, raw: Any) -> Any:
     if raw is None:
@@ -120,8 +134,10 @@ def _coerce(var: PromptVariable, raw: Any) -> Any:
                 return raw
             if isinstance(raw, str):
                 low = raw.strip().lower()
-                if low in ("true", "yes", "1"): return True
-                if low in ("false", "no", "0"): return False
+                if low in ("true", "yes", "1"):
+                    return True
+                if low in ("false", "no", "0"):
+                    return False
             raise PromptRenderError(f"variable {var.name!r} expects boolean, got {raw!r}")
         if t == "select":
             s = str(raw)
@@ -139,6 +155,7 @@ def _coerce(var: PromptVariable, raw: Any) -> Any:
 
 # ── built-in functions ───────────────────────────────────────────────────────
 
+
 def _fn_default(value: Any, fallback: Any = "") -> Any:
     return value if value not in (None, "") else fallback
 
@@ -154,14 +171,18 @@ BUILT_IN_FUNCTIONS: dict[str, Callable[..., Any]] = {
     "length": lambda s: len(s) if hasattr(s, "__len__") else 0,
     "truncate": lambda s, n=80: str(s) if len(str(s)) <= int(n) else str(s)[: int(n)] + "…",
     "split": lambda s, sep=",": str(s).split(str(sep)),
-    "substring": lambda s, start, end=None: str(s)[int(start):] if end is None else str(s)[int(start):int(end)],
+    "substring": lambda s, start, end=None: (
+        str(s)[int(start) :] if end is None else str(s)[int(start) : int(end)]
+    ),
     # array
     "join": lambda xs, sep=", ": str(sep).join(str(x) for x in (xs or [])),
     "first": lambda xs: (xs[0] if xs else ""),
     "last": lambda xs: (xs[-1] if xs else ""),
     "count": lambda xs: len(xs) if hasattr(xs, "__len__") else 0,
     "sort": lambda xs: sorted(xs or [], key=str),
-    "slice": lambda xs, start, end=None: (list(xs)[int(start):] if end is None else list(xs)[int(start):int(end)]) if xs else [],
+    "slice": lambda xs, start, end=None: (
+        (list(xs)[int(start) :] if end is None else list(xs)[int(start) : int(end)]) if xs else []
+    ),
     "push": lambda xs, item: [*(xs or []), item],
     "filter": lambda xs: [x for x in (xs or []) if x],
     "map": lambda xs, prop: [(x.get(prop) if isinstance(x, dict) else None) for x in (xs or [])],
@@ -178,8 +199,12 @@ BUILT_IN_FUNCTIONS: dict[str, Callable[..., Any]] = {
     "parse": lambda s: json.loads(s) if isinstance(s, str) else s,
     "default": _fn_default,
     "uuid": lambda: __import__("uuid").uuid4().hex,
-    "date": lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
-    "timestamp": lambda: int(__import__("datetime").datetime.now(__import__("datetime").timezone.utc).timestamp()),
+    "date": lambda: __import__("datetime")
+    .datetime.now(__import__("datetime").timezone.utc)
+    .isoformat(),
+    "timestamp": lambda: int(
+        __import__("datetime").datetime.now(__import__("datetime").timezone.utc).timestamp()
+    ),
     # math
     "add": lambda a, b: _num(a) + _num(b),
     "subtract": lambda a, b: _num(a) - _num(b),
@@ -226,7 +251,11 @@ def _fn_get(obj: Any, path: Any, fallback: Any = None) -> Any:
     for seg in str(path).split("."):
         if isinstance(cur, dict) and seg in cur:
             cur = cur[seg]
-        elif isinstance(cur, (list, tuple)) and seg.lstrip("-").isdigit() and -len(cur) <= int(seg) < len(cur):
+        elif (
+            isinstance(cur, (list, tuple))
+            and seg.lstrip("-").isdigit()
+            and -len(cur) <= int(seg) < len(cur)
+        ):
             cur = cur[int(seg)]
         else:
             return fallback
@@ -246,6 +275,7 @@ def _num(v: Any) -> float | int:
 
 
 # ── expression evaluation ────────────────────────────────────────────────────
+
 
 def _lookup(path: str, ctx: dict[str, Any]) -> Any:
     """Dot-path lookup into the context. Returns None when any segment is missing."""
@@ -313,11 +343,14 @@ def _split_args(argstr: str) -> list[str]:
             quote = ch
             cur += ch
         elif ch in "([":
-            depth += 1; cur += ch
+            depth += 1
+            cur += ch
         elif ch in ")]":
-            depth -= 1; cur += ch
+            depth -= 1
+            cur += ch
         elif ch == "," and depth == 0:
-            args.append(cur); cur = ""
+            args.append(cur)
+            cur = ""
         else:
             cur += ch
     if cur.strip():
@@ -360,7 +393,7 @@ def _eval_not(expr: str, ctx: dict[str, Any]) -> bool:
     e = expr.strip()
     m = _BOOL_WORD_RE.match(e)
     if m and m.group(1).lower() == "not":
-        return not _eval_not(e[m.end():], ctx)
+        return not _eval_not(e[m.end() :], ctx)
     return _eval_comparison(e, ctx)
 
 
@@ -383,16 +416,27 @@ def _split_bool(expr: str, word: str) -> list[str]:
             i += 1
             continue
         if ch in "\"'":
-            quote = ch; cur += ch; i += 1; continue
+            quote = ch
+            cur += ch
+            i += 1
+            continue
         if ch == "(":
-            depth += 1; cur += ch; i += 1; continue
+            depth += 1
+            cur += ch
+            i += 1
+            continue
         if ch == ")":
-            depth -= 1; cur += ch; i += 1; continue
+            depth -= 1
+            cur += ch
+            i += 1
+            continue
         # Top-level keyword match on word boundaries.
-        if (depth == 0
-                and expr[i:i + wl].lower() == word
-                and (i == 0 or not (expr[i - 1].isalnum() or expr[i - 1] == "_"))
-                and (i + wl >= n or not (expr[i + wl].isalnum() or expr[i + wl] == "_"))):
+        if (
+            depth == 0
+            and expr[i : i + wl].lower() == word
+            and (i == 0 or not (expr[i - 1].isalnum() or expr[i - 1] == "_"))
+            and (i + wl >= n or not (expr[i + wl].isalnum() or expr[i + wl] == "_"))
+        ):
             parts.append(cur)
             cur = ""
             i += wl
@@ -416,7 +460,11 @@ def _eval_comparison(cond: str, ctx: dict[str, Any]) -> bool:
     # so an `in`/`contains` operand that itself contains '==' is handled right).
     mem = _MEMBERSHIP_RE.match(s)
     if mem:
-        a, kw, b = _eval_expr(mem.group(1), ctx), mem.group(2).lower(), _eval_expr(mem.group(3), ctx)
+        a, kw, b = (
+            _eval_expr(mem.group(1), ctx),
+            mem.group(2).lower(),
+            _eval_expr(mem.group(3), ctx),
+        )
         needle, haystack = (a, b) if kw == "in" else (b, a)
         return _contains(haystack, needle)
 
@@ -425,17 +473,25 @@ def _eval_comparison(cond: str, ctx: dict[str, Any]) -> bool:
         return _truthy(_eval_expr(s, ctx))
     left, op, right = _eval_expr(m.group(1), ctx), m.group(2), _eval_expr(m.group(3), ctx)
     try:
-        if op == "==": return left == right
-        if op == "!=": return left != right
+        if op == "==":
+            return left == right
+        if op == "!=":
+            return left != right
         # numeric comparisons coerce; fall back to string compare on failure
+        ln: Any
+        rn: Any
         try:
             ln, rn = _num(left), _num(right)
         except PromptRenderError:
             ln, rn = str(left), str(right)
-        if op == ">": return ln > rn
-        if op == "<": return ln < rn
-        if op == ">=": return ln >= rn
-        if op == "<=": return ln <= rn
+        if op == ">":
+            return ln > rn
+        if op == "<":
+            return ln < rn
+        if op == ">=":
+            return ln >= rn
+        if op == "<=":
+            return ln <= rn
     except TypeError:
         return False
     return False
@@ -475,6 +531,7 @@ def _contains(haystack: Any, needle: Any) -> bool:
 
 # ── block parsing (if / for) — nesting-aware ────────────────────────────────
 
+
 def _render_blocks(text: str, ctx: dict[str, Any], depth: int = 0) -> str:
     """Resolve {% if %}/{% for %} blocks then {{ expr }} expressions in `text`."""
     if depth > 50:
@@ -484,7 +541,7 @@ def _render_blocks(text: str, ctx: dict[str, Any], depth: int = 0) -> str:
     for m in _TAG_RE.finditer(text):
         if m.start() < i:
             continue
-        out.append(_render_exprs(text[i:m.start()], ctx))
+        out.append(_render_exprs(text[i : m.start()], ctx))
         tag = m.group(1).strip()
         if tag.startswith("for "):
             body, end = _extract_block(text, m.start(), "for", "endfor")
@@ -519,7 +576,7 @@ def _extract_block(text: str, start: int, open_kw: str, close_kw: str) -> tuple[
         elif kw == close_kw:
             level -= 1
             if level == 0:
-                return text[body_start:m.start()], m.end()
+                return text[body_start : m.start()], m.end()
     raise PromptRenderError(f"unterminated {{% {open_kw} %}} block")
 
 
@@ -555,11 +612,11 @@ def _split_if_chain(if_cond: str, body: str) -> list[tuple[str | None, str]]:
         elif kw in ("endif", "endfor"):
             level -= 1
         elif level == 0 and kw == "elif":
-            branches.append((cur_cond, body[seg_start:m.start()]))
-            cur_cond = tag[len("elif"):].strip()
+            branches.append((cur_cond, body[seg_start : m.start()]))
+            cur_cond = tag[len("elif") :].strip()
             seg_start = m.end()
         elif level == 0 and kw == "else":
-            branches.append((cur_cond, body[seg_start:m.start()]))
+            branches.append((cur_cond, body[seg_start : m.start()]))
             cur_cond = None
             seg_start = m.end()
     branches.append((cur_cond, body[seg_start:]))
@@ -589,14 +646,20 @@ def _render_for(tag: str, body: str, ctx: dict[str, Any], depth: int) -> str:
     for idx, item in enumerate(items):
         loop_ctx = dict(ctx)
         loop_ctx[var_name] = item
-        loop_ctx["loop"] = {"index": idx, "index1": idx + 1, "first": idx == 0,
-                            "last": idx == n - 1, "length": n}
+        loop_ctx["loop"] = {
+            "index": idx,
+            "index1": idx + 1,
+            "first": idx == 0,
+            "last": idx == n - 1,
+            "length": n,
+        }
         out.append(_render_blocks(body, loop_ctx, depth + 1))
     return "".join(out)
 
 
 def _render_exprs(text: str, ctx: dict[str, Any]) -> str:
     """Replace {{ expr }} expressions. Undeclared bare names pass through."""
+
     def repl(m: re.Match[str]) -> str:
         expr = m.group(1).strip()
         if expr.startswith(">"):
@@ -614,6 +677,7 @@ def _render_exprs(text: str, ctx: dict[str, Any]) -> str:
         if val is None and not is_func and _lookup(expr, ctx) is None and not _is_known(expr, ctx):
             return m.group(0)
         return "" if val is None else _stringify(val)
+
     return _EXPR_RE.sub(repl, text)
 
 
@@ -632,8 +696,10 @@ def _stringify(val: Any) -> str:
 
 # ── includes (snippet transclusion) ─────────────────────────────────────────
 
-def _resolve_includes(text: str, resolver: SnippetResolver | None, depth: int,
-                      seen: tuple[str, ...]) -> str:
+
+def _resolve_includes(
+    text: str, resolver: SnippetResolver | None, depth: int, seen: tuple[str, ...]
+) -> str:
     if "{{>" not in text:
         return text
     if depth > MAX_INCLUDE_DEPTH:
@@ -658,10 +724,14 @@ def _resolve_includes(text: str, resolver: SnippetResolver | None, depth: int,
 # We strip the markers and the adjacent run of whitespace in one pre-pass, then
 # hand clean {{ }}/{% %}/{# #} delimiters to the normal passes. Templates that
 # use no markers are returned untouched (the regex simply doesn't match).
-_WS_OPEN_RE = re.compile(r"[ \t\r\n]+(\{[{%#])-")   # whitespace before an opener whose marker is '-'
+_WS_OPEN_RE = re.compile(r"[ \t\r\n]+(\{[{%#])-")  # whitespace before an opener whose marker is '-'
 _WS_CLOSE_RE = re.compile(r"-([}%#]\})[ \t\r\n]+")  # whitespace after a closer whose marker is '-'
-_WS_OPEN_BARE_RE = re.compile(r"(\{[{%#])-")          # leftover opener marker at string start (no preceding ws)
-_WS_CLOSE_BARE_RE = re.compile(r"-([}%#]\})")         # leftover closer marker at string end (no following ws)
+_WS_OPEN_BARE_RE = re.compile(
+    r"(\{[{%#])-"
+)  # leftover opener marker at string start (no preceding ws)
+_WS_CLOSE_BARE_RE = re.compile(
+    r"-([}%#]\})"
+)  # leftover closer marker at string end (no following ws)
 
 
 def _apply_whitespace_control(text: str) -> str:
@@ -677,6 +747,7 @@ def _apply_whitespace_control(text: str) -> str:
 
 
 # ── variable value map (declared variables → coerced values) ────────────────
+
 
 def _build_value_ctx(variables: list[PromptVariable], values: dict[str, Any]) -> dict[str, Any]:
     ctx: dict[str, Any] = dict(values)  # ambient values (e.g. {{bot_name}}) pass through
@@ -694,8 +765,14 @@ def _build_value_ctx(variables: list[PromptVariable], values: dict[str, Any]) ->
 
 # ── public API ───────────────────────────────────────────────────────────────
 
-def render(content: str, variables: list[PromptVariable], values: dict[str, Any] | None = None,
-           *, resolver: SnippetResolver | None = None) -> str:
+
+def render(
+    content: str,
+    variables: list[PromptVariable],
+    values: dict[str, Any] | None = None,
+    *,
+    resolver: SnippetResolver | None = None,
+) -> str:
     """Render raw ``content`` through the full pipeline.
 
     1. resolve {{> snippet}} includes (via ``resolver``), 2. strip comments,
@@ -709,14 +786,22 @@ def render(content: str, variables: list[PromptVariable], values: dict[str, Any]
     return _render_blocks(text, ctx)
 
 
-def render_template(template: PromptTemplate, values: dict[str, Any] | None = None,
-                    *, resolver: SnippetResolver | None = None) -> str:
+def render_template(
+    template: PromptTemplate,
+    values: dict[str, Any] | None = None,
+    *,
+    resolver: SnippetResolver | None = None,
+) -> str:
     """Render a ``PromptTemplate`` with the supplied variable values."""
     return render(template.content, template.variables, values, resolver=resolver)
 
 
-def render_snippet(snippet: PromptSnippet, values: dict[str, Any] | None = None,
-                   *, resolver: SnippetResolver | None = None) -> str:
+def render_snippet(
+    snippet: PromptSnippet,
+    values: dict[str, Any] | None = None,
+    *,
+    resolver: SnippetResolver | None = None,
+) -> str:
     """Render a ``PromptSnippet`` standalone (for preview)."""
     return render(snippet.content, snippet.variables, values, resolver=resolver)
 
@@ -753,8 +838,9 @@ def extract_inline_variables(content: str) -> list[PromptVariable]:
     return out
 
 
-def merged_variables(template: PromptTemplate | PromptSnippet,
-                     resolver: SnippetResolver | None = None) -> list[PromptVariable]:
+def merged_variables(
+    template: PromptTemplate | PromptSnippet, resolver: SnippetResolver | None = None
+) -> list[PromptVariable]:
     """A template's own variables ∪ the variables of every snippet it transitively
     includes, deduped by name (the host's declaration wins). This is the set the
     fill-in UI renders and binding-time validation checks."""

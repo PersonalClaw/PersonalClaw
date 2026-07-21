@@ -10,6 +10,7 @@ Chat, autonomous goal loops, long-term memory, a knowledge base, skills, schedul
 automation, and channel integrations — all behind one gateway process and one web
 dashboard you own. Local-first, provider-agnostic, zero telemetry, MIT.
 
+[![CI](https://github.com/PersonalClaw/PersonalClaw/actions/workflows/ci.yml/badge.svg)](https://github.com/PersonalClaw/PersonalClaw/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
 [![Zero telemetry](https://img.shields.io/badge/telemetry-none-brightgreen.svg)](#privacy)
@@ -143,6 +144,16 @@ Store, add your API key under **Settings → Providers**, and bind a chat model 
 **Zero telemetry.** PersonalClaw sends no usage data anywhere. It's single-user and
 self-hosted; your conversations, memory, and knowledge never leave your machine unless
 *you* wire up a remote provider app. Exports exclude credentials by design.
+
+## Supply chain
+
+The release pipeline practices the install-time gating the product itself preaches:
+builds run in CI from a committed lockfile (`uv.lock`, installed with `uv sync
+--locked`); PyPI publishing uses **Trusted Publishing** (OIDC — no long-lived tokens
+stored anywhere) behind a manual owner-approval gate; every release attaches a **syft
+SBOM** and **build-provenance attestations** on the wheel and images; and Dependabot
+watches the pip, npm, and GitHub-Actions ecosystems weekly. `pip-audit` and `npm audit`
+run on every push to `main`.
 
 ## Documentation
 

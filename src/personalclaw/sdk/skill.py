@@ -16,6 +16,9 @@ from personalclaw.skills.marketplace import (  # noqa: F401
 )
 
 __all__ = [
-    'SkillsMarketplace', 'SkillEntry', 'SkillDetail',
-    'get_default_skills_registry', 'read_skill_file_entry',
+    "SkillsMarketplace",
+    "SkillEntry",
+    "SkillDetail",
+    "get_default_skills_registry",
+    "read_skill_file_entry",
 ]

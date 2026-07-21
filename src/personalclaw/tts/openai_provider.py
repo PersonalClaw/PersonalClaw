@@ -15,6 +15,7 @@ import asyncio
 import logging
 import os
 import tempfile
+from typing import Any
 
 from personalclaw.tts.provider import TtsProvider
 
@@ -29,7 +30,9 @@ _DEFAULT_SPEECH_VOICE = "alloy"
 class OpenAITtsProvider(TtsProvider):
     """Synthesize speech via an OpenAI-compatible hosted TTS endpoint."""
 
-    def __init__(self, *, provider_name: str, provider_type: str = "", endpoint: str = "", api_key: str = "") -> None:
+    def __init__(
+        self, *, provider_name: str, provider_type: str = "", endpoint: str = "", api_key: str = ""
+    ) -> None:
         self._provider_name = provider_name
         self._provider_type = provider_type
         self._endpoint = endpoint
@@ -74,6 +77,7 @@ class OpenAITtsProvider(TtsProvider):
         *,
         speech_voice: str = "",
         speed: float = 1.0,
+        **opts: Any,
     ) -> str | None:
         """Synthesize *text* to a ``.mp3`` file. Returns the path or None.
 
@@ -102,7 +106,8 @@ class OpenAITtsProvider(TtsProvider):
         if not model_id:
             logger.error(
                 "No TTS model selected for %r (this endpoint has no contributed "
-                "default); pin one in Settings → Models.", self._provider_name,
+                "default); pin one in Settings → Models.",
+                self._provider_name,
             )
             return None
         persona = speech_voice or _DEFAULT_SPEECH_VOICE

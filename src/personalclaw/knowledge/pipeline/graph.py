@@ -47,6 +47,11 @@ class PipelineGraph:
         self.nodes[spec.node_type] = spec
         return spec
 
+    def build(self) -> None:
+        """Populate ``nodes``/``edges``/``roots`` for this knowledge type.
+        Subclasses override; the base is a no-op so a bare graph is valid-but-empty."""
+        return None
+
     def edge(self, frm: str, to: str, *, when: str | None = None) -> None:
         self.edges.append(Edge(from_node=frm, to_node=to, when=when))
 
@@ -55,7 +60,9 @@ class PipelineGraph:
         graph segment while `frm`'s classification == `when`, up to `max_iters`
         times. The only permitted cycle; excluded from acyclic validation + topo
         order (the executor drives it — see PipelineExecutor)."""
-        self.edges.append(Edge(from_node=frm, to_node=to, when=when, loop=True, max_iters=max_iters))
+        self.edges.append(
+            Edge(from_node=frm, to_node=to, when=when, loop=True, max_iters=max_iters)
+        )
 
     # ── topology ──
 

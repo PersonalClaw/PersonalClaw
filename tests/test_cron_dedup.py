@@ -8,8 +8,8 @@ the dedup state.
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from personalclaw.schedule import ScheduleJob, ScheduleDefinition, make_agent_action
 from personalclaw.gateway import _result_hash
+from personalclaw.schedule import ScheduleDefinition, ScheduleJob, make_agent_action
 
 
 def _make_gateway():
@@ -66,9 +66,10 @@ def _run_callback(gw, job, stream_result="done"):
     async def fake_stream(client, msg, **kwargs):
         return stream_result
 
-    with patch("personalclaw.gateway.stream_and_collect", fake_stream), patch(
-        "personalclaw.gateway.ScheduleService"
-    ) as mock_cron_cls:
+    with (
+        patch("personalclaw.gateway.stream_and_collect", fake_stream),
+        patch("personalclaw.gateway.ScheduleService") as mock_cron_cls,
+    ):
 
         def capture_cron(on_job=None, **kw):
             nonlocal captured_cb
@@ -272,9 +273,11 @@ def _run_callback_raising(gw, job, exc):
     async def fake_stream(client, msg, **kwargs):
         raise exc
 
-    with patch("personalclaw.gateway.stream_and_collect", fake_stream), patch(
-        "personalclaw.gateway.ScheduleService"
-    ) as mock_cron_cls, patch("personalclaw.sel.sel"):
+    with (
+        patch("personalclaw.gateway.stream_and_collect", fake_stream),
+        patch("personalclaw.gateway.ScheduleService") as mock_cron_cls,
+        patch("personalclaw.sel.sel"),
+    ):
 
         def capture_cron(on_job=None, **kw):
             nonlocal captured_cb
@@ -325,9 +328,7 @@ class TestCronFailureDedup:
         assert gw._channel_delivery.deliver_text.await_count == 1  # no new channel post
         assert job.consecutive_failures == 2
         # Dashboard still gets notified (with dup marker)
-        dup_calls = [
-            c for c in gw.dashboard_state.notify.call_args_list if "dup failure" in str(c)
-        ]
+        dup_calls = [c for c in gw.dashboard_state.notify.call_args_list if "dup failure" in str(c)]
         assert dup_calls, "Expected a dup failure dashboard notification"
 
     def test_different_failure_re_alerts(self) -> None:
@@ -431,8 +432,9 @@ class TestCronFailurePersistence:
             timeout_secs=0,
         )
         # Pretend _execute hangs so _execute_with_timeout triggers the timeout.
-        with patch.object(svc, "_execute", side_effect=_hang), patch(
-            "personalclaw.schedule._JOB_TIMEOUT_SECS", 0.05
+        with (
+            patch.object(svc, "_execute", side_effect=_hang),
+            patch("personalclaw.schedule._JOB_TIMEOUT_SECS", 0.05),
         ):
             asyncio.run(svc._execute_with_timeout(job))
         assert job.last_status == "error"
@@ -464,8 +466,9 @@ class TestCronFailurePersistence:
         )
         svc._jobs = [job]
         svc._save()
-        with patch.object(svc, "_execute", side_effect=_hang), patch(
-            "personalclaw.schedule._JOB_TIMEOUT_SECS", 0.05
+        with (
+            patch.object(svc, "_execute", side_effect=_hang),
+            patch("personalclaw.schedule._JOB_TIMEOUT_SECS", 0.05),
         ):
             asyncio.run(svc._run_job_isolated(job))
         svc2 = ScheduleService(base_dir=tmp_path)

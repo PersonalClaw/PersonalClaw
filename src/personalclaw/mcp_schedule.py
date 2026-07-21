@@ -23,7 +23,12 @@ from typing import Any
 
 from personalclaw.config.loader import config_dir
 from personalclaw.mcp_core import _resolve_session_key
-from personalclaw.schedule import ScheduleService, compute_next_run_ts, format_schedule, get_local_tz
+from personalclaw.schedule import (
+    ScheduleService,
+    compute_next_run_ts,
+    format_schedule,
+    get_local_tz,
+)
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
 logger = logging.getLogger(__name__)
@@ -131,7 +136,7 @@ def _list_tools() -> list[dict[str, Any]]:
                     },
                     "delay": {
                         "type": "number",
-                        "description": "Seconds from now for one-shot job (e.g. 120 for 2 minutes). "
+                        "description": "Seconds from now for one-shot job (e.g. 120 for 2 minutes). "  # noqa: E501
                         "Converted to 'at' internally. Prefer this over 'at'.",
                     },
                     "at_time": {
@@ -149,7 +154,7 @@ def _list_tools() -> list[dict[str, Any]]:
                     "thread_ts": {
                         "type": "string",
                         "description": "Channel thread timestamp to reply in. "
-                        "Use with channel to post results as a thread reply instead of a new message.",
+                        "Use with channel to post results as a thread reply instead of a new message.",  # noqa: E501
                     },
                     "agent": {
                         "type": "string",
@@ -171,7 +176,7 @@ def _list_tools() -> list[dict[str, Any]]:
                     "skip_dates": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "ISO dates to skip (e.g. [\"2026-04-06\", \"2026-12-25\"]). "
+                        "description": 'ISO dates to skip (e.g. ["2026-04-06", "2026-12-25"]). '
                         "Job silently does not fire on these dates. Evaluated in job's timezone.",
                     },
                     "timezone": {
@@ -215,7 +220,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "schedule_update",
-            "description": "Update an existing cron job's name, message, schedule, agent, or channel.",
+            "description": "Update an existing cron job's name, message, schedule, agent, or channel.",  # noqa: E501
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -304,10 +309,12 @@ def _list_tools() -> list[dict[str, Any]]:
         {
             "name": "schedule_trigger",
             "description": "Fire a cron job immediately (on-demand), regardless of its schedule. "
-            "Runs through the live gateway and returns at once; the run appears in execution history.",
+            "Runs through the live gateway and returns at once; the run appears in execution history.",  # noqa: E501
             "inputSchema": {
                 "type": "object",
-                "properties": {"job_id": {"type": "string", "description": "Job ID to trigger now"}},
+                "properties": {
+                    "job_id": {"type": "string", "description": "Job ID to trigger now"}
+                },
                 "required": ["job_id"],
             },
         },
@@ -324,10 +331,19 @@ def _list_tools() -> list[dict[str, Any]]:
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "Job name"},
-                    "message": {"type": "string", "description": "The agent prompt to run on each fire."},
-                    "cadence": {"type": "string", "description": "Plain-English recurring cadence (e.g. 'every weekday at 9am')."},
+                    "message": {
+                        "type": "string",
+                        "description": "The agent prompt to run on each fire.",
+                    },
+                    "cadence": {
+                        "type": "string",
+                        "description": "Plain-English recurring cadence (e.g. 'every weekday at 9am').",  # noqa: E501
+                    },
                     "channel": {"type": "string", "description": "Optional delivery channel id."},
-                    "silent": {"type": "boolean", "description": "Suppress delivery (run quietly)."},
+                    "silent": {
+                        "type": "boolean",
+                        "description": "Suppress delivery (run quietly).",
+                    },
                 },
                 "required": ["name", "message", "cadence"],
             },
@@ -358,8 +374,12 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
     from personalclaw.mcp_shared import call_tool_with_logging
 
     return call_tool_with_logging(
-        name, raw_args, _validate_args, _call_tool_inner,
-        session_key="mcp_schedule", downstream_service="personalclaw-schedule",
+        name,
+        raw_args,
+        _validate_args,
+        _call_tool_inner,
+        session_key="mcp_schedule",
+        downstream_service="personalclaw-schedule",
     )
 
 
@@ -392,7 +412,8 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             return f"Error: {err}"
         # Delegate to the validated schedule_add path with the derived cron expr.
         add_args = {
-            "name": args.get("name", ""), "message": args.get("message", ""),
+            "name": args.get("name", ""),
+            "message": args.get("message", ""),
             "cron_expr": cron_expr,
         }
         if args.get("channel"):
@@ -404,7 +425,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             from personalclaw.schedule import _humanize_cron
 
             try:
-                result += f"\n(interpreted '{cadence}' as cron: {cron_expr} — {_humanize_cron(cron_expr)})"
+                result += f"\n(interpreted '{cadence}' as cron: {cron_expr} — {_humanize_cron(cron_expr)})"  # noqa: E501
             except Exception:
                 result += f"\n(cron: {cron_expr})"
         return result
@@ -456,7 +477,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         n = args["name"]
         msg = args["message"]
         every = args.get("every")
-        cron_expr = args.get("cron_expr")
+        cron_arg = args.get("cron_expr")
         at_ts = args.get("at")
         delay = args.get("delay")
         at_time = args.get("at_time")
@@ -474,7 +495,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         channel = (args.get("channel") or "").strip() or None
         if channel is None:
             channel = os.environ.get("PERSONALCLAW_CHANNEL_ID") or None
-        if not every and not cron_expr and not at_ts:
+        if not every and not cron_arg and not at_ts:
             return "Error: provide every, cron_expr, at, delay, or at_time"
         # The job's action — a deterministic command/script (zero-token, no LLM)
         # or an agent turn. ``message`` is the script's args when a script/command
@@ -504,7 +525,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 name=n,
                 action=action,
                 every_secs=every,
-                cron_expr=cron_expr,
+                cron_expr=cron_arg,
                 at_ts=at_ts,
                 channel=channel,
                 thread_ts=thread_ts,
@@ -547,7 +568,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         ):
             svc._save()
         sched_str = format_schedule(job.schedule)
-        return f"Added job: {job.id} ({job.name}) [{sched_str}]. Tell the user: scheduled for {sched_str}."
+        return f"Added job: {job.id} ({job.name}) [{sched_str}]. Tell the user: scheduled for {sched_str}."  # noqa: E501
 
     if name == "schedule_update":
         from personalclaw.schedule import (

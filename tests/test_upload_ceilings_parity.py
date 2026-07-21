@@ -11,7 +11,7 @@ _REPO = Path(__file__).resolve().parent.parent
 _NGINX = _REPO / "deploy" / "docker" / "nginx.conf.template"
 
 _MB = 1024 * 1024
-_GB = 1024 ** 3
+_GB = 1024**3
 
 
 def _parse_size(tok: str) -> int:

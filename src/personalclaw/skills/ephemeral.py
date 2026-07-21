@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from personalclaw.atomic_write import atomic_write
@@ -41,7 +41,9 @@ def _slugify(text: str) -> str:
 
 def _session_slug(session_key: str) -> str:
     # Session keys carry ':' / '/' etc. — flatten to a safe single dir name.
-    return _SLUG_RE.sub("-", (session_key or "default").strip().lower()).strip("-")[:80] or "default"
+    return (
+        _SLUG_RE.sub("-", (session_key or "default").strip().lower()).strip("-")[:80] or "default"
+    )
 
 
 def _ephemeral_root() -> Path:
@@ -66,7 +68,9 @@ class EphemeralSkill:
         return asdict(self)
 
 
-def remember(session_key: str, title: str, body: str, *, created_at: str = "") -> EphemeralSkill | None:
+def remember(
+    session_key: str, title: str, body: str, *, created_at: str = ""
+) -> EphemeralSkill | None:
     """Write (or overwrite) a session-live draft. Returns the draft, or None on
     invalid input. Idempotent per (session, slug): re-remembering a title updates it."""
     title = (title or "").strip()
@@ -89,8 +93,9 @@ def remember(session_key: str, title: str, body: str, *, created_at: str = "") -
             logger.debug("ephemeral draft cap reached for session %s", session_key)
             return None
     slug = _slugify(title)
-    draft = EphemeralSkill(slug=slug, title=title, body=body,
-                           session_key=session_key, created_at=created_at)
+    draft = EphemeralSkill(
+        slug=slug, title=title, body=body, session_key=session_key, created_at=created_at
+    )
     try:
         atomic_write(sdir / f"{slug}.json", json.dumps(draft.to_dict(), indent=2))
     except OSError:

@@ -23,6 +23,7 @@ def _load_providers_raw() -> list[dict]:
     """Load the raw providers array from config.json."""
     try:
         from personalclaw.config.loader import config_path
+
         path = config_path()
         if path.exists():
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -157,16 +158,22 @@ def save_all_sessions_to_history(state: DashboardState) -> None:
 
 
 def _attach_variants(session: _ChatSession, m: dict) -> None:
-    """Copy variant history from a persisted message onto the session's last message, with redaction."""
+    """Copy variant history from a persisted message onto the session's last message, with redaction."""  # noqa: E501
     if m.get("variants"):
         session.messages[-1]["variants"] = [  # type: ignore[assignment]
-            {**v, "content": redact_credentials(redact_exfiltration_urls(v.get("content", ""))[0])[0]}
-            for v in m["variants"] if isinstance(v, dict)
+            {
+                **v,
+                "content": redact_credentials(redact_exfiltration_urls(v.get("content", ""))[0])[0],
+            }
+            for v in m["variants"]
+            if isinstance(v, dict)
         ]
         session.messages[-1]["variant_idx"] = m.get("variant_idx", 0)
 
 
-def _rehydrate_session_from_history(state: DashboardState, session_name: str) -> _ChatSession | None:
+def _rehydrate_session_from_history(
+    state: DashboardState, session_name: str
+) -> _ChatSession | None:
     """Rehydrate a single dashboard session from persisted history.
 
     Unlike ``state.get_or_create_session`` (which creates a fresh, empty session with
@@ -236,7 +243,9 @@ def _rehydrate_session_from_history(state: DashboardState, session_name: str) ->
             provider_name = pc.provider_agent if pc and pc.provider_agent else session.agent
             session.model = provider_model_map.get(provider_name, "")
         except Exception:
-            logger.debug("Failed to resolve model for rehydrated session %s", session_name, exc_info=True)
+            logger.debug(
+                "Failed to resolve model for rehydrated session %s", session_name, exc_info=True
+            )
     if meta.get("reasoning_effort"):
         session.reasoning_effort = _validate_reasoning_effort(meta["reasoning_effort"])
     # Ephemeral discovered-ACP-agent override (per-session, never in config).
@@ -268,6 +277,7 @@ def _rehydrate_session_from_history(state: DashboardState, session_name: str) ->
     _side_meta = meta.get("side")
     if isinstance(_side_meta, dict) and _side_meta.get("messages"):
         from personalclaw.dashboard.side_state import SideState
+
         session._side = SideState.from_dict(_side_meta)
     messages = state.conversation_log.read_messages(history_key)
     for m in messages[-200:]:
@@ -277,7 +287,13 @@ def _rehydrate_session_from_history(state: DashboardState, session_name: str) ->
         if role != "user":
             content, _ = redact_exfiltration_urls(content)
             content, _ = redact_credentials(content)
-        session.append(role, content, cls, ts=m.get("ts", ""), meta=_redact_meta(m["meta"]) if m.get("meta") else None)
+        session.append(
+            role,
+            content,
+            cls,
+            ts=m.get("ts", ""),
+            meta=_redact_meta(m["meta"]) if m.get("meta") else None,
+        )
         _attach_variants(session, m)
     session.drain()
     session._resumed_count = len(session.messages)
@@ -297,7 +313,9 @@ def resolve_session(state: DashboardState, name: str):
     return state._sessions.get(name) or _rehydrate_session_from_history(state, name)
 
 
-def restore_recent_sessions(state: DashboardState, window_minutes: int = 30, *, folders_only: bool = False) -> int:
+def restore_recent_sessions(
+    state: DashboardState, window_minutes: int = 30, *, folders_only: bool = False
+) -> int:
     """Restore sessions as chat sessions."""
     if not state.conversation_log:
         return 0
@@ -383,6 +401,7 @@ def restore_recent_sessions(state: DashboardState, window_minutes: int = 30, *, 
         _side_meta = meta.get("side")
         if isinstance(_side_meta, dict) and _side_meta.get("messages"):
             from personalclaw.dashboard.side_state import SideState
+
             session._side = SideState.from_dict(_side_meta)
         tab_id = meta.get("tab_id")
         if not tab_id:
@@ -398,7 +417,13 @@ def restore_recent_sessions(state: DashboardState, window_minutes: int = 30, *, 
             if role != "user":
                 content, _ = redact_exfiltration_urls(content)
                 content, _ = redact_credentials(content)
-            session.append(role, content, cls, ts=m.get("ts", ""), meta=_redact_meta(m["meta"]) if m.get("meta") else None)
+            session.append(
+                role,
+                content,
+                cls,
+                ts=m.get("ts", ""),
+                meta=_redact_meta(m["meta"]) if m.get("meta") else None,
+            )
             _attach_variants(session, m)
         session.drain()
         session._resumed_count = len(session.messages)
@@ -428,7 +453,9 @@ def _save_session_to_history(
     # channel-provider thread keeps its own bare key; a dashboard session uses the
     # dashboard: namespace. resolve_history_key returns the existing persisted key
     # (channel thread) and falls back to the dashboard form for a brand-new session.
-    history_key = resolve_history_key(state.conversation_log, session.key) or _history_key_for(session.key)
+    history_key = resolve_history_key(state.conversation_log, session.key) or _history_key_for(
+        session.key
+    )
     try:
         existing_meta = state.conversation_log.get_metadata(history_key)
 

@@ -15,7 +15,6 @@ import pytest
 
 from personalclaw.hooks import (
     HOOK_EVENT_PRE_TOOL_USE,
-    ScriptHook,
     ScriptHookResult,
     ScriptHookStore,
     fire_tool_hooks,
@@ -26,11 +25,15 @@ from personalclaw.hooks import (
 def store_with_hook(tmp_path: Path) -> tuple[ScriptHookStore, str]:
     """A store with one enabled PreToolUse hook (no matcher → fires for any tool)."""
     store = ScriptHookStore(tmp_path)
-    hook = store.create({
-        "name": "audit", "event": HOOK_EVENT_PRE_TOOL_USE,
-        "provider": "script", "provider_config": {"command": "true"},
-        "enabled": True,
-    })
+    hook = store.create(
+        {
+            "name": "audit",
+            "event": HOOK_EVENT_PRE_TOOL_USE,
+            "provider": "script",
+            "provider_config": {"command": "true"},
+            "enabled": True,
+        }
+    )
     return store, hook.id
 
 
@@ -52,7 +55,8 @@ class TestFireForIdsAttribution:
         seen, fake = _capture_payloads()
         with patch("personalclaw.hooks.run_script_hook", side_effect=fake):
             await store.fire_for_ids(
-                HOOK_EVENT_PRE_TOOL_USE, [hook_id],
+                HOOK_EVENT_PRE_TOOL_USE,
+                [hook_id],
                 tool_name="execute_bash",
                 subagent_id="sa-42",
                 parent_session_key="dashboard:chat-1-abc",
@@ -70,7 +74,9 @@ class TestFireForIdsAttribution:
         seen, fake = _capture_payloads()
         with patch("personalclaw.hooks.run_script_hook", side_effect=fake):
             await store.fire_for_ids(
-                HOOK_EVENT_PRE_TOOL_USE, [hook_id], tool_name="execute_bash",
+                HOOK_EVENT_PRE_TOOL_USE,
+                [hook_id],
+                tool_name="execute_bash",
             )
         assert len(seen) == 1
         payload = seen[0]
@@ -85,7 +91,9 @@ class TestFireForIdsAttribution:
         seen, fake = _capture_payloads()
         with patch("personalclaw.hooks.run_script_hook", side_effect=fake):
             await store.fire_for_ids(
-                HOOK_EVENT_PRE_TOOL_USE, [hook_id], tool_name="x",
+                HOOK_EVENT_PRE_TOOL_USE,
+                [hook_id],
+                tool_name="x",
                 subagent_id="sa-9",  # only this one
             )
         payload = seen[0]
@@ -101,12 +109,20 @@ class TestFireToolHooksAttribution:
         store, _ = store_with_hook
         with patch.object(store, "fire", new_callable=AsyncMock) as mock_fire:
             await fire_tool_hooks(
-                store, "Running: execute_bash", None,
-                subagent_id="sa-7", parent_session_key="dashboard:p", agent_role="coder",
+                store,
+                "Running: execute_bash",
+                None,
+                subagent_id="sa-7",
+                parent_session_key="dashboard:p",
+                agent_role="coder",
             )
         mock_fire.assert_awaited_once_with(
-            HOOK_EVENT_PRE_TOOL_USE, tool_name="execute_bash", tool_input=None,
-            subagent_id="sa-7", parent_session_key="dashboard:p", agent_role="coder",
+            HOOK_EVENT_PRE_TOOL_USE,
+            tool_name="execute_bash",
+            tool_input=None,
+            subagent_id="sa-7",
+            parent_session_key="dashboard:p",
+            agent_role="coder",
         )
 
     @pytest.mark.asyncio
@@ -116,6 +132,10 @@ class TestFireToolHooksAttribution:
         with patch.object(store, "fire", new_callable=AsyncMock) as mock_fire:
             await fire_tool_hooks(store, "Running: execute_bash", None)
         mock_fire.assert_awaited_once_with(
-            HOOK_EVENT_PRE_TOOL_USE, tool_name="execute_bash", tool_input=None,
-            subagent_id="", parent_session_key="", agent_role="",
+            HOOK_EVENT_PRE_TOOL_USE,
+            tool_name="execute_bash",
+            tool_input=None,
+            subagent_id="",
+            parent_session_key="",
+            agent_role="",
         )

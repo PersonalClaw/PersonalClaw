@@ -16,7 +16,6 @@ import pytest
 
 from personalclaw import app_cli
 from personalclaw.apps import manager
-from personalclaw.sdk.cli import DoctorLine
 
 
 @pytest.fixture(autouse=True)

@@ -337,7 +337,8 @@ class SecurityEventLog:
             if self._path.exists():
                 try:
                     entries_before = sum(
-                        1 for line in self._path.read_text(encoding="utf-8").splitlines()
+                        1
+                        for line in self._path.read_text(encoding="utf-8").splitlines()
                         if line.strip()
                     )
                 except OSError:
@@ -418,7 +419,12 @@ class SecurityEventLog:
             with self._lock:
                 atomic_write(self._path, "\n".join(kept) + "\n" if kept else "")
                 self._last_hash = self._read_last_hash()
-            logger.info("SEL pruned %d entries (keep_days=%d, max_entries=%d)", removed, keep_days, max_entries)
+            logger.info(
+                "SEL pruned %d entries (keep_days=%d, max_entries=%d)",
+                removed,
+                keep_days,
+                max_entries,
+            )
         return removed
 
 

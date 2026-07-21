@@ -32,7 +32,12 @@ class TestReadMessageContentLength:
         assert mcp_shared._use_content_length is True
 
     def test_reads_multibyte_utf8(self):
-        msg = {"jsonrpc": "2.0", "method": "tools/call", "id": 1, "params": {"name": "tëst_émoji_🎉"}}
+        msg = {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "id": 1,
+            "params": {"name": "tëst_émoji_🎉"},
+        }
         stdin = _make_stdin(_content_length_frame(msg))
         result = _read_message(stdin)
         assert result == msg

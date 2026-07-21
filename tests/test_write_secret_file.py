@@ -29,7 +29,9 @@ class TestWriteSecretFile:
     def test_unlink_failure_still_raises_original(self, tmp_path):
         secret_path = tmp_path / ".local_secret"
 
-        with patch("personalclaw.dashboard.server.os.open", side_effect=OSError("fail")), \
-             patch.object(type(secret_path), "unlink", side_effect=OSError("unlink fail")):
+        with (
+            patch("personalclaw.dashboard.server.os.open", side_effect=OSError("fail")),
+            patch.object(type(secret_path), "unlink", side_effect=OSError("unlink fail")),
+        ):
             with pytest.raises(OSError, match="fail"):
                 _write_secret_file(secret_path, "s")

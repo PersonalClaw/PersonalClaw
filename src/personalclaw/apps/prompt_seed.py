@@ -111,7 +111,9 @@ def seed_app_prompts(manifest, app_dir: str | Path) -> None:
                 from personalclaw.apps import prompt_registry
 
                 prompt_registry.register_use_case(
-                    use_case, provider="native", prompt_name=name,
+                    use_case,
+                    provider="native",
+                    prompt_name=name,
                     category=str(raw.get("category") or "internal"),
                     app=app_name,
                 )

@@ -56,9 +56,7 @@ class TestSetPersonalclawEntry:
         from personalclaw.dashboard.handlers import mcp as mcp_mod
 
         mc_path = tmp_path / "personalclaw.mcp.json"
-        mc_path.write_text(
-            json.dumps({"mcpServers": {"srv": {"command": "x", "disabled": True}}})
-        )
+        mc_path.write_text(json.dumps({"mcpServers": {"srv": {"command": "x", "disabled": True}}}))
         monkeypatch.setattr(mcp_mod, "_PERSONALCLAW_MCP_JSON", mc_path)
         action = mcp_mod._set_personalclaw_entry("srv", enabled=True)
         assert action == "enabled"
@@ -69,9 +67,7 @@ class TestSetPersonalclawEntry:
 
         mc_path = tmp_path / "personalclaw.mcp.json"
         monkeypatch.setattr(mcp_mod, "_PERSONALCLAW_MCP_JSON", mc_path)
-        action = mcp_mod._set_personalclaw_entry(
-            "srv", enabled=False, spec={"command": "x"}
-        )
+        action = mcp_mod._set_personalclaw_entry("srv", enabled=False, spec={"command": "x"})
         assert action == "disabled"
         entry = json.loads(mc_path.read_text())["mcpServers"]["srv"]
         assert entry == {"command": "x", "disabled": True}
@@ -82,9 +78,7 @@ class TestSetScopeEntry:
         from personalclaw.dashboard.handlers import mcp as mcp_mod
 
         cfg_path = tmp_path / "global_mcp.json"
-        action = mcp_mod._set_scope_entry(
-            cfg_path, "srv", enabled=True, spec={"command": "c"}
-        )
+        action = mcp_mod._set_scope_entry(cfg_path, "srv", enabled=True, spec={"command": "c"})
         assert action == "added"
         assert json.loads(cfg_path.read_text())["mcpServers"]["srv"] == {"command": "c"}
 
@@ -121,9 +115,7 @@ class TestSetScopeEntry:
         from personalclaw.dashboard.handlers import mcp as mcp_mod
 
         cfg_path = tmp_path / "global_mcp.json"
-        monkeypatch.setattr(
-            mcp_mod, "_find_server_spec_anywhere", lambda name: None
-        )
+        monkeypatch.setattr(mcp_mod, "_find_server_spec_anywhere", lambda name: None)
         action = mcp_mod._set_scope_entry(cfg_path, "srv", enabled=True)
         assert action == "missing_spec"
         assert not cfg_path.exists()
@@ -137,7 +129,7 @@ class TestSetScopeEntry:
 class TestApplyEndpoint:
     @pytest.mark.asyncio
     async def test_preservation_global_to_personalclaw(self, tmp_path, monkeypatch):
-        """Turning agent config off when server was only in agent config copies to PersonalClaw first."""
+        """Turning agent config off when server was only in agent config copies to PersonalClaw first."""  # noqa: E501
         from personalclaw.dashboard.handlers import mcp as mcp_mod
 
         # Real files: only global config has generic-mcp initially.
@@ -158,11 +150,7 @@ class TestApplyEndpoint:
         monkeypatch.setattr(
             mcp_mod,
             "_find_server_spec_anywhere",
-            lambda name: (
-                {"command": "slack", "args": []}
-                if name == "generic-mcp"
-                else None
-            ),
+            lambda name: ({"command": "slack", "args": []} if name == "generic-mcp" else None),
         )
         # Stub rebuild_agent_config — we only care about file writes here.
         import personalclaw.agent
@@ -301,23 +289,34 @@ class TestApplyEndpoint:
         global_path = tmp_path / "global_mcp.json"
         cc_path = tmp_path / "cc_global.json"
         # Server exists ONLY in Claude Code's config.
-        cc_path.write_text(json.dumps({"mcpServers": {"cc-srv": {"command": "npx", "args": ["cc-mcp"]}}}))
+        cc_path.write_text(
+            json.dumps({"mcpServers": {"cc-srv": {"command": "npx", "args": ["cc-mcp"]}}})
+        )
 
         monkeypatch.setattr(mcp_mod, "_PERSONALCLAW_MCP_JSON", mc_path)
         monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", global_path)
         monkeypatch.setattr(mcp_mod, "_CC_GLOBAL_JSON", cc_path)
 
         import personalclaw.agent
+
         monkeypatch.setattr(personalclaw.agent, "rebuild_agent_config", lambda: None)
 
         class _NoLock:
-            async def __aenter__(self): pass
-            async def __aexit__(self, *a): pass
+            async def __aenter__(self):
+                pass
+
+            async def __aexit__(self, *a):
+                pass
+
         monkeypatch.setattr(mcp_mod, "_get_mcp_lock", lambda: _NoLock())
 
-        request = _make_request({"changes": [
-            {"name": "cc-srv", "personalclaw": True, "globalMcp": False, "ccGlobal": True},
-        ]})
+        request = _make_request(
+            {
+                "changes": [
+                    {"name": "cc-srv", "personalclaw": True, "globalMcp": False, "ccGlobal": True},
+                ]
+            }
+        )
         resp = await mcp_mod.api_mcp_apply(request)
         body = json.loads(resp.body)
         assert body["ok"] is True
@@ -343,20 +342,20 @@ class TestHostileNameRejection:
     @pytest.mark.parametrize(
         "bad_name",
         [
-            "../../etc/passwd",       # classic path traversal
-            "./local",                # leading . (not alphanumeric)
-            "/abs/path",              # leading / (not alphanumeric)
-            "-rf",                    # leading dash looks like an argv flag
-            "a b",                    # whitespace — shouldn't smuggle into argv
-            "a\nb",                   # newline injection
-            "a;rm -rf /",             # command-sep chars
-            "a|whoami",               # pipe
-            "$(echo pwn)",            # command substitution shape
-            "`echo pwn`",             # backtick command substitution
-            "a\x00b",                 # NUL byte
-            "",                       # empty
-            "a" * 200,                # too long (> _MAX_MCP_NAME_LEN = 128)
-            "foo/../bar",             # embedded .. even with alphanumerics around
+            "../../etc/passwd",  # classic path traversal
+            "./local",  # leading . (not alphanumeric)
+            "/abs/path",  # leading / (not alphanumeric)
+            "-rf",  # leading dash looks like an argv flag
+            "a b",  # whitespace — shouldn't smuggle into argv
+            "a\nb",  # newline injection
+            "a;rm -rf /",  # command-sep chars
+            "a|whoami",  # pipe
+            "$(echo pwn)",  # command substitution shape
+            "`echo pwn`",  # backtick command substitution
+            "a\x00b",  # NUL byte
+            "",  # empty
+            "a" * 200,  # too long (> _MAX_MCP_NAME_LEN = 128)
+            "foo/../bar",  # embedded .. even with alphanumerics around
         ],
     )
     async def test_rejects_hostile_names(self, tmp_path, monkeypatch, bad_name):
@@ -394,9 +393,7 @@ class TestHostileNameRejection:
 
         monkeypatch.setattr(mcp_mod, "_get_mcp_lock", lambda: _NoLock())
 
-        request = _make_request(
-            {"changes": [{"name": bad_name, "personalclaw": True}]}
-        )
+        request = _make_request({"changes": [{"name": bad_name, "personalclaw": True}]})
         resp = await mcp_mod.api_mcp_apply(request)
         body = json.loads(resp.body)
 
@@ -404,9 +401,10 @@ class TestHostileNameRejection:
         assert len(body["results"]) == 1
         # Either "invalid name" (regex/len reject) or "empty name" (empty string).
         err = body["results"][0].get("error", "")
-        assert err in {"invalid name", "empty name"}, (
-            f"expected invalid/empty name error for {bad_name!r}, got {body['results'][0]}"
-        )
+        assert err in {
+            "invalid name",
+            "empty name",
+        }, f"expected invalid/empty name error for {bad_name!r}, got {body['results'][0]}"
         # No file was created by the scope helpers.
         assert not mc_path.exists()
         assert not global_path.exists()
@@ -423,9 +421,7 @@ class TestHostileNameRejection:
         monkeypatch.setattr(mcp_mod, "_PERSONALCLAW_MCP_JSON", mc_path)
         monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", tmp_path / "global_mcp.json")
         monkeypatch.setattr(mcp_mod, "_CC_GLOBAL_JSON", tmp_path / "cc.json")
-        monkeypatch.setattr(
-            mcp_mod, "_find_server_spec_anywhere", lambda n: {"command": "x"}
-        )
+        monkeypatch.setattr(mcp_mod, "_find_server_spec_anywhere", lambda n: {"command": "x"})
         monkeypatch.setattr(mcp_mod.shutil, "which", lambda _n: None)
 
         import personalclaw.agent
@@ -448,8 +444,8 @@ class TestHostileNameRejection:
                         "name": "generic-mcp",
                         "personalclaw": True,
                         "toolOverrides": {
-                            "../evil": False,         # rejected
-                            "legit-tool": False,      # accepted
+                            "../evil": False,  # rejected
+                            "legit-tool": False,  # accepted
                         },
                     }
                 ]

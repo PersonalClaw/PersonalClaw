@@ -72,7 +72,8 @@ def test_no_partial_routeprops_in_pages():
     (with `query ?? {}` / `setQuery ?? (()=>{})` guards) if App.tsx's contract
     ever breaks. App.tsx always spreads the full bundle, so Partial is a lie."""
     offenders = [
-        str(f) for f in _PAGES.rglob("*.tsx")
+        str(f)
+        for f in _PAGES.rglob("*.tsx")
         if "Partial<RouteProps>" in f.read_text(encoding="utf-8")
     ]
     assert not offenders, (
@@ -127,6 +128,6 @@ def test_router_still_owns_history_mechanics():
     """Sanity: the one allowed place (the router) still performs the hash/history
     writes — so the guard above is banning *bypasses*, not the mechanism itself."""
     src = _ROUTER.read_text(encoding="utf-8")
-    assert "location.hash" in src and "replaceState" in src, (
-        "useHashRoute.ts should own the location.hash/replaceState mechanics"
-    )
+    assert (
+        "location.hash" in src and "replaceState" in src
+    ), "useHashRoute.ts should own the location.hash/replaceState mechanics"

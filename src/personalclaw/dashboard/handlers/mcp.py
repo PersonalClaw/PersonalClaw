@@ -50,11 +50,13 @@ def _is_valid_mcp_name(name: str) -> bool:
 # ignored it). A one-time migration folds any legacy settings/mcp.json content in.
 def _canonical_mcp_json() -> Path:
     from personalclaw.config.loader import config_dir
+
     return config_dir() / "mcp.json"
 
 
 def _legacy_mcp_json() -> Path:
     from personalclaw.config.loader import config_dir
+
     return config_dir() / "settings" / "mcp.json"
 
 
@@ -82,11 +84,13 @@ def _migrate_legacy_mcp_json() -> None:
                 moved += 1
         if moved:
             from personalclaw.agent import _atomic_json_write
+
             canon.parent.mkdir(parents=True, exist_ok=True)
             _atomic_json_write(canon, cdata)
             logger.info("mcp: migrated %d server(s) from legacy settings/mcp.json", moved)
         # empty the legacy file so it can't re-diverge
         from personalclaw.agent import _atomic_json_write
+
         _atomic_json_write(legacy, {"mcpServers": {}})
     except Exception:
         logger.debug("mcp: legacy migration skipped", exc_info=True)
@@ -151,6 +155,7 @@ def _server_in_agent_config(name: str) -> bool:
     ``source="agent"`` MCP servers live there, not in mcp.json, so a delete must
     check here to report honestly + actually remove them (via _sync remove)."""
     from personalclaw.dashboard.handlers.agents import _installed_agent_config
+
     try:
         cfg = json.loads(_installed_agent_config().read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError):
@@ -343,9 +348,7 @@ async def api_mcp_servers(request: web.Request) -> web.Response:
     # Kick off a background re-probe if the handler cache is stale,
     # so the next request gets fresh results.
     now = time.time()
-    should_reprobe = (
-        now - _mcp_probe_ts > _MCP_PROBE_CACHE_SECS and not _mcp_probe_in_progress
-    )
+    should_reprobe = now - _mcp_probe_ts > _MCP_PROBE_CACHE_SECS and not _mcp_probe_in_progress
 
     servers = list_servers()
 
@@ -555,6 +558,7 @@ async def api_mcp_pool_stats(request: web.Request) -> web.Response:
     counters. Returns ``{available:false}`` when the ``mcp`` SDK extra is absent (no
     pool exists) so the FE can show a graceful 'MCP not installed' state."""
     from personalclaw.mcp_client import get_mcp_client_registry
+
     reg = get_mcp_client_registry()
     if reg is None:
         return web.json_response({"available": False})
@@ -665,15 +669,13 @@ async def api_mcp_toggle(request: web.Request) -> web.Response:
         if name not in servers:
             # Server may exist in another scope (agent config, ~/.claude.json).
             # Create a stub so we can store disabled state here.
-            from personalclaw.mcp_discovery import (
-                list_servers as _ls,  # circular import: mcp_discovery defers imports of personalclaw.agent which shares state with this module
+            from personalclaw.mcp_discovery import (  # circular import: mcp_discovery defers imports of personalclaw.agent which shares state with this module  # noqa: E501
+                list_servers as _ls,
             )
 
             known = {s.name for s in _ls()}
             if name not in known:
-                return web.json_response(
-                    {"error": f"server {name!r} not found"}, status=404
-                )
+                return web.json_response({"error": f"server {name!r} not found"}, status=404)
             servers[name] = {}
 
         spec = servers[name]
@@ -734,15 +736,13 @@ async def api_mcp_toggle_tool(request: web.Request) -> web.Response:
             # Server may exist in another scope (agent config, ~/.claude.json)
             # but not in the global settings mcp.json. Create a stub entry to hold
             # disabledTools state — the ACP agent reads this file for enforcement.
-            from personalclaw.mcp_discovery import (
-                list_servers as _ls,  # circular import: mcp_discovery defers imports of personalclaw.agent which shares state with this module
+            from personalclaw.mcp_discovery import (  # circular import: mcp_discovery defers imports of personalclaw.agent which shares state with this module  # noqa: E501
+                list_servers as _ls,
             )
 
             known = {s.name for s in _ls()}
             if server not in known:
-                return web.json_response(
-                    {"error": f"server {server!r} not found"}, status=404
-                )
+                return web.json_response({"error": f"server {server!r} not found"}, status=404)
             servers[server] = {}
 
         spec = servers[server]
@@ -887,6 +887,7 @@ async def api_mcp_remove(request: web.Request) -> web.Response:
 # Skills marketplace integration
 # ---------------------------------------------------------------------------
 
+
 async def api_mcp_server_detail(request: web.Request) -> web.Response:
     """PUT/DELETE /api/mcp/servers/{name} — register or remove an MCP server.
 
@@ -910,7 +911,9 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
     # (mcp_bridge) — without it the DELETE 400s before it can remove one.
     if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}(:[a-zA-Z0-9_-]{1,64})?", name):
         return web.json_response(
-            {"error": "MCP server name must be letters/digits/dashes/underscores, optionally one ':' namespace"},
+            {
+                "error": "MCP server name must be letters/digits/dashes/underscores, optionally one ':' namespace"  # noqa: E501
+            },
             status=400,
         )
 
@@ -922,13 +925,19 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         if ":" in name:
             app_name = name.split(":", 1)[0]
             from personalclaw.apps.manager import _read_installed
+
             if _read_installed(app_name) is not None:
-                return web.json_response({
-                    "ok": False, "name": name, "removed": False,
-                    "ownedByApp": app_name,
-                    "error": f"This MCP server is provided by the '{app_name}' app. Uninstall that app "
-                             f"(Store → Library) to remove it.",
-                }, status=409)
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "name": name,
+                        "removed": False,
+                        "ownedByApp": app_name,
+                        "error": f"This MCP server is provided by the '{app_name}' app. Uninstall that app "  # noqa: E501
+                        f"(Store → Library) to remove it.",
+                    },
+                    status=409,
+                )
         # Remove from EVERY store a server can live in — the PersonalClaw scope the
         # registry reads (~/.personalclaw/mcp.json), the legacy settings/mcp.json,
         # AND the agent config (source="agent" servers live there, not mcp.json) —

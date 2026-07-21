@@ -30,17 +30,14 @@ class TtsProvider(ABC):
 
     @property
     @abstractmethod
-    def name(self) -> str:
-        ...
+    def name(self) -> str: ...
 
     @property
     @abstractmethod
-    def display_name(self) -> str:
-        ...
+    def display_name(self) -> str: ...
 
     @abstractmethod
-    async def is_available(self) -> bool:
-        ...
+    async def is_available(self) -> bool: ...
 
     @abstractmethod
     async def synthesize(
@@ -80,23 +77,23 @@ class LocalTtsProvider(TtsProvider, LocalModelProvider):
     TTS provider subclasses plain :class:`TtsProvider` instead."""
 
     @abstractmethod
-    async def list_voices(self) -> list[TtsVoice]:
-        ...
+    async def list_voices(self) -> list[TtsVoice]: ...
 
     @abstractmethod
-    async def download_voice(self, voice_name: str) -> bool:
-        ...
+    async def download_voice(self, voice_name: str) -> bool: ...
 
     @abstractmethod
-    async def delete_voice(self, voice_name: str) -> bool:
-        ...
+    async def delete_voice(self, voice_name: str) -> bool: ...
 
     # voices ARE the local models — bridge the management contract to the voice methods.
     async def list_models(self) -> list[LocalModel]:
         return [
             LocalModel(
-                name=v.name, size_mb=v.size_mb, description=v.description,
-                downloaded=v.downloaded, capabilities=["tts"],
+                name=v.name,
+                size_mb=v.size_mb,
+                description=v.description,
+                downloaded=v.downloaded,
+                capabilities=["tts"],
             )
             for v in await self.list_voices()
         ]

@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 def _sel():
     """Late-binding _sel() for test monkeypatch compatibility."""
     import personalclaw.dashboard.handlers as _pkg  # noqa: F811
+
     return _pkg.sel()
 
 
@@ -24,6 +25,7 @@ def _path_home_pclaw() -> Path:
     """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
     try:
         from personalclaw.config.loader import config_dir as _cd
+
         return _cd()
     except Exception:
         return Path.home() / ".personalclaw"
@@ -82,12 +84,14 @@ async def api_action_providers(request: web.Request) -> web.Response:
         prov = get_action_provider(name)
         if prov is None:
             continue
-        result.append({
-            "name": name,
-            "display_name": getattr(prov, "display_name", name),
-            "supports_blocking": bool(getattr(prov, "supports_blocking", False)),
-            "settingsSchema": _schema_for(name),
-        })
+        result.append(
+            {
+                "name": name,
+                "display_name": getattr(prov, "display_name", name),
+                "supports_blocking": bool(getattr(prov, "supports_blocking", False)),
+                "settingsSchema": _schema_for(name),
+            }
+        )
     return web.json_response({"providers": result})
 
 
@@ -122,11 +126,13 @@ async def api_agent_hooks(request: web.Request) -> web.Response:
             if isinstance(e, dict):
                 key = (event, e.get("command") or "", e.get("matcher") or "")
                 # redact() wraps redact_exfiltration_urls + redact_credentials
-                tagged.append({
-                    "command": redact(e.get("command") or ""),
-                    "matcher": redact(e.get("matcher") or ""),
-                    "source": "bundled" if key in bundled_keys else "user",
-                })
+                tagged.append(
+                    {
+                        "command": redact(e.get("command") or ""),
+                        "matcher": redact(e.get("matcher") or ""),
+                        "source": "bundled" if key in bundled_keys else "user",
+                    }
+                )
         if tagged:
             result[event] = tagged
     return web.json_response({"hooks": result})
@@ -292,7 +298,11 @@ async def _run_hook_inner(
     full_message = message
     if is_new and state.context_builder:
         full_message, _ = state.context_builder.build_message(
-            message, is_new, session_key, agent=agent, resumed=resumed,
+            message,
+            is_new,
+            session_key,
+            agent=agent,
+            resumed=resumed,
         )
     result_text = ""
     async for event in client.stream(full_message):

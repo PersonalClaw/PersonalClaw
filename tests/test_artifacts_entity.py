@@ -18,7 +18,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.artifacts import registry
 from personalclaw.artifacts.handlers import register_artifact_routes
-from personalclaw.artifacts.models import MAX_VERSIONS, Artifact, slugify
+from personalclaw.artifacts.models import MAX_VERSIONS, slugify
 from personalclaw.artifacts.native import NativeArtifactProvider
 from personalclaw.artifacts.provider import ArtifactProvider
 
@@ -52,7 +52,9 @@ class TestSlugify:
 
 class TestNativeProvider:
     def test_create_and_get(self, provider) -> None:
-        a = provider.create(name="My Chart!", content="<div>v1</div>", actor="user", session_id="s1")
+        a = provider.create(
+            name="My Chart!", content="<div>v1</div>", actor="user", session_id="s1"
+        )
         assert a.slug == "my-chart"
         assert a.version == 1
         assert a.events[0].type == "created"
@@ -209,7 +211,11 @@ class TestLivePointer:
         assert found is not None and found.slug == a.slug
 
     def test_sensitive_source_path_refused_on_read(self, provider, tmp_path) -> None:
-        a = provider.create(name="Creds", content="placeholder", source_path=str(Path.home() / ".aws" / "credentials"))
+        a = provider.create(
+            name="Creds",
+            content="placeholder",
+            source_path=str(Path.home() / ".aws" / "credentials"),
+        )
         g = provider.get(a.slug)
         # Live read refused → falls back to current.html placeholder, never the real file.
         assert g.content == "placeholder"
@@ -257,14 +263,29 @@ class TestRegistry:
             display_name = "RO"
             readonly = True
 
-            def list(self, **k): return []
-            def get(self, slug, **k): return None
-            def create(self, **k): raise AssertionError("should not create")
-            def update(self, slug, **k): raise AssertionError("should not update")
-            def delete(self, slug): return False
-            def list_versions(self, slug): return []
-            def find_by_source_path(self, sp): return None
-            def record_impression(self, slug, **k): return None, False
+            def list(self, **k):
+                return []
+
+            def get(self, slug, **k):
+                return None
+
+            def create(self, **k):
+                raise AssertionError("should not create")
+
+            def update(self, slug, **k):
+                raise AssertionError("should not update")
+
+            def delete(self, slug):
+                return False
+
+            def list_versions(self, slug):
+                return []
+
+            def find_by_source_path(self, sp):
+                return None
+
+            def record_impression(self, slug, **k):
+                return None, False
 
         registry.register_provider(ReadOnlyStub())
         try:
@@ -300,7 +321,9 @@ def patched_native(provider):
 async def test_rest_create_and_get(patched_native) -> None:
     client = await _client(patched_native)
     try:
-        resp = await client.post("/api/artifacts", json={"name": "Chart", "content": "<div>hi</div>", "kind": "widget"})
+        resp = await client.post(
+            "/api/artifacts", json={"name": "Chart", "content": "<div>hi</div>", "kind": "widget"}
+        )
         assert resp.status == 201
         body = await resp.json()
         slug = body["slug"]
@@ -345,11 +368,17 @@ async def test_rest_dedup_by_source_path(patched_native, tmp_path) -> None:
     f.write_text("orig")
     client = await _client(patched_native)
     try:
-        r1 = await client.post("/api/artifacts", json={"name": "Doc", "content": "orig", "kind": "markdown", "source_path": str(f)})
+        r1 = await client.post(
+            "/api/artifacts",
+            json={"name": "Doc", "content": "orig", "kind": "markdown", "source_path": str(f)},
+        )
         assert r1.status == 201
         slug1 = (await r1.json())["slug"]
         # Re-save same source_path → bump (200), same slug, no duplicate.
-        r2 = await client.post("/api/artifacts", json={"name": "Doc", "content": "updated", "kind": "markdown", "source_path": str(f)})
+        r2 = await client.post(
+            "/api/artifacts",
+            json={"name": "Doc", "content": "updated", "kind": "markdown", "source_path": str(f)},
+        )
         assert r2.status == 200
         assert (await r2.json())["slug"] == slug1
         listing = await (await client.get("/api/artifacts")).json()
@@ -363,7 +392,9 @@ async def test_rest_slug_collision_409(patched_native) -> None:
     client = await _client(patched_native)
     try:
         await client.post("/api/artifacts", json={"name": "A", "content": "x", "slug": "taken"})
-        resp = await client.post("/api/artifacts", json={"name": "B", "content": "y", "slug": "taken"})
+        resp = await client.post(
+            "/api/artifacts", json={"name": "B", "content": "y", "slug": "taken"}
+        )
         assert resp.status == 409
     finally:
         await client.close()
@@ -375,7 +406,8 @@ async def test_rest_events_drops_dashboard_ui(patched_native) -> None:
     try:
         # create carries the browser's dashboard:ui marker as session
         resp = await client.post(
-            "/api/artifacts", json={"name": "C", "content": "x"},
+            "/api/artifacts",
+            json={"name": "C", "content": "x"},
             headers={"X-Session-Key": "dashboard:ui"},
         )
         slug = (await resp.json())["slug"]

@@ -23,11 +23,15 @@ class _FakeProvider:
         self.runtime_id = runtime_id
         self._alive = True
         self._started = False
-        self._snapshot = snapshot if snapshot is not None else {
-            "sessionId": f"sid-{runtime_id}",
-            "modes": {"availableModes": [{"id": "gpu-dev", "name": "gpu-dev"}]},
-            "models": {"availableModels": [{"modelId": "auto"}]},
-        }
+        self._snapshot = (
+            snapshot
+            if snapshot is not None
+            else {
+                "sessionId": f"sid-{runtime_id}",
+                "modes": {"availableModes": [{"id": "gpu-dev", "name": "gpu-dev"}]},
+                "models": {"availableModels": [{"modelId": "auto"}]},
+            }
+        )
 
     async def start(self) -> None:
         self._started = True
@@ -163,6 +167,7 @@ async def test_warm_failure_is_swallowed():
 async def test_warm_failure_sets_exponential_backoff():
     """A repeatedly-failing runtime accrues backoff so the health loop stops
     re-spawning it every interval (the npx/CLI process-leak source)."""
+
     def bad_builder(_rt):
         raise RuntimeError("delegate CLI cannot start")
 
@@ -198,6 +203,7 @@ async def test_health_loop_skips_runtime_within_backoff_window(monkeypatch):
     # Drive ONE health-loop pass with a near-zero interval; the open backoff
     # window must cause it to skip (no new build).
     import personalclaw.acp.connection_pool as cp
+
     monkeypatch.setattr(cp, "_HEALTH_INTERVAL_SECS", 0.01)
     task = asyncio.ensure_future(pool._health_loop())
     await asyncio.sleep(0.1)
@@ -214,6 +220,7 @@ async def test_health_loop_skips_runtime_within_backoff_window(monkeypatch):
 async def test_invalidate_clears_backoff():
     """invalidate() (enable/disable/auth change) resets backoff so the next warm
     retries immediately rather than waiting out a stale window."""
+
     def bad_builder(_rt):
         raise RuntimeError("broken")
 
@@ -249,6 +256,7 @@ async def test_successful_warm_clears_prior_backoff():
 
 # ── concurrent sessions (P9): open_session reuses ONE shared connection ──────
 
+
 @pytest.mark.asyncio
 async def test_open_session_reuses_shared_connection(monkeypatch):
     """Two open_session calls on the same runtime spawn ONE shared AcpConnection and
@@ -281,6 +289,7 @@ async def test_open_session_reuses_shared_connection(monkeypatch):
 
     # Patch AcpConnection.spawn + the provider opener (avoid real AcpSessionProvider deps)
     import personalclaw.acp.session as sess_mod
+
     monkeypatch.setattr(sess_mod.AcpConnection, "spawn", staticmethod(fake_spawn))
 
     async def fake_opener(conn, **kw):
@@ -288,13 +297,14 @@ async def test_open_session_reuses_shared_connection(monkeypatch):
         return type("P", (), {"session_id": s.session_id, "_conn": conn})()
 
     import personalclaw.llm.acp_session_provider as prov_mod
+
     monkeypatch.setattr(prov_mod, "open_acp_session_provider", fake_opener)
 
     pool, _ = _make_pool()
     p1 = await pool.open_session("acp:demo-cli", cwd="/tmp", command=["demo"], dialect="default")
     p2 = await pool.open_session("acp:demo-cli", cwd="/tmp", command=["demo"], dialect="default")
 
-    assert len(spawns) == 1              # ONE process spawned
-    assert shared.opened == 2            # TWO sessions on it
+    assert len(spawns) == 1  # ONE process spawned
+    assert shared.opened == 2  # TWO sessions on it
     assert p1.session_id == "sess-1" and p2.session_id == "sess-2"
     assert p1._conn is p2._conn is shared

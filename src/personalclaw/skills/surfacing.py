@@ -101,7 +101,9 @@ class _EmbedCache:
                 self._data = {}
         return self._data
 
-    def get_or_embed(self, path: str, text: str, mtime: float, model: str, embed_fn) -> list[float] | None:
+    def get_or_embed(
+        self, path: str, text: str, mtime: float, model: str, embed_fn
+    ) -> list[float] | None:
         data = self._load()
         row = data.get(path)
         if isinstance(row, dict) and row.get("mtime") == mtime and row.get("model") == model:
@@ -203,7 +205,9 @@ def surface_skills(
                 mtime = Path(s["path"]).stat().st_mtime
             except (OSError, KeyError):
                 mtime = 0.0
-            vec = cache.get_or_embed(s.get("path", s.get("key", "")), embed_text, mtime, model, embed_fn)
+            vec = cache.get_or_embed(
+                s.get("path", s.get("key", "")), embed_text, mtime, model, embed_fn
+            )
             if vec is not None:
                 sem_score = _cosine(query_vec, vec)
         sem_hit = sem_score >= semantic_threshold

@@ -29,7 +29,6 @@ from personalclaw.agents.registry import get_agent_provider_class
 from personalclaw.llm.acp_agent import ACP_AGENT_CAPABILITY
 from personalclaw.llm.registry import get_default_registry, reset_default_registry
 
-
 # The claude-code / codex ACP bundles are standalone APPS now (apps/<name>-agent/).
 # Load their provider modules the way the app loader does (from the app dir under a
 # namespaced module name) so this suite keeps exercising the real bundle wiring +
@@ -416,9 +415,9 @@ def test_factory_honors_per_session_agent_model_mode(monkeypatch, tmp_path):
     config = {"model": entry.model, **(entry.options or {})}
     config.update(agent="gpu-dev", model="claude-opus-4.8", acp_mode="plan")
     prov = reg.build("acp:test-cli", **config)
-    assert prov._agent_name == "gpu-dev"        # per-session modeId, not "PersonalClaw"
-    assert prov._model == "claude-opus-4.8"      # per-session model, not entry default
-    assert prov._mode == "plan"                  # per-session mode threaded through
+    assert prov._agent_name == "gpu-dev"  # per-session modeId, not "PersonalClaw"
+    assert prov._model == "claude-opus-4.8"  # per-session model, not entry default
+    assert prov._mode == "plan"  # per-session mode threaded through
     # And it reaches the protocol client.
     assert prov.client._agent == "gpu-dev"
     assert prov.client._model == "claude-opus-4.8"
@@ -461,6 +460,7 @@ def _stub_discovery_client(monkeypatch, session_new: dict):
     # which() must pass for the command gate (imported inside the method, so
     # patch the shutil module attribute directly).
     import shutil as _shutil
+
     monkeypatch.setattr(_shutil, "which", lambda c: "/usr/bin/" + str(c))
     # discover_agents gates on readiness — stub it ready so the discovery path
     # runs without a real handshake.
@@ -482,19 +482,26 @@ async def test_discover_agents_claude_effort(monkeypatch, tmp_path):
     snew = {
         "configOptions": [
             {"id": "model", "options": [{"value": "default"}, {"value": "opus"}]},
-            {"id": "effort", "options": [
-                {"value": "default", "name": "Default"},
-                {"value": "high", "name": "High"},
-                {"value": "max", "name": "Max"},
-            ]},
+            {
+                "id": "effort",
+                "options": [
+                    {"value": "default", "name": "Default"},
+                    {"value": "high", "name": "High"},
+                    {"value": "max", "name": "Max"},
+                ],
+            },
         ],
     }
     _stub_discovery_client(monkeypatch, snew)
     fake = _fake_on_path(monkeypatch, tmp_path, "claude-agent-acp")
-    agents = await AcpAgentProvider.discover_agents({
-        "command": [str(fake)], "dialect": "claude-code",
-        "runtime_id": "acp:claude-code", "runtime_label": "Claude",
-    })
+    agents = await AcpAgentProvider.discover_agents(
+        {
+            "command": [str(fake)],
+            "dialect": "claude-code",
+            "runtime_id": "acp:claude-code",
+            "runtime_label": "Claude",
+        }
+    )
     # ONE agent — no effort variants in the picker.
     assert len(agents) == 1
     base = agents[0]
@@ -511,10 +518,14 @@ async def test_discover_agents_claude_effort(monkeypatch, tmp_path):
 async def test_discover_agents_absent_binary_returns_empty(monkeypatch):
     """No adapter on PATH → discovery returns [] (never raises)."""
     from personalclaw.llm.acp_agent import AcpAgentProvider
-    agents = await AcpAgentProvider.discover_agents({
-        "command": ["/nonexistent/test-cli", "acp"], "dialect": "default",
-        "runtime_id": "acp:test-cli",
-    })
+
+    agents = await AcpAgentProvider.discover_agents(
+        {
+            "command": ["/nonexistent/test-cli", "acp"],
+            "dialect": "default",
+            "runtime_id": "acp:test-cli",
+        }
+    )
     assert agents == []
 
 
@@ -526,28 +537,32 @@ async def test_discover_agents_spawn_failure_returns_empty(monkeypatch):
     ``runtime_id`` name, so any handshake exception escaped discover_agents as
     a NameError instead of the contractual [] — breaking "discovery never
     raises into the API"."""
+    import shutil as _shutil
+
     from personalclaw.acp import session as session_mod
     from personalclaw.agents.provider import ReadinessStatus
     from personalclaw.llm import acp_agent as acp_mod
     from personalclaw.llm.acp_agent import AcpAgentProvider
 
-    import shutil as _shutil
     monkeypatch.setattr(_shutil, "which", lambda c: "/usr/bin/" + str(c))
 
     async def ready(cls, options):
         return ReadinessStatus(ready=True, state="ready")
-    monkeypatch.setattr(
-        acp_mod.AcpAgentProvider, "probe_readiness", classmethod(ready)
-    )
+
+    monkeypatch.setattr(acp_mod.AcpAgentProvider, "probe_readiness", classmethod(ready))
 
     async def boom(**kwargs):
         raise RuntimeError("handshake exploded")
+
     monkeypatch.setattr(session_mod.AcpConnection, "spawn", staticmethod(boom))
 
-    agents = await AcpAgentProvider.discover_agents({
-        "command": ["test-cli", "acp"], "dialect": "default",
-        "runtime_id": "acp:test-cli",
-    })
+    agents = await AcpAgentProvider.discover_agents(
+        {
+            "command": ["test-cli", "acp"],
+            "dialect": "default",
+            "runtime_id": "acp:test-cli",
+        }
+    )
     assert agents == []
 
 
@@ -556,22 +571,28 @@ async def test_discover_agents_not_ready_returns_empty(monkeypatch, tmp_path):
     """A runtime whose readiness probe fails (e.g. codex: adapter present but its
     engine CLI absent → not_found) contributes NO discovered agents — discovery
     and readiness never disagree."""
+    import shutil as _shutil
+
     from personalclaw.agents.provider import ReadinessStatus
     from personalclaw.llm import acp_agent as acp_mod
     from personalclaw.llm.acp_agent import AcpAgentProvider
 
-    import shutil as _shutil
     monkeypatch.setattr(_shutil, "which", lambda c: "/usr/bin/" + str(c))
 
     async def not_ready(cls, options):
         return ReadinessStatus(ready=False, state="not_found", detail="engine 'codex' not found")
+
     monkeypatch.setattr(acp_mod.AcpAgentProvider, "probe_readiness", classmethod(not_ready))
 
     fake = _fake_on_path(monkeypatch, tmp_path, "codex-acp")
-    agents = await AcpAgentProvider.discover_agents({
-        "command": [str(fake)], "dialect": "codex", "runtime_id": "acp:codex",
-        "requires_executable": {"label": "codex", "env_var": "CODEX_PATH", "path": ""},
-    })
+    agents = await AcpAgentProvider.discover_agents(
+        {
+            "command": [str(fake)],
+            "dialect": "codex",
+            "runtime_id": "acp:codex",
+            "requires_executable": {"label": "codex", "env_var": "CODEX_PATH", "path": ""},
+        }
+    )
     assert agents == []
 
 
@@ -604,7 +625,12 @@ def test_isolation_strips_auto_approve_and_writes_0600(monkeypatch, tmp_path):
         json.dumps(
             {
                 "awsCredentialExport": "aws configure export-credentials",
-                "permissions": {"allow": ["Bash(*)"], "ask": ["Read"], "defaultMode": "acceptEdits", "deny": ["Bash(rm:*)"]},
+                "permissions": {
+                    "allow": ["Bash(*)"],
+                    "ask": ["Read"],
+                    "defaultMode": "acceptEdits",
+                    "deny": ["Bash(rm:*)"],
+                },
                 "enabledPlugins": {"x": True},
                 "model": "claude-opus-4-8",
             }
@@ -661,7 +687,9 @@ def test_bundle_options_flow_into_client_dialect(monkeypatch, tmp_path):
     # No set_mode for the Zed adapter (agent bound at launch).
     assert dialect.activate_agent_request(session_id="s", agent="x") is None
     # Permission options read the public-spec optionId/name shape.
-    parsed = dialect.parse_permission_options([{"optionId": "allow_once", "name": "Allow once", "kind": "allow_once"}])
+    parsed = dialect.parse_permission_options(
+        [{"optionId": "allow_once", "name": "Allow once", "kind": "allow_once"}]
+    )
     assert parsed == [{"id": "allow_once", "label": "Allow once", "kind": "allow_once"}]
 
 

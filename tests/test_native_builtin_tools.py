@@ -72,7 +72,9 @@ async def test_edit_rejects_ambiguous_match(ws):
 async def test_edit_replace_all(ws):
     (ws / "dup.txt").write_text("a = 1\nb = 1\nc = 1\n")
     p = NativeBuiltinToolProvider(ws)
-    r = await p.invoke("edit_file", {"path": "dup.txt", "old_str": "1", "new_str": "9", "replace_all": True})
+    r = await p.invoke(
+        "edit_file", {"path": "dup.txt", "old_str": "1", "new_str": "9", "replace_all": True}
+    )
     assert r.success and "3 replacements" in r.output
     assert (ws / "dup.txt").read_text() == "a = 9\nb = 9\nc = 9\n"
 
@@ -81,7 +83,9 @@ async def test_edit_replace_all(ws):
 async def test_edit_unique_match_still_works(ws):
     # The common case — a unique old_str — edits with no replace_all needed.
     p = NativeBuiltinToolProvider(ws)
-    r = await p.invoke("edit_file", {"path": "a.txt", "old_str": "second line", "new_str": "2nd line"})
+    r = await p.invoke(
+        "edit_file", {"path": "a.txt", "old_str": "second line", "new_str": "2nd line"}
+    )
     assert r.success and "1 replacement" in r.output
     assert "2nd line" in (ws / "a.txt").read_text()
 
@@ -110,7 +114,9 @@ async def test_edit_rejects_empty_old_str(ws):
     # char) — reject it, file untouched.
     before = (ws / "a.txt").read_text()
     p = NativeBuiltinToolProvider(ws)
-    r = await p.invoke("edit_file", {"path": "a.txt", "old_str": "", "new_str": "X", "replace_all": True})
+    r = await p.invoke(
+        "edit_file", {"path": "a.txt", "old_str": "", "new_str": "X", "replace_all": True}
+    )
     assert not r.success and "empty" in r.error
     assert (ws / "a.txt").read_text() == before
 
@@ -120,7 +126,9 @@ async def test_edit_rejects_noop_identical(ws):
     # old==new reported "Edited" success while changing nothing — the worker would
     # believe it made an edit it didn't. Reject as a no-op.
     p = NativeBuiltinToolProvider(ws)
-    r = await p.invoke("edit_file", {"path": "a.txt", "old_str": "hello world", "new_str": "hello world"})
+    r = await p.invoke(
+        "edit_file", {"path": "a.txt", "old_str": "hello world", "new_str": "hello world"}
+    )
     assert not r.success and "identical" in r.error
 
 
@@ -206,12 +214,15 @@ async def test_bash_timeout_arg_is_capped(ws):
     # The agent-settable timeout is clamped to _BASH_TIMEOUT_MAX so a background turn
     # can't wedge forever; an over-max request is silently capped (not rejected).
     import personalclaw.agents.native.builtin_tools as BT
+
     seen = {}
     p = BT.NativeBuiltinToolProvider(ws)
     real_wait_for = BT.asyncio.wait_for
+
     async def _spy(coro, timeout=None):
         seen["timeout"] = timeout
         return await real_wait_for(coro, timeout=timeout)
+
     BT.asyncio.wait_for = _spy
     try:
         await p.invoke("bash", {"command": "true", "timeout": 99999})
@@ -244,7 +255,9 @@ async def test_extra_roots_allow_engine_dir_outside_cwd(ws):
     r = await p.invoke("read_file", {"path": str(engine / "status.json")})
     assert r.success and "running" in r.output
     # write a finding into the engine dir by absolute path
-    w = await p.invoke("write_file", {"path": str(engine / "findings" / "cycle_1.json"), "content": "{}"})
+    w = await p.invoke(
+        "write_file", {"path": str(engine / "findings" / "cycle_1.json"), "content": "{}"}
+    )
     assert w.success and (engine / "findings" / "cycle_1.json").exists()
     # a path in NEITHER cwd nor an extra root is still rejected
     esc = await p.invoke("read_file", {"path": str(ws.parent / "elsewhere.txt")})
@@ -283,6 +296,7 @@ async def test_bash_timeout_returns_cleanly_and_reaps_child(ws, monkeypatch):
     # A command exceeding the bash timeout must return a clean timeout result (not
     # hang/raise) and reap the killed child (await proc.wait), leaving no zombie.
     import personalclaw.agents.native.builtin_tools as BT
+
     monkeypatch.setattr(BT, "_BASH_TIMEOUT", 0.3)
     p = BT.NativeBuiltinToolProvider(ws, sandbox_mode="off")
     r = await p.invoke("bash", {"command": "sleep 5"})
@@ -351,7 +365,9 @@ async def test_knowledge_get_redacts_content(ws, monkeypatch, tmp_path):
 
     store = KnowledgeStore(str(tmp_path / "k.db"))
     iid = store.create_typed_item(
-        item_type="note", title="Creds", content="root password AKIAIOSFODNN7EXAMPLE here",
+        item_type="note",
+        title="Creds",
+        content="root password AKIAIOSFODNN7EXAMPLE here",
     )
     store.db.commit()
     # The tool imports get_knowledge_store from personalclaw.knowledge at call time.
@@ -373,7 +389,9 @@ async def test_knowledge_get_surfaces_document_shape(ws, monkeypatch, tmp_path):
     store = KnowledgeStore(str(tmp_path / "k.db"))
     iid = store.create_typed_item(item_type="sheet", title="Budget", content="rows")
     store.update_item(
-        iid, file_path="/x/budget.xlsx", mime_type="application/vnd.ms-excel",
+        iid,
+        file_path="/x/budget.xlsx",
+        mime_type="application/vnd.ms-excel",
         file_metadata={"format": "xlsx", "sheet_count": 3},
     )
     store.db.commit()
@@ -392,8 +410,12 @@ async def test_knowledge_get_surfaces_gist_language(ws, monkeypatch, tmp_path):
     from personalclaw.knowledge.store import KnowledgeStore
 
     store = KnowledgeStore(str(tmp_path / "k.db"))
-    iid = store.create_typed_item(item_type="gist", title="bsearch", content="def f(): pass",
-                                  extra={"gist_language": "python"})
+    iid = store.create_typed_item(
+        item_type="gist",
+        title="bsearch",
+        content="def f(): pass",
+        extra={"gist_language": "python"},
+    )
     store.db.commit()
     monkeypatch.setattr(kn, "get_knowledge_store", lambda: store, raising=False)
 
@@ -430,8 +452,11 @@ async def test_knowledge_get_flags_unreachable_bookmark(ws, monkeypatch, tmp_pat
 
     store = KnowledgeStore(str(tmp_path / "k.db"))
     iid = store.create_typed_item(item_type="bookmark", title="", url="https://nope.invalid/x")
-    store.update_item(iid, processing_status="unreachable",
-                      processing_error="bookmark_scrape: Couldn't reach the site.")
+    store.update_item(
+        iid,
+        processing_status="unreachable",
+        processing_error="bookmark_scrape: Couldn't reach the site.",
+    )
     store.db.commit()
     monkeypatch.setattr(kn, "get_knowledge_store", lambda: store, raising=False)
 
@@ -447,8 +472,8 @@ async def test_knowledge_search_uses_embedder_for_hybrid(ws, monkeypatch, tmp_pa
     — the same as the gateway's context search — not a keyword-only degrade. It builds the
     process-wide embedder and hands its embed fn to the retriever."""
     import personalclaw.knowledge as kn
-    from personalclaw.knowledge.store import KnowledgeStore
     import personalclaw.knowledge.retrieval as retr
+    from personalclaw.knowledge.store import KnowledgeStore
 
     store = KnowledgeStore(str(tmp_path / "k.db"))
     store.create_typed_item(item_type="note", title="Vector DB notes", content="pgvector and HNSW")
@@ -457,21 +482,29 @@ async def test_knowledge_search_uses_embedder_for_hybrid(ws, monkeypatch, tmp_pa
 
     # A fake available embedder; assert the retriever receives its embed fn (not None).
     class _Emb:
-        def is_available(self): return True
-        def embed(self, text): return [0.1] * 8
+        def is_available(self):
+            return True
+
+        def embed(self, text):
+            return [0.1] * 8
+
     monkeypatch.setattr(kn, "get_knowledge_embedder", lambda: _Emb(), raising=False)
 
     seen = {}
     real_init = retr.HybridRetriever.__init__
+
     def _spy_init(self, store, embedder=None):
         seen["embedder"] = embedder
         real_init(self, store, embedder=embedder)
+
     monkeypatch.setattr(retr.HybridRetriever, "__init__", _spy_init)
 
     p = NativeBuiltinToolProvider(ws)
     r = await p.invoke("knowledge_search", {"query": "vector database"})
     assert r.success
-    assert callable(seen.get("embedder")), "knowledge_search must pass the embedder's embed fn for hybrid retrieval"
+    assert callable(
+        seen.get("embedder")
+    ), "knowledge_search must pass the embedder's embed fn for hybrid retrieval"
 
 
 def test_get_knowledge_embedder_none_safe(monkeypatch):
@@ -481,8 +514,10 @@ def test_get_knowledge_embedder_none_safe(monkeypatch):
 
     monkeypatch.setattr(kn, "_embedder", None, raising=False)
     monkeypatch.setattr(kn, "_embedder_spec", object(), raising=False)  # force rebuild
-    monkeypatch.setattr("personalclaw.embedding_providers.registry._active_embedding_spec",
-                        lambda: ("native", "all-MiniLM-L6-v2"))
+    monkeypatch.setattr(
+        "personalclaw.embedding_providers.registry._active_embedding_spec",
+        lambda: ("native", "all-MiniLM-L6-v2"),
+    )
     monkeypatch.setattr(
         "personalclaw.knowledge.embedder.create_embedder_from_config",
         lambda cfg: (_ for _ in ()).throw(RuntimeError("boom")),
@@ -500,18 +535,23 @@ def test_get_knowledge_embedder_rebuilds_on_model_switch(monkeypatch):
     monkeypatch.setattr(kn, "_embedder_spec", False, raising=False)
 
     spec = {"v": ("native", "model-a")}
-    monkeypatch.setattr("personalclaw.embedding_providers.registry._active_embedding_spec",
-                        lambda: spec["v"])
+    monkeypatch.setattr(
+        "personalclaw.embedding_providers.registry._active_embedding_spec", lambda: spec["v"]
+    )
     builds: list = []
+
     def _build(cfg):
-        e = object(); builds.append((spec["v"], e)); return e
+        e = object()
+        builds.append((spec["v"], e))
+        return e
+
     monkeypatch.setattr("personalclaw.knowledge.embedder.create_embedder_from_config", _build)
 
     e1 = kn.get_knowledge_embedder()
-    e2 = kn.get_knowledge_embedder()           # same selection → cached, no rebuild
+    e2 = kn.get_knowledge_embedder()  # same selection → cached, no rebuild
     assert e1 is e2 and len(builds) == 1
-    spec["v"] = ("native", "model-b")          # user switches embedding model
-    e3 = kn.get_knowledge_embedder()           # selection changed → rebuild
+    spec["v"] = ("native", "model-b")  # user switches embedding model
+    e3 = kn.get_knowledge_embedder()  # selection changed → rebuild
     assert e3 is not e1 and len(builds) == 2
 
 

@@ -1,4 +1,5 @@
-"""Tests for to_dict() Board fields: options, waiting_for_input, pending_approval_info, last_activity_ts."""
+"""Tests for to_dict() Board fields: options, waiting_for_input, pending_approval_info, last_activity_ts."""  # noqa: E501
+
 import asyncio
 import json
 

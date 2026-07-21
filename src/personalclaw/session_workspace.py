@@ -17,7 +17,13 @@ _SAFE_ID_RE = re.compile(r"^[a-zA-Z0-9_.:-]+$")
 
 
 def _validate_id(value: str, label: str = "id") -> str:
-    if not value or ".." in value or "/" in value or "\\" in value or not _SAFE_ID_RE.fullmatch(value):
+    if (
+        not value
+        or ".." in value
+        or "/" in value
+        or "\\" in value
+        or not _SAFE_ID_RE.fullmatch(value)
+    ):
         raise ValueError(f"Invalid {label}: {value!r}")
     return value
 

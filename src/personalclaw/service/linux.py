@@ -40,9 +40,7 @@ def _current_group(user: str) -> str:
     it.
     """
     try:
-        res = subprocess.run(
-            ["id", "-gn", user], capture_output=True, text=True, check=False
-        )
+        res = subprocess.run(["id", "-gn", user], capture_output=True, text=True, check=False)
         if res.returncode == 0 and res.stdout.strip():
             return res.stdout.strip()
     except FileNotFoundError:
@@ -119,9 +117,7 @@ def _sudo_run(
 def _systemctl(*args: str, sudo: bool = True) -> subprocess.CompletedProcess[str]:
     if sudo:
         return _sudo_run("systemctl", *args)
-    return subprocess.run(
-        ["systemctl", *args], capture_output=True, text=True, check=False
-    )
+    return subprocess.run(["systemctl", *args], capture_output=True, text=True, check=False)
 
 
 def _write_unit_via_sudo(contents: str) -> subprocess.CompletedProcess[str]:
@@ -255,7 +251,5 @@ def status() -> str:
     ``personalclaw service status`` doesn't prompt for a password just to
     show whether the service is up.
     """
-    res = _systemctl(
-        "status", f"{SERVICE_NAME}.service", "--no-pager", sudo=False
-    )
+    res = _systemctl("status", f"{SERVICE_NAME}.service", "--no-pager", sudo=False)
     return res.stdout or res.stderr

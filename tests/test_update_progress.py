@@ -91,7 +91,9 @@ class TestUpdateEndpoints:
     async def test_simulate_walks_through_steps(self, monkeypatch, tmp_path) -> None:
         """Simulate endpoint broadcasts progress for each step."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        monkeypatch.setattr("personalclaw.dashboard.handlers.config_path", lambda: tmp_path / "c.json")
+        monkeypatch.setattr(
+            "personalclaw.dashboard.handlers.config_path", lambda: tmp_path / "c.json"
+        )
 
         from personalclaw.dashboard.handlers import api_update_simulate
 
@@ -130,7 +132,9 @@ class TestUpdateEndpoints:
     async def test_simulate_fail_at(self, monkeypatch, tmp_path) -> None:
         """Simulate endpoint stops at fail_at step."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        monkeypatch.setattr("personalclaw.dashboard.handlers.config_path", lambda: tmp_path / "c.json")
+        monkeypatch.setattr(
+            "personalclaw.dashboard.handlers.config_path", lambda: tmp_path / "c.json"
+        )
 
         from personalclaw.dashboard.handlers import api_update_simulate
 
@@ -163,7 +167,9 @@ class TestUpdateEndpoints:
     async def test_simulate_reject(self, monkeypatch, tmp_path) -> None:
         """Simulate endpoint returns 409 when reject=true."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        monkeypatch.setattr("personalclaw.dashboard.handlers.config_path", lambda: tmp_path / "c.json")
+        monkeypatch.setattr(
+            "personalclaw.dashboard.handlers.config_path", lambda: tmp_path / "c.json"
+        )
 
         from personalclaw.dashboard.handlers import api_update_simulate
 
@@ -211,7 +217,9 @@ class TestUpdateEndpoints:
         # Two running subagents + one done; two live sessions.
         state.subagents = MagicMock()
         state.subagents.all_agents = [
-            MagicMock(done=False), MagicMock(done=False), MagicMock(done=True),
+            MagicMock(done=False),
+            MagicMock(done=False),
+            MagicMock(done=True),
         ]
         state.sessions._sessions = {"a": object(), "b": object()}
 
@@ -295,6 +303,7 @@ class TestUpdateEndpoints:
         assert "uncommitted" in data["error"]
         # The 409 path must release the in-flight guard for the next attempt.
         import personalclaw.dashboard.handlers.updates as upd
+
         assert upd._apply_in_flight is False
 
 
@@ -492,7 +501,9 @@ class TestUpdateApplyPipeline:
         build entirely, push ONLY the restarting step, and reach the re-exec —
         even on a DIRTY tree (nothing will be pulled, dirtiness is moot)."""
         data, steps, reexec, commands = await self._run_nothing_to_pull(
-            monkeypatch, tmp_path, rev_list=(128, b""),
+            monkeypatch,
+            tmp_path,
+            rev_list=(128, b""),
         )
         assert data["status"] == "restarting"
         assert "No upstream" in data["detail"]
@@ -508,7 +519,9 @@ class TestUpdateApplyPipeline:
         """Upstream configured but zero new commits → same short-circuit:
         restarting step + re-exec, with an 'Already up to date' note."""
         data, steps, reexec, commands = await self._run_nothing_to_pull(
-            monkeypatch, tmp_path, rev_list=(0, b"0\n"),
+            monkeypatch,
+            tmp_path,
+            rev_list=(0, b"0\n"),
         )
         assert data["status"] == "restarting"
         assert "Already up to date" in data["detail"]
@@ -573,20 +586,27 @@ class TestReexecPreservesAuthMode:
 
     def test_reexec_passes_auth_mode_in_child_env(self, monkeypatch, tmp_path):
         import asyncio
+
         import personalclaw.dashboard.handlers.updates as U
 
         state = _make_state(monkeypatch, tmp_path)
         # neutralize the pre-exec side effects
-        monkeypatch.setattr("personalclaw.dashboard.chat.save_all_sessions_to_history", lambda s: None)
+        monkeypatch.setattr(
+            "personalclaw.dashboard.chat.save_all_sessions_to_history", lambda s: None
+        )
 
         class _Sessions:
-            async def close_all(self): return None
+            async def close_all(self):
+                return None
+
         monkeypatch.setattr(state, "sessions", _Sessions(), raising=False)
 
         captured = {}
+
         def _fake_execve(exe, argv, env):
             captured["env"] = env
             raise SystemExit  # stop before actually replacing the process
+
         monkeypatch.setattr(U.os, "execve", _fake_execve)
         monkeypatch.setattr(U.os.path, "isfile", lambda p: True)
         monkeypatch.setattr(U.os, "access", lambda p, m: True)
@@ -597,19 +617,27 @@ class TestReexecPreservesAuthMode:
 
     def test_reexec_without_auth_mode_leaves_env_unset(self, monkeypatch, tmp_path):
         import asyncio
+
         import personalclaw.dashboard.handlers.updates as U
 
         state = _make_state(monkeypatch, tmp_path)
-        monkeypatch.setattr("personalclaw.dashboard.chat.save_all_sessions_to_history", lambda s: None)
+        monkeypatch.setattr(
+            "personalclaw.dashboard.chat.save_all_sessions_to_history", lambda s: None
+        )
+
         class _Sessions:
-            async def close_all(self): return None
+            async def close_all(self):
+                return None
+
         monkeypatch.setattr(state, "sessions", _Sessions(), raising=False)
         monkeypatch.delenv("PERSONALCLAW_AUTH_MODE", raising=False)
 
         captured = {}
+
         def _fake_execve(exe, argv, env):
             captured["env"] = env
             raise SystemExit
+
         monkeypatch.setattr(U.os, "execve", _fake_execve)
         monkeypatch.setattr(U.os.path, "isfile", lambda p: True)
         monkeypatch.setattr(U.os, "access", lambda p, m: True)

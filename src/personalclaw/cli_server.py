@@ -19,6 +19,7 @@ from personalclaw.constants import DATA_WARNING
 from personalclaw.dashboard.origin import dashboard_origin, parse_dashboard_url
 from personalclaw.dashboard.token_auth import parse_duration
 from personalclaw.frontend import build_frontend_sync, ensure_dev_dist_symlink
+from personalclaw.gateway import run_gateway
 from personalclaw.history import ConversationLog, HistoryConsolidator
 from personalclaw.learn import LessonStore
 from personalclaw.memory import MemoryStore
@@ -29,7 +30,6 @@ from personalclaw.service import macos as svc_macos
 from personalclaw.service.common import SERVICE_NAME, Platform, current_platform
 from personalclaw.session import SessionManager
 from personalclaw.skills import SkillsLoader
-from personalclaw.gateway import run_gateway
 from personalclaw.vector_memory import VectorMemoryStore
 
 
@@ -150,8 +150,11 @@ def _stop(port: int) -> None:
     """
     if service_controller.stop_service():
         sel().log_api_access(
-            caller="cli", operation="gateway_stop", outcome="allowed",
-            source="cli", resources=f"port={port} via=service",
+            caller="cli",
+            operation="gateway_stop",
+            outcome="allowed",
+            source="cli",
+            resources=f"port={port} via=service",
         )
         print("✅ Stopped personalclaw service. To remove it: personalclaw service uninstall")
         return
@@ -162,19 +165,27 @@ def _stop(port: int) -> None:
         ).strip()
     except FileNotFoundError:
         sel().log_api_access(
-            caller="cli", operation="gateway_stop", outcome="error",
-            source="cli", resources=f"port={port} reason=lsof_not_found",
+            caller="cli",
+            operation="gateway_stop",
+            outcome="error",
+            source="cli",
+            resources=f"port={port} reason=lsof_not_found",
         )
-        print("❌ `lsof` not found — cannot look up gateway process. "
-              f"Install lsof or use `ss -tlnp | grep {port}` to find the PID manually.")
+        print(
+            "❌ `lsof` not found — cannot look up gateway process. "
+            f"Install lsof or use `ss -tlnp | grep {port}` to find the PID manually."
+        )
         sys.exit(1)
     except subprocess.CalledProcessError:
         out = ""
 
     if not out:
         sel().log_api_access(
-            caller="cli", operation="gateway_stop", outcome="no_target",
-            source="cli", resources=f"port={port}",
+            caller="cli",
+            operation="gateway_stop",
+            outcome="no_target",
+            source="cli",
+            resources=f"port={port}",
         )
         print(f"No PersonalClaw gateway currently running on port {port}.")
         sys.exit(1)
@@ -188,16 +199,24 @@ def _stop(port: int) -> None:
         pids = [p for p in pids if _is_personalclaw_process(p)]
     except FileNotFoundError:
         sel().log_api_access(
-            caller="cli", operation="gateway_stop", outcome="error",
-            source="cli", resources=f"port={port} reason=ps_not_found",
+            caller="cli",
+            operation="gateway_stop",
+            outcome="error",
+            source="cli",
+            resources=f"port={port} reason=ps_not_found",
         )
-        print("❌ `ps` not found — cannot verify gateway process. "
-              "Install procps or manually kill the process.")
+        print(
+            "❌ `ps` not found — cannot verify gateway process. "
+            "Install procps or manually kill the process."
+        )
         sys.exit(1)
     if not pids:
         sel().log_api_access(
-            caller="cli", operation="gateway_stop", outcome="no_target",
-            source="cli", resources=f"port={port} reason=no_personalclaw_process",
+            caller="cli",
+            operation="gateway_stop",
+            outcome="no_target",
+            source="cli",
+            resources=f"port={port} reason=no_personalclaw_process",
         )
         print(f"No PersonalClaw gateway currently running on port {port}.")
         sys.exit(1)
@@ -222,21 +241,32 @@ def _stop(port: int) -> None:
 
     if sent:
         sel().log_api_access(
-            caller="cli", operation="gateway_stop", outcome="allowed",
-            source="cli", resources=f"pids={sorted(sent)} port={port}",
+            caller="cli",
+            operation="gateway_stop",
+            outcome="allowed",
+            source="cli",
+            resources=f"pids={sorted(sent)} port={port}",
         )
         print(f"✅ Sent SIGTERM to gateway (pid {', '.join(str(p) for p in sorted(sent))}).")
     if denied:
         sel().log_api_access(
-            caller="cli", operation="gateway_stop", outcome="denied",
-            source="cli", resources=f"pids={denied} port={port}",
+            caller="cli",
+            operation="gateway_stop",
+            outcome="denied",
+            source="cli",
+            resources=f"pids={denied} port={port}",
         )
-        print(f"❌ No permission to stop pid {', '.join(str(p) for p in denied)} — try: sudo personalclaw stop")
+        print(
+            f"❌ No permission to stop pid {', '.join(str(p) for p in denied)} — try: sudo personalclaw stop"  # noqa: E501
+        )
         sys.exit(1)
     if not sent:
         sel().log_api_access(
-            caller="cli", operation="gateway_stop", outcome="no_target",
-            source="cli", resources=f"port={port} reason=process_already_exited",
+            caller="cli",
+            operation="gateway_stop",
+            outcome="no_target",
+            source="cli",
+            resources=f"port={port} reason=process_already_exited",
         )
         print(f"No PersonalClaw gateway currently running on port {port} (process already exited).")
         sys.exit(1)
@@ -245,11 +275,17 @@ def _stop(port: int) -> None:
 def _is_personalclaw_process(pid: int) -> bool:
     """Return True if *pid* looks like a PersonalClaw gateway process."""
     try:
-        out = subprocess.check_output(
-            ["ps", "-p", str(pid), "-o", "args="], text=True
-        ).strip().lower()
-        return ("backend.gateway" in out or "personalclaw.dashboard" in out
-                or "personalclaw gateway" in out or "personalclaw start" in out)
+        out = (
+            subprocess.check_output(["ps", "-p", str(pid), "-o", "args="], text=True)
+            .strip()
+            .lower()
+        )
+        return (
+            "backend.gateway" in out
+            or "personalclaw.dashboard" in out
+            or "personalclaw gateway" in out
+            or "personalclaw start" in out
+        )
     except subprocess.CalledProcessError:
         return False
 
@@ -288,8 +324,11 @@ def _spawn_detached_gateway(port: int) -> None:
         close_fds=True,
     )
     sel().log_api_access(
-        caller="cli", operation="gateway_spawn", outcome="allowed",
-        source="cli", resources=f"port={port}",
+        caller="cli",
+        operation="gateway_spawn",
+        outcome="allowed",
+        source="cli",
+        resources=f"port={port}",
     )
     print(f"✅ Started a fresh PersonalClaw gateway on port {port} (logs: {log_path}).")
 
@@ -305,8 +344,11 @@ def _restart(port: int) -> None:
     """
     if service_controller.restart_service():
         sel().log_api_access(
-            caller="cli", operation="gateway_restart", outcome="allowed",
-            source="cli", resources=f"port={port} via=service",
+            caller="cli",
+            operation="gateway_restart",
+            outcome="allowed",
+            source="cli",
+            resources=f"port={port} via=service",
         )
         print("✅ Restarted personalclaw service.")
         return
@@ -442,7 +484,6 @@ def _update() -> None:
         print("  ⚠️  Agent config refresh failed — run: personalclaw setup --agent-only")
 
 
-
 def _status(args: argparse.Namespace) -> None:
     """Query the running gateway for stats, or print offline message."""
     port = resolve_client_port(getattr(args, "port", None))
@@ -473,7 +514,6 @@ def _status(args: argparse.Namespace) -> None:
     print(f"  Subagents:   {data.get('subagents', 0)}")
     print(f"  Cron jobs:   {data.get('crons', 0)}")
     print(f"  Lessons:     {data.get('lessons', 0)}")
-
 
 
 async def _gateway(
@@ -533,6 +573,7 @@ def _build_consolidator() -> tuple["SessionManager", HistoryConsolidator, Conver
         get_active_embed_fn,
         get_active_embedding_dim,
     )
+
     vector_memory = VectorMemoryStore(
         confidence_threshold=cfg.memory.semantic_confidence_threshold,
         extra_prefixes=cfg.memory.semantic_keys or None,
@@ -612,25 +653,31 @@ def _service_cmd(args: argparse.Namespace) -> int:
     if action == "install":
         rc = service_controller.install_service()
         sel().log_api_access(
-            caller="cli", operation="service_install",
+            caller="cli",
+            operation="service_install",
             outcome="allowed" if rc == 0 else "error",
-            source="cli", resources=f"rc={rc}",
+            source="cli",
+            resources=f"rc={rc}",
         )
         return rc
     if action == "uninstall":
         rc = service_controller.uninstall_service()
         sel().log_api_access(
-            caller="cli", operation="service_uninstall",
+            caller="cli",
+            operation="service_uninstall",
             outcome="allowed" if rc == 0 else "error",
-            source="cli", resources=f"rc={rc}",
+            source="cli",
+            resources=f"rc={rc}",
         )
         return rc
     if action == "status":
         rc = service_controller.service_status()
         sel().log_api_access(
-            caller="cli", operation="service_status",
+            caller="cli",
+            operation="service_status",
             outcome="allowed" if rc == 0 else "error",
-            source="cli", resources=f"rc={rc}",
+            source="cli",
+            resources=f"rc={rc}",
         )
         return rc
     print("Usage: personalclaw service {install|uninstall|status}", file=sys.stderr)

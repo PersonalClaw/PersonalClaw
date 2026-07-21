@@ -26,6 +26,11 @@ from personalclaw.config.loader import (  # noqa: F401
     config_dir,
     resolve_agent_bindings,
 )
+from personalclaw.dashboard.chat_channel import (  # noqa: F401
+    api_channel_reply_targets,
+    api_chat_session_channel_link,
+    api_chat_session_handoff,
+)
 from personalclaw.dashboard.chat_folders import (  # noqa: F401
     _generate_folder_icon,
     api_chat_folder_create,
@@ -36,17 +41,10 @@ from personalclaw.dashboard.chat_folders import (  # noqa: F401
     api_chat_session_pin,
 )
 from personalclaw.dashboard.chat_fork import api_chat_session_fork  # noqa: F401
-from personalclaw.dashboard.chat_undo import api_chat_session_undo  # noqa: F401
-from personalclaw.dashboard.side import (  # noqa: F401
-    api_side_close,
-    api_side_open,
-    api_side_turn,
-)
 from personalclaw.dashboard.chat_handlers import (  # noqa: F401
     MAX_COLOR_INDEX,
     api_chat,
     api_chat_mode,
-    api_chat_task_mode,
     api_chat_session_acp_agent,
     api_chat_session_agent,
     api_chat_session_approve,
@@ -55,8 +53,8 @@ from personalclaw.dashboard.chat_handlers import (  # noqa: F401
     api_chat_session_create,
     api_chat_session_delete,
     api_chat_session_detail,
-    api_chat_session_model,
     api_chat_session_interrupt,
+    api_chat_session_model,
     api_chat_session_queue_cancel,
     api_chat_session_reasoning_effort,
     api_chat_session_resume,
@@ -64,6 +62,7 @@ from personalclaw.dashboard.chat_handlers import (  # noqa: F401
     api_chat_session_workspace_dir,
     api_chat_sessions,
     api_chat_sessions_cleanup,
+    api_chat_task_mode,
     api_chat_tool_result,
     api_nav_resolve_links,
     api_recent_projects,
@@ -86,11 +85,6 @@ from personalclaw.dashboard.chat_runner import (  # noqa: F401
     _expand_prompt_mention,
     _flush_segment,
     _run_chat,
-)
-from personalclaw.dashboard.chat_channel import (  # noqa: F401
-    api_chat_session_handoff,
-    api_chat_session_channel_link,
-    api_channel_reply_targets,
 )
 from personalclaw.dashboard.chat_tags import (  # noqa: F401
     api_chat_session_drop,
@@ -116,6 +110,7 @@ from personalclaw.dashboard.chat_title import (  # noqa: F401
     api_chat_session_generate_title,
     api_chat_session_rename,
 )
+from personalclaw.dashboard.chat_undo import api_chat_session_undo  # noqa: F401
 from personalclaw.dashboard.chat_utils import (  # noqa: F401
     _BLOCKED_SLASH_COMMANDS,
     _SLASH_COMMANDS,
@@ -140,5 +135,10 @@ from personalclaw.dashboard.chat_utils import (  # noqa: F401
     is_deprecated_model,
 )
 from personalclaw.dashboard.chat_voice import api_voice_synthesize  # noqa: F401
+from personalclaw.dashboard.side import (  # noqa: F401
+    api_side_close,
+    api_side_open,
+    api_side_turn,
+)
 from personalclaw.security import is_sensitive_path  # noqa: F401
 from personalclaw.sel import sel  # noqa: F401

@@ -107,4 +107,6 @@ def _structural_descriptor(file_path: str, item_type: str, result) -> str:
     if not bits:
         return ""
     label = (item_type or "file").capitalize()
-    return f"{label}: {os.path.basename(file_path)} ({', '.join(bits)}) — no extractable text content."
+    return (
+        f"{label}: {os.path.basename(file_path)} ({', '.join(bits)}) — no extractable text content."
+    )

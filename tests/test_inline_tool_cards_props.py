@@ -72,7 +72,9 @@ class TestSegmentFlushOnInterrupt:
     and assistant_text shall be empty after the flush.
     """
 
-    @pytest.mark.skipif(platform.system() == "Darwin", reason="Hypothesis flaky on macOS CI (timing-sensitive)")
+    @pytest.mark.skipif(
+        platform.system() == "Darwin", reason="Hypothesis flaky on macOS CI (timing-sensitive)"
+    )
     @given(
         text_chunks=st.lists(_text_st, min_size=1, max_size=5),
         tool_name=_tool_name_st,

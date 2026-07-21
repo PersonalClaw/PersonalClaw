@@ -18,8 +18,8 @@ from typing import Any
 
 from personalclaw.action_providers.base import (
     ActionContext,
-    ActionResult,
     ActionProvider,
+    ActionResult,
 )
 from personalclaw.action_providers.services import get_action_services
 from personalclaw.action_providers.template import render_template
@@ -44,9 +44,7 @@ class NotifyActionProvider(ActionProvider):
     ) -> ActionResult:
         title = render_template(action_config.get("title_template", ""), ctx).strip()
         if not title:
-            return ActionResult(
-                success=False, error="notify hook is missing 'title_template'"
-            )
+            return ActionResult(success=False, error="notify hook is missing 'title_template'")
         body = render_template(action_config.get("body_template", ""), ctx)
         kind = (action_config.get("kind") or "info").strip().lower()
         if kind not in _ALLOWED_KINDS:

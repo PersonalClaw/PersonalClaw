@@ -3,6 +3,7 @@
 Covers the killpg + escaped-child sweep that terminates the whole process group
 so no orphaned personalclaw-cli sessions survive a reset.
 """
+
 import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -177,7 +178,10 @@ class TestSigkillSessionProcessTree:
     """Tests for SubagentManager._sigkill_session() process tree cleanup."""
 
     def _make_manager(
-        self, pid: int, child_pids: dict[int, int | None] | None = None, start_time: int | None = 100
+        self,
+        pid: int,
+        child_pids: dict[int, int | None] | None = None,
+        start_time: int | None = 100,
     ):
         provider = _make_provider(pid, child_pids, start_time=start_time)
         sessions = _mock_sessions_with_provider(provider)

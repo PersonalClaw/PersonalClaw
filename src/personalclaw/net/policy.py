@@ -7,7 +7,7 @@ for gateway↔mcp self-calls) instead of re-implementing checks. The guard
 enforces the byte/timeout/redirect caps.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -41,6 +41,7 @@ class EgressPolicy:
     def with_overrides(self, **kw) -> "EgressPolicy":
         """A copy with fields replaced (operator config layering)."""
         from dataclasses import replace
+
         return replace(self, **kw)
 
 
@@ -59,8 +60,12 @@ WEBHOOK = EgressPolicy(name="webhook", timeout_s=30.0)
 
 # Gateway↔mcp self-calls: inverted — loopback expected, public denied.
 LOOPBACK_INTERNAL = EgressPolicy(
-    name="loopback_internal", allow_private=True, loopback_only=True,
-    pin_resolved_ip=False, max_bytes=50_000_000, timeout_s=60.0,
+    name="loopback_internal",
+    allow_private=True,
+    loopback_only=True,
+    pin_resolved_ip=False,
+    max_bytes=50_000_000,
+    timeout_s=60.0,
 )
 
 _PROFILES: dict[str, EgressPolicy] = {
@@ -83,6 +88,7 @@ def egress_policy_for(base: EgressPolicy) -> EgressPolicy:
     best-effort so ``net`` stays importable without a loaded config (tests, early boot)."""
     try:
         from personalclaw.config.loader import AppConfig
+
         eg = AppConfig.load().security.egress
     except Exception:
         return base

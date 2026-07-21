@@ -74,9 +74,8 @@ class OrchestrationTracker:
     @property
     def has_escalated(self) -> bool:
         """True if any task hit failure limit or any stage hit round limit."""
-        return (
-            any(v >= MAX_TASK_FAILURES for v in self._task_failures.values())
-            or any(v >= MAX_STAGE_ROUNDS for v in self._stage_rounds.values())
+        return any(v >= MAX_TASK_FAILURES for v in self._task_failures.values()) or any(
+            v >= MAX_STAGE_ROUNDS for v in self._stage_rounds.values()
         )
 
     def reset_after_guidance(self) -> None:
@@ -219,8 +218,7 @@ Stage N: Verification
 # Loose pre-filter: catches plan-like text cheaply. False positives are
 # handled by rephrase_plan(might_not_be_plan=True) which asks the LLM.
 _PLAN_LIKE_RE = re.compile(
-    r"(?:^|\n)\s*(?:Phase|Step|Stage|Part)\s+\d+\s*[:\-—]"
-    r"|(?:^|\n)\s*\d+\.\s+\*\*[A-Z]",
+    r"(?:^|\n)\s*(?:Phase|Step|Stage|Part)\s+\d+\s*[:\-—]" r"|(?:^|\n)\s*\d+\.\s+\*\*[A-Z]",
     re.IGNORECASE,
 )
 
@@ -262,7 +260,9 @@ def validate_plan_format(text: str) -> tuple[bool, bool, list[str]]:
     return True, len(issues) == 0, issues
 
 
-async def rephrase_plan(text: str, issues: list[str], client: Any, *, might_not_be_plan: bool = False) -> str | None:
+async def rephrase_plan(
+    text: str, issues: list[str], client: Any, *, might_not_be_plan: bool = False
+) -> str | None:
     """Ask the LLM to reformat a malformed plan. Returns fixed text or None.
 
     When *might_not_be_plan* is True, the LLM is instructed to return the
@@ -388,14 +388,20 @@ def build_plan_consolidation_prompt() -> str:
         if etype == "plan_created":
             event_lines.append(f"[{sid}] Plan created: {e.get('task_description', '')[:100]}")
         elif etype == "task_failed":
-            event_lines.append(f"[{sid}] Failed: {e.get('task', '')[:60]} — {e.get('error', '')[:60]}")
+            event_lines.append(
+                f"[{sid}] Failed: {e.get('task', '')[:60]} — {e.get('error', '')[:60]}"
+            )
         elif etype == "user_guidance":
-            event_lines.append(f"[{sid}] User said: Q: {e.get('question', '')[:60]} A: {e.get('answer', '')[:80]}")
+            event_lines.append(
+                f"[{sid}] User said: Q: {e.get('question', '')[:60]} A: {e.get('answer', '')[:80]}"
+            )
         elif etype == "plan_completed":
             status = "succeeded" if e.get("success") else "failed"
             event_lines.append(f"[{sid}] Plan {status}: {e.get('summary', '')[:80]}")
         elif etype == "format_miss":
-            event_lines.append(f"[{sid}] Format miss ({e.get('pattern', '')}): {e.get('snippet', '')[:80]}")
+            event_lines.append(
+                f"[{sid}] Format miss ({e.get('pattern', '')}): {e.get('snippet', '')[:80]}"
+            )
         elif etype == "format_invalid":
             event_lines.append(f"[{sid}] Format invalid: {e.get('issues', [])}")
 
@@ -407,13 +413,16 @@ def build_plan_consolidation_prompt() -> str:
     # ``task-plan-consolidation``), rendered with the current lessons + events.
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
-    return render_use_case_prompt(
-        "plan_consolidation",
-        {
-            "existing": existing or "(empty — first consolidation)",
-            "event_lines": "\n".join(event_lines),
-        },
-    ) or ""
+    return (
+        render_use_case_prompt(
+            "plan_consolidation",
+            {
+                "existing": existing or "(empty — first consolidation)",
+                "event_lines": "\n".join(event_lines),
+            },
+        )
+        or ""
+    )
 
 
 _MAX_PLAN_LESSONS_LINES = 80  # hard cap on saved plan lessons

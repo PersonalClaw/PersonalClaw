@@ -18,7 +18,9 @@ from hypothesis import HealthCheck, settings
 # ── Hypothesis profiles ─────────────────────────────────────────────────
 # Default (CI): fast iteration.  Run ``HYPOTHESIS_PROFILE=thorough make build test``
 # for deeper coverage.
-settings.register_profile("default", max_examples=20, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+settings.register_profile(
+    "default", max_examples=20, suppress_health_check=[HealthCheck.too_slow], deadline=None
+)
 settings.register_profile("thorough", max_examples=100)
 settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "default"))
 
@@ -60,9 +62,52 @@ def _reset_trust_mode():
     force it OFF before and after each test.
     """
     import personalclaw.trust_mode as _tm
+
     _tm._TRUST.disable()
     yield
     _tm._TRUST.disable()
+
+
+@pytest.fixture(autouse=True)
+def _reset_sel_singleton():
+    """Reset the process-global Security Event Log singleton around every test.
+
+    ``SecurityEventLog`` is a ``__new__``-based singleton whose ``__init__`` no-ops
+    once ``_initialized`` — so the FIRST test to touch ``sel()`` pins ``_dir`` to its
+    own home, and every later test in the same worker inherits that stale path. Under
+    ``pytest-xdist`` which test lands first per worker varies, so SEL-reading/asserting
+    tests (doctor STT, ACP-died recovery, auto-skill audit, …) failed nondeterministically.
+    Clearing the class-level state before + after each test gives every test a fresh SEL
+    bound to its own isolated home — the same discipline as ``_reset_trust_mode`` above.
+    """
+    from personalclaw.sel import SecurityEventLog as _SEL
+
+    def _clear() -> None:
+        _SEL._instance = None
+        _SEL._initialized = False
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_single_flight_locks(tmp_path_factory, monkeypatch):
+    """Point the cross-process single-flight lock dir at a per-test tmp dir.
+
+    ``concurrency.single_flight(job_key)`` takes an OS ``flock`` on
+    ``config_dir()/locks/<job_key>.lock`` so only one PROCESS consolidates a given
+    key at a time — correct in production, but a cross-test hazard under xdist:
+    all workers share one ``PERSONALCLAW_HOME`` (one ``config_dir()``), and several
+    tests reuse the same consolidation key (e.g. ``consolidate:dashboard:chat-empty``).
+    Two such tests landing on different workers then contend for the SAME lock file —
+    the loser's ``single_flight`` returns False, its consolidation is skipped, and its
+    SEL-audit assertions see an empty record (a rotating ~1-in-3 red). Isolating the
+    lock DIR per test makes each test's keys resolve to their own files, so no two
+    tests can collide regardless of worker placement. A test that patches the locks
+    dir itself still overrides this (last wins)."""
+    locks_home = tmp_path_factory.mktemp("pclaw-locks")
+    monkeypatch.setattr("personalclaw.concurrency._locks_dir", lambda: locks_home)
 
 
 @pytest.fixture(autouse=True)

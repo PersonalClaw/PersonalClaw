@@ -33,9 +33,9 @@ logger = logging.getLogger(__name__)
 Shape = Literal["flat", "tree"]
 
 # Callables injected by the caller (keeps grill vendor-/surface-neutral).
-AskFn = Callable[[str], Awaitable[str]]              # prompt → raw LLM text
-RecallFn = Callable[[str], Awaitable[str]]           # query → relevant prior context (or "")
-SaveFn = Callable[[str], None]                       # a settled decision → persist (lesson)
+AskFn = Callable[[str], Awaitable[str]]  # prompt → raw LLM text
+RecallFn = Callable[[str], Awaitable[str]]  # query → relevant prior context (or "")
+SaveFn = Callable[[str], None]  # a settled decision → persist (lesson)
 
 
 @dataclass
@@ -43,8 +43,10 @@ class GrillResult:
     """Outcome of a grill pass."""
 
     shape: Shape
-    sub_goals: list[str] = field(default_factory=list)        # flat shape
-    phases: list[dict] = field(default_factory=list)          # tree shape: [{title, description, steps:[{title,prompt}]}]
+    sub_goals: list[str] = field(default_factory=list)  # flat shape
+    phases: list[dict] = field(
+        default_factory=list
+    )  # tree shape: [{title, description, steps:[{title,prompt}]}]
     clarifying_questions: list[str] = field(default_factory=list)
     memory_hits: int = 0
     ambiguous: bool = False
@@ -52,10 +54,15 @@ class GrillResult:
 
 def _flat_prompt(goal: str, prior: str) -> str:
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
+
     rendered = render_use_case_prompt("grill_flat", {"goal": goal, "prior": prior})
     if rendered is not None:
         return rendered
-    mem = f"\n\nRELEVANT PRIOR CONTEXT (do not re-ask what's already settled here):\n{prior}" if prior else ""
+    mem = (
+        f"\n\nRELEVANT PRIOR CONTEXT (do not re-ask what's already settled here):\n{prior}"
+        if prior
+        else ""
+    )
     return (
         "Decompose this goal into concise sub-goals that make pursuing it thorough — "
         "each a DISTINCT angle (technical feasibility, trade-offs, alternatives, risks, "
@@ -67,22 +74,28 @@ def _flat_prompt(goal: str, prior: str) -> str:
 
 def _tree_prompt(goal: str, prior: str) -> str:
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
+
     rendered = render_use_case_prompt("grill_tree", {"goal": goal, "prior": prior})
     if rendered is not None:
         return rendered
-    mem = f"\n\nRELEVANT PRIOR CONTEXT (skip questions already answered here):\n{prior}" if prior else ""
+    mem = (
+        f"\n\nRELEVANT PRIOR CONTEXT (skip questions already answered here):\n{prior}"
+        if prior
+        else ""
+    )
     return (
         "You are planning work. Read the goal and produce an adaptive plan as PHASES of "
         "clarifying QUESTIONS that, once answered, give enough detail to break the work "
         "into concrete tasks. Detect the kind of work and tailor the phases (software, "
         "event, research, routine — adapt; no fixed template). 2-4 phases, 2-5 questions "
         f"each.{mem}\n\nGOAL:\n{goal}\n\nRespond with ONLY a JSON object, no prose:\n"
-        '{"phases": [{"title": "...", "description": "...", "steps": [{"title": "short label", "prompt": "the question"}]}]}'
+        '{"phases": [{"title": "...", "description": "...", "steps": [{"title": "short label", "prompt": "the question"}]}]}'  # noqa: E501
     )
 
 
 def _assess_prompt(goal: str) -> str:
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
+
     rendered = render_use_case_prompt("grill_assess", {"goal": goal})
     if rendered is not None:
         return rendered
@@ -104,7 +117,9 @@ async def assess_goal(goal: str, ask: AskFn) -> tuple[bool, list[str]]:
         return False, []
     if not isinstance(data, dict):
         return False, []
-    qs = [str(q).strip() for q in data.get("questions", []) if isinstance(q, str) and str(q).strip()]
+    qs = [
+        str(q).strip() for q in data.get("questions", []) if isinstance(q, str) and str(q).strip()
+    ]
     return bool(data.get("ambiguous")) and bool(qs), qs[:8]
 
 
@@ -148,7 +163,9 @@ async def grill(
         if shape == "flat":
             raw = await ask(_flat_prompt(goal, prior))
             items = _parse_list(raw)
-            result.sub_goals = [str(s).strip() for s in (items or []) if isinstance(s, str) and str(s).strip()][:20]
+            result.sub_goals = [
+                str(s).strip() for s in (items or []) if isinstance(s, str) and str(s).strip()
+            ][:20]
         else:
             raw = await ask(_tree_prompt(goal, prior))
             data = _parse_obj(raw)
@@ -180,13 +197,16 @@ def _normalize_phases(phases: list) -> list[dict]:
             continue
         steps = [
             {"title": str(s.get("title", "")).strip(), "prompt": str(s.get("prompt", "")).strip()}
-            for s in ph.get("steps", []) if isinstance(s, dict) and str(s.get("prompt", "")).strip()
+            for s in ph.get("steps", [])
+            if isinstance(s, dict) and str(s.get("prompt", "")).strip()
         ]
-        out.append({
-            "title": str(ph.get("title", "")).strip(),
-            "description": str(ph.get("description", "")).strip(),
-            "steps": steps,
-        })
+        out.append(
+            {
+                "title": str(ph.get("title", "")).strip(),
+                "description": str(ph.get("description", "")).strip(),
+                "steps": steps,
+            }
+        )
     return out
 
 

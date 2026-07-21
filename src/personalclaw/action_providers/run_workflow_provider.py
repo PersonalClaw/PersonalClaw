@@ -110,9 +110,7 @@ class RunWorkflowActionProvider(ActionProvider):
     ) -> ActionResult:
         workflow_id = str(action_config.get("workflow_id") or "").strip()
         if not workflow_id:
-            return ActionResult(
-                success=False, error="run-workflow is missing 'workflow_id'"
-            )
+            return ActionResult(success=False, error="run-workflow is missing 'workflow_id'")
 
         try:
             workflow = await resolve_workflow(workflow_id)
@@ -134,9 +132,7 @@ class RunWorkflowActionProvider(ActionProvider):
 
         services = get_action_services()
         if services is None or services.subagents is None:
-            return ActionResult(
-                success=False, error="run-workflow: subagent manager unavailable"
-            )
+            return ActionResult(success=False, error="run-workflow: subagent manager unavailable")
 
         agent = (action_config.get("agent") or "").strip()
         model = (action_config.get("model") or "").strip() or None
@@ -176,7 +172,9 @@ class RunWorkflowActionProvider(ActionProvider):
         # "launched", not "succeeded": the background workflow turn's real outcome
         # is recorded by the spawned run itself (T7 honesty).
         return ActionResult(
-            success=True, exit_code=0, stdout=f"launched workflow {workflow.name!r}",
+            success=True,
+            exit_code=0,
+            stdout=f"launched workflow {workflow.name!r}",
             outcome="launched",
         )
 

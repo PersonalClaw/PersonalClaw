@@ -42,6 +42,7 @@ _EVENT = "event"  # data-event triggers (#38): memory/content patterns
 def _event_store():
     from personalclaw.config.loader import config_dir
     from personalclaw.event_triggers import EventTriggerStore
+
     return EventTriggerStore(config_dir() / "event_triggers.json")
 
 
@@ -62,6 +63,7 @@ def _serialize_event(t) -> dict[str, Any]:
 
 def _sel():
     import personalclaw.dashboard.handlers as _pkg  # noqa: F811
+
     return _pkg.sel()
 
 
@@ -78,6 +80,7 @@ def _split_id(trigger_id: str) -> tuple[str, str]:
 
 
 # ── serializers ──
+
 
 def _last_run_status(state: DashboardState, job_id: str) -> str | None:
     """The newest run record's status for the honest UI badge (T7), or None.
@@ -160,6 +163,7 @@ def _serialize_lifecycle(hook, used_by: list[str]) -> dict[str, Any]:
 
 def _hook_store(state: DashboardState):
     from personalclaw.dashboard.handlers.hooks import _get_hook_store
+
     return _get_hook_store(state)
 
 
@@ -179,6 +183,7 @@ def _used_by_index() -> dict[str, list[str]]:
 
 
 # ── variable catalog ──
+
 
 async def api_trigger_variables(request: web.Request) -> web.Response:
     """GET /api/triggers/variables — the ``$variables`` each trigger kind exposes.
@@ -207,6 +212,7 @@ async def api_trigger_variables(request: web.Request) -> web.Response:
 
 # ── list ──
 
+
 async def api_triggers(request: web.Request) -> web.Response:
     """GET /api/triggers?type=schedule|lifecycle — every trigger, both kinds.
 
@@ -229,11 +235,13 @@ async def api_triggers(request: web.Request) -> web.Response:
             triggers.append(_serialize_event(t))
 
     from personalclaw.schedule import get_local_tz
+
     tz_name, _ = get_local_tz()
     return web.json_response({"triggers": triggers, "server_tz": tz_name})
 
 
 # ── create ──
+
 
 async def api_trigger_create(request: web.Request) -> web.Response:
     """POST /api/triggers — create a schedule or lifecycle trigger.
@@ -257,7 +265,9 @@ async def api_trigger_create(request: web.Request) -> web.Response:
         return await _create_schedule(state, body, request)
     if trigger_type == _EVENT:
         return _create_event(body)
-    return web.json_response({"error": "trigger_type must be 'schedule', 'lifecycle', or 'event'"}, status=400)
+    return web.json_response(
+        {"error": "trigger_type must be 'schedule', 'lifecycle', or 'event'"}, status=400
+    )
 
 
 def _create_event(body: dict) -> web.Response:
@@ -268,7 +278,9 @@ def _create_event(body: dict) -> web.Response:
 
     pattern = str(body.get("pattern") or "").strip()
     if pattern not in EVENT_PATTERNS:
-        return web.json_response({"error": f"pattern must be one of {list(EVENT_PATTERNS)}"}, status=400)
+        return web.json_response(
+            {"error": f"pattern must be one of {list(EVENT_PATTERNS)}"}, status=400
+        )
     action = body.get("action") or {}
     t = EventTrigger(
         id=str(body.get("name") or uuid.uuid4().hex[:8]).strip(),
@@ -283,7 +295,9 @@ def _create_event(body: dict) -> web.Response:
     return web.json_response(_serialize_event(t), status=201)
 
 
-async def _create_lifecycle(state: DashboardState, body: dict, request: web.Request) -> web.Response:
+async def _create_lifecycle(
+    state: DashboardState, body: dict, request: web.Request
+) -> web.Response:
     from personalclaw.validation import HOOK_CREATE_SCHEMA, ValidationError, validate_tool_args
 
     action = body.get("action") or {}
@@ -302,8 +316,10 @@ async def _create_lifecycle(state: DashboardState, body: dict, request: web.Requ
         return web.json_response({"error": str(exc)}, status=400)
     hook = _hook_store(state).create(validated)
     _sel().log_api_access(
-        caller=request.get("user", "dashboard"), operation="trigger.create",
-        outcome="success", source="dashboard",
+        caller=request.get("user", "dashboard"),
+        operation="trigger.create",
+        outcome="success",
+        source="dashboard",
         resources=f"trigger:lifecycle:{hook.id}:{hook.name}:{hook.event}",
     )
     return web.json_response({"ok": True, "trigger": _serialize_lifecycle(hook, [])})
@@ -312,9 +328,8 @@ async def _create_lifecycle(state: DashboardState, body: dict, request: web.Requ
 async def _create_schedule(state: DashboardState, body: dict, request: web.Request) -> web.Response:
     from zoneinfo import available_timezones
 
-    from personalclaw.validation import CHANNEL_ID_RE, CHANNEL_MAX_LEN
-
     from personalclaw.schedule import normalize_action
+    from personalclaw.validation import CHANNEL_ID_RE, CHANNEL_MAX_LEN
 
     name = str(body.get("name", "")).strip()
     if not name:
@@ -332,7 +347,9 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
         return web.json_response({"error": "invalid channel ID format"}, status=400)
     timezone_val = str(body.get("timezone") or "").strip()
     if timezone_val and timezone_val not in available_timezones():
-        return web.json_response({"error": f"invalid timezone: {_redact(timezone_val)!r}"}, status=400)
+        return web.json_response(
+            {"error": f"invalid timezone: {_redact(timezone_val)!r}"}, status=400
+        )
 
     kwargs: dict[str, Any] = {"channel": channel, "action": action}
     if every:
@@ -364,13 +381,17 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
     state.crons._save()
     state.push_refresh("crons")
     _sel().log_api_access(
-        caller=request.get("user", "dashboard"), operation="trigger.create",
-        outcome="success", source="dashboard", resources=f"trigger:schedule:{job.id}:{name}",
+        caller=request.get("user", "dashboard"),
+        operation="trigger.create",
+        outcome="success",
+        source="dashboard",
+        resources=f"trigger:schedule:{job.id}:{name}",
     )
     return web.json_response({"ok": True, "trigger": _serialize_schedule(state, job)})
 
 
 # ── update / delete ──
+
 
 async def api_trigger_detail(request: web.Request) -> web.Response:
     """PUT / DELETE /api/triggers/{id}."""
@@ -382,8 +403,11 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
             if not _event_store().delete(raw):
                 return web.json_response({"error": "not found"}, status=404)
             _sel().log_api_access(
-                caller=request.get("user", "dashboard"), operation="trigger.delete",
-                outcome="success", source="dashboard", resources=f"trigger:event:{raw}",
+                caller=request.get("user", "dashboard"),
+                operation="trigger.delete",
+                outcome="success",
+                source="dashboard",
+                resources=f"trigger:event:{raw}",
             )
             return web.json_response({"ok": True})
         if kind == _LIFECYCLE:
@@ -392,8 +416,10 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
             if not store.delete(raw):
                 return web.json_response({"error": "not found"}, status=404)
             _sel().log_api_access(
-                caller=request.get("user", "dashboard"), operation="trigger.delete",
-                outcome="success", source="dashboard",
+                caller=request.get("user", "dashboard"),
+                operation="trigger.delete",
+                outcome="success",
+                source="dashboard",
                 resources=f"trigger:lifecycle:{raw}:{hook.name if hook else 'unknown'}",
             )
             return web.json_response({"ok": True})
@@ -406,8 +432,11 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
             logger.debug("Failed to delete run history for %s", raw, exc_info=True)
         state.push_refresh("crons")
         _sel().log_api_access(
-            caller=request.get("user", "dashboard"), operation="trigger.delete",
-            outcome="success", source="dashboard", resources=f"trigger:schedule:{raw}",
+            caller=request.get("user", "dashboard"),
+            operation="trigger.delete",
+            outcome="success",
+            source="dashboard",
+            resources=f"trigger:schedule:{raw}",
         )
         return web.json_response({"ok": True})
 
@@ -446,7 +475,9 @@ async def _update_lifecycle(state: DashboardState, raw: str, body: dict) -> web.
         return web.json_response({"error": str(exc)}, status=400)
     if not hook:
         return web.json_response({"error": "not found"}, status=404)
-    return web.json_response({"ok": True, "trigger": _serialize_lifecycle(hook, _used_by_index().get(raw, []))})
+    return web.json_response(
+        {"ok": True, "trigger": _serialize_lifecycle(hook, _used_by_index().get(raw, []))}
+    )
 
 
 async def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.Response:
@@ -472,7 +503,9 @@ async def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.R
     if "timezone" in body:
         tz_val = (body["timezone"] or "").strip()
         if tz_val and tz_val not in available_timezones():
-            return web.json_response({"error": f"invalid timezone: {_redact(tz_val)!r}"}, status=400)
+            return web.json_response(
+                {"error": f"invalid timezone: {_redact(tz_val)!r}"}, status=400
+            )
         kwargs["timezone"] = tz_val
     if not kwargs:
         return web.json_response({"error": "no fields to update"}, status=400)
@@ -488,6 +521,7 @@ async def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.R
 
 # ── toggle / run / test ──
 
+
 async def api_trigger_toggle(request: web.Request) -> web.Response:
     """POST /api/triggers/{id}/toggle — enable/disable."""
     state: DashboardState = request.app["state"]
@@ -496,7 +530,9 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
         hook = _hook_store(state).toggle(raw)
         if not hook:
             return web.json_response({"error": "not found"}, status=404)
-        return web.json_response({"ok": True, "trigger": _serialize_lifecycle(hook, _used_by_index().get(raw, []))})
+        return web.json_response(
+            {"ok": True, "trigger": _serialize_lifecycle(hook, _used_by_index().get(raw, []))}
+        )
     # schedule
     try:
         body = await request.json()
@@ -527,7 +563,9 @@ async def api_trigger_run(request: web.Request) -> web.Response:
     state: DashboardState = request.app["state"]
     kind, raw = _split_id(request.match_info["id"])
     if kind == _LIFECYCLE:
-        return web.json_response({"error": "lifecycle triggers fire on events; use /test"}, status=400)
+        return web.json_response(
+            {"error": "lifecycle triggers fire on events; use /test"}, status=400
+        )
     job = next((j for j in state.crons.list_jobs(include_disabled=True) if j.id == raw), None)
     if not job:
         return web.json_response({"error": "not found"}, status=404)
@@ -563,7 +601,9 @@ async def api_trigger_test(request: web.Request) -> web.Response:
     state: DashboardState = request.app["state"]
     kind, raw = _split_id(request.match_info["id"])
     if kind != _LIFECYCLE:
-        return web.json_response({"error": "only lifecycle triggers support /test; use /run"}, status=400)
+        return web.json_response(
+            {"error": "only lifecycle triggers support /test; use /run"}, status=400
+        )
     hook = _hook_store(state).get(raw)
     if not hook:
         return web.json_response({"error": "not found"}, status=404)
@@ -573,14 +613,18 @@ async def api_trigger_test(request: web.Request) -> web.Response:
         body = {}
     context = sanitize_string(body.get("context", "test"))[:10000]
     result = await run_script_hook(hook, context)
-    return web.json_response({
-        "ok": True,
-        "result": {
-            "stdout": _redact(result.stdout), "stderr": _redact(result.stderr),
-            "exit_code": result.exit_code, "error": _redact(result.error),
-            "duration_ms": result.duration_ms,
-        },
-    })
+    return web.json_response(
+        {
+            "ok": True,
+            "result": {
+                "stdout": _redact(result.stdout),
+                "stderr": _redact(result.stderr),
+                "exit_code": result.exit_code,
+                "error": _redact(result.error),
+                "duration_ms": result.duration_ms,
+            },
+        }
+    )
 
 
 async def api_trigger_to_chat(request: web.Request) -> web.Response:
@@ -605,6 +649,7 @@ async def api_trigger_to_chat(request: web.Request) -> web.Response:
         if not history:
             return web.json_response({"error": "not found"}, status=404)
         from personalclaw.schedule import ScheduleJob
+
         job = ScheduleJob(id=raw, name=f"cron-{raw}")
 
     session = inject_schedule_result_to_session(state, job, job.last_result or "", history=history)
@@ -628,6 +673,7 @@ async def api_trigger_ack(request: web.Request) -> web.Response:
 
 
 # ── history (schedule-only) ──
+
 
 def _redact_run(run: dict[str, Any], *, job_name: str | None = None) -> dict[str, Any]:
     out = dict(run)

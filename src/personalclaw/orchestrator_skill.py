@@ -54,6 +54,7 @@ def generate_orchestrator_skill(skills_loader) -> Path:
     roster = "\n".join(roster_lines) if roster_lines else "_No specialist agents installed._\n"
     # Render the bound orchestrator-skill prompt; fall back to the shipped template.
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
+
     skill_content = render_use_case_prompt("orchestrator_skill", {"roster": roster})
     if skill_content is None:
         skill_content = _SKILL_TEMPLATE.format(roster=roster)

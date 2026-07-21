@@ -62,7 +62,10 @@ class TestSkillInstallGate:
         from personalclaw.skills.marketplace import install_skill_files
 
         files = [
-            {"path": "SKILL.md", "contents": "---\nname: greet\ndescription: be nice\n---\nBe nice.\n"},
+            {
+                "path": "SKILL.md",
+                "contents": "---\nname: greet\ndescription: be nice\n---\nBe nice.\n",
+            },
             {"path": "scripts/setup.sh", "contents": "echo hello\n"},
         ]
         written = install_skill_files(files, "greet", tmp_path)

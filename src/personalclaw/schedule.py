@@ -70,8 +70,8 @@ _REAPER_INTERVAL = 60  # seconds between reaper sweeps
 _REAPER_RESET_TIMEOUT = 30.0  # max seconds for session reset in reaper
 
 # Jitter bounds (seconds) to spread job execution and avoid traffic spikes
-_JITTER_HOURLY_MAX = 20 * 60   # 0–20 minutes for hourly jobs
-_JITTER_DAILY_MAX = 2 * 3600   # 0–2 hours for daily jobs
+_JITTER_HOURLY_MAX = 20 * 60  # 0–20 minutes for hourly jobs
+_JITTER_DAILY_MAX = 2 * 3600  # 0–2 hours for daily jobs
 
 
 # ── Types ──
@@ -172,7 +172,9 @@ class ScheduleJob:
     @property
     def message(self) -> str:
         """The agent prompt — the ``invoke-agent`` action's ``task_template``."""
-        return str(self._config.get("task_template") or "") if self.provider == "invoke-agent" else ""
+        return (
+            str(self._config.get("task_template") or "") if self.provider == "invoke-agent" else ""
+        )
 
     @property
     def agent_id(self) -> str:
@@ -180,17 +182,19 @@ class ScheduleJob:
 
     @property
     def model(self) -> str:
-        """"" (use agent's model) | model name override."""
+        """ "" (use agent's model) | model name override."""
         return str(self._config.get("model") or "") if self.provider == "invoke-agent" else ""
 
     @property
     def approval_mode(self) -> str:
-        """"" (default/hook-based) | "auto" (auto-approve all tools)."""
-        return str(self._config.get("approval_mode") or "") if self.provider == "invoke-agent" else ""
+        """ "" (default/hook-based) | "auto" (auto-approve all tools)."""
+        return (
+            str(self._config.get("approval_mode") or "") if self.provider == "invoke-agent" else ""
+        )
 
     @property
     def script(self) -> str:
-        """"path/to/file.py:func" under ~/.personalclaw/crons/ — the run-script action."""
+        """ "path/to/file.py:func" under ~/.personalclaw/crons/ — the run-script action."""
         return str(self._config.get("script") or "") if self.provider == "run-script" else ""
 
     @property
@@ -217,8 +221,13 @@ class ScheduleJob:
 # UIs do NOT mirror it. ``$EVENT`` is ``schedule:<id>`` and ``$CONTEXT`` is the
 # previous result, matching the lifecycle base vars' meaning.
 SCHEDULE_VARS: tuple[str, ...] = (
-    "$EVENT", "$CONTEXT", "$last_result", "$now", "$timezone",
-    "$job_id", "$job_name",
+    "$EVENT",
+    "$CONTEXT",
+    "$last_result",
+    "$now",
+    "$timezone",
+    "$job_id",
+    "$job_name",
 )
 
 
@@ -299,7 +308,10 @@ def make_command_action(command: str, timeout: int = 0) -> dict:
 
 def make_script_action(script: str, timeout: int = 0) -> dict:
     """A ``run-script`` action — run a sandboxed ``file.py:func`` (zero-token)."""
-    return {"provider": "run-script", "config": {"script": script or "", "timeout": int(timeout or 0)}}
+    return {
+        "provider": "run-script",
+        "config": {"script": script or "", "timeout": int(timeout or 0)},
+    }
 
 
 def _action_from_record(j: dict) -> dict:
@@ -337,6 +349,7 @@ def normalize_action(action: dict | None) -> dict:
         script = str(config.get("script") or "").strip()
         if script:
             from personalclaw.schedule_script import resolve_script_path
+
             resolve_script_path(script)  # eager validation — reject a bad spec at creation
     if provider == "invoke-agent":
         mode = str(config.get("approval_mode") or "")
@@ -740,7 +753,9 @@ class ScheduleService:
                 raise ValueError(f"Invalid cron expression: {cron_expr}")
             schedule = ScheduleDefinition(kind="cron", cron_expr=cron_expr)
         elif every_secs:
-            schedule = ScheduleDefinition(kind="every", every_secs=max(every_secs, _MIN_INTERVAL_SECS))
+            schedule = ScheduleDefinition(
+                kind="every", every_secs=max(every_secs, _MIN_INTERVAL_SECS)
+            )
         elif at_ts:
             schedule = ScheduleDefinition(kind="at", at_ts=at_ts)
         else:
@@ -781,7 +796,11 @@ class ScheduleService:
                 if job.id != job_id:
                     continue
                 # Validate action if provided (canonicalizes + eager-validates spec)
-                new_action = normalize_action(kwargs["action"]) if "action" in kwargs and kwargs["action"] else None
+                new_action = (
+                    normalize_action(kwargs["action"])
+                    if "action" in kwargs and kwargs["action"]
+                    else None
+                )
                 # Validate before any mutations
                 if (
                     "cron_expr" in kwargs
@@ -818,7 +837,9 @@ class ScheduleService:
                 if "cron_expr" in kwargs and kwargs["cron_expr"]:
                     job.schedule = ScheduleDefinition(kind="cron", cron_expr=kwargs["cron_expr"])
                 elif "every_secs" in kwargs and kwargs["every_secs"]:
-                    job.schedule = ScheduleDefinition(kind="every", every_secs=int(kwargs["every_secs"]))
+                    job.schedule = ScheduleDefinition(
+                        kind="every", every_secs=int(kwargs["every_secs"])
+                    )
                 self._save()
                 self._arm_timer()
                 logger.info("Updated cron job %s", job_id)
@@ -979,11 +1000,15 @@ class ScheduleService:
             except Exception:
                 logger.debug("push_refresh callback failed", exc_info=True)
 
-    async def list_runs(self, job_id: str, offset: int = 0, limit: int = 10) -> tuple[list[dict[str, Any]], int]:
+    async def list_runs(
+        self, job_id: str, offset: int = 0, limit: int = 10
+    ) -> tuple[list[dict[str, Any]], int]:
         """Return (runs, total) for one job — shaped like TaskProvider.list_tasks."""
         return await self._run_store.list_for_job(job_id, offset, limit)
 
-    async def list_all_runs(self, offset: int = 0, limit: int = 20, job_id: str | None = None) -> tuple[list[dict[str, Any]], int]:
+    async def list_all_runs(
+        self, offset: int = 0, limit: int = 20, job_id: str | None = None
+    ) -> tuple[list[dict[str, Any]], int]:
         """Return (runs, total) across all jobs (from the index)."""
         return await self._run_store.list_all(offset, limit, job_id)
 

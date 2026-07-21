@@ -17,6 +17,7 @@ from personalclaw.skills.loader import SkillsLoader
 def home(tmp_path, monkeypatch):
     monkeypatch.setattr(loader_mod, "config_dir", lambda: tmp_path)
     import personalclaw.skills.marketplace as mp
+
     monkeypatch.setattr(mp, "SKILL_DISCOVERY_PATHS", [])
     return tmp_path
 
@@ -43,8 +44,12 @@ def test_enqueue_and_list(home):
 
 def test_enqueue_rejects_empty(home):
     assert _enqueue(slug="") is None
-    assert proposals.enqueue(slug="x", description="", triggers="", procedure_md="",
-                             session_key="s", created_at="t") is None
+    assert (
+        proposals.enqueue(
+            slug="x", description="", triggers="", procedure_md="", session_key="s", created_at="t"
+        )
+        is None
+    )
 
 
 def test_source_excerpt_is_fenced(home):
@@ -103,12 +108,14 @@ def test_history_consolidation_enqueues_not_writes(home, monkeypatch):
     mgr._skills_loader = loader
     mgr._auto_similarity_threshold = 0.95
     mgr._auto_refine_enabled = False
-    result = {"new_skill": {
-        "slug": "from-consolidation",
-        "description": "a synthesized skill",
-        "triggers": "x",
-        "procedure_md": "do the thing",
-    }}
+    result = {
+        "new_skill": {
+            "slug": "from-consolidation",
+            "description": "a synthesized skill",
+            "triggers": "x",
+            "procedure_md": "do the thing",
+        }
+    }
     mgr._process_auto_skills(result, "sess:consolidate")
     pend = proposals.list_pending()
     assert any(p.slug == "from-consolidation" for p in pend)

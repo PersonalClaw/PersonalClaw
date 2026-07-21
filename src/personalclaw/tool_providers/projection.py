@@ -76,12 +76,16 @@ def set_user_rules(rules: "list[ProjectionRule] | None") -> None:
         strat = str(getattr(r, "strategy", "")).strip().lower()
         pat = str(getattr(r, "match_regex", "")).strip()
         if strat not in _PROJECTORS or not pat:
-            logger.debug("projection rule %r skipped (bad strategy/empty regex)", getattr(r, "name", "?"))
+            logger.debug(
+                "projection rule %r skipped (bad strategy/empty regex)", getattr(r, "name", "?")
+            )
             continue
         try:
             compiled.append((str(getattr(r, "name", "")), re.compile(pat, re.M), strat))
         except re.error:
-            logger.warning("projection rule %r has an invalid regex — skipped", getattr(r, "name", "?"))
+            logger.warning(
+                "projection rule %r has an invalid regex — skipped", getattr(r, "name", "?")
+            )
     _USER_RULES = tuple(compiled)
 
 
@@ -101,10 +105,10 @@ def _match_user_rule(sample: str) -> str | None:
 class Projection:
     """Outcome of projecting one tool output."""
 
-    text: str                 # the projected preview (what the model sees)
-    truncated: bool           # whether anything was dropped
+    text: str  # the projected preview (what the model sees)
+    truncated: bool  # whether anything was dropped
     original_length: int | None  # raw char length when truncated (else None)
-    content_type: str         # the type used to project (recognized or "generic")
+    content_type: str  # the type used to project (recognized or "generic")
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +116,9 @@ class Projection:
 # ---------------------------------------------------------------------------
 
 _DIFF_RE = re.compile(r"^(diff --git |@@ -\d|index [0-9a-f]+\.\.|\+\+\+ |--- )", re.M)
-_TEST_RE = re.compile(r"\b(PASSED|FAILED|\d+ passed|\d+ failed|=+ test session|FAIL\b|AssertionError)\b")
+_TEST_RE = re.compile(
+    r"\b(PASSED|FAILED|\d+ passed|\d+ failed|=+ test session|FAIL\b|AssertionError)\b"
+)
 _JSON_LEAD_RE = re.compile(r"^\s*[\[{]")
 
 
@@ -172,7 +178,7 @@ def _project_log(text: str, cap: int) -> str:
     head_n, tail_n = 40, 40
     head = lines[:head_n]
     tail = lines[-tail_n:] if n > head_n + tail_n else []
-    middle = lines[head_n: n - tail_n] if tail else []
+    middle = lines[head_n : n - tail_n] if tail else []
     errs = [ln for ln in middle if _ERROR_LINE_RE.search(ln)]
     # cap the error sample so a log that's ALL errors doesn't blow the budget
     err_cap = 60
@@ -181,8 +187,11 @@ def _project_log(text: str, cap: int) -> str:
     parts: list[str] = []
     parts.extend(head)
     if errs:
-        parts.append(f"\n…[{len(middle)} middle lines elided; {len(errs)} error/warning line(s) kept"
-                     + (f", {elided_errs} more errors not shown" if elided_errs else "") + "]…\n")
+        parts.append(
+            f"\n…[{len(middle)} middle lines elided; {len(errs)} error/warning line(s) kept"
+            + (f", {elided_errs} more errors not shown" if elided_errs else "")
+            + "]…\n"
+        )
         parts.extend(errs)
     elif middle:
         parts.append(f"\n…[{len(middle)} middle lines elided — no error/warning markers]…\n")
@@ -219,13 +228,13 @@ def _project_json(text: str, cap: int) -> str:
         return capped
     if isinstance(data, list):
         shape = f"[array: {len(data)} items]"
-        sample = json.dumps(data[0], indent=2)[:cap // 2] if data else "(empty)"
+        sample = json.dumps(data[0], indent=2)[: cap // 2] if data else "(empty)"
         body = f"{shape}\nfirst item:\n{sample}"
     elif isinstance(data, dict):
         keys = list(data.keys())
         shape = "{object: " + ", ".join(f"{k}: {type(data[k]).__name__}" for k in keys[:40]) + "}"
         sample = json.dumps(data, indent=2)
-        body = shape + ("\n" + sample[:cap // 2] if len(sample) > cap else "\n" + sample)
+        body = shape + ("\n" + sample[: cap // 2] if len(sample) > cap else "\n" + sample)
     else:
         body = json.dumps(data)
     capped, _, _ = maybe_truncate(body, cap)
@@ -235,10 +244,18 @@ def _project_json(text: str, cap: int) -> str:
 def _project_test(text: str, cap: int) -> str:
     """Failures + the summary line; elide the passing noise."""
     lines = text.splitlines()
-    fail_lines = [ln for ln in lines if re.search(r"\b(FAIL|FAILED|ERROR|AssertionError|✗)\b", ln)
-                  or ln.strip().startswith(("E   ", "FAILED", "_____"))]
-    summary = [ln for ln in lines if re.search(r"\b(\d+ passed|\d+ failed|\d+ error|passed|failed)\b", ln)
-               and ("=" in ln or "passed" in ln or "failed" in ln)]
+    fail_lines = [
+        ln
+        for ln in lines
+        if re.search(r"\b(FAIL|FAILED|ERROR|AssertionError|✗)\b", ln)
+        or ln.strip().startswith(("E   ", "FAILED", "_____"))
+    ]
+    summary = [
+        ln
+        for ln in lines
+        if re.search(r"\b(\d+ passed|\d+ failed|\d+ error|passed|failed)\b", ln)
+        and ("=" in ln or "passed" in ln or "failed" in ln)
+    ]
     tail = lines[-12:]
     parts = []
     if fail_lines:
@@ -281,6 +298,7 @@ _PROJECTORS = {
 # The entry point
 # ---------------------------------------------------------------------------
 
+
 def project_output(
     text: str,
     *,
@@ -302,8 +320,12 @@ def project_output(
         # Small / uncapped: never project. Report the type (declared or sniffed)
         # so the renderer can still pick a rich view, but leave bytes untouched.
         ctype = content_type or infer_content_type(text)
-        return Projection(text=text, truncated=False, original_length=None,
-                          content_type=ctype if ctype in CONTENT_TYPES else "generic")
+        return Projection(
+            text=text,
+            truncated=False,
+            original_length=None,
+            content_type=ctype if ctype in CONTENT_TYPES else "generic",
+        )
 
     original_length = len(text)
     ctype = content_type if content_type in CONTENT_TYPES else infer_content_type(text)
@@ -311,11 +333,13 @@ def project_output(
     if projector is None:
         # generic / unknown → the safe blunt cap (no regression).
         capped, _, _ = maybe_truncate(text, cap)
-        return Projection(text=capped, truncated=True, original_length=original_length,
-                          content_type="generic")
+        return Projection(
+            text=capped, truncated=True, original_length=original_length, content_type="generic"
+        )
     projected = projector(text, cap)
-    return Projection(text=projected, truncated=True, original_length=original_length,
-                      content_type=ctype)
+    return Projection(
+        text=projected, truncated=True, original_length=original_length, content_type=ctype
+    )
 
 
 def project_and_retain(

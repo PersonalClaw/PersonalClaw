@@ -23,8 +23,11 @@ def _load() -> dict[str, int]:
     if _WINDOWS is None:
         try:
             with open(_TOKENS_FILE, encoding="utf-8") as fp:
-                _WINDOWS = {k: int(v) for k, v in json.load(fp).items()
-                            if not k.startswith("_") and isinstance(v, (int, float))}
+                _WINDOWS = {
+                    k: int(v)
+                    for k, v in json.load(fp).items()
+                    if not k.startswith("_") and isinstance(v, (int, float))
+                }
         except (OSError, ValueError, json.JSONDecodeError):
             _WINDOWS = {}
     return _WINDOWS
@@ -67,6 +70,7 @@ def active_chat_model_window() -> int:
     actually in use without threading the id through every call site."""
     try:
         from personalclaw.providers.use_cases import active_model_refs
+
         refs = active_model_refs("chat")
         if refs:
             return model_context_window(refs[0])

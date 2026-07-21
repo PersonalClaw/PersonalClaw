@@ -9,7 +9,6 @@ to a real app backend subprocess.
 from __future__ import annotations
 
 import json
-import sys
 import textwrap
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -25,8 +24,10 @@ from personalclaw.dashboard.handlers.apps import register_app_routes
 
 @asynccontextmanager
 async def _client(tmp_path):
-    with patch("personalclaw.config.loader.config_dir", return_value=tmp_path), \
-         patch.object(manager, "config_dir", return_value=tmp_path):
+    with (
+        patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
+        patch.object(manager, "config_dir", return_value=tmp_path),
+    ):
         # Fresh supervisor per test so backend processes don't leak between tests.
         backend_runtime._supervisor = backend_runtime.BackendSupervisor()
         app = web.Application()
@@ -38,12 +39,25 @@ async def _client(tmp_path):
                 backend_runtime.get_backend_supervisor().stop_all()
 
 
-def _app_src(tmp_path: Path, name: str, *, version="1.0.0", subdir="src",
-             setup=None, backend=None, files=None, platform=None) -> str:
+def _app_src(
+    tmp_path: Path,
+    name: str,
+    *,
+    version="1.0.0",
+    subdir="src",
+    setup=None,
+    backend=None,
+    files=None,
+    platform=None,
+) -> str:
     d = tmp_path / subdir / name
     d.mkdir(parents=True)
-    mani = {"name": name, "version": version, "displayName": name.title(),
-            "description": f"{name} fixture"}
+    mani = {
+        "name": name,
+        "version": version,
+        "displayName": name.title(),
+        "description": f"{name} fixture",
+    }
     if setup:
         mani["setup"] = setup
     if backend:
@@ -87,16 +101,28 @@ async def test_list_hasconfig_from_provider_settings_schema(tmp_path):
         # A provider app with settings under provider.settingsSchema, NO setup.configSchema.
         d = tmp_path / "src" / "cfgprov"
         d.mkdir(parents=True)
-        (d / "app.json").write_text(json.dumps({
-            "name": "cfgprov", "version": "1.0.0", "displayName": "Cfg Prov",
-            "description": "provider-schema fixture",
-            "provider": {
-                "type": "tool",
-                "implementation": "provider:create_provider",
-                "settingsSchema": {"type": "object", "properties": {"threshold": {"type": "number"}}},
-            },
-        }), encoding="utf-8")
-        (d / "provider.py").write_text("def create_provider(config=None):\n    return None\n", encoding="utf-8")
+        (d / "app.json").write_text(
+            json.dumps(
+                {
+                    "name": "cfgprov",
+                    "version": "1.0.0",
+                    "displayName": "Cfg Prov",
+                    "description": "provider-schema fixture",
+                    "provider": {
+                        "type": "tool",
+                        "implementation": "provider:create_provider",
+                        "settingsSchema": {
+                            "type": "object",
+                            "properties": {"threshold": {"type": "number"}},
+                        },
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (d / "provider.py").write_text(
+            "def create_provider(config=None):\n    return None\n", encoding="utf-8"
+        )
         r = await client.post("/api/apps", json={"source": str(d), "confirm": True})
         assert r.status == 201, await r.text()
 
@@ -123,11 +149,18 @@ async def test_client_install_returns_200_with_one_liner(tmp_path):
     handler must return 200 (a valid client-install DIRECTIVE, not a 400 bad-request)
     with needs_client_install + the copy-paste one-liner, and must NOT commit it."""
     async with _client(tmp_path) as client:
-        src = _app_src(tmp_path, "clientapp", platform={
-            "os": ["macos", "linux"], "installMode": "client",
-            "clientInstall": {"shell": "curl -fsSL https://example.invalid/i.sh | sh",
-                              "postInstall": "open ~/Applications/X.app"},
-        })
+        src = _app_src(
+            tmp_path,
+            "clientapp",
+            platform={
+                "os": ["macos", "linux"],
+                "installMode": "client",
+                "clientInstall": {
+                    "shell": "curl -fsSL https://example.invalid/i.sh | sh",
+                    "postInstall": "open ~/Applications/X.app",
+                },
+            },
+        )
         r = await client.post("/api/apps", json={"source": src})
         assert r.status == 200, await r.text()  # directive, not a 400 bad-request
         body = await r.json()
@@ -151,8 +184,7 @@ async def test_install_missing_source_400(tmp_path):
 @pytest.mark.asyncio
 async def test_dangerous_install_refused(tmp_path):
     async with _client(tmp_path) as client:
-        src = _app_src(tmp_path, "evil",
-                       files={"scripts/x.sh": "rm -rf / --no-preserve-root\n"})
+        src = _app_src(tmp_path, "evil", files={"scripts/x.sh": "rm -rf / --no-preserve-root\n"})
         r = await client.post("/api/apps", json={"source": src, "confirm": True})
         assert r.status == 400
         body = await r.json()
@@ -172,10 +204,14 @@ async def test_enable_disable(tmp_path):
 
 @pytest.mark.asyncio
 async def test_config_get_put_validated(tmp_path):
-    schema = {"type": "object", "properties": {
-        "apiKey": {"type": "string"},
-        "maxItems": {"type": "integer"},
-    }, "required": ["apiKey"]}
+    schema = {
+        "type": "object",
+        "properties": {
+            "apiKey": {"type": "string"},
+            "maxItems": {"type": "integer"},
+        },
+        "required": ["apiKey"],
+    }
     async with _client(tmp_path) as client:
         src = _app_src(tmp_path, "notes", setup={"configSchema": schema})
         await client.post("/api/apps", json={"source": src})
@@ -190,8 +226,7 @@ async def test_config_get_put_validated(tmp_path):
         assert r.status == 400
 
         # valid
-        r = await client.put("/api/apps/notes/config",
-                             json={"apiKey": "sk-1", "maxItems": 10})
+        r = await client.put("/api/apps/notes/config", json={"apiKey": "sk-1", "maxItems": 10})
         assert r.status == 200
         assert (await client.get("/api/apps/notes/config")).status == 200
         saved = (await (await client.get("/api/apps/notes/config")).json())["config"]
@@ -208,17 +243,21 @@ async def test_sensitive_config_field_is_write_only(tmp_path):
     the stored secret (never returns it in the clear) + flags it in _secret_set; a
     PUT carrying the mask sentinel (or empty) keeps the stored secret rather than
     clobbering it; a real new value overwrites it."""
-    schema = {"type": "object", "properties": {
-        "api_key": {"type": "string", "x-meta": {"label": "API Key", "sensitive": True}},
-        "endpoint": {"type": "string"},
-    }}
+    schema = {
+        "type": "object",
+        "properties": {
+            "api_key": {"type": "string", "x-meta": {"label": "API Key", "sensitive": True}},
+            "endpoint": {"type": "string"},
+        },
+    }
     async with _client(tmp_path) as client:
         src = _app_src(tmp_path, "sec", setup={"configSchema": schema})
         await client.post("/api/apps", json={"source": src})
 
         # set a real secret + a normal field
-        r = await client.put("/api/apps/sec/config",
-                             json={"api_key": "sk-REALSECRET-123", "endpoint": "https://x"})
+        r = await client.put(
+            "/api/apps/sec/config", json={"api_key": "sk-REALSECRET-123", "endpoint": "https://x"}
+        )
         assert r.status == 200
         put_body = await r.json()
         # the PUT response must NOT echo the raw secret back
@@ -234,18 +273,22 @@ async def test_sensitive_config_field_is_write_only(tmp_path):
         mask = body["config"]["api_key"]
 
         # PUT the mask sentinel back (with a changed endpoint) → secret PRESERVED
-        r = await client.put("/api/apps/sec/config",
-                             json={"api_key": mask, "endpoint": "https://y"})
+        r = await client.put(
+            "/api/apps/sec/config", json={"api_key": mask, "endpoint": "https://y"}
+        )
         assert r.status == 200
 
         # confirm on-disk stored secret is still the real one (via the manager's raw read)
         from personalclaw.apps.app_config import read_config
+
         raw = read_config("sec")
         assert raw["api_key"] == "sk-REALSECRET-123"  # NOT overwritten by the sentinel
-        assert raw["endpoint"] == "https://y"          # normal field updated
+        assert raw["endpoint"] == "https://y"  # normal field updated
 
         # a genuinely new secret value DOES overwrite
-        r = await client.put("/api/apps/sec/config", json={"api_key": "sk-NEW-456", "endpoint": "https://y"})
+        r = await client.put(
+            "/api/apps/sec/config", json={"api_key": "sk-NEW-456", "endpoint": "https://y"}
+        )
         assert r.status == 200
         assert read_config("sec")["api_key"] == "sk-NEW-456"
 
@@ -268,19 +311,35 @@ async def test_config_falls_back_to_provider_settings_schema(tmp_path):
     # A provider app declares its settings under provider.settingsSchema (not
     # setup.configSchema); the config UI/API must surface + validate against it.
     import json as _json
+
     async with _client(tmp_path) as client:
         d = tmp_path / "src" / "wiki"
         d.mkdir(parents=True)
-        (d / "app.json").write_text(_json.dumps({
-            "name": "wiki", "version": "1.0.0", "displayName": "Wiki", "description": "x",
-            "provider": {
-                "type": "search", "implementation": "provider:create_provider",
-                "settingsSchema": {"type": "object", "properties": {
-                    "lang": {"type": "string"}, "timeout_secs": {"type": "integer"}}},
-            },
-        }), encoding="utf-8")
+        (d / "app.json").write_text(
+            _json.dumps(
+                {
+                    "name": "wiki",
+                    "version": "1.0.0",
+                    "displayName": "Wiki",
+                    "description": "x",
+                    "provider": {
+                        "type": "search",
+                        "implementation": "provider:create_provider",
+                        "settingsSchema": {
+                            "type": "object",
+                            "properties": {
+                                "lang": {"type": "string"},
+                                "timeout_secs": {"type": "integer"},
+                            },
+                        },
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
         (d / "provider.py").write_text(
-            "def create_provider(config=None):\n    return object()\n", encoding="utf-8")
+            "def create_provider(config=None):\n    return object()\n", encoding="utf-8"
+        )
         await client.post("/api/apps", json={"source": str(d)})
 
         # schema surfaced from provider.settingsSchema (NOT empty)
@@ -288,8 +347,12 @@ async def test_config_falls_back_to_provider_settings_schema(tmp_path):
         assert set(body["schema"].get("properties", {})) == {"lang", "timeout_secs"}
 
         # validated against it: valid saves, wrong type rejected
-        assert (await client.put("/api/apps/wiki/config", json={"lang": "en", "timeout_secs": 20})).status == 200
-        assert (await client.put("/api/apps/wiki/config", json={"timeout_secs": "slow"})).status == 400
+        assert (
+            await client.put("/api/apps/wiki/config", json={"lang": "en", "timeout_secs": 20})
+        ).status == 200
+        assert (
+            await client.put("/api/apps/wiki/config", json={"timeout_secs": "slow"})
+        ).status == 400
 
 
 @pytest.mark.asyncio
@@ -319,8 +382,9 @@ async def test_proxy_404_when_not_installed(tmp_path):
 @pytest.mark.asyncio
 async def test_ui_asset_served_and_traversal_guarded(tmp_path):
     async with _client(tmp_path) as client:
-        src = _app_src(tmp_path, "widget",
-                       files={"ui/index.js": "export function mount(){return null}\n"})
+        src = _app_src(
+            tmp_path, "widget", files={"ui/index.js": "export function mount(){return null}\n"}
+        )
         assert (await client.post("/api/apps", json={"source": src})).status == 201
         r = await client.get("/apps/widget/ui/index.js")
         assert r.status == 200
@@ -350,7 +414,8 @@ async def test_backend_proxy_round_trip(tmp_path):
     """)
     async with _client(tmp_path) as client:
         src = _app_src(
-            tmp_path, "svc",
+            tmp_path,
+            "svc",
             backend={"entryPoint": "backend/server.py", "type": "python", "healthCheck": "/health"},
             files={"backend/server.py": backend_py},
         )
@@ -359,6 +424,7 @@ async def test_backend_proxy_round_trip(tmp_path):
 
         # Backend was launched on install; poll until the proxy gets through.
         import asyncio
+
         got = None
         for _ in range(50):
             resp = await client.get("/apps/svc/api/ping")
@@ -389,7 +455,9 @@ async def test_startup_relaunches_enabled_backends(tmp_path, monkeypatch):
         from http.server import BaseHTTPRequestHandler, HTTPServer
         class H(BaseHTTPRequestHandler):
             def do_GET(self):
-                self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
                 self.wfile.write(json.dumps({"ok": True}).encode())
             def log_message(self, *a): pass
         HTTPServer(("127.0.0.1", int(os.environ["PORT"])), H).serve_forever()
@@ -397,10 +465,14 @@ async def test_startup_relaunches_enabled_backends(tmp_path, monkeypatch):
     import asyncio
 
     from personalclaw.apps import app_manager
+
     async with _client(tmp_path) as client:
-        src = _app_src(tmp_path, "svc2",
-                       backend={"entryPoint": "backend/server.py", "type": "python"},
-                       files={"backend/server.py": backend_py})
+        src = _app_src(
+            tmp_path,
+            "svc2",
+            backend={"entryPoint": "backend/server.py", "type": "python"},
+            files={"backend/server.py": backend_py},
+        )
         assert (await client.post("/api/apps", json={"source": src})).status == 201
         # Simulate a gateway restart: drop the supervisor (kills tracked procs).
         backend_runtime.get_backend_supervisor().stop_all()
@@ -413,6 +485,7 @@ async def test_startup_relaunches_enabled_backends(tmp_path, monkeypatch):
         for _ in range(50):
             resp = await client.get("/apps/svc2/api/ping")
             if resp.status == 200:
-                got = await resp.json(); break
+                got = await resp.json()
+                break
             await asyncio.sleep(0.1)
         assert got == {"ok": True}

@@ -20,8 +20,11 @@ def root(tmp_path, monkeypatch):
     (tmp_path / "afile.txt").write_text("x")
     # Allow anything under tmp_path.
     monkeypatch.setattr(F, "_dashboard_roots", lambda: [("R", str(tmp_path))])
-    monkeypatch.setattr(F, "_validate_dashboard_path",
-                        lambda raw: str(raw) if str(raw).startswith(str(tmp_path)) else None)
+    monkeypatch.setattr(
+        F,
+        "_validate_dashboard_path",
+        lambda raw: str(raw) if str(raw).startswith(str(tmp_path)) else None,
+    )
     return tmp_path
 
 

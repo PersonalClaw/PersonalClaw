@@ -22,14 +22,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+
 def _path_home_pclaw():
     """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
     try:
         from personalclaw.config.loader import config_dir as _cd
+
         return _cd()
     except Exception:
         from pathlib import Path as _P
+
         return _P.home() / ".personalclaw"
+
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +42,8 @@ _SKILL_FILENAME = "SKILL.md"
 
 # Standard discovery paths in priority order
 SKILL_DISCOVERY_PATHS: list[Path] = [
-    Path.home() / ".agents" / "skills",          # agentskills.io cross-client standard
-    _path_home_pclaw() / "skills",         # user-created skills
+    Path.home() / ".agents" / "skills",  # agentskills.io cross-client standard
+    _path_home_pclaw() / "skills",  # user-created skills
 ]
 
 # Default target for `skills install` when the caller doesn't override.
@@ -54,12 +58,13 @@ DEFAULT_SKILLS_INSTALL_PATH: Path = Path.home() / ".agents" / "skills"
 @dataclass
 class SkillEntry:
     """Metadata for a skill returned from a marketplace search."""
-    id: str             # marketplace-scoped id, e.g. "vercel-labs/agent-skills/next-js"
-    name: str           # from SKILL.md frontmatter
-    description: str    # from SKILL.md frontmatter
-    source: str         # marketplace name or "local"
-    url: str = ""       # human-readable URL on the marketplace
-    installs: int = 0   # install count if known
+
+    id: str  # marketplace-scoped id, e.g. "vercel-labs/agent-skills/next-js"
+    name: str  # from SKILL.md frontmatter
+    description: str  # from SKILL.md frontmatter
+    source: str  # marketplace name or "local"
+    url: str = ""  # human-readable URL on the marketplace
+    installs: int = 0  # install count if known
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -79,6 +84,7 @@ class SkillDetail:
     Each ``files`` entry is ``{path, contents}`` for a text file or ``{path, data}``
     (raw ``bytes``) for a binary — the whole tree is carried so nothing is dropped
     before the scan/commit/lock. Use :func:`read_skill_file_entry` to build entries."""
+
     id: str
     name: str
     files: list[dict[str, Any]] = field(default_factory=list)  # [{path, contents|data}]
@@ -133,8 +139,8 @@ class InstallResult:
     """A successful guarded install: where it landed + the scan evidence surfaced."""
 
     path: Path
-    report: "Any"   # supply_chain.ScanReport
-    tier: "Any"     # supply_chain.TrustTier
+    report: "Any"  # supply_chain.ScanReport
+    tier: "Any"  # supply_chain.TrustTier
 
 
 class SkillInstallRefused(Exception):
@@ -149,7 +155,9 @@ class SkillInstallRefused(Exception):
         self.report = report
         self.dangerous = dangerous
         cats = ", ".join(sorted({f.rule for f in report.findings})) or "no specific rule"
-        verb = "refused (dangerous, non-overridable)" if dangerous else "needs confirmation (warning)"
+        verb = (
+            "refused (dangerous, non-overridable)" if dangerous else "needs confirmation (warning)"
+        )
         super().__init__(f"skill install {verb}: {cats}")
 
 
@@ -190,7 +198,9 @@ def _stage_files(files: "list[dict[str, Any]]", staged_skill: Path) -> None:
         out.write_bytes(_entry_bytes(entry))
 
 
-def _write_lock(target_dir: Path, detail: "SkillDetail", source: str, tier: "Any", report: "Any") -> None:
+def _write_lock(
+    target_dir: Path, detail: "SkillDetail", source: str, tier: "Any", report: "Any"
+) -> None:
     """Record install provenance + an integrity baseline in ``<skill>/.pclaw-lock.json``:
     id, source, tier, verdict, per-file sha256, timestamp. A later integrity lint (S6)
     compares on-disk sha256 vs this to detect a skill mutated after install."""
@@ -232,9 +242,9 @@ class IntegrityReport:
     skill: str
     ok: bool = True
     unlocked: bool = False
-    mutated: list[str] = field(default_factory=list)   # locked file whose hash changed
-    missing: list[str] = field(default_factory=list)   # locked file now gone
-    added: list[str] = field(default_factory=list)     # new file not in the lock
+    mutated: list[str] = field(default_factory=list)  # locked file whose hash changed
+    missing: list[str] = field(default_factory=list)  # locked file now gone
+    added: list[str] = field(default_factory=list)  # new file not in the lock
 
     def summary(self) -> str:
         if self.unlocked:
@@ -292,10 +302,15 @@ def verify_skill_integrity(skill_dir: Path) -> IntegrityReport:
     if not rep.ok:
         try:
             from personalclaw.sel import sel
+
             sel().log_api_access(
-                caller="skills.verify_integrity", operation="skill_integrity",
-                outcome="tampered", source="skills", resources=name,
-                error=rep.summary())
+                caller="skills.verify_integrity",
+                operation="skill_integrity",
+                outcome="tampered",
+                source="skills",
+                resources=name,
+                error=rep.summary(),
+            )
         except Exception:
             logger.debug("integrity SEL audit failed", exc_info=True)
     return rep
@@ -305,11 +320,14 @@ def _audit_install(source: str, skill_id: str, tier: "Any", report: "Any", *, ou
     """Emit a SEL audit event for a scan/install/refuse (best-effort)."""
     try:
         from personalclaw.sel import sel
+
         sel().log_api_access(
-            caller=f"skills.install_guarded:{source}", operation="skill_install",
-            outcome=outcome, source="skills",
+            caller=f"skills.install_guarded:{source}",
+            operation="skill_install",
+            outcome=outcome,
+            source="skills",
             resources=f"{source}/{skill_id}",
-            error=f"tier={getattr(tier,'value',tier)} verdict={getattr(report.verdict,'value',report.verdict)}",
+            error=f"tier={getattr(tier, 'value', tier)} verdict={getattr(report.verdict, 'value', report.verdict)}",  # noqa: E501
         )
     except Exception:
         logger.debug("skill install SEL audit failed", exc_info=True)
@@ -336,7 +354,7 @@ class SkillsRegistry:
     def list(self) -> "list[str]":
         return sorted(self._marketplaces)
 
-    def info(self) -> "list[dict[str, str]]":
+    def info(self) -> "list[dict[str, str]]":  # type: ignore[valid-type]  # CI-1
         return [
             {"name": n, "type": mp.marketplace_type, "trust_tier": mp.trust_tier}
             for n, mp in sorted(self._marketplaces.items())
@@ -446,12 +464,14 @@ def list_local_skills(extra_paths: list[Path] | None = None) -> list[dict[str, s
                 continue  # project-level wins; skip duplicates
             seen_names.add(name)
             description = _parse_description(skill_md)
-            skills.append({
-                "name": name,
-                "description": description,
-                "path": str(skill_md),
-                "source": str(base),
-            })
+            skills.append(
+                {
+                    "name": name,
+                    "description": description,
+                    "path": str(skill_md),
+                    "source": str(base),
+                }
+            )
 
     return skills
 
@@ -541,9 +561,13 @@ def install_skill_files(
         if "data" in file_entry:
             continue
         contents = file_entry.get("contents", "")
-        is_script = rel_path.endswith((".sh", ".bash", ".py", ".js", ".rb", ".pl")) or "/scripts/" in f"/{rel_path}"
+        is_script = (
+            rel_path.endswith((".sh", ".bash", ".py", ".js", ".rb", ".pl"))
+            or "/scripts/" in f"/{rel_path}"
+        )
         report = default_scanner.scan_text(
-            contents, surface="script" if is_script else "manifest",
+            contents,
+            surface="script" if is_script else "manifest",
         )
         if report.verdict is Verdict.DANGEROUS:
             cats = ", ".join(sorted({f.rule for f in report.findings})) or "dangerous content"

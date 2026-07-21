@@ -5,8 +5,6 @@
 - Lazy SDK imports: importing the providers package pulls in no vendor SDK.
 """
 
-import importlib
-import sys
 import tempfile
 from pathlib import Path
 
@@ -14,22 +12,34 @@ import pytest
 
 pytest.importorskip("hypothesis")
 
-from hypothesis import assume, given, settings
-from hypothesis import strategies as st
+from hypothesis import (  # noqa: E402
+    assume,
+    given,
+    settings,
+)
+from hypothesis import strategies as st  # noqa: E402
 
-from personalclaw.llm.capabilities import Capability, ProviderCapability
-from personalclaw.llm.registry import ProviderEntry, ProviderRegistry, ProviderResolutionError
-
+from personalclaw.llm.capabilities import (  # noqa: E402
+    Capability,
+    ProviderCapability,
+)
+from personalclaw.llm.registry import ProviderEntry, ProviderRegistry  # noqa: E402
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
 _ALL_CAPS = list(Capability)
 # The capabilities meaningful to bind a provider entry to (was the deleted
 # router's _BINDABLE_USE_CASES; inlined here for the property strategies).
-_BINDABLE_USE_CASES = frozenset({
-    Capability.CHAT, Capability.CODE_TOOLS, Capability.SUMMARIZATION,
-    Capability.PLANNING, Capability.EMBEDDING, Capability.VISION,
-})
+_BINDABLE_USE_CASES = frozenset(
+    {
+        Capability.CHAT,
+        Capability.CODE_TOOLS,
+        Capability.SUMMARIZATION,
+        Capability.PLANNING,
+        Capability.EMBEDDING,
+        Capability.VISION,
+    }
+)
 _BINDABLE_LIST = sorted(_BINDABLE_USE_CASES, key=lambda c: c.value)
 
 
@@ -86,6 +96,7 @@ def _unique_entries(draw, min_size=1, max_size=5):
 
 # ── Registry closure ──────────────────────────────────────────────────────
 
+
 @given(entries=_unique_entries())
 @settings(max_examples=50)
 def test_registry_closure(entries):
@@ -93,15 +104,17 @@ def test_registry_closure(entries):
     reg = _make_reg_with_entries(entries)
     type_caps = reg.capability_of("test").capabilities
     for e in reg.list_entries():
-        assert e.declared_capabilities.issubset(type_caps), (
-            f"closure violated for {e.name}: {e.declared_capabilities} ⊄ {type_caps}"
-        )
+        assert e.declared_capabilities.issubset(
+            type_caps
+        ), f"closure violated for {e.name}: {e.declared_capabilities} ⊄ {type_caps}"
 
 
 # ── Credential non-leakage ────────────────────────────────────────────────
 
+
 def _make_store_with_secret(tmp_dir: str, name: str, value: str):
     from personalclaw.llm.credentials import CredentialStore
+
     store = CredentialStore(Path(tmp_dir) / "creds.json")
     store.save({name: {"value": value}})
     store.reload()
@@ -114,9 +127,9 @@ def test_credential_list_strips_secrets():
         store = _make_store_with_secret(tmp, "my-key", "super-secret-value")
         entries = store.list()
         for cred in entries:
-            assert cred.secret is None, (
-                f"credential '{cred.name}' leaked a non-None secret in list()"
-            )
+            assert (
+                cred.secret is None
+            ), f"credential '{cred.name}' leaked a non-None secret in list()"
 
 
 @given(secret=st.text(min_size=1, max_size=64))
@@ -131,15 +144,20 @@ def test_list_never_leaks_secret(secret):
 
 # ── Lazy SDK imports ─────────────────────────────────────────────────────
 
+
 def test_providers_import_no_sdk_leakage():
     """Importing personalclaw.providers does not trigger anthropic/openai/httpx."""
-    import subprocess, sys as _sys, os as _os
+    import os as _os
+    import subprocess
+    import sys as _sys
     from pathlib import Path as _Path
+
     repo_src = str(_Path(__file__).resolve().parent.parent / "src")
     env = {**_os.environ, "PYTHONPATH": repo_src}
     result = subprocess.run(
         [
-            _sys.executable, "-c",
+            _sys.executable,
+            "-c",
             (
                 "import sys; "
                 "import personalclaw.llm; "
@@ -154,6 +172,6 @@ def test_providers_import_no_sdk_leakage():
         timeout=30,
         env=env,
     )
-    assert result.returncode == 0, (
-        f"SDK modules loaded on import: {result.stdout.strip()}\n{result.stderr[:300]}"
-    )
+    assert (
+        result.returncode == 0
+    ), f"SDK modules loaded on import: {result.stdout.strip()}\n{result.stderr[:300]}"

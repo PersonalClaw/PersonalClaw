@@ -34,7 +34,7 @@ except ImportError:
 class ExtractedDoc:
     """The result of extracting a fetched document."""
 
-    text: str           # main content as markdown
+    text: str  # main content as markdown
     title: str = ""
     char_count: int = 0
     extractor: str = ""  # which path produced it ("trafilatura" | "html2text" | "raw")
@@ -74,21 +74,31 @@ def extract_main_content(html: str, *, url: str = "") -> ExtractedDoc:
     if _trafilatura is not None:
         try:
             text = _trafilatura.extract(
-                clean, output_format="markdown", url=url or None,
-                include_links=True, include_tables=True, with_metadata=False,
+                clean,
+                output_format="markdown",
+                url=url or None,
+                include_links=True,
+                include_tables=True,
+                with_metadata=False,
             )
         except Exception:
             logger.debug("trafilatura extract failed; falling back", exc_info=True)
             text = None
         if text:
-            return ExtractedDoc(text=text.strip(), title=title,
-                                char_count=len(text.strip()), extractor="trafilatura")
+            return ExtractedDoc(
+                text=text.strip(),
+                title=title,
+                char_count=len(text.strip()),
+                extractor="trafilatura",
+            )
 
     # Fallback: the connector's existing chrome-stripped html2text path.
     from personalclaw.knowledge.connectors.base import html_to_text
+
     text = html_to_text(clean)
-    return ExtractedDoc(text=text.strip(), title=title,
-                        char_count=len(text.strip()), extractor="html2text")
+    return ExtractedDoc(
+        text=text.strip(), title=title, char_count=len(text.strip()), extractor="html2text"
+    )
 
 
 def _title(html: str, url: str) -> str:

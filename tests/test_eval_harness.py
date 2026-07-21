@@ -113,7 +113,9 @@ class TestScenarioLoading:
             "sessions": [
                 {
                     "name": "s1",
-                    "turns": [{"user": "hello", "assertions": [{"type": "contains", "value": "hi"}]}],
+                    "turns": [
+                        {"user": "hello", "assertions": [{"type": "contains", "value": "hi"}]}
+                    ],
                 }
             ],
         }
@@ -282,9 +284,14 @@ class TestEvalRunner:
             sessions=[
                 Session(
                     name="s1",
-                    turns=[Turn(user="hello", assertions=[
-                        Assertion(type=AssertionType.CONTAINS, value="echo"),
-                    ])],
+                    turns=[
+                        Turn(
+                            user="hello",
+                            assertions=[
+                                Assertion(type=AssertionType.CONTAINS, value="echo"),
+                            ],
+                        )
+                    ],
                 )
             ],
         )
@@ -302,9 +309,14 @@ class TestEvalRunner:
             sessions=[
                 Session(
                     name="s1",
-                    turns=[Turn(user="hello", assertions=[
-                        Assertion(type=AssertionType.CONTAINS, value="nonexistent"),
-                    ])],
+                    turns=[
+                        Turn(
+                            user="hello",
+                            assertions=[
+                                Assertion(type=AssertionType.CONTAINS, value="nonexistent"),
+                            ],
+                        )
+                    ],
                 )
             ],
         )
@@ -323,17 +335,21 @@ class TestEvalRunner:
             sessions=[
                 Session(
                     name="teach",
-                    turns=[Turn(
-                        user="My favorite language is Rust",
-                        assertions=[Assertion(type=AssertionType.CONTAINS, value="rust")],
-                    )],
+                    turns=[
+                        Turn(
+                            user="My favorite language is Rust",
+                            assertions=[Assertion(type=AssertionType.CONTAINS, value="rust")],
+                        )
+                    ],
                 ),
                 Session(
                     name="recall",
-                    turns=[Turn(
-                        user="What is my favorite language?",
-                        assertions=[Assertion(type=AssertionType.CONTAINS, value="rust")],
-                    )],
+                    turns=[
+                        Turn(
+                            user="What is my favorite language?",
+                            assertions=[Assertion(type=AssertionType.CONTAINS, value="rust")],
+                        )
+                    ],
                 ),
             ],
         )
@@ -365,7 +381,9 @@ class TestEvalRunner:
             ],
         )
 
-        runner = EvalRunner(provider_factory=lambda key, **kw: MockProvider(), workspace_dir=tmp_path)
+        runner = EvalRunner(
+            provider_factory=lambda key, **kw: MockProvider(), workspace_dir=tmp_path
+        )
         await runner.run_scenario(scenario)
         prefs = (tmp_path / "memory" / "preferences.md").read_text()
         assert "Rust" in prefs
@@ -571,29 +589,39 @@ class TestDimensionScoring:
             ScenarioResult(
                 name="a",
                 dimensions=["memory_recall"],
-                sessions=[SessionResult(name="s1", turns=[
-                    TurnResult(
-                        user_message="q",
-                        agent_response="r",
-                        assertion_results=[
-                            (Assertion(type=AssertionType.CONTAINS, value="x"), True),
-                            (Assertion(type=AssertionType.CONTAINS, value="y"), False),
+                sessions=[
+                    SessionResult(
+                        name="s1",
+                        turns=[
+                            TurnResult(
+                                user_message="q",
+                                agent_response="r",
+                                assertion_results=[
+                                    (Assertion(type=AssertionType.CONTAINS, value="x"), True),
+                                    (Assertion(type=AssertionType.CONTAINS, value="y"), False),
+                                ],
+                            ),
                         ],
-                    ),
-                ])],
+                    )
+                ],
             ),
             ScenarioResult(
                 name="b",
                 dimensions=["memory_recall", "lesson_application"],
-                sessions=[SessionResult(name="s1", turns=[
-                    TurnResult(
-                        user_message="q",
-                        agent_response="r",
-                        assertion_results=[
-                            (Assertion(type=AssertionType.CONTAINS, value="z"), True),
+                sessions=[
+                    SessionResult(
+                        name="s1",
+                        turns=[
+                            TurnResult(
+                                user_message="q",
+                                agent_response="r",
+                                assertion_results=[
+                                    (Assertion(type=AssertionType.CONTAINS, value="z"), True),
+                                ],
+                            ),
                         ],
-                    ),
-                ])],
+                    )
+                ],
             ),
         ]
         dims = score_by_dimension(results)
@@ -623,15 +651,20 @@ class TestReporting:
         result = ScenarioResult(
             name="test",
             dimensions=["memory_recall"],
-            sessions=[SessionResult(name="s1", turns=[
-                TurnResult(
-                    user_message="q",
-                    agent_response="r",
-                    assertion_results=[
-                        (Assertion(type=AssertionType.CONTAINS, value="r"), True),
+            sessions=[
+                SessionResult(
+                    name="s1",
+                    turns=[
+                        TurnResult(
+                            user_message="q",
+                            agent_response="r",
+                            assertion_results=[
+                                (Assertion(type=AssertionType.CONTAINS, value="r"), True),
+                            ],
+                        ),
                     ],
-                ),
-            ])],
+                )
+            ],
         )
         report = format_results([result])
         assert "Scorecard by Dimension" in report
@@ -715,9 +748,14 @@ class TestConsolidationFailure:
             sessions=[
                 Session(
                     name="s1",
-                    turns=[Turn(user="hello", assertions=[
-                        Assertion(type=AssertionType.CONTAINS, value="echo"),
-                    ])],
+                    turns=[
+                        Turn(
+                            user="hello",
+                            assertions=[
+                                Assertion(type=AssertionType.CONTAINS, value="echo"),
+                            ],
+                        )
+                    ],
                 ),
             ],
         )
@@ -749,10 +787,15 @@ class TestJudgeFiltering:
             sessions=[
                 Session(
                     name="s1",
-                    turns=[Turn(user="hello", assertions=[
-                        Assertion(type=AssertionType.CONTAINS, value="echo"),
-                        Assertion(type=AssertionType.JUDGE, value="quality check"),
-                    ])],
+                    turns=[
+                        Turn(
+                            user="hello",
+                            assertions=[
+                                Assertion(type=AssertionType.CONTAINS, value="echo"),
+                                Assertion(type=AssertionType.JUDGE, value="quality check"),
+                            ],
+                        )
+                    ],
                 ),
             ],
         )
@@ -771,10 +814,15 @@ class TestJudgeFiltering:
             sessions=[
                 Session(
                     name="s1",
-                    turns=[Turn(user="hello", assertions=[
-                        Assertion(type=AssertionType.CONTAINS, value="echo"),
-                        Assertion(type=AssertionType.JUDGE, value="quality check"),
-                    ])],
+                    turns=[
+                        Turn(
+                            user="hello",
+                            assertions=[
+                                Assertion(type=AssertionType.CONTAINS, value="echo"),
+                                Assertion(type=AssertionType.JUDGE, value="quality check"),
+                            ],
+                        )
+                    ],
                 ),
             ],
         )

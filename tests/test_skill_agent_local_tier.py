@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from personalclaw.skills import loader as loader_mod
-from personalclaw.skills.loader import SkillsLoader, agent_skills_dir, _agent_slug
+from personalclaw.skills.loader import SkillsLoader, _agent_slug, agent_skills_dir
 
 
 @pytest.fixture
@@ -21,6 +21,7 @@ def home(tmp_path, monkeypatch):
     # marketplace's discovery paths key off real home dirs; neutralize them so the
     # test only sees the global + agent-local tiers under tmp.
     import personalclaw.skills.marketplace as mp
+
     monkeypatch.setattr(mp, "SKILL_DISCOVERY_PATHS", [])
     return tmp_path
 
@@ -28,7 +29,11 @@ def home(tmp_path, monkeypatch):
 def _write_skill(base: Path, name: str, body: str, *, always: bool = False):
     d = base / name
     d.mkdir(parents=True, exist_ok=True)
-    fm = f"---\nname: {name}\ndescription: {name} desc\n" + ("always: true\n" if always else "") + "---\n"
+    fm = (
+        f"---\nname: {name}\ndescription: {name} desc\n"
+        + ("always: true\n" if always else "")
+        + "---\n"
+    )
     (d / "SKILL.md").write_text(fm + body, encoding="utf-8")
 
 

@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
-
 import pytest
 
 import personalclaw.context_engine as ce
@@ -36,7 +33,7 @@ def builder(tmp_path):
     )
     # get_memory_for is a staticmethod resolving by cwd; point it at our store so
     # active_recall_block sees the populated vector store.
-    b.get_memory_for = staticmethod(lambda cwd=None, memory_store=None: ms)  # type: ignore[assignment]
+    b.get_memory_for = staticmethod(lambda cwd=None, memory_store=None: ms)  # type: ignore[assignment]  # noqa: E501
     return b, vs
 
 
@@ -49,9 +46,7 @@ def test_no_recall_block_on_empty_memory(builder):
 def test_recall_block_surfaces_relevant_episode(builder, monkeypatch):
     b, vs = builder
     # Stub episodic retrieval so the test doesn't depend on embeddings.
-    monkeypatch.setattr(
-        vs, "get_episodic_context", lambda **kw: "User prefers pandas over polars."
-    )
+    monkeypatch.setattr(vs, "get_episodic_context", lambda **kw: "User prefers pandas over polars.")
     blk = ce.active_recall_block(b, "what about pandas?", cwd=None, memory_store=None)
     assert "ACTIVE RECALL" in blk
     assert "pandas" in blk
@@ -76,6 +71,7 @@ def test_circuit_breaker_opens_after_timeouts(builder, monkeypatch):
 
     def _slow(**kw):
         import time
+
         time.sleep(0.5)
         return "x"
 

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from personalclaw.mcp_client import _coerce_args_to_schema, _schema_numeric_kind
 
-
 _SUM_SCHEMA = {
     "type": "object",
     "properties": {

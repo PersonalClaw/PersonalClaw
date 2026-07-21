@@ -164,9 +164,7 @@ class TestHeartbeatRetention:
 
         svc = HeartbeatService(memory=MagicMock(), on_task=on_task)
         hb_path = tmp_path / "HEARTBEAT.md"
-        hb_path.write_text(
-            _HEADER + "- Check ticket  <!-- deliver:C0EXAMPLE04 -->\n"
-        )
+        hb_path.write_text(_HEADER + "- Check ticket  <!-- deliver:C0EXAMPLE04 -->\n")
 
         original = hb_mod.heartbeat_path
         hb_mod.heartbeat_path = lambda: hb_path

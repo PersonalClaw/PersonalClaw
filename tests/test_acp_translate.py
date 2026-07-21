@@ -26,14 +26,19 @@ def _update(update: dict) -> JsonRpcMessage:
 # ── extract_text_chunk ─────────────────────────────────────────────────────────
 class TestExtractTextChunk:
     def test_plain_text(self):
-        msg = _update({"sessionUpdate": "agent_message_chunk",
-                       "content": {"type": "text", "text": "hi"}})
+        msg = _update(
+            {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "hi"}}
+        )
         text, is_thinking = translate.extract_text_chunk(msg)
         assert text == "hi" and is_thinking is False
 
     def test_thinking_flagged(self):
-        msg = _update({"sessionUpdate": "agent_message_chunk",
-                       "content": {"type": "thinking", "text": "pondering"}})
+        msg = _update(
+            {
+                "sessionUpdate": "agent_message_chunk",
+                "content": {"type": "thinking", "text": "pondering"},
+            }
+        )
         text, is_thinking = translate.extract_text_chunk(msg)
         assert text == "pondering" and is_thinking is True
 
@@ -46,33 +51,55 @@ class TestExtractTextChunk:
 # ── extract_tool_event ─────────────────────────────────────────────────────────
 class TestExtractToolEvent:
     def test_tool_call_event(self):
-        msg = _update({"sessionUpdate": "tool_call", "toolCallId": "t1",
-                       "title": "Read file", "kind": "read", "rawInput": {"path": "/x"}})
+        msg = _update(
+            {
+                "sessionUpdate": "tool_call",
+                "toolCallId": "t1",
+                "title": "Read file",
+                "kind": "read",
+                "rawInput": {"path": "/x"},
+            }
+        )
         ev = translate.extract_tool_event(msg, {}, [])
         assert ev is not None and ev.kind == EVENT_TOOL_CALL
         assert ev.tool_call_id == "t1" and ev.title == "Read file"
 
     def test_non_tool_returns_none(self):
-        msg = _update({"sessionUpdate": "agent_message_chunk",
-                       "content": {"type": "text", "text": "hi"}})
+        msg = _update(
+            {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "hi"}}
+        )
         assert translate.extract_tool_event(msg, {}, []) is None
 
 
 # ── extract_tool_update_events (completed + failed both surface results) ─────────
 class TestExtractToolUpdateEvents:
     def test_completed_yields_result(self):
-        msg = _update({"sessionUpdate": "tool_call_update", "toolCallId": "t1",
-                       "status": "completed",
-                       "content": [{"type": "content", "content": {"type": "text", "text": "done"}}]})
+        msg = _update(
+            {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "t1",
+                "status": "completed",
+                "content": [{"type": "content", "content": {"type": "text", "text": "done"}}],
+            }
+        )
         events = translate.extract_tool_update_events(msg, {})
         results = [e for e in events if e.kind == EVENT_TOOL_RESULT]
         assert len(results) == 1 and "done" in results[0].tool_output
 
     def test_failed_still_surfaces_result(self):
-        msg = _update({"sessionUpdate": "tool_call_update", "toolCallId": "t1",
-                       "status": "failed",
-                       "content": [{"type": "content", "content": {"type": "text",
-                                    "text": "ls: /nope: No such file"}}]})
+        msg = _update(
+            {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "t1",
+                "status": "failed",
+                "content": [
+                    {
+                        "type": "content",
+                        "content": {"type": "text", "text": "ls: /nope: No such file"},
+                    }
+                ],
+            }
+        )
         events = translate.extract_tool_update_events(msg, {})
         results = [e for e in events if e.kind == EVENT_TOOL_RESULT]
         assert len(results) == 1 and "No such file" in results[0].tool_output
@@ -84,7 +111,8 @@ class TestBuildPermissionEvent:
         from personalclaw.acp.dialect import DefaultDialect
 
         msg = JsonRpcMessage(
-            id=55, method="session/request_permission",
+            id=55,
+            method="session/request_permission",
             params={"toolCall": {"title": "Write", "toolCallId": "t9"}, "options": []},
         )
         offered: dict = {}
@@ -106,18 +134,35 @@ class TestInterruptedMarker:
         assert translate.is_tool_interrupted_marker(translate.TOOL_INTERRUPTED_MARKER) is True
 
     def test_prose_quoting_marker_does_not_match(self):
-        assert translate.is_tool_interrupted_marker("I saw: " + translate.TOOL_INTERRUPTED_MARKER) is False
+        assert (
+            translate.is_tool_interrupted_marker("I saw: " + translate.TOOL_INTERRUPTED_MARKER)
+            is False
+        )
 
 
 # ── read_new_tool_results (per-session JSONL tail) ───────────────────────────────
 class TestReadNewToolResults:
     def test_reads_tool_results_and_advances_pos(self, tmp_path):
         jsonl = tmp_path / "sess.jsonl"
-        jsonl.write_text(json.dumps({
-            "kind": "ToolResults",
-            "data": {"content": [{"kind": "toolResult", "data": {
-                "toolUseId": "j1", "content": [{"kind": "text", "data": "jsonl output"}]}}]},
-        }) + "\n")
+        jsonl.write_text(
+            json.dumps(
+                {
+                    "kind": "ToolResults",
+                    "data": {
+                        "content": [
+                            {
+                                "kind": "toolResult",
+                                "data": {
+                                    "toolUseId": "j1",
+                                    "content": [{"kind": "text", "data": "jsonl output"}],
+                                },
+                            }
+                        ]
+                    },
+                }
+            )
+            + "\n"
+        )
         events, pos = translate.read_new_tool_results(jsonl, 0)
         assert len(events) == 1 and events[0].tool_call_id == "j1"
         assert "jsonl output" in events[0].tool_output
@@ -134,7 +179,9 @@ class TestReadNewToolResults:
 # ── coerce_tool_content ───────────────────────────────────────────────────────────
 class TestCoerceToolContent:
     def test_flattens_text_blocks(self):
-        out = translate.coerce_tool_content([{"type": "text", "text": "a"}, {"type": "text", "text": "b"}])
+        out = translate.coerce_tool_content(
+            [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]
+        )
         assert "a" in out and "b" in out
 
     def test_plain_string_passthrough(self):

@@ -3,6 +3,7 @@
 Covers serialization round-trip of every CronEntry field (including the
 extended scheduling fields: agent_sequence, env, persistent_session, silent).
 """
+
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -17,7 +18,8 @@ def _env_dict() -> st.SearchStrategy[dict[str, str]]:
     """Generate environment variable dicts."""
     key = st.from_regex(r"[A-Z][A-Z0-9_]{0,10}", fullmatch=True)
     val = st.text(
-        min_size=0, max_size=20,
+        min_size=0,
+        max_size=20,
         alphabet=st.characters(categories=("L", "N", "P")),
     )
     return st.dictionaries(key, val, max_size=3)
@@ -30,17 +32,22 @@ def _cron_entry() -> st.SearchStrategy[CronEntry]:
         name=st.from_regex(r"[a-z][a-z0-9-]{0,15}", fullmatch=True),
         every=st.integers(min_value=0, max_value=86400),
         cron_expr=st.one_of(
-            st.just(""), st.just("* * * * *"), st.just("0 */6 * * *"),
+            st.just(""),
+            st.just("* * * * *"),
+            st.just("0 */6 * * *"),
         ),
         agent=st.one_of(
-            st.just(""), st.from_regex(r"[a-z][a-z0-9-]{0,10}", fullmatch=True),
+            st.just(""),
+            st.from_regex(r"[a-z][a-z0-9-]{0,10}", fullmatch=True),
         ),
         message=st.text(
-            min_size=0, max_size=50,
+            min_size=0,
+            max_size=50,
             alphabet=st.characters(categories=("L", "N", "P", "Z")),
         ),
         agent_sequence=st.lists(
-            st.from_regex(r"[a-z][a-z0-9-]{0,10}", fullmatch=True), max_size=3,
+            st.from_regex(r"[a-z][a-z0-9-]{0,10}", fullmatch=True),
+            max_size=3,
         ),
         env=_env_dict(),
         persistent_session=st.booleans(),

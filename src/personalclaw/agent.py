@@ -70,6 +70,7 @@ def _atomic_json_write(path: Path, data: dict) -> None:
         except OSError:
             # Fallback for container bind mounts where rename fails with EBUSY
             import shutil
+
             shutil.copy2(tmp_name, path)
             os.unlink(tmp_name)
     except BaseException:
@@ -86,6 +87,7 @@ def _atomic_json_write(path: Path, data: dict) -> None:
 # splitting agent state between /data and ~/.personalclaw/.
 def _user_dir() -> Path:
     from personalclaw.config.loader import config_dir as _cd
+
     return _cd()
 
 
@@ -138,6 +140,7 @@ _USER_OVERRIDES = _USER_DIR / "agent.json"
 # personalclaw binary path — resolved lazily to handle gateway restarts
 # where PATH may not include the virtualenv at import time.
 _PERSONALCLAW_BIN: str | None = None
+
 
 def _bin_is_usable(path: Path) -> bool:
     """Return False if the binary cannot run in the current environment.
@@ -313,6 +316,7 @@ def _all_skill_paths() -> list[str]:
     # Must match the path used by SkillsLoader (personalclaw/skills/loader.py) so
     # skills written by api_skills_create are visible to api_skills_list.
     from personalclaw.skills.loader import skills_dir as _user_skills_dir
+
     user_skills = _user_skills_dir()
     if user_skills.is_dir():
         paths.add(str(user_skills))
@@ -322,12 +326,11 @@ def _all_skill_paths() -> list[str]:
         paths.add(str(agents_skills))
     # Package-bundled skills (always available as baseline)
     from personalclaw.skills.native import _bundled_root
+
     bundled = _bundled_root()
     if bundled.is_dir():
         paths.add(str(bundled))
     return sorted(paths)
-
-
 
 
 def _inject_skill_paths(bm: dict, skill_paths: list[str]) -> None:
@@ -362,7 +365,9 @@ def _validate_hook_command(command: str, event: str) -> str | None:
     command injection.  Uses an allowlist regex for path characters.
     """
     if not _SAFE_PATH_RE.match(command):
-        logger.warning("agent_hooks[%s]: command contains disallowed characters: %r", event, command)
+        logger.warning(
+            "agent_hooks[%s]: command contains disallowed characters: %r", event, command
+        )
         return None
     if not os.path.isabs(command):
         logger.warning("agent_hooks[%s]: command must be absolute path, got %r", event, command)
@@ -442,7 +447,7 @@ _HOOK_HEADER_RE = re.compile(r"^\s*#\s*(event|matcher)\s*:\s*(\S.*?)\s*$", re.IG
 
 
 def _parse_hook_script_headers(path: Path) -> tuple[str | None, str | None]:
-    """Read the first few lines of a hook script and extract ``# event:`` / ``# matcher:`` directives.
+    """Read the first few lines of a hook script and extract ``# event:`` / ``# matcher:`` directives.  # noqa: E501
 
     Returns ``(event_header, matcher_header)``.  Either may be ``None`` if not present.
     Values are returned unparsed; callers normalize/validate them.
@@ -713,9 +718,11 @@ def _merge_agent_hooks(hooks: dict, user_hooks: dict) -> dict:
                 # configured 10 and all loaded".
                 _sel_hook_rejected(
                     event,
-                    str(entry.get("command", ""))[:200]
-                    if isinstance(entry, dict)
-                    else str(entry)[:200],
+                    (
+                        str(entry.get("command", ""))[:200]
+                        if isinstance(entry, dict)
+                        else str(entry)[:200]
+                    ),
                     "per-event limit exceeded",
                 )
                 break
@@ -731,9 +738,11 @@ def _merge_agent_hooks(hooks: dict, user_hooks: dict) -> dict:
                 # loaded".
                 _sel_hook_rejected(
                     event,
-                    str(entry.get("command", ""))[:200]
-                    if isinstance(entry, dict)
-                    else str(entry)[:200],
+                    (
+                        str(entry.get("command", ""))[:200]
+                        if isinstance(entry, dict)
+                        else str(entry)[:200]
+                    ),
                     "global limit exceeded",
                 )
                 break
@@ -758,7 +767,7 @@ def _merge_agent_hooks(hooks: dict, user_hooks: dict) -> dict:
                 len(matcher) > _MAX_MATCHER_LEN or not _SAFE_MATCHER_RE.match(matcher)
             ):
                 logger.warning(
-                    "agent_hooks[%s]: matcher contains disallowed characters or is too long, skipping",
+                    "agent_hooks[%s]: matcher contains disallowed characters or is too long, skipping",  # noqa: E501
                     event,
                 )
                 _sel_hook_rejected(event, entry["command"], "invalid matcher")
@@ -893,9 +902,7 @@ def _apply_user_agent_hooks(config: dict, pc_cfg: dict) -> None:
     discovered: dict[str, list[dict[str, str]]] = {}
     if autoimport_enabled:
         discovered = _autoimport_agent_hooks(hooks_dir)
-        requested_autoimport = sum(
-            len(v) for v in discovered.values() if isinstance(v, list)
-        )
+        requested_autoimport = sum(len(v) for v in discovered.values() if isinstance(v, list))
 
     if requested_explicit == 0 and requested_autoimport == 0:
         # Nothing to merge; keep config["hooks"] untouched (or create empty

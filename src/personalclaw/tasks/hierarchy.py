@@ -120,6 +120,7 @@ class HierarchyStore:
                 if not self._project_path(proj.id).exists():
                     self._write_project(proj)
             import shutil
+
             shutil.rmtree(old_dir, ignore_errors=True)
         # (3) fold a legacy Chore project into the new Personal name.
         for p in self._all_projects_raw():
@@ -161,7 +162,9 @@ class HierarchyStore:
 
     def list_projects(self) -> list[Project]:
         self.ensure_defaults()
-        return sorted(self._all_projects_raw(), key=lambda p: (not p.is_default_project(), p.name.lower()))
+        return sorted(
+            self._all_projects_raw(), key=lambda p: (not p.is_default_project(), p.name.lower())
+        )
 
     def get_project(self, project_id: str) -> Project | None:
         return self._read_project(self._project_path(project_id))
@@ -314,9 +317,10 @@ class HierarchyStore:
         if repeatable:
             project = self.find_or_create_project("Repeatable")
         elif project_id:
-            project = self.get_project(project_id)
-            if not project:
+            _p = self.get_project(project_id)
+            if not _p:
                 raise ValueError(f"no project with id '{project_id}'")
+            project = _p
         elif project_name:
             project = self.find_or_create_project(project_name)
         else:

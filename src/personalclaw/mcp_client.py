@@ -99,7 +99,9 @@ def _schema_numeric_kind(prop_schema: object) -> str | None:
     return None
 
 
-def _coerce_args_to_schema(arguments: dict[str, Any], input_schema: dict[str, Any] | None) -> dict[str, Any]:
+def _coerce_args_to_schema(
+    arguments: dict[str, Any], input_schema: dict[str, Any] | None
+) -> dict[str, Any]:
     """Coerce numeric-looking STRING args back to numbers per the tool's
     inputSchema. Only top-level properties are handled (nested object/array
     numerics are a known, accepted limitation). Non-string values, string-typed
@@ -200,7 +202,9 @@ class McpServerConn:
             self._breaker_until = time.monotonic() + _BREAKER_COOLDOWN_SECS
             logger.warning(
                 "MCP server '%s' tripped the spawn breaker after %d failures; "
-                "cooling down %.0fs", self.name, self._consecutive_failures,
+                "cooling down %.0fs",
+                self.name,
+                self._consecutive_failures,
                 _BREAKER_COOLDOWN_SECS,
             )
 
@@ -312,7 +316,8 @@ class McpServerConn:
                 McpToolSpec(
                     name=getattr(t, "name", ""),
                     description=getattr(t, "description", "") or "",
-                    input_schema=getattr(t, "inputSchema", None) or {"type": "object", "properties": {}},
+                    input_schema=getattr(t, "inputSchema", None)
+                    or {"type": "object", "properties": {}},
                 )
             )
         self._tools = tools
@@ -378,6 +383,7 @@ def _spec_hash(spec: dict[str, Any]) -> str:
     breaking any cross-process/cross-surface sharing that keys off this)."""
     import hashlib
     import json
+
     material = {
         "command": spec.get("command", ""),
         "args": spec.get("args", []),
@@ -469,8 +475,7 @@ class McpClientRegistry:
         demand by :meth:`get`. Removed servers — AND servers whose spec content
         changed (new content hash) — have their stale connections dropped."""
         self._specs = {
-            n: s for n, s in specs.items()
-            if isinstance(s, dict) and not s.get("disabled")
+            n: s for n, s in specs.items() if isinstance(s, dict) and not s.get("disabled")
         }
         # The set of keys that SHOULD exist for the current specs (canonical scope).
         want_canonical = {self._canonical_key(n) for n in self._specs}
@@ -583,7 +588,11 @@ def _personalclaw_mcp_specs() -> dict[str, dict[str, Any]]:
         logger.warning("Failed to read %s: %s", path, exc)
         return {}
     servers = data.get("mcpServers", {}) if isinstance(data, dict) else {}
-    return {k: v for k, v in servers.items() if isinstance(v, dict)} if isinstance(servers, dict) else {}
+    return (
+        {k: v for k, v in servers.items() if isinstance(v, dict)}
+        if isinstance(servers, dict)
+        else {}
+    )
 
 
 def get_mcp_client_registry() -> McpClientRegistry | None:
@@ -603,7 +612,7 @@ def get_mcp_client_registry() -> McpClientRegistry | None:
 
 
 def with_mcp_session_eviction(
-    prior: "Callable[[str], Awaitable[None]] | None",
+    prior: "Callable[[str], Awaitable[object]] | None",
 ) -> "Callable[[str], Awaitable[None]]":
     """Wrap a session-expire callback so it also evicts that session's per-session
     MCP connections (stateful servers). Composed onto the existing expire chain so
@@ -615,7 +624,9 @@ def with_mcp_session_eviction(
             try:
                 await prior(session_key)
             except Exception:
-                logger.warning("session-expire prior callback failed for %s", session_key, exc_info=True)
+                logger.warning(
+                    "session-expire prior callback failed for %s", session_key, exc_info=True
+                )
         try:
             if _registry is not None:
                 _registry.evict_session(session_key)

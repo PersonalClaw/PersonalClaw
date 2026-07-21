@@ -6,6 +6,7 @@ import tempfile
 
 import pytest
 
+from personalclaw.workflows.models import Workflow, WorkflowScope, WorkflowStep
 from personalclaw.workflows.native import (
     NativeWorkflowProvider,
     assemble_markdown,
@@ -13,7 +14,6 @@ from personalclaw.workflows.native import (
     parse_steps,
     slugify,
 )
-from personalclaw.workflows.models import Workflow, WorkflowScope, WorkflowStep
 
 
 def _prov() -> NativeWorkflowProvider:
@@ -42,8 +42,14 @@ def test_parse_steps_numbered_and_blockquote_instruction():
 
 def test_assemble_then_parse_roundtrips_steps():
     wf = Workflow(
-        id="wf-x", name="demo", description="d", scope=WorkflowScope.GLOBAL,
-        steps=[WorkflowStep(id="s1", title="A", instruction="do A"), WorkflowStep(id="s2", title="B")],
+        id="wf-x",
+        name="demo",
+        description="d",
+        scope=WorkflowScope.GLOBAL,
+        steps=[
+            WorkflowStep(id="s1", title="A", instruction="do A"),
+            WorkflowStep(id="s2", title="B"),
+        ],
     )
     md = assemble_markdown(wf)
     fm, body = parse_frontmatter(md)
@@ -65,8 +71,12 @@ def test_slugify():
 async def test_create_writes_workflow_md():
     prov = _prov()
     wf = await prov.create_workflow(
-        name="git-commit", description="flow", scope="workspace", scope_ref="/repo/a",
-        match_text="commit changes", tags=["git"],
+        name="git-commit",
+        description="flow",
+        scope="workspace",
+        scope_ref="/repo/a",
+        match_text="commit changes",
+        tags=["git"],
         steps=[{"title": "Test"}, {"title": "Commit", "instruction": "conventional"}],
     )
     assert wf.id.startswith("wf-")

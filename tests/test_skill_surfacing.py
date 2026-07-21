@@ -10,7 +10,9 @@ import personalclaw.skills.surfacing as surf
 from personalclaw.skills.surfacing import _EmbedCache, surface_skills
 
 
-def _skill(key: str, desc: str, triggers: str = "", *, always=False, use_count=0, path=None) -> dict:
+def _skill(
+    key: str, desc: str, triggers: str = "", *, always=False, use_count=0, path=None
+) -> dict:
     return {
         "key": key,
         "name": key,
@@ -80,31 +82,35 @@ class _StubEmbedder:
     def __call__(self, text: str):
         t = text.lower()
         # axis 0 = "billing", axis 1 = "shipping"
-        return [1.0 if "bill" in t or "invoice" in t or "charge" in t else 0.0,
-                1.0 if "ship" in t or "deliver" in t else 0.0]
+        return [
+            1.0 if "bill" in t or "invoice" in t or "charge" in t else 0.0,
+            1.0 if "ship" in t or "deliver" in t else 0.0,
+        ]
 
 
 def test_semantic_surfaces_paraphrase_keyword_misses(monkeypatch, tmp_path):
     monkeypatch.setattr(surf, "_active_embedder", lambda: (_StubEmbedder(), "stub:v1"))
     # triggers say "invoice"; query says "charge" — no keyword overlap, but both
     # embed onto the billing axis → semantic hit.
-    skills = [_skill("billing", "handle invoice questions", "invoice help",
-                     path=str(tmp_path / "b.md"))]
+    skills = [
+        _skill("billing", "handle invoice questions", "invoice help", path=str(tmp_path / "b.md"))
+    ]
     Path(skills[0]["path"]).write_text("x")
     cache = _EmbedCache(path=tmp_path / ".emb.json")
-    out = surface_skills("help me with this charge", skills, max_skills=3,
-                         semantic_threshold=0.9, embed_cache=cache)
+    out = surface_skills(
+        "help me with this charge", skills, max_skills=3, semantic_threshold=0.9, embed_cache=cache
+    )
     assert out == ["billing"]
 
 
 def test_semantic_off_topic_excluded(monkeypatch, tmp_path):
     monkeypatch.setattr(surf, "_active_embedder", lambda: (_StubEmbedder(), "stub:v1"))
-    skills = [_skill("shipping", "delivery tracking", "deliver track",
-                     path=str(tmp_path / "s.md"))]
+    skills = [_skill("shipping", "delivery tracking", "deliver track", path=str(tmp_path / "s.md"))]
     Path(skills[0]["path"]).write_text("x")
     cache = _EmbedCache(path=tmp_path / ".emb.json")
-    out = surface_skills("question about my invoice", skills, max_skills=3,
-                         semantic_threshold=0.9, embed_cache=cache)
+    out = surface_skills(
+        "question about my invoice", skills, max_skills=3, semantic_threshold=0.9, embed_cache=cache
+    )
     assert out == []  # billing query, shipping skill → orthogonal → no hit
 
 

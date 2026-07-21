@@ -61,8 +61,9 @@ async def api_providers_list(request: web.Request) -> web.Response:
             cred_status = "ok"
         else:
             try:
-                from personalclaw.llm.credentials import CredentialStore
                 from personalclaw.config.loader import config_dir
+                from personalclaw.llm.credentials import CredentialStore
+
                 store = CredentialStore(config_dir() / "credentials.json")
                 cred = store.resolve(entry.credential)
                 cred_status = "ok" if cred.secret else "missing"
@@ -76,13 +77,15 @@ async def api_providers_list(request: web.Request) -> web.Response:
         except Exception:
             capabilities = sorted(c.value for c in entry.declared_capabilities)
 
-        result.append({
-            "name": entry.name,
-            "type": entry.type,
-            "model": entry.model,
-            "capabilities": capabilities,
-            "credential_status": cred_status,
-        })
+        result.append(
+            {
+                "name": entry.name,
+                "type": entry.type,
+                "model": entry.model,
+                "capabilities": capabilities,
+                "credential_status": cred_status,
+            }
+        )
 
     return web.json_response({"providers": result})
 
@@ -115,14 +118,16 @@ async def api_provider_types(request: web.Request) -> web.Response:
             continue
         seen.add(ptype)
         manifest = ext.manifest
-        types.append({
-            "type": ptype,
-            "label": manifest.displayName or manifest.name,
-            "app": manifest.name,
-            "capabilities": list(cfg.capabilities),
-            "multiInstance": bool(cfg.multiInstance),
-            "settingsSchema": cfg.settingsSchema or {},
-        })
+        types.append(
+            {
+                "type": ptype,
+                "label": manifest.displayName or manifest.name,
+                "app": manifest.name,
+                "capabilities": list(cfg.capabilities),
+                "multiInstance": bool(cfg.multiInstance),
+                "settingsSchema": cfg.settingsSchema or {},
+            }
+        )
     types.sort(key=lambda t: t["label"].lower())
     return web.json_response({"types": types})
 
@@ -182,8 +187,7 @@ async def api_agent_providers_list(request: web.Request) -> web.Response:
     runtime_entries = [
         entry
         for entry in entries
-        if get_agent_provider_class("acp" if entry.type == "acp_agent" else entry.type)
-        is not None
+        if get_agent_provider_class("acp" if entry.type == "acp_agent" else entry.type) is not None
     ]
 
     # A runtime with a live warmed pool connection is provably ready — answer
@@ -212,12 +216,14 @@ async def api_agent_providers_list(request: web.Request) -> web.Response:
 
         # 1. Pool fast-path: a live warmed connection IS ready (no probe).
         if _pool is not None and _pool.is_warmed(entry.name):
-            return _row({
-                "ready": True,
-                "state": "ready",
-                "detail": "warmed (pooled live connection)",
-                "login_command": None,
-            })
+            return _row(
+                {
+                    "ready": True,
+                    "state": "ready",
+                    "detail": "warmed (pooled live connection)",
+                    "login_command": None,
+                }
+            )
         # 2. Cached probe result (covers not-pooled runtimes like codex without
         #    re-paying their slow handshake on every call). Skipped on ?refresh=1 so
         #    a just-signed-in CLI is re-probed instead of returning the stale state.
@@ -226,6 +232,15 @@ async def api_agent_providers_list(request: web.Request) -> web.Response:
             if hit and (_time.monotonic() - hit[0]) < _READINESS_TTL_SECS:
                 return _row(hit[1])
         # 3. Live probe (first hit / cache miss).
+        if cls is None:
+            return _row(
+                {
+                    "ready": False,
+                    "state": "error",
+                    "detail": f"no agent provider registered for family {family!r}",
+                    "login_command": None,
+                }
+            )
         try:
             status = await cls.probe_readiness(options)
             status_d = {
@@ -293,8 +308,12 @@ async def warm_readiness_cache() -> int:
                 "login_command": status.login_command,
             }
         except Exception as exc:  # noqa: BLE001
-            status_d = {"ready": False, "state": "error",
-                        "detail": f"probe failed: {exc}", "login_command": None}
+            status_d = {
+                "ready": False,
+                "state": "error",
+                "detail": f"probe failed: {exc}",
+                "login_command": None,
+            }
         _readiness_cache[entry.name] = (_time.monotonic(), status_d)
         # A ready runtime's FIRST discovery is a cold session/new (~15-20s). If we
         # only warm readiness, the chat picker's discovered section is still empty
@@ -569,7 +588,9 @@ async def api_provider_model_show(request: web.Request) -> web.Response:
 
     catalog = registry.build_catalog(entry)
     if not isinstance(catalog, ModelManager):
-        return web.json_response({"error": "Model detail not supported by this provider"}, status=400)
+        return web.json_response(
+            {"error": "Model detail not supported by this provider"}, status=400
+        )
 
     model = request.rel_url.query.get("model", "").strip()
     if not model:
@@ -593,7 +614,7 @@ async def api_provider_model_show(request: web.Request) -> web.Response:
 # ── /api/model-providers/{name}/pull ────────────────────────────────────────────────
 
 
-async def api_provider_model_pull(request: web.Request) -> web.Response:
+async def api_provider_model_pull(request: web.Request) -> web.StreamResponse:
     """POST /api/model-providers/{name}/pull — pull (download) a model.
 
     Body: {model: "<model_name>"}. Generic across provider types via the
@@ -615,7 +636,9 @@ async def api_provider_model_pull(request: web.Request) -> web.Response:
 
     catalog = registry.build_catalog(entry)
     if not isinstance(catalog, ModelManager):
-        return web.json_response({"error": "Model download not supported by this provider"}, status=400)
+        return web.json_response(
+            {"error": "Model download not supported by this provider"}, status=400
+        )
 
     try:
         body = await request.json()
@@ -640,6 +663,7 @@ async def api_provider_model_pull(request: web.Request) -> web.Response:
     # the pull_model generator (breaking the loop) closes its upstream connection,
     # which is what actually stops the provider-side download.
     import json as _json
+
     from aiohttp.client_exceptions import ClientConnectionResetError
 
     resp = web.StreamResponse(
@@ -678,7 +702,9 @@ async def api_provider_model_pull(request: web.Request) -> web.Response:
         # Close the async generator so its upstream connection is released (this is
         # what stops the provider-side download on client disconnect).
         with contextlib.suppress(Exception):
-            await pull.aclose()
+            aclose = getattr(pull, "aclose", None)
+            if aclose is not None:
+                await aclose()
     if cancelled:
         logger.info("Model pull of %r cancelled by client disconnect", model)
     with contextlib.suppress(Exception):
@@ -708,7 +734,9 @@ async def api_provider_model_delete(request: web.Request) -> web.Response:
 
     catalog = registry.build_catalog(entry)
     if not isinstance(catalog, ModelManager):
-        return web.json_response({"error": "Model deletion not supported by this provider"}, status=400)
+        return web.json_response(
+            {"error": "Model deletion not supported by this provider"}, status=400
+        )
 
     try:
         body = await request.json()
@@ -734,6 +762,7 @@ async def api_provider_model_delete(request: web.Request) -> web.Response:
 async def api_provider_create(request: web.Request) -> web.Response:
     """POST /api/model-providers — add a new model provider to config."""
     import json as _json
+
     from personalclaw.config.loader import config_path
     from personalclaw.dashboard.handlers.agents import _get_config_lock
 
@@ -758,15 +787,19 @@ async def api_provider_create(request: web.Request) -> web.Response:
     # (the model-provider-as-app model). Every model-provider type comes from an app
     # (ollama included); only ``acp_agent`` — an agent runtime, not a model provider —
     # is core-native.
-    from personalclaw.llm.registry import canonical_provider_type, get_default_registry as _gdr
+    from personalclaw.llm.registry import canonical_provider_type
+    from personalclaw.llm.registry import get_default_registry as _gdr
+
     _reg = _gdr()
     _canon = canonical_provider_type(ptype)
     _known = _canon in _reg._capabilities or _reg.catalog_of(_canon) is not None  # noqa: SLF001
     if not _known:
         _addable = sorted(set(_reg._capabilities) | set(_reg._catalog_factories))  # noqa: SLF001
         return web.json_response(
-            {"error": f"Unknown provider type {ptype!r}. Install its app first. "
-                      f"Currently registered: {_addable}"},
+            {
+                "error": f"Unknown provider type {ptype!r}. Install its app first. "
+                f"Currently registered: {_addable}"
+            },
             status=400,
         )
 
@@ -793,6 +826,7 @@ async def api_provider_create(request: web.Request) -> web.Response:
         canonical_provider_type,
         get_default_registry,
     )
+
     registry = get_default_registry()
     try:
         # Single source of truth for the branded-alias → base-type collapse (shared
@@ -831,6 +865,7 @@ def _refresh_media_registries() -> None:
     from personalclaw.stt.registry import refresh_providers as _stt_refresh
     from personalclaw.tts.registry import refresh_providers as _tts_refresh
     from personalclaw.video_gen.registry import refresh_providers as _vid_refresh
+
     _stt_refresh()
     _tts_refresh()
     _img_refresh()
@@ -839,6 +874,7 @@ def _refresh_media_registries() -> None:
     # so a newly added/edited endpoint gets its download card without a restart.
     try:
         from personalclaw.local_models.registry import register_config_model_managers
+
         register_config_model_managers()
     except Exception:
         pass
@@ -846,7 +882,9 @@ def _refresh_media_registries() -> None:
 
 async def api_provider_update(request: web.Request) -> web.Response:
     """PUT /api/model-providers/{name} — update a provider's model, endpoint, or options."""
+    import dataclasses as _dataclasses
     import json as _json
+
     from personalclaw.config.loader import config_path
     from personalclaw.dashboard.handlers.agents import _get_config_lock
 
@@ -884,11 +922,19 @@ async def api_provider_update(request: web.Request) -> web.Response:
         atomic_write(path, _json.dumps(data, indent=2) + "\n", fsync=True)
 
     from personalclaw.llm.registry import get_default_registry
+
     registry = get_default_registry()
     try:
         existing = registry.get_entry(name)
-        existing.model = target.get("model", existing.model)
-        existing.options = target.get("options", existing.options)
+        # ProviderEntry is a frozen dataclass — build a replacement and re-register
+        # (register_entry is idempotent-by-name, so drop the old one first).
+        updated = _dataclasses.replace(
+            existing,
+            model=target.get("model", existing.model),
+            options=target.get("options", existing.options),
+        )
+        registry.unregister_entry(name)
+        registry.register_entry(updated)
     except Exception:
         pass
 
@@ -899,6 +945,7 @@ async def api_provider_update(request: web.Request) -> web.Response:
 async def api_provider_delete(request: web.Request) -> web.Response:
     """DELETE /api/model-providers/{name} — remove a provider from config."""
     import json as _json
+
     from personalclaw.config.loader import config_path
     from personalclaw.dashboard.handlers.agents import _get_config_lock
 
@@ -920,6 +967,7 @@ async def api_provider_delete(request: web.Request) -> web.Response:
         atomic_write(path, _json.dumps(data, indent=2) + "\n", fsync=True)
 
     from personalclaw.llm.registry import get_default_registry
+
     registry = get_default_registry()
     try:
         registry.unregister_entry(name)
@@ -962,6 +1010,7 @@ async def api_provider_test(request: web.Request) -> web.Response:
     A provider type with no catalog registered (its app not loaded) reports a
     benign "no discovery" status rather than erroring."""
     import json as _json
+
     from personalclaw.config.loader import config_path
     from personalclaw.llm.registry import ProviderEntry, get_default_registry
 
@@ -973,7 +1022,11 @@ async def api_provider_test(request: web.Request) -> web.Response:
     entry = next((e for e in registry.list_entries() if e.name == name), None)
     if entry is None:
         try:
-            data = _json.loads(config_path().read_text(encoding="utf-8")) if config_path().exists() else {}
+            data = (
+                _json.loads(config_path().read_text(encoding="utf-8"))
+                if config_path().exists()
+                else {}
+            )
             p = next((p for p in data.get("providers", []) if p.get("name") == name), None)
             if not p:
                 return web.json_response({"error": "not found"}, status=404)
@@ -989,19 +1042,26 @@ async def api_provider_test(request: web.Request) -> web.Response:
     if catalog is None:
         # No discovery/connectivity probe for this provider (e.g. its app isn't
         # loaded, or it authenticates purely via environment/SDK chain).
-        return web.json_response({
-            "ok": True, "status": "no_probe",
-            "message": "No connectivity probe available for this provider type",
-        })
+        return web.json_response(
+            {
+                "ok": True,
+                "status": "no_probe",
+                "message": "No connectivity probe available for this provider type",
+            }
+        )
 
     result = await catalog.test_connection()
     if result.ok:
         msg = result.detail or (
             f"Connected — {result.model_count} model(s) available"
-            if result.model_count is not None else "Connected"
+            if result.model_count is not None
+            else "Connected"
         )
         return web.json_response({"ok": True, "status": "connected", "message": msg})
-    return web.json_response({
-        "ok": False, "status": "error",
-        "message": result.detail or "Connection test failed",
-    })
+    return web.json_response(
+        {
+            "ok": False,
+            "status": "error",
+            "message": result.detail or "Connection test failed",
+        }
+    )

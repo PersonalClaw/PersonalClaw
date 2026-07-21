@@ -17,9 +17,9 @@ from personalclaw.memory_record import MemoryKind, MemoryRecord, MemoryScope
 from personalclaw.memory_service import MemoryService
 from personalclaw.memory_vault import (
     MemoryVault,
-    render_record,
     _slug,
     _yaml_scalar,
+    render_record,
 )
 from personalclaw.vector_memory import VectorMemoryStore
 
@@ -43,6 +43,7 @@ def vault(service, tmp_path):
 
 
 # ── frontmatter is fence-proof (untrusted memory text) ───────────────────────
+
 
 def test_yaml_scalar_escapes_fence_breakers():
     # A value that tries to break the fence / forge keys is JSON-escaped inline.
@@ -70,10 +71,14 @@ def test_slug_is_stable_and_safe():
 
 # ── rendering derives links from real fields ─────────────────────────────────
 
+
 def test_render_episodic_links_session_and_tags():
     rec = MemoryRecord(
-        id="ep1", kind=MemoryKind.EPISODIC, text="deployed the migration",
-        conversation_id="sess-42", tags=["deploy", "infra"],
+        id="ep1",
+        kind=MemoryKind.EPISODIC,
+        text="deployed the migration",
+        conversation_id="sess-42",
+        tags=["deploy", "infra"],
     )
     note = render_record(rec)
     assert note.relpath == "episodic/ep1.md"
@@ -84,23 +89,31 @@ def test_render_episodic_links_session_and_tags():
 
 
 def test_render_supersession_link():
-    rec = MemoryRecord(id="fact.old", kind=MemoryKind.SEMANTIC, value="old",
-                       superseded_by="fact.new")
+    rec = MemoryRecord(
+        id="fact.old", kind=MemoryKind.SEMANTIC, value="old", superseded_by="fact.new"
+    )
     note = render_record(rec)
     assert "**Superseded by:** [[fact.new]]" in note.content
 
 
 def test_render_frontmatter_has_axes():
-    rec = MemoryRecord(id="pref.x", kind=MemoryKind.PREFERENCE, value="vim",
-                       scope=MemoryScope.GLOBAL, confidence=0.9, category="pref")
+    rec = MemoryRecord(
+        id="pref.x",
+        kind=MemoryKind.PREFERENCE,
+        value="vim",
+        scope=MemoryScope.GLOBAL,
+        confidence=0.9,
+        category="pref",
+    )
     note = render_record(rec)
     assert note.content.startswith("---\n")
     assert 'id: "pref.x"' in note.content
-    assert "kind: \"preference\"" in note.content
+    assert 'kind: "preference"' in note.content
     assert "confidence: 0.9" in note.content
 
 
 # ── sync is idempotent + incremental + prunes ────────────────────────────────
+
 
 def test_sync_writes_then_noop(vault, service):
     service.set_semantic("pref.editor", "vim", 0.9, "user_explicit")

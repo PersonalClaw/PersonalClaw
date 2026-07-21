@@ -34,7 +34,9 @@ _GEN_TIMEOUT_S = 180
 class OpenAIImageProvider(ImageGenProvider):
     """Generate/edit images via an OpenAI-Images-compatible hosted endpoint."""
 
-    def __init__(self, *, provider_name: str, provider_type: str = "", endpoint: str = "", api_key: str = "") -> None:
+    def __init__(
+        self, *, provider_name: str, provider_type: str = "", endpoint: str = "", api_key: str = ""
+    ) -> None:
         self._provider_name = provider_name
         self._provider_type = provider_type
         self._endpoint = endpoint
@@ -65,7 +67,8 @@ class OpenAIImageProvider(ImageGenProvider):
             return []
         return [
             ImageGenModel(
-                name=m.name, description=m.description,
+                name=m.name,
+                description=m.description,
                 sizes=list(m.extra.get("sizes", [])),
                 supports_edit=bool(m.extra.get("supports_edit", False)),
             )
@@ -98,10 +101,9 @@ class OpenAIImageProvider(ImageGenProvider):
         if not models:
             return []
         from personalclaw.image_gen.registry import active_image_gen
+
         resolved = active_image_gen()
-        active_model = (
-            resolved[1] if resolved and resolved[0].name == self._provider_name else ""
-        )
+        active_model = resolved[1] if resolved and resolved[0].name == self._provider_name else ""
         for m in models:
             m.downloaded = True
             m.active = m.name == active_model
@@ -123,7 +125,13 @@ class OpenAIImageProvider(ImageGenProvider):
         )
 
     async def generate(
-        self, prompt: str, *, model: str = "", size: str = "", n: int = 1, **opts: Any,
+        self,
+        prompt: str,
+        *,
+        model: str = "",
+        size: str = "",
+        n: int = 1,
+        **opts: Any,
     ) -> list[ImageResult]:
         client = self._client()
         model_id = self._default_model(model)
@@ -141,8 +149,15 @@ class OpenAIImageProvider(ImageGenProvider):
         return await self._await(_run, "generate")
 
     async def edit(
-        self, prompt: str, *, source_image: str, mask: str = "", model: str = "",
-        size: str = "", n: int = 1, **opts: Any,
+        self,
+        prompt: str,
+        *,
+        source_image: str,
+        mask: str = "",
+        model: str = "",
+        size: str = "",
+        n: int = 1,
+        **opts: Any,
     ) -> list[ImageResult]:
         client = self._client()
         model_id = self._default_model(model)
@@ -173,17 +188,23 @@ class OpenAIImageProvider(ImageGenProvider):
         try:
             import openai
         except ImportError as e:
-            raise ImageGenError("The openai SDK is not installed — cannot use remote image gen.") from e
+            raise ImageGenError(
+                "The openai SDK is not installed — cannot use remote image gen."
+            ) from e
         api_key = self._resolve_api_key()
         if not api_key:
-            raise ImageGenError(f"No API key configured for image provider {self._provider_name!r}.")
+            raise ImageGenError(
+                f"No API key configured for image provider {self._provider_name!r}."
+            )
         return openai.AsyncOpenAI(api_key=api_key, base_url=self._endpoint or None)
 
     async def _await(self, run: Any, op: str) -> list[ImageResult]:
         try:
             return await asyncio.wait_for(run(), timeout=_GEN_TIMEOUT_S)
         except asyncio.TimeoutError as e:
-            raise ImageGenError(f"Image {op} timed out for provider {self._provider_name!r}.") from e
+            raise ImageGenError(
+                f"Image {op} timed out for provider {self._provider_name!r}."
+            ) from e
         except ImageGenError:
             raise
         except Exception as e:  # noqa: BLE001 — normalize SDK/HTTP errors to a clean message
@@ -209,6 +230,7 @@ class OpenAIImageProvider(ImageGenProvider):
     @staticmethod
     async def _close(client: Any) -> None:
         import contextlib
+
         with contextlib.suppress(Exception):
             await client.close()
 

@@ -219,15 +219,19 @@ class SessionManager:
         # Fired with the session key just before an idle session is reset,
         # so a consumer (the consolidator) can extract skills from the ending
         # session. Wired at gateway startup to consolidator.consolidate_session.
-        self._on_session_expire: Callable[[str], Awaitable[None]] | None = None
+        self._on_session_expire: Callable[[str], Awaitable[object]] | None = None
         self._pool_started = False
         self._session_map = SessionMap()
-        self._active_dashboard_sessions: set[str] | None = None  # None = uninitialized; empty set = all tabs closed
+        self._active_dashboard_sessions: set[str] | None = (
+            None  # None = uninitialized; empty set = all tabs closed
+        )
 
         # ── Warm Pool ──
         self._pool_size: int = min(_MAX_POOL, max(0, cfg.session.pool_size))
         if cfg.session.pool_size > _MAX_POOL:
-            logger.warning("pool_size %d exceeds max %d, clamping", cfg.session.pool_size, _MAX_POOL)
+            logger.warning(
+                "pool_size %d exceeds max %d, clamping", cfg.session.pool_size, _MAX_POOL
+            )
         self._pool_agent: str = cfg.session.pool_agent or cfg.default_agent
         self._pool_ttl_secs: int = max(0, cfg.session.pool_ttl_secs)
         # Default cwd used by pool processes — matches the workspace-dir
@@ -269,14 +273,20 @@ class SessionManager:
             try:
                 await sess.provider.shutdown()
             except Exception:
-                logger.debug("Failed to shut down session %s on provider switch", key, exc_info=True)
+                logger.debug(
+                    "Failed to shut down session %s on provider switch", key, exc_info=True
+                )
         # Reset pool state so start_pool() actually refills
         self._pool_started = False
         if self._pool_health_task and not self._pool_health_task.done():
             self._pool_health_task.cancel()
             self._pool_health_task = None
         await self.start_pool(blocking=False)
-        logger.info("Provider factory reloaded: provider=%s, cleared %d sessions", cfg.agent.provider, len(stale))
+        logger.info(
+            "Provider factory reloaded: provider=%s, cleared %d sessions",
+            cfg.agent.provider,
+            len(stale),
+        )
 
     # ── Background Session ──
 
@@ -293,6 +303,7 @@ class SessionManager:
         self._pool_started = True
 
         if not blocking:
+
             async def _start_bg_and_pool() -> None:
                 await self._ensure_background()
                 await self._fill_warm_pool()
@@ -368,7 +379,8 @@ class SessionManager:
                 p = None
                 try:
                     p = self._provider_factory(
-                        "", agent=self._pool_agent or None,
+                        "",
+                        agent=self._pool_agent or None,
                         cwd=self._pool_cwd or None,
                     )
                     async with self._start_sem:
@@ -514,7 +526,7 @@ class SessionManager:
                 dialect=str(dialect) if dialect else None,
                 session_files_dir=_Path(str(sfd)) if sfd else None,
                 sandbox_mode=str(options.get("sandbox_mode") or "auto"),
-                extra_env=options.get("env") if isinstance(options.get("env"), dict) else None,
+                extra_env=(_env if isinstance((_env := options.get("env")), dict) else None),
                 session_key=key,
                 channel_id=channel_id,
                 model=model or "",
@@ -539,7 +551,9 @@ class SessionManager:
             logger.info("Opened concurrent ACP session for %s (runtime=%s)", key, provider_kind)
             return provider
         except Exception:
-            logger.debug("ACP concurrent open_session failed for %s — falling back", key, exc_info=True)
+            logger.debug(
+                "ACP concurrent open_session failed for %s — falling back", key, exc_info=True
+            )
             return None
 
     async def _drain_and_claim(self, agent: str | None) -> ModelProvider | None:
@@ -551,7 +565,11 @@ class SessionManager:
             # Check TTL (0 = disabled)
             age = time.monotonic() - spawn_time
             if self._pool_ttl_secs and age > self._pool_ttl_secs:
-                logger.warning("Warm pool: %.0fs old provider exceeds TTL %ds, discarding", age, self._pool_ttl_secs)
+                logger.warning(
+                    "Warm pool: %.0fs old provider exceeds TTL %ds, discarding",
+                    age,
+                    self._pool_ttl_secs,
+                )
                 discarded = True
                 try:
                     await provider.shutdown()
@@ -569,7 +587,9 @@ class SessionManager:
             alive = hasattr(provider, "is_process_alive") and provider.is_process_alive()
             if not alive:
                 rc = provider.exit_code if hasattr(provider, "exit_code") else None
-                logger.warning("Warm pool: claimed provider is dead (returncode=%s), discarding", rc)
+                logger.warning(
+                    "Warm pool: claimed provider is dead (returncode=%s), discarding", rc
+                )
                 discarded = True
                 try:
                     await provider.shutdown()
@@ -625,8 +645,12 @@ class SessionManager:
                 qsize = self._warm_pool.qsize()
                 if not qsize:
                     continue
-                logger.debug("Pool health: sweeping %d providers (target=%d, ttl=%ds)",
-                             qsize, self._pool_size, self._pool_ttl_secs)
+                logger.debug(
+                    "Pool health: sweeping %d providers (target=%d, ttl=%ds)",
+                    qsize,
+                    self._pool_size,
+                    self._pool_ttl_secs,
+                )
                 # Drain entire queue, keep healthy entries, discard the rest
                 healthy: list[tuple[ModelProvider, float]] = []
                 to_shutdown: list[ModelProvider] = []
@@ -642,18 +666,29 @@ class SessionManager:
                         if isinstance(pid, int):
                             self._pool_sweep_pids.add(pid)
                         if self._pool_ttl_secs and age > self._pool_ttl_secs:
-                            logger.warning("Pool health: %.0fs old provider (pid=%s) exceeds TTL %ds, discarding",
-                                           age, pid, self._pool_ttl_secs)
+                            logger.warning(
+                                "Pool health: %.0fs old provider (pid=%s) exceeds TTL %ds, discarding",  # noqa: E501
+                                age,
+                                pid,
+                                self._pool_ttl_secs,
+                            )
                             to_shutdown.append(provider)
                             continue
                         try:
-                            alive = hasattr(provider, "is_process_alive") and provider.is_process_alive()
+                            alive = (
+                                hasattr(provider, "is_process_alive")
+                                and provider.is_process_alive()
+                            )
                         except Exception:
                             alive = False
                         if not alive:
                             rc = provider.exit_code if hasattr(provider, "exit_code") else None
-                            logger.warning("Pool health: dead provider (pid=%s, returncode=%s, age=%.0fs), discarding",
-                                           pid, rc, age)
+                            logger.warning(
+                                "Pool health: dead provider (pid=%s, returncode=%s, age=%.0fs), discarding",  # noqa: E501
+                                pid,
+                                rc,
+                                age,
+                            )
                             to_shutdown.append(provider)
                             continue
                         logger.debug("Pool health: provider pid=%s alive (age=%.0fs)", pid, age)
@@ -679,7 +714,11 @@ class SessionManager:
                         self._pool_sweep_pids.clear()
                 removed = qsize - len(healthy)
                 if removed:
-                    logger.info("Pool health: removed %d dead/expired, %d healthy remain", removed, len(healthy))
+                    logger.info(
+                        "Pool health: removed %d dead/expired, %d healthy remain",
+                        removed,
+                        len(healthy),
+                    )
                     self._schedule_replenish()
                 else:
                     logger.debug("Pool health: all %d providers healthy", len(healthy))
@@ -866,6 +905,7 @@ class SessionManager:
         # Reuse an existing live session: acquire its per-session semaphore OUTSIDE
         # the global lock (a mid-turn session holds it, so this can block — which
         # must never happen under _lock, or all other get_or_create calls wedge).
+        provider: "ModelProvider | None"
         if reuse is not None:
             provider, was_new, sess = reuse
             await sess.semaphore.acquire()
@@ -879,8 +919,15 @@ class SessionManager:
 
         # Try warm pool first (no resume — pooled processes have no prior session)
         logger.info(
-            "Pool decision: key=%s resume_sid=%s model=%s agent=%s pool_size=%d pool_qsize=%d cwd=%s pool_cwd=%s",
-            key, resume_sid, model, agent, self._pool_size, self._warm_pool.qsize(), cwd, self._pool_cwd,
+            "Pool decision: key=%s resume_sid=%s model=%s agent=%s pool_size=%d pool_qsize=%d cwd=%s pool_cwd=%s",  # noqa: E501
+            key,
+            resume_sid,
+            model,
+            agent,
+            self._pool_size,
+            self._warm_pool.qsize(),
+            cwd,
+            self._pool_cwd,
         )
         # Only bypass pool for cwd if it's a user-chosen project that differs
         # from the default workspace dir (which pool processes already use).
@@ -902,11 +949,17 @@ class SessionManager:
                     provider.set_session_key(key, channel_id)
                     # Switch model post-claim if caller requested non-default
                     if model:
-                        _pool_model = self._resolve_agent_model(self._pool_agent) if self._pool_agent else None
+                        _pool_model = (
+                            self._resolve_agent_model(self._pool_agent)
+                            if self._pool_agent
+                            else None
+                        )
                         if model and _pool_model and model != _pool_model:
                             await provider.set_model(model)
                             logger.info("Pool post-claim: switched model to %s", model)
-                logger.info("Claimed warm-pool process for %s (agent=%s)", key, agent or self._pool_agent)
+                logger.info(
+                    "Claimed warm-pool process for %s (agent=%s)", key, agent or self._pool_agent
+                )
                 self._schedule_replenish()
             except (asyncio.CancelledError, Exception):
                 _sync_kill_provider(provider)
@@ -976,6 +1029,9 @@ class SessionManager:
 
         # Everything after start() must be wrapped so that a CancelledError
         # between start() and session registration doesn't orphan the process.
+        # Invariant: by here provider is set — either claimed from the ACP pool or
+        # cold-started via factory() above (both branches assign it).
+        assert provider is not None
         try:
             # Check if session was resumed
             resumed = False
@@ -1001,7 +1057,12 @@ class SessionManager:
                     # the lock is released — the winner's session may be mid-turn.
                     race_loser = sess
                 else:
-                    sess = _Session(provider=provider, is_new=False, approval_policy=approval_policy, agent=agent or "")
+                    sess = _Session(
+                        provider=provider,
+                        is_new=False,
+                        approval_policy=approval_policy,
+                        agent=agent or "",
+                    )
                     self._sessions[key] = sess
                     logger.info(
                         "New session: %s agent=%s resumed=%s (total=%d)",
@@ -1014,7 +1075,7 @@ class SessionManager:
                     # Save session mapping for long-lived sessions. session_id is an
                     # AgentProvider capability (ACP: the CLI's session UUID; native:
                     # its own id) — read it through the public accessor.
-                    _cwd_str = str(provider._work_dir) if hasattr(provider, '_work_dir') else ""
+                    _cwd_str = str(provider._work_dir) if hasattr(provider, "_work_dir") else ""
                     if not is_stateless and isinstance(provider, AgentProvider):
                         sid = provider.session_id
                         if sid:
@@ -1125,9 +1186,7 @@ class SessionManager:
             logger.info("Session %s context at %.0f%%", key, pct)
         return pct
 
-    def set_compact_callback(
-        self, cb: Callable[[str, float], Awaitable[None]] | None
-    ) -> None:
+    def set_compact_callback(self, cb: Callable[[str, float], Awaitable[None]] | None) -> None:
         """Register a callback fired after a session is compacted.
 
         The callback receives the session key and the context pct that
@@ -1136,14 +1195,10 @@ class SessionManager:
         auto-compaction.
         """
         if self._on_compacted is not None and cb is not None:
-            logger.warning(
-                "Compact callback already registered; replacing existing handler"
-            )
+            logger.warning("Compact callback already registered; replacing existing handler")
         self._on_compacted = cb
 
-    def set_session_expire_callback(
-        self, cb: Callable[[str], Awaitable[None]] | None
-    ) -> None:
+    def set_session_expire_callback(self, cb: Callable[[str], Awaitable[object]] | None) -> None:
         """Register a callback fired with the session key just before an idle
         session is reset. The consolidator wires this to ``consolidate_session``
         so an ending session gets one last skill-extraction pass before its
@@ -1240,7 +1295,9 @@ class SessionManager:
             from personalclaw.agents.provider import AgentProvider
 
             for key, sess in self._sessions.items():
-                _cwd_str = str(sess.provider._work_dir) if hasattr(sess.provider, '_work_dir') else ""
+                _cwd_str = (
+                    str(sess.provider._work_dir) if hasattr(sess.provider, "_work_dir") else ""
+                )
                 if isinstance(sess.provider, AgentProvider):
                     sid = sess.provider.session_id
                     if (
@@ -1327,7 +1384,9 @@ class SessionManager:
 
     # ── Message queue (channel thread serialization) ──
 
-    def enqueue(self, key: str, msg_ts: str, text: str, *, force: bool = False, **kwargs: object) -> bool:
+    def enqueue(
+        self, key: str, msg_ts: str, text: str, *, force: bool = False, **kwargs: object
+    ) -> bool:
         """Append a message to the session queue. Returns True if queued (session busy).
 
         If *force* is True, queue even when the semaphore isn't locked yet
@@ -1510,9 +1569,7 @@ class SessionManager:
 
     # ── Cancel ──
 
-    async def cancel_current(
-        self, key: str, *, wait_ack_timeout: float = 0.0
-    ) -> CancelOutcome:
+    async def cancel_current(self, key: str, *, wait_ack_timeout: float = 0.0) -> CancelOutcome:
         """Cancel the in-flight operation for *key* without destroying the session."""
         session = self._sessions.get(key)
         if not session:
@@ -1708,7 +1765,8 @@ class SessionManager:
                         )
                         if orphan_killed:
                             logger.warning(
-                                "Periodic sweep: killed %d orphaned ACP agent processes", orphan_killed
+                                "Periodic sweep: killed %d orphaned ACP agent processes",
+                                orphan_killed,
                             )
             except Exception:
                 logger.debug("Orphan PID sweep failed", exc_info=True)

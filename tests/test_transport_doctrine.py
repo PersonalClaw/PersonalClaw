@@ -32,9 +32,9 @@ def _read(rel: str) -> str:
 
 def test_state_has_no_global_sse_hub():
     """The dead global SSE hub + accessor must stay gone (M3)."""
-    assert not hasattr(state_mod.DashboardState, "sse_hub"), (
-        "global SSE hub removed in M3 — dashboard state rides the WebSocket"
-    )
+    assert not hasattr(
+        state_mod.DashboardState, "sse_hub"
+    ), "global SSE hub removed in M3 — dashboard state rides the WebSocket"
     # The per-resource campaign registry IS expected to remain.
     assert hasattr(state_mod.DashboardState, "loop_sse")
 
@@ -59,16 +59,16 @@ def test_no_global_api_stream_route():
     server_src = _read("src/personalclaw/dashboard/server.py")
     # The per-campaign /api/campaigns/{id}/stream is registered in its own
     # handler module, not here; the global /api/stream must be gone.
-    assert not re.search(r'add_get\(\s*["\']/api/stream["\']', server_src), (
-        "/api/stream (global SSE) was removed in M3"
-    )
+    assert not re.search(
+        r'add_get\(\s*["\']/api/stream["\']', server_src
+    ), "/api/stream (global SSE) was removed in M3"
 
 
 def test_useSSE_hook_deleted():
     """The dead, never-mounted useSSE.ts frontend hook must stay deleted (M3)."""
-    assert not (_ROOT / "web/src/hooks/useSSE.ts").exists(), (
-        "useSSE.ts was dead (never mounted) and removed in M3"
-    )
+    assert not (
+        _ROOT / "web/src/hooks/useSSE.ts"
+    ).exists(), "useSSE.ts was dead (never mounted) and removed in M3"
 
 
 def test_per_resource_sse_substrate_present():
@@ -98,7 +98,9 @@ def test_unified_loop_sse_events_are_all_registered_in_the_frontend():
     # Backend event names: direct loop_sse().publish(registry_key(..), "EVENT", ..) in
     # the handler (the action handler publishes a variable action ∈ start/pause/resume/
     # stop, added explicitly) + the watchdog's self._publish(loop_id, "EVENT", ..).
-    published = set(re.findall(r'loop_sse\(\)\.publish\(\s*registry_key\([^)]*\),\s*"([a-z_]+)"', handler))
+    published = set(
+        re.findall(r'loop_sse\(\)\.publish\(\s*registry_key\([^)]*\),\s*"([a-z_]+)"', handler)
+    )
     published |= set(re.findall(r'self\._publish\(\s*[a-zA-Z_.]+,\s*"([a-z_]+)"', watchdog))
     # The design kind (which uses THIS cockpit's useRunStream) publishes its phase-trail
     # advance through the cycle context — same drift class as the code kind's ctx.publish.
@@ -130,7 +132,9 @@ def test_code_cockpit_sse_events_are_all_registered_in_the_frontend():
     sdlc = _read("src/personalclaw/loop/kinds/sdlc.py")
     fe = _read("web/src/pages/loops/useRunStream.ts")
 
-    published = set(re.findall(r'loop_sse\(\)\.publish\(\s*registry_key\([^)]*\),\s*"([a-z_]+)"', handler))
+    published = set(
+        re.findall(r'loop_sse\(\)\.publish\(\s*registry_key\([^)]*\),\s*"([a-z_]+)"', handler)
+    )
     published |= set(re.findall(r'self\._publish\(\s*[a-zA-Z_.]+,\s*"([a-z_]+)"', watchdog))
     # The sdlc kind publishes its orchestration events through the cycle context.
     published |= set(re.findall(r'ctx\.publish\(\s*[a-zA-Z_.]+,\s*"([a-z_]+)"', sdlc))

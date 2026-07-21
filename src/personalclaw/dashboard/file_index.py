@@ -15,10 +15,19 @@ logger = logging.getLogger(__name__)
 # session working dir, each holding identical agent-internal memory files like
 # preferences.md) — it must never surface in the @-mention file picker, where it
 # floods results with hundreds of duplicates and crowds out real workspace files.
-_SKIP_DIRS = frozenset({
-    "node_modules", "__pycache__", "venv",
-    "dist", "build", "env", "out", "target", "_ext",
-})
+_SKIP_DIRS = frozenset(
+    {
+        "node_modules",
+        "__pycache__",
+        "venv",
+        "dist",
+        "build",
+        "env",
+        "out",
+        "target",
+        "_ext",
+    }
+)
 
 # Package/build caches that are NOT dot-prefixed and whose basename is too
 # generic to blanket-skip (``pkg``/``mod``/``go``). The Go module+build cache
@@ -33,8 +42,15 @@ _PKG_CACHE_SUFFIXES = ("/go/pkg",)
 # flood the @-mention picker with internal database/cache files. Matched by the
 # directory-name extension.
 _BUNDLE_EXTS = (
-    ".app", ".photoslibrary", ".musiclibrary", ".tvlibrary", ".aplibrary",
-    ".bundle", ".framework", ".xcodeproj", ".xcworkspace",
+    ".app",
+    ".photoslibrary",
+    ".musiclibrary",
+    ".tvlibrary",
+    ".aplibrary",
+    ".bundle",
+    ".framework",
+    ".xcodeproj",
+    ".xcworkspace",
 )
 
 
@@ -62,7 +78,9 @@ class FileIndex:
 
     def __init__(self, root: str) -> None:
         self.root = root
-        self._entries: list[tuple[str, str, str, int, int]] = []  # (path, name, relpath, size, mtime)
+        self._entries: list[tuple[str, str, str, int, int]] = (
+            []
+        )  # (path, name, relpath, size, mtime)
         self._task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._ready = asyncio.Event()
         self._truncated = False
@@ -104,10 +122,15 @@ class FileIndex:
             sc = scorer(query, fname, rel)
             if sc <= 0:
                 continue
-            hits.append({
-                "path": fpath, "name": fname,
-                "size": size, "mtime": mtime, "_score": sc,
-            })
+            hits.append(
+                {
+                    "path": fpath,
+                    "name": fname,
+                    "size": size,
+                    "mtime": mtime,
+                    "_score": sc,
+                }
+            )
         now = time.time()
         hits.sort(key=lambda r: (-r["_score"], len(r["name"]), now - r["mtime"]))
         return hits[:max_results]
@@ -116,15 +139,22 @@ class FileIndex:
         entries, truncated = await asyncio.to_thread(self._walk)
         self._entries = entries
         self._truncated = truncated
-        logger.debug("FileIndex rebuilt for %s: %d entries%s", self.root, len(entries), " (truncated)" if truncated else "")
+        logger.debug(
+            "FileIndex rebuilt for %s: %d entries%s",
+            self.root,
+            len(entries),
+            " (truncated)" if truncated else "",
+        )
 
     def _walk(self) -> tuple[list[tuple[str, str, str, int, int]], bool]:
         entries: list[tuple[str, str, str, int, int]] = []
         truncated = False
         for dirpath, dirnames, filenames in os.walk(self.root):
             dirnames[:] = [
-                d for d in dirnames
-                if not d.startswith(".") and d not in _SKIP_DIRS
+                d
+                for d in dirnames
+                if not d.startswith(".")
+                and d not in _SKIP_DIRS
                 and not is_pkg_cache_dir(os.path.join(dirpath, d))
             ]
             for fname in filenames:
@@ -140,7 +170,9 @@ class FileIndex:
                     st = os.stat(fpath)
                 except OSError:
                     continue
-                entries.append((fpath, fname, os.path.relpath(fpath, self.root), st.st_size, int(st.st_mtime)))
+                entries.append(
+                    (fpath, fname, os.path.relpath(fpath, self.root), st.st_size, int(st.st_mtime))
+                )
             if truncated:
                 break
         return entries, truncated

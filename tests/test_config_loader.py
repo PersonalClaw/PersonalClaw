@@ -20,10 +20,10 @@ from personalclaw.config.loader import (
     AgentProfile,
     AppConfig,
     DashboardConfig,
+    InboxConfig,
     MemoryConfig,
     MemoryStoreConfig,
     ResolvedBindings,
-    InboxConfig,
     SessionConfig,
     resolve_agent_bindings,
     resolve_memory_store_config,
@@ -428,18 +428,20 @@ class TestConfigLoaderProperties:
         flood). A genuinely bogus key must still be flagged (the diagnostic still works)."""
         data = {
             "meta": {"lastTouchedVersion": "0.1.0", "lastTouchedAt": "2026-06-25T00:00:00Z"},
-            "providers": [{"name": "Bedrock", "type": "bedrock", "options": {"region": "us-west-2"}}],
+            "providers": [
+                {"name": "Bedrock", "type": "bedrock", "options": {"region": "us-west-2"}}
+            ],
             "definitely_bogus_key": 1,
         }
         _, messages = _load_from_dict_with_logs(data)
         unrecognized = [m for m in messages if "unrecognized top-level keys" in m]
         joined = " ".join(unrecognized)
-        assert "meta" not in joined and "providers" not in joined, (
-            f"meta/providers must not be flagged: {unrecognized}"
-        )
-        assert "definitely_bogus_key" in joined, (
-            f"a genuinely unknown key must still be flagged: {messages}"
-        )
+        assert (
+            "meta" not in joined and "providers" not in joined
+        ), f"meta/providers must not be flagged: {unrecognized}"
+        assert (
+            "definitely_bogus_key" in joined
+        ), f"a genuinely unknown key must still be flagged: {messages}"
 
     # Feature: config-schema, Property 12: load() always returns valid AppConfig
     @given(
@@ -664,8 +666,12 @@ class TestAgentBindingsProperties:
             {},
             optional={
                 "description": st.text(min_size=0, max_size=30),
-                "episodic_max_results": st.one_of(st.just(None), st.integers(min_value=1, max_value=50)),
-                "history_max_days": st.one_of(st.just(None), st.integers(min_value=1, max_value=365)),
+                "episodic_max_results": st.one_of(
+                    st.just(None), st.integers(min_value=1, max_value=50)
+                ),
+                "history_max_days": st.one_of(
+                    st.just(None), st.integers(min_value=1, max_value=365)
+                ),
             },
         ),
     )
@@ -818,7 +824,9 @@ class TestAgentBindingsProperties:
             keys=_safe_name_st,
             values=st.fixed_dictionaries(
                 {
-                    "provider_agent": st.sampled_from(["personalclaw", "oncall-agent", "custom", ""]),
+                    "provider_agent": st.sampled_from(
+                        ["personalclaw", "oncall-agent", "custom", ""]
+                    ),
                     "default_dir": st.text(min_size=0, max_size=15),
                     "memory_store": _safe_name_st,
                 },
@@ -885,17 +893,19 @@ class TestEdgeCases:
         one-time migration, not a load-time-only mask. A user-created agent and the
         reserved system agents are untouched."""
         cfg_file = tmp_path / "config.json"
-        cfg_file.write_text(json.dumps({
-            "agents": {
-                "PersonalClaw": {"provider": "native"},
-                "my-helper": {"provider": "native"},          # user agent — keep
-                "personalclaw-autonomous": {"provider": "native"},  # retired — prune
-            },
-            "default_agent": "PersonalClaw",
-        }))
-        with unittest.mock.patch(
-            "personalclaw.config.loader.config_dir", return_value=tmp_path
-        ):
+        cfg_file.write_text(
+            json.dumps(
+                {
+                    "agents": {
+                        "PersonalClaw": {"provider": "native"},
+                        "my-helper": {"provider": "native"},  # user agent — keep
+                        "personalclaw-autonomous": {"provider": "native"},  # retired — prune
+                    },
+                    "default_agent": "PersonalClaw",
+                }
+            )
+        )
+        with unittest.mock.patch("personalclaw.config.loader.config_dir", return_value=tmp_path):
             cfg = AppConfig.load()
 
         # In-memory: retired gone, user + default kept, reserved seeded.
@@ -1033,7 +1043,9 @@ class TestMemoryConfigBehaviorFlags:
         assert cfg.memory.proactive_commitments_max_per_day == 7
 
     def test_auto_promote_flags_load(self) -> None:
-        cfg = _load_from_dict({"memory": {"auto_promote_enabled": False, "auto_promote_every_n": 9}})
+        cfg = _load_from_dict(
+            {"memory": {"auto_promote_enabled": False, "auto_promote_every_n": 9}}
+        )
         assert cfg.memory.auto_promote_enabled is False
         assert cfg.memory.auto_promote_every_n == 9
 

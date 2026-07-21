@@ -25,9 +25,9 @@ from personalclaw.llm.base import (
     LLMEvent,
     ModelProvider,
 )
-from personalclaw.llm.stream_tags import KIND_OUTSIDE, make_think_splitter
 from personalclaw.llm.credentials import Credential
 from personalclaw.llm.registry import CredentialMissing
+from personalclaw.llm.stream_tags import KIND_OUTSIDE, make_think_splitter
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ _DEFAULT_CONTEXT_WINDOW = 128_000
 
 
 # Model → context window tokens (loaded from shared JSON).
-from personalclaw.model_windows import model_context_window as _model_window
+from personalclaw.model_windows import model_context_window as _model_window  # noqa: E402
 
 
 class OpenAIProvider(ModelProvider):
@@ -109,7 +109,11 @@ class OpenAIProvider(ModelProvider):
                 cred = getattr(self._client, "api_key", "") or ""
                 models = await openai_compatible_list_models(self._base_url or "", cred)
                 chat = next(
-                    (m.id for m in models if "chat" in (m.capabilities or infer_capabilities(m.id))),
+                    (
+                        m.id
+                        for m in models
+                        if "chat" in (m.capabilities or infer_capabilities(m.id))
+                    ),
                     models[0].id if models else "",
                 )
                 if chat:
@@ -165,6 +169,7 @@ class OpenAIProvider(ModelProvider):
         # every provider supports it — on a 400 that mentions it, retry once
         # without it so the turn still streams (we just won't get a usage chunk).
         import openai  # noqa: PLC0415
+
         try:
             response = await self._client.chat.completions.create(**request_kwargs)
         except openai.BadRequestError as exc:
@@ -172,9 +177,7 @@ class OpenAIProvider(ModelProvider):
                 raise
             if "stream_options" not in str(exc) and "include_usage" not in str(exc):
                 raise
-            logger.info(
-                "Endpoint rejected stream_options; retrying without usage reporting"
-            )
+            logger.info("Endpoint rejected stream_options; retrying without usage reporting")
             request_kwargs.pop("stream_options", None)
             response = await self._client.chat.completions.create(**request_kwargs)
 
@@ -184,7 +187,7 @@ class OpenAIProvider(ModelProvider):
         # think tags passes through as plain text, so it's safe unconditionally.
         splitter = make_think_splitter()
         # Accumulators for tool-call deltas, keyed by tool_call_id.
-        tool_calls: dict[str, dict[str, str]] = {}
+        tool_calls: dict[str, dict[str, Any]] = {}
         emitted_tool_calls: set[str] = set()
         last_tool_call_id: str | None = None
 
@@ -348,6 +351,7 @@ class OpenAIProvider(ModelProvider):
         # every provider supports it — on a 400 that mentions it, retry once
         # without it so the turn still streams (we just won't get a usage chunk).
         import openai  # noqa: PLC0415
+
         try:
             response = await self._client.chat.completions.create(**request_kwargs)
         except openai.BadRequestError as exc:
@@ -355,16 +359,14 @@ class OpenAIProvider(ModelProvider):
                 raise
             if "stream_options" not in str(exc) and "include_usage" not in str(exc):
                 raise
-            logger.info(
-                "Endpoint rejected stream_options; retrying without usage reporting"
-            )
+            logger.info("Endpoint rejected stream_options; retrying without usage reporting")
             request_kwargs.pop("stream_options", None)
             response = await self._client.chat.completions.create(**request_kwargs)
 
         # See stream(): self-gating inline <think> splitter.
         splitter = make_think_splitter()
         # Accumulators for tool-call deltas, keyed by tool_call_id.
-        tool_calls: dict[str, dict[str, str]] = {}
+        tool_calls: dict[str, dict[str, Any]] = {}
         emitted_tool_calls: set[str] = set()
         last_tool_call_id: str | None = None
 
@@ -381,7 +383,11 @@ class OpenAIProvider(ModelProvider):
                     if text_delta:
                         for seg in splitter.feed(text_delta):
                             yield LLMEvent(
-                                kind=EVENT_TEXT_CHUNK if seg.kind == KIND_OUTSIDE else EVENT_THINKING_CHUNK,
+                                kind=(
+                                    EVENT_TEXT_CHUNK
+                                    if seg.kind == KIND_OUTSIDE
+                                    else EVENT_THINKING_CHUNK
+                                ),
                                 text=seg.text,
                             )
 
@@ -474,8 +480,10 @@ class OpenAIProvider(ModelProvider):
     async def embed(self, inputs: list[str]) -> list[list[float]]:
         """Return embedding vectors for ``inputs``.
 
-        The model defaults to ``text-embedding-3-small`` and can be
-        overridden via the ``embedding_model`` key in ``extra_options``.
+        The embedding model comes from the ``embedding_model`` key in
+        ``extra_options`` (threaded from the embedding use-case binding); it has no
+        vendor default (empty ⇒ the call errors clearly rather than sending an
+        OpenAI-specific id to a non-OpenAI compatible endpoint).
         """
         if not inputs:
             return []

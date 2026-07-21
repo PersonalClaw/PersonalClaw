@@ -62,11 +62,20 @@ def test_platform_owns_filesystem_shell_and_affordance():
 
 def test_app_categories_are_the_installable_entities():
     assert _names(BT.create_knowledge_tools_provider()) == {
-        "knowledge_search", "knowledge_create", "knowledge_get", "knowledge_update", "knowledge_stats",
+        "knowledge_search",
+        "knowledge_create",
+        "knowledge_get",
+        "knowledge_update",
+        "knowledge_stats",
     }
     assert _names(BT.create_inbox_tools_provider()) == {"post_to_inbox"}
     runs = _names(BT.create_project_tools_provider())
-    assert {"project_run_create", "project_run_start", "project_run_status", "project_run_list"} <= runs
+    assert {
+        "project_run_create",
+        "project_run_start",
+        "project_run_status",
+        "project_run_list",
+    } <= runs
 
 
 def test_category_map_covers_every_tool():

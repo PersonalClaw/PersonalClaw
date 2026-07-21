@@ -39,11 +39,14 @@ def home_patch(tmp_path):
     def fake_expanduser(p):
         return p.replace("~", str(tmp_path))
 
-    with patch("os.path.expanduser", side_effect=fake_expanduser), patch(
-        "os.path.realpath", side_effect=real_realpath
-    ), patch("pathlib.Path.home", return_value=tmp_path), patch(
-        "personalclaw.dashboard.handlers.files._dashboard_roots",
-        return_value=[("Test", str(tmp_path))],
+    with (
+        patch("os.path.expanduser", side_effect=fake_expanduser),
+        patch("os.path.realpath", side_effect=real_realpath),
+        patch("pathlib.Path.home", return_value=tmp_path),
+        patch(
+            "personalclaw.dashboard.handlers.files._dashboard_roots",
+            return_value=[("Test", str(tmp_path))],
+        ),
     ):
         yield tmp_path
 

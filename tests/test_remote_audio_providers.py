@@ -24,15 +24,32 @@ class TestOpenAIFamilyProviders:
     def test_filters_to_openai_family(self, tmp_path, monkeypatch):
         from personalclaw.providers import use_cases as uc
 
-        _write_config(tmp_path, [
-            {"name": "MyOpenAI", "type": "openai", "model": "gpt-4o",
-             "options": {"api_key": "sk-x", "endpoint": "https://api.openai.com/v1"}},
-            {"name": "LocalLlama", "type": "ollama", "model": "llama3",
-             "options": {"endpoint": "http://localhost:11434"}},
-            {"name": "Groqq", "type": "groq", "model": "whisper-large",
-             "options": {"api_key": "gsk-y"}},
-        ])
-        monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: tmp_path / "config.json")
+        _write_config(
+            tmp_path,
+            [
+                {
+                    "name": "MyOpenAI",
+                    "type": "openai",
+                    "model": "gpt-4o",
+                    "options": {"api_key": "sk-x", "endpoint": "https://api.openai.com/v1"},
+                },
+                {
+                    "name": "LocalLlama",
+                    "type": "ollama",
+                    "model": "llama3",
+                    "options": {"endpoint": "http://localhost:11434"},
+                },
+                {
+                    "name": "Groqq",
+                    "type": "groq",
+                    "model": "whisper-large",
+                    "options": {"api_key": "gsk-y"},
+                },
+            ],
+        )
+        monkeypatch.setattr(
+            "personalclaw.config.loader.config_path", lambda: tmp_path / "config.json"
+        )
 
         found = uc.openai_family_providers()
         names = {p["name"] for p in found}
@@ -43,7 +60,10 @@ class TestOpenAIFamilyProviders:
 
     def test_no_config_returns_empty(self, tmp_path, monkeypatch):
         from personalclaw.providers import use_cases as uc
-        monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: tmp_path / "missing.json")
+
+        monkeypatch.setattr(
+            "personalclaw.config.loader.config_path", lambda: tmp_path / "missing.json"
+        )
         assert uc.openai_family_providers() == []
 
 
@@ -52,16 +72,18 @@ class TestOpenAIFamilyProviders:
 
 class TestRemoteSttResolution:
     def test_active_stt_resolves_remote_provider(self, monkeypatch):
-        from personalclaw.stt import registry as sr
         from personalclaw.providers import use_cases as uc
+        from personalclaw.stt import registry as sr
 
         monkeypatch.setattr(sr, "_providers", {}, raising=False)
         monkeypatch.setattr(
-            uc, "openai_family_providers",
+            uc,
+            "openai_family_providers",
             lambda: [{"name": "MyOpenAI", "endpoint": "", "api_key": "sk-x"}],
         )
         monkeypatch.setattr(
-            uc, "active_model_refs",
+            uc,
+            "active_model_refs",
             lambda u: ["MyOpenAI:whisper-1"] if u == "stt" else [],
         )
 
@@ -76,8 +98,8 @@ class TestRemoteSttResolution:
         # provider into the stt registry (name "faster_whisper"). Simulate that here
         # (register a stand-in), then confirm active_stt() resolves the local binding
         # alongside the remote OpenAI-family adapter.
-        from personalclaw.stt import registry as sr
         from personalclaw.providers import use_cases as uc
+        from personalclaw.stt import registry as sr
 
         class _FakeWhisper:
             name = "faster_whisper"
@@ -85,11 +107,13 @@ class TestRemoteSttResolution:
 
         monkeypatch.setattr(sr, "_providers", {"faster_whisper": _FakeWhisper()}, raising=False)
         monkeypatch.setattr(
-            uc, "openai_family_providers",
+            uc,
+            "openai_family_providers",
             lambda: [{"name": "MyOpenAI", "endpoint": "", "api_key": "sk-x"}],
         )
         monkeypatch.setattr(
-            uc, "active_model_refs",
+            uc,
+            "active_model_refs",
             lambda u: ["faster-whisper:turbo"] if u == "stt" else [],
         )
 
@@ -108,12 +132,12 @@ class TestRemoteSttResolution:
 
         bundled = object()  # stands in for the app-registered faster-whisper provider
         remote = object()
-        monkeypatch.setattr(sr, "_providers", {"faster_whisper": bundled, "MyOpenAI": remote}, raising=False)
+        monkeypatch.setattr(
+            sr, "_providers", {"faster_whisper": bundled, "MyOpenAI": remote}, raising=False
+        )
         monkeypatch.setattr(sr, "_remote_names", {"MyOpenAI"}, raising=False)
         # No config providers → _ensure_registered re-adds nothing; refresh drops remote only.
-        monkeypatch.setattr(
-            "personalclaw.providers.use_cases.openai_family_providers", lambda: []
-        )
+        monkeypatch.setattr("personalclaw.providers.use_cases.openai_family_providers", lambda: [])
         sr.refresh_providers()
         assert sr._providers == {"faster_whisper": bundled}  # bundled survived
         assert sr._remote_names == set()
@@ -124,16 +148,18 @@ class TestRemoteSttResolution:
 
 class TestRemoteTtsResolution:
     def test_active_tts_resolves_remote_provider(self, monkeypatch):
-        from personalclaw.tts import registry as tr
         from personalclaw.providers import use_cases as uc
+        from personalclaw.tts import registry as tr
 
         monkeypatch.setattr(tr, "_providers", {}, raising=False)
         monkeypatch.setattr(
-            uc, "openai_family_providers",
+            uc,
+            "openai_family_providers",
             lambda: [{"name": "MyOpenAI", "endpoint": "", "api_key": "sk-x"}],
         )
         monkeypatch.setattr(
-            uc, "active_model_refs",
+            uc,
+            "active_model_refs",
             lambda u: ["MyOpenAI:tts-1"] if u == "tts" else [],
         )
 
@@ -144,13 +170,14 @@ class TestRemoteTtsResolution:
         assert voice_id == "tts-1"
 
     def test_active_voice_params_provider_neutral(self, monkeypatch):
-        from personalclaw.tts import registry as tr
         from personalclaw.providers import use_cases as uc
+        from personalclaw.tts import registry as tr
 
         prov = MagicMock()
         monkeypatch.setattr(tr, "active_tts", lambda: (prov, "tts-1"))
         monkeypatch.setattr(
-            uc, "load_use_case_settings",
+            uc,
+            "load_use_case_settings",
             lambda u: {"enabled": True, "auto_speak": True, "speed": 1.2, "speech_voice": "nova"},
         )
 
@@ -170,6 +197,7 @@ class TestOpenAISttProvider:
     @pytest.mark.asyncio
     async def test_unavailable_without_key(self):
         from personalclaw.stt.openai_provider import OpenAISttProvider
+
         prov = OpenAISttProvider(provider_name="X", endpoint="", api_key="")
         with patch.dict("os.environ", {}, clear=True):
             assert await prov.is_available() is False
@@ -204,6 +232,7 @@ class TestOpenAISttProvider:
         hosted models surface for binding via the config-provider catalog, not here."""
         from personalclaw.local_models.provider import LocalModelProvider
         from personalclaw.stt.openai_provider import OpenAISttProvider
+
         prov = OpenAISttProvider(provider_name="X", endpoint="", api_key="sk-x")
         assert not isinstance(prov, LocalModelProvider)
         assert not hasattr(prov, "list_models")
@@ -229,8 +258,11 @@ class TestOpenAITtsProvider:
         prov = OpenAITtsProvider(provider_name="X", endpoint="", api_key="sk-x")
         with patch.dict("sys.modules", {"openai": fake_openai}):
             result = await prov.synthesize(
-                "hello", voice="tts-1", output_path=str(out),
-                speech_voice="nova", speed=1.1,
+                "hello",
+                voice="tts-1",
+                output_path=str(out),
+                speech_voice="nova",
+                speed=1.1,
             )
         assert result == str(out)
         assert out.read_bytes() == b"ID3audio-bytes"
@@ -242,6 +274,7 @@ class TestOpenAITtsProvider:
     @pytest.mark.asyncio
     async def test_can_synthesize_requires_key(self):
         from personalclaw.tts.openai_provider import OpenAITtsProvider
+
         prov = OpenAITtsProvider(provider_name="X", endpoint="", api_key="")
         with patch.dict("os.environ", {}, clear=True):
             assert await prov.can_synthesize("tts-1") is False
@@ -261,11 +294,14 @@ class TestRemoteAudioEndpointGating:
         # than sending whisper-1 to the wrong service. (Model DISCOVERY for binding is
         # the config-provider catalog's job, not the adapter's — see the decoupling.)
         from personalclaw.stt.openai_provider import OpenAISttProvider
+
         audio = tmp_path / "a.wav"
         audio.write_bytes(b"RIFFxxxx")
         prov = OpenAISttProvider(
             provider_name="Alibaba",
-            endpoint="https://dashscope-intl.aliyuncs.com/compatible-mode/v1", api_key="k")
+            endpoint="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+            api_key="k",
+        )
         assert await prov.transcribe(str(audio)) is None
 
     def test_remote_tts_is_inference_only_no_management(self):
@@ -274,6 +310,7 @@ class TestRemoteAudioEndpointGating:
         axis for local backends (piper)."""
         from personalclaw.local_models.provider import LocalModelProvider
         from personalclaw.tts.openai_provider import OpenAITtsProvider
+
         prov = OpenAITtsProvider(provider_name="X", endpoint="", api_key="k")
         assert not isinstance(prov, LocalModelProvider)
         assert not hasattr(prov, "list_voices")
@@ -283,8 +320,11 @@ class TestRemoteAudioEndpointGating:
     @pytest.mark.asyncio
     async def test_tts_non_openai_unpinned_synthesize_refuses(self, tmp_path):
         from personalclaw.tts.openai_provider import OpenAITtsProvider
+
         prov = OpenAITtsProvider(
             provider_name="Alibaba",
-            endpoint="https://dashscope-intl.aliyuncs.com/compatible-mode/v1", api_key="k")
+            endpoint="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+            api_key="k",
+        )
         # No voice= (model) → must NOT default to tts-1 on a non-OpenAI endpoint.
         assert await prov.synthesize("hello", output_path=str(tmp_path / "o.mp3")) is None

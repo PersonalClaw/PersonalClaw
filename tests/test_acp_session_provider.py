@@ -145,6 +145,7 @@ async def test_cancel_acked_fire_and_forget():
 
 # ── double-gate + opener ─────────────────────────────────────────────────────
 
+
 def test_gate_off_when_flag_off_even_for_concurrent_dialect(monkeypatch):
     # the default dialect IS concurrent-capable, but with the runtime flag OFF the gate
     # is OFF (the one-session client path stays authoritative). Monkeypatch the flag off
@@ -181,7 +182,7 @@ def test_gate_on_only_when_both_true(monkeypatch):
     # The gate reads config via `from personalclaw.config import AppConfig` at call time,
     # so patch the class's load on the source module.
     monkeypatch.setattr(config_mod.AppConfig, "load", staticmethod(lambda: _Cfg()))
-    assert concurrent_sessions_enabled("default") is True   # capable dialect + flag on
+    assert concurrent_sessions_enabled("default") is True  # capable dialect + flag on
     assert concurrent_sessions_enabled("claude-code") is False  # flag on but dialect not capable
 
 

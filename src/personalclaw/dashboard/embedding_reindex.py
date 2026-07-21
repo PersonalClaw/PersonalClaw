@@ -54,9 +54,15 @@ class ReindexJob:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "id": self.id, "model": self.model, "status": self.status,
-            "phase": self.phase, "done": self.done, "total": self.total,
-            "knowledge": self.knowledge, "memory": self.memory, "error": self.error,
+            "id": self.id,
+            "model": self.model,
+            "status": self.status,
+            "phase": self.phase,
+            "done": self.done,
+            "total": self.total,
+            "knowledge": self.knowledge,
+            "memory": self.memory,
+            "error": self.error,
         }
 
 
@@ -100,8 +106,9 @@ class ReindexRegistry:
                 return run.job
         return None
 
-    def start(self, model: str, knowledge_store: Any, vector_store: Any,
-              embedder: Any, embed_fn: Any) -> tuple[ReindexJob | None, str | None]:
+    def start(
+        self, model: str, knowledge_store: Any, vector_store: Any, embedder: Any, embed_fn: Any
+    ) -> tuple[ReindexJob | None, str | None]:
         """Begin a re-index (or return the in-flight one).
 
         ``embedder`` (knowledge, exposes ``embed_for_item``) and ``embed_fn``
@@ -117,14 +124,16 @@ class ReindexRegistry:
         run = _Running(job=job)
         self._running[job.id] = run
         run.task = asyncio.ensure_future(
-            self._drive(run, knowledge_store, vector_store, embedder, embed_fn))
+            self._drive(run, knowledge_store, vector_store, embedder, embed_fn)
+        )
         return job, None
 
     def _publish(self, job: ReindexJob, event: str) -> None:
         self._sse.publish(registry_key(job.id), event, job.to_dict())
 
-    async def _drive(self, run: _Running, knowledge_store: Any, vector_store: Any,
-                     embedder: Any, embed_fn: Any) -> None:
+    async def _drive(
+        self, run: _Running, knowledge_store: Any, vector_store: Any, embedder: Any, embed_fn: Any
+    ) -> None:
         job = run.job
         try:
             # Tally total work up front for a determinate bar.
@@ -136,7 +145,8 @@ class ReindexRegistry:
 
             # Run the blocking SQLite + embedding work off the event loop.
             await asyncio.to_thread(
-                self._reindex_sync, run, knowledge_store, vector_store, embedder, embed_fn)
+                self._reindex_sync, run, knowledge_store, vector_store, embedder, embed_fn
+            )
 
             job.status = "done"
             job.phase = "done"
@@ -152,10 +162,12 @@ class ReindexRegistry:
         finally:
             self._running.pop(job.id, None)
 
-    def _reindex_sync(self, run: _Running, knowledge_store: Any, vector_store: Any,
-                      embedder: Any, embed_fn: Any) -> None:
+    def _reindex_sync(
+        self, run: _Running, knowledge_store: Any, vector_store: Any, embedder: Any, embed_fn: Any
+    ) -> None:
         """Blocking re-index of both stores. Publishes throttled progress frames."""
         job = run.job
+
         # Throttle SSE frames: publish at most every ~25 items (and on phase change).
         def _progress(done_in_phase: int, base: int) -> None:
             job.done = base + done_in_phase
@@ -168,8 +180,7 @@ class ReindexRegistry:
             job.phase = "reindexing knowledge"
             self._publish(job, "progress")
             knowledge_store.clear_embeddings()
-            res = knowledge_store.reembed_all(
-                embedder, on_progress=lambda d, _t: _progress(d, 0))
+            res = knowledge_store.reembed_all(embedder, on_progress=lambda d, _t: _progress(d, 0))
             job.knowledge = res.get("reembedded", 0)
             k_done = res.get("total", 0)
 
@@ -179,6 +190,5 @@ class ReindexRegistry:
             self._publish(job, "progress")
             vector_store.embed_fn = embed_fn
             vector_store.clear_embeddings()
-            res = vector_store.reembed_all(
-                on_progress=lambda d, _t: _progress(d, k_done))
+            res = vector_store.reembed_all(on_progress=lambda d, _t: _progress(d, k_done))
             job.memory = res.get("reembedded", 0)

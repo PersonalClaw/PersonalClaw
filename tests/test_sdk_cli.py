@@ -1,4 +1,5 @@
 """Tests for personalclaw.sdk.cli — SetupContext + DoctorLine contract (Plan 32)."""
+
 from personalclaw.sdk.cli import DoctorLine, SetupContext
 
 

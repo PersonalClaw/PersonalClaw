@@ -44,6 +44,7 @@ def slugify_goal(goal: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", goal.lower()).strip("-")[:48].strip("-")
     return slug or "intent"
 
+
 # Standard field types the matcher may emit; the UI renders each type-aware.
 FIELD_TYPES = ("string", "number", "boolean", "date", "url", "tags")
 
@@ -68,8 +69,11 @@ class Intent:
 
     def to_dict(self) -> dict:
         return {
-            "id": self.id, "goal": self.goal, "enabled": self.enabled,
-            "enabled_for": list(self.enabled_for), "propose_skill": self.propose_skill,
+            "id": self.id,
+            "goal": self.goal,
+            "enabled": self.enabled,
+            "enabled_for": list(self.enabled_for),
+            "propose_skill": self.propose_skill,
         }
 
     @classmethod
@@ -82,7 +86,8 @@ class Intent:
         # identically and the user never authors an id.
         intent_id = str(d.get("id") or "").strip() or slugify_goal(goal)
         return cls(
-            id=intent_id, goal=goal,
+            id=intent_id,
+            goal=goal,
             enabled=bool(d.get("enabled", True)),
             enabled_for=[str(t) for t in d.get("enabled_for", []) if isinstance(t, str)],
             propose_skill=bool(d.get("propose_skill")),
@@ -100,8 +105,10 @@ class IntentMatch:
 
     def to_dict(self) -> dict:
         return {
-            "intent_id": self.intent_id, "relevant": self.relevant,
-            "takeaway": self.takeaway, "fields": list(self.fields),
+            "intent_id": self.intent_id,
+            "relevant": self.relevant,
+            "takeaway": self.takeaway,
+            "fields": list(self.fields),
         }
 
 
@@ -143,7 +150,9 @@ class IntentStore:
 
     def upsert(self, intent: Intent) -> None:
         if not _ID_RE.match(intent.id):
-            raise ValueError(f"invalid intent id {intent.id!r} (lowercase/digits/hyphen, ≤49 chars)")
+            raise ValueError(
+                f"invalid intent id {intent.id!r} (lowercase/digits/hyphen, ≤49 chars)"
+            )
         intents = [i for i in self.load() if i.id != intent.id]
         intents.append(intent)
         self.save(intents)
@@ -166,11 +175,17 @@ def build_match_prompt(intent: Intent, content: str, *, max_chars: int = 12000) 
     capped content."""
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
-    return render_use_case_prompt("knowledge_intent_match", {
-        "goal": intent.goal,
-        "field_types": ", ".join(FIELD_TYPES),
-        "content": content[:max_chars],
-    }) or ""
+    return (
+        render_use_case_prompt(
+            "knowledge_intent_match",
+            {
+                "goal": intent.goal,
+                "field_types": ", ".join(FIELD_TYPES),
+                "content": content[:max_chars],
+            },
+        )
+        or ""
+    )
 
 
 def _coerce_fields(raw) -> list[dict]:
@@ -222,14 +237,19 @@ async def match_intent(
     if not isinstance(parsed, dict) or not parsed.get("relevant"):
         return None
     return IntentMatch(
-        intent_id=intent.id, relevant=True,
+        intent_id=intent.id,
+        relevant=True,
         takeaway=_redact(str(parsed.get("takeaway") or "")),
         fields=_coerce_fields(parsed.get("fields")),
     )
 
 
 async def run_intents(
-    intents: list[Intent], item_type: str, content: str, *, pool=None,
+    intents: list[Intent],
+    item_type: str,
+    content: str,
+    *,
+    pool=None,
 ) -> list[IntentMatch]:
     """Run every applicable intent against *content*. Returns the relevant matches.
 
@@ -245,6 +265,7 @@ async def run_intents(
     # sequential LLM calls (the intent stage is the per-item cost that grows with the
     # number of intents). The pool applies its own backpressure.
     import asyncio
+
     results = await asyncio.gather(
         *(match_intent(i, content, pool=pool) for i in applicable),
         return_exceptions=True,

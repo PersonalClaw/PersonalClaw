@@ -18,6 +18,7 @@ from personalclaw.providers import loader
 def _isolate(tmp_path, monkeypatch):
     """Isolate the apps config dir AND point BUNDLED_DIR at a tmp fixture tree."""
     import personalclaw.config.loader as cfg
+
     monkeypatch.setattr(cfg, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
 
@@ -31,7 +32,9 @@ def _native_manifest(root: Path, name: str, *, native: bool, provider: bool = Tr
     d = root / "native" / name
     d.mkdir(parents=True)
     mani: dict = {
-        "name": name, "version": "1.0.0", "displayName": name.title(),
+        "name": name,
+        "version": "1.0.0",
+        "displayName": name.title(),
         "description": f"{name} fixture",
     }
     if native:
@@ -108,7 +111,10 @@ def test_native_manifest_resyncs_from_source_on_restart(tmp_path):
     # Edit the SOURCE manifest (simulates a shipped manifest fix, e.g. a new field).
     src = tmp_path / "native" / "brave-search" / "app.json"
     mani = json.loads(src.read_text())
-    mani["provider"]["settingsSchema"] = {"type": "object", "properties": {"new_field": {"type": "string"}}}
+    mani["provider"]["settingsSchema"] = {
+        "type": "object",
+        "properties": {"new_field": {"type": "string"}},
+    }
     src.write_text(json.dumps(mani), encoding="utf-8")
 
     # Re-run seeding (a gateway restart) — not re-seeded, but manifest re-synced.
@@ -160,17 +166,25 @@ def test_ollama_migration_demotes_builtin_to_local(tmp_path):
     ollama_dir = tmp_path / "apps" / "ollama-models"
     ollama_dir.mkdir(parents=True)
     mani = {
-        "name": "ollama-models", "version": "1.0.0",
-        "displayName": "Ollama", "description": "local model runtime",
+        "name": "ollama-models",
+        "version": "1.0.0",
+        "displayName": "Ollama",
+        "description": "local model runtime",
         "provider": {"type": "model", "implementation": "provider:create_provider"},
     }
     (ollama_dir / "app.json").write_text(json.dumps(mani), encoding="utf-8")
     meta = {
-        "name": "ollama-models", "version": "1.0.0", "displayName": "Ollama",
-        "enabled": True, "installedAt": "2026-01-01T00:00:00Z",
+        "name": "ollama-models",
+        "version": "1.0.0",
+        "displayName": "Ollama",
+        "enabled": True,
+        "installedAt": "2026-01-01T00:00:00Z",
         "updatedAt": "2026-01-01T00:00:00Z",
-        "source": "builtin", "origin": "builtin",
-        "resources": "gateway", "lifecycle": "gateway", "schemaVersion": 2,
+        "source": "builtin",
+        "origin": "builtin",
+        "resources": "gateway",
+        "lifecycle": "gateway",
+        "schemaVersion": 2,
     }
     (ollama_dir / "installed.json").write_text(json.dumps(meta), encoding="utf-8")
 

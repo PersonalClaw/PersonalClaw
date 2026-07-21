@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-
 from chat_test_helpers import _make_app, _make_state
 
 
@@ -19,6 +18,7 @@ def _isolate_home(tmp_path, monkeypatch):
     in the sandbox (the ConversationLog already uses tmp_path via _make_state)."""
     import personalclaw.config.loader as cfg
     import personalclaw.session_workspace as ws
+
     monkeypatch.setattr(cfg, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(ws, "config_dir", lambda: tmp_path)
     return tmp_path
@@ -35,6 +35,7 @@ def _seed_persistent_chat(state):
     the way a real turn does (via _save_session_to_history, not just append+drain —
     append only updates the in-memory list)."""
     from personalclaw.dashboard.chat_persistence import _save_session_to_history
+
     session = state.get_or_create_session(name=None)
     session.append("user", "hello", "msg u0", broadcast=False)
     session.append("assistant", "hi there", "msg a0", broadcast=False)
@@ -48,6 +49,7 @@ async def test_delete_purges_history_file(tmp_path):
     state = _make_state(tmp_path)
     session = _seed_persistent_chat(state)
     from personalclaw.dashboard.chat_utils import _history_key_for
+
     hk = _history_key_for(session.key)
     assert state.conversation_log.has_log(hk), "precondition: history file exists"
 
@@ -67,6 +69,7 @@ async def test_delete_purges_tool_result_store(tmp_path):
     session = _seed_persistent_chat(state)
     from personalclaw.dashboard.chat_utils import _history_key_for
     from personalclaw.tool_providers import result_store
+
     hk = _history_key_for(session.key)
     # A retained raw tool result under the canonical (dashboard:-prefixed) key.
     rid = result_store.store_result(hk, "SECRET FILE CONTENTS", content_type="log", tool="bash")
@@ -110,6 +113,7 @@ async def test_delete_purges_disk_only_session(tmp_path):
     session = _seed_persistent_chat(state)
     from personalclaw.dashboard.chat_utils import _history_key_for
     from personalclaw.tool_providers import result_store
+
     hk = _history_key_for(session.key)
     key = session.key
     rid = result_store.store_result(hk, "SECRET", content_type="log", tool="bash")
@@ -150,6 +154,7 @@ async def test_cleanup_still_soft_archives(tmp_path):
     state = _make_state(tmp_path)
     from personalclaw.dashboard.chat_persistence import _save_session_to_history
     from personalclaw.dashboard.chat_utils import _history_key_for
+
     session = state.get_or_create_session(name=None)
     # Old timestamps so cleanup considers it stale (>1 day inactive).
     session.append("user", "hello", "msg u0", broadcast=False, ts="2020-01-01T00:00:00+00:00")

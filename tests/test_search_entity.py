@@ -10,6 +10,8 @@ import json
 
 import pytest
 
+from personalclaw.search_providers import registry as reg
+from personalclaw.search_providers import use_cases as uc
 from personalclaw.search_providers.base import (
     DEFAULT_DEPTH,
     FetchResult,
@@ -18,29 +20,43 @@ from personalclaw.search_providers.base import (
     SearchProvider,
     SearchResult,
 )
-from personalclaw.search_providers import registry as reg
-from personalclaw.search_providers import use_cases as uc
-
 
 # ── Fakes ─────────────────────────────────────────────────────────────────────
 
+
 class FakeSearch(SearchProvider):
-    def __init__(self, name="fake", *, available=True, caps=None, depths=("quick", "balanced", "deep")):
+    def __init__(
+        self, name="fake", *, available=True, caps=None, depths=("quick", "balanced", "deep")
+    ):
         self._name = name
         self._available = available
         self._caps = caps or SearchCapabilities(returns_content=True, depths=depths)
 
     @property
-    def name(self): return self._name
-    @property
-    def display_name(self): return self._name.title()
-    async def is_available(self): return self._available
-    def capabilities(self): return self._caps
+    def name(self):
+        return self._name
 
-    async def search(self, query, *, depth=DEFAULT_DEPTH, recency=None, domains=None, max_results=10):
+    @property
+    def display_name(self):
+        return self._name.title()
+
+    async def is_available(self):
+        return self._available
+
+    def capabilities(self):
+        return self._caps
+
+    async def search(
+        self, query, *, depth=DEFAULT_DEPTH, recency=None, domains=None, max_results=10
+    ):
         return SearchResult(
-            results=[SearchHit(url="https://example.com/a", title="A", snippet="s", raw_content="body")],
-            answer="", provider=self.name, query=query, depth=depth,
+            results=[
+                SearchHit(url="https://example.com/a", title="A", snippet="s", raw_content="body")
+            ],
+            answer="",
+            provider=self.name,
+            query=query,
+            depth=depth,
         )
 
 
@@ -63,12 +79,15 @@ def _isolate(monkeypatch, tmp_path):
 
 # ── Normalized shapes ───────────────────────────────────────────────────────
 
+
 def test_search_result_sources_dedup_in_order():
-    r = SearchResult(results=[
-        SearchHit(url="https://x.com/1"),
-        SearchHit(url="https://x.com/2"),
-        SearchHit(url="https://x.com/1"),  # dup
-    ])
+    r = SearchResult(
+        results=[
+            SearchHit(url="https://x.com/1"),
+            SearchHit(url="https://x.com/2"),
+            SearchHit(url="https://x.com/1"),  # dup
+        ]
+    )
     assert r.sources == ["https://x.com/1", "https://x.com/2"]
 
 
@@ -94,6 +113,7 @@ def test_fetch_result_includes_next_index_only_when_set():
 
 # ── Depth normalization ───────────────────────────────────────────────────────
 
+
 def test_normalize_depth_passes_supported():
     assert FakeSearch().normalize_depth("deep") == "deep"
 
@@ -109,11 +129,13 @@ def test_normalize_depth_uses_first_when_default_unsupported():
 
 def test_base_fetch_raises_when_unsupported():
     import asyncio
+
     with pytest.raises(NotImplementedError):
         asyncio.run(FakeSearch().fetch("https://x.com"))
 
 
 # ── Use-case store ────────────────────────────────────────────────────────────
+
 
 def test_set_and_load_binding_roundtrip():
     uc.set_active_search_provider("search-general", "tavily")
@@ -146,6 +168,7 @@ def test_load_normalizes_bare_string_value(monkeypatch, tmp_path):
 
 # ── Resolution ────────────────────────────────────────────────────────────────
 
+
 async def _resolve(use_case):
     return await reg.resolve_search_provider_for_use_case(use_case)
 
@@ -173,8 +196,8 @@ async def test_resolve_none_when_nothing_registered():
 
 @pytest.mark.asyncio
 async def test_resolve_fetch_article_prefers_fetch_capable():
-    reg.register_provider(FakeSearch("linksonly"))   # no supports_fetch
-    reg.register_provider(FetchCapable("fetcher"))    # supports_fetch
+    reg.register_provider(FakeSearch("linksonly"))  # no supports_fetch
+    reg.register_provider(FetchCapable("fetcher"))  # supports_fetch
     p = await _resolve("fetch-article")
     assert p.name == "fetcher"
 
@@ -208,5 +231,6 @@ def test_can_resolve_rejects_unknown_use_case():
 
 def test_resolve_unknown_use_case_raises():
     import asyncio
+
     with pytest.raises(ValueError):
         asyncio.run(reg.resolve_search_provider_for_use_case("nope"))

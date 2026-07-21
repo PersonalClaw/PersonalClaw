@@ -9,8 +9,8 @@ import pytest
 
 import personalclaw.heartbeat as hb_mod
 from personalclaw.acp.client import AcpClient
-from personalclaw.schedule import ScheduleJob, ScheduleService, make_agent_action
 from personalclaw.heartbeat import _HEADER, HeartbeatService
+from personalclaw.schedule import ScheduleJob, ScheduleService, make_agent_action
 
 
 async def _wait_for(predicate, timeout=5.0, interval=0.05):

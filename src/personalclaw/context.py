@@ -4,7 +4,7 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 from personalclaw.agent import _shipped_prompt
 from personalclaw.config.loader import AppConfig, memory_dir_for_cwd
@@ -16,8 +16,8 @@ from personalclaw.hooks import (
     safe_read_file,
 )
 from personalclaw.learn import LessonStore
-from personalclaw.schedule import get_local_tz
 from personalclaw.memory import MemoryStore
+from personalclaw.schedule import get_local_tz
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.skills import SkillsLoader
 
@@ -26,14 +26,18 @@ if TYPE_CHECKING:
     from personalclaw.history import ConversationLog
     from personalclaw.session import SessionManager
 
+
 def _path_home_pclaw():
     """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
     try:
         from personalclaw.config.loader import config_dir as _cd
+
         return _cd()
     except Exception:
         from pathlib import Path as _P
+
         return _P.home() / ".personalclaw"
+
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +85,7 @@ def _make_contradiction_judge():
     would fail) it returns False — keep both — so it never crashes a turn; the
     judge runs on the sync write paths (consolidation thread, CLI) where it can.
     """
+
     def _judge(new_rule: str, existing_rule: str) -> bool:
         import asyncio
 
@@ -98,8 +103,10 @@ def _make_contradiction_judge():
         if not prompt:
             return False
         try:
-            from personalclaw.llm_helpers import one_shot_completion
             import asyncio as _aio
+
+            from personalclaw.llm_helpers import one_shot_completion
+
             resp = _aio.run(one_shot_completion(prompt, use_case="background"))
             return "CONTRADICT" in resp.upper()
         except Exception:
@@ -107,6 +114,7 @@ def _make_contradiction_judge():
             return False
 
     return _judge
+
 
 # Cap injected context to avoid blowing the context window on first turn
 _MAX_CONTEXT_CHARS = 165_000  # ~55k tokens
@@ -116,45 +124,47 @@ _MAX_CONTEXT_CHARS = 165_000  # ~55k tokens
 #   "byte index 4096 is not a char boundary; it is inside '—'"
 # Workaround: replace common multi-byte punctuation with ASCII equivalents.
 # NOTE: truncate_safe workaround for ACP agent string slicing.
-_MULTIBYTE_TABLE = str.maketrans({
-    "\u2014": "--",  # em dash
-    "\u2013": "-",   # en dash
-    "\u2018": "'",   # left single quote
-    "\u2019": "'",   # right single quote
-    "\u201c": '"',   # left double quote
-    "\u201d": '"',   # right double quote
-    "\u2026": "...",  # ellipsis
-    "\u00a0": " ",   # non-breaking space
-    "\u2022": "-",   # bullet
-    "\u2192": "->",  # rightwards arrow (→) — ACP agent string slicing workaround
-    "\u2190": "<-",  # leftwards arrow (←)
-    "\u2194": "<->",  # left right arrow (↔)
-    "\u21d2": "=>",   # rightwards double arrow (⇒)
-    "\u2713": "[x]",  # check mark (✓)
-    "\u2717": "[ ]",  # ballot x (✗)
-    "\u00d7": "x",   # multiplication sign (×)
-    # Known gap: accented chars (e.g. \u00e9) and emoji are not replaced here.
-    # They are legitimate content; stripping them would be lossy. The real fix
-    # is the ACP agent truncate_safe behavior.
-})
+_MULTIBYTE_TABLE = str.maketrans(
+    {
+        "\u2014": "--",  # em dash
+        "\u2013": "-",  # en dash
+        "\u2018": "'",  # left single quote
+        "\u2019": "'",  # right single quote
+        "\u201c": '"',  # left double quote
+        "\u201d": '"',  # right double quote
+        "\u2026": "...",  # ellipsis
+        "\u00a0": " ",  # non-breaking space
+        "\u2022": "-",  # bullet
+        "\u2192": "->",  # rightwards arrow (→) — ACP agent string slicing workaround
+        "\u2190": "<-",  # leftwards arrow (←)
+        "\u2194": "<->",  # left right arrow (↔)
+        "\u21d2": "=>",  # rightwards double arrow (⇒)
+        "\u2713": "[x]",  # check mark (✓)
+        "\u2717": "[ ]",  # ballot x (✗)
+        "\u00d7": "x",  # multiplication sign (×)
+        # Known gap: accented chars (e.g. \u00e9) and emoji are not replaced here.
+        # They are legitimate content; stripping them would be lossy. The real fix
+        # is the ACP agent truncate_safe behavior.
+    }
+)
 
 # Soft per-component caps: each component is individually truncated to its
 # cap, then the assembled context is hard-truncated at _MAX_CONTEXT_CHARS.
 # No single component may exceed 30% of the hard cap to prevent any one
 # category from dominating. The sum of soft caps (~145k) is under the hard
 # cap (165k), so all components can coexist without silent truncation.
-_HISTORY_BUDGET_CHARS = 35_000   # thread history (fallback/truncated)
+_HISTORY_BUDGET_CHARS = 35_000  # thread history (fallback/truncated)
 _CROSS_TAB_BUDGET_CHARS = 6_000  # sibling dashboard sessions
 # Memory-injection per-section caps. These are the BASELINE (calibrated for a 200k-
 # token window); mem-adaptive-budget scales them proportionally to the resolved
 # model's context window (via _memory_caps) so a 1M-window model recalls more and a
 # 128k one less — clamped floor (the baseline) / ceiling (×5).
-_MEMORY_PREFS_CAP = 4_000        # user preferences
-_MEMORY_PROJECTS_CAP = 6_000     # active projects
-_MEMORY_HISTORY_CAP = 25_000     # daily history (multi-tier decay)
-_LESSONS_CAP = 35_000            # learned corrections (high priority)
-_SEMANTIC_MEMORY_CAP = 12_000    # structured key-value facts (vector memory)
-_EPISODIC_MEMORY_CAP = 12_000    # relevant past conversation fragments (vector memory)
+_MEMORY_PREFS_CAP = 4_000  # user preferences
+_MEMORY_PROJECTS_CAP = 6_000  # active projects
+_MEMORY_HISTORY_CAP = 25_000  # daily history (multi-tier decay)
+_LESSONS_CAP = 35_000  # learned corrections (high priority)
+_SEMANTIC_MEMORY_CAP = 12_000  # structured key-value facts (vector memory)
+_EPISODIC_MEMORY_CAP = 12_000  # relevant past conversation fragments (vector memory)
 _PER_MESSAGE_CAP = 8_000  # truncate individual messages on fallback path
 
 # The window the baseline caps were calibrated for + the max multiple we scale to.
@@ -162,7 +172,15 @@ _BASELINE_WINDOW = 200_000
 _MAX_BUDGET_MULTIPLE = 5.0
 
 
-def _memory_caps(context_window: int | None) -> dict[str, int]:
+class _MemoryCaps(TypedDict):
+    prefs_cap: int
+    projects_cap: int
+    history_cap: int
+    semantic_cap: int
+    episodic_cap: int
+
+
+def _memory_caps(context_window: int | None) -> _MemoryCaps:
     """Per-section memory caps scaled to the resolved model window (mem-adaptive-budget).
 
     Baseline caps are calibrated for a 200k window; scale linearly by
@@ -180,11 +198,10 @@ def _memory_caps(context_window: int | None) -> dict[str, int]:
         "episodic_cap": int(_EPISODIC_MEMORY_CAP * mult),
     }
 
+
 # Strip Mode Identity blocks from injected context so cross-tab or history
 # content from a different mode doesn't override the current prompt's identity.
-_MODE_IDENTITY_RE = re.compile(
-    r"## 🔒 Mode Identity.*?(?=\n## |\Z)", re.DOTALL
-)
+_MODE_IDENTITY_RE = re.compile(r"## 🔒 Mode Identity.*?(?=\n## |\Z)", re.DOTALL)
 _COMPRESSED_HISTORY_CAP = 45_000  # budget for LLM-compressed thread summary
 
 
@@ -192,9 +209,7 @@ _STOP_EVENT_CAP = 3  # max recent stop events to inject into LLM context
 _STOP_EVENT_RESOLVED_STATES = frozenset({"stopped", "stop_failed_reset"})
 
 
-def _build_stop_event_notes(
-    conversation_log: "ConversationLog", session_key: str
-) -> str:
+def _build_stop_event_notes(conversation_log: "ConversationLog", session_key: str) -> str:
     """Render recent resolved stop_events as short system notes for LLM context."""
     # Bound the scan: only the last _STOP_EVENT_CAP stop events matter,
     # and stop events from hundreds of turns ago are not actionable context.
@@ -275,7 +290,12 @@ def _prompt_use_case_for(session_key: str | None, explicit: str = "") -> str:
         return "code"
     if sk.startswith("loop:") or sk.startswith("loop_") or sk.startswith("campaign"):
         return "goal_loop"
-    if sk == "_bg" or sk.startswith("cron:") or sk.startswith("cron_") or sk.startswith("subagent:"):
+    if (
+        sk == "_bg"
+        or sk.startswith("cron:")
+        or sk.startswith("cron_")
+        or sk.startswith("subagent:")
+    ):
         return "background"
     return explicit or "chat"
 
@@ -767,16 +787,15 @@ class ContextBuilder:
                 render_snippet_block(
                     "agent-runtime-identity",
                     {"agent_label": agent_label, "runtime": runtime},
-                ) + "\n\n"
+                )
+                + "\n\n"
             )
 
         # Workspace identity — personalclaw-only (custom agents don't use workspaces).
         # The workspace IS the working directory; memory is scoped to it.
         if not is_custom:
             ws_path = cwd or "(none)"
-            parts.append(
-                render_snippet_block("workspace-identity", {"ws_path": ws_path}) + "\n\n"
-            )
+            parts.append(render_snippet_block("workspace-identity", {"ws_path": ws_path}) + "\n\n")
 
         # Thread conversation history — highest priority context.
         # Use pre-computed LLM compression when available; fall back to truncation.
@@ -794,9 +813,7 @@ class ContextBuilder:
                 )
                 parts.append(_history_header + compressed_history + "\n[End of thread history]\n\n")
             else:
-                recent = self.conversation_log.recent(
-                    session_key, roles={"user", "assistant"}
-                )
+                recent = self.conversation_log.recent(session_key, roles={"user", "assistant"})
                 logger.info(
                     "🔍 build_session_context: session_key=%s resumed=%s "
                     "conv_log_entries=%d (fallback truncation)",
@@ -836,9 +853,7 @@ class ContextBuilder:
         # Stop event context — inject notes for recent stop events so the
         # LLM knows prior turns were cancelled by the user.
         if session_key and self.conversation_log:
-            _stop_notes = _build_stop_event_notes(
-                self.conversation_log, session_key
-            )
+            _stop_notes = _build_stop_event_notes(self.conversation_log, session_key)
             if _stop_notes:
                 parts.append(_stop_notes)
 
@@ -933,7 +948,12 @@ class ContextBuilder:
                 parts.append(lessons_ctx)
 
         # Cross-tab context (dashboard only, skipped for temporary sessions)
-        if session_key and self.conversation_log and session_key.startswith("dashboard:") and not blocks_reads:
+        if (
+            session_key
+            and self.conversation_log
+            and session_key.startswith("dashboard:")
+            and not blocks_reads
+        ):
             cross = self.conversation_log.recent_from_source(
                 "dashboard:", exclude_key=session_key, max_messages=10
             )
@@ -953,7 +973,8 @@ class ContextBuilder:
                     parts.append(
                         render_snippet_block(
                             "cross-tab-context", {"cross_lines": "\n".join(cross_lines)}
-                        ) + "\n\n"
+                        )
+                        + "\n\n"
                     )
 
         # Provenance-tagged entries from recent sessions (skipped for temporary)
@@ -1070,7 +1091,8 @@ class ContextBuilder:
                 parts.append(
                     render_snippet_block(
                         "agent-system-prompt-wrapper", {"agent_prompt": agent_prompt}
-                    ) + "\n\n"
+                    )
+                    + "\n\n"
                 )
             session_ctx = self.build_session_context(
                 session_key,
@@ -1088,7 +1110,8 @@ class ContextBuilder:
                 parts.append(
                     render_snippet_block(
                         "session-context-wrapper", {"session_context": session_ctx}
-                    ) + "\n\n"
+                    )
+                    + "\n\n"
                 )
 
         # Channel history — inject on every message for group channel context
@@ -1115,7 +1138,8 @@ class ContextBuilder:
                         "thread_ts": thread_ts,
                         "thread_parent_text": thread_parent_text or "",
                     },
-                ) + "\n\n"
+                )
+                + "\n\n"
             )
 
         # Trust ACP native history for follow-up messages — do NOT inject
@@ -1196,7 +1220,7 @@ class ContextBuilder:
                 ]
                 by_key = {s["key"]: s for s in self.skills.list_skills()}
                 for name in triggered:
-                    desc = (by_key.get(name, {}).get("description") or name)
+                    desc = by_key.get(name, {}).get("description") or name
                     index_lines.append(f"- {name}: {desc}")
                 index_lines.append("[End of skill index]")
                 parts.append("\n".join(index_lines) + "\n\n")
@@ -1252,7 +1276,10 @@ class ContextBuilder:
                     emitted_wf.add(match.workflow.id)
                     logger.info(
                         "Surfaced workflow %s (scope=%s score=%.2f method=%s)",
-                        match.workflow.name, match.scope.value, match.score, match.method,
+                        match.workflow.name,
+                        match.scope.value,
+                        match.score,
+                        match.method,
                     )
                 # Force-included workflows (goal-loop planner/quorum): the loop's
                 # confirmed workflow_ids inject ACTIVELY every cycle, by id, on top
@@ -1272,7 +1299,9 @@ class ContextBuilder:
                     for wid in force_workflow_ids:
                         wf = by_id.get(wid)
                         if wf and wf.id not in emitted_wf:
-                            m = WorkflowMatch(workflow=wf, score=1.0, scope=wf.scope, method="forced")
+                            m = WorkflowMatch(
+                                workflow=wf, score=1.0, scope=wf.scope, method="forced"
+                            )
                             parts.append(render_injection(m, all_wf) + "\n\n")
                             emitted_wf.add(wf.id)
                             forced_wf.append(wf.name)
@@ -1313,7 +1342,7 @@ class ContextBuilder:
         if _is_dashboard:
             parts.append(
                 "\n\n[WIDGETS] You can render rich HTML inline using "
-                "<widget title=\"Title\">HTML</widget> tags. Tailwind CSS is available. "
+                '<widget title="Title">HTML</widget> tags. Tailwind CSS is available. '
                 "The widget iframe inherits the dashboard's active theme: use "
                 "var(--bg), var(--text), var(--card), var(--border), var(--accent), "
                 "var(--muted), var(--ok), var(--warn), var(--danger) (or Tailwind "

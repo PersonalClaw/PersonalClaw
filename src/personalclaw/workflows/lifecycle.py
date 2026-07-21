@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def with_session_workflow_cleanup(
-    prior: Callable[[str], Awaitable[None]] | None,
+    prior: Callable[[str], Awaitable[object]] | None,
 ) -> Callable[[str], Awaitable[None]]:
     """Wrap a session-expire callback so it also sweeps session-scoped workflows.
 
@@ -29,7 +29,9 @@ def with_session_workflow_cleanup(
             try:
                 await prior(session_key)
             except Exception:
-                logger.warning("session-expire prior callback failed for %s", session_key, exc_info=True)
+                logger.warning(
+                    "session-expire prior callback failed for %s", session_key, exc_info=True
+                )
         try:
             from personalclaw.workflows.registry import delete_session_workflows
 

@@ -21,6 +21,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from personalclaw.tool_providers import result_store
 from personalclaw.tool_providers.base import (
     RiskLevel,
     ToolDefinition,
@@ -28,7 +29,6 @@ from personalclaw.tool_providers.base import (
     ToolResult,
 )
 from personalclaw.tool_providers.projection import project_and_retain, project_output
-from personalclaw.tool_providers import result_store
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +60,13 @@ _CURRENT_PROJECT_ID: contextvars.ContextVar[str] = contextvars.ContextVar(
 )
 
 
-def bind_tool_context(*, cwd: Path | str | None, agent: str = "", extra_roots: list | None = None,
-                      project_id: str = ""):
+def bind_tool_context(
+    *,
+    cwd: Path | str | None,
+    agent: str = "",
+    extra_roots: list | None = None,
+    project_id: str = "",
+):
     """Bind the per-turn workspace context for native tool dispatch; returns a
     list of reset tokens the caller restores after the call. Called by the native
     runtime in ``_invoke`` so the registry-singleton category providers resolve
@@ -76,9 +81,13 @@ def bind_tool_context(*, cwd: Path | str | None, agent: str = "", extra_roots: l
 
 
 def reset_tool_context(tokens) -> None:
-    for var, tok in zip(
-        (_CURRENT_CWD, _CURRENT_AGENT, _CURRENT_EXTRA_ROOTS, _CURRENT_PROJECT_ID), tokens or []
-    ):
+    _vars: tuple[contextvars.ContextVar, ...] = (
+        _CURRENT_CWD,
+        _CURRENT_AGENT,
+        _CURRENT_EXTRA_ROOTS,
+        _CURRENT_PROJECT_ID,
+    )
+    for var, tok in zip(_vars, tokens or []):
         try:
             var.reset(tok)
         except (ValueError, LookupError):
@@ -98,24 +107,40 @@ def current_project_id() -> str:
 # default (categories=None) surfaces everything (tests, direct construction).
 _CATEGORY_OF: dict[str, str] = {
     # filesystem (platform, always-on, cwd-coupled)
-    "read_file": "filesystem", "write_file": "filesystem", "edit_file": "filesystem",
-    "list_dir": "filesystem", "glob": "filesystem", "grep": "filesystem", "repo_map": "filesystem",
+    "read_file": "filesystem",
+    "write_file": "filesystem",
+    "edit_file": "filesystem",
+    "list_dir": "filesystem",
+    "glob": "filesystem",
+    "grep": "filesystem",
+    "repo_map": "filesystem",
     # shell (platform, always-on, cwd-coupled)
     "bash": "shell",
     # core/runtime affordance (platform, always-on) — the projection retrieval tool
     "tool_result_get": "core",
     # knowledge (installable app)
-    "knowledge_search": "knowledge", "knowledge_create": "knowledge", "knowledge_get": "knowledge",
-    "knowledge_update": "knowledge", "knowledge_stats": "knowledge",
+    "knowledge_search": "knowledge",
+    "knowledge_create": "knowledge",
+    "knowledge_get": "knowledge",
+    "knowledge_update": "knowledge",
+    "knowledge_stats": "knowledge",
     # tasks (installable app) — the Project→TaskList→Task CONTAINER hierarchy.
-    "task_create": "tasks", "task_list": "tasks", "task_get": "tasks", "task_update": "tasks",
-    "task_ready": "tasks", "task_search": "tasks", "project_create": "tasks",
-    "project_list": "tasks", "task_list_create": "tasks",
+    "task_create": "tasks",
+    "task_list": "tasks",
+    "task_get": "tasks",
+    "task_update": "tasks",
+    "task_ready": "tasks",
+    "task_search": "tasks",
+    "project_create": "tasks",
+    "project_list": "tasks",
+    "task_list_create": "tasks",
     # projects (installable app) — autonomous project RUNS (loops: code/goal/general/
     # design/research). Loops were absorbed into the uber Project feature; the agent
     # operates them through one cohesive project_run_* set.
-    "project_run_create": "projects", "project_run_start": "projects",
-    "project_run_status": "projects", "project_run_list": "projects",
+    "project_run_create": "projects",
+    "project_run_start": "projects",
+    "project_run_status": "projects",
+    "project_run_list": "projects",
     # inbox (installable app)
     "post_to_inbox": "inbox",
 }
@@ -134,8 +159,11 @@ APP_CATEGORY_PROVIDERS: dict[str, tuple[str, str]] = {
 _MAX_READ_BYTES = 256 * 1024  # cap a single read to keep context bounded
 # Shared with the MCP tool adapter (the app) via projection.DEFAULT_TOOL_OUTPUT_CAP so
 # every tool surface projects at the same threshold — one source of truth.
-from personalclaw.tool_providers.projection import DEFAULT_TOOL_OUTPUT_CAP as _MAX_OUTPUT_CHARS
-_BASH_TIMEOUT = 120.0       # default bash timeout when the agent doesn't set one
+from personalclaw.tool_providers.projection import (  # noqa: E402
+    DEFAULT_TOOL_OUTPUT_CAP as _MAX_OUTPUT_CHARS,
+)
+
+_BASH_TIMEOUT = 120.0  # default bash timeout when the agent doesn't set one
 # Agent-settable bash timeout ceiling. The agent runs its own tests/builds via bash
 # (no dedicated run_tests/diagnostics tools), so a slow suite needs headroom beyond
 # the 120s default — but a hard cap keeps a background turn from wedging forever.
@@ -177,9 +205,13 @@ def _kn_title(item: dict) -> str:
 def _kn_snippet(item: dict, limit: int = 160) -> str:
     """Best one-line snippet: prefer a summary, then the link/description, then body."""
     insights = item.get("insights") or {}
-    for cand in (item.get("summary"), item.get("ai_summary"),
-                 insights.get("summary") if isinstance(insights, dict) else None,
-                 item.get("url_description"), item.get("content")):
+    for cand in (
+        item.get("summary"),
+        item.get("ai_summary"),
+        insights.get("summary") if isinstance(insights, dict) else None,
+        item.get("url_description"),
+        item.get("content"),
+    ):
         text = (cand or "").strip()
         if text:
             return text[:limit].replace("\n", " ")
@@ -189,7 +221,9 @@ def _kn_snippet(item: dict, limit: int = 160) -> str:
 def _enrich_in_background(item_id: str) -> None:
     """Fire-and-forget the ingestion node-graph for an agent-created/updated item."""
     from personalclaw.knowledge import (
-        get_knowledge_embedder, get_knowledge_llm_pool, get_knowledge_store,
+        get_knowledge_embedder,
+        get_knowledge_llm_pool,
+        get_knowledge_store,
     )
     from personalclaw.knowledge.pipeline.runner import ingest_item
 
@@ -199,7 +233,8 @@ def _enrich_in_background(item_id: str) -> None:
             # created via the UI (the gateway's ingest queue embeds; this direct path
             # must too, else agent-authored knowledge is keyword-only forever).
             await ingest_item(
-                get_knowledge_store(), item_id,
+                get_knowledge_store(),
+                item_id,
                 embedder=get_knowledge_embedder(),
                 insights_pool=get_knowledge_llm_pool(),
             )
@@ -238,11 +273,17 @@ def _ok_capped(
     # project_and_retain returns the projection outcome (truncated/original_length)
     # in meta, so we project exactly once.
     proj_text, meta = project_and_retain(
-        text, session_key=session_key, content_type=content_type, cap=limit,
+        text,
+        session_key=session_key,
+        content_type=content_type,
+        cap=limit,
     )
     return ToolResult(
-        success=True, output=proj_text, truncated=bool(meta.get("truncated")),
-        original_length=meta.get("original_length"), metadata=meta,
+        success=True,
+        output=proj_text,
+        truncated=bool(meta.get("truncated")),
+        original_length=meta.get("original_length"),
+        metadata=meta,
     )
 
 
@@ -263,11 +304,28 @@ class NativeBuiltinToolProvider(ToolProvider):
 
     # VCS / vendored / build dirs that grep + repo_map skip — searching them is
     # slow and floods results with deps, lockfiles, and build output.
-    _SKIP_DIRS = frozenset({
-        ".git", "node_modules", "__pycache__", ".venv", "venv", "env", "dist",
-        "build", ".next", "target", ".mypy_cache", ".pytest_cache", "vendor",
-        ".idea", ".tox", ".cache", "coverage", ".gradle",
-    })
+    _SKIP_DIRS = frozenset(
+        {
+            ".git",
+            "node_modules",
+            "__pycache__",
+            ".venv",
+            "venv",
+            "env",
+            "dist",
+            "build",
+            ".next",
+            "target",
+            ".mypy_cache",
+            ".pytest_cache",
+            "vendor",
+            ".idea",
+            ".tox",
+            ".cache",
+            "coverage",
+            ".gradle",
+        }
+    )
 
     def __init__(
         self,
@@ -327,6 +385,7 @@ class NativeBuiltinToolProvider(ToolProvider):
     @property
     def _session_key(self) -> str:
         from personalclaw import mcp_core
+
         return mcp_core.get_current_session_key() or self._session_key_inst
 
     @property
@@ -367,43 +426,87 @@ class NativeBuiltinToolProvider(ToolProvider):
     def _all_tool_defs(self, s: dict) -> list[ToolDefinition]:
         return [
             ToolDefinition(
-                name="read_file", provider=self.name, requires_approval=False,
+                name="read_file",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.SAFE,
-                description="Read a UTF-8 text file from the workspace. Args: path (str), optional max_bytes (int).",
-                parameters={**s, "properties": {"path": {"type": "string"}, "max_bytes": {"type": "integer"}}, "required": ["path"]},
+                description="Read a UTF-8 text file from the workspace. Args: path (str), optional max_bytes (int).",  # noqa: E501
+                parameters={
+                    **s,
+                    "properties": {"path": {"type": "string"}, "max_bytes": {"type": "integer"}},
+                    "required": ["path"],
+                },
             ),
             ToolDefinition(
-                name="write_file", provider=self.name, requires_approval=True,
+                name="write_file",
+                provider=self.name,
+                requires_approval=True,
                 risk_level=RiskLevel.CAUTION,
-                description="Create or overwrite a text file in the workspace. Args: path (str), content (str).",
-                parameters={**s, "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]},
+                description="Create or overwrite a text file in the workspace. Args: path (str), content (str).",  # noqa: E501
+                parameters={
+                    **s,
+                    "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+                    "required": ["path", "content"],
+                },
             ),
             ToolDefinition(
-                name="edit_file", provider=self.name, requires_approval=True,
+                name="edit_file",
+                provider=self.name,
+                requires_approval=True,
                 risk_level=RiskLevel.CAUTION,
-                description="Replace old_str with new_str in a file. old_str must match EXACTLY ONCE (include surrounding context to make it unique) — if it matches multiple times the edit is rejected unless replace_all is true. Args: path, old_str, new_str, replace_all (optional, default false).",
-                parameters={**s, "properties": {"path": {"type": "string"}, "old_str": {"type": "string"}, "new_str": {"type": "string"}, "replace_all": {"type": "boolean"}}, "required": ["path", "old_str", "new_str"]},
+                description="Replace old_str with new_str in a file. old_str must match EXACTLY ONCE (include surrounding context to make it unique) — if it matches multiple times the edit is rejected unless replace_all is true. Args: path, old_str, new_str, replace_all (optional, default false).",  # noqa: E501
+                parameters={
+                    **s,
+                    "properties": {
+                        "path": {"type": "string"},
+                        "old_str": {"type": "string"},
+                        "new_str": {"type": "string"},
+                        "replace_all": {"type": "boolean"},
+                    },
+                    "required": ["path", "old_str", "new_str"],
+                },
             ),
             ToolDefinition(
-                name="list_dir", provider=self.name, requires_approval=False,
+                name="list_dir",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.SAFE,
                 description="List entries in a workspace directory. Args: path (str, default '.').",
                 parameters={**s, "properties": {"path": {"type": "string"}}},
             ),
             ToolDefinition(
-                name="glob", provider=self.name, requires_approval=False,
+                name="glob",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.SAFE,
-                description="Find files matching a glob pattern under the workspace. Args: pattern (str, e.g. '**/*.py').",
-                parameters={**s, "properties": {"pattern": {"type": "string"}}, "required": ["pattern"]},
+                description="Find files matching a glob pattern under the workspace. Args: pattern (str, e.g. '**/*.py').",  # noqa: E501
+                parameters={
+                    **s,
+                    "properties": {"pattern": {"type": "string"}},
+                    "required": ["pattern"],
+                },
             ),
             ToolDefinition(
-                name="grep", provider=self.name, requires_approval=False,
+                name="grep",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.SAFE,
-                description="Search file contents (substring by default, or a Python regex with regex=true). Skips .git/node_modules/venv/build dirs. Args: query (str), optional glob (str), optional regex (bool), optional max_results (int).",
-                parameters={**s, "properties": {"query": {"type": "string"}, "glob": {"type": "string"}, "regex": {"type": "boolean"}, "max_results": {"type": "integer"}}, "required": ["query"]},
+                description="Search file contents (substring by default, or a Python regex with regex=true). Skips .git/node_modules/venv/build dirs. Args: query (str), optional glob (str), optional regex (bool), optional max_results (int).",  # noqa: E501
+                parameters={
+                    **s,
+                    "properties": {
+                        "query": {"type": "string"},
+                        "glob": {"type": "string"},
+                        "regex": {"type": "boolean"},
+                        "max_results": {"type": "integer"},
+                    },
+                    "required": ["query"],
+                },
             ),
             ToolDefinition(
-                name="repo_map", provider=self.name, requires_approval=False,
+                name="repo_map",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.SAFE,
                 description=(
                     "Structural map of the workspace codebase — the directory tree plus the "
@@ -411,29 +514,43 @@ class NativeBuiltinToolProvider(ToolProvider):
                     "so you can orient WITHOUT reading every file. Args: optional path (str, "
                     "subdir to map, default the whole workspace), optional max_files (int)."
                 ),
-                parameters={**s, "properties": {"path": {"type": "string"}, "max_files": {"type": "integer"}}},
+                parameters={
+                    **s,
+                    "properties": {"path": {"type": "string"}, "max_files": {"type": "integer"}},
+                },
             ),
             ToolDefinition(
-                name="bash", provider=self.name, requires_approval=True,
+                name="bash",
+                provider=self.name,
+                requires_approval=True,
                 risk_level=RiskLevel.DESTRUCTIVE,
                 description=(
                     "Run a shell command in the workspace — your PRIMARY way to interact with the "
                     "environment. Use it for git (status/diff/branch/commit — push is blocked), "
                     "running tests (pytest, npm test, go test, cargo test, make test), linters/"
                     "type-checkers (ruff, eslint, tsc, go vet), builds, package managers, and any "
-                    "standard CLI. Prefer real commands over asking for a dedicated tool. Runs in a "
+                    "standard CLI. Prefer real commands over asking for a dedicated tool. Runs in a "  # noqa: E501
                     "login shell at the workspace root; stdout+stderr are merged and the exit code "
                     "is reported. Sandboxed + credential/exfiltration deny-list enforced. Args: "
                     "command (str), optional timeout (int seconds, default 120, max 600 — raise it "
                     "for a slow test suite or build)."
                 ),
-                parameters={**s, "properties": {
-                    "command": {"type": "string"},
-                    "timeout": {"type": "integer", "description": "Seconds before the command is killed (default 120, max 600)."},
-                }, "required": ["command"]},
+                parameters={
+                    **s,
+                    "properties": {
+                        "command": {"type": "string"},
+                        "timeout": {
+                            "type": "integer",
+                            "description": "Seconds before the command is killed (default 120, max 600).",  # noqa: E501
+                        },
+                    },
+                    "required": ["command"],
+                },
             ),
             ToolDefinition(
-                name="post_to_inbox", provider=self.name, requires_approval=False,
+                name="post_to_inbox",
+                provider=self.name,
+                requires_approval=False,
                 # CAUTION: surfaces an outward message to the user (a bounded
                 # side-effect — a store write + WS broadcast), not a read.
                 risk_level=RiskLevel.CAUTION,
@@ -444,20 +561,32 @@ class NativeBuiltinToolProvider(ToolProvider):
                     "('notification'|'question'|'fyi', default 'notification'; 'question' asks "
                     "for a reply), optional context (str — why/what you used)."
                 ),
-                parameters={**s, "properties": {
-                    "message": {"type": "string"},
-                    "kind": {"type": "string", "enum": ["notification", "question", "fyi"]},
-                    "context": {"type": "string"},
-                }, "required": ["message"]},
+                parameters={
+                    **s,
+                    "properties": {
+                        "message": {"type": "string"},
+                        "kind": {"type": "string", "enum": ["notification", "question", "fyi"]},
+                        "context": {"type": "string"},
+                    },
+                    "required": ["message"],
+                },
             ),
             ToolDefinition(
-                name="knowledge_search", provider=self.name, requires_approval=False,
+                name="knowledge_search",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.SAFE,
-                description="Search the user's knowledge library (notes, bookmarks, docs). Args: query (str), optional limit (int, default 8).",
-                parameters={**s, "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["query"]},
+                description="Search the user's knowledge library (notes, bookmarks, docs). Args: query (str), optional limit (int, default 8).",  # noqa: E501
+                parameters={
+                    **s,
+                    "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+                    "required": ["query"],
+                },
             ),
             ToolDefinition(
-                name="knowledge_create", provider=self.name, requires_approval=False,
+                name="knowledge_create",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.CAUTION,
                 description=(
                     "Add an item to the user's knowledge library. Args: type "
@@ -466,43 +595,56 @@ class NativeBuiltinToolProvider(ToolProvider):
                     "optional tags (list of str), optional gist_language (str — the "
                     "code language for a gist, e.g. 'python')."
                 ),
-                parameters={**s, "properties": {
-                    "type": {"type": "string"},
-                    "title": {"type": "string"},
-                    "content": {"type": "string"},
-                    "url": {"type": "string"},
-                    "tags": {"type": "array", "items": {"type": "string"}},
-                    "gist_language": {"type": "string"},
-                }},
+                parameters={
+                    **s,
+                    "properties": {
+                        "type": {"type": "string"},
+                        "title": {"type": "string"},
+                        "content": {"type": "string"},
+                        "url": {"type": "string"},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                        "gist_language": {"type": "string"},
+                    },
+                },
             ),
             ToolDefinition(
-                name="knowledge_get", provider=self.name, requires_approval=False,
+                name="knowledge_get",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.SAFE,
-                description="Fetch one knowledge item by id (title, type, content, tags, summary). Args: id (str).",
+                description="Fetch one knowledge item by id (title, type, content, tags, summary). Args: id (str).",  # noqa: E501
                 parameters={**s, "properties": {"id": {"type": "string"}}, "required": ["id"]},
             ),
             ToolDefinition(
-                name="knowledge_update", provider=self.name, requires_approval=False,
+                name="knowledge_update",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.CAUTION,
                 description=(
                     "Update an existing knowledge item and re-enrich it. Args: id (str, required), "
                     "and any of title (str), content (str), tags (list of str), url (str), "
                     "gist_language (str — only for gist items; sets the code language for syntax "
-                    "highlighting), is_pinned (bool), is_archived (bool). Editing content/url re-runs extraction."
+                    "highlighting), is_pinned (bool), is_archived (bool). Editing content/url re-runs extraction."  # noqa: E501
                 ),
-                parameters={**s, "properties": {
-                    "id": {"type": "string"},
-                    "title": {"type": "string"},
-                    "content": {"type": "string"},
-                    "url": {"type": "string"},
-                    "tags": {"type": "array", "items": {"type": "string"}},
-                    "gist_language": {"type": "string"},
-                    "is_pinned": {"type": "boolean"},
-                    "is_archived": {"type": "boolean"},
-                }, "required": ["id"]},
+                parameters={
+                    **s,
+                    "properties": {
+                        "id": {"type": "string"},
+                        "title": {"type": "string"},
+                        "content": {"type": "string"},
+                        "url": {"type": "string"},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                        "gist_language": {"type": "string"},
+                        "is_pinned": {"type": "boolean"},
+                        "is_archived": {"type": "boolean"},
+                    },
+                    "required": ["id"],
+                },
             ),
             ToolDefinition(
-                name="knowledge_stats", provider=self.name, requires_approval=False,
+                name="knowledge_stats",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.SAFE,
                 description=(
                     "Get an overview of the knowledge library for gap detection: total item "
@@ -512,7 +654,9 @@ class NativeBuiltinToolProvider(ToolProvider):
             ),
             # ── Tasks (Project → TaskList → Task) ──
             ToolDefinition(
-                name="task_create", provider=self.name, requires_approval=False,
+                name="task_create",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.CAUTION,
                 description=(
                     "Create a task in the user's task system. Args: title (str, required), "
@@ -523,41 +667,57 @@ class NativeBuiltinToolProvider(ToolProvider):
                     "action_plan (list of {content} ordered), depends_on (list of task ids "
                     "that must finish first). Cycles are rejected."
                 ),
-                parameters={**s, "properties": {
-                    "title": {"type": "string"},
-                    "description": {"type": "string"},
-                    "priority": {"type": "string", "enum": ["critical", "high", "medium", "low", "trivial"]},
-                    "task_list_id": {"type": "string"},
-                    "labels": {"type": "array", "items": {"type": "string"}},
-                    "due": {"type": "string"},
-                    "exit_criteria": {"type": "array", "items": {"type": "object"}},
-                    "action_plan": {"type": "array", "items": {"type": "object"}},
-                    "depends_on": {"type": "array", "items": {"type": "string"}},
-                }, "required": ["title"]},
+                parameters={
+                    **s,
+                    "properties": {
+                        "title": {"type": "string"},
+                        "description": {"type": "string"},
+                        "priority": {
+                            "type": "string",
+                            "enum": ["critical", "high", "medium", "low", "trivial"],
+                        },
+                        "task_list_id": {"type": "string"},
+                        "labels": {"type": "array", "items": {"type": "string"}},
+                        "due": {"type": "string"},
+                        "exit_criteria": {"type": "array", "items": {"type": "object"}},
+                        "action_plan": {"type": "array", "items": {"type": "object"}},
+                        "depends_on": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["title"],
+                },
             ),
             ToolDefinition(
-                name="task_list", provider=self.name, requires_approval=False,
+                name="task_list",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.SAFE,
                 description=(
                     "List tasks, most-recent first. Args: optional status "
                     "('open'|'in_progress'|'blocked'|'done'|'cancelled'), project (str label), "
                     "task_list_id (str), limit (int, default 25)."
                 ),
-                parameters={**s, "properties": {
-                    "status": {"type": "string"},
-                    "project": {"type": "string"},
-                    "task_list_id": {"type": "string"},
-                    "limit": {"type": "integer"},
-                }},
+                parameters={
+                    **s,
+                    "properties": {
+                        "status": {"type": "string"},
+                        "project": {"type": "string"},
+                        "task_list_id": {"type": "string"},
+                        "limit": {"type": "integer"},
+                    },
+                },
             ),
             ToolDefinition(
-                name="task_get", provider=self.name, requires_approval=False,
+                name="task_get",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.SAFE,
-                description="Fetch one task by id (full detail incl. exit criteria, plan, deps). Args: id (str).",
+                description="Fetch one task by id (full detail incl. exit criteria, plan, deps). Args: id (str).",  # noqa: E501
                 parameters={**s, "properties": {"id": {"type": "string"}}, "required": ["id"]},
             ),
             ToolDefinition(
-                name="task_update", provider=self.name, requires_approval=False,
+                name="task_update",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.CAUTION,
                 description=(
                     "Update a task. Args: id (str, required), and any of title, description, "
@@ -566,166 +726,235 @@ class NativeBuiltinToolProvider(ToolProvider):
                     "labels, due, exit_criteria, action_plan, depends_on. The 'project' label "
                     "is derived from the task list and cannot be set directly."
                 ),
-                parameters={**s, "properties": {
-                    "id": {"type": "string"},
-                    "title": {"type": "string"},
-                    "description": {"type": "string"},
-                    "status": {"type": "string"},
-                    "priority": {"type": "string"},
-                    "task_list_id": {"type": "string"},
-                    "labels": {"type": "array", "items": {"type": "string"}},
-                    "due": {"type": "string"},
-                    "exit_criteria": {"type": "array", "items": {"type": "object"}},
-                    "action_plan": {"type": "array", "items": {"type": "object"}},
-                    "depends_on": {"type": "array", "items": {"type": "string"}},
-                }, "required": ["id"]},
+                parameters={
+                    **s,
+                    "properties": {
+                        "id": {"type": "string"},
+                        "title": {"type": "string"},
+                        "description": {"type": "string"},
+                        "status": {"type": "string"},
+                        "priority": {"type": "string"},
+                        "task_list_id": {"type": "string"},
+                        "labels": {"type": "array", "items": {"type": "string"}},
+                        "due": {"type": "string"},
+                        "exit_criteria": {"type": "array", "items": {"type": "object"}},
+                        "action_plan": {"type": "array", "items": {"type": "object"}},
+                        "depends_on": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["id"],
+                },
             ),
             ToolDefinition(
-                name="task_ready", provider=self.name, requires_approval=False,
+                name="task_ready",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.SAFE,
                 description=(
                     "List tasks that can be started now (no unfinished prerequisites), "
                     "optionally scoped. Args: optional project (str), task_list_id (str)."
                 ),
-                parameters={**s, "properties": {
-                    "project": {"type": "string"},
-                    "task_list_id": {"type": "string"},
-                }},
+                parameters={
+                    **s,
+                    "properties": {
+                        "project": {"type": "string"},
+                        "task_list_id": {"type": "string"},
+                    },
+                },
             ),
             ToolDefinition(
-                name="task_search", provider=self.name, requires_approval=False,
+                name="task_search",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.SAFE,
                 description=(
                     "Search tasks by text + filters. Args: optional query (str over title+"
                     "description), status (list), priority (list), tags (list), project (str), "
                     "sort_by ('relevance'|'created_at'|'updated_at'|'priority'), limit (int)."
                 ),
-                parameters={**s, "properties": {
-                    "query": {"type": "string"},
-                    "status": {"type": "array", "items": {"type": "string"}},
-                    "priority": {"type": "array", "items": {"type": "string"}},
-                    "tags": {"type": "array", "items": {"type": "string"}},
-                    "project": {"type": "string"},
-                    "sort_by": {"type": "string"},
-                    "limit": {"type": "integer"},
-                }},
+                parameters={
+                    **s,
+                    "properties": {
+                        "query": {"type": "string"},
+                        "status": {"type": "array", "items": {"type": "string"}},
+                        "priority": {"type": "array", "items": {"type": "string"}},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                        "project": {"type": "string"},
+                        "sort_by": {"type": "string"},
+                        "limit": {"type": "integer"},
+                    },
+                },
             ),
             ToolDefinition(
-                name="project_create", provider=self.name, requires_approval=False,
+                name="project_create",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.CAUTION,
                 description=(
                     "Create a project (a scoping container for task lists). Args: name (str, "
                     "required, unique), optional agent_instructions_template (str)."
                 ),
-                parameters={**s, "properties": {
-                    "name": {"type": "string"},
-                    "agent_instructions_template": {"type": "string"},
-                }, "required": ["name"]},
+                parameters={
+                    **s,
+                    "properties": {
+                        "name": {"type": "string"},
+                        "agent_instructions_template": {"type": "string"},
+                    },
+                    "required": ["name"],
+                },
             ),
             ToolDefinition(
-                name="project_list", provider=self.name, requires_approval=False,
+                name="project_list",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.SAFE,
                 description="List projects (with their task lists). No args.",
                 parameters={**s, "properties": {}},
             ),
             ToolDefinition(
-                name="task_list_create", provider=self.name, requires_approval=False,
+                name="task_list_create",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.CAUTION,
                 description=(
                     "Create a task list inside a project. Args: name (str, required), optional "
                     "project_id (str) or project_name (str, find-or-create); repeatable (bool — "
                     "place under the Repeatable project). With no project it lands in 'Chore'."
                 ),
-                parameters={**s, "properties": {
-                    "name": {"type": "string"},
-                    "project_id": {"type": "string"},
-                    "project_name": {"type": "string"},
-                    "repeatable": {"type": "boolean"},
-                }, "required": ["name"]},
+                parameters={
+                    **s,
+                    "properties": {
+                        "name": {"type": "string"},
+                        "project_id": {"type": "string"},
+                        "project_name": {"type": "string"},
+                        "repeatable": {"type": "boolean"},
+                    },
+                    "required": ["name"],
+                },
             ),
             # ── Projects: create + launch + watch an autonomous run (any kind) ──
             # A Project is the uber work-unit; a loop is one KIND of project-scoped run.
             # ONE cohesive project_* set operates them all (kind selects code SDLC vs
             # goal/general/design/research), matching the unified Project+Loop arch.
             ToolDefinition(
-                name="project_run_create", provider=self.name, requires_approval=True,
+                name="project_run_create",
+                provider=self.name,
+                requires_approval=True,
                 risk_level=RiskLevel.CAUTION,
                 description=(
-                    "Create a project RUN — an autonomous, multi-cycle execution (a 'loop') — from a "
-                    "plan you shaped with the user. USE WHEN the user wants substantial over-many-cycles "
-                    "work rather than a one-shot chat answer. The `kind` selects the engine: 'code' "
-                    "(SDLC plan→execute in a codebase — feature/refactor/bugfix, gated stages, its own "
+                    "Create a project RUN — an autonomous, multi-cycle execution (a 'loop') — from a "  # noqa: E501
+                    "plan you shaped with the user. USE WHEN the user wants substantial over-many-cycles "  # noqa: E501
+                    "work rather than a one-shot chat answer. The `kind` selects the engine: 'code' "  # noqa: E501
+                    "(SDLC plan→execute in a codebase — feature/refactor/bugfix, gated stages, its own "  # noqa: E501
                     "workspace + tasks), 'goal' (open-ended research-or-action toward an outcome — "
-                    "investigate/monitor/drive to done), 'research' (deep web research → a synthesized "
-                    "report), 'design' (a design system — tokens/components/exports), or 'general' (a "
-                    "generic iterative task). Offer it, then create on the user's go. Does NOT start it "
-                    "— call project_run_start on their go. (To create a plain task CONTAINER instead, "
-                    "use project_create.) Args: kind (required), task (str, required, 12+ chars — the "
-                    "goal/work), name?, project_id? (bind under an existing Project container), attended?, "
-                    "max_cycles?, success_criteria?. kind 'code': project_kind? (greenfield|brownfield), "
+                    "investigate/monitor/drive to done), 'research' (deep web research → a synthesized "  # noqa: E501
+                    "report), 'design' (a design system — tokens/components/exports), or 'general' (a "  # noqa: E501
+                    "generic iterative task). Offer it, then create on the user's go. Does NOT start it "  # noqa: E501
+                    "— call project_run_start on their go. (To create a plain task CONTAINER instead, "  # noqa: E501
+                    "use project_create.) Args: kind (required), task (str, required, 12+ chars — the "  # noqa: E501
+                    "goal/work), name?, project_id? (bind under an existing Project container), attended?, "  # noqa: E501
+                    "max_cycles?, success_criteria?. kind 'code': project_kind? (greenfield|brownfield), "  # noqa: E501
                     "entry_stage?, workspace_dir? (brownfield needs one to start), stage_plan? "
-                    "([{stage,title,objective,exit_criteria?,tasks?}]), verify_command?, test_command?. "
+                    "([{stage,title,objective,exit_criteria?,tasks?}]), verify_command?, test_command?. "  # noqa: E501
                     "kind goal/research/design/general: sub_goals? ([str]), deliverables? ([str]), "
                     "scope? ([str]), goal_type? (goal only), rubric? ([str])."
                 ),
-                parameters={**s, "properties": {
-                    "kind": {"type": "string", "enum": ["code", "goal", "general", "design", "research"]},
-                    "task": {"type": "string"}, "name": {"type": "string"},
-                    "project_id": {"type": "string"},
-                    "attended": {"type": "boolean"}, "max_cycles": {"type": "integer"},
-                    "success_criteria": {"type": "string"},
-                    # code-kind
-                    "project_kind": {"type": "string"}, "entry_stage": {"type": "string"},
-                    "workspace_dir": {"type": "string"}, "stage_plan": {"type": "array"},
-                    "verify_command": {"type": "string"}, "test_command": {"type": "string"},
-                    # goal/research/design/general
-                    "sub_goals": {"type": "array"}, "deliverables": {"type": "array"},
-                    "scope": {"type": "array"}, "goal_type": {"type": "string"}, "rubric": {"type": "array"},
-                }, "required": ["kind", "task"]},
+                parameters={
+                    **s,
+                    "properties": {
+                        "kind": {
+                            "type": "string",
+                            "enum": ["code", "goal", "general", "design", "research"],
+                        },
+                        "task": {"type": "string"},
+                        "name": {"type": "string"},
+                        "project_id": {"type": "string"},
+                        "attended": {"type": "boolean"},
+                        "max_cycles": {"type": "integer"},
+                        "success_criteria": {"type": "string"},
+                        # code-kind
+                        "project_kind": {"type": "string"},
+                        "entry_stage": {"type": "string"},
+                        "workspace_dir": {"type": "string"},
+                        "stage_plan": {"type": "array"},
+                        "verify_command": {"type": "string"},
+                        "test_command": {"type": "string"},
+                        # goal/research/design/general
+                        "sub_goals": {"type": "array"},
+                        "deliverables": {"type": "array"},
+                        "scope": {"type": "array"},
+                        "goal_type": {"type": "string"},
+                        "rubric": {"type": "array"},
+                    },
+                    "required": ["kind", "task"],
+                },
             ),
             ToolDefinition(
-                name="project_run_start", provider=self.name, requires_approval=True,
+                name="project_run_start",
+                provider=self.name,
+                requires_approval=True,
                 risk_level=RiskLevel.CAUTION,
-                description="Launch a created project run (any kind), or resume a paused/failed one. Args: project_id (str, required — the run id).",
-                parameters={**s, "properties": {"project_id": {"type": "string"}}, "required": ["project_id"]},
+                description="Launch a created project run (any kind), or resume a paused/failed one. Args: project_id (str, required — the run id).",  # noqa: E501
+                parameters={
+                    **s,
+                    "properties": {"project_id": {"type": "string"}},
+                    "required": ["project_id"],
+                },
             ),
             ToolDefinition(
-                name="project_run_status", provider=self.name, requires_approval=False,
+                name="project_run_status",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.SAFE,
                 description=(
-                    "Read live progress of any project run — status, stage/phase progress, cycles, latest "
-                    "finding, and any blocker / needs-input — to report to the user. Args: project_id (str, required — the run id)."
+                    "Read live progress of any project run — status, stage/phase progress, cycles, latest "  # noqa: E501
+                    "finding, and any blocker / needs-input — to report to the user. Args: project_id (str, required — the run id)."  # noqa: E501
                 ),
-                parameters={**s, "properties": {"project_id": {"type": "string"}}, "required": ["project_id"]},
+                parameters={
+                    **s,
+                    "properties": {"project_id": {"type": "string"}},
+                    "required": ["project_id"],
+                },
             ),
             ToolDefinition(
-                name="project_run_list", provider=self.name, requires_approval=False,
+                name="project_run_list",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.SAFE,
                 description=(
-                    "List the user's project runs (autonomous executions) with kind + live status, to find "
-                    "one to report on or resume. Args: optional kind (filter: code|goal|general|design|research), limit (int)."
+                    "List the user's project runs (autonomous executions) with kind + live status, to find "  # noqa: E501
+                    "one to report on or resume. Args: optional kind (filter: code|goal|general|design|research), limit (int)."  # noqa: E501
                 ),
-                parameters={**s, "properties": {
-                    "kind": {"type": "string"}, "limit": {"type": "integer"},
-                }},
+                parameters={
+                    **s,
+                    "properties": {
+                        "kind": {"type": "string"},
+                        "limit": {"type": "integer"},
+                    },
+                },
             ),
             ToolDefinition(
-                name="tool_result_get", provider=self.name, requires_approval=False,
+                name="tool_result_get",
+                provider=self.name,
+                requires_approval=False,
                 risk_level=RiskLevel.SAFE,
                 description=(
                     "Retrieve the FULL raw output of an earlier tool call that was projected/"
                     "truncated. When a tool result shows '[projected … full result: "
-                    "tool_result_get(result_id=\"r_…\")]', call this with that result_id to pull the "
-                    "part the preview dropped. Args: result_id (str, required); optional grep (str, "
+                    'tool_result_get(result_id="r_…")]\', call this with that result_id to pull the '  # noqa: E501
+                    "part the preview dropped. Args: result_id (str, required); optional grep (str, "  # noqa: E501
                     "return only matching lines), start/end (int, char range), max_chars (int)."
                 ),
-                parameters={**s, "properties": {
-                    "result_id": {"type": "string"},
-                    "grep": {"type": "string"},
-                    "start": {"type": "integer"},
-                    "end": {"type": "integer"},
-                    "max_chars": {"type": "integer"},
-                }, "required": ["result_id"]},
+                parameters={
+                    **s,
+                    "properties": {
+                        "result_id": {"type": "string"},
+                        "grep": {"type": "string"},
+                        "start": {"type": "integer"},
+                        "end": {"type": "integer"},
+                        "max_chars": {"type": "integer"},
+                    },
+                    "required": ["result_id"],
+                },
             ),
         ]
 
@@ -739,28 +968,37 @@ class NativeBuiltinToolProvider(ToolProvider):
             msg = str(exc)
             hints: list[str] = []
             if "escapes the workspace" in msg:
-                hints = ["Use a path relative to the workspace root; '..' and absolute paths outside it are not allowed."]
+                hints = [
+                    "Use a path relative to the workspace root; '..' and absolute paths outside it are not allowed."  # noqa: E501
+                ]
             return ToolResult(success=False, error=msg, recovery_hints=hints)
         except KeyError as exc:  # a required argument was omitted
             return ToolResult(
                 success=False,
                 error=f"missing required argument: {exc}",
-                recovery_hints=[f"Provide the {exc} argument; see the tool's parameter schema for required fields."],
+                recovery_hints=[
+                    f"Provide the {exc} argument; see the tool's parameter schema for required fields."  # noqa: E501
+                ],
             )
         except Exception as exc:  # noqa: BLE001
             logger.debug("builtin tool %s failed", tool_name, exc_info=True)
             return ToolResult(
                 success=False,
                 error=f"{type(exc).__name__}: {exc}",
-                recovery_hints=["Check the arguments against the tool's parameter schema and retry."],
+                recovery_hints=[
+                    "Check the arguments against the tool's parameter schema and retry."
+                ],
             )
 
     # ── tool-output retrieval (OP2): pull the full raw of a projected result ──
     async def _t_tool_result_get(self, a: dict) -> ToolResult:
         rid = str(a.get("result_id", "")).strip()
         if not rid:
-            return ToolResult(success=False, error="result_id is required",
-                              recovery_hints=["Pass the result_id named in the projection note, e.g. r_001ab."])
+            return ToolResult(
+                success=False,
+                error="result_id is required",
+                recovery_hints=["Pass the result_id named in the projection note, e.g. r_001ab."],
+            )
         if not self._session_key:
             return ToolResult(success=False, error="no session context for tool-result retrieval")
         grep = a.get("grep")
@@ -769,37 +1007,54 @@ class NativeBuiltinToolProvider(ToolProvider):
         end = int(end) if end is not None else None
         max_chars = int(a.get("max_chars") or _MAX_OUTPUT_CHARS)
         res = result_store.fetch_slice(
-            self._session_key, rid, start=start, end=end,
-            grep=str(grep) if grep else None, max_chars=max_chars,
+            self._session_key,
+            rid,
+            start=start,
+            end=end,
+            grep=str(grep) if grep else None,
+            max_chars=max_chars,
         )
         if not res.get("ok"):
-            return ToolResult(success=False, error=res.get("error", "not found"),
-                              recovery_hints=["The raw result may have been evicted (bounded store) — re-run the original tool."])
-        note = (f"[{res['mode']}: showing {res['shown']} of {res['length']} chars"
-                + (f", {res.get('matches', 0)} match(es)" if res["mode"] == "grep" else "")
-                + (f"; more from start_index={res['next_index']}" if res.get("next_index") else "") + "]")
+            return ToolResult(
+                success=False,
+                error=res.get("error", "not found"),
+                recovery_hints=[
+                    "The raw result may have been evicted (bounded store) — re-run the original tool."  # noqa: E501
+                ],
+            )
+        note = (
+            f"[{res['mode']}: showing {res['shown']} of {res['length']} chars"
+            + (f", {res.get('matches', 0)} match(es)" if res["mode"] == "grep" else "")
+            + (f"; more from start_index={res['next_index']}" if res.get("next_index") else "")
+            + "]"
+        )
         # Carry the ORIGINAL stored content_type back so a retrieved diff/log/json
         # renders rich (not flattened to generic). A grep slice loses structure, so
         # only the full range keeps the type; grep falls back to generic.
         ctype = res.get("content_type", "generic") if res.get("mode") == "range" else "generic"
-        return ToolResult(success=True, output=f"{note}\n{res['content']}",
-                          metadata={"content_type": ctype})
+        return ToolResult(
+            success=True, output=f"{note}\n{res['content']}", metadata={"content_type": ctype}
+        )
 
     # ── SDLC: create/launch a Code project or Goal Loop from chat (sdlc_tools.py) ──
     async def _t_project_run_create(self, a: dict) -> ToolResult:
         from personalclaw.agents.native import sdlc_tools
+
         return await sdlc_tools.project_create(a)
 
     async def _t_project_run_start(self, a: dict) -> ToolResult:
         from personalclaw.agents.native import sdlc_tools
+
         return await sdlc_tools.project_start(a)
 
     async def _t_project_run_status(self, a: dict) -> ToolResult:
         from personalclaw.agents.native import sdlc_tools
+
         return await sdlc_tools.project_status(a)
 
     async def _t_project_run_list(self, a: dict) -> ToolResult:
         from personalclaw.agents.native import sdlc_tools
+
         return await sdlc_tools.project_list(a)
 
     # ── tool impls (run blocking fs/proc work off the loop) ──
@@ -829,13 +1084,17 @@ class NativeBuiltinToolProvider(ToolProvider):
             return ToolResult(
                 success=False,
                 error=f"not a file: {a['path']}",
-                recovery_hints=["Use glob to locate the file, or list_dir on its parent directory."],
+                recovery_hints=[
+                    "Use glob to locate the file, or list_dir on its parent directory."
+                ],
             )
         if data is _BINARY:
             return ToolResult(
                 success=False,
                 error=f"binary file (not UTF-8 text): {a['path']}",
-                recovery_hints=["This is a binary file — read_file only handles text. Use list_dir/glob to inspect it, or a bash tool if you need its bytes."],
+                recovery_hints=[
+                    "This is a binary file — read_file only handles text. Use list_dir/glob to inspect it, or a bash tool if you need its bytes."  # noqa: E501
+                ],
             )
         return _ok_capped(data, session_key=self._session_key)  # type: ignore[arg-type]
 
@@ -861,11 +1120,21 @@ class NativeBuiltinToolProvider(ToolProvider):
 
         err = await asyncio.get_event_loop().run_in_executor(None, _write)
         if err == "is a directory":
-            return ToolResult(success=False, error=f"path is a directory, not a file: {a['path']}",
-                              recovery_hints=["Pass a file path, not a directory. Add a filename segment (e.g. dir/file.py)."])
+            return ToolResult(
+                success=False,
+                error=f"path is a directory, not a file: {a['path']}",
+                recovery_hints=[
+                    "Pass a file path, not a directory. Add a filename segment (e.g. dir/file.py)."
+                ],
+            )
         if err == "parent is not a directory":
-            return ToolResult(success=False, error=f"a parent path segment is a file, not a directory: {a['path']}",
-                              recovery_hints=["A directory in the path is actually a file — pick a different location or remove the conflicting file first."])
+            return ToolResult(
+                success=False,
+                error=f"a parent path segment is a file, not a directory: {a['path']}",
+                recovery_hints=[
+                    "A directory in the path is actually a file — pick a different location or remove the conflicting file first."  # noqa: E501
+                ],
+            )
         return ToolResult(success=True, output=f"Wrote {len(content)} chars to {a['path']}")
 
     async def _t_edit_file(self, a: dict) -> ToolResult:
@@ -905,13 +1174,13 @@ class NativeBuiltinToolProvider(ToolProvider):
         if msg.startswith("not a file"):
             hint = "Use glob or list_dir to confirm the path, or write_file to create it first."
         elif "not unique" in msg:
-            hint = "Add surrounding lines to old_str so it matches exactly once, or pass replace_all=true to change every occurrence."
+            hint = "Add surrounding lines to old_str so it matches exactly once, or pass replace_all=true to change every occurrence."  # noqa: E501
         elif msg == "old_str is empty":
-            hint = "old_str must be the exact existing text to replace. To create a file or append, use write_file."
+            hint = "old_str must be the exact existing text to replace. To create a file or append, use write_file."  # noqa: E501
         elif "identical" in msg:
-            hint = "The file already contains new_str — no edit needed. If you meant a different change, set old_str to the current text."
+            hint = "The file already contains new_str — no edit needed. If you meant a different change, set old_str to the current text."  # noqa: E501
         else:  # old_str not found
-            hint = "Read the file first to copy the exact text (including whitespace) you want to replace."
+            hint = "Read the file first to copy the exact text (including whitespace) you want to replace."  # noqa: E501
         return ToolResult(success=False, error=msg, recovery_hints=[hint])
 
     async def _t_list_dir(self, a: dict) -> ToolResult:
@@ -928,7 +1197,9 @@ class NativeBuiltinToolProvider(ToolProvider):
             return ToolResult(
                 success=False,
                 error=f"not a directory: {a.get('path', '.')}",
-                recovery_hints=["Use list_dir on the parent directory, or read_file if this path is a file."],
+                recovery_hints=[
+                    "Use list_dir on the parent directory, or read_file if this path is a file."
+                ],
             )
         return _ok_capped(listing, session_key=self._session_key)
 
@@ -941,11 +1212,16 @@ class NativeBuiltinToolProvider(ToolProvider):
             if len(matches) > 500:
                 # Signal the cap rather than silently showing 500 of N (no-silent-truncation).
                 shown = matches[:500]
-                shown.append(f"…[showing 500 of {len(matches)} matches — narrow the pattern to see the rest]")
+                shown.append(
+                    f"…[showing 500 of {len(matches)} matches — narrow the pattern to see the rest]"
+                )
                 return "\n".join(shown)
             return "\n".join(matches) or "(no matches)"
 
-        return _ok_capped(await asyncio.get_event_loop().run_in_executor(None, _glob), session_key=self._session_key)
+        return _ok_capped(
+            await asyncio.get_event_loop().run_in_executor(None, _glob),
+            session_key=self._session_key,
+        )
 
     async def _t_grep(self, a: dict) -> ToolResult:
         import re as _re
@@ -961,8 +1237,13 @@ class NativeBuiltinToolProvider(ToolProvider):
             try:
                 matcher = _re.compile(query)
             except _re.error as e:
-                return ToolResult(success=False, error=f"invalid regex: {e}",
-                                  recovery_hints=["Fix the pattern, or drop regex=true to search for the literal text."])
+                return ToolResult(
+                    success=False,
+                    error=f"invalid regex: {e}",
+                    recovery_hints=[
+                        "Fix the pattern, or drop regex=true to search for the literal text."
+                    ],
+                )
 
         def _grep() -> str:
             hits: list[str] = []
@@ -973,20 +1254,27 @@ class NativeBuiltinToolProvider(ToolProvider):
                 if any(part in self._SKIP_DIRS for part in p.relative_to(base).parts):
                     continue
                 try:
-                    for i, line in enumerate(p.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
-                        if (matcher.search(line) if matcher else query in line):
+                    for i, line in enumerate(
+                        p.read_text(encoding="utf-8", errors="ignore").splitlines(), 1
+                    ):
+                        if matcher.search(line) if matcher else query in line:
                             hits.append(f"{p.relative_to(base)}:{i}: {line.strip()[:200]}")
                             if len(hits) >= max_results:
                                 # Signal the cap: the worker must know more matches may
                                 # exist (no-silent-truncation) so it can narrow `glob`
                                 # or raise `max_results` rather than assume these are all.
-                                hits.append(f"…[stopped at max_results={max_results} — more matches may exist; narrow `glob` or raise `max_results`]")
+                                hits.append(
+                                    f"…[stopped at max_results={max_results} — more matches may exist; narrow `glob` or raise `max_results`]"  # noqa: E501
+                                )
                                 return "\n".join(hits)
                 except (OSError, UnicodeDecodeError):
                     continue
             return "\n".join(hits) or "(no matches)"
 
-        return _ok_capped(await asyncio.get_event_loop().run_in_executor(None, _grep), session_key=self._session_key)
+        return _ok_capped(
+            await asyncio.get_event_loop().run_in_executor(None, _grep),
+            session_key=self._session_key,
+        )
 
     async def _t_repo_map(self, a: dict) -> ToolResult:
         """A structural overview of the workspace: the source tree + each file's
@@ -1001,13 +1289,34 @@ class NativeBuiltinToolProvider(ToolProvider):
             import re
 
             # Source extensions worth mapping (skip data/asset files).
-            exts = {".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".rb", ".java", ".kt", ".c", ".cc", ".cpp", ".h", ".hpp", ".cs", ".php", ".swift", ".scala", ".sh"}
+            exts = {
+                ".py",
+                ".js",
+                ".jsx",
+                ".ts",
+                ".tsx",
+                ".go",
+                ".rs",
+                ".rb",
+                ".java",
+                ".kt",
+                ".c",
+                ".cc",
+                ".cpp",
+                ".h",
+                ".hpp",
+                ".cs",
+                ".php",
+                ".swift",
+                ".scala",
+                ".sh",
+            }
             skip_dirs = self._SKIP_DIRS
             # cheap top-level symbol regexes for non-Python files
             sym_re = re.compile(
                 r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?"
-                r"(?:(?:function|class|interface|type|enum|struct|trait|impl|func|fn|def)\s+([A-Za-z_][\w]*)"
-                r"|(?:const|let|var)\s+([A-Za-z_][\w]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_][\w]*)\s*=>)"
+                r"(?:(?:function|class|interface|type|enum|struct|trait|impl|func|fn|def)\s+([A-Za-z_][\w]*)"  # noqa: E501
+                r"|(?:const|let|var)\s+([A-Za-z_][\w]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_][\w]*)\s*=>)"  # noqa: E501
             )
             # Path.walk (py3.12+) with in-place dir pruning so the traversal never
             # DESCENDS into node_modules/.git/etc — rglob('*') would walk every ignored
@@ -1031,8 +1340,12 @@ class NativeBuiltinToolProvider(ToolProvider):
             # the capped count as the WHOLE repo and may miss files (no-silent-caps).
             header = (
                 f"# Repo map — {base.name}/  ({len(files)} source files"
-                + (f", capped at max_files={max_files} — map is PARTIAL; pass a "
-                   f"subdir `path` or a higher `max_files` to see the rest" if truncated else "")
+                + (
+                    f", capped at max_files={max_files} — map is PARTIAL; pass a "
+                    f"subdir `path` or a higher `max_files` to see the rest"
+                    if truncated
+                    else ""
+                )
                 + ")"
             )
             lines: list[str] = [header, ""]
@@ -1050,8 +1363,15 @@ class NativeBuiltinToolProvider(ToolProvider):
                             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                                 syms.append(f"def {node.name}()")
                             elif isinstance(node, ast.ClassDef):
-                                methods = [n.name for n in node.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))][:8]
-                                syms.append(f"class {node.name}" + (f" ({', '.join(methods)})" if methods else ""))
+                                methods = [
+                                    n.name
+                                    for n in node.body
+                                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                                ][:8]
+                                syms.append(
+                                    f"class {node.name}"
+                                    + (f" ({', '.join(methods)})" if methods else "")
+                                )
                     except SyntaxError:
                         pass
                 else:
@@ -1066,7 +1386,10 @@ class NativeBuiltinToolProvider(ToolProvider):
                 lines.append(f"{rel}" + (f"\n    {' · '.join(syms[:30])}" if syms else ""))
             return "\n".join(lines)
 
-        return _ok_capped(await asyncio.get_event_loop().run_in_executor(None, _build), session_key=self._session_key)
+        return _ok_capped(
+            await asyncio.get_event_loop().run_in_executor(None, _build),
+            session_key=self._session_key,
+        )
 
     async def _t_bash(self, a: dict, *, timeout: float | None = None) -> ToolResult:
         from personalclaw import security
@@ -1093,14 +1416,18 @@ class NativeBuiltinToolProvider(ToolProvider):
             return ToolResult(
                 success=False,
                 error=sens,
-                recovery_hints=["This command touches a sensitive credential path. Use a non-credential path or a different approach."],
+                recovery_hints=[
+                    "This command touches a sensitive credential path. Use a non-credential path or a different approach."  # noqa: E501
+                ],
             )
         deny = _denied_bash_reason(command)
         if deny:
             return ToolResult(
                 success=False,
                 error=f"Blocked: command matches denied pattern {deny!r}",
-                recovery_hints=["This command matches a credential-exfiltration denylist. Use a read-only alternative or a different approach."],
+                recovery_hints=[
+                    "This command matches a credential-exfiltration denylist. Use a read-only alternative or a different approach."  # noqa: E501
+                ],
             )
 
         argv = ["bash", "-lc", command]
@@ -1126,7 +1453,9 @@ class NativeBuiltinToolProvider(ToolProvider):
                 return ToolResult(
                     success=False,
                     error=f"command timed out after {timeout:.0f}s",
-                    recovery_hints=["The command exceeded the time limit. Narrow its scope or run it in the background."],
+                    recovery_hints=[
+                        "The command exceeded the time limit. Narrow its scope or run it in the background."  # noqa: E501
+                    ],
                 )
         finally:
             if cleanup:
@@ -1173,7 +1502,8 @@ class NativeBuiltinToolProvider(ToolProvider):
         item = await asyncio.get_event_loop().run_in_executor(
             None,
             lambda: post_to_inbox(
-                message, kind=kind,
+                message,
+                kind=kind,
                 sender_name=self._agent or "agent",
                 context=str(a.get("context", "")) or None,
                 reply_target=self._session_key,
@@ -1220,21 +1550,25 @@ class NativeBuiltinToolProvider(ToolProvider):
                     lr = r["line_range"]
                     loc_bits.append(f"lines {lr[0]}-{lr[1]}")
                 loc = f" [{' · '.join(loc_bits)}]" if loc_bits else ""
-                lines.append(f"- [{item.get('type', 'note')}] {_kn_redact(_kn_title(item))} (id={r['id']}){loc}{tail}")
+                lines.append(
+                    f"- [{item.get('type', 'note')}] {_kn_redact(_kn_title(item))} (id={r['id']}){loc}{tail}"  # noqa: E501
+                )
             return "\n".join(lines) or "(no matching knowledge items)"
 
         # Output is markdown-ish bullet lines ("- [type] title (id=…)"), NOT JSON —
         # leave the type to inference (the native search-results override parses the
         # rare JSON case; otherwise it renders as clean text, never a failed JSON tree).
-        return _ok_capped(await asyncio.get_event_loop().run_in_executor(None, _search),
-                          session_key=self._session_key)
+        return _ok_capped(
+            await asyncio.get_event_loop().run_in_executor(None, _search),
+            session_key=self._session_key,
+        )
 
     async def _t_knowledge_create(self, a: dict) -> ToolResult:
         item_type = str(a.get("type", "note")).strip() or "note"
         if item_type not in ("note", "fleeting", "journal", "gist", "bookmark"):
             return ToolResult(
                 success=False,
-                error=f"knowledge_create: unsupported type {item_type!r} (agents author text/bookmark types)",
+                error=f"knowledge_create: unsupported type {item_type!r} (agents author text/bookmark types)",  # noqa: E501
                 recovery_hints=["Use one of: note, fleeting, journal, gist, bookmark."],
             )
         title = str(a.get("title", "")).strip()
@@ -1244,21 +1578,27 @@ class NativeBuiltinToolProvider(ToolProvider):
             if not url:
                 return ToolResult(success=False, error="knowledge_create: bookmark requires a url")
             from urllib.parse import urlsplit
+
             try:
                 scheme = urlsplit(url).scheme.lower()
             except ValueError:
                 scheme = ""
             if scheme not in ("http", "https"):
-                return ToolResult(success=False, error="knowledge_create: bookmark url must be http(s)")
+                return ToolResult(
+                    success=False, error="knowledge_create: bookmark url must be http(s)"
+                )
         if not title and not content.strip() and not url:
-            return ToolResult(success=False, error="knowledge_create: title, content, or url required")
+            return ToolResult(
+                success=False, error="knowledge_create: title, content, or url required"
+            )
         if not title and item_type == "journal":
             # Journals are date-driven records — enrichment never AI-titles them, so a
             # blank title becomes the entry's date (mirrors the HTTP create handler);
             # otherwise an agent's untitled journal would keep a content-slug title forever.
             from datetime import datetime
+
             title = datetime.now().strftime("%B %-d, %Y")
-        tags = a.get("tags") if isinstance(a.get("tags"), list) else []
+        tags = _t if isinstance((_t := a.get("tags")), list) else []
         extra: dict[str, Any] = {"processing_status": "queued"}
         if item_type == "gist":
             lang = str(a.get("gist_language", "")).strip()
@@ -1274,17 +1614,26 @@ class NativeBuiltinToolProvider(ToolProvider):
         if item_type == "bookmark" and url:
             existing = store.find_active_by_url(url)
             if existing:
-                return ToolResult(success=True, output=f"knowledge bookmark already saved — id {existing['id']}")
+                return ToolResult(
+                    success=True, output=f"knowledge bookmark already saved — id {existing['id']}"
+                )
         item_id = store.create_typed_item(
-            item_type=item_type, title=title or (url or content[:60]) or "Untitled",
-            content=content, tags=[str(t) for t in tags], url=url, provider="native",
+            item_type=item_type,
+            title=title or (url or content[:60]) or "Untitled",
+            content=content,
+            tags=[str(t) for t in tags],
+            url=url,
+            provider="native",
             extra=extra,
         )
         # Enrich in the background (node-graph: extraction → insights → entities →
         # embed) so the tool returns the id immediately — create-fast/enrich-async,
         # not a 30-60s block on the agent's turn.
         _enrich_in_background(item_id)
-        return ToolResult(success=True, output=f"created knowledge {item_type} (enriching in background) — id {item_id}")
+        return ToolResult(
+            success=True,
+            output=f"created knowledge {item_type} (enriching in background) — id {item_id}",
+        )
 
     async def _t_knowledge_get(self, a: dict) -> ToolResult:
         item_id = str(a.get("id", "")).strip()
@@ -1299,8 +1648,13 @@ class NativeBuiltinToolProvider(ToolProvider):
                 return ""
             tags = ", ".join(item.get("tags", []) or [])
             insights = item.get("insights") or {}
-            summary = (item.get("summary") or item.get("ai_summary") or insights.get("summary")
-                       or item.get("url_description") or "").strip()
+            summary = (
+                item.get("summary")
+                or item.get("ai_summary")
+                or insights.get("summary")
+                or item.get("url_description")
+                or ""
+            ).strip()
             itype = item.get("type", "note")
             # A gist's language is a meaningful attribute — surface it in the type tag
             # (e.g. "[gist · python]") so the agent knows what language the code is.
@@ -1317,15 +1671,21 @@ class NativeBuiltinToolProvider(ToolProvider):
             # should know it was deliberately put away, so it can caveat rather than
             # present stale/retired content as current.
             if item.get("is_archived"):
-                lines.append("(archived — the user has put this item away; treat as retired unless they ask about it)")
+                lines.append(
+                    "(archived — the user has put this item away; treat as retired unless they ask about it)"  # noqa: E501
+                )
             # An unreachable bookmark's page couldn't be fetched, so the body is just the
             # URL — tell the agent why the content is missing (vs. a not-yet-scraped item),
             # and that a re-fetch may succeed later. A hard 'failed' is flagged likewise.
             if pstatus == "unreachable":
-                lines.append("(unreachable — the page couldn't be fetched, so only the URL is saved; the content may be retrievable on a later retry)")
+                lines.append(
+                    "(unreachable — the page couldn't be fetched, so only the URL is saved; the content may be retrievable on a later retry)"  # noqa: E501
+                )
             elif pstatus == "failed":
                 reason = (item.get("processing_error") or "").strip()
-                lines.append(f"(processing failed{': ' + reason if reason else ''} — content may be incomplete)")
+                lines.append(
+                    f"(processing failed{': ' + reason if reason else ''} — content may be incomplete)"  # noqa: E501
+                )
             if tags:
                 lines.append(f"tags: {tags}")
             if item.get("url"):
@@ -1373,7 +1733,9 @@ class NativeBuiltinToolProvider(ToolProvider):
             return ToolResult(
                 success=False,
                 error=f"knowledge item {item_id!r} not found",
-                recovery_hints=["Use knowledge_search to find the correct item id, then retry knowledge_get."],
+                recovery_hints=[
+                    "Use knowledge_search to find the correct item id, then retry knowledge_get."
+                ],
             )
         return _ok_capped(out, session_key=self._session_key)
 
@@ -1389,6 +1751,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         # A url edit must stay http(s) (same guard as create) — no javascript:/data:.
         if str(fields.get("url", "")).strip():
             from urllib.parse import urlsplit
+
             try:
                 scheme = urlsplit(fields["url"].strip()).scheme.lower()
             except ValueError:
@@ -1405,8 +1768,11 @@ class NativeBuiltinToolProvider(ToolProvider):
         want_lang = str(a["gist_language"]).strip() if "gist_language" in a else None
         if not fields and want_lang is None:
             return ToolResult(
-                success=False, error="knowledge_update: no updatable fields given",
-                recovery_hints=["Pass at least one of: title, content, tags, url, gist_language, is_pinned, is_archived."],
+                success=False,
+                error="knowledge_update: no updatable fields given",
+                recovery_hints=[
+                    "Pass at least one of: title, content, tags, url, gist_language, is_pinned, is_archived."  # noqa: E501
+                ],
             )
         # Editing the text re-runs extraction/insights/entities so enrichment stays
         # consistent with the new content (the create/update → enrich contract).
@@ -1427,7 +1793,9 @@ class NativeBuiltinToolProvider(ToolProvider):
             # append-only — editable on its creation day, frozen after. Block a content/
             # title edit to a past-day journal so an agent can't mutate a record the UI +
             # HTTP path forbid. Curation (tags/pin/archive) stays allowed.
-            if (item.get("item_type") or item.get("type")) == "journal" and ("content" in applied or "title" in applied):
+            if (item.get("item_type") or item.get("type")) == "journal" and (
+                "content" in applied or "title" in applied
+            ):
                 created = str(item.get("created_at") or "")[:10]
                 if created and created != datetime.now().isoformat()[:10]:
                     return "journal_locked"
@@ -1444,14 +1812,17 @@ class NativeBuiltinToolProvider(ToolProvider):
         result = await asyncio.get_event_loop().run_in_executor(None, _update)
         if result == "not_found":
             return ToolResult(
-                success=False, error=f"knowledge item {item_id!r} not found",
+                success=False,
+                error=f"knowledge item {item_id!r} not found",
                 recovery_hints=["Use knowledge_search to find the correct item id."],
             )
         if result == "journal_locked":
             return ToolResult(
                 success=False,
-                error="knowledge_update: this journal entry is immutable — its creation day has passed",
-                recovery_hints=["A journal's body can't be edited after its creation day. You can still update tags, is_pinned, or is_archived."],
+                error="knowledge_update: this journal entry is immutable — its creation day has passed",  # noqa: E501
+                recovery_hints=[
+                    "A journal's body can't be edited after its creation day. You can still update tags, is_pinned, or is_archived."  # noqa: E501
+                ],
             )
         if reenrich:
             _enrich_in_background(item_id)
@@ -1460,7 +1831,9 @@ class NativeBuiltinToolProvider(ToolProvider):
                 success=True,
                 output=f"no change to {item_id} — gist_language only applies to gist items",
             )
-        return ToolResult(success=True, output=f"updated knowledge item {item_id} ({', '.join(applied)})")
+        return ToolResult(
+            success=True, output=f"updated knowledge item {item_id} ({', '.join(applied)})"
+        )
 
     async def _t_knowledge_stats(self, a: dict) -> ToolResult:
         def _overview() -> dict:
@@ -1473,11 +1846,14 @@ class NativeBuiltinToolProvider(ToolProvider):
             return ToolResult(success=True, output="Knowledge library is empty.")
         by_type = ", ".join(f"{t}: {c}" for t, c in ov["by_type"].items())
         top_tags = ", ".join(f"{r['tag']} ({r['count']})" for r in ov["top_tags"]) or "(none)"
-        return ToolResult(success=True, output=(
-            f"Knowledge library: {ov['total']} items, {ov['entities']} entities.\n"
-            f"By type: {by_type}\n"
-            f"Top tags: {top_tags}"
-        ))
+        return ToolResult(
+            success=True,
+            output=(
+                f"Knowledge library: {ov['total']} items, {ov['entities']} entities.\n"
+                f"By type: {by_type}\n"
+                f"Top tags: {top_tags}"
+            ),
+        )
 
     # ── Tasks (Project → TaskList → Task) ──
 
@@ -1495,20 +1871,33 @@ class NativeBuiltinToolProvider(ToolProvider):
         return " ".join(bits)
 
     async def _t_task_create(self, a: dict) -> ToolResult:
-        from personalclaw.tasks import registry, reconcile
+        from personalclaw.tasks import reconcile, registry
 
         title = str(a.get("title", "")).strip()
         if not title:
             return ToolResult(success=False, error="task_create requires 'title'")
-        fields = {k: a[k] for k in (
-            "description", "priority", "task_list_id", "labels", "due",
-            "exit_criteria", "action_plan", "depends_on",
-        ) if k in a}
+        fields = {
+            k: a[k]
+            for k in (
+                "description",
+                "priority",
+                "task_list_id",
+                "labels",
+                "due",
+                "exit_criteria",
+                "action_plan",
+                "depends_on",
+            )
+            if k in a
+        }
         try:
             task = await registry.create_task(title=title, **fields)
         except reconcile.DependencyCycleError as e:
-            return ToolResult(success=False, error=str(e),
-                              recovery_hints=["Remove the dependency that closes the loop."])
+            return ToolResult(
+                success=False,
+                error=str(e),
+                recovery_hints=["Remove the dependency that closes the loop."],
+            )
         return ToolResult(success=True, output=f"created task {task.id}: {self._task_line(task)}")
 
     async def _t_task_list(self, a: dict) -> ToolResult:
@@ -1557,15 +1946,27 @@ class NativeBuiltinToolProvider(ToolProvider):
         return _ok_capped("\n".join(lines), session_key=self._session_key)
 
     async def _t_task_update(self, a: dict) -> ToolResult:
-        from personalclaw.tasks import registry, reconcile
+        from personalclaw.tasks import reconcile, registry
 
         item_id = str(a.get("id", "")).strip()
         if not item_id:
             return ToolResult(success=False, error="task_update requires 'id'")
-        fields = {k: a[k] for k in (
-            "title", "description", "status", "priority", "task_list_id", "labels",
-            "due", "exit_criteria", "action_plan", "depends_on",
-        ) if k in a}
+        fields = {
+            k: a[k]
+            for k in (
+                "title",
+                "description",
+                "status",
+                "priority",
+                "task_list_id",
+                "labels",
+                "due",
+                "exit_criteria",
+                "action_plan",
+                "depends_on",
+            )
+            if k in a
+        }
         if not fields:
             return ToolResult(success=False, error="task_update: nothing to change")
         # Normalize the status BEFORE update_task — an LLM commonly emits a synonym
@@ -1576,11 +1977,20 @@ class NativeBuiltinToolProvider(ToolProvider):
         # valid set named explicitly.
         if "status" in fields:
             _VALID = {"open", "in_progress", "done", "cancelled", "blocked"}
-            _SYNONYM = {"complete": "done", "completed": "done", "finished": "done",
-                        "todo": "open", "to_do": "open", "pending": "open",
-                        "in-progress": "in_progress", "inprogress": "in_progress",
-                        "doing": "in_progress", "wip": "in_progress",
-                        "canceled": "cancelled", "won't_do": "cancelled"}
+            _SYNONYM = {
+                "complete": "done",
+                "completed": "done",
+                "finished": "done",
+                "todo": "open",
+                "to_do": "open",
+                "pending": "open",
+                "in-progress": "in_progress",
+                "inprogress": "in_progress",
+                "doing": "in_progress",
+                "wip": "in_progress",
+                "canceled": "cancelled",
+                "won't_do": "cancelled",
+            }
             raw = str(fields["status"]).strip().lower().replace(" ", "_")
             norm = raw if raw in _VALID else _SYNONYM.get(raw)
             if norm is None:
@@ -1593,11 +2003,17 @@ class NativeBuiltinToolProvider(ToolProvider):
         try:
             task = await registry.update_task(item_id, **fields)
         except reconcile.DependencyCycleError as e:
-            return ToolResult(success=False, error=str(e),
-                              recovery_hints=["Remove the dependency that closes the loop."])
+            return ToolResult(
+                success=False,
+                error=str(e),
+                recovery_hints=["Remove the dependency that closes the loop."],
+            )
         except ValueError as e:
-            return ToolResult(success=False, error=str(e),
-                              recovery_hints=["Complete the exit criteria before marking the task done."])
+            return ToolResult(
+                success=False,
+                error=str(e),
+                recovery_hints=["Complete the exit criteria before marking the task done."],
+            )
         if not task:
             return ToolResult(success=False, error=f"no task with id {item_id!r}")
         return ToolResult(success=True, output=f"updated {task.id}: {self._task_line(task)}")
@@ -1610,8 +2026,10 @@ class NativeBuiltinToolProvider(ToolProvider):
         )
         if not tasks:
             return ToolResult(success=True, output="(no ready tasks — all blocked or done)")
-        return _ok_capped("Ready to start:\n" + "\n".join(f"- {self._task_line(t)}" for t in tasks),
-                          session_key=self._session_key)
+        return _ok_capped(
+            "Ready to start:\n" + "\n".join(f"- {self._task_line(t)}" for t in tasks),
+            session_key=self._session_key,
+        )
 
     async def _t_task_search(self, a: dict) -> ToolResult:
         from personalclaw.tasks import registry
@@ -1650,7 +2068,9 @@ class NativeBuiltinToolProvider(ToolProvider):
             project = await asyncio.get_event_loop().run_in_executor(None, _create)
         except ValueError as e:
             return ToolResult(success=False, error=str(e))
-        return ToolResult(success=True, output=f"created project '{project.name}' (id={project.id})")
+        return ToolResult(
+            success=True, output=f"created project '{project.name}' (id={project.id})"
+        )
 
     async def _t_project_list(self, a: dict) -> ToolResult:
         from personalclaw.tasks.hierarchy import HierarchyStore
@@ -1662,11 +2082,15 @@ class NativeBuiltinToolProvider(ToolProvider):
             for p in projects:
                 lists = store.list_task_lists(project_id=p.id)
                 tail = f" — lists: {', '.join(tl.name for tl in lists)}" if lists else ""
-                lines.append(f"- {p.name} (id={p.id}){' [default]' if p.is_default_project() else ''}{tail}")
+                lines.append(
+                    f"- {p.name} (id={p.id}){' [default]' if p.is_default_project() else ''}{tail}"
+                )
             return "\n".join(lines)
 
-        return _ok_capped(await asyncio.get_event_loop().run_in_executor(None, _list),
-                          session_key=self._session_key)
+        return _ok_capped(
+            await asyncio.get_event_loop().run_in_executor(None, _list),
+            session_key=self._session_key,
+        )
 
     async def _t_task_list_create(self, a: dict) -> ToolResult:
         from personalclaw.tasks.hierarchy import HierarchyStore
@@ -1687,7 +2111,10 @@ class NativeBuiltinToolProvider(ToolProvider):
             tl = await asyncio.get_event_loop().run_in_executor(None, _create)
         except ValueError as e:
             return ToolResult(success=False, error=str(e))
-        return ToolResult(success=True, output=f"created task list '{tl.name}' (id={tl.id}, project_id={tl.project_id})")
+        return ToolResult(
+            success=True,
+            output=f"created task list '{tl.name}' (id={tl.id}, project_id={tl.project_id})",
+        )
 
 
 # ── Category providers (UT1 split) ──────────────────────────────────────────
@@ -1696,6 +2123,7 @@ class NativeBuiltinToolProvider(ToolProvider):
 # These are registry singletons — they resolve the per-turn workspace via the
 # contextvars the runtime binds, NOT a per-session constructor. The platform
 # bundle (filesystem/shell/core) is always-on; the rest are installable apps.
+
 
 def create_platform_tools_provider(config: dict | None = None) -> "NativeBuiltinToolProvider":
     """The always-on platform tool surface: filesystem + shell + the tool_result_get
@@ -1712,8 +2140,11 @@ def _make_app_category_provider(category: str):
 
     def _factory(config: dict | None = None) -> "NativeBuiltinToolProvider":
         return NativeBuiltinToolProvider(
-            categories={category}, provider_name=name, display=display,
+            categories={category},
+            provider_name=name,
+            display=display,
         )
+
     return _factory
 
 

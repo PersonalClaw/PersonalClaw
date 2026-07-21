@@ -21,20 +21,20 @@ from dataclasses import dataclass
 
 # Confirmed-dup thresholds (conservative — false-merge is worse than a missed merge; the
 # loser is only ARCHIVED, but a wrongly-merged report series is data loss).
-_FUZZY_COSINE_MIN = 0.90     # semantic near-identity on the embedding
-_FILENAME_SIM_MIN = 0.85     # title/filename-stem token overlap (Jaccard)
+_FUZZY_COSINE_MIN = 0.90  # semantic near-identity on the embedding
+_FILENAME_SIM_MIN = 0.85  # title/filename-stem token overlap (Jaccard)
 
 # Recurring-series date tokens in a title/filename — if two otherwise-identical items carry
 # DIFFERENT date tokens they are DISTINCT (the date gate). Ordered widest-match first. Use a
 # not-preceded-by-digit lookbehind (NOT \b) for the numeric leaders: filenames glue tokens
 # with '_' (a regex word-char), so '_2026' has no \b before it — the lookbehind still matches.
 _DATE_PATTERNS = [
-    re.compile(r"(?<![0-9])(\d{4}-\d{2}-\d{2})(?![0-9])"),        # 2026-07-07
-    re.compile(r"(?<![0-9])(\d{4}[-_/]?[qQ][1-4])(?![0-9])"),     # 2026-Q3 / 2026Q3
-    re.compile(r"(?<![0-9])(\d{4}[-_/]\d{2})(?![0-9])"),          # 2026-07
+    re.compile(r"(?<![0-9])(\d{4}-\d{2}-\d{2})(?![0-9])"),  # 2026-07-07
+    re.compile(r"(?<![0-9])(\d{4}[-_/]?[qQ][1-4])(?![0-9])"),  # 2026-Q3 / 2026Q3
+    re.compile(r"(?<![0-9])(\d{4}[-_/]\d{2})(?![0-9])"),  # 2026-07
     re.compile(r"(?<![0-9])(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})(?![0-9])"),  # 7/7/2026
     re.compile(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{4}\b", re.I),
-    re.compile(r"\bweek\s*\d{1,2}\b", re.I),                       # Week 27
+    re.compile(r"\bweek\s*\d{1,2}\b", re.I),  # Week 27
 ]
 
 _STOP_STEM = re.compile(r"[^a-z0-9]+")
@@ -44,6 +44,7 @@ _STOP_STEM = re.compile(r"[^a-z0-9]+")
 class DupVerdict:
     """Result of a TIER-2 comparison. ``is_dup`` only when filename AND cosine AND date-gate
     all agree. ``winner``/``loser`` (item ids) set only when is_dup — the loser is archived."""
+
     is_dup: bool
     reason: str
     winner_id: str | None = None
@@ -112,6 +113,7 @@ def format_recall_winner(a: dict, b: dict) -> tuple[dict, dict]:
     unlike ``word_count``, which the ingest can leave at 0 for a type whose body is moved
     into the extracted-content pool, or which may not be recomputed until after the dedup
     stage runs. word_count is kept as a fallback for a caller that only has it."""
+
     def richness(it: dict) -> int:
         cl = it.get("content_len")
         if cl is not None:
@@ -123,9 +125,12 @@ def format_recall_winner(a: dict, b: dict) -> tuple[dict, dict]:
 
     def rank(it: dict) -> tuple:
         status_done = 1 if str(it.get("processing_status", "")).lower() == "done" else 0
-        is_file = 1 if str(it.get("item_type", "")).lower() not in ("bookmark", "url", "link") else 0
+        is_file = (
+            1 if str(it.get("item_type", "")).lower() not in ("bookmark", "url", "link") else 0
+        )
         created = str(it.get("created_at", "") or "")
         return (status_done, is_file, richness(it), created)
+
     return (a, b) if rank(a) >= rank(b) else (b, a)
 
 
@@ -158,7 +163,10 @@ def resolve_duplicate(
 
     winner, loser = format_recall_winner(candidate, existing)
     return DupVerdict(
-        True, "fuzzy dup (filename+cosine+date-gate)",
-        winner_id=winner.get("id"), loser_id=loser.get("id"),
-        cosine=cos, filename_sim=fsim,
+        True,
+        "fuzzy dup (filename+cosine+date-gate)",
+        winner_id=winner.get("id"),
+        loser_id=loser.get("id"),
+        cosine=cos,
+        filename_sim=fsim,
     )

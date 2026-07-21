@@ -66,12 +66,13 @@ def test_normalize_agent_name_canonicalizes_default():
 # #17). Empty string is allowed (reset to system default).
 
 import json as _json  # noqa: E402
+
 import pytest  # noqa: E402
 from aiohttp.test_utils import make_mocked_request  # noqa: E402
 
-import personalclaw.dashboard.handlers.agents as _agents_h  # noqa: E402
 import personalclaw.config.loader as _loader  # noqa: E402
 import personalclaw.dashboard.handlers as _handlers  # noqa: E402
+import personalclaw.dashboard.handlers.agents as _agents_h  # noqa: E402
 
 
 def _acfg(monkeypatch, tmp_path, agents: dict):
@@ -86,7 +87,10 @@ def _acfg(monkeypatch, tmp_path, agents: dict):
 
 def _put(body):
     req = make_mocked_request("PUT", "/api/config/default-agent")
-    async def _j(): return body
+
+    async def _j():
+        return body
+
     req.json = _j
     return req
 
@@ -112,7 +116,7 @@ async def test_default_agent_accepts_known(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_default_agent_empty_allowed(monkeypatch, tmp_path):
-    cfg = _acfg(monkeypatch, tmp_path, {"default": {}})
+    _acfg(monkeypatch, tmp_path, {"default": {}})
     resp = await _agents_h.api_default_agent(_put({"agent": ""}))
     assert resp.status == 200  # empty = reset to system default, never rejected
 

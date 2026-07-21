@@ -22,8 +22,10 @@ def _make_session(key: str, running: bool = False) -> MagicMock:
     session.key = key
     session.running = running
     if running:
+
         async def _hang():
             await asyncio.sleep(999)
+
         session.task = asyncio.ensure_future(_hang())
     else:
         session.task = None
@@ -88,11 +90,13 @@ class TestRemoveSessionForHistoryKey:
         session_a = _make_session("chat-1-100")
         session_b = _make_session("chat-2-200", running=True)
         session_c = _make_session("chat-9-999")
-        state = _make_state({
-            "chat-1-100": session_a,
-            "chat-2-200": session_b,
-            "chat-9-999": session_c,
-        })
+        state = _make_state(
+            {
+                "chat-1-100": session_a,
+                "chat-2-200": session_b,
+                "chat-9-999": session_c,
+            }
+        )
         # Simulate batch clear for two keys (one matched, one running)
         await _remove_session_for_history_key(state, "dashboard_chat-1-100")
         await _remove_session_for_history_key(state, "dashboard_chat-2-200")

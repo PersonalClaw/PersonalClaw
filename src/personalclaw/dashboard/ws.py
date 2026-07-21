@@ -42,7 +42,9 @@ async def api_ws(request: web.Request) -> web.WebSocketResponse:
     # Push current sessions immediately so sidebar populates without waiting
     try:
         sessions_data = [s.to_dict() for s in state._sessions.values()]
-        await ws.send_json({"type": "sessions", "data": sessions_data, "yolo": state.is_yolo_active()})
+        await ws.send_json(
+            {"type": "sessions", "data": sessions_data, "yolo": state.is_yolo_active()}
+        )
     except Exception:
         pass
 
@@ -67,10 +69,12 @@ async def api_ws(request: web.Request) -> web.WebSocketResponse:
                         state.subscribe_subagents(ws)
                         # Send snapshot of active subagents + done events for completed ones
                         if state.subagents:
+
                             def _r(t: str) -> str:
                                 t, _ = redact_exfiltration_urls(t)
                                 t, _ = redact_credentials(t)
                                 return t
+
                             for a in state.subagents.running:
                                 try:
                                     session = a.parent_session_key.removeprefix("dashboard:")

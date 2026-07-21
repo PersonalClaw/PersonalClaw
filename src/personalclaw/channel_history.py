@@ -321,9 +321,7 @@ class ChannelHistory:
             return
         try:
             lines = [
-                self._entry_to_jsonl(entry) + "\n"
-                for entry in buf
-                if entry.wall_ts is not None
+                self._entry_to_jsonl(entry) + "\n" for entry in buf if entry.wall_ts is not None
             ]
             atomic_write(path, "".join(lines))
         except OSError:

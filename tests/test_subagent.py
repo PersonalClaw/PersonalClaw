@@ -136,7 +136,9 @@ class TestSpawnWithoutApprovalCallback:
             sessions=sessions,
             ctx_builder=ctx,
         )
-        info = SubagentInfo(id="test01", task="tool approval task", parent_session_key="slack:C123:T456")
+        info = SubagentInfo(
+            id="test01", task="tool approval task", parent_session_key="slack:C123:T456"
+        )
 
         with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
             await manager._run_inner(info, "subagent:test01")
@@ -144,9 +146,9 @@ class TestSpawnWithoutApprovalCallback:
         # Subagent session should be created with parent_policy="auto"
         sessions.get_or_create.assert_awaited_once()
         call_kwargs = sessions.get_or_create.call_args.kwargs
-        assert call_kwargs.get("approval_policy") == "auto", (
-            f"Expected approval_policy=auto, got {call_kwargs}"
-        )
+        assert (
+            call_kwargs.get("approval_policy") == "auto"
+        ), f"Expected approval_policy=auto, got {call_kwargs}"
 
     @pytest.mark.asyncio
     async def test_spawn_without_callback_yolo_on_executes(self) -> None:
@@ -517,8 +519,10 @@ class TestSubagentReaper:
         manager._agents["done0001"] = info
 
         # Run one real reaper sweep — first sleep succeeds, second raises CancelledError
-        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"), patch(
-            "asyncio.sleep", AsyncMock(side_effect=[None, asyncio.CancelledError])
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch("asyncio.sleep", AsyncMock(side_effect=[None, asyncio.CancelledError])),
         ):
             with pytest.raises(asyncio.CancelledError):
                 await manager._reaper_loop()
@@ -552,9 +556,12 @@ class TestSubagentReaper:
         manager._agents["hang0001"] = info
         manager._running_count = 1
 
-        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"), patch(
-            "personalclaw.subagent._RESET_TIMEOUT", 0.1
-        ), patch.object(manager, "_sigkill_session") as mock_kill:
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch("personalclaw.subagent._RESET_TIMEOUT", 0.1),
+            patch.object(manager, "_sigkill_session") as mock_kill,
+        ):
             await manager._force_reap("hang0001", info, _TIMEOUT_SECS + 60)
 
         assert info.done is True
@@ -582,9 +589,12 @@ class TestSubagentReaper:
         manager._agents["slow0001"] = info
         manager._running_count = 1
 
-        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"), patch(
-            "personalclaw.subagent._RESET_TIMEOUT", 0.1
-        ), patch.object(manager, "_sigkill_session"):
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch("personalclaw.subagent._RESET_TIMEOUT", 0.1),
+            patch.object(manager, "_sigkill_session"),
+        ):
             await manager._run(info)
 
         # Should complete without hanging
@@ -925,8 +935,10 @@ class TestOnDoneTimeout:
             is_yolo=lambda: True,
         )
 
-        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"), patch(
-            "personalclaw.subagent._ON_DONE_TIMEOUT", 0.1
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch("personalclaw.subagent._ON_DONE_TIMEOUT", 0.1),
         ):
             info = manager.spawn("timeout test", parent_session_key="dashboard:test-session")
             assert info is not None
@@ -960,8 +972,10 @@ class TestOnDoneTimeout:
             is_yolo=lambda: True,
         )
 
-        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"), patch(
-            "personalclaw.subagent._ON_DONE_TIMEOUT", 0.1
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch("personalclaw.subagent._ON_DONE_TIMEOUT", 0.1),
         ):
             info = manager.spawn("path test", parent_session_key="dashboard:session-x")
             assert info is not None
@@ -1003,8 +1017,10 @@ class TestOnDoneTimeout:
         manager._agents["hang0002"] = info
         manager._running_count = 1
 
-        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"), patch(
-            "personalclaw.subagent._ON_DONE_TIMEOUT", 0.1
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch("personalclaw.subagent._ON_DONE_TIMEOUT", 0.1),
         ):
             await manager._force_reap("hang0002", info, _TIMEOUT_SECS + 60)
 
@@ -1037,8 +1053,11 @@ class TestOnDoneTimeout:
         info.error = "Timed out after 30 minutes"
         manager._agents["done0001"] = info
 
-        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"), \
-             patch.object(manager, "_write_tombstone") as mock_ts:
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch.object(manager, "_write_tombstone") as mock_ts,
+        ):
             await manager._force_reap("done0001", info, _TIMEOUT_SECS + 60)
 
         assert info.reaped is True
@@ -1081,8 +1100,10 @@ class TestOnDoneTimeout:
             is_yolo=lambda: True,
         )
 
-        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"), patch(
-            "personalclaw.subagent._ON_DONE_TIMEOUT", 0.1
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch("personalclaw.subagent._ON_DONE_TIMEOUT", 0.1),
         ):
             info = manager.spawn("timeout reset test", parent_session_key="dashboard:session-1")
             assert info is not None
@@ -1341,9 +1362,11 @@ class TestSpawnMemoryGuard:
             max_concurrent=3,
         )
 
-        with patch("personalclaw.subagent.check_memory_available", return_value=(False, 2.5)), \
-             patch("personalclaw.subagent.AppConfig") as mock_cfg, \
-             patch("personalclaw.subagent.sel") as mock_sel:
+        with (
+            patch("personalclaw.subagent.check_memory_available", return_value=(False, 2.5)),
+            patch("personalclaw.subagent.AppConfig") as mock_cfg,
+            patch("personalclaw.subagent.sel") as mock_sel,
+        ):
             mock_cfg.load.return_value.agent.spawn_min_memory_gb = 4.0
             mock_sel.return_value.log_tool_invocation = MagicMock()
 

@@ -39,7 +39,9 @@ class ApprovalGate:
         self._pending[request_id] = fut
         return fut
 
-    async def wait(self, request_id: str, fut: asyncio.Future[str], *, timeout: float = 300.0) -> str:
+    async def wait(
+        self, request_id: str, fut: asyncio.Future[str], *, timeout: float = 300.0
+    ) -> str:
         """Await a previously-:meth:`register`ed Future; fail-closed on timeout."""
         try:
             return await asyncio.wait_for(fut, timeout=timeout)

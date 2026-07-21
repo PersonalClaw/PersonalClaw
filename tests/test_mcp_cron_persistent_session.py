@@ -10,8 +10,8 @@ import uuid
 
 import pytest
 
-from personalclaw.schedule import ScheduleService
 from personalclaw.mcp_schedule import _call_tool_inner, _list_tools, _validate_args
+from personalclaw.schedule import ScheduleService
 
 
 def _unique_name() -> str:
@@ -38,9 +38,7 @@ class TestScheduleAddPersistentSession:
     def test_default_is_persistent(self):
         """schedule_add without the flag → job.persistent_session is True."""
         name = _unique_name()
-        result = _call_tool_inner(
-            "schedule_add", {"name": name, "message": "hi", "every": 120}
-        )
+        result = _call_tool_inner("schedule_add", {"name": name, "message": "hi", "every": 120})
         assert "Added job" in result
 
         svc = ScheduleService()

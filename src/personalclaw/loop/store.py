@@ -44,6 +44,7 @@ class TransitionError(RuntimeError):
 
 # ── paths ──
 
+
 def _loops_root() -> Path:
     return config_dir() / "loop"
 
@@ -83,6 +84,7 @@ def safe_loop_dir(loop_id: str) -> Path | None:
 
 
 # ── redaction ──
+
 
 def _redact_str(s: str) -> str:
     cleaned, _ = redact_credentials(s)
@@ -124,6 +126,7 @@ def _redact_loop(row: dict) -> dict:
 
 # ── connection + schema ──
 
+
 def _connect() -> sqlite3.Connection:
     _db_path().parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(_db_path()), timeout=5.0)
@@ -133,8 +136,7 @@ def _connect() -> sqlite3.Connection:
         conn.execute("PRAGMA busy_timeout=5000")
     except sqlite3.DatabaseError:
         logger.debug("could not set WAL/busy_timeout pragmas", exc_info=True)
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS loops (
+    conn.execute("""CREATE TABLE IF NOT EXISTS loops (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             kind TEXT NOT NULL DEFAULT 'goal',
@@ -174,13 +176,15 @@ def _connect() -> sqlite3.Connection:
             task_list_ids TEXT NOT NULL DEFAULT '{}',
             linked_task_ids TEXT NOT NULL DEFAULT '[]',
             session_key TEXT NOT NULL DEFAULT ''
-        )"""
-    )
+        )""")
     # Idempotent column migrations for DBs created before a field was added (the
     # CREATE above is IF NOT EXISTS, so an existing table won't gain new columns).
-    _ensure_columns(conn, {
-        "auto_teardown_on_complete": "INTEGER NOT NULL DEFAULT 0",
-    })
+    _ensure_columns(
+        conn,
+        {
+            "auto_teardown_on_complete": "INTEGER NOT NULL DEFAULT 0",
+        },
+    )
     conn.commit()
     return conn
 
@@ -202,12 +206,36 @@ def _ensure_columns(conn: sqlite3.Connection, cols: dict[str, str]) -> None:
 # Columns in INSERT order (everything except the JSON-encoded ones, which are
 # handled by serializing the matching Loop fields).
 _SCALAR_COLS = (
-    "id", "name", "kind", "task", "project_id", "summary", "intake_rigor",
-    "execution", "agent", "model", "provider", "provider_agent", "reasoning_effort",
-    "strategy_id", "workspace_dir", "auto_teardown_on_complete", "attended", "autopilot", "max_cycles",
-    "idle_secs", "success_criteria", "status", "created_at", "started_at",
-    "completed_at", "elapsed_seconds", "total_cycles", "error_message",
-    "tasks_project_id", "session_key",
+    "id",
+    "name",
+    "kind",
+    "task",
+    "project_id",
+    "summary",
+    "intake_rigor",
+    "execution",
+    "agent",
+    "model",
+    "provider",
+    "provider_agent",
+    "reasoning_effort",
+    "strategy_id",
+    "workspace_dir",
+    "auto_teardown_on_complete",
+    "attended",
+    "autopilot",
+    "max_cycles",
+    "idle_secs",
+    "success_criteria",
+    "status",
+    "created_at",
+    "started_at",
+    "completed_at",
+    "elapsed_seconds",
+    "total_cycles",
+    "error_message",
+    "tasks_project_id",
+    "session_key",
 )
 _JSON_COLS = _LIST_COLS + _DICT_COLS
 
@@ -217,7 +245,11 @@ def _row_to_loop(row: sqlite3.Row) -> Loop:
     for col in _JSON_COLS:
         raw = d.get(col)
         try:
-            d[col] = json.loads(raw) if isinstance(raw, str) else (raw or ({} if col in _DICT_COLS else []))
+            d[col] = (
+                json.loads(raw)
+                if isinstance(raw, str)
+                else (raw or ({} if col in _DICT_COLS else []))
+            )
         except (json.JSONDecodeError, TypeError):
             d[col] = {} if col in _DICT_COLS else []
     d["attended"] = bool(d.get("attended", 0))
@@ -241,12 +273,14 @@ def _loop_to_params(loop: Loop) -> dict[str, Any]:
 
 # ── CRUD ──
 
+
 def create(loop: Loop) -> Loop:
     """Insert a new loop (assigning an id + created_at if unset). Validates kind."""
     if loop.kind not in KINDS:
         raise ValueError(f"unknown loop kind: {loop.kind!r}")
     if not loop.id:
         import uuid
+
         loop.id = uuid.uuid4().hex[:8]
     if not loop.created_at:
         loop.created_at = time.time()
@@ -337,16 +371,19 @@ def update_status(loop_id: str, new_status: LoopStatus, **fields: Any) -> Loop:
                 sets.append("elapsed_seconds = ?")
                 vals.append(float(prior) + max(0.0, now - float(started)))
         if new_status == LoopStatus.RUNNING:
-            sets.append("started_at = ?"); vals.append(now)
+            sets.append("started_at = ?")
+            vals.append(now)
             fields.setdefault("error_message", None)
         if new_status in (LoopStatus.COMPLETE, LoopStatus.STOPPED, LoopStatus.FAILED):
-            sets.append("completed_at = ?"); vals.append(now)
+            sets.append("completed_at = ?")
+            vals.append(now)
         for key, value in fields.items():
             if key in _JSON_COLS:
                 value = json.dumps(value)
             elif key in ("attended", "autopilot"):
                 value = int(bool(value))
-            sets.append(f"{key} = ?"); vals.append(value)
+            sets.append(f"{key} = ?")
+            vals.append(value)
         vals.append(loop_id)
         conn.execute(f"UPDATE loops SET {', '.join(sets)} WHERE id = ?", vals)
         conn.commit()
@@ -360,13 +397,33 @@ def update_status(loop_id: str, new_status: LoopStatus, **fields: Any) -> Loop:
 
 
 # Spec fields a pre-launch loop may edit (the rest are engine-managed).
-_EDITABLE_SPEC_COLS = frozenset({
-    "name", "task", "summary", "intake_rigor", "plan", "execution", "agent",
-    "model", "provider", "provider_agent", "reasoning_effort", "roster",
-    "strategy_id", "strategy_config", "skill_ids", "workflow_ids", "workspace_dir",
-    "attended", "autopilot", "max_cycles", "idle_secs", "success_criteria",
-    "kind_config",
-})
+_EDITABLE_SPEC_COLS = frozenset(
+    {
+        "name",
+        "task",
+        "summary",
+        "intake_rigor",
+        "plan",
+        "execution",
+        "agent",
+        "model",
+        "provider",
+        "provider_agent",
+        "reasoning_effort",
+        "roster",
+        "strategy_id",
+        "strategy_config",
+        "skill_ids",
+        "workflow_ids",
+        "workspace_dir",
+        "attended",
+        "autopilot",
+        "max_cycles",
+        "idle_secs",
+        "success_criteria",
+        "kind_config",
+    }
+)
 
 
 def update_spec(loop_id: str, fields: dict) -> Loop | None:
@@ -374,6 +431,7 @@ def update_spec(loop_id: str, fields: dict) -> Loop | None:
     is missing OR its spec is frozen (already started) — the caller routes a
     name-only patch to :func:`rename` instead."""
     from personalclaw.loop.loop import PRELAUNCH_STATUSES
+
     loop = get(loop_id)
     if loop is None:
         return None
@@ -390,7 +448,8 @@ def update_spec(loop_id: str, fields: dict) -> Loop | None:
                 value = json.dumps(value)
             elif key in ("attended", "autopilot"):
                 value = int(bool(value))
-            sets.append(f"{key} = ?"); vals.append(value)
+            sets.append(f"{key} = ?")
+            vals.append(value)
         vals.append(loop_id)
         conn.execute(f"UPDATE loops SET {', '.join(sets)} WHERE id = ?", vals)
         conn.commit()
@@ -409,6 +468,7 @@ def rebind_workspace(loop_id: str, workspace_dir: str) -> Loop | None:
     if loop is None:
         return None
     from personalclaw.loop.loop import TERMINAL_STATUSES
+
     if LoopStatus(loop.status) in TERMINAL_STATUSES or loop.status == LoopStatus.RUNNING.value:
         return None
     _simple_set(loop_id, "workspace_dir", str(workspace_dir or "").strip())
@@ -492,19 +552,23 @@ def merge_kind_config(loop_id: str, patch: dict) -> dict:
     return merged
 
 
-def set_tasks_links(loop_id: str, *, tasks_project_id: str = "",
-                    task_list_ids: dict | None = None) -> Loop | None:
+def set_tasks_links(
+    loop_id: str, *, tasks_project_id: str = "", task_list_ids: dict | None = None
+) -> Loop | None:
     loop = get(loop_id)
     if loop is None:
         return None
     conn = _connect()
     try:
         if tasks_project_id:
-            conn.execute("UPDATE loops SET tasks_project_id = ? WHERE id = ?",
-                         (tasks_project_id, loop_id))
+            conn.execute(
+                "UPDATE loops SET tasks_project_id = ? WHERE id = ?", (tasks_project_id, loop_id)
+            )
         if task_list_ids is not None:
-            conn.execute("UPDATE loops SET task_list_ids = ? WHERE id = ?",
-                         (json.dumps(task_list_ids), loop_id))
+            conn.execute(
+                "UPDATE loops SET task_list_ids = ? WHERE id = ?",
+                (json.dumps(task_list_ids), loop_id),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -554,11 +618,13 @@ def delete(loop_id: str) -> bool:
     d = safe_loop_dir(loop_id)
     if d is not None:
         import shutil
+
         shutil.rmtree(d, ignore_errors=True)
     return deleted
 
 
 # ── redacted views ──
+
 
 def get_redacted(loop_id: str) -> dict | None:
     loop = get(loop_id)
@@ -597,6 +663,7 @@ def read_deliverable(loop_id: str) -> str:
     candidates: list[str] = []
     if loop is not None:
         from personalclaw.loop import kinds
+
         kinds.ensure_loaded()
         strat = kinds.get_or_none(loop.kind)
         namer = getattr(strat, "deliverable_name", None) if strat else None
@@ -654,6 +721,7 @@ def list_redacted(project_id: str = "", kind: str = "") -> list[dict]:
 
 
 # ── file-based worker interface (status / brief / guidance / findings / …) ──
+
 
 def write_status(loop_id: str, status: LoopStatus, **extra: Any) -> None:
     """Mirror status to status.json — the cycle gate the worker reads each turn.
@@ -838,8 +906,14 @@ def append_nudge(loop_id: str, text: str, sent_at_cycle: int) -> None:
             log = []
     except (json.JSONDecodeError, OSError):
         log = []
-    log.append({"text": text, "sent_at": time.time(),
-                "sent_at_cycle": sent_at_cycle, "applied_cycle": None})
+    log.append(
+        {
+            "text": text,
+            "sent_at": time.time(),
+            "sent_at_cycle": sent_at_cycle,
+            "applied_cycle": None,
+        }
+    )
     atomic_write(p, json.dumps(log, indent=2))
 
 
@@ -856,7 +930,11 @@ def mark_nudges_applied(loop_id: str, cycle: int) -> None:
         return
     changed = False
     for n in log:
-        if isinstance(n, dict) and n.get("applied_cycle") is None and int(n.get("sent_at_cycle", 0)) < cycle:
+        if (
+            isinstance(n, dict)
+            and n.get("applied_cycle") is None
+            and int(n.get("sent_at_cycle", 0)) < cycle
+        ):
             n["applied_cycle"] = cycle
             changed = True
     if changed:
@@ -958,6 +1036,7 @@ _PLAN_SESSION_FILE = "plan_session.json"
 
 def read_plan_session(loop_id: str):
     from personalclaw.planning.session import PlanSession
+
     d = safe_loop_dir(loop_id)
     f = d / _PLAN_SESSION_FILE if d else None
     if not f or not f.exists():
@@ -1001,6 +1080,7 @@ def reap_orphan_dirs() -> int:
         return 0
     reaped = 0
     import shutil
+
     for child in root.iterdir():
         try:
             if not child.is_dir() or not valid_loop_id(child.name) or child.name in ids:

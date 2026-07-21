@@ -12,7 +12,6 @@ import json
 import pytest
 
 from personalclaw.acp.reader import FrameRouter
-from personalclaw.acp.types import JsonRpcMessage
 
 
 class _FakeStdout:
@@ -94,7 +93,9 @@ async def test_one_session_unregister_does_not_stall_other():
     qb = r.register_session("B")
     out.feed(_f(method="session/update", params={"sessionId": "A", "update": {}}))
     r.unregister_session("A")  # A is gone
-    out.feed(_f(method="session/update", params={"sessionId": "A", "update": {}}))  # now routes to broadcast/drop
+    out.feed(
+        _f(method="session/update", params={"sessionId": "A", "update": {}})
+    )  # now routes to broadcast/drop
     out.feed(_f(method="session/update", params={"sessionId": "B", "update": {"ok": True}}))
     b = await asyncio.wait_for(qb.get(), timeout=2)
     assert b.params["update"]["ok"] is True
@@ -155,7 +156,7 @@ async def test_process_death_fans_out_to_ALL_concurrent_sessions():
     out = _FakeStdout()
     r = FrameRouter(out.readline)
     r.start()
-    futs = [r.expect(i) for i in (10, 11, 12)]         # 3 in-flight requests
+    futs = [r.expect(i) for i in (10, 11, 12)]  # 3 in-flight requests
     queues = [r.register_session(sid) for sid in ("A", "B", "C")]  # 3 concurrent sessions
     out.eof()  # connection dies
     # every pending future fails (no request hangs)

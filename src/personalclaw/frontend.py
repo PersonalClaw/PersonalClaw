@@ -123,12 +123,16 @@ def build_frontend_sync(
     try:
         r = subprocess.run(
             ["npm", "ci", "--no-audit", "--no-fund"],
-            cwd=website_dir, capture_output=True, timeout=180,
+            cwd=website_dir,
+            capture_output=True,
+            timeout=180,
         )
         if r.returncode == 0:
             r = subprocess.run(
                 ["npm", "run", "build"],
-                cwd=website_dir, capture_output=True, timeout=120,
+                cwd=website_dir,
+                capture_output=True,
+                timeout=120,
             )
             if r.returncode == 0:
                 _propagate_dist(website_dir / "dist", proj_path, log)
@@ -161,7 +165,10 @@ async def build_frontend_async(
         return
 
     npm_i = await asyncio.create_subprocess_exec(
-        "npm", "ci", "--no-audit", "--no-fund",
+        "npm",
+        "ci",
+        "--no-audit",
+        "--no-fund",
         cwd=str(website_dir),
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
@@ -176,7 +183,9 @@ async def build_frontend_async(
         await npm_i.wait()
     if npm_i.returncode == 0:
         npm_build = await asyncio.create_subprocess_exec(
-            "npm", "run", "build",
+            "npm",
+            "run",
+            "build",
             cwd=str(website_dir),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,

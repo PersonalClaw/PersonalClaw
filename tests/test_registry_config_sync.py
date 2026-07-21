@@ -49,13 +49,16 @@ def test_sync_registers_config_providers(cfg_with_provider):
     # load apps, so register the type here to simulate that app being installed —
     # after the alias collapse there is NO mapping to "openai".
     from personalclaw.llm.capabilities import Capability, ProviderCapability
+
     if "openai_compatible" not in reg._capabilities:  # noqa: SLF001
         reg.register_type(
             ProviderCapability(
                 type="openai_compatible",
                 capabilities=frozenset({Capability.CHAT, Capability.STREAMING}),
-                supports_streaming=True, supports_tools=True,
-                supports_embeddings=True, supports_vision=True,
+                supports_streaming=True,
+                supports_tools=True,
+                supports_embeddings=True,
+                supports_vision=True,
                 max_context_tokens=0,
             ),
             lambda **kw: None,

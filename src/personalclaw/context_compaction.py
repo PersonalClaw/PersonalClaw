@@ -37,8 +37,8 @@ logger = logging.getLogger(__name__)
 _TOOL_RESULT_PRUNE_OVER = 600
 _KEEP_RECENT_TOOL_RESULTS = 4
 # 4-region protection.
-_PROTECT_HEAD = 3          # system + first messages stay verbatim
-_PROTECT_TAIL = 8          # floor of recent messages kept verbatim
+_PROTECT_HEAD = 3  # system + first messages stay verbatim
+_PROTECT_TAIL = 8  # floor of recent messages kept verbatim
 # Anti-thrashing: a compaction that saved less than this fraction "didn't help".
 _MIN_SAVE_FRACTION = 0.10
 # Paths in tool-call args worth surfacing as "Relevant Files".
@@ -119,6 +119,7 @@ def extract_file_refs(messages: list[dict], limit: int = 25) -> list[str]:
             args = tc.get("function", {}).get("arguments", "")
             if isinstance(args, str):
                 import json
+
                 try:
                     parsed = json.loads(args)
                 except (ValueError, TypeError):
@@ -155,6 +156,7 @@ def _structured_digest(middle: list[dict], files: list[str]) -> str:
         parts.append("### Requests made\n" + "\n".join(f"- {u[:200]}" for u in user_msgs[:10]))
     if tool_names:
         from collections import Counter
+
         counts = Counter(tool_names)
         parts.append("### Tools used\n" + ", ".join(f"{n}×{c}" for n, c in counts.most_common(12)))
     if files:

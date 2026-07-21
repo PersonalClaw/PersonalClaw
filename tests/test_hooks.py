@@ -1,7 +1,5 @@
 """Tests for hooks module."""
 
-from unittest.mock import MagicMock
-
 import pytest
 
 from personalclaw.hooks import (
@@ -218,29 +216,35 @@ class TestHooksConfigFromDict:
         assert cfg.auto_approve_subagent_tools is False  # independent flag, not inherited
 
     def test_subagent_tools_independent_of_spawn(self):
-        cfg = HooksConfig.from_dict({
-            "auto_approve_subagent_spawn": True,
-            "auto_approve_subagent_tools": False,
-        })
+        cfg = HooksConfig.from_dict(
+            {
+                "auto_approve_subagent_spawn": True,
+                "auto_approve_subagent_tools": False,
+            }
+        )
         assert cfg.auto_approve_subagent_spawn is True
         assert cfg.auto_approve_subagent_tools is False
 
     def test_subagent_tools_explicit_true(self):
-        cfg = HooksConfig.from_dict({
-            "auto_approve_subagent_spawn": False,
-            "auto_approve_subagent_tools": True,
-        })
+        cfg = HooksConfig.from_dict(
+            {
+                "auto_approve_subagent_spawn": False,
+                "auto_approve_subagent_tools": True,
+            }
+        )
         assert cfg.auto_approve_subagent_spawn is False
         assert cfg.auto_approve_subagent_tools is True
 
     def test_hook_manager_auto_approve_subagent_tools_property(self):
         from personalclaw.hooks import HookManager
+
         cfg = HooksConfig.from_dict({"auto_approve_subagent_tools": True})
         mgr = HookManager(cfg)
         assert mgr.auto_approve_subagent_tools is True
 
     def test_hook_manager_auto_approve_subagent_tools_default(self):
         from personalclaw.hooks import HookManager
+
         cfg = HooksConfig.from_dict({})
         mgr = HookManager(cfg)
         assert mgr.auto_approve_subagent_tools is False

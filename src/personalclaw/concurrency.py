@@ -111,8 +111,6 @@ async def reap_orphans(
             await reap(item)
             reaped += 1
         except Exception:
-            logger.warning(
-                "reap_orphans[%s]: failed to reap %r", label, item, exc_info=True
-            )
+            logger.warning("reap_orphans[%s]: failed to reap %r", label, item, exc_info=True)
     logger.info("reap_orphans[%s]: reaped %d orphan(s) at startup", label, reaped)
     return reaped

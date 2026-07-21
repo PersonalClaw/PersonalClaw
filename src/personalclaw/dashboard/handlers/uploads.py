@@ -48,10 +48,12 @@ def _store(request: web.Request) -> UploadStore:
 async def api_uploads_limits(request: web.Request) -> web.Response:
     """GET /api/uploads/limits — per-category caps + the single-POST threshold, so
     the client can pre-check + choose single-POST vs chunked before uploading."""
-    return web.json_response({
-        "limits": limits_table(),
-        "single_post_threshold": single_post_threshold(),
-    })
+    return web.json_response(
+        {
+            "limits": limits_table(),
+            "single_post_threshold": single_post_threshold(),
+        }
+    )
 
 
 async def api_uploads_init(request: web.Request) -> web.Response:
@@ -66,8 +68,11 @@ async def api_uploads_init(request: web.Request) -> web.Response:
     filename = str(body.get("filename") or "").strip()
     if not filename:
         return web.json_response({"error": "filename required"}, status=400)
+    _size = body.get("size")
+    if _size is None:
+        return web.json_response({"error": "size (bytes) required"}, status=400)
     try:
-        size = int(body.get("size"))
+        size = int(_size)
     except (TypeError, ValueError):
         return web.json_response({"error": "size (bytes) required"}, status=400)
     mime = str(body.get("mime") or "") or None
@@ -86,17 +91,23 @@ async def api_uploads_init(request: web.Request) -> web.Response:
 
     try:
         sess = _store(request).init(
-            filename=filename, size=size, mime=mime or "", target=target, target_dir=target_dir,
+            filename=filename,
+            size=size,
+            mime=mime or "",
+            target=target,
+            target_dir=target_dir,
         )
     except UploadError as exc:
         return web.json_response({"error": exc.message}, status=exc.status)
 
-    return web.json_response({
-        "uploadId": sess.id,
-        "partSize": sess.part_size,
-        "totalParts": sess.total_parts,
-        "category": sess.category,
-    })
+    return web.json_response(
+        {
+            "uploadId": sess.id,
+            "partSize": sess.part_size,
+            "totalParts": sess.total_parts,
+            "category": sess.category,
+        }
+    )
 
 
 async def api_uploads_part(request: web.Request) -> web.Response:
@@ -118,11 +129,13 @@ async def api_uploads_part(request: web.Request) -> web.Response:
         logger.exception("write_part failed for %s idx=%s", sid, index)
         return web.json_response({"error": "failed to write part"}, status=500)
 
-    return web.json_response({
-        "received": sess.received,
-        "totalParts": sess.total_parts,
-        "complete": store.is_complete(sess),
-    })
+    return web.json_response(
+        {
+            "received": sess.received,
+            "totalParts": sess.total_parts,
+            "complete": store.is_complete(sess),
+        }
+    )
 
 
 async def api_uploads_status(request: web.Request) -> web.Response:
@@ -132,15 +145,17 @@ async def api_uploads_status(request: web.Request) -> web.Response:
         sess = store.get(request.match_info["id"])
     except UploadError as exc:
         return web.json_response({"error": exc.message}, status=exc.status)
-    return web.json_response({
-        "uploadId": sess.id,
-        "filename": sess.filename,
-        "size": sess.size,
-        "received": sess.received,
-        "totalParts": sess.total_parts,
-        "complete": store.is_complete(sess),
-        "completed": sess.completed,
-    })
+    return web.json_response(
+        {
+            "uploadId": sess.id,
+            "filename": sess.filename,
+            "size": sess.size,
+            "received": sess.received,
+            "totalParts": sess.total_parts,
+            "complete": store.is_complete(sess),
+            "completed": sess.completed,
+        }
+    )
 
 
 async def api_uploads_complete(request: web.Request) -> web.Response:
@@ -222,8 +237,8 @@ async def _finalize_target(request: web.Request, sess, final_path: Path) -> dict
     import uuid
 
     if sess.target == "attachment":
-        from personalclaw.dashboard.handlers.files import _UPLOAD_DIR
         from personalclaw.dashboard.attachment_extract import get_extractor
+        from personalclaw.dashboard.handlers.files import _UPLOAD_DIR
 
         _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         import re
@@ -236,6 +251,7 @@ async def _finalize_target(request: web.Request, sess, final_path: Path) -> dict
         # text is ready by the time the turn runs.
         try:
             import mimetypes as _mt
+
             get_extractor().start(str(dest), sess.mime or _mt.guess_type(str(dest))[0])
         except Exception:
             logger.debug("attachment extract kickoff failed", exc_info=True)
@@ -249,14 +265,19 @@ async def _finalize_target(request: web.Request, sess, final_path: Path) -> dict
         if classify(sess.filename, sess.mime or None) is None:
             raise UploadError(f"unsupported file type: {sess.filename}", 415)
         store = _kn_store(request)
-        item, is_new = _store_file_item(store, str(final_path), sess.filename, mime=sess.mime or None)
+        item, is_new = _store_file_item(
+            store, str(final_path), sess.filename, mime=sess.mime or None
+        )
+        if item is None:
+            raise UploadError("failed to store item", 500)
         if is_new:
             try:
                 request.app["state"].knowledge_ingest_queue().enqueue(item["id"])
             except Exception:
                 logger.debug("knowledge enqueue failed for %s", item["id"], exc_info=True)
         return {
-            "item_id": item["id"], "type": item["type"],
+            "item_id": item["id"],
+            "type": item["type"],
             "status": "processing" if is_new else (item.get("processing_status") or "done"),
             "deduped": not is_new,
         }
@@ -264,12 +285,12 @@ async def _finalize_target(request: web.Request, sess, final_path: Path) -> dict
     if sess.target == "workspace":
         from personalclaw.dashboard.handlers.files import _validate_dashboard_path
 
-        dest = _validate_dashboard_path(os.path.join(sess.target_dir, Path(sess.filename).name))
-        if not dest:
+        wdest = _validate_dashboard_path(os.path.join(sess.target_dir, Path(sess.filename).name))
+        if not wdest:
             raise UploadError(f"forbidden filename: {sess.filename}", 400)
-        if os.path.exists(dest):
+        if os.path.exists(wdest):
             raise UploadError(f"already exists: {sess.filename}", 409)
-        shutil.move(str(final_path), dest)
-        return {"paths": [dest]}
+        shutil.move(str(final_path), wdest)
+        return {"paths": [wdest]}
 
     raise UploadError(f"unknown target: {sess.target}", 400)

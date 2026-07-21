@@ -314,8 +314,10 @@ class TestConsolidation:
 
         state.consolidator.maybe_consolidate.assert_not_called()
         mock_sel().log_api_access.assert_called_once_with(
-            caller="dashboard:e1", operation="consolidate",
-            outcome="denied", source="dashboard",
+            caller="dashboard:e1",
+            operation="consolidate",
+            outcome="denied",
+            source="dashboard",
             resources="restricted_session_block",
         )
 
@@ -456,8 +458,10 @@ class TestLessonsGate:
             assert resp.status == 400
 
     @pytest.mark.asyncio
-    async def test_learn_add_blocked_by_session_fallback_on_restricted_key_desync(self, tmp_path, monkeypatch):
-        """Defense-in-depth: even if _restricted_keys loses the key, the session's own flag blocks writes."""
+    async def test_learn_add_blocked_by_session_fallback_on_restricted_key_desync(
+        self, tmp_path, monkeypatch
+    ):
+        """Defense-in-depth: even if _restricted_keys loses the key, the session's own flag blocks writes."""  # noqa: E501
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         state.get_or_create_session("e1", memory_mode="incognito")
@@ -474,8 +478,10 @@ class TestLessonsGate:
             assert "not allowed" in data["error"]
 
     @pytest.mark.asyncio
-    async def test_learn_add_allowed_for_browser_ui_despite_restricted_session(self, tmp_path, monkeypatch):
-        """Browser Memory page sends 'dashboard:ui' — allowed even when restricted sessions exist."""
+    async def test_learn_add_allowed_for_browser_ui_despite_restricted_session(
+        self, tmp_path, monkeypatch
+    ):
+        """Browser Memory page sends 'dashboard:ui' — allowed even when restricted sessions exist."""  # noqa: E501
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setattr(
             "personalclaw.dashboard.handlers._get_memory",
@@ -509,6 +515,7 @@ class TestMcpCoreSessionKeyPassthrough:
             mock_urlopen.return_value = mock_resp
 
             from personalclaw.mcp_core import _post
+
             _post("/api/lessons", {"rule": "test", "category": "knowledge"})
 
         req = mock_urlopen.call_args[0][0]
@@ -526,6 +533,7 @@ class TestMcpCoreSessionKeyPassthrough:
             mock_urlopen.return_value = mock_resp
 
             from personalclaw.mcp_core import _post
+
             _post("/api/lessons", {"rule": "test", "category": "knowledge"})
 
         req = mock_urlopen.call_args[0][0]
@@ -540,7 +548,9 @@ class TestCrossTabPrivacy:
         """Restricted session messages must not leak into 'Other chat tabs' context."""
         log = ConversationLog(base_dir=tmp_path)
 
-        _write_session(log, "dashboard:e1", [("user", "secret private data")], memory_mode="incognito")
+        _write_session(
+            log, "dashboard:e1", [("user", "secret private data")], memory_mode="incognito"
+        )
         _write_session(log, "dashboard:n1", [("user", "normal public data")])
 
         results = log.recent_from_source("dashboard:", max_messages=50)
@@ -560,7 +570,9 @@ class TestCrossTabPrivacy:
         """4 restricted + 3 persistent: all 3 persistent sessions included."""
         log = ConversationLog(base_dir=tmp_path)
         for i in range(4):
-            _write_session(log, f"dashboard:e{i}", [("user", f"secret-{i}")], memory_mode="temporary")
+            _write_session(
+                log, f"dashboard:e{i}", [("user", f"secret-{i}")], memory_mode="temporary"
+            )
             p = log._path(f"dashboard:e{i}")
             os.utime(p, (time.time() + 100 + i, time.time() + 100 + i))
         for i in range(3):
@@ -578,13 +590,13 @@ class TestCrossTabPrivacy:
     def test_many_restricted_do_not_crowd_out_persistent_sessions(self, tmp_path):
         log = ConversationLog(base_dir=tmp_path)
         for i in range(18):
-            _write_session(log, f"dashboard:e{i}",
-                           [("user", f"secret-{i}")], memory_mode="incognito")
+            _write_session(
+                log, f"dashboard:e{i}", [("user", f"secret-{i}")], memory_mode="incognito"
+            )
             p = log._path(f"dashboard:e{i}")
             os.utime(p, (time.time() + 200 + i, time.time() + 200 + i))
         for i in range(5):
-            _write_session(log, f"dashboard:n{i}",
-                           [("user", f"normal-{i}")])
+            _write_session(log, f"dashboard:n{i}", [("user", f"normal-{i}")])
             p = log._path(f"dashboard:n{i}")
             os.utime(p, (time.time() + i, time.time() + i))
 
@@ -692,7 +704,9 @@ class TestBlocksReadsContext:
         # Memory is resolved per-cwd via the static get_memory_for; pin it to the
         # test's store so the assertion targets the blocks_reads gate, not the
         # cwd→partition mapping.
-        monkeypatch.setattr(ContextBuilder, "get_memory_for", staticmethod(lambda cwd=None, memory_store=None: mem))
+        monkeypatch.setattr(
+            ContextBuilder, "get_memory_for", staticmethod(lambda cwd=None, memory_store=None: mem)
+        )
 
         ctx_normal = cb.build_session_context(
             session_key="dashboard:test-normal",
@@ -842,6 +856,7 @@ class TestSessionRecovery:
             # (ServerDisconnectedError or similar). Either way, the request
             # cannot reach the handler — verify it doesn't succeed.
             import aiohttp
+
             try:
                 resp = await client.post(
                     "/api/lessons",
@@ -905,8 +920,11 @@ class TestSessionRecovery:
                 assert resp.status == 200
 
         mock_sel().log_api_access.assert_any_call(
-            caller="dashboard:live1", operation="memory_remember", outcome="allowed",
-            source="dashboard", resources="live_session",
+            caller="dashboard:live1",
+            operation="memory_remember",
+            outcome="allowed",
+            source="dashboard",
+            resources="live_session",
         )
 
     @pytest.mark.asyncio
@@ -938,8 +956,11 @@ class TestSessionRecovery:
                 assert resp.status in (200, 403)
 
         mock_sel().log_api_access.assert_any_call(
-            caller="dashboard:r1", operation="memory_remember", outcome="allowed",
-            source="dashboard", resources="restricted_key",
+            caller="dashboard:r1",
+            operation="memory_remember",
+            outcome="allowed",
+            source="dashboard",
+            resources="restricted_key",
         )
 
     @pytest.mark.asyncio
@@ -963,8 +984,11 @@ class TestSessionRecovery:
                 assert resp.status == 200
 
         mock_sel().log_api_access.assert_any_call(
-            caller="channel:C123:1777000000.000000", operation="memory_remember", outcome="allowed",
-            source="dashboard", resources="channel_namespace",
+            caller="channel:C123:1777000000.000000",
+            operation="memory_remember",
+            outcome="allowed",
+            source="dashboard",
+            resources="channel_namespace",
         )
 
     @pytest.mark.asyncio
@@ -991,8 +1015,11 @@ class TestSessionRecovery:
                 assert resp.status == 200
 
         mock_sel().log_api_access.assert_any_call(
-            caller="dashboard:ui", operation="memory_remember", outcome="allowed",
-            source="dashboard", resources="dashboard_ui",
+            caller="dashboard:ui",
+            operation="memory_remember",
+            outcome="allowed",
+            source="dashboard",
+            resources="dashboard_ui",
         )
 
 

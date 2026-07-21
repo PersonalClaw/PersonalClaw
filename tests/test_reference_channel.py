@@ -34,6 +34,7 @@ def test_send_records_and_echoes_inbound():
         msg = await anext(t.receive())
         await t.disconnect()
         return msg
+
     msg = _run(go())
     assert isinstance(msg, ChannelMessage)
     assert msg.text == "echo: hello" and msg.sender == "reference-echo"
@@ -47,6 +48,7 @@ def test_simulate_inbound_yields_normalized():
         msg = await anext(t.receive())
         await t.disconnect()
         return msg
+
     msg = _run(go())
     assert msg.text == "a real user message" and msg.sender == "user"
 

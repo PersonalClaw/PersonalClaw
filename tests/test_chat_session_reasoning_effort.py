@@ -155,6 +155,7 @@ class TestValidateReasoningEffortPersistence:
     def test_passes_through_wellformed(self, level: str):
         # Any well-formed token passes (backends declare their own values).
         from personalclaw.dashboard.chat_persistence import _validate_reasoning_effort
+
         assert _validate_reasoning_effort(level) == level
 
     @pytest.mark.parametrize(
@@ -165,10 +166,12 @@ class TestValidateReasoningEffortPersistence:
     )
     def test_discards_malformed(self, tampered: str):
         from personalclaw.dashboard.chat_persistence import _validate_reasoning_effort
+
         assert _validate_reasoning_effort(tampered) == ""
 
     def test_discards_non_string(self):
         from personalclaw.dashboard.chat_persistence import _validate_reasoning_effort
+
         assert _validate_reasoning_effort(5) == ""
         assert _validate_reasoning_effort(None) == ""
         assert _validate_reasoning_effort(["max"]) == ""

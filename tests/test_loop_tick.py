@@ -31,6 +31,7 @@ def _state(**kw) -> TickState:
 
 # ── budget / completion ─────────────────────────────────────────────────────
 
+
 def test_budget_exhausted_completes():
     d = evaluate(_cfg(StepConfig(), max_cycles=5), _state(total_cycles=5), now=100.0)
     assert d.action is Action.COMPLETE and "budget" in d.reason
@@ -49,12 +50,14 @@ def test_past_last_step_completes():
 
 # ── worker-in-flight ──────────────────────────────────────────────────────────
 
+
 def test_worker_in_flight_waits():
     d = evaluate(_cfg(StepConfig()), _state(worker_in_flight=True), now=100.0)
     assert d.action is Action.WAITING
 
 
 # ── dwell / bake ───────────────────────────────────────────────────────────────
+
 
 def test_bake_period_holds_until_elapsed():
     cfg = _cfg(StepConfig(min_dwell_secs=60.0))
@@ -70,6 +73,7 @@ def test_bake_elapsed_allows_advance():
 
 # ── min_findings ───────────────────────────────────────────────────────────────
 
+
 def test_min_findings_keeps_executing():
     cfg = _cfg(StepConfig(min_findings=3))
     d = evaluate(cfg, _state(findings_in_step=1, gate_passed=True), now=100.0)
@@ -77,6 +81,7 @@ def test_min_findings_keeps_executing():
 
 
 # ── gate / advance ──────────────────────────────────────────────────────────────
+
 
 def test_gate_passed_advances():
     cfg = _cfg(StepConfig(), StepConfig())
@@ -97,6 +102,7 @@ def test_gate_not_passed_executes():
 
 # ── metric gate ────────────────────────────────────────────────────────────────
 
+
 def test_metric_pass_gates_advance():
     cfg = _cfg(StepConfig(metric_pass=4.0, metric_hold=2.0), StepConfig())
     # gate structurally passed but metric below pass → not an advance
@@ -116,6 +122,7 @@ def test_metric_below_hold_without_prior_floor_executes():
 
 # ── rollback ───────────────────────────────────────────────────────────────────
 
+
 def test_metric_regression_rolls_back():
     cfg = _cfg(StepConfig(metric_pass=4.0), StepConfig(metric_pass=4.0))
     d = evaluate(cfg, _state(step_index=1, metric=1.0, prior_step_floor=3.0), now=100.0)
@@ -125,17 +132,22 @@ def test_metric_regression_rolls_back():
 
 def test_rollback_cap_blocks():
     cfg = _cfg(StepConfig(metric_pass=4.0), StepConfig(metric_pass=4.0), rollback_cap=2)
-    d = evaluate(cfg, _state(step_index=1, metric=1.0, prior_step_floor=3.0, rollbacks_on_step=2), now=100.0)
+    d = evaluate(
+        cfg, _state(step_index=1, metric=1.0, prior_step_floor=3.0, rollbacks_on_step=2), now=100.0
+    )
     assert d.action is Action.COMPLETE and "cap" in d.reason
 
 
 def test_no_rollback_when_metric_at_or_above_floor():
     cfg = _cfg(StepConfig(metric_pass=4.0), StepConfig(metric_pass=4.0))
-    d = evaluate(cfg, _state(step_index=1, metric=3.5, prior_step_floor=3.0, gate_passed=False), now=100.0)
+    d = evaluate(
+        cfg, _state(step_index=1, metric=3.5, prior_step_floor=3.0, gate_passed=False), now=100.0
+    )
     assert d.action is not Action.ROLLBACK
 
 
 # ── default / no-steps ───────────────────────────────────────────────────────────
+
 
 def test_no_steps_executes():
     # A point-in-time loop (no steps) just executes; completion comes from an external signal.
@@ -144,6 +156,7 @@ def test_no_steps_executes():
 
 
 # ── zero-wait collapse ─────────────────────────────────────────────────────────
+
 
 def test_collapse_folds_instant_steps():
     # 3 instant, already-gated steps → collapse straight to COMPLETE in one call.
@@ -163,6 +176,7 @@ def test_collapse_stops_at_a_dwell_step():
 
 # ── Decision serialization ───────────────────────────────────────────────────────
 
+
 def test_decision_to_dict_lean_and_metric():
     assert "metric" not in Decision(Action.EXECUTE, 0).to_dict()
     d = Decision(Action.ADVANCE, 1, "why", metric=3.14159).to_dict()
@@ -170,6 +184,7 @@ def test_decision_to_dict_lean_and_metric():
 
 
 # ── pure adapters: phase dict → StepConfig / TickConfig ────────────────────────
+
 
 def test_step_config_from_bare_phase_is_neutral():
     # A phase with no P6 keys → today's no-dwell / no-metric behavior.
@@ -179,15 +194,17 @@ def test_step_config_from_bare_phase_is_neutral():
 
 
 def test_step_config_from_phase_parses_keys():
-    sc = step_config_from_phase({"min_dwell_secs": 30, "min_findings": "2",
-                                 "metric_pass": 4.0, "metric_hold": 2.0})
+    sc = step_config_from_phase(
+        {"min_dwell_secs": 30, "min_findings": "2", "metric_pass": 4.0, "metric_hold": 2.0}
+    )
     assert sc.min_dwell_secs == 30.0 and sc.min_findings == 2
     assert sc.metric_pass == 4.0 and sc.metric_hold == 2.0
 
 
 def test_step_config_ignores_garbage():
-    sc = step_config_from_phase({"min_dwell_secs": "not-a-number", "min_findings": "oops",
-                                 "metric_pass": ""})
+    sc = step_config_from_phase(
+        {"min_dwell_secs": "not-a-number", "min_findings": "oops", "metric_pass": ""}
+    )
     assert sc.min_dwell_secs == 0.0 and sc.min_findings == 0 and sc.metric_pass is None
 
 
@@ -199,8 +216,12 @@ def test_tick_config_from_plan_builds_steps():
 
 # ── phase validation ────────────────────────────────────────────────────────────
 
+
 def test_validate_step_phase_ok():
-    assert validate_step_phase({"title": "a", "min_dwell_secs": 5, "metric_pass": 4, "metric_hold": 2}) == []
+    assert (
+        validate_step_phase({"title": "a", "min_dwell_secs": 5, "metric_pass": 4, "metric_hold": 2})
+        == []
+    )
     assert validate_step_phase({"title": "bare"}) == []
 
 
@@ -213,38 +234,64 @@ def test_validate_step_phase_catches_bad_dwell_and_inverted_band():
 def test_goal_validate_config_surfaces_bad_phase(monkeypatch, tmp_path):
     # The malformed phase must surface through the kind's validate_config (intake-time).
     from personalclaw.loop import kinds
+
     kinds.ensure_loaded()
-    cfg = {"kind_config": {"goal_type": "open_ended", "granularity": "balanced",
-                           "execution_plan": [{"title": "bad", "metric_pass": 1.0, "metric_hold": 5.0}]}}
+    cfg = {
+        "kind_config": {
+            "goal_type": "open_ended",
+            "granularity": "balanced",
+            "execution_plan": [{"title": "bad", "metric_pass": 1.0, "metric_hold": 5.0}],
+        }
+    }
     errors, _warnings = kinds.get("goal").validate_config(cfg)
     assert any("metric_hold" in e for e in errors)
 
 
 # ── snapshot builder + end-to-end pipeline ────────────────────────────────────
 
+
 def test_snapshot_derives_findings_in_step():
-    st = tick_state_from_snapshot(step_index=1, step_started_at=10.0,
-                                  findings_total=7, findings_at_step_start=5)
+    st = tick_state_from_snapshot(
+        step_index=1, step_started_at=10.0, findings_total=7, findings_at_step_start=5
+    )
     assert st.findings_in_step == 2 and st.step_index == 1
     # never negative even if counts look inconsistent
-    st2 = tick_state_from_snapshot(step_index=0, step_started_at=0.0,
-                                   findings_total=3, findings_at_step_start=9)
+    st2 = tick_state_from_snapshot(
+        step_index=0, step_started_at=0.0, findings_total=3, findings_at_step_start=9
+    )
     assert st2.findings_in_step == 0
 
 
 def test_end_to_end_snapshot_to_decision():
     # Realistic adapter pipeline: plan → cfg, raw reads → state, evaluate → Decision.
     cfg = tick_config_from_plan(
-        [{"title": "gather", "min_findings": 2}, {"title": "finalize"}], max_cycles=30)
+        [{"title": "gather", "min_findings": 2}, {"title": "finalize"}], max_cycles=30
+    )
     # On step 0 with only 1 finding since it began → keep executing (evidence not met).
-    executing = evaluate(cfg, tick_state_from_snapshot(
-        step_index=0, step_started_at=0.0, findings_total=1, findings_at_step_start=0,
-        gate_passed=True), now=100.0)
+    executing = evaluate(
+        cfg,
+        tick_state_from_snapshot(
+            step_index=0,
+            step_started_at=0.0,
+            findings_total=1,
+            findings_at_step_start=0,
+            gate_passed=True,
+        ),
+        now=100.0,
+    )
     assert executing.action is Action.EXECUTE and "evidence" in executing.reason
     # Enough findings + gate passed → advance to step 1.
-    adv = evaluate(cfg, tick_state_from_snapshot(
-        step_index=0, step_started_at=0.0, findings_total=3, findings_at_step_start=0,
-        gate_passed=True), now=100.0)
+    adv = evaluate(
+        cfg,
+        tick_state_from_snapshot(
+            step_index=0,
+            step_started_at=0.0,
+            findings_total=3,
+            findings_at_step_start=0,
+            gate_passed=True,
+        ),
+        now=100.0,
+    )
     assert adv.action is Action.ADVANCE and adv.step_index == 1
 
 
@@ -252,10 +299,17 @@ def test_sdlc_producer_emits_step_keys():
     """P6 producer: the SDLC classifier attaches sensible tick step-keys per stage kind,
     a planner override survives, and every emitted phase passes intake validation."""
     from personalclaw.loop.code_classify import _normalize_plan
+
     raw = [
         {"stage": "implementation", "title": "Build", "objective": "x"},
         {"stage": "verification", "title": "Verify", "objective": "y"},
-        {"stage": "review", "title": "Review", "objective": "z", "metric_pass": 4.9, "metric_hold": 3.0},
+        {
+            "stage": "review",
+            "title": "Review",
+            "objective": "z",
+            "metric_pass": 4.9,
+            "metric_hold": 3.0,
+        },
     ]
     plan = _normalize_plan(raw, set(), set())
     by = {p["title"]: step_config_from_phase(p) for p in plan}
@@ -271,11 +325,27 @@ def test_sdlc_producer_emits_step_keys():
 
 def test_end_to_end_dwell_then_advance():
     cfg = tick_config_from_plan([{"title": "bake", "min_dwell_secs": 60}, {"title": "next"}])
-    hold = evaluate(cfg, tick_state_from_snapshot(
-        step_index=0, step_started_at=0.0, findings_total=1, findings_at_step_start=0,
-        gate_passed=True), now=30.0)
+    hold = evaluate(
+        cfg,
+        tick_state_from_snapshot(
+            step_index=0,
+            step_started_at=0.0,
+            findings_total=1,
+            findings_at_step_start=0,
+            gate_passed=True,
+        ),
+        now=30.0,
+    )
     assert hold.action is Action.HOLD
-    adv = evaluate(cfg, tick_state_from_snapshot(
-        step_index=0, step_started_at=0.0, findings_total=1, findings_at_step_start=0,
-        gate_passed=True), now=61.0)
+    adv = evaluate(
+        cfg,
+        tick_state_from_snapshot(
+            step_index=0,
+            step_started_at=0.0,
+            findings_total=1,
+            findings_at_step_start=0,
+            gate_passed=True,
+        ),
+        now=61.0,
+    )
     assert adv.action is Action.ADVANCE

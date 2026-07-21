@@ -5,11 +5,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from personalclaw.schedule import ScheduleDefinition
 from personalclaw.mcp_schedule import _call_tool
+from personalclaw.schedule import ScheduleDefinition
 from personalclaw.validation import (
-    SCHEDULE_ADD_SCHEMA,
     MCP_SCHEDULE_SCHEMAS,
+    SCHEDULE_ADD_SCHEMA,
     ValidationError,
     validate_tool_args,
 )

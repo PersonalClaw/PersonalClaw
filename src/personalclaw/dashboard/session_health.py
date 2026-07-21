@@ -76,7 +76,9 @@ def _line_age_seconds(line: str, file_mtime: float) -> float:
     return delta
 
 
-def compute_session_health(log_path: Path | None = None, now: float | None = None) -> dict[str, dict]:
+def compute_session_health(
+    log_path: Path | None = None, now: float | None = None
+) -> dict[str, dict]:
     """Return ``{session_name: {reason, since_ts}}`` for sessions flagged as stalled."""
     if log_path is None:
         home = Path(os.environ.get("PERSONALCLAW_HOME") or Path.home() / ".personalclaw")
@@ -106,7 +108,11 @@ def compute_session_health(log_path: Path | None = None, now: float | None = Non
             if not m:
                 continue
             session = _normalize_session(m.group(1))
-            if session.startswith("_") or session.startswith("cron_") or session.startswith("cron:"):
+            if (
+                session.startswith("_")
+                or session.startswith("cron_")
+                or session.startswith("cron:")
+            ):
                 continue
             since_ts = file_mtime - age_from_mtime
             out[session] = {"reason": reason, "since_ts": since_ts}

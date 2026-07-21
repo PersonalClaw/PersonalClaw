@@ -45,7 +45,8 @@ class _FakeProvider(ImageGenProvider):
 @pytest.fixture
 def _wired(tmp_path, monkeypatch):
     """Point the artifact store at tmp + bind a fake image_gen provider."""
-    from personalclaw.artifacts import native, registry as art_reg
+    from personalclaw.artifacts import native
+    from personalclaw.artifacts import registry as art_reg
     from personalclaw.image_gen import registry as ig_reg
 
     prov = native.NativeArtifactProvider(root=tmp_path)
@@ -74,11 +75,13 @@ class TestImageGenerateTool:
 
     def test_generate_surfaces_revised_prompt(self, _wired):
         from personalclaw.mcp_artifacts import _call_tool_inner
+
         out = _call_tool_inner("image_generate", {"prompt": "a cat"})
         assert "refined: a cat" in out
 
     def test_generate_returns_embeddable_markdown(self, _wired):
         from personalclaw.mcp_artifacts import _call_tool_inner
+
         out = _call_tool_inner("image_generate", {"prompt": "a tree"})
         slug = _wired.list(kind="image")[0].slug
         # the result hands the model a ready markdown image PINNED to the version it
@@ -86,11 +89,16 @@ class TestImageGenerateTool:
         assert "![" in out and f"](/api/artifacts/{slug}/raw?version=1)" in out
 
     def test_no_model_configured_is_clear_error(self, tmp_path, monkeypatch):
-        from personalclaw.artifacts import native, registry as art_reg
+        from personalclaw.artifacts import native
+        from personalclaw.artifacts import registry as art_reg
         from personalclaw.image_gen import registry as ig_reg
         from personalclaw.mcp_artifacts import _call_tool_inner
 
-        monkeypatch.setattr(art_reg, "get_provider", lambda name="native": native.NativeArtifactProvider(root=tmp_path))
+        monkeypatch.setattr(
+            art_reg,
+            "get_provider",
+            lambda name="native": native.NativeArtifactProvider(root=tmp_path),
+        )
         monkeypatch.setattr(ig_reg, "active_image_gen", lambda: None)
         monkeypatch.setattr("personalclaw.mcp_artifacts._resolve_session_key", lambda: None)
         out = _call_tool_inner("image_generate", {"prompt": "x"})
@@ -98,6 +106,7 @@ class TestImageGenerateTool:
 
     def test_empty_prompt_rejected(self, _wired):
         from personalclaw.mcp_artifacts import _call_tool_inner
+
         out = _call_tool_inner("image_generate", {"prompt": "   "})
         assert out.startswith("Error:")
 
@@ -117,11 +126,13 @@ class TestImageGenerateTool:
 
     def test_edit_nonexistent_artifact_errors(self, _wired):
         from personalclaw.mcp_artifacts import _call_tool_inner
+
         out = _call_tool_inner("image_generate", {"prompt": "x", "edit_artifact": "nope"})
         assert "not an existing image artifact" in out
 
     def test_edit_refuses_non_image_artifact(self, _wired):
         from personalclaw.mcp_artifacts import _call_tool_inner
+
         _wired.create(name="doc", content="# hi", kind="markdown")
         out = _call_tool_inner("image_generate", {"prompt": "x", "edit_artifact": "doc"})
         assert "not an existing image artifact" in out
@@ -158,6 +169,7 @@ class TestRegenerateAtSlug:
 
     def test_no_prompt_fails_cleanly(self, _wired):
         from personalclaw.mcp_artifacts import regenerate_image_at_slug
+
         ok, msg = regenerate_image_at_slug(_wired, "some-slug", "   ")
         assert ok is False and "prompt" in msg.lower()
 
@@ -165,12 +177,14 @@ class TestRegenerateAtSlug:
 class TestMaterialize:
     def test_materialize_b64(self):
         from personalclaw.mcp_artifacts import _materialize_image
+
         r = ImageResult(b64=_PNG_B64, mime="image/png")
         data, mime = _materialize_image(r)
         assert data == base64.b64decode(_PNG_B64) and mime == "image/png"
 
     def test_materialize_local_path(self, tmp_path):
         from personalclaw.mcp_artifacts import _materialize_image
+
         p = tmp_path / "x.png"
         p.write_bytes(b"localbytes")
         r = ImageResult(local_path=str(p), mime="image/png")
@@ -179,4 +193,5 @@ class TestMaterialize:
 
     def test_materialize_nothing_returns_none(self):
         from personalclaw.mcp_artifacts import _materialize_image
+
         assert _materialize_image(ImageResult()) is None

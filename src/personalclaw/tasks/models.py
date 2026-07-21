@@ -47,7 +47,7 @@ class TaskPriority(str, enum.Enum):
 
 
 class DependencyType(str, enum.Enum):
-    BLOCKS = "BLOCKS"            # prerequisite must finish before this task can start
+    BLOCKS = "BLOCKS"  # prerequisite must finish before this task can start
     REQUIRED_FOR = "REQUIRED_FOR"  # softer link: informational, does not gate status
 
 
@@ -177,23 +177,23 @@ class Task:
     status: "TaskStatus" = TaskStatus.OPEN
     description: str = ""
     provider: str = ""
-    project: str = ""                 # denormalized project-id label (grouping/filter)
-    task_list_id: str = ""            # structural parent (Project → TaskList → Task)
+    project: str = ""  # denormalized project-id label (grouping/filter)
+    task_list_id: str = ""  # structural parent (Project → TaskList → Task)
     dependencies: list[TaskDependency] = field(default_factory=list)
     assignee: str = ""
     priority: TaskPriority = TaskPriority.MEDIUM
     labels: list[str] = field(default_factory=list)
     due: str = ""
-    order: float = 0.0                # intra-column ordering for kanban reorder
+    order: float = 0.0  # intra-column ordering for kanban reorder
     # Rich planning fields
-    exit_criteria: list[dict] = field(default_factory=list)   # [{description, status, comment}]
-    action_plan: list[dict] = field(default_factory=list)     # [{sequence, content, completed}]
-    notes: list[dict] = field(default_factory=list)           # general notes [{content, timestamp}]
+    exit_criteria: list[dict] = field(default_factory=list)  # [{description, status, comment}]
+    action_plan: list[dict] = field(default_factory=list)  # [{sequence, content, completed}]
+    notes: list[dict] = field(default_factory=list)  # general notes [{content, timestamp}]
     research_notes: list[dict] = field(default_factory=list)  # research-phase notes
     execution_notes: list[dict] = field(default_factory=list)  # execution-phase notes
     agent_instructions_template: str = ""
     # Dependency-driven status bookkeeping
-    blocked_reason_kind: str = ""     # "" | "auto" | "manual"
+    blocked_reason_kind: str = ""  # "" | "auto" | "manual"
     created_at: str = ""
     updated_at: str = ""
     url: str = ""
@@ -213,7 +213,9 @@ class Task:
         d["priority"] = self.priority.value
         d["dependencies"] = [dep.to_dict() for dep in self.dependencies]
         d["exit_criteria"] = [normalize_exit_criterion(e) for e in self.exit_criteria]
-        d["action_plan"] = [normalize_action_plan_item(a, i) for i, a in enumerate(self.action_plan)]
+        d["action_plan"] = [
+            normalize_action_plan_item(a, i) for i, a in enumerate(self.action_plan)
+        ]
         d["notes"] = [normalize_note(n) for n in self.notes]
         d["research_notes"] = [normalize_note(n) for n in self.research_notes]
         d["execution_notes"] = [normalize_note(n) for n in self.execution_notes]
@@ -332,9 +334,9 @@ class Project:
     id: str
     name: str
     is_default: bool = False
-    status: str = "active"             # active | archived
-    workspace_dir: str = ""            # bound codebase dir; "" = context dir is the workspace
-    name_locked: bool = False          # user renamed manually → LLM stops auto-renaming
+    status: str = "active"  # active | archived
+    workspace_dir: str = ""  # bound codebase dir; "" = context dir is the workspace
+    name_locked: bool = False  # user renamed manually → LLM stops auto-renaming
     agent_instructions_template: str = ""
     # User-authored project brief — the goal/scope/background of this effort. Stored on
     # the project and injected as shared CONTEXT for every agent working on any session

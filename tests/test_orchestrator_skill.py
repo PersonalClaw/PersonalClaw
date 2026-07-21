@@ -45,7 +45,9 @@ def _config_with(agents):
 @patch("personalclaw.orchestrator_skill.load_all")
 @patch("personalclaw.orchestrator_skill.load")
 @patch("personalclaw.orchestrator_skill.save")
-def test_includes_agents_from_metadata(mock_save, mock_load, mock_load_all, mock_config_load, skills_loader):
+def test_includes_agents_from_metadata(
+    mock_save, mock_load, mock_load_all, mock_config_load, skills_loader
+):
     from personalclaw.orchestrator_skill import generate_orchestrator_skill
 
     mock_config_load.return_value = _config_with(
@@ -63,7 +65,9 @@ def test_includes_agents_from_metadata(mock_save, mock_load, mock_load_all, mock
 @patch("personalclaw.orchestrator_skill.load_all")
 @patch("personalclaw.orchestrator_skill.load")
 @patch("personalclaw.orchestrator_skill.save")
-def test_auto_seeds_metadata_from_description(mock_save, mock_load, mock_load_all, mock_config_load, skills_loader):
+def test_auto_seeds_metadata_from_description(
+    mock_save, mock_load, mock_load_all, mock_config_load, skills_loader
+):
     from personalclaw.orchestrator_skill import generate_orchestrator_skill
 
     mock_config_load.return_value = _config_with(
@@ -79,7 +83,9 @@ def test_auto_seeds_metadata_from_description(mock_save, mock_load, mock_load_al
 @patch("personalclaw.orchestrator_skill.load_all")
 @patch("personalclaw.orchestrator_skill.load")
 @patch("personalclaw.orchestrator_skill.save")
-def test_excludes_personalclaw_and_orchestrator(mock_save, mock_load, mock_load_all, mock_config_load, skills_loader):
+def test_excludes_personalclaw_and_orchestrator(
+    mock_save, mock_load, mock_load_all, mock_config_load, skills_loader
+):
     from personalclaw.orchestrator_skill import generate_orchestrator_skill
 
     mock_config_load.return_value = _config_with(
@@ -103,7 +109,9 @@ def test_excludes_personalclaw_and_orchestrator(mock_save, mock_load, mock_load_
 @patch("personalclaw.orchestrator_skill.load_all")
 @patch("personalclaw.orchestrator_skill.load")
 @patch("personalclaw.orchestrator_skill.save")
-def test_skill_has_always_true_and_delegation_guidelines(mock_save, mock_load, mock_load_all, mock_config_load, skills_loader):
+def test_skill_has_always_true_and_delegation_guidelines(
+    mock_save, mock_load, mock_load_all, mock_config_load, skills_loader
+):
     from personalclaw.orchestrator_skill import generate_orchestrator_skill
 
     mock_config_load.return_value = _config_with(
@@ -124,7 +132,9 @@ def test_skill_has_always_true_and_delegation_guidelines(mock_save, mock_load, m
 @patch("personalclaw.orchestrator_skill.load_all")
 @patch("personalclaw.orchestrator_skill.load")
 @patch("personalclaw.orchestrator_skill.save")
-def test_removes_legacy_conductor_skill_dir(mock_save, mock_load, mock_load_all, mock_config_load, skills_loader):
+def test_removes_legacy_conductor_skill_dir(
+    mock_save, mock_load, mock_load_all, mock_config_load, skills_loader
+):
     """The feature was renamed conductor → orchestrator. Generating the
     orchestrator skill must delete any pre-rename ``conductor/`` dir so the stale
     always-loaded SKILL.md doesn't double-inject the routing table."""

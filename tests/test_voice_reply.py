@@ -1,7 +1,6 @@
 """Tests for voice_reply — provider-agnostic TTS orchestration (strip/split/
 synthesize-speech/upload/stream). Piper-specific synthesis moved to the piper-tts app."""
 
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -164,9 +163,16 @@ class TestVoiceReplyEndToEnd:
             "personalclaw.voice_reply.synthesize_speech",
             new=AsyncMock(return_value=None),
         ):
-            assert await voice_reply(
-                client, "C1", "t1", "hi", provider=MagicMock(),
-            ) is False
+            assert (
+                await voice_reply(
+                    client,
+                    "C1",
+                    "t1",
+                    "hi",
+                    provider=MagicMock(),
+                )
+                is False
+            )
 
     @pytest.mark.asyncio
     async def test_success_uploads_and_unlinks(self, tmp_path) -> None:
@@ -179,7 +185,11 @@ class TestVoiceReplyEndToEnd:
             new=AsyncMock(return_value=str(audio)),
         ):
             ok = await voice_reply(
-                client, "C1", "t1", "hello", provider=MagicMock(),
+                client,
+                "C1",
+                "t1",
+                "hello",
+                provider=MagicMock(),
             )
         assert ok is True
         assert not audio.exists()
@@ -195,7 +205,11 @@ class TestVoiceReplyEndToEnd:
             new=AsyncMock(return_value=str(audio)),
         ):
             ok = await voice_reply(
-                client, "C1", "t1", "hi", provider=MagicMock(),
+                client,
+                "C1",
+                "t1",
+                "hi",
+                provider=MagicMock(),
             )
         assert ok is False
         assert not audio.exists(), "temp audio must be cleaned up on upload failure"
@@ -245,7 +259,8 @@ class TestStreamingVoiceReply:
         prov.synthesize = AsyncMock(side_effect=alternating)
         collected = []
         async for idx, sent, data in streaming_voice_reply(
-            prov, "First. Second. Third.",
+            prov,
+            "First. Second. Third.",
         ):
             collected.append(idx)
 

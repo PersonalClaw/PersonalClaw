@@ -1,7 +1,7 @@
 """Tests for cold-start staggering and parallel task batching."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 

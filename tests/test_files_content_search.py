@@ -23,13 +23,17 @@ def search_root(tmp_path, monkeypatch):
     (tmp_path / "node_modules").mkdir()
     (tmp_path / "node_modules" / "c.py").write_text("NEEDLE_here ignored\n")
     monkeypatch.setattr(F, "_dashboard_roots", lambda: [("Root", str(tmp_path))])
-    monkeypatch.setattr(F, "_validate_dashboard_path",
-                        lambda raw: raw if str(raw).startswith(str(tmp_path)) else None)
+    monkeypatch.setattr(
+        F,
+        "_validate_dashboard_path",
+        lambda raw: raw if str(raw).startswith(str(tmp_path)) else None,
+    )
     monkeypatch.setattr(F, "_sel", lambda: MagicMock())
     return tmp_path
 
 
 # ── Python fallback (unit) ──
+
 
 def test_python_search_finds_matches(search_root):
     results, truncated = F._content_search_python(str(search_root), "needle_here", "")
@@ -56,8 +60,10 @@ def test_python_search_reports_line_and_col(search_root):
 
 # ── HTTP handler ──
 
+
 def _call(path: str, q: str = "", include: str = "", *, force_python=True, monkeypatch=None):
     from urllib.parse import urlencode
+
     if force_python and monkeypatch is not None:
         monkeypatch.setattr(F, "_has_rg", lambda: False)
     qs = urlencode({"path": path, "q": q, "include": include})
@@ -86,9 +92,15 @@ def test_handler_invalid_dir_400(monkeypatch):
 
 
 def test_handler_redacts_secrets_in_preview(tmp_path, monkeypatch):
-    (tmp_path / "leak.txt").write_text("AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLEKEY1234567890abcd needle\n")
+    (tmp_path / "leak.txt").write_text(
+        "AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLEKEY1234567890abcd needle\n"
+    )
     monkeypatch.setattr(F, "_dashboard_roots", lambda: [("R", str(tmp_path))])
-    monkeypatch.setattr(F, "_validate_dashboard_path", lambda raw: raw if str(raw).startswith(str(tmp_path)) else None)
+    monkeypatch.setattr(
+        F,
+        "_validate_dashboard_path",
+        lambda raw: raw if str(raw).startswith(str(tmp_path)) else None,
+    )
     monkeypatch.setattr(F, "_sel", lambda: MagicMock())
     status, body = _call(str(tmp_path), "needle", monkeypatch=monkeypatch)
     assert status == 200

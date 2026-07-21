@@ -41,17 +41,13 @@ def skill_root(tmp_path, monkeypatch):
     """A single skill discovery root, wired into _all_skill_paths."""
     root = tmp_path / "skills"
     root.mkdir()
-    monkeypatch.setattr(
-        "personalclaw.agent._all_skill_paths", lambda: [str(root)]
-    )
+    monkeypatch.setattr("personalclaw.agent._all_skill_paths", lambda: [str(root)])
     return root
 
 
 def _files(name: str, path: str | None = None) -> tuple[int, dict]:
     query = f"?path={path}" if path is not None else ""
-    req = make_mocked_request(
-        "GET", f"/api/skills/{name}/files{query}", match_info={"name": name}
-    )
+    req = make_mocked_request("GET", f"/api/skills/{name}/files{query}", match_info={"name": name})
     resp = asyncio.run(skills_h.api_skill_files(req))
     return resp.status, json.loads(resp.body.decode())
 
@@ -171,9 +167,7 @@ class TestLoadedByAgents:
 
 
 def _verify(name: str) -> tuple[int, dict]:
-    req = make_mocked_request(
-        "POST", f"/api/skills/{name}/verify", match_info={"name": name}
-    )
+    req = make_mocked_request("POST", f"/api/skills/{name}/verify", match_info={"name": name})
     resp = asyncio.run(skills_h.api_skill_verify(req))
     return resp.status, json.loads(resp.body.decode())
 

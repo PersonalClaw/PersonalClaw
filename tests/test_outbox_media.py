@@ -9,7 +9,6 @@ path.
 
 from __future__ import annotations
 
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -53,7 +52,9 @@ async def test_notify_accepts_mp3_with_content_type(outbox, mock_sel) -> None:
     f.write_bytes(b"\xff\xfb\x90\x00not-utf8-binary\x00\x01")  # non-UTF-8 bytes
     client = await _client(outbox)
     try:
-        resp = await client.post("/api/outbox/notify", json={"filename": "clip.mp3", "path": str(f)})
+        resp = await client.post(
+            "/api/outbox/notify", json={"filename": "clip.mp3", "path": str(f)}
+        )
         assert resp.status == 200
         # The broadcast carries the derived content_type.
         state = client.app["state"]
@@ -70,7 +71,9 @@ async def test_notify_still_rejects_non_utf8_text(outbox, mock_sel) -> None:
     f.write_bytes(b"\xff\xfe\x00binary-but-text-ext")
     client = await _client(outbox)
     try:
-        resp = await client.post("/api/outbox/notify", json={"filename": "data.txt", "path": str(f)})
+        resp = await client.post(
+            "/api/outbox/notify", json={"filename": "data.txt", "path": str(f)}
+        )
         assert resp.status == 400  # text/* must be UTF-8
     finally:
         await client.close()
@@ -82,7 +85,9 @@ async def test_notify_accepts_utf8_text(outbox, mock_sel) -> None:
     f.write_text("hello world")
     client = await _client(outbox)
     try:
-        resp = await client.post("/api/outbox/notify", json={"filename": "note.txt", "path": str(f)})
+        resp = await client.post(
+            "/api/outbox/notify", json={"filename": "note.txt", "path": str(f)}
+        )
         assert resp.status == 200
         ct = client.app["state"].broadcast_ws.call_args[0][1]["content_type"]
         assert ct == "text/plain"
@@ -96,7 +101,9 @@ async def test_notify_rejects_path_outside_outbox(outbox, mock_sel, tmp_path) ->
     outside.write_bytes(b"\x00\x01")
     client = await _client(outbox)
     try:
-        resp = await client.post("/api/outbox/notify", json={"filename": "evil.mp3", "path": str(outside)})
+        resp = await client.post(
+            "/api/outbox/notify", json={"filename": "evil.mp3", "path": str(outside)}
+        )
         assert resp.status == 403
     finally:
         await client.close()

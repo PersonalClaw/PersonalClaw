@@ -46,7 +46,8 @@ async def run_verify_command(cmd: str, cwd: str | None, *, label: str = "verify"
         return None
     try:
         proc = await asyncio.create_subprocess_shell(
-            cmd, cwd=cwd or None,
+            cmd,
+            cwd=cwd or None,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -73,8 +74,12 @@ async def run_verify_command(cmd: str, cwd: str | None, *, label: str = "verify"
         # — surface it distinctly (not the silent "didn't pass yet" of a real fail)
         # so the un-runnable gate is diagnosable rather than a forever-spin. None.
         detail = (err or b"").decode("utf-8", "replace").strip()[:200]
-        logger.warning("loop gate: %s command not runnable (exit 127 — tool missing?) `%s`%s",
-                       label, cmd, f" — {detail}" if detail else "")
+        logger.warning(
+            "loop gate: %s command not runnable (exit 127 — tool missing?) `%s`%s",
+            label,
+            cmd,
+            f" — {detail}" if detail else "",
+        )
         return None
     return rc == 0
 
@@ -87,6 +92,7 @@ def verdict_is_pass(raw: str | None) -> bool:
     Conservative — PASS only when the first token is exactly PASS/PASSED; anything
     else (FAIL, prose, empty, ambiguous) is NOT passed (never advance on a misread)."""
     import re
+
     m = re.search(r"[A-Za-z]+", raw or "")
     return m is not None and m.group().upper() in ("PASS", "PASSED")
 
@@ -99,6 +105,7 @@ def verdict_rendered(raw: str | None) -> bool:
     (model error/timeout): the latter must NOT count as FAIL when deterministic gates
     already passed, else a flaky judge permanently blocks a complete stage."""
     import re
+
     m = re.search(r"[A-Za-z]+", raw or "")
     return m is not None and m.group().upper() in ("PASS", "PASSED", "FAIL", "FAILED")
 
@@ -125,7 +132,7 @@ async def judge_verdict(prompt: str) -> str:
             elif event.kind == EVENT_PERMISSION_REQUEST:
                 # The judge must not act — deny any tool call (it should only reason).
                 try:
-                    await provider.respond_permission(event, allow=False)  # type: ignore[attr-defined]
+                    await provider.respond_permission(event, allow=False)  # type: ignore[attr-defined]  # noqa: E501
                 except Exception:
                     pass
             elif event.kind == EVENT_COMPLETE:

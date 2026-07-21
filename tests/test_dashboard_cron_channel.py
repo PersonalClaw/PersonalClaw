@@ -10,7 +10,12 @@ from personalclaw.schedule import ScheduleDefinition, ScheduleJob, make_agent_ac
 
 def _real_job(**over):
     """A real ScheduleJob so the handler's full serialization doesn't choke on a mock."""
-    base = dict(id="abc", name="t", action=make_agent_action(message="m"), schedule=ScheduleDefinition(kind="every", every_secs=300))
+    base = dict(
+        id="abc",
+        name="t",
+        action=make_agent_action(message="m"),
+        schedule=ScheduleDefinition(kind="every", every_secs=300),
+    )
     base.update(over)
     return ScheduleJob(**base)
 

@@ -56,7 +56,7 @@ def test_registry_kinds_match_backend_allowed_kinds():
         "Add them to artifacts/models.py ALLOWED_KINDS."
     )
     assert not missing_in_registry, (
-        f"backend ALLOWED_KINDS has kinds the FE registry doesn't render: {sorted(missing_in_registry)}. "
+        f"backend ALLOWED_KINDS has kinds the FE registry doesn't render: {sorted(missing_in_registry)}. "  # noqa: E501
         "Register them in web/src/ui/content/registerBuiltins.ts (or remove from ALLOWED_KINDS)."
     )
 

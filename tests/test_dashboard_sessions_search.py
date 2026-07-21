@@ -13,6 +13,7 @@ def _make_app(log: ConversationLog) -> web.Application:
     # handler depends on; adding a new one will raise a clear AttributeError
     # instead of inheriting real DashboardState behavior via __new__.
     from types import SimpleNamespace
+
     state = SimpleNamespace(conversation_log=log)
     app = web.Application()
     app["state"] = state

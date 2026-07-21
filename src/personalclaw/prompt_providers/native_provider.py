@@ -59,9 +59,7 @@ def _yaml_loads(text: str) -> dict[str, Any]:
     try:
         import yaml  # type: ignore
     except ImportError as exc:
-        raise RuntimeError(
-            "PyYAML is required for the native prompt provider"
-        ) from exc
+        raise RuntimeError("PyYAML is required for the native prompt provider") from exc
     data = yaml.safe_load(text) or {}
     if not isinstance(data, dict):
         raise ValueError("prompt YAML must parse to a mapping at the top level")
@@ -95,8 +93,7 @@ def _snippets_dir() -> Path:
 def _safe_name(name: str) -> str:
     if not _NAME_RE.match(name or ""):
         raise ValueError(
-            "name must match ^[a-zA-Z0-9_-]{1,64}$ "
-            "(only letters, digits, dashes, underscores)"
+            "name must match ^[a-zA-Z0-9_-]{1,64}$ " "(only letters, digits, dashes, underscores)"
         )
     return name
 
@@ -289,8 +286,9 @@ class NativePromptProvider(PromptProvider):
         return snip
 
     @staticmethod
-    def _migrate_in_place(path: Path, raw: dict[str, Any], canonical: dict[str, Any],
-                          name: str) -> None:
+    def _migrate_in_place(
+        path: Path, raw: dict[str, Any], canonical: dict[str, Any], name: str
+    ) -> None:
         """Rewrite a record whose stored shape differs from the canonical one.
 
         Migrate-on-read is *shape* normalization (kind/title/legacy var types) — it must

@@ -35,7 +35,6 @@ from personalclaw.agents.native.tools import (
     tool_definitions_to_openai_schema,
 )
 from personalclaw.agents.provider import AgentProvider
-from personalclaw.tool_providers.base import RiskLevel
 from personalclaw.llm.events import (
     EVENT_COMPLETE,
     EVENT_PERMISSION_REQUEST,
@@ -45,6 +44,7 @@ from personalclaw.llm.events import (
     EVENT_TOOL_RESULT,
     AgentEvent,
 )
+from personalclaw.tool_providers.base import RiskLevel
 
 if TYPE_CHECKING:
     from personalclaw.agents.provider import AgentRuntimeDefinition
@@ -72,6 +72,7 @@ def _sanitized_tool_key(name: str) -> str:
     safe = _TOOL_NAME_SANITIZE_RE.sub("_", name or "")[:_TOOL_NAME_SANITIZE_MAX]
     return safe or "tool"
 
+
 # Hook fire callback: (event_title, tool_input) -> awaitable[list[str]] of
 # "BLOCKED:..." strings (non-empty ⇒ blocked). Mirrors chat_runner's fire shape.
 HookFire = Callable[[str, str | None], Awaitable[list[str]]]
@@ -88,16 +89,16 @@ _NEEDS_APPROVAL: Any = object()
 # shape). A tool failing the SAME way repeatedly burns an autonomous run's tokens
 # + time before any other guard fires; this caps it. Params-aware so a tool that
 # fails on input A but succeeds on input B isn't penalized for A's failures.
-_BREAKER_WARN = 3        # ≥ this many same failures → warn the model, still allow
-_BREAKER_BLOCK = 5       # ≥ this → refuse further identical calls this run
-_BREAKER_CIRCUIT = 30    # > this total failures in a run → abort the whole run
+_BREAKER_WARN = 3  # ≥ this many same failures → warn the model, still allow
+_BREAKER_BLOCK = 5  # ≥ this → refuse further identical calls this run
+_BREAKER_CIRCUIT = 30  # > this total failures in a run → abort the whole run
 
 # Structural loop detection (E3.1) — catches stuck-but-*successful* repetition the
 # failure breaker misses, over (tool, params, result_digest) triples. Warn-only for
 # the first release (§6 decision 3): looping is higher-variance than failure
 # counting, so we observe-and-report before graduating to block.
-_STRUCT_WINDOW = 16          # recent-call signatures kept for pattern matching
-_STRUCT_REPEAT = 3           # ≥ this many identical triples in a row → no-progress
+_STRUCT_WINDOW = 16  # recent-call signatures kept for pattern matching
+_STRUCT_REPEAT = 3  # ≥ this many identical triples in a row → no-progress
 _STRUCT_PINGPONG_CYCLES = 3  # ≥ this many A↔B cycles (2× entries) → ping-pong
 
 
@@ -119,13 +120,17 @@ def _params_key(tool_name: str, args: dict) -> str:
 # the result digest so a call producing the "same" result each time is recognized
 # as no-progress (result normalization). Order-independent.
 _VOLATILE_PATTERNS = [
-    re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"),  # ISO ts
-    re.compile(r"\b\d{10,13}\b"),                       # epoch (s / ms)
-    re.compile(r"0x[0-9a-fA-F]+"),                       # hex / memory address
-    re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"),  # uuid
-    re.compile(r"\b(?:pid|PID)[=: ]\s*\d+"),            # pid=NNN
+    re.compile(
+        r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"
+    ),  # ISO ts
+    re.compile(r"\b\d{10,13}\b"),  # epoch (s / ms)
+    re.compile(r"0x[0-9a-fA-F]+"),  # hex / memory address
+    re.compile(
+        r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+    ),  # uuid
+    re.compile(r"\b(?:pid|PID)[=: ]\s*\d+"),  # pid=NNN
     re.compile(r"\bin \d+(?:\.\d+)?\s*(?:ms|s|sec|seconds|m|min)\b"),  # "in 1.23s"
-    re.compile(r"\b\d+(?:\.\d+)?\s*(?:ms|µs|us)\b"),    # bare durations
+    re.compile(r"\b\d+(?:\.\d+)?\s*(?:ms|µs|us)\b"),  # bare durations
 ]
 
 
@@ -304,7 +309,7 @@ class NativeAgentRuntime(AgentProvider):
         self._tool_sanitized_index: dict[str, str] = {}
         self._tool_retriever: Any = None  # built in start() (per-turn tool retrieval)
         self._tool_search_def: Any = None  # synthetic escape-hatch def (built in start())
-        self._tool_schema_def: Any = None   # synthetic schema-expander def (built in start())
+        self._tool_schema_def: Any = None  # synthetic schema-expander def (built in start())
         self._last_result_meta: dict = {}  # typed meta of the last tool result (for TOOL_RESULT)
         self._approval = ApprovalGate()
         # Approval policy: "" / "default" prompt; "auto"/"yolo" auto-approve.
@@ -353,7 +358,9 @@ class NativeAgentRuntime(AgentProvider):
         for prov in self._tool_providers:
             prov_name = getattr(prov, "name", "") or ""
             if prov_name in disabled_provs:
-                logger.info("native: provider %r is user-disabled — skipping its toolset", prov_name)
+                logger.info(
+                    "native: provider %r is user-disabled — skipping its toolset", prov_name
+                )
                 continue
             try:
                 tools = await prov.list_tools()
@@ -415,32 +422,50 @@ class NativeAgentRuntime(AgentProvider):
         # grow; selection only changes the schema the model SEES (dispatch via
         # _tool_index is untouched). Fails open (returns the full set on any issue).
         from personalclaw.agents.native.tool_retrieval import ToolRetriever
+
         self._tool_retriever = ToolRetriever(defs)
         # Synthetic schema for the tool_search escape hatch — added to the surfaced
         # set only on a reduced turn (handled in _invoke, not a provider).
         from personalclaw.tool_providers.base import ToolDefinition as _TD
+
         self._tool_search_def = _TD(
-            name="tool_search", provider="native", requires_approval=False,
-            description=("Find tools by capability. Searches the FULL catalog (incl. tools shown "
-                         "this turn only as a name in the catalog). Args: query (str), optional "
-                         "limit (int). Returns ranked name+description; then call tool_schema(name) "
-                         "to see a tool's inputs, or just call it by name."),
-            parameters={"type": "object", "properties": {
-                "query": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["query"]},
+            name="tool_search",
+            provider="native",
+            requires_approval=False,
+            description=(
+                "Find tools by capability. Searches the FULL catalog (incl. tools shown "
+                "this turn only as a name in the catalog). Args: query (str), optional "
+                "limit (int). Returns ranked name+description; then call tool_schema(name) "
+                "to see a tool's inputs, or just call it by name."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+                "required": ["query"],
+            },
         )
         # Progressive disclosure: tools not in the per-turn full-schema set still
         # appear in a name+description CATALOG. tool_schema expands ONE of them to
         # its full input schema on demand, so the model can call any catalog tool
         # correctly without ever carrying every schema.
         self._tool_schema_def = _TD(
-            name="tool_schema", provider="native", requires_approval=False,
-            description=("Get the full input schema for a tool by name — use when the catalog lists "
-                         "a tool you want but you need its exact arguments. Args: tool_name (str). "
-                         "Returns the tool's parameters/description; then call the tool by name."),
-            parameters={"type": "object", "properties": {
-                "tool_name": {"type": "string"}}, "required": ["tool_name"]},
+            name="tool_schema",
+            provider="native",
+            requires_approval=False,
+            description=(
+                "Get the full input schema for a tool by name — use when the catalog lists "
+                "a tool you want but you need its exact arguments. Args: tool_name (str). "
+                "Returns the tool's parameters/description; then call the tool by name."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {"tool_name": {"type": "string"}},
+                "required": ["tool_name"],
+            },
         )
-        logger.info("native: discovered %d tools across %d providers", len(defs), len(self._tool_providers))
+        logger.info(
+            "native: discovered %d tools across %d providers", len(defs), len(self._tool_providers)
+        )
 
     async def shutdown(self) -> None:
         self._cancelled = True
@@ -458,9 +483,12 @@ class NativeAgentRuntime(AgentProvider):
         # Per-turn tool retrieval (TR2): surface only the relevant projection of
         # the catalog for this turn (core ∪ top-K ∪ structural ∪ sticky). No-op
         # until the catalog exceeds K; fails open to the full schema.
-        selected_defs = self._tool_retriever.select(message) if self._tool_retriever else self._tool_defs
+        selected_defs = (
+            self._tool_retriever.select(message) if self._tool_retriever else self._tool_defs
+        )
         reduced = bool(self._tool_retriever) and not (
-            selected_defs is self._tool_defs or len(selected_defs) == len(self._tool_defs))
+            selected_defs is self._tool_defs or len(selected_defs) == len(self._tool_defs)
+        )
         if not reduced:
             tools_kwarg = self._tool_schema or None
         else:
@@ -478,15 +506,18 @@ class NativeAgentRuntime(AgentProvider):
             note = (
                 "[tool catalog] To save context, only the most relevant tools above carry their "
                 "full input schema this turn. Every OTHER available tool is listed below by "
-                "name + description. To use one: call tool_schema(\"name\") to see its inputs, "
-                "then call it — or call tool_search(\"capability\") to rank the catalog. Every "
+                'name + description. To use one: call tool_schema("name") to see its inputs, '
+                'then call it — or call tool_search("capability") to rank the catalog. Every '
                 "tool here is fully available; nothing is disabled.\n" + catalog
             )
             # SYSTEM role: this is runtime metadata, not something the user said.
             self._messages.append({"role": "system", "content": note})
-            logger.debug("native: tier-1 %d/%d tools (+tool_search,+tool_schema); catalog=%d tools",
-                         len(selected_defs), len(self._tool_defs),
-                         len(self._tool_defs) - len(selected_defs))
+            logger.debug(
+                "native: tier-1 %d/%d tools (+tool_search,+tool_schema); catalog=%d tools",
+                len(selected_defs),
+                len(self._tool_defs),
+                len(self._tool_defs) - len(selected_defs),
+            )
         agg_in = agg_out = 0
         agg_cost = 0.0
         turns = 0
@@ -563,9 +594,7 @@ class NativeAgentRuntime(AgentProvider):
                 if tool_calls and self._cancelled:
                     for call in tool_calls:
                         self._messages.append(
-                            self._tool_result_msg(
-                                call, "Error: cancelled before this tool ran"
-                            )
+                            self._tool_result_msg(call, "Error: cancelled before this tool ran")
                         )
                 yield AgentEvent(
                     kind=EVENT_COMPLETE,
@@ -602,9 +631,16 @@ class NativeAgentRuntime(AgentProvider):
                 for s in steers:
                     if self._steers_injected >= _MAX_STEERS_PER_TURN:
                         break
-                    self._messages.append({"role": "user", "content": f"[Steering — the user added this mid-task]\n{s}"})
+                    self._messages.append(
+                        {
+                            "role": "user",
+                            "content": f"[Steering — the user added this mid-task]\n{s}",
+                        }
+                    )
                     self._steers_injected += 1
-                    yield AgentEvent(kind=EVENT_TEXT_CHUNK, text="")  # keep stream warm; UI shows the steer via activity
+                    yield AgentEvent(
+                        kind=EVENT_TEXT_CHUNK, text=""
+                    )  # keep stream warm; UI shows the steer via activity
             # 4) REPEAT — re-infer with tool results now in context.
 
         # max_turns exhausted
@@ -775,9 +811,7 @@ class NativeAgentRuntime(AgentProvider):
         # Hard deny-list (never prompts) — terminal, no retry invitation.
         deny = security.is_denied(tool_name, self._extra_deny)
         if deny:
-            _, observation = security.classify_denial(
-                security.DENY_KIND_POLICY, deny, tool_name
-            )
+            _, observation = security.classify_denial(security.DENY_KIND_POLICY, deny, tool_name)
             return observation
 
         # Task-mode gate (ask/plan/build) — runs HERE, before approval, so a
@@ -788,9 +822,7 @@ class NativeAgentRuntime(AgentProvider):
 
         tm_deny = task_mode_denies(self._task_mode, tool_name, "", call.tool_input)
         if tm_deny:
-            _, observation = security.classify_denial(
-                security.DENY_KIND_POLICY, tm_deny, tool_name
-            )
+            _, observation = security.classify_denial(security.DENY_KIND_POLICY, tm_deny, tool_name)
             return observation
 
         # PreToolUse hooks (blocking) — recoverable: adapt, don't repeat.
@@ -827,29 +859,40 @@ class NativeAgentRuntime(AgentProvider):
         # discover any tool retrieval didn't surface this turn.
         if tool_name == "tool_search" and self._tool_retriever is not None:
             self._tool_retriever.mark_used("tool_search")
-            hits = self._tool_retriever.search(str(args.get("query", "")), int(args.get("limit", 20) or 20))
+            hits = self._tool_retriever.search(
+                str(args.get("query", "")), int(args.get("limit", 20) or 20)
+            )
             if not hits:
                 return "No tools matched. Try broader terms; all tools remain callable by name."
             lines = [f"- {h['name']}: {h['description']}" for h in hits]
-            return ("Matching tools (call tool_schema(name) for inputs, or call by name):\n"
-                    + "\n".join(lines))
+            return (
+                "Matching tools (call tool_schema(name) for inputs, or call by name):\n"
+                + "\n".join(lines)
+            )
         # tool_schema (progressive disclosure): expand ONE catalog tool to its full
         # input schema so the model can call it correctly. Reads the def straight
         # from the catalog (not the per-turn surfaced set), so any tool resolves.
         if tool_name == "tool_schema":
             import json as _json
+
             want = str(args.get("tool_name", "")).strip()
             d = next((t for t in self._tool_defs if getattr(t, "name", "") == want), None)
             if d is None:
-                return (f"No tool named {want!r}. Use tool_search(query) to find the right name "
-                        "(names are case-sensitive and exact).")
-            return _json.dumps({
-                "name": d.name,
-                "description": getattr(d, "description", "") or "",
-                "parameters": getattr(d, "parameters", {}) or {"type": "object", "properties": {}},
-                "provider": getattr(d, "provider", ""),
-                "requires_approval": getattr(d, "requires_approval", True),
-            }, indent=2)
+                return (
+                    f"No tool named {want!r}. Use tool_search(query) to find the right name "
+                    "(names are case-sensitive and exact)."
+                )
+            return _json.dumps(
+                {
+                    "name": d.name,
+                    "description": getattr(d, "description", "") or "",
+                    "parameters": getattr(d, "parameters", {})
+                    or {"type": "object", "properties": {}},
+                    "provider": getattr(d, "provider", ""),
+                    "requires_approval": getattr(d, "requires_approval", True),
+                },
+                indent=2,
+            )
         prov = self._tool_index.get(tool_name)
         if prov is None:
             return f"Error: unknown tool {tool_name!r}"
@@ -877,8 +920,9 @@ class NativeAgentRuntime(AgentProvider):
         # constructor. (The platform filesystem/shell provider is still built
         # per-session in provider_bridge with cwd+extra_roots, so its own confinement
         # is unaffected; this binding makes the singletons resolve THIS session too.)
-        ctx_tokens = _bt.bind_tool_context(cwd=self._cwd, agent=self._agent_id,
-                                           project_id=self._project_id)
+        ctx_tokens = _bt.bind_tool_context(
+            cwd=self._cwd, agent=self._agent_id, project_id=self._project_id
+        )
         try:
             result = await prov.invoke(tool_name, args)
         finally:
@@ -959,7 +1003,9 @@ class NativeAgentRuntime(AgentProvider):
             self._breaker.reset_structural()
             logger.info(
                 "native: compacted context %d→%d chars (saved %.0f%%)",
-                before, after, saved * 100,
+                before,
+                after,
+                saved * 100,
             )
         self._compaction_saves.append(saved)
 
@@ -974,7 +1020,11 @@ class NativeAgentRuntime(AgentProvider):
                     "type": "function",
                     "function": {
                         "name": c.title,
-                        "arguments": c.tool_input if isinstance(c.tool_input, str) else _short_json(c.tool_input),
+                        "arguments": (
+                            c.tool_input
+                            if isinstance(c.tool_input, str)
+                            else _short_json(c.tool_input)
+                        ),
                     },
                 }
                 # Gemini 3.x requires thought_signature echoed back on tool-call

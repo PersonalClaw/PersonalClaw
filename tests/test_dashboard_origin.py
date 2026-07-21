@@ -42,9 +42,7 @@ class TestBuildAllowedOrigins:
         assert "http://myhost:8080" in origins
 
     def test_dashboard_url_no_scheme_normalized(self) -> None:
-        origins = build_allowed_origins(
-            7777, local_only=True, dashboard_url="myhost:8080"
-        )
+        origins = build_allowed_origins(7777, local_only=True, dashboard_url="myhost:8080")
         assert "http://myhost:8080" in origins
 
     def test_dashboard_url_preserves_existing_origins(self) -> None:
@@ -79,9 +77,7 @@ class TestBuildAllowedOrigins:
         assert "https://personalclaw.local:8443" in origins
 
     def test_dashboard_url_malformed_port_ignored(self) -> None:
-        origins = build_allowed_origins(
-            7777, local_only=True, dashboard_url="https://host:abc"
-        )
+        origins = build_allowed_origins(7777, local_only=True, dashboard_url="https://host:abc")
         assert len([o for o in origins if "host:abc" in o]) == 0
 
 
@@ -128,7 +124,9 @@ _MOD = "personalclaw.dashboard.origin"
 
 class TestBuildDashboardUrl:
     def test_token_appended(self) -> None:
-        assert build_dashboard_url("http://localhost:7777", "abc") == "http://localhost:7777?token=abc"
+        assert (
+            build_dashboard_url("http://localhost:7777", "abc") == "http://localhost:7777?token=abc"
+        )
 
     def test_empty_token_returns_bare_url(self) -> None:
         assert build_dashboard_url("http://localhost:7777") == "http://localhost:7777"
@@ -138,7 +136,10 @@ class TestBuildDashboardUrl:
             build_dashboard_url("http://host:7777", "", local_only=False)
 
     def test_local_without_token_ok(self) -> None:
-        assert build_dashboard_url("http://localhost:7777", "", local_only=True) == "http://localhost:7777"
+        assert (
+            build_dashboard_url("http://localhost:7777", "", local_only=True)
+            == "http://localhost:7777"
+        )
 
     def test_not_local_with_token_ok(self) -> None:
         url = build_dashboard_url("http://host:7777", "tok", local_only=False)
@@ -185,7 +186,9 @@ class TestFormatDashboardUrls:
     @patch(f"{_MOD}.devspaces_proxy_url", return_value=None)
     @patch(f"{_MOD}.machine_hostname", return_value="myhost.example.com")
     @patch(f"{_MOD}.socket.gethostbyname", return_value="10.0.0.1")
-    def test_local_with_resolvable_host_adds_remote_hint(self, _dns: object, _mh: object, _dp: object) -> None:
+    def test_local_with_resolvable_host_adds_remote_hint(
+        self, _dns: object, _mh: object, _dp: object
+    ) -> None:
         lines = format_dashboard_urls("http://localhost:7777", port=7777, local_only=True)
         assert any("Remote" in ln and "ssh -L" in ln for ln in lines)
 
@@ -193,7 +196,9 @@ class TestFormatDashboardUrls:
     @patch(f"{_MOD}.devspaces_proxy_url", return_value=None)
     @patch(f"{_MOD}.machine_hostname", return_value="myhost.example.com")
     @patch(f"{_MOD}.socket.gethostbyname", return_value="10.0.0.1")
-    def test_custom_host_suppresses_remote_hint(self, _dns: object, _mh: object, _dp: object) -> None:
+    def test_custom_host_suppresses_remote_hint(
+        self, _dns: object, _mh: object, _dp: object
+    ) -> None:
         lines = format_dashboard_urls("http://localhost:7777", port=7777, has_custom_host=True)
         assert not any("Remote" in ln for ln in lines)
 
@@ -229,7 +234,7 @@ class TestFormatDashboardUrls:
 
     def test_truthy_non_bool_local_only_raises(self) -> None:
         with pytest.raises(ValueError, match="token is required"):
-            format_dashboard_urls("http://host:7777", port=7777, local_only="yes")  # type: ignore[arg-type]
+            format_dashboard_urls("http://host:7777", port=7777, local_only="yes")  # type: ignore[arg-type]  # noqa: E501
 
 
 class TestCheckOriginLoopbackTrust:

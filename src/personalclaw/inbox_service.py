@@ -62,6 +62,7 @@ def _dashboard_state():
 
     return get_dashboard_state()
 
+
 # Bound how much external text we feed a single prompt (a busy thread can be huge).
 _MAX_MESSAGE_CHARS = 6000
 _MAX_THREAD_TURNS = 12
@@ -139,6 +140,7 @@ class InboxService:
     def _poll_interval(self) -> float:
         try:
             from personalclaw.config.loader import AppConfig
+
             return float(AppConfig.load().inbox.poll_interval_seconds)
         except Exception:
             return 60.0
@@ -148,9 +150,7 @@ class InboxService:
         # bare service construction (tests, headless) never touches the store.
         while not shutdown_event.is_set():
             try:
-                await asyncio.wait_for(
-                    shutdown_event.wait(), timeout=self._poll_interval()
-                )
+                await asyncio.wait_for(shutdown_event.wait(), timeout=self._poll_interval())
                 return  # shutdown signaled
             except asyncio.TimeoutError:
                 pass  # normal wake-up
@@ -184,9 +184,7 @@ class InboxService:
         )
         if checkpoints:
             self.state.last_read_ts.update(checkpoints)
-        ingested = self._ingest(
-            messages, own_user_id=cfg.user_id, test_mode=cfg.test_mode
-        )
+        ingested = self._ingest(messages, own_user_id=cfg.user_id, test_mode=cfg.test_mode)
         if ingested or checkpoints:
             self.state.save()
 
@@ -206,10 +204,7 @@ class InboxService:
         settings = load_inbox_settings()
         operator = self._operator_name()
         dash_state = _dashboard_state()
-        can_reply = bool(
-            self._provider is not None
-            and self._provider.source_name != "filesystem"
-        )
+        can_reply = bool(self._provider is not None and self._provider.source_name != "filesystem")
         count = 0
         for m in messages:
             item_id = f"{m.channel_id}_{m.timestamp}"
@@ -243,9 +238,7 @@ class InboxService:
                 try:
                     from personalclaw.dashboard.handlers_inbox import _redact_item
 
-                    dash_state.broadcast_ws(
-                        "inbox_new_item", _redact_item(item.to_dict())
-                    )
+                    dash_state.broadcast_ws("inbox_new_item", _redact_item(item.to_dict()))
                 except Exception:
                     logger.debug("inbox ingest broadcast failed", exc_info=True)
         if count:
@@ -273,6 +266,7 @@ class InboxService:
     def _operator_name() -> str:
         try:
             from personalclaw.config.loader import AppConfig
+
             return AppConfig.load().dashboard.user_name or ""
         except Exception:
             return ""
@@ -286,11 +280,17 @@ class InboxService:
         from personalclaw.llm_helpers import one_shot_completion
         from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
-        prompt = render_use_case_prompt("inbox_classify", {
-            "channel": item.channel_name or item.channel,
-            "sender": item.sender_name or "unknown",
-            "message": _fence_message(item),
-        }) or ""
+        prompt = (
+            render_use_case_prompt(
+                "inbox_classify",
+                {
+                    "channel": item.channel_name or item.channel,
+                    "sender": item.sender_name or "unknown",
+                    "message": _fence_message(item),
+                },
+            )
+            or ""
+        )
         try:
             raw = await one_shot_completion(prompt, use_case="background")
         except Exception:
@@ -311,14 +311,24 @@ class InboxService:
         from personalclaw.llm_helpers import one_shot_completion
         from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
-        style = f"Match this voice/style when replying:\n{self._style_rules}" if self._style_rules else ""
-        prompt = render_use_case_prompt("inbox_draft", {
-            "user_name": self._user_name,
-            "channel": item.channel_name or item.channel,
-            "sender": item.sender_name or "unknown",
-            "message": _fence_message(item),
-            "style": style,
-        }) or ""
+        style = (
+            f"Match this voice/style when replying:\n{self._style_rules}"
+            if self._style_rules
+            else ""
+        )
+        prompt = (
+            render_use_case_prompt(
+                "inbox_draft",
+                {
+                    "user_name": self._user_name,
+                    "channel": item.channel_name or item.channel,
+                    "sender": item.sender_name or "unknown",
+                    "message": _fence_message(item),
+                    "style": style,
+                },
+            )
+            or ""
+        )
         try:
             raw = (await one_shot_completion(prompt, use_case="background") or "").strip()
         except Exception:
@@ -345,13 +355,21 @@ class InboxService:
         from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
         channel_name = self.state.channel_names.get(channel_id, channel_id)
-        fenced = fence_untrusted("\n".join(messages[-_MAX_DIGEST_MESSAGES:]), source="inbox-channel")
-        prompt = render_use_case_prompt("inbox_digest", {
-            "channel": channel_name,
-            "hours": f"{hours:g}",
-            "user_name": self._user_name,
-            "messages": fenced,
-        }) or ""
+        fenced = fence_untrusted(
+            "\n".join(messages[-_MAX_DIGEST_MESSAGES:]), source="inbox-channel"
+        )
+        prompt = (
+            render_use_case_prompt(
+                "inbox_digest",
+                {
+                    "channel": channel_name,
+                    "hours": f"{hours:g}",
+                    "user_name": self._user_name,
+                    "messages": fenced,
+                },
+            )
+            or ""
+        )
         try:
             summary = (await one_shot_completion(prompt, use_case="background") or "").strip()
         except Exception:
@@ -397,7 +415,8 @@ class InboxService:
                 logger.debug("channel history fetch failed for %s", channel_id, exc_info=True)
         if not lines:
             stored = [
-                it for it in self.inbox.items.values()
+                it
+                for it in self.inbox.items.values()
                 if it.channel == channel_id and it.created_at >= cutoff and it.source != "digest"
             ]
             for it in sorted(stored, key=lambda i: i.created_at):
@@ -413,6 +432,7 @@ def _parse_classification(raw: str) -> tuple[str, str]:
     valid_conf = {c.value for c in Confidence}
     try:
         from personalclaw.llm_helpers import parse_llm_json
+
         data = parse_llm_json(raw) or {}
     except Exception:
         data = {}

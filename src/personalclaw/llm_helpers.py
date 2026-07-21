@@ -106,7 +106,9 @@ async def stream_and_collect(
                         outcome="auto_approved",
                     )
                     await fire_tool_hooks(
-                        get_global_hook_store(), event.title, event.tool_input,
+                        get_global_hook_store(),
+                        event.title,
+                        event.tool_input,
                     )
                 elif event.kind == EVENT_COMPLETE:
                     break
@@ -292,13 +294,19 @@ async def one_shot_completion(prompt: str, *, use_case: str = "background") -> s
 
     # Honor a caller that already named a real model-axis use case; otherwise the
     # informal label collapses to the reasoning axis (→ chat fallback).
-    resolved_uc = use_case if use_case in VALID_USE_CASES and use_case not in ("chat", "code_tools") else "reasoning"
+    resolved_uc = (
+        use_case
+        if use_case in VALID_USE_CASES and use_case not in ("chat", "code_tools")
+        else "reasoning"
+    )
 
     provider = None
     try:
         provider = resolve_provider_for_use_case(resolved_uc)
     except Exception:
-        logger.debug("one_shot_completion: use-case bridge resolve failed for %r", resolved_uc, exc_info=True)
+        logger.debug(
+            "one_shot_completion: use-case bridge resolve failed for %r", resolved_uc, exc_info=True
+        )
 
     # Last-resort fallback: no active selection AND the bridge couldn't resolve a
     # capable provider — build the first registered provider so a single-provider
@@ -338,19 +346,47 @@ def humanize_provider_error(exc: object) -> str:
     low = raw.lower()
     # (needle, friendly) — order matters; first match wins.
     _MAP = [
-        (("credit balance is too low", "insufficient_quota", "insufficient credit", "billing"),
-         "This model's provider account is out of credits/quota. Top it up, or pick a "
-         "different model for this chat (the model selector is in the composer)."),
-        (("rate limit", "rate_limit", "429", "too many requests", "overloaded", "overloaded_error"),
-         "The model provider is rate-limiting or overloaded right now. Wait a moment and "
-         "retry, or switch to a different model."),
-        (("authentication", "invalid api key", "invalid x-api-key", "401", "unauthorized",
-          "permission", "invalid_api_key"),
-         "The model provider rejected the API key (auth failed). Check the key in "
-         "Settings → Providers, or pick a different model."),
-        (("model not found", "does not exist", "not_found_error", "unknown model", "invalid model"),
-         "The selected model id isn't valid for this provider. Pick a listed model in "
-         "the composer's model selector."),
+        (
+            ("credit balance is too low", "insufficient_quota", "insufficient credit", "billing"),
+            "This model's provider account is out of credits/quota. Top it up, or pick a "
+            "different model for this chat (the model selector is in the composer).",
+        ),
+        (
+            (
+                "rate limit",
+                "rate_limit",
+                "429",
+                "too many requests",
+                "overloaded",
+                "overloaded_error",
+            ),
+            "The model provider is rate-limiting or overloaded right now. Wait a moment and "
+            "retry, or switch to a different model.",
+        ),
+        (
+            (
+                "authentication",
+                "invalid api key",
+                "invalid x-api-key",
+                "401",
+                "unauthorized",
+                "permission",
+                "invalid_api_key",
+            ),
+            "The model provider rejected the API key (auth failed). Check the key in "
+            "Settings → Providers, or pick a different model.",
+        ),
+        (
+            (
+                "model not found",
+                "does not exist",
+                "not_found_error",
+                "unknown model",
+                "invalid model",
+            ),
+            "The selected model id isn't valid for this provider. Pick a listed model in "
+            "the composer's model selector.",
+        ),
     ]
     for needles, friendly in _MAP:
         if any(n in low for n in needles):

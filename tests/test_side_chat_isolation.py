@@ -41,10 +41,10 @@ def test_build_side_message_includes_snapshot_question_and_prior():
     side.append("user", "what model?")
     side.append("assistant", "glm-5.1")
     prompt = build_side_message(s, side, "summarize what we did")
-    assert "deploy the stack" in prompt          # snapshot
-    assert "what model?" in prompt                # prior side Q
-    assert "summarize what we did" in prompt      # new question
-    assert "read-only" in prompt.lower()          # boundary envelope
+    assert "deploy the stack" in prompt  # snapshot
+    assert "what model?" in prompt  # prior side Q
+    assert "summarize what we did" in prompt  # new question
+    assert "read-only" in prompt.lower()  # boundary envelope
 
 
 @pytest.mark.asyncio
@@ -112,6 +112,7 @@ async def test_side_turn_rejects_tools():
         await side_mod._run_side_turn(state, "parent", s, s._side, "q", "run-1")
 
     from personalclaw.llm_helpers import ToolApprovalPolicy
+
     assert captured["policy"] == ToolApprovalPolicy.REJECT_ALL
 
 

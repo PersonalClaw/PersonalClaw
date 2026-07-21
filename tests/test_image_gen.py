@@ -46,11 +46,15 @@ class _FakePollProvider(ImageGenProvider):
         for _ in range(3):
             self.polls += 1
             await asyncio.sleep(0)
-        return [ImageResult(local_path=f"/cache/{prompt[:4]}.png", mime="image/png") for _ in range(n)]
+        return [
+            ImageResult(local_path=f"/cache/{prompt[:4]}.png", mime="image/png") for _ in range(n)
+        ]
 
     async def edit(self, prompt, *, source_image, mask="", model="", size="", n=1, **opts):
         self.polls += 1
-        return [ImageResult(local_path="/cache/edited.png", mime="image/png", revised_prompt=prompt)]
+        return [
+            ImageResult(local_path="/cache/edited.png", mime="image/png", revised_prompt=prompt)
+        ]
 
 
 class TestImageGenABC:
@@ -85,6 +89,7 @@ class TestImageGenRegistry:
         mocked providers never get registered and _providers stays empty (the flaky
         full-suite failure). Reset BOTH."""
         from personalclaw.image_gen import registry as ir
+
         monkeypatch.setattr(ir, "_providers", {}, raising=False)
         monkeypatch.setattr(ir, "_auto_registered", False, raising=False)
 
@@ -94,11 +99,13 @@ class TestImageGenRegistry:
 
         monkeypatch.setattr(ir, "_providers", {}, raising=False)
         monkeypatch.setattr(
-            uc, "openai_family_providers",
+            uc,
+            "openai_family_providers",
             lambda: [{"name": "MyOpenAI", "endpoint": "", "api_key": "sk-x"}],
         )
         monkeypatch.setattr(
-            uc, "active_model_refs",
+            uc,
+            "active_model_refs",
             lambda u: ["MyOpenAI:gpt-image-1"] if u == "image_gen" else [],
         )
 
@@ -111,6 +118,7 @@ class TestImageGenRegistry:
     def test_no_selection_resolves_none(self, monkeypatch):
         from personalclaw.image_gen import registry as ir
         from personalclaw.providers import use_cases as uc
+
         monkeypatch.setattr(ir, "_providers", {}, raising=False)
         monkeypatch.setattr(uc, "openai_family_providers", lambda: [])
         monkeypatch.setattr(uc, "active_model_refs", lambda u: [])
@@ -124,9 +132,14 @@ class TestImageGenRegistry:
         from personalclaw.image_gen import registry as ir
         from personalclaw.providers import use_cases as uc
 
-        monkeypatch.setattr(uc, "openai_family_providers", lambda: [{"name": "MyOpenAI", "endpoint": "", "api_key": "k"}])
         monkeypatch.setattr(
-            ir, "_providers",
+            uc,
+            "openai_family_providers",
+            lambda: [{"name": "MyOpenAI", "endpoint": "", "api_key": "k"}],
+        )
+        monkeypatch.setattr(
+            ir,
+            "_providers",
             {"MyOpenAI": object(), "stub": object(), "fal": object()},
             raising=False,
         )
@@ -142,6 +155,7 @@ class TestImageGenRegistry:
     @pytest.mark.asyncio
     async def test_list_models_for_provider_shape(self, monkeypatch):
         from personalclaw.image_gen import registry as ir
+
         prov = _FakePollProvider()
         monkeypatch.setattr(ir, "_providers", {"fake": prov}, raising=False)
         monkeypatch.setattr(ir, "_ensure_registered", lambda: None)
@@ -161,6 +175,7 @@ class TestModelTypeHandlerImageGen:
 
         class _Cfg:
             capabilities = ["image_gen"]
+
         # RegisteredProvider needs a provider_config with .capabilities; a tiny
         # stand-in keeps the test independent of the full manifest schema.
         rp = RegisteredProvider.__new__(RegisteredProvider)
@@ -192,6 +207,7 @@ class TestOpenAIImageProvider:
     @pytest.mark.asyncio
     async def test_unavailable_without_key(self):
         from personalclaw.image_gen.openai_provider import OpenAIImageProvider
+
         prov = OpenAIImageProvider(provider_name="X", endpoint="", api_key="")
         with patch.dict("os.environ", {}, clear=True):
             assert await prov.is_available() is False
@@ -255,16 +271,21 @@ class TestOpenAIImageProvider:
     @pytest.mark.asyncio
     async def test_no_key_raises_clean_error(self):
         from personalclaw.image_gen.openai_provider import OpenAIImageProvider
+
         fake_openai = MagicMock()
         fake_openai.AsyncOpenAI = MagicMock()
         prov = OpenAIImageProvider(provider_name="X", endpoint="", api_key="")
-        with patch.dict("sys.modules", {"openai": fake_openai}), patch.dict("os.environ", {}, clear=True):
+        with (
+            patch.dict("sys.modules", {"openai": fake_openai}),
+            patch.dict("os.environ", {}, clear=True),
+        ):
             with pytest.raises(ImageGenError):
                 await prov.generate("x")
 
     @pytest.mark.asyncio
     async def test_empty_response_raises(self):
         from personalclaw.image_gen.openai_provider import OpenAIImageProvider
+
         fake_client = MagicMock()
         fake_client.images.generate = AsyncMock(return_value=MagicMock(data=[]))
         fake_client.close = AsyncMock()
@@ -278,9 +299,13 @@ class TestOpenAIImageProvider:
     @pytest.mark.asyncio
     async def test_list_models_marks_active(self, monkeypatch, _openai_image_catalog):
         from personalclaw.image_gen.openai_provider import OpenAIImageProvider
-        prov = OpenAIImageProvider(provider_name="X", provider_type="openai", endpoint="", api_key="sk-x")
+
+        prov = OpenAIImageProvider(
+            provider_name="X", provider_type="openai", endpoint="", api_key="sk-x"
+        )
         monkeypatch.setattr(
-            "personalclaw.image_gen.registry.active_image_gen", lambda: (prov, "gpt-image-1"),
+            "personalclaw.image_gen.registry.active_image_gen",
+            lambda: (prov, "gpt-image-1"),
         )
         models = await prov.list_models()
         active = [m for m in models if m.active]
@@ -292,23 +317,26 @@ class TestStubProvider:
     @pytest.mark.asyncio
     async def test_stub_generates_valid_png_deterministic(self):
         import base64
+
         from personalclaw.image_gen.stub_provider import StubImageProvider
+
         prov = StubImageProvider()
         a = await prov.generate("a red leaf")
         b = await prov.generate("a red leaf")
         c = await prov.generate("a blue car")
         assert base64.b64decode(a[0].b64)[:8] == b"\x89PNG\r\n\x1a\n"
-        assert a[0].b64 == b[0].b64           # deterministic per prompt
-        assert a[0].b64 != c[0].b64           # distinct per prompt
+        assert a[0].b64 == b[0].b64  # deterministic per prompt
+        assert a[0].b64 != c[0].b64  # distinct per prompt
         assert "stub render of: a red leaf" in a[0].revised_prompt
 
     @pytest.mark.asyncio
     async def test_stub_edit_differs_from_generate(self):
         from personalclaw.image_gen.stub_provider import StubImageProvider
+
         prov = StubImageProvider()
         g = await prov.generate("x")
         e = await prov.edit("x", source_image="/tmp/x.png")
-        assert g[0].b64 != e[0].b64           # edit is a visibly distinct shade
+        assert g[0].b64 != e[0].b64  # edit is a visibly distinct shade
 
 
 @pytest.fixture
@@ -317,13 +345,20 @@ def _openai_image_catalog():
     openai-models app does this on load) so the core adapter — now catalog-driven,
     not host-sniffing — can resolve it. Cleaned up after the test."""
     from personalclaw.media_catalogs import (
-        MediaCatalog, MediaModel, register_media_catalog, unregister_media_catalogs,
+        MediaCatalog,
+        MediaModel,
+        register_media_catalog,
+        unregister_media_catalogs,
     )
+
     register_media_catalog(
-        "image_gen", "openai",
+        "image_gen",
+        "openai",
         MediaCatalog(
             models=(
-                MediaModel(name="gpt-image-1", extra={"sizes": ["1024x1024"], "supports_edit": True}),
+                MediaModel(
+                    name="gpt-image-1", extra={"sizes": ["1024x1024"], "supports_edit": True}
+                ),
                 MediaModel(name="dall-e-3", extra={"sizes": ["1024x1024"], "supports_edit": False}),
                 MediaModel(name="dall-e-2", extra={"sizes": ["256x256"], "supports_edit": True}),
             ),
@@ -345,41 +380,62 @@ class TestOpenAIImageCatalogByType:
     @pytest.mark.asyncio
     async def test_openai_type_lists_curated_models(self, _openai_image_catalog):
         from personalclaw.image_gen.openai_provider import OpenAIImageProvider
-        prov = OpenAIImageProvider(provider_name="OpenAI", provider_type="openai", endpoint="", api_key="sk-x")
+
+        prov = OpenAIImageProvider(
+            provider_name="OpenAI", provider_type="openai", endpoint="", api_key="sk-x"
+        )
         ids = {m.name for m in await prov.list_models()}
         assert ids == {"gpt-image-1", "dall-e-3", "dall-e-2"}
 
     @pytest.mark.asyncio
-    async def test_openai_type_lists_curated_models_regardless_of_endpoint(self, _openai_image_catalog):
+    async def test_openai_type_lists_curated_models_regardless_of_endpoint(
+        self, _openai_image_catalog
+    ):
         from personalclaw.image_gen.openai_provider import OpenAIImageProvider
+
         # Catalog is keyed by TYPE, not endpoint host — an explicit OpenAI host still works.
         prov = OpenAIImageProvider(
-            provider_name="OpenAI", provider_type="openai",
-            endpoint="https://api.openai.com/v1", api_key="sk-x")
+            provider_name="OpenAI",
+            provider_type="openai",
+            endpoint="https://api.openai.com/v1",
+            api_key="sk-x",
+        )
         assert {m.name for m in await prov.list_models()} == {"gpt-image-1", "dall-e-3", "dall-e-2"}
 
     @pytest.mark.asyncio
     async def test_uncontributed_type_lists_no_models(self):
         from personalclaw.image_gen.openai_provider import OpenAIImageProvider
+
         prov = OpenAIImageProvider(
-            provider_name="Alibaba", provider_type="openai_compatible",
-            endpoint="https://dashscope-intl.aliyuncs.com/compatible-mode/v1", api_key="sk-x")
+            provider_name="Alibaba",
+            provider_type="openai_compatible",
+            endpoint="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+            api_key="sk-x",
+        )
         assert await prov.list_models() == []  # no contributed catalog for this type
 
     @pytest.mark.asyncio
     async def test_uncontributed_type_unpinned_generate_raises(self):
         from personalclaw.image_gen.openai_provider import OpenAIImageProvider
+
         prov = OpenAIImageProvider(
-            provider_name="Alibaba", provider_type="openai_compatible",
-            endpoint="https://dashscope-intl.aliyuncs.com/compatible-mode/v1", api_key="sk-x")
+            provider_name="Alibaba",
+            provider_type="openai_compatible",
+            endpoint="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+            api_key="sk-x",
+        )
         with pytest.raises(ImageGenError) as exc:
             await prov.generate("a cat")  # no model= → must NOT fall back to a bogus id
         assert "no contributed default" in str(exc.value)
 
     def test_pinned_model_wins_on_any_type(self):
         from personalclaw.image_gen.openai_provider import OpenAIImageProvider
+
         prov = OpenAIImageProvider(
-            provider_name="Alibaba", provider_type="openai_compatible",
-            endpoint="https://dashscope-intl.aliyuncs.com/v1", api_key="k")
+            provider_name="Alibaba",
+            provider_type="openai_compatible",
+            endpoint="https://dashscope-intl.aliyuncs.com/v1",
+            api_key="k",
+        )
         # An explicit model is honored even for an uncontributed type.
         assert prov._default_model("wan2.7-image") == "wan2.7-image"

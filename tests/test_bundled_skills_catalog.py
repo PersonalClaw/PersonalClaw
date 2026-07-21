@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import re
 
-import pytest
-
 from personalclaw.skills.marketplace import _parse_description
 from personalclaw.skills.native import NativeSkillsMarketplace, _bundled_root
 
@@ -33,6 +31,7 @@ class TestVisualOutputSkill:
 
     def test_triggered_on_widget_request(self, tmp_path, monkeypatch):
         from personalclaw.skills.loader import SkillsLoader
+
         monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
         loader = SkillsLoader(skills_path=tmp_path / "skills")
         names = {s["key"] for s in loader.list_skills()}
@@ -51,6 +50,7 @@ class TestArtifactsSkill:
 
     def test_triggered_on_save_widget(self, tmp_path, monkeypatch):
         from personalclaw.skills.loader import SkillsLoader
+
         monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
         loader = SkillsLoader(skills_path=tmp_path / "skills")
         assert "artifacts" in {s["key"] for s in loader.list_skills()}

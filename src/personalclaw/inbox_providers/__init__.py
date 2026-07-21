@@ -1,5 +1,5 @@
-from personalclaw.provider_registry import discover_providers
 from personalclaw.inbox_providers.base import MessageSourceProvider
+from personalclaw.provider_registry import discover_providers
 
 _cache: dict[str, type] | None = None
 
@@ -7,7 +7,10 @@ _cache: dict[str, type] | None = None
 def get_message_providers() -> dict[str, type]:
     global _cache
     if _cache is None:
-        _cache = discover_providers("personalclaw.message_source_providers", MessageSourceProvider)
+        _cache = discover_providers(
+            "personalclaw.message_source_providers",
+            MessageSourceProvider,  # type: ignore[type-abstract]
+        )
     return _cache
 
 
@@ -22,5 +25,6 @@ def get_default_provider(name: str = "native") -> "MessageSourceProvider":
     cls = providers.get(name) or providers.get("native") or providers.get("filesystem")
     if cls is None:
         from personalclaw.inbox_providers.filesystem_source import FilesystemSourceProvider
+
         cls = FilesystemSourceProvider
     return cls()

@@ -9,8 +9,8 @@ a research loop's Plan Review reads as research planning rather than goal sub-go
 
 from __future__ import annotations
 
-from personalclaw.planning.session import PlanStep
 from personalclaw.loop import goal_plan_briefs as _gpb
+from personalclaw.planning.session import PlanStep
 
 # Reuse the goal walkthrough's sentinels (same plumbing, different step semantics).
 STEPS_SENTINEL = _gpb.STEPS_SENTINEL
@@ -20,10 +20,22 @@ ARTIFACT_SENTINEL = _gpb.ARTIFACT_SENTINEL
 # step's CONTENT to the request). ``subtopics`` is the deep-research plan; ``output``
 # pins the report template + manner the user asked for; ``execution_plan`` is executable.
 RESEARCH_STEP_GUIDE: tuple[tuple[str, str], ...] = (
-    ("intent", "the true research question + what 'done' means (the report the user actually wants)"),
-    ("subtopics", "the initial deep-research plan — the ordered subtopics/questions to investigate (this list evolves as the loop learns)"),
-    ("output", "the OUTPUT contract — the report's template/structure AND the manner (tone, format, depth, audience) the user requested"),
-    ("execution_plan", "the role-phased research cycle plan — ordered phases, each with role/target/min_cycles/exit"),
+    (
+        "intent",
+        "the true research question + what 'done' means (the report the user actually wants)",
+    ),
+    (
+        "subtopics",
+        "the initial deep-research plan — the ordered subtopics/questions to investigate (this list evolves as the loop learns)",  # noqa: E501
+    ),
+    (
+        "output",
+        "the OUTPUT contract — the report's template/structure AND the manner (tone, format, depth, audience) the user requested",  # noqa: E501
+    ),
+    (
+        "execution_plan",
+        "the role-phased research cycle plan — ordered phases, each with role/target/min_cycles/exit",  # noqa: E501
+    ),
 )
 
 

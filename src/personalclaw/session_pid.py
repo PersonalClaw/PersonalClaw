@@ -82,7 +82,7 @@ def _pid_file_lock():  # type: ignore[no-untyped-def]
 
 
 def _is_managed_agent_process(pid: int) -> bool:
-    """Check if a PID belongs to an agent process managed by PersonalClaw (guards against PID recycling)."""
+    """Check if a PID belongs to an agent process managed by PersonalClaw (guards against PID recycling)."""  # noqa: E501
     try:
         if sys.platform == "linux":
             cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
@@ -174,8 +174,7 @@ def _write_back_pid_file(killed_or_dead: set[str]) -> None:
         if path.exists():
             current = path.read_text(encoding="utf-8").splitlines()
             keep = [
-                entry for entry in current
-                if entry.strip() and entry.strip() not in killed_or_dead
+                entry for entry in current if entry.strip() and entry.strip() not in killed_or_dead
             ]
             path.write_text(
                 ("\n".join(keep) + "\n") if keep else "",
@@ -383,8 +382,11 @@ def _get_ppid_libproc(pid: int) -> int:
             raise OSError("libproc not found")
         _libproc = ctypes.CDLL(path)
         _libproc.proc_pidinfo.argtypes = [
-            ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
-            ctypes.c_void_p, ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint64,
+            ctypes.c_void_p,
+            ctypes.c_int,
         ]
         _libproc.proc_pidinfo.restype = ctypes.c_int
     PROC_PIDTBSDINFO = 3  # noqa: N806 — macOS kernel constant

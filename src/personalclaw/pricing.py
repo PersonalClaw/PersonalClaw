@@ -27,7 +27,8 @@ if _PRICING_FILE.exists():
     try:
         with open(_PRICING_FILE, encoding="utf-8") as _fp:
             _PRICES = {
-                k: v for k, v in json.load(_fp).items()
+                k: v
+                for k, v in json.load(_fp).items()
                 if not k.startswith("_") and isinstance(v, dict)
             }
     except (OSError, ValueError):

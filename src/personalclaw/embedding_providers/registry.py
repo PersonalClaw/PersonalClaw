@@ -44,6 +44,7 @@ def _ensure_scanned() -> None:
     (dedupes by ``provider.name``)."""
     try:
         from personalclaw.providers.media_scanners import scan
+
         for prov in scan("embedding"):
             nm = getattr(prov, "name", "")
             if nm and nm not in _providers:
@@ -82,7 +83,7 @@ async def list_native_models() -> list[EmbeddingModel]:
         # event loop, so this must be awaited — a prior asyncio.run() here raised
         # "cannot be called from a running event loop", was swallowed by the
         # except, and returned [] → the model always looked "not downloaded".
-        return await provider.list_models()
+        return await provider.list_models()  # type: ignore[attr-defined]  # CI-3
     except Exception:
         logger.debug("list_native_models failed", exc_info=True)
         return []
@@ -101,7 +102,7 @@ async def delete_native_model(model_name: str) -> bool:
     if provider is None:
         return False
     try:
-        return await provider.delete_model(model_name)
+        return await provider.delete_model(model_name)  # type: ignore[attr-defined]  # CI-3
     except Exception:
         logger.debug("delete_native_model failed", exc_info=True)
         return False
@@ -153,7 +154,9 @@ def _llm_embed_fn(provider_name: str, model_id: str) -> Callable[[str], list[flo
         registry = get_default_registry()
         provider = registry.build(provider_name, embedding_model=model_id)
     except Exception:
-        logger.warning("Could not build embedding provider %r from LLM registry", provider_name, exc_info=True)
+        logger.warning(
+            "Could not build embedding provider %r from LLM registry", provider_name, exc_info=True
+        )
         return None
 
     embed = getattr(provider, "embed", None)
@@ -202,19 +205,22 @@ def get_active_embed_fn() -> Callable[[str], list[float] | None] | None:
     _ensure_scanned()
     direct = _providers.get(provider_name)
     if direct is not None:
+
         def _direct_embed(text: str) -> list[float] | None:
             try:
                 asyncio.get_running_loop()
                 import concurrent.futures
+
                 with concurrent.futures.ThreadPoolExecutor() as pool:
-                    return pool.submit(
-                        asyncio.run, direct.embed(text, model=model_id)
-                    ).result(timeout=60)
+                    return pool.submit(asyncio.run, direct.embed(text, model=model_id)).result(
+                        timeout=60
+                    )
             except RuntimeError:
                 return asyncio.run(direct.embed(text, model=model_id))
             except Exception:
                 logger.debug("Direct embed provider %r failed", provider_name, exc_info=True)
                 return None
+
         return _direct_embed
 
     return _llm_embed_fn(provider_name, model_id)
@@ -240,10 +246,12 @@ def get_active_embedding_dim() -> int | None:
                 # raises inside a running loop, so run list_models() on a worker
                 # thread when a loop is already active (mirrors get_active_embed_fn).
                 async def _list():
-                    return await provider.list_models()
+                    return await provider.list_models()  # type: ignore[attr-defined]  # CI-3
+
                 try:
                     asyncio.get_running_loop()
                     import concurrent.futures
+
                     with concurrent.futures.ThreadPoolExecutor() as pool:
                         models = pool.submit(asyncio.run, _list()).result(timeout=30)
                 except RuntimeError:

@@ -177,8 +177,7 @@ class SearchProvider(ABC):
 
     @property
     @abstractmethod
-    def display_name(self) -> str:
-        ...
+    def display_name(self) -> str: ...
 
     @abstractmethod
     async def is_available(self) -> bool:
@@ -186,8 +185,7 @@ class SearchProvider(ABC):
         ...
 
     @abstractmethod
-    def capabilities(self) -> SearchCapabilities:
-        ...
+    def capabilities(self) -> SearchCapabilities: ...
 
     @abstractmethod
     async def search(

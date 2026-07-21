@@ -41,11 +41,11 @@ def _list_tools() -> list[dict[str, Any]]:
                     "scope": {
                         "type": "string",
                         "enum": ["global", "workspace"],
-                        "description": "Where to save: 'global' (default, all workspaces) or 'workspace' (active workspace only)",
+                        "description": "Where to save: 'global' (default, all workspaces) or 'workspace' (active workspace only)",  # noqa: E501
                     },
                     "workspace": {
                         "type": "string",
-                        "description": "Workspace name (required when scope='workspace'). Use the workspace name from your session context.",
+                        "description": "Workspace name (required when scope='workspace'). Use the workspace name from your session context.",  # noqa: E501
                     },
                 },
                 "required": ["rule", "category"],
@@ -80,8 +80,14 @@ def _list_tools() -> list[dict[str, Any]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "What to recall (a topic, name, or question)"},
-                    "deep": {"type": "boolean", "description": "Broader/deeper search (default false)"},
+                    "query": {
+                        "type": "string",
+                        "description": "What to recall (a topic, name, or question)",
+                    },
+                    "deep": {
+                        "type": "boolean",
+                        "description": "Broader/deeper search (default false)",
+                    },
                 },
                 "required": ["query"],
             },
@@ -173,6 +179,10 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
     from personalclaw.mcp_shared import call_tool_with_logging
 
     return call_tool_with_logging(
-        name, raw_args, _validate_args, _call_tool_inner,
-        session_key="mcp_core", downstream_service="personalclaw-memory",
+        name,
+        raw_args,
+        _validate_args,
+        _call_tool_inner,
+        session_key="mcp_core",
+        downstream_service="personalclaw-memory",
     )

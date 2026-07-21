@@ -94,15 +94,19 @@ class BackendSupervisor:
             entry = (root / backend.entryPoint).resolve()
             # Containment: the entry point must live inside the app dir.
             if not str(entry).startswith(str(root.resolve())) or not entry.is_file():
-                logger.warning("app %s backend entryPoint missing/escapes app dir: %s",
-                               name, backend.entryPoint)
+                logger.warning(
+                    "app %s backend entryPoint missing/escapes app dir: %s",
+                    name,
+                    backend.entryPoint,
+                )
                 return None
 
             port = self._resolve_port(backend.port)
             cmd = self._launch_cmd(backend.type, entry)
             if cmd is None:
-                logger.warning("app %s backend: cannot determine launcher for %s",
-                               name, backend.entryPoint)
+                logger.warning(
+                    "app %s backend: cannot determine launcher for %s", name, backend.entryPoint
+                )
                 return None
 
             # The app's isolated, update-surviving storage dir is a stable
@@ -113,6 +117,7 @@ class BackendSupervisor:
             # persist (untrusted-app sandbox P3: the capability grants the path).
             from personalclaw.apps.manager import app_data_dir
             from personalclaw.apps.permissions import checker_for
+
             checker = checker_for(name)
             storage_ok = checker is not None and checker.can_use_storage()
             data_dir = app_data_dir(name) if storage_ok else None
@@ -127,14 +132,18 @@ class BackendSupervisor:
                 env.pop("PERSONALCLAW_APP_DATA_DIR", None)
             try:
                 proc = subprocess.Popen(  # noqa: S603 — vetted app backend, scanned at install
-                    cmd, cwd=str(root), env=env,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    cmd,
+                    cwd=str(root),
+                    env=env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                 )
             except OSError as exc:
                 logger.warning("app %s backend failed to launch: %s", name, exc)
                 return None
-            rb = RunningBackend(name=name, port=port, pid=proc.pid,
-                                health_check=backend.healthCheck, proc=proc)
+            rb = RunningBackend(
+                name=name, port=port, pid=proc.pid, health_check=backend.healthCheck, proc=proc
+            )
             self._procs[name] = rb
             logger.info("app %s backend started: pid=%s port=%s", name, proc.pid, port)
             return rb
@@ -190,7 +199,9 @@ class BackendSupervisor:
             try:
                 os.kill(pid, signal.SIGTERM)
                 reaped += 1
-                logger.info("app %s backend: reaped orphaned process pid=%s from prior run", name, pid)
+                logger.info(
+                    "app %s backend: reaped orphaned process pid=%s from prior run", name, pid
+                )
             except (ProcessLookupError, PermissionError):
                 pass
         return reaped
@@ -201,11 +212,19 @@ class BackendSupervisor:
         app's resolved backend entry path). Uses the real ``ps`` directly so a
         test that monkeypatches subprocess.Popen for the spawn path can't
         entangle this read-only lookup. Any failure → empty (conservative —
-        reap nothing)."""
+        reap nothing).
+
+        ``-ww`` disables the command-column truncation Linux ``ps`` applies when
+        stdout is not a TTY (it clips ``command=`` to ~screen width, defaulting to
+        80 cols). Without it, a backend under a long path (a CI temp dir, a deep
+        home) has its entry path clipped off, ``needle`` never matches, and no
+        orphan is ever found/reaped. ``-ww`` is a harmless no-op on macOS ``ps``."""
         needle = str(entry)
         pids: list[tuple[int, int]] = []
         try:
-            out = os.popen("ps -Ao pid=,ppid=,command= 2>/dev/null").read()  # noqa: S605 — static command
+            out = os.popen(
+                "ps -Awwo pid=,ppid=,command= 2>/dev/null"
+            ).read()  # noqa: S605 — static command
         except Exception:  # noqa: BLE001 — never let the probe break the caller
             return pids
         for line in out.splitlines():
@@ -314,7 +333,9 @@ def _check_and_revive() -> None:
             if launched is not None:
                 logger.info(
                     "watchdog: revived app %s backend (pid=%s port=%s)",
-                    name, launched.pid, launched.port,
+                    name,
+                    launched.pid,
+                    launched.port,
                 )
         except Exception:
             logger.debug("watchdog: failed to revive %s", name, exc_info=True)

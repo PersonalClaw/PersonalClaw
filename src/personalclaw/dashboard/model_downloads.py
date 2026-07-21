@@ -112,9 +112,11 @@ def _dir_size(path: Path) -> int:
 # sentence-transformers, the diarization backends, ollama, …) works identically; a
 # not-installed provider degrades to "unknown provider" rather than erroring elsewhere.
 
+
 def _provider(name: str):
     """The registered local-model provider by name (or None)."""
     from personalclaw.local_models.registry import get_provider
+
     return get_provider(name)
 
 
@@ -126,6 +128,7 @@ def _list_models_for_provider(name: str) -> list:
     ``asyncio.run`` raises inside a running loop, so run the async catalog on a worker
     thread when a loop is already active (mirrors the embedding registry's dim lookup)."""
     from personalclaw.local_models.registry import catalog_for
+
     provider = _provider(name)
     if provider is None:
         return []
@@ -135,6 +138,7 @@ def _list_models_for_provider(name: str) -> list:
         except RuntimeError:
             return asyncio.run(catalog_for(provider))
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor() as pool:
             return pool.submit(asyncio.run, catalog_for(provider)).result(timeout=30)
     except Exception:
@@ -251,7 +255,11 @@ class ModelDownloadRegistry:
             return None, f"Unknown model {model!r} for provider {provider!r}"
 
         existing_id = self._by_model.get((provider, model))
-        if existing_id and (existing := self._jobs.get(existing_id)) and existing.status == "running":
+        if (
+            existing_id
+            and (existing := self._jobs.get(existing_id))
+            and existing.status == "running"
+        ):
             return existing, None
 
         job = ModelDownloadJob(
@@ -327,7 +335,6 @@ class ModelDownloadRegistry:
             self._running.pop(job.id, None)
 
         self._publish(job, event)
-
 
     async def _poll(self, run: _Running) -> None:
         """Sample on-disk growth and publish a ``progress`` frame each tick."""

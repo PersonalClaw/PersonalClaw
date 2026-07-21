@@ -77,12 +77,14 @@ class NativeSkillsMarketplace(SkillsMarketplace):
             description = _parse_description(skill_dir / _SKILL_FILENAME)
             if q and q not in name.lower() and q not in description.lower():
                 continue
-            results.append(SkillEntry(
-                id=name,
-                name=name,
-                description=description,
-                source="native",
-            ))
+            results.append(
+                SkillEntry(
+                    id=name,
+                    name=name,
+                    description=description,
+                    source="native",
+                )
+            )
             if len(results) >= limit:
                 break
         return results
@@ -114,12 +116,15 @@ class NativeSkillsMarketplace(SkillsMarketplace):
 get_default_skills_registry().register("native", NativeSkillsMarketplace())
 
 # Also register user-installed skills as searchable
-from personalclaw.skills.loader import skills_dir as _user_skills_dir
-get_default_skills_registry().register("installed", NativeSkillsMarketplace(root=_user_skills_dir()))
+from personalclaw.skills.loader import skills_dir as _user_skills_dir  # noqa: E402
+
+get_default_skills_registry().register(
+    "installed", NativeSkillsMarketplace(root=_user_skills_dir())
+)
 
 
 def create_provider(config=None):
     """Extension factory for native skills provider."""
     from personalclaw.skills.loader import SkillsLoader
-    return SkillsLoader()
 
+    return SkillsLoader()

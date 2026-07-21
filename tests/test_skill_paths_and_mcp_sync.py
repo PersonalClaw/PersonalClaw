@@ -48,10 +48,22 @@ class TestApiSessionsRestartMcpSync:
         request = _make_restart_request()
 
         with (
-            patch("personalclaw.dashboard.handlers.sessions._reset_all_sessions", new_callable=AsyncMock, return_value=2),
-            patch("personalclaw.dashboard.handlers.sessions.discover_servers_to_sync", return_value=[fake_server]),
-            patch("personalclaw.dashboard.handlers.sessions.sync_to_agent_config", return_value=True),
-            patch("personalclaw.dashboard.handlers.sessions.register_servers_for_cc", return_value=True),
+            patch(
+                "personalclaw.dashboard.handlers.sessions._reset_all_sessions",
+                new_callable=AsyncMock,
+                return_value=2,
+            ),
+            patch(
+                "personalclaw.dashboard.handlers.sessions.discover_servers_to_sync",
+                return_value=[fake_server],
+            ),
+            patch(
+                "personalclaw.dashboard.handlers.sessions.sync_to_agent_config", return_value=True
+            ),
+            patch(
+                "personalclaw.dashboard.handlers.sessions.register_servers_for_cc",
+                return_value=True,
+            ),
         ):
             resp = await api_sessions_restart(request)
 
@@ -67,8 +79,15 @@ class TestApiSessionsRestartMcpSync:
         request = _make_restart_request()
 
         with (
-            patch("personalclaw.dashboard.handlers.sessions._reset_all_sessions", new_callable=AsyncMock, return_value=1),
-            patch("personalclaw.dashboard.handlers.sessions.discover_servers_to_sync", side_effect=RuntimeError("boom")),
+            patch(
+                "personalclaw.dashboard.handlers.sessions._reset_all_sessions",
+                new_callable=AsyncMock,
+                return_value=1,
+            ),
+            patch(
+                "personalclaw.dashboard.handlers.sessions.discover_servers_to_sync",
+                side_effect=RuntimeError("boom"),
+            ),
         ):
             resp = await api_sessions_restart(request)
 
@@ -84,8 +103,14 @@ class TestApiSessionsRestartMcpSync:
         request = _make_restart_request()
 
         with (
-            patch("personalclaw.dashboard.handlers.sessions._reset_all_sessions", new_callable=AsyncMock, return_value=0),
-            patch("personalclaw.dashboard.handlers.sessions.discover_servers_to_sync", return_value=[]),
+            patch(
+                "personalclaw.dashboard.handlers.sessions._reset_all_sessions",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "personalclaw.dashboard.handlers.sessions.discover_servers_to_sync", return_value=[]
+            ),
             patch("personalclaw.dashboard.handlers.sessions.sync_to_agent_config") as mock_sync,
         ):
             resp = await api_sessions_restart(request)
@@ -102,9 +127,18 @@ class TestApiSessionsRestartMcpSync:
         request = _make_restart_request()
 
         with (
-            patch("personalclaw.dashboard.handlers.sessions._reset_all_sessions", new_callable=AsyncMock, return_value=1),
-            patch("personalclaw.dashboard.handlers.sessions.discover_servers_to_sync", return_value=[MagicMock()]),
-            patch("personalclaw.dashboard.handlers.sessions.sync_to_agent_config", return_value=False),
+            patch(
+                "personalclaw.dashboard.handlers.sessions._reset_all_sessions",
+                new_callable=AsyncMock,
+                return_value=1,
+            ),
+            patch(
+                "personalclaw.dashboard.handlers.sessions.discover_servers_to_sync",
+                return_value=[MagicMock()],
+            ),
+            patch(
+                "personalclaw.dashboard.handlers.sessions.sync_to_agent_config", return_value=False
+            ),
         ):
             resp = await api_sessions_restart(request)
 
@@ -121,10 +155,22 @@ class TestApiSessionsRestartMcpSync:
         servers = [MagicMock(), MagicMock(), MagicMock()]
 
         with (
-            patch("personalclaw.dashboard.handlers.sessions._reset_all_sessions", new_callable=AsyncMock, return_value=1),
-            patch("personalclaw.dashboard.handlers.sessions.discover_servers_to_sync", return_value=servers),
-            patch("personalclaw.dashboard.handlers.sessions.sync_to_agent_config", return_value=True),
-            patch("personalclaw.dashboard.handlers.sessions.register_servers_for_cc", return_value=True),
+            patch(
+                "personalclaw.dashboard.handlers.sessions._reset_all_sessions",
+                new_callable=AsyncMock,
+                return_value=1,
+            ),
+            patch(
+                "personalclaw.dashboard.handlers.sessions.discover_servers_to_sync",
+                return_value=servers,
+            ),
+            patch(
+                "personalclaw.dashboard.handlers.sessions.sync_to_agent_config", return_value=True
+            ),
+            patch(
+                "personalclaw.dashboard.handlers.sessions.register_servers_for_cc",
+                return_value=True,
+            ),
         ):
             resp = await api_sessions_restart(request)
 
@@ -146,7 +192,9 @@ class TestInjectSkillPathsPreservesFlagValues:
 
         bm: dict = {"args": ["--include-tool-tags", "default,code-review"]}
         with patch("personalclaw.agent.Path") as mock_path_cls:
-            mock_path_cls.side_effect = lambda p: MagicMock(is_dir=MagicMock(return_value=p == "/real/skills"))
+            mock_path_cls.side_effect = lambda p: MagicMock(
+                is_dir=MagicMock(return_value=p == "/real/skills")
+            )
             _inject_skill_paths(bm, ["/real/skills"])
         result = bm["args"]
         assert "--include-tool-tags" in result

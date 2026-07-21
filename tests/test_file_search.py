@@ -147,8 +147,15 @@ class TestFileSearch:
         (ws / "findme.txt").write_text("x")
         # A file living elsewhere under home must NOT be surfaced.
         (tmp_path / "elsewhere.txt").write_text("y")
-        with patch.dict(os.environ, {"HOME": str(tmp_path), "PERSONALCLAW_WORKSPACE": str(ws),
-                                     "PERSONALCLAW_PROJECT_DIR": ""}, clear=False):
+        with patch.dict(
+            os.environ,
+            {
+                "HOME": str(tmp_path),
+                "PERSONALCLAW_WORKSPACE": str(ws),
+                "PERSONALCLAW_PROJECT_DIR": "",
+            },
+            clear=False,
+        ):
             async with TestClient(TestServer(_make_app())) as client:
                 resp = await client.get("/api/file-search?q=findme")
                 names = {r["name"] for r in (await resp.json())["results"]}
@@ -177,9 +184,7 @@ class TestFileSearch:
         sensitive_dir.mkdir()
         with patch("personalclaw.security.is_sensitive_path", return_value=True):
             async with TestClient(TestServer(_make_app())) as client:
-                resp = await client.get(
-                    f"/api/file-search?q=test&project={sensitive_dir}"
-                )
+                resp = await client.get(f"/api/file-search?q=test&project={sensitive_dir}")
                 assert resp.status == 403
                 data = await resp.json()
                 assert data["error"] == "Access denied"
@@ -188,7 +193,7 @@ class TestFileSearch:
     async def test_path_match_ranked_below_name_match(self, tmp_path, mock_sel):
         sub = tmp_path / "myfeature"
         sub.mkdir()
-        (sub / "utils.py").write_text("x")          # path matches "myfeature"
+        (sub / "utils.py").write_text("x")  # path matches "myfeature"
         (tmp_path / "myfeature.py").write_text("x")  # filename matches "myfeature"
         async with TestClient(TestServer(_make_app())) as client:
             resp = await client.get(f"/api/file-search?q=myfeature&project={tmp_path}")

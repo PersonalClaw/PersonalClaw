@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-
 from chat_test_helpers import _make_app, _make_state
 
 
@@ -80,6 +79,7 @@ async def test_undo_persists_across_reload(tmp_path) -> None:
     state = _make_state(tmp_path)
     session = _seed_turns(state, 3)
     from personalclaw.dashboard.chat_utils import _history_key_for
+
     hk = _history_key_for(session.key)
     client = await _client(state)
     try:

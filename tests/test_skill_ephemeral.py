@@ -11,13 +11,14 @@ import pytest
 
 from personalclaw.skills import ephemeral
 from personalclaw.skills import loader as loader_mod
-from personalclaw.skills.loader import SkillsLoader, agent_skills_dir, skills_dir
+from personalclaw.skills.loader import SkillsLoader
 
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     monkeypatch.setattr(loader_mod, "config_dir", lambda: tmp_path)
     import personalclaw.skills.marketplace as mp
+
     monkeypatch.setattr(mp, "SKILL_DISCOVERY_PATHS", [])
     return tmp_path
 
@@ -80,7 +81,10 @@ def test_promote_to_agent_tier(home):
     name = ephemeral.promote("sess:1", "agent-skill", "agent", agent="researcher")
     assert name == "agent-skill"
     # Written under the agent-local tier, visible to that agent only.
-    assert SkillsLoader(install_builtins=False, agent="researcher").load_skill("agent-skill") is not None
+    assert (
+        SkillsLoader(install_builtins=False, agent="researcher").load_skill("agent-skill")
+        is not None
+    )
     assert SkillsLoader(install_builtins=False).load_skill("agent-skill") is None
 
 
@@ -92,8 +96,9 @@ def test_promote_agent_scope_without_agent_refused(home):
 
 def test_promote_with_edits(home):
     ephemeral.remember("sess:1", "Original", "orig body")
-    name = ephemeral.promote("sess:1", "original", "global",
-                             title="Edited Name", body="edited body")
+    name = ephemeral.promote(
+        "sess:1", "original", "global", title="Edited Name", body="edited body"
+    )
     assert name == "edited-name"
     content = SkillsLoader(install_builtins=False).load_skill("edited-name")
     assert "edited body" in content

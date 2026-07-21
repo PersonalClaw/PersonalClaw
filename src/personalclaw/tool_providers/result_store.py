@@ -27,7 +27,7 @@ from personalclaw.session_workspace import workspace_dir
 logger = logging.getLogger(__name__)
 
 _DIRNAME = "tool_results"
-_MAX_PER_SESSION = 200      # oldest evicted beyond this (bounded growth)
+_MAX_PER_SESSION = 200  # oldest evicted beyond this (bounded growth)
 _ID_PREFIX = "r_"
 
 
@@ -50,8 +50,9 @@ def _next_id(store: Path) -> str:
     return f"{_ID_PREFIX}{n:03d}{suffix}"
 
 
-def store_result(session_id: str, raw: str, *, content_type: str = "generic",
-                 tool: str = "") -> str:
+def store_result(
+    session_id: str, raw: str, *, content_type: str = "generic", tool: str = ""
+) -> str:
     """Persist a raw tool output; return its ``result_id``.
 
     Evicts the oldest entries beyond :data:`_MAX_PER_SESSION` so the store stays
@@ -62,8 +63,12 @@ def store_result(session_id: str, raw: str, *, content_type: str = "generic",
         store = _store_dir(session_id)
         rid = _next_id(store)
         payload = {
-            "id": rid, "tool": tool, "content_type": content_type,
-            "length": len(raw), "created": time.time_ns(), "raw": raw,
+            "id": rid,
+            "tool": tool,
+            "content_type": content_type,
+            "length": len(raw),
+            "created": time.time_ns(),
+            "raw": raw,
         }
         atomic_write(store / f"{rid}.json", json.dumps(payload, ensure_ascii=False))
         _evict_overflow(store)
@@ -86,6 +91,7 @@ def purge_session(session_id: str) -> bool:
     can hold file contents / command output) don't survive on disk. Best-effort;
     returns True if a dir was removed."""
     import shutil
+
     try:
         d = workspace_dir(session_id)
     except Exception:
@@ -112,8 +118,15 @@ def get_result(session_id: str, result_id: str) -> dict | None:
         return None
 
 
-def fetch_slice(session_id: str, result_id: str, *, start: int = 0, end: int | None = None,
-                grep: str | None = None, max_chars: int = 8000) -> dict:
+def fetch_slice(
+    session_id: str,
+    result_id: str,
+    *,
+    start: int = 0,
+    end: int | None = None,
+    grep: str | None = None,
+    max_chars: int = 8000,
+) -> dict:
     """Pull a slice or grep of a stored raw result — backs ``tool_result_get``.
 
     Returns ``{ok, error?, content, length, shown, mode}``. ``grep`` returns the
@@ -122,34 +135,69 @@ def fetch_slice(session_id: str, result_id: str, *, start: int = 0, end: int | N
     """
     rec = get_result(session_id, result_id)
     if rec is None:
-        return {"ok": False, "error": f"no stored result {result_id!r} (it may have expired)",
-                "content": "", "length": 0, "shown": 0, "mode": "none"}
+        return {
+            "ok": False,
+            "error": f"no stored result {result_id!r} (it may have expired)",
+            "content": "",
+            "length": 0,
+            "shown": 0,
+            "mode": "none",
+        }
     raw = rec.get("raw", "")
     ctype = rec.get("content_type", "generic")
     total = len(raw)
     if grep:
         import re
+
         try:
             pat = re.compile(grep, re.I)
         except re.error as exc:
-            return {"ok": False, "error": f"bad grep pattern: {exc}", "content": "",
-                    "length": total, "shown": 0, "mode": "grep", "content_type": ctype}
+            return {
+                "ok": False,
+                "error": f"bad grep pattern: {exc}",
+                "content": "",
+                "length": total,
+                "shown": 0,
+                "mode": "grep",
+                "content_type": ctype,
+            }
         hits = [ln for ln in raw.splitlines() if pat.search(ln)]
         body = "\n".join(hits)
         truncated = len(body) > max_chars
-        return {"ok": True, "content": body[:max_chars], "length": total,
-                "shown": min(len(body), max_chars), "matches": len(hits),
-                "truncated": truncated, "mode": "grep", "content_type": ctype}
+        return {
+            "ok": True,
+            "content": body[:max_chars],
+            "length": total,
+            "shown": min(len(body), max_chars),
+            "matches": len(hits),
+            "truncated": truncated,
+            "mode": "grep",
+            "content_type": ctype,
+        }
     # char range. A start past the end is a caller error, not an empty success —
     # surface it so the agent doesn't read "" as "the result is empty".
     if start and start >= total:
-        return {"ok": False, "error": f"start={start} is past the result length ({total})",
-                "content": "", "length": total, "shown": 0, "mode": "range", "content_type": ctype}
+        return {
+            "ok": False,
+            "error": f"start={start} is past the result length ({total})",
+            "content": "",
+            "length": total,
+            "shown": 0,
+            "mode": "range",
+            "content_type": ctype,
+        }
     s = max(0, start)
     e = total if end is None else min(end, total)
     window = raw[s:e]
     truncated = len(window) > max_chars
-    return {"ok": True, "content": window[:max_chars], "length": total,
-            "shown": min(len(window), max_chars), "start": s,
-            "next_index": (s + max_chars) if truncated else None,
-            "truncated": truncated, "mode": "range", "content_type": ctype}
+    return {
+        "ok": True,
+        "content": window[:max_chars],
+        "length": total,
+        "shown": min(len(window), max_chars),
+        "start": s,
+        "next_index": (s + max_chars) if truncated else None,
+        "truncated": truncated,
+        "mode": "range",
+        "content_type": ctype,
+    }

@@ -19,7 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from personalclaw.atomic_write import atomic_write
@@ -63,10 +63,15 @@ class SkillProposal:
     def summary(self) -> dict:
         """The compact view for the inbox list (no full procedure body)."""
         return {
-            "id": self.id, "slug": self.slug, "description": self.description,
-            "triggers": self.triggers, "kind": self.kind,
-            "refine_target": self.refine_target, "session_key": self.session_key,
-            "created_at": self.created_at, "status": self.status,
+            "id": self.id,
+            "slug": self.slug,
+            "description": self.description,
+            "triggers": self.triggers,
+            "kind": self.kind,
+            "refine_target": self.refine_target,
+            "session_key": self.session_key,
+            "created_at": self.created_at,
+            "status": self.status,
             "procedure_preview": self.procedure_md[:280],
         }
 
@@ -102,14 +107,23 @@ def enqueue(
         try:
             from personalclaw.security import fence_untrusted
 
-            fenced = fence_untrusted(source_excerpt[:_SOURCE_EXCERPT_MAX], source="skill-synthesis-trace")
+            fenced = fence_untrusted(
+                source_excerpt[:_SOURCE_EXCERPT_MAX], source="skill-synthesis-trace"
+            )
         except Exception:
             fenced = ""  # never let fencing failure block the proposal
     pid = _make_id(slug, session_key, created_at)
     prop = SkillProposal(
-        id=pid, slug=slug, description=description, triggers=triggers,
-        procedure_md=procedure_md, session_key=session_key, created_at=created_at,
-        kind=kind, refine_target=refine_target, source_excerpt=fenced,
+        id=pid,
+        slug=slug,
+        description=description,
+        triggers=triggers,
+        procedure_md=procedure_md,
+        session_key=session_key,
+        created_at=created_at,
+        kind=kind,
+        refine_target=refine_target,
+        source_excerpt=fenced,
     )
     try:
         atomic_write(d / f"{pid}.json", json.dumps(prop.to_dict(), indent=2))

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import tempfile
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -51,7 +50,9 @@ def test_recalled_fact_not_stale(vs):
 
 def test_flags_near_duplicates(vs):
     vs.set_semantic("pref.a", "prefers the vim text editor for all coding", 1.0, "user_explicit")
-    vs.set_semantic("pref.b", "prefers the vim text editor for all coding tasks", 1.0, "user_explicit")
+    vs.set_semantic(
+        "pref.b", "prefers the vim text editor for all coding tasks", 1.0, "user_explicit"
+    )
     report = lint_memory(vs)
     assert any(f["check"] == "near_dup" for f in report.flags)
 
@@ -69,7 +70,10 @@ def test_auto_purges_long_superseded(vs):
     _age(vs, "pref.gone", invalidated="2020-01-01T00:00:00+00:00")
     report = lint_memory(vs)
     assert report.auto_fixed["superseded_purged"] == 1
-    assert vs.db.execute("SELECT COUNT(*) FROM semantic_memory WHERE key='pref.gone'").fetchone()[0] == 0
+    assert (
+        vs.db.execute("SELECT COUNT(*) FROM semantic_memory WHERE key='pref.gone'").fetchone()[0]
+        == 0
+    )
 
 
 def test_recent_superseded_not_purged(vs):
@@ -78,13 +82,18 @@ def test_recent_superseded_not_purged(vs):
     vs.supersede_semantic("pref.gone", "pref.new", "user_explicit")  # invalidated_at = now
     report = lint_memory(vs)
     assert report.auto_fixed["superseded_purged"] == 0
-    assert vs.db.execute("SELECT COUNT(*) FROM semantic_memory WHERE key='pref.gone'").fetchone()[0] == 1
+    assert (
+        vs.db.execute("SELECT COUNT(*) FROM semantic_memory WHERE key='pref.gone'").fetchone()[0]
+        == 1
+    )
 
 
 def test_lessons_excluded_from_checks(vs):
     vs.write_lesson("a lesson rule that is quite old and never recalled", "tool")
     # Age it; lessons must not be flagged stale by this scan (they ride their own path).
-    vs.db.execute("UPDATE semantic_memory SET updated_at='2020-01-01T00:00:00+00:00' WHERE key LIKE 'lesson.%'")
+    vs.db.execute(
+        "UPDATE semantic_memory SET updated_at='2020-01-01T00:00:00+00:00' WHERE key LIKE 'lesson.%'"  # noqa: E501
+    )
     vs.db.commit()
     report = lint_memory(vs)
     assert not any(f["key"].startswith("lesson.") for f in report.flags)

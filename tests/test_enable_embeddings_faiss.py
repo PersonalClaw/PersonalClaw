@@ -45,9 +45,7 @@ def _common_patches(cfg_path, faiss_available=False):
             return_value=("native", "all-MiniLM-L6-v2"),
         ),
         "embed_fn": patch(f"{_REG}.get_active_embed_fn", return_value=lambda t: [0.0]),
-        "cfg_path": patch(
-            "personalclaw.config.loader.config_path", return_value=cfg_path
-        ),
+        "cfg_path": patch("personalclaw.config.loader.config_path", return_value=cfg_path),
         # The native embedding backend is the sentence-transformers APP now: the
         # handler guards on native_provider() being registered + the model being
         # downloaded (both via the embedding registry), not the old embedding.py.
@@ -68,8 +66,15 @@ class TestFaissMissing:
         cfg_path.write_text("{}", encoding="utf-8")
         patches, store = _common_patches(cfg_path, faiss_available=False)
 
-        with patches["spec"], patches["embed_fn"], patches["cfg_path"], \
-             patches["native"], patches["is_downloaded"], patches["faiss"], patches["store"]:
+        with (
+            patches["spec"],
+            patches["embed_fn"],
+            patches["cfg_path"],
+            patches["native"],
+            patches["is_downloaded"],
+            patches["faiss"],
+            patches["store"],
+        ):
             async with TestClient(TestServer(_make_app())) as c:
                 resp = await c.post("/api/memory/enable-embeddings")
                 assert resp.status == 400
@@ -88,8 +93,15 @@ class TestFaissAvailableSuccess:
         cfg_path.write_text("{}", encoding="utf-8")
         patches, store = _common_patches(cfg_path, faiss_available=True)
 
-        with patches["spec"], patches["embed_fn"], patches["cfg_path"], \
-             patches["native"], patches["is_downloaded"], patches["faiss"], patches["store"]:
+        with (
+            patches["spec"],
+            patches["embed_fn"],
+            patches["cfg_path"],
+            patches["native"],
+            patches["is_downloaded"],
+            patches["faiss"],
+            patches["store"],
+        ):
             async with TestClient(TestServer(_make_app())) as c:
                 resp = await c.post("/api/memory/enable-embeddings")
                 assert resp.status == 200
@@ -106,8 +118,15 @@ class TestLoadFaissIndexFailure:
         patches, store = _common_patches(cfg_path, faiss_available=True)
         store.load_faiss_index.side_effect = RuntimeError("corrupted index")
 
-        with patches["spec"], patches["embed_fn"], patches["cfg_path"], \
-             patches["native"], patches["is_downloaded"], patches["faiss"], patches["store"]:
+        with (
+            patches["spec"],
+            patches["embed_fn"],
+            patches["cfg_path"],
+            patches["native"],
+            patches["is_downloaded"],
+            patches["faiss"],
+            patches["store"],
+        ):
             async with TestClient(TestServer(_make_app())) as c:
                 resp = await c.post("/api/memory/enable-embeddings")
                 assert resp.status == 500

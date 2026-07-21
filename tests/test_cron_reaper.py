@@ -8,8 +8,8 @@ import pytest
 
 from personalclaw.schedule import (
     _JOB_TIMEOUT_SECS,
-    ScheduleJob,
     ScheduleDefinition,
+    ScheduleJob,
     ScheduleService,
     make_agent_action,
 )
@@ -26,6 +26,7 @@ def _isolate_schedule_dir(tmp_path, monkeypatch):
     so the leak can't happen, regardless of whether a test passes tmp_path.
     """
     import personalclaw.schedule as sched
+
     monkeypatch.setattr(sched, "_DEFAULT_DIR", tmp_path, raising=False)
 
 
@@ -90,8 +91,9 @@ class TestCronReaper:
 
         svc._job_start_times["ok1"] = time.time() - 60  # only 60s old
 
-        with patch("personalclaw.sel.sel"), patch(
-            "asyncio.sleep", AsyncMock(side_effect=[None, asyncio.CancelledError])
+        with (
+            patch("personalclaw.sel.sel"),
+            patch("asyncio.sleep", AsyncMock(side_effect=[None, asyncio.CancelledError])),
         ):
             with pytest.raises(asyncio.CancelledError):
                 await svc._reaper_loop()
@@ -111,8 +113,9 @@ class TestCronReaper:
         done_task.done.return_value = True
         svc._running_tasks["done1"] = done_task
 
-        with patch("personalclaw.sel.sel"), patch(
-            "asyncio.sleep", AsyncMock(side_effect=[None, asyncio.CancelledError])
+        with (
+            patch("personalclaw.sel.sel"),
+            patch("asyncio.sleep", AsyncMock(side_effect=[None, asyncio.CancelledError])),
         ):
             with pytest.raises(asyncio.CancelledError):
                 await svc._reaper_loop()
@@ -137,9 +140,12 @@ class TestCronReaper:
         svc._jobs = [job]
         svc._running_tasks["hang1"] = MagicMock(done=MagicMock(return_value=False))
 
-        with patch("personalclaw.sel.sel"), patch(
-            "personalclaw.schedule._REAPER_RESET_TIMEOUT", 0.05
-        ), patch.object(svc, "_sigkill_session") as mock_kill, patch.object(svc, "_save"):
+        with (
+            patch("personalclaw.sel.sel"),
+            patch("personalclaw.schedule._REAPER_RESET_TIMEOUT", 0.05),
+            patch.object(svc, "_sigkill_session") as mock_kill,
+            patch.object(svc, "_save"),
+        ):
             await svc._force_reap("hang1", _JOB_TIMEOUT_SECS + 60)
 
         assert job.last_status == "error"
@@ -158,9 +164,11 @@ class TestCronReaper:
         svc._jobs = [job]
         svc._running_tasks["exc1"] = MagicMock(done=MagicMock(return_value=False))
 
-        with patch("personalclaw.sel.sel"), patch.object(
-            svc, "_sigkill_session"
-        ) as mock_kill, patch.object(svc, "_save"):
+        with (
+            patch("personalclaw.sel.sel"),
+            patch.object(svc, "_sigkill_session") as mock_kill,
+            patch.object(svc, "_save"),
+        ):
             await svc._force_reap("exc1", _JOB_TIMEOUT_SECS + 10)
 
         assert job.last_status == "error"
@@ -209,9 +217,10 @@ class TestCronReaper:
         svc._reaped_jobs.add("reaped1")
         svc._executing.add("reaped1")
 
-        with patch.object(svc, "_execute_with_timeout", new_callable=AsyncMock), patch.object(
-            svc, "_merge_job_result"
-        ) as mock_merge:
+        with (
+            patch.object(svc, "_execute_with_timeout", new_callable=AsyncMock),
+            patch.object(svc, "_merge_job_result") as mock_merge,
+        ):
             await svc._run_job_isolated(job)
 
         mock_merge.assert_not_called()
@@ -228,9 +237,10 @@ class TestCronReaper:
         svc._reaped_jobs.add("reaped2")
         svc._executing.add("reaped2")
 
-        with patch.object(
-            svc, "_execute_with_timeout", side_effect=asyncio.CancelledError
-        ), patch.object(svc, "_merge_job_result") as mock_merge:
+        with (
+            patch.object(svc, "_execute_with_timeout", side_effect=asyncio.CancelledError),
+            patch.object(svc, "_merge_job_result") as mock_merge,
+        ):
             with pytest.raises(asyncio.CancelledError):
                 await svc._run_job_isolated(job)
 
@@ -246,9 +256,10 @@ class TestCronReaper:
         job = _make_job("normal1")
         svc._executing.add("normal1")
 
-        with patch.object(svc, "_execute_with_timeout", new_callable=AsyncMock), patch.object(
-            svc, "_merge_job_result"
-        ) as mock_merge:
+        with (
+            patch.object(svc, "_execute_with_timeout", new_callable=AsyncMock),
+            patch.object(svc, "_merge_job_result") as mock_merge,
+        ):
             await svc._run_job_isolated(job)
 
         mock_merge.assert_called_once_with(job)
@@ -307,8 +318,9 @@ class TestCronReaper:
         async def capture_start(j: ScheduleJob) -> None:
             start_captured.append("track1" in svc._job_start_times)
 
-        with patch.object(svc, "_execute_with_timeout", side_effect=capture_start), patch.object(
-            svc, "_merge_job_result"
+        with (
+            patch.object(svc, "_execute_with_timeout", side_effect=capture_start),
+            patch.object(svc, "_merge_job_result"),
         ):
             await svc._run_job_isolated(job)
 
@@ -324,10 +336,9 @@ class TestCronReaper:
         svc._job_start_times["exp1"] = time.time() - _JOB_TIMEOUT_SECS - 60
         svc._running_tasks["exp1"] = MagicMock(done=MagicMock(return_value=False))
 
-        with patch.object(
-            svc, "_force_reap", new_callable=AsyncMock
-        ) as mock_reap, patch(
-            "asyncio.sleep", AsyncMock(side_effect=[None, asyncio.CancelledError])
+        with (
+            patch.object(svc, "_force_reap", new_callable=AsyncMock) as mock_reap,
+            patch("asyncio.sleep", AsyncMock(side_effect=[None, asyncio.CancelledError])),
         ):
             with pytest.raises(asyncio.CancelledError):
                 await svc._reaper_loop()

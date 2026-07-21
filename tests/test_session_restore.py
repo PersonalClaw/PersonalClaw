@@ -79,7 +79,12 @@ class TestRestoreRecentSessions:
                 {"role": "user", "content": "hello", "ts": "2026-03-23T10:00:00"},
                 {"role": "assistant", "content": "hi there", "ts": "2026-03-23T10:00:01"},
             ],
-            meta={"title": "Test Chat", "agent": "personalclaw", "workspace_dir": "myws", "mode": "orchestrator"},
+            meta={
+                "title": "Test Chat",
+                "agent": "personalclaw",
+                "workspace_dir": "myws",
+                "mode": "orchestrator",
+            },
         )
         # Touch the file to make it recent
         path = tmp_path / "dashboard_chat1.jsonl"
@@ -443,7 +448,9 @@ class TestDashboardConfigAPI:
     @pytest.mark.asyncio
     async def test_put_invalid_json(self, tmp_path, monkeypatch):
         """PUT with invalid JSON returns 400."""
-        monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: tmp_path / "config.json")
+        monkeypatch.setattr(
+            "personalclaw.config.loader.config_path", lambda: tmp_path / "config.json"
+        )
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         with patch("personalclaw.sel.sel") as mock_sel:
             mock_sel.return_value = MagicMock()
@@ -459,7 +466,9 @@ class TestDashboardConfigAPI:
     @pytest.mark.asyncio
     async def test_put_invalid_window_type(self, tmp_path, monkeypatch):
         """PUT with non-integer restore_window_minutes returns 400."""
-        monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: tmp_path / "config.json")
+        monkeypatch.setattr(
+            "personalclaw.config.loader.config_path", lambda: tmp_path / "config.json"
+        )
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         with patch("personalclaw.sel.sel") as mock_sel:
             mock_sel.return_value = MagicMock()
@@ -476,7 +485,9 @@ class TestDashboardConfigAPI:
     @pytest.mark.asyncio
     async def test_put_invalid_restore_sessions_type(self, tmp_path, monkeypatch):
         """PUT with non-boolean restore_sessions returns 400."""
-        monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: tmp_path / "config.json")
+        monkeypatch.setattr(
+            "personalclaw.config.loader.config_path", lambda: tmp_path / "config.json"
+        )
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         with patch("personalclaw.sel.sel") as mock_sel:
             mock_sel.return_value = MagicMock()
@@ -547,18 +558,16 @@ class TestConfigRestoreFields:
 
     def test_to_dict_includes_restore_fields(self):
         """to_dict() serializes restore fields under dashboard key."""
-        from personalclaw.config.loader import DashboardConfig, AppConfig
+        from personalclaw.config.loader import AppConfig, DashboardConfig
 
-        cfg = AppConfig(
-            dashboard=DashboardConfig(restore_sessions=True, restore_window_minutes=60)
-        )
+        cfg = AppConfig(dashboard=DashboardConfig(restore_sessions=True, restore_window_minutes=60))
         d = cfg.to_dict()
         assert d["dashboard"]["restore_sessions"] is True
         assert d["dashboard"]["restore_window_minutes"] == 60
 
     def test_save_and_reload_roundtrip(self, tmp_path, monkeypatch):
         """save() then load() preserves restore fields."""
-        from personalclaw.config.loader import DashboardConfig, AppConfig
+        from personalclaw.config.loader import AppConfig, DashboardConfig
 
         cfg_file = tmp_path / ".personalclaw" / "config.json"
         monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: cfg_file)

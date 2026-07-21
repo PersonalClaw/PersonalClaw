@@ -30,7 +30,15 @@ from personalclaw.web.fetch import (  # noqa: F401
 # can still guard an operator-configured endpoint before a raw request, WITHOUT
 # reaching into ``personalclaw.net`` directly (the app import-boundary forbids that).
 __all__ = [
-    'fetch', 'CONNECTOR', 'EgressPolicy', 'WEBHOOK', 'EgressBlocked', 'egress_policy_for',
-    'evaluate', 'GuardDecision',
-    'web_fetch', 'web_extract', 'record_seen_urls',
+    "fetch",
+    "CONNECTOR",
+    "EgressPolicy",
+    "WEBHOOK",
+    "EgressBlocked",
+    "egress_policy_for",
+    "evaluate",
+    "GuardDecision",
+    "web_fetch",
+    "web_extract",
+    "record_seen_urls",
 ]

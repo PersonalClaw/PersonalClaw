@@ -10,7 +10,7 @@ from personalclaw.app_cli import run_app_setup_steps
 from personalclaw.atomic_write import atomic_write
 from personalclaw.cli_chat import _ensure_default_agent_in_config
 from personalclaw.config import AppConfig
-from personalclaw.config.loader import (
+from personalclaw.config.loader import (  # noqa: F401 — re-exported for test patch seam
     _WORKSPACE_DIR_NAME,
     DASHBOARD_PORT,
     _default_workspace_base,
@@ -206,10 +206,12 @@ def _setup_noninteractive(
             cred_val = os.environ.get(cred_name, "")
         if cred_name and cred_val:
             try:
-                from personalclaw.llm.credentials import Credential, CredentialStore
+                from personalclaw.llm.credentials import CredentialStore
 
-                store = CredentialStore(config_dir() / "credentials.json")
-                store.upsert(Credential(name=cred_name, value=cred_val))
+                store = CredentialStore(config_dir())
+                descriptors = {k: dict(v) for k, v in store._descriptors.items()}
+                descriptors[cred_name] = {"type": "api_key", "value": cred_val}
+                store.save(descriptors)
                 print(f"  ✅ Credential stored: {cred_name}")
             except Exception as exc:
                 print(f"  ❌ Could not store credential {cred_name!r}: {exc}")

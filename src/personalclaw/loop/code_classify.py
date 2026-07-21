@@ -37,20 +37,20 @@ _EXECUTIONS = frozenset({"solo", "multi_agent"})
 class CodeClassification:
     """The planner's read of an SDLC task (all fields recommendations, overridable)."""
 
-    title: str = ""                          # short human label generated from the task
-    summary: str = ""                        # one-line restatement of what's being built
-    classified: bool = True                  # False = LLM failed/garbled → bare defaults (UI should warn)
-    entry_stage: str = "ideation"            # where the input already is (ENTRY_STAGES)
+    title: str = ""  # short human label generated from the task
+    summary: str = ""  # one-line restatement of what's being built
+    classified: bool = True  # False = LLM failed/garbled → bare defaults (UI should warn)
+    entry_stage: str = "ideation"  # where the input already is (ENTRY_STAGES)
     entry_reason: str = ""
-    project_kind: str = "greenfield"         # greenfield | brownfield
-    intake_rigor: str = "grill"              # minimal | grill | thorough
+    project_kind: str = "greenfield"  # greenfield | brownfield
+    intake_rigor: str = "grill"  # minimal | grill | thorough
     rigor_reason: str = ""
-    execution: str = "solo"                  # solo | multi_agent
-    roster: list[dict] = field(default_factory=list)        # [{role, persona, role_hint}]
+    execution: str = "solo"  # solo | multi_agent
+    roster: list[dict] = field(default_factory=list)  # [{role, persona, role_hint}]
     strategy_id: str = "orchestrator"
     clarifying_questions: list[str] = field(default_factory=list)
-    verify_command: str = ""                 # build/lint check, e.g. "make lint"
-    test_command: str = ""                   # test runner, e.g. "pytest"
+    verify_command: str = ""  # build/lint check, e.g. "make lint"
+    test_command: str = ""  # test runner, e.g. "pytest"
     success_criteria: str = ""
     # The stage plan — the ordered stages still AHEAD of entry_stage. Each:
     # {stage, title, objective, exit_criteria: [str], deliverable, task_list_name,
@@ -112,20 +112,47 @@ def _fallback_classification() -> CodeClassification:
     c = CodeClassification(classified=False)
     c.stage_plan = [
         {
-            "stage": "implementation", "title": "Implementation",
+            "stage": "implementation",
+            "title": "Implementation",
             "objective": "Build the change described in the task.",
-            "exit_criteria": ["The described change is implemented", "It builds/runs without errors"],
-            "deliverable": "", "task_list_name": "Implementation",
-            "agent_name": "", "skill_ids": [], "workflow_ids": [],
-            "tasks": [{"title": "Implement the task", "description": "", "action_plan": [], "exit_criteria": [], "depends_on": []}],
+            "exit_criteria": [
+                "The described change is implemented",
+                "It builds/runs without errors",
+            ],
+            "deliverable": "",
+            "task_list_name": "Implementation",
+            "agent_name": "",
+            "skill_ids": [],
+            "workflow_ids": [],
+            "tasks": [
+                {
+                    "title": "Implement the task",
+                    "description": "",
+                    "action_plan": [],
+                    "exit_criteria": [],
+                    "depends_on": [],
+                }
+            ],
         },
         {
-            "stage": "verification", "title": "Verification",
+            "stage": "verification",
+            "title": "Verification",
             "objective": "Verify the change works as intended.",
             "exit_criteria": ["The change is tested/validated"],
-            "deliverable": "", "task_list_name": "Verification",
-            "agent_name": "", "skill_ids": [], "workflow_ids": [],
-            "tasks": [{"title": "Test and verify the change", "description": "", "action_plan": [], "exit_criteria": [], "depends_on": []}],
+            "deliverable": "",
+            "task_list_name": "Verification",
+            "agent_name": "",
+            "skill_ids": [],
+            "workflow_ids": [],
+            "tasks": [
+                {
+                    "title": "Test and verify the change",
+                    "description": "",
+                    "action_plan": [],
+                    "exit_criteria": [],
+                    "depends_on": [],
+                }
+            ],
         },
     ]
     return c
@@ -149,16 +176,21 @@ async def classify(
     ``agents_catalog`` is the list of installed agent names a stage may bind to —
     a stage's ``agent_name`` is cleared if it isn't one of them.
     """
-    skill_ids = {str(c.get("id", "")).strip() for c in (skills_catalog or []) if isinstance(c, dict)}
-    workflow_ids = {str(c.get("id", "")).strip() for c in (workflows_catalog or []) if isinstance(c, dict)}
+    skill_ids = {
+        str(c.get("id", "")).strip() for c in (skills_catalog or []) if isinstance(c, dict)
+    }
+    workflow_ids = {
+        str(c.get("id", "")).strip() for c in (workflows_catalog or []) if isinstance(c, dict)
+    }
     agent_names = {str(a).strip() for a in (agents_catalog or []) if str(a).strip()}
     catalog = _capability_catalog(skills_catalog, workflows_catalog)
     if agent_names:
-        catalog += "Installed AGENTS (bind a stage to one of these names, or leave empty for the default coder):\n"
+        catalog += "Installed AGENTS (bind a stage to one of these names, or leave empty for the default coder):\n"  # noqa: E501
         catalog += "".join(f"- {a}\n" for a in sorted(agent_names)) + "\n"
     # The classifier prompt lives in the prompt system (bundled ``task-code-classify``,
     # bindable in Settings → Prompts); it folds in the catalog + task.
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
+
     prompt = render_use_case_prompt("code_classify", {"catalog": catalog, "task": task})
     if not prompt:
         return _fallback_classification()
@@ -198,7 +230,9 @@ async def classify(
     if c.execution == "multi_agent" and not c.roster:
         c.execution = "solo"
     c.strategy_id = str(data.get("strategy_id", "")).strip() or "orchestrator"
-    c.clarifying_questions = _clean_str_list(data.get("clarifying_questions"), item_cap=300, count_cap=8)
+    c.clarifying_questions = _clean_str_list(
+        data.get("clarifying_questions"), item_cap=300, count_cap=8
+    )
     c.verify_command = str(data.get("verify_command", "")).strip()[:300]
     c.test_command = str(data.get("test_command", "")).strip()[:300]
     c.success_criteria = str(data.get("success_criteria", "")).strip()[:300]
@@ -250,7 +284,9 @@ def _clean_str_list(raw, *, item_cap: int, count_cap: int) -> list[str]:
     return out
 
 
-def _normalize_plan(raw, skill_ids: set[str], workflow_ids: set[str], agent_names: set[str] | None = None) -> list[dict]:
+def _normalize_plan(
+    raw, skill_ids: set[str], workflow_ids: set[str], agent_names: set[str] | None = None
+) -> list[dict]:
     """Coerce the planner's stage_plan into clean stage dicts.
 
     Each stage keeps {stage, title, objective, exit_criteria, deliverable,
@@ -357,7 +393,15 @@ def _normalize_tasks(raw) -> list[dict]:
         if isinstance(t, str):
             title = t.strip()
             if title:
-                out.append({"title": title[:160], "description": "", "action_plan": [], "exit_criteria": [], "depends_on": []})
+                out.append(
+                    {
+                        "title": title[:160],
+                        "description": "",
+                        "action_plan": [],
+                        "exit_criteria": [],
+                        "depends_on": [],
+                    }
+                )
             continue
         if not isinstance(t, dict):
             continue
@@ -389,13 +433,15 @@ def _normalize_tasks(raw) -> list[dict]:
             if di >= 0 and di not in depends_on:
                 depends_on.append(di)
         depends_on = depends_on[:8]
-        out.append({
-            "title": title,
-            "description": str(t.get("description", "")).strip()[:500],
-            "action_plan": action_plan,
-            "exit_criteria": exit_criteria,
-            "depends_on": depends_on,
-        })
+        out.append(
+            {
+                "title": title,
+                "description": str(t.get("description", "")).strip()[:500],
+                "action_plan": action_plan,
+                "exit_criteria": exit_criteria,
+                "depends_on": depends_on,
+            }
+        )
     return out[:12]
 
 
@@ -422,11 +468,13 @@ def _normalize_roster(roster) -> list[dict]:
         persona = str(m.get("persona", "")).strip()
         if not (role or persona):
             continue
-        out.append({
-            "role": role,
-            "persona": persona,
-            "role_hint": str(m.get("role_hint", "")).strip(),
-        })
+        out.append(
+            {
+                "role": role,
+                "persona": persona,
+                "role_hint": str(m.get("role_hint", "")).strip(),
+            }
+        )
     return out[:5]
 
 
@@ -459,7 +507,7 @@ def _first_json_object(raw: str) -> str | None:
         elif ch == "}":
             depth -= 1
             if depth == 0:
-                return raw[start:i + 1]
+                return raw[start : i + 1]
     return None
 
 

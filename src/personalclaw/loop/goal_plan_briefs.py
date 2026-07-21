@@ -22,7 +22,10 @@ GOAL_STEP_GUIDE: tuple[tuple[str, str], ...] = (
     ("intent", "the true intent + definition of done (concrete success criteria)"),
     ("sub_goals", "the ordered decomposition into distinct, non-overlapping sub-goals"),
     ("quorum", "the agent roles/personas (+ orchestration) the goal needs"),
-    ("execution_plan", "the role-phased cycle plan — ordered phases, each with role/target/min_cycles/exit"),
+    (
+        "execution_plan",
+        "the role-phased cycle plan — ordered phases, each with role/target/min_cycles/exit",
+    ),
 )
 
 
@@ -126,7 +129,7 @@ def _artifact_contract(kind: str) -> str:
     if kind == "quorum":
         return (
             'For `quorum`, write: {"markdown":"<who runs this + why>", '
-            '"roster":[{"role":"<role>","persona":"<persona/agent>","role_hint":"<what they do>"}, ...]}'
+            '"roster":[{"role":"<role>","persona":"<persona/agent>","role_hint":"<what they do>"}, ...]}'  # noqa: E501
             "  (smallest quorum that credibly achieves the goal; one member = solo)"
         )
     if kind == "execution_plan":

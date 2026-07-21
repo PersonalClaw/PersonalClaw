@@ -56,6 +56,7 @@ class ProviderWorker(Worker):
 
     async def send_message(self, prompt: str, timeout: float = DEFAULT_TIMEOUT) -> str:
         from personalclaw.llm_helpers import one_shot_completion
+
         try:
             return await asyncio.wait_for(
                 one_shot_completion(prompt, use_case="ingestion"),

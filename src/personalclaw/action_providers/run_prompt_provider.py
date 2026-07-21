@@ -151,9 +151,7 @@ class RunPromptActionProvider(ActionProvider):
         if values in (None, "", {}):
             values = None
         elif not isinstance(values, dict):
-            return ActionResult(
-                success=False, error="run-prompt 'vars' must be an object"
-            )
+            return ActionResult(success=False, error="run-prompt 'vars' must be an object")
 
         # No prompt_id → run the project/user default-recurring-prompt (loop.md),
         # the thin convenience that makes 'every 20m, run my loop' work with no
@@ -194,9 +192,7 @@ class RunPromptActionProvider(ActionProvider):
 
         services = get_action_services()
         if services is None or services.subagents is None:
-            return ActionResult(
-                success=False, error="run-prompt: subagent manager unavailable"
-            )
+            return ActionResult(success=False, error="run-prompt: subagent manager unavailable")
 
         # Pre-validate cwd so an out-of-allowlist dir returns an honest error now
         # rather than a false "launched" (the fire-and-forget spawn refuses cwd

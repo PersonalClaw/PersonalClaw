@@ -40,11 +40,29 @@ def _isolate_home(tmp_path, monkeypatch):
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
 
 
+@pytest.fixture
+def frozen_clock(monkeypatch):
+    """Freeze ``personalclaw.context.datetime`` so the ``[CURRENT DATE] … HH:MM …``
+    marker is identical across calls. Tests that build a message TWICE and byte-compare
+    (default-engine parity, failing-engine quarantine) would otherwise flake when the
+    minute rolls over between the two builds — a wall-clock artifact, not a real diff."""
+    import personalclaw.context as _ctx
+
+    frozen = _ctx.datetime.now(_ctx.get_local_tz()[1])
+
+    class _FrozenDateTime(_ctx.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen if tz is None else frozen.astimezone(tz)
+
+    monkeypatch.setattr(_ctx, "datetime", _FrozenDateTime)
+
+
 def test_default_engine_is_active_by_default():
     assert get_engine().name == "default"
 
 
-def test_default_assemble_matches_build_message(builder):
+def test_default_assemble_matches_build_message(builder, frozen_clock):
     """The default engine must be byte-identical to calling build_message."""
     text = "what's the plan?"
     direct_msg, _ = builder.build_message(text, True, "chat-1")
@@ -94,7 +112,7 @@ def test_valid_custom_engine_is_used(builder):
     assert out.injected_chars == 7
 
 
-def test_failing_engine_quarantined_to_default(builder):
+def test_failing_engine_quarantined_to_default(builder, frozen_clock):
     """A custom engine that raises in assemble downgrades to the default engine
     so the turn still gets context — chat never goes dark."""
 

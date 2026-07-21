@@ -8,8 +8,6 @@ unguarded. Now both go through net.fetch(policy=CONNECTOR).
 import asyncio
 import socket
 
-import pytest
-
 from personalclaw.knowledge.connectors.web_url import WebUrlConnector
 
 
@@ -23,6 +21,7 @@ def _fake_dns(mapping):
         if ips is None:
             raise socket.gaierror(f"unknown host {host}")
         return [(socket.AF_INET, None, None, "", (ip, 0)) for ip in ips]
+
     return _gai
 
 
@@ -37,8 +36,12 @@ def test_web_url_fetch_blocks_private(monkeypatch):
 
 def test_web_url_fetch_blocks_imds(monkeypatch):
     """A bookmark of the AWS IMDS address is blocked."""
-    monkeypatch.setattr(socket, "getaddrinfo", _fake_dns({"metadata.internal": ["169.254.169.254"]}))
-    text, meta = _run(WebUrlConnector().fetch({"uri": "http://metadata.internal/latest/meta-data/"}))
+    monkeypatch.setattr(
+        socket, "getaddrinfo", _fake_dns({"metadata.internal": ["169.254.169.254"]})
+    )
+    text, meta = _run(
+        WebUrlConnector().fetch({"uri": "http://metadata.internal/latest/meta-data/"})
+    )
     assert text == ""
     assert meta.get("error_kind") == "blocked"
 
@@ -54,15 +57,19 @@ def test_web_url_detect_changes_blocks_private(monkeypatch):
 def test_web_url_fetch_public_attempts(monkeypatch):
     """A public host passes the guard and the fetch is attempted (stubbed transport)."""
     import personalclaw.net.client as client
+
     monkeypatch.setattr(socket, "getaddrinfo", _fake_dns({"example.com": ["93.184.216.34"]}))
 
     async def fake_fetch(url, **kw):
         return client.FetchResponse(
-            url=url, status=200,
+            url=url,
+            status=200,
             headers={"Content-Type": "text/html"},
-            body=b"<html><head><title>Hi</title></head><body><p>Hello world content</p></body></html>",
+            body=b"<html><head><title>Hi</title></head><body><p>Hello world content</p></body></html>",  # noqa: E501
         )
+
     import personalclaw.net as net
+
     monkeypatch.setattr(net, "fetch", fake_fetch)
     text, meta = _run(WebUrlConnector().fetch({"uri": "https://example.com/"}))
     assert meta.get("error") is None

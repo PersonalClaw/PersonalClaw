@@ -69,7 +69,9 @@ class InstallResult:
     scan: ScanReport | None = None
     error: str = ""
     needs_consent: bool = False  # a warning verdict the caller must confirm
-    restart_required: bool = False  # a new python dep was installed; gateway must restart to import it
+    restart_required: bool = (
+        False  # a new python dep was installed; gateway must restart to import it
+    )
     # P21 platform gate: set when the app can't be server-installed here (installMode=client,
     # or this OS isn't in the app's `os` list). The install did NOT commit; the UI shows the
     # copy-paste client-install one-liner instead. `client_install` = {shell, postInstall}.
@@ -89,11 +91,17 @@ class InstallResult:
         }
 
 
-def _audit(operation: str, outcome: str, name: str, *, caller: str = "app_manager", error: str = "") -> None:
+def _audit(
+    operation: str, outcome: str, name: str, *, caller: str = "app_manager", error: str = ""
+) -> None:
     try:
         sel().log_api_access(
-            caller=caller, operation=f"app.{operation}", outcome=outcome,
-            source="app_platform", resources=f"app={name}", error=error,
+            caller=caller,
+            operation=f"app.{operation}",
+            outcome=outcome,
+            source="app_platform",
+            resources=f"app={name}",
+            error=error,
         )
     except Exception:  # noqa: BLE001 — audit must never break the lifecycle
         logger.debug("app lifecycle audit failed", exc_info=True)
@@ -126,8 +134,12 @@ def _run_hook(cmd: str, *, cwd: Path, timeout: int, env_name: str) -> None:
         return
     try:
         proc = subprocess.run(  # noqa: S602 — intentional: vetted third-party setup hook
-            cmd, shell=True, cwd=str(cwd), timeout=max(1, timeout),
-            capture_output=True, text=True,
+            cmd,
+            shell=True,
+            cwd=str(cwd),
+            timeout=max(1, timeout),
+            capture_output=True,
+            text=True,
         )
     except subprocess.TimeoutExpired as exc:
         raise AppLifecycleError(f"{env_name} hook timed out after {timeout}s") from exc
@@ -155,8 +167,11 @@ def _install_python_deps(manifest: AppManifest) -> bool:
 
     # Which requirements are already satisfied? Only then can we skip the restart.
     try:
-        from importlib.metadata import PackageNotFoundError, version as _dist_version
+        from importlib.metadata import PackageNotFoundError
+        from importlib.metadata import version as _dist_version
+
         from packaging.requirements import Requirement  # bundled via pip
+
         missing: list[str] = []
         for spec in reqs:
             try:
@@ -179,7 +194,9 @@ def _install_python_deps(manifest: AppManifest) -> bool:
     try:
         proc = subprocess.run(  # noqa: S603 — deps come from a scanned+vetted manifest
             [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", *missing],
-            timeout=_PIP_TIMEOUT, capture_output=True, text=True,
+            timeout=_PIP_TIMEOUT,
+            capture_output=True,
+            text=True,
         )
     except subprocess.TimeoutExpired as exc:
         raise AppLifecycleError(
@@ -217,6 +234,7 @@ def _start_backend(manifest: AppManifest) -> None:
         return
     try:
         from personalclaw.apps.backend_runtime import get_backend_supervisor
+
         get_backend_supervisor().start(manifest)
     except Exception:
         logger.debug("app %s: backend start failed", manifest.name, exc_info=True)
@@ -225,6 +243,7 @@ def _start_backend(manifest: AppManifest) -> None:
 def _stop_backend(name: str) -> None:
     try:
         from personalclaw.apps.backend_runtime import get_backend_supervisor
+
         get_backend_supervisor().stop(name)
     except Exception:
         logger.debug("app %s: backend stop failed", name, exc_info=True)
@@ -236,6 +255,7 @@ def _register_mcp(manifest: AppManifest) -> None:
         return
     try:
         from personalclaw.apps import mcp_bridge
+
         mcp_bridge.register_app_mcp_servers(manifest)
     except Exception:
         logger.debug("app %s: MCP register failed", manifest.name, exc_info=True)
@@ -244,6 +264,7 @@ def _register_mcp(manifest: AppManifest) -> None:
 def _deregister_mcp(name: str) -> None:
     try:
         from personalclaw.apps import mcp_bridge
+
         mcp_bridge.deregister_app_mcp_servers(name)
     except Exception:
         logger.debug("app %s: MCP deregister failed", name, exc_info=True)
@@ -256,6 +277,7 @@ def _seed_app_prompts(manifest: AppManifest, name: str) -> None:
         return
     try:
         from personalclaw.apps.prompt_seed import seed_app_prompts
+
         seed_app_prompts(manifest, app_dir(name))
     except Exception:
         logger.debug("app %s: prompt seed failed", name, exc_info=True)
@@ -265,6 +287,7 @@ def _remove_app_prompts(manifest: AppManifest, name: str) -> None:
     """Remove the app's own seeded prompts + unregister its prompt use-cases."""
     try:
         from personalclaw.apps.prompt_seed import remove_app_prompts
+
         remove_app_prompts(manifest, app_dir(name))
     except Exception:
         logger.debug("app %s: prompt remove failed", name, exc_info=True)
@@ -316,12 +339,21 @@ def install(
         report = default_scanner.scan(staged, tier)
         if report.verdict is Verdict.DANGEROUS:
             _audit("install", "refused", name, caller=caller, error="scan: dangerous")
-            return InstallResult(ok=False, name=name, scan=report,
-                                 error="install refused: scanner flagged dangerous content")
+            return InstallResult(
+                ok=False,
+                name=name,
+                scan=report,
+                error="install refused: scanner flagged dangerous content",
+            )
         if report.verdict is Verdict.WARNING and not confirm:
             _audit("install", "needs_consent", name, caller=caller)
-            return InstallResult(ok=False, name=name, scan=report, needs_consent=True,
-                                 error="install needs consent: scanner raised warnings")
+            return InstallResult(
+                ok=False,
+                name=name,
+                scan=report,
+                needs_consent=True,
+                error="install needs consent: scanner raised warnings",
+            )
 
         # 3.5 Platform gate (P21 Gap B). An app that must be installed on the user's
         # local machine (installMode="client") or that doesn't support THIS server's OS
@@ -330,27 +362,43 @@ def install(
         # client-install shell runs on the user's machine, OUTSIDE the scanner, so it's
         # surfaced as trusted-by-inspection copy-paste, never auto-run.
         import sys as _sys
+
         platform_cfg = manifest.platform
         if platform_cfg is not None and (
-            platform_cfg.installMode == "client" or not platform_cfg.supports_platform(_sys.platform)
+            platform_cfg.installMode == "client"
+            or not platform_cfg.supports_platform(_sys.platform)
         ):
             ci = platform_cfg.clientInstall.to_dict()
-            _audit("install", "client_install_required", name, caller=caller,
-                   error=f"installMode={platform_cfg.installMode} os={platform_cfg.os}")
+            _audit(
+                "install",
+                "client_install_required",
+                name,
+                caller=caller,
+                error=f"installMode={platform_cfg.installMode} os={platform_cfg.os}",
+            )
             return InstallResult(
-                ok=False, name=name, scan=report, needs_client_install=True,
+                ok=False,
+                name=name,
+                scan=report,
+                needs_client_install=True,
                 client_install=ci or {},
-                error=(f"'{name}' installs on your local machine, not this server"
-                       if platform_cfg.installMode == "client"
-                       else f"'{name}' does not support this server's platform ({_sys.platform})"),
+                error=(
+                    f"'{name}' installs on your local machine, not this server"
+                    if platform_cfg.installMode == "client"
+                    else f"'{name}' does not support this server's platform ({_sys.platform})"
+                ),
             )
 
         # 4. Commit: move staged → live app dir.
         dest = app_dir(name)
         if dest.exists():
             _audit("install", "error", name, caller=caller, error="already installed")
-            return InstallResult(ok=False, name=name, scan=report,
-                                 error=f"app {name!r} already installed (use update)")
+            return InstallResult(
+                ok=False,
+                name=name,
+                scan=report,
+                error=f"app {name!r} already installed (use update)",
+            )
         shutil.move(str(staged), str(dest))
 
         # Ensure the app's data/ dir exists BEFORE any hook runs — apps write
@@ -370,8 +418,12 @@ def install(
 
         # 5b. Run onInstall (bounded) — only after the gate passed.
         try:
-            _run_hook(manifest.setup.onInstall, cwd=dest,
-                      timeout=_HOOK_DEFAULT_TIMEOUT, env_name="onInstall")
+            _run_hook(
+                manifest.setup.onInstall,
+                cwd=dest,
+                timeout=_HOOK_DEFAULT_TIMEOUT,
+                env_name="onInstall",
+            )
         except AppLifecycleError as exc:
             shutil.rmtree(dest, ignore_errors=True)  # roll back the commit
             _audit("install", "error", name, caller=caller, error=str(exc))
@@ -379,11 +431,14 @@ def install(
 
         # 6. Persist installed.json + register providers.
         meta = InstalledApp(
-            name=name, version=manifest.version, displayName=manifest.displayName or name,
-            enabled=True, installedAt=_now_iso(), updatedAt=_now_iso(),
+            name=name,
+            version=manifest.version,
+            displayName=manifest.displayName or name,
+            enabled=True,
+            installedAt=_now_iso(),
+            updatedAt=_now_iso(),
             source=str(source_ref if source_ref is not None else source),
-            origin=origin if origin in
-            {"builtin", "registry", "local", "external"} else "local",
+            origin=origin if origin in {"builtin", "registry", "local", "external"} else "local",
         )
         _write_installed(name, meta)
         if manifest.all_providers():
@@ -398,6 +453,7 @@ def install(
         # so a later uninstall can tell removable from shared.
         try:
             from personalclaw.apps import dependency_ledger
+
             dependency_ledger.record_install(manifest)
         except Exception:
             logger.debug("app %s: dependency-ledger record failed", name, exc_info=True)
@@ -447,7 +503,9 @@ def update(
         return InstallResult(ok=False, error=str(exc))
     name = name or peek.name
     if _read_installed(name) is None:
-        return InstallResult(ok=False, name=name, error=f"app {name!r} is not installed (use install)")
+        return InstallResult(
+            ok=False, name=name, error=f"app {name!r} is not installed (use install)"
+        )
 
     staged_root = _quarantine_dir()
     staged = staged_root / f"{name}{_ROLLBACK_SUFFIX}.new"
@@ -460,18 +518,31 @@ def update(
     try:
         manifest = _load_staged_manifest(staged)
         if manifest.name != name:
-            return InstallResult(ok=False, name=name, scan=None,
-                                 error=f"manifest name {manifest.name!r} ≠ target {name!r}")
+            return InstallResult(
+                ok=False,
+                name=name,
+                scan=None,
+                error=f"manifest name {manifest.name!r} ≠ target {name!r}",
+            )
         # Scan the new content (fresh fetch → re-scan; same gate as install).
         report = default_scanner.scan(staged, _tier_for_origin(origin))
         if report.verdict is Verdict.DANGEROUS:
             _audit("update", "refused", name, caller=caller, error="scan: dangerous")
-            return InstallResult(ok=False, name=name, scan=report,
-                                 error="update refused: scanner flagged dangerous content")
+            return InstallResult(
+                ok=False,
+                name=name,
+                scan=report,
+                error="update refused: scanner flagged dangerous content",
+            )
         if report.verdict is Verdict.WARNING and not confirm:
             _audit("update", "needs_consent", name, caller=caller)
-            return InstallResult(ok=False, name=name, scan=report, needs_consent=True,
-                                 error="update needs consent: scanner raised warnings")
+            return InstallResult(
+                ok=False,
+                name=name,
+                scan=report,
+                needs_consent=True,
+                error="update needs consent: scanner raised warnings",
+            )
 
         # Preserve the old app's data/ into the new tree (state survives updates).
         old_data = live / _APP_DATA_DIRNAME
@@ -505,8 +576,12 @@ def update(
         try:
             shutil.move(str(staged), str(live))
             (live / _APP_DATA_DIRNAME).mkdir(parents=True, exist_ok=True)
-            _run_hook(manifest.setup.onUpdate, cwd=live,
-                      timeout=_HOOK_DEFAULT_TIMEOUT, env_name="onUpdate")
+            _run_hook(
+                manifest.setup.onUpdate,
+                cwd=live,
+                timeout=_HOOK_DEFAULT_TIMEOUT,
+                env_name="onUpdate",
+            )
         except Exception as exc:  # noqa: BLE001 — ANY swap/hook failure → restore
             # Restore: drop the failed new, move .rollback back to live.
             shutil.rmtree(live, ignore_errors=True)
@@ -519,8 +594,9 @@ def update(
                 _start_backend(old_manifest)  # bring the old backend back up
                 _seed_app_prompts(old_manifest, name)  # restore old app's prompts
             _audit("update", "error", name, caller=caller, error=str(exc))
-            return InstallResult(ok=False, name=name, scan=report,
-                                 error=f"update failed, rolled back: {exc}")
+            return InstallResult(
+                ok=False, name=name, scan=report, error=f"update failed, rolled back: {exc}"
+            )
 
         # Success: drop the rollback, re-register new, bump installed.json.
         shutil.rmtree(rollback, ignore_errors=True)
@@ -649,10 +725,14 @@ def seed_builtin_apps() -> list[str]:
             shutil.copytree(entry, dest)
             (dest / _APP_DATA_DIRNAME).mkdir(parents=True, exist_ok=True)
             meta = InstalledApp(
-                name=name, version=manifest.version,
-                displayName=manifest.displayName or name, enabled=True,
-                installedAt=_now_iso(), updatedAt=_now_iso(),
-                source="builtin", origin="builtin",
+                name=name,
+                version=manifest.version,
+                displayName=manifest.displayName or name,
+                enabled=True,
+                installedAt=_now_iso(),
+                updatedAt=_now_iso(),
+                source="builtin",
+                origin="builtin",
             )
             _write_installed(name, meta)
             _audit("seed", "ok", name)
@@ -710,6 +790,7 @@ def start_enabled_app_backends() -> list[str]:
         try:
             manifest = AppManifest.from_dict(manifest_data)
             from personalclaw.apps.backend_runtime import get_backend_supervisor
+
             sup = get_backend_supervisor()
             # Reap any orphans a prior gateway left running for this app (crash /
             # kill -9 / force-exit) BEFORE spawning a fresh one — otherwise each
@@ -733,9 +814,11 @@ def recover_interrupted_updates() -> list[str]:
     if not root.is_dir():
         return recovered
     for entry in root.iterdir():
-        if not (entry.is_dir() and entry.name.startswith(".") and entry.name.endswith(_ROLLBACK_SUFFIX)):
+        if not (
+            entry.is_dir() and entry.name.startswith(".") and entry.name.endswith(_ROLLBACK_SUFFIX)
+        ):
             continue
-        name = entry.name[1:-len(_ROLLBACK_SUFFIX)]
+        name = entry.name[1 : -len(_ROLLBACK_SUFFIX)]
         live = app_dir(name)
         try:
             if not live.exists() or not any(live.iterdir()):
@@ -760,8 +843,12 @@ def enable(name: str, *, caller: str = "app_manager") -> bool:
     manifest = _manifest_of(name)
     if manifest is not None:
         try:
-            _run_hook(manifest.setup.onEnable, cwd=app_dir(name),
-                      timeout=manifest.setup.onEnableTimeout, env_name="onEnable")
+            _run_hook(
+                manifest.setup.onEnable,
+                cwd=app_dir(name),
+                timeout=manifest.setup.onEnableTimeout,
+                env_name="onEnable",
+            )
         except AppLifecycleError as exc:
             _audit("enable", "error", name, caller=caller, error=str(exc))
             return False
@@ -805,8 +892,12 @@ def disable(name: str, *, caller: str = "app_manager") -> bool:
     if manifest is not None:
         _remove_app_prompts(manifest, name)  # drop the app's own seeded prompts
         try:
-            _run_hook(manifest.setup.onDisable, cwd=app_dir(name),
-                      timeout=manifest.setup.onDisableTimeout, env_name="onDisable")
+            _run_hook(
+                manifest.setup.onDisable,
+                cwd=app_dir(name),
+                timeout=manifest.setup.onDisableTimeout,
+                env_name="onDisable",
+            )
         except AppLifecycleError as exc:
             # Already deregistered; log but don't fail the disable (it IS disabled).
             logger.warning("app %s onDisable hook failed: %s", name, exc)
@@ -874,8 +965,12 @@ def force_uninstall(name: str, *, caller: str = "app_manager") -> bool:
     if manifest is not None:
         _remove_app_prompts(manifest, name)  # drop the app's own seeded prompts
         try:
-            _run_hook(manifest.setup.onUninstall, cwd=app_dir(name),
-                      timeout=_HOOK_DEFAULT_TIMEOUT, env_name="onUninstall")
+            _run_hook(
+                manifest.setup.onUninstall,
+                cwd=app_dir(name),
+                timeout=_HOOK_DEFAULT_TIMEOUT,
+                env_name="onUninstall",
+            )
         except AppLifecycleError as exc:
             logger.warning("app %s onUninstall hook failed (removing anyway): %s", name, exc)
     if manifest is not None and manifest.all_providers():
@@ -887,9 +982,13 @@ def force_uninstall(name: str, *, caller: str = "app_manager") -> bool:
     if manifest is not None:
         try:
             from personalclaw.apps import dependency_ledger
+
             removed = dependency_ledger.record_uninstall(manifest)
-            kept = [c.key for c in removed if c.disposition is not
-                    dependency_ledger.DepDisposition.REMOVABLE]
+            kept = [
+                c.key
+                for c in removed
+                if c.disposition is not dependency_ledger.DepDisposition.REMOVABLE
+            ]
             if kept:
                 logger.info("app %s force-uninstall: keeping shared/user deps %s", name, kept)
         except Exception:

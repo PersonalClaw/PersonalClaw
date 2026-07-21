@@ -26,27 +26,24 @@ class KnowledgeItem:
 class KnowledgeProvider(ABC):
     @property
     @abstractmethod
-    def name(self) -> str:
-        ...
+    def name(self) -> str: ...
 
     @property
     @abstractmethod
-    def display_name(self) -> str:
-        ...
+    def display_name(self) -> str: ...
 
     @abstractmethod
-    async def list_sources(self) -> list[KnowledgeSource]:
-        ...
+    async def list_sources(self) -> list[KnowledgeSource]: ...
 
     @abstractmethod
-    async def search(self, query: str, limit: int = 10) -> list[KnowledgeItem]:
-        ...
+    async def search(self, query: str, limit: int = 10) -> list[KnowledgeItem]: ...
 
     @abstractmethod
-    async def get_item(self, item_id: str) -> KnowledgeItem | None:
-        ...
+    async def get_item(self, item_id: str) -> KnowledgeItem | None: ...
 
-    async def ingest(self, source_id: str, content: str, title: str = "", metadata: dict[str, Any] | None = None) -> KnowledgeItem | None:
+    async def ingest(
+        self, source_id: str, content: str, title: str = "", metadata: dict[str, Any] | None = None
+    ) -> KnowledgeItem | None:
         return None
 
     async def delete_item(self, item_id: str) -> bool:

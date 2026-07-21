@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 # Caps (module constants — there is no schedule-history config block).
 _SUMMARY_CAP = 200
-_TRACE_CAP = 50_000          # 50 KB of the full last result
+_TRACE_CAP = 50_000  # 50 KB of the full last result
 _MAX_RECORDS_PER_JOB = 100
 _MAX_INDEX_RECORDS = 2_000
 
@@ -52,7 +52,7 @@ class ScheduleRun:
 
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     job_id: str = ""
-    trigger: str = "scheduled"        # "scheduled" | "manual"
+    trigger: str = "scheduled"  # "scheduled" | "manual"
     started_at: float = 0.0
     finished_at: float = 0.0
     duration_ms: int = 0
@@ -190,31 +190,42 @@ class ScheduleRunStore:
 
     async def append(self, run: ScheduleRun) -> None:
         import asyncio
+
         await asyncio.to_thread(self._append_sync, run)
 
     # ── Read (TaskProvider-shaped: returns (rows, total)) ─────────────
 
-    def _list_for_job_sync(self, job_id: str, offset: int, limit: int) -> tuple[list[dict[str, Any]], int]:
+    def _list_for_job_sync(
+        self, job_id: str, offset: int, limit: int
+    ) -> tuple[list[dict[str, Any]], int]:
         rows = self._read_jsonl(self._job_path(job_id))
         rows.reverse()  # newest-first
         total = len(rows)
-        page = [{k: v for k, v in r.items() if k != "trace"} for r in rows[offset:offset + limit]]
+        page = [{k: v for k, v in r.items() if k != "trace"} for r in rows[offset : offset + limit]]
         return page, total
 
-    async def list_for_job(self, job_id: str, offset: int = 0, limit: int = 10) -> tuple[list[dict[str, Any]], int]:
+    async def list_for_job(
+        self, job_id: str, offset: int = 0, limit: int = 10
+    ) -> tuple[list[dict[str, Any]], int]:
         import asyncio
+
         return await asyncio.to_thread(self._list_for_job_sync, job_id, offset, limit)
 
-    def _list_all_sync(self, offset: int, limit: int, job_id: str | None) -> tuple[list[dict[str, Any]], int]:
+    def _list_all_sync(
+        self, offset: int, limit: int, job_id: str | None
+    ) -> tuple[list[dict[str, Any]], int]:
         rows = self._read_jsonl(self._index)
         if job_id:
             rows = [r for r in rows if r.get("job_id") == job_id]
         rows.reverse()  # newest-first
         total = len(rows)
-        return rows[offset:offset + limit], total
+        return rows[offset : offset + limit], total
 
-    async def list_all(self, offset: int = 0, limit: int = 20, job_id: str | None = None) -> tuple[list[dict[str, Any]], int]:
+    async def list_all(
+        self, offset: int = 0, limit: int = 20, job_id: str | None = None
+    ) -> tuple[list[dict[str, Any]], int]:
         import asyncio
+
         return await asyncio.to_thread(self._list_all_sync, offset, limit, job_id)
 
     def _get_run_sync(self, job_id: str, run_id: str) -> dict[str, Any] | None:
@@ -225,6 +236,7 @@ class ScheduleRunStore:
 
     async def get_run(self, job_id: str, run_id: str) -> dict[str, Any] | None:
         import asyncio
+
         return await asyncio.to_thread(self._get_run_sync, job_id, run_id)
 
     # ── Rotation + delete ─────────────────────────────────────────────
@@ -254,6 +266,7 @@ class ScheduleRunStore:
 
     async def rotate_all(self) -> None:
         import asyncio
+
         await asyncio.to_thread(self._rotate_all_sync)
 
     def _delete_for_job_sync(self, job_id: str) -> None:
@@ -271,4 +284,5 @@ class ScheduleRunStore:
 
     async def delete_for_job(self, job_id: str) -> None:
         import asyncio
+
         await asyncio.to_thread(self._delete_for_job_sync, job_id)

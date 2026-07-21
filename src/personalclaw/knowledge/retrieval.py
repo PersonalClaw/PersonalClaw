@@ -74,7 +74,7 @@ class HybridRetriever:
         self.embedder = embedder
 
     def search(self, query: str, limit: int = 10, *, include_archived: bool = False) -> list[dict]:
-        """Hybrid search with RRF fusion. Returns [{id, title, summary, content, score, source, match_type}].
+        """Hybrid search with RRF fusion. Returns [{id, title, summary, content, score, source, match_type}].  # noqa: E501
 
         ``include_archived`` defaults False — archived items never surface to agents or
         chat context-injection. The Archived UI view sets it True so a search *within*
@@ -125,9 +125,7 @@ class HybridRetriever:
         # instead of a fixed top-K, bounded by the caller's limit. A query with
         # one clearly-best hit returns just that; a broad query returns the whole
         # relevant run (up to limit).
-        keep = relevance_cliff_cut(
-            [score for _, score in fused], max_results=limit
-        )
+        keep = relevance_cliff_cut([score for _, score in fused], max_results=limit)
 
         # Track which lists each item appeared in
         kw_ids = {i for i, _ in kw}
@@ -146,21 +144,25 @@ class HybridRetriever:
                 types.append("graph")
             if item_id in vec_ids:
                 types.append("vector")
-            results.append({
-                "id": item_id,
-                "title": item["title"],
-                "summary": item.get("summary"),
-                "content": item["content"],
-                "score": score,
-                "provider": item.get("provider", "native"),
-                "match_type": "+".join(types),
-                # P12: per-item citation locator (source_type/section/line_range/deep_link),
-                # derived from the item's own content + the query terms already computed above.
-                **_attach_locator(item, q_terms),
-            })
+            results.append(
+                {
+                    "id": item_id,
+                    "title": item["title"],
+                    "summary": item.get("summary"),
+                    "content": item["content"],
+                    "score": score,
+                    "provider": item.get("provider", "native"),
+                    "match_type": "+".join(types),
+                    # P12: per-item citation locator (source_type/section/line_range/deep_link),
+                    # derived from the item's own content + the query terms already computed above.
+                    **_attach_locator(item, q_terms),
+                }
+            )
         return results
 
-    def _keyword_search(self, query: str, limit: int = 20, *, include_archived: bool = False) -> list[tuple[str, int]]:
+    def _keyword_search(
+        self, query: str, limit: int = 20, *, include_archived: bool = False
+    ) -> list[tuple[str, int]]:
         """FTS5 search. Returns [(item_id, rank)] where rank is position (1=best)."""
         safe_query = self._sanitize_fts5_query(query)
         if not safe_query:
@@ -171,7 +173,7 @@ class HybridRetriever:
                 "SELECT i.id FROM items_fts fts "
                 "JOIN items i ON i.rowid = fts.rowid "
                 "WHERE items_fts MATCH ? AND i.status = 'active' "
-                f"{archived_clause}ORDER BY fts.rank LIMIT ?",  # noqa: S608 (clause is a fixed literal)
+                f"{archived_clause}ORDER BY fts.rank LIMIT ?",  # noqa: S608,E501 (clause is a fixed literal)
                 (safe_query, limit),
             ).fetchall()
         except sqlite3.OperationalError:
@@ -190,7 +192,9 @@ class HybridRetriever:
         terms = [t.replace('"', '""') for t in query.split() if t]
         return " OR ".join(f'"{t}"*' for t in terms)
 
-    def _graph_search(self, query: str, limit: int = 20, *, include_archived: bool = False) -> list[tuple[str, int]]:
+    def _graph_search(
+        self, query: str, limit: int = 20, *, include_archived: bool = False
+    ) -> list[tuple[str, int]]:
         """Find entities matching query terms, traverse graph, rank items by mention count."""
         words = query.split()
         # Match entity names at several granularities: individual words, consecutive
@@ -199,7 +203,7 @@ class HybridRetriever:
         candidates = list(words)
         for size in (2, 3):
             for i in range(len(words) - size + 1):
-                candidates.append(" ".join(words[i:i + size]))
+                candidates.append(" ".join(words[i : i + size]))
         if len(words) > 1:
             candidates.append(query.strip())
 
@@ -237,7 +241,9 @@ class HybridRetriever:
         sorted_items = sorted(item_counts.items(), key=lambda x: x[1], reverse=True)
         return [(item_id, rank + 1) for rank, (item_id, _) in enumerate(sorted_items)]
 
-    def _vector_search(self, query: str, limit: int = 20, *, include_archived: bool = False) -> list[tuple[str, int]] | None:
+    def _vector_search(
+        self, query: str, limit: int = 20, *, include_archived: bool = False
+    ) -> list[tuple[str, int]] | None:
         """Brute-force cosine similarity against stored embeddings. Returns None if no embedder."""
         if self.embedder is None:
             return None

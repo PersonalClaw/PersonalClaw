@@ -43,7 +43,9 @@ def test_record_procedural_distinct_outcomes_distinct_records(svc):
 def test_procedural_priors_returns_global_sorted_by_heat(svc):
     # promote one to global by hand (the heat gate would normally do this)
     k = svc.record_procedural(tool="grep", task_shape="x", outcome="success")
-    svc._vs.db.execute("UPDATE semantic_memory SET scope='global', recall_count=9 WHERE key=?", (k,))
+    svc._vs.db.execute(
+        "UPDATE semantic_memory SET scope='global', recall_count=9 WHERE key=?", (k,)
+    )
     svc._vs.db.commit()
     priors = svc.procedural_priors()
     assert any(p["key"] == k for p in priors)
@@ -106,4 +108,3 @@ def test_record_procedural_outcomes_noop_without_service(svc):
 
     assert atr.record_procedural_outcomes(None, [("x", False)]) == 0
     assert atr.record_procedural_outcomes(svc, []) == 0
-

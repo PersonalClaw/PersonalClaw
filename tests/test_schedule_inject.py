@@ -10,8 +10,6 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock
 
-import pytest
-
 from personalclaw.dashboard.schedule_inject import (
     _HYDRATE_LIMIT,
     hydrate_session_from_history,
@@ -45,9 +43,11 @@ def _make_state() -> DashboardState:
 
 
 def _job(**kw) -> ScheduleJob:
-    return ScheduleJob(id=kw.get("id", "abc123"), name=kw.get("name", "Nightly"),
-                       action=make_agent_action(message=kw.get("message", "do it"),
-                                                 agent=kw.get("agent_id", "")))
+    return ScheduleJob(
+        id=kw.get("id", "abc123"),
+        name=kw.get("name", "Nightly"),
+        action=make_agent_action(message=kw.get("message", "do it"), agent=kw.get("agent_id", "")),
+    )
 
 
 def test_first_open_links_and_threads_result() -> None:

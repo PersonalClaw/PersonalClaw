@@ -7,6 +7,7 @@ The third-party app-platform lifecycle (install/update/enable/disable/uninstall)
 was retired; what remains is reading what's present so the provider loader can
 discover installed extensions.
 """
+
 import json
 import logging
 import time
@@ -27,6 +28,7 @@ INSTALLED_META_FILENAME = "installed.json"
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
+
 
 def apps_dir() -> Path:
     """Return the root directory for installed apps: ``~/.personalclaw/apps/``."""
@@ -118,7 +120,7 @@ class InstalledApp:
     installedAt: str = ""  # noqa: N815
     updatedAt: str = ""  # noqa: N815
     source: str = ""  # concrete provenance: path, URL, "registry:name", "builtin"
-    origin: str = "registry"    # builtin | registry | local | external
+    origin: str = "registry"  # builtin | registry | local | external
     resources: str = "gateway"  # gateway | app
     lifecycle: str = "gateway"  # gateway | app | locked
     schemaVersion: int = 2  # noqa: N815  — schema version for future migrations
@@ -156,7 +158,8 @@ class InstalledApp:
         if errors:
             logger.warning(
                 "InstalledApp %s has invalid fields: %s — using defaults",
-                inst.name, errors,
+                inst.name,
+                errors,
             )
             if inst.origin not in _VALID_ORIGIN:
                 inst.origin = "registry"
@@ -217,7 +220,11 @@ def list_apps() -> list[dict[str, Any]]:
                 manifest_data = manifest.to_dict()
                 # A self-managed app may update its own app.json directly; sync the
                 # version so discovery reflects the real one, not a stale installed.json.
-                if meta.lifecycle == "app" and manifest.version and manifest.version != meta.version:
+                if (
+                    meta.lifecycle == "app"
+                    and manifest.version
+                    and manifest.version != meta.version
+                ):
                     meta.version = manifest.version
                     meta.updatedAt = _now_iso()
                     _write_installed(entry.name, meta)

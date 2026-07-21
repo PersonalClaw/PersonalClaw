@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # The resolution helpers below UNION the core catalog with that registry, so an
 # app-owned use-case is bindable + resolvable exactly like a core one — while a
 # system with no apps installed sees only this catalog (the registry is empty).
-from personalclaw.prompt_providers.catalog import BUNDLED_PROMPTS as _CATALOG
+from personalclaw.prompt_providers.catalog import BUNDLED_PROMPTS as _CATALOG  # noqa: E402
 
 # Core (catalog-derived) vocabulary. Kept as a module constant for the common
 # import; the UNION (core + app-contributed) is exposed by all_prompt_use_cases().
@@ -53,7 +53,7 @@ BUNDLED_PROMPT_NAME: dict[str, str] = {p.use_case: p.name for p in _CATALOG}
 DEFAULT_PROMPT_NAME = BUNDLED_PROMPT_NAME["chat"]
 
 
-def _app_prompt_use_cases() -> "object":
+def _app_prompt_use_cases():
     """The app-contributed prompt-use-case registry (lazy import — avoids a cycle,
     since the apps layer imports the prompt system). Returns the module."""
     from personalclaw.apps import prompt_registry
@@ -115,22 +115,14 @@ def load_active_prompts() -> dict[str, str]:
         return {}
     # Keep only known use-cases (core + app-contributed) mapping to string refs.
     valid = valid_prompt_use_cases()
-    return {
-        k: v
-        for k, v in data.items()
-        if k in valid and isinstance(v, str) and v
-    }
+    return {k: v for k, v in data.items() if k in valid and isinstance(v, str) and v}
 
 
 def save_active_prompts(active: dict[str, str]) -> None:
     path = _active_prompts_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     valid = valid_prompt_use_cases()
-    cleaned = {
-        k: v
-        for k, v in active.items()
-        if k in valid and isinstance(v, str) and v
-    }
+    cleaned = {k: v for k, v in active.items() if k in valid and isinstance(v, str) and v}
     atomic_write(path, json.dumps(cleaned, indent=2) + "\n")
 
 

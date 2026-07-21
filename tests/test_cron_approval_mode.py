@@ -11,8 +11,8 @@ Persistence tests live in test_cron.py. This file covers:
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from personalclaw.schedule import ScheduleJob, ScheduleDefinition, make_agent_action
 from personalclaw.llm_helpers import ToolApprovalPolicy
+from personalclaw.schedule import ScheduleDefinition, ScheduleJob, make_agent_action
 
 
 class TestCronApprovalModeField:
@@ -23,7 +23,9 @@ class TestCronApprovalModeField:
         assert job.approval_mode == ""
 
     def test_set_auto(self) -> None:
-        job = ScheduleJob(id="t2", name="test", action=make_agent_action(message="hi", approval_mode="auto"))
+        job = ScheduleJob(
+            id="t2", name="test", action=make_agent_action(message="hi", approval_mode="auto")
+        )
         assert job.approval_mode == "auto"
 
 
@@ -74,9 +76,10 @@ class TestCronApprovalModeGateway:
 
         captured_cb = None
 
-        with patch("personalclaw.gateway.stream_and_collect", fake_stream), patch(
-            "personalclaw.gateway.ScheduleService"
-        ) as mock_cron_cls:
+        with (
+            patch("personalclaw.gateway.stream_and_collect", fake_stream),
+            patch("personalclaw.gateway.ScheduleService") as mock_cron_cls,
+        ):
 
             def capture_cron(on_job=None, **kw):
                 nonlocal captured_cb
@@ -197,7 +200,9 @@ class TestSessionApprovalPolicy:
 class TestSubagentInheritsPolicy:
     """Subagent _run_inner passes parent's approval_policy to get_or_create."""
 
-    def _run_inner_and_capture(self, parent_policy: str, parent_session_key: str = "parent-key") -> dict:
+    def _run_inner_and_capture(
+        self, parent_policy: str, parent_session_key: str = "parent-key"
+    ) -> dict:
         """Invoke the real _run_inner and capture get_or_create kwargs."""
         from personalclaw.llm.base import EVENT_COMPLETE, LLMEvent
         from personalclaw.subagent import SubagentInfo, SubagentManager
@@ -247,7 +252,9 @@ class TestSubagentInheritsPolicy:
             captured = self._run_inner_and_capture("", parent_session_key="")
         assert captured["approval_policy"] == "auto"
 
-    def _run_inner_with_tool_event(self, parent_policy: str, on_tool_approval=None, parent_session_key: str = "parent-key") -> MagicMock:
+    def _run_inner_with_tool_event(
+        self, parent_policy: str, on_tool_approval=None, parent_session_key: str = "parent-key"
+    ) -> MagicMock:
         """Invoke _run_inner with a PERMISSION_REQUEST event and return the mock client."""
         from personalclaw.hooks import TOOL_ALLOW, ToolHookResult
         from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, LLMEvent
@@ -302,7 +309,9 @@ class TestSubagentInheritsPolicy:
             "personalclaw.subagent.AppConfig.load",
             return_value=MagicMock(agent=MagicMock(approval_mode="interactive")),
         ):
-            client = self._run_inner_with_tool_event("", on_tool_approval=None, parent_session_key="")
+            client = self._run_inner_with_tool_event(
+                "", on_tool_approval=None, parent_session_key=""
+            )
         client.reject_tool.assert_called_once_with("req-1")
         client.approve_tool.assert_not_called()
 
@@ -461,10 +470,14 @@ class TestCronSubagentInjection:
                 return_value=("", False),
             ),
         )
-        with patch(
-            "personalclaw.gateway.stream_and_collect",
-            AsyncMock(side_effect=RuntimeError("boom")),
-        ), p2, p3:
+        with (
+            patch(
+                "personalclaw.gateway.stream_and_collect",
+                AsyncMock(side_effect=RuntimeError("boom")),
+            ),
+            p2,
+            p3,
+        ):
             asyncio.run(done_cb(info))
 
         assert gw._cron_injecting == {}
@@ -623,11 +636,11 @@ class TestNoCronsFlag:
         """CLI _gateway function forwards no_crons to run_gateway."""
         from personalclaw.cli_server import _gateway
 
-        with patch("personalclaw.cli_server.config_path") as mock_cp, patch(
-            "personalclaw.cli_server.AppConfig"
-        ) as mock_cfg_cls, patch(
-            "personalclaw.cli_server.run_gateway", new_callable=AsyncMock
-        ) as mock_run:
+        with (
+            patch("personalclaw.cli_server.config_path") as mock_cp,
+            patch("personalclaw.cli_server.AppConfig") as mock_cfg_cls,
+            patch("personalclaw.cli_server.run_gateway", new_callable=AsyncMock) as mock_run,
+        ):
             mock_cp.return_value.exists.return_value = True
             mock_cfg_cls.load.return_value = MagicMock()
             asyncio.run(_gateway(no_crons=True))
@@ -641,9 +654,10 @@ class TestNoCronsFlag:
         with patch.object(sys, "argv", ["personalclaw", "gateway", "--no-crons"]):
             from personalclaw.cli import main
 
-            with patch("personalclaw.cli._gateway", new_callable=AsyncMock) as mock_gw, patch(
-                "personalclaw.cli.asyncio"
-            ) as mock_asyncio:
+            with (
+                patch("personalclaw.cli._gateway", new_callable=AsyncMock) as mock_gw,
+                patch("personalclaw.cli.asyncio") as mock_asyncio,
+            ):
                 mock_asyncio.run = MagicMock()
                 main()
                 mock_gw.assert_called_once()

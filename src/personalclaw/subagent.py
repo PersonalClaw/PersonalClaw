@@ -33,7 +33,6 @@ from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.session import SessionManager
 from personalclaw.session_workspace import result_path as _ws_result_path
-from personalclaw.textfmt import extract_options
 from personalclaw.stats import Stats
 from personalclaw.subagent_persistence import (
     _agent_dir,
@@ -46,10 +45,10 @@ from personalclaw.subagent_persistence import (
     write_result_chunk,
     write_tombstone,
 )
+from personalclaw.textfmt import extract_options
 from personalclaw.validation import _AGENT_NAME_RE
 
 logger = logging.getLogger(__name__)
-
 
 
 _MAX_CONCURRENT = 3
@@ -74,9 +73,9 @@ def _total_memory_gb() -> float:
     """
     try:
         if sys.platform == "darwin":
-            out = subprocess.check_output(
-                ["sysctl", "-n", "hw.memsize"], timeout=2
-            ).decode().strip()
+            out = (
+                subprocess.check_output(["sysctl", "-n", "hw.memsize"], timeout=2).decode().strip()
+            )
             return int(out) / (1024**3)
         if sys.platform == "linux":
             for line in safe_read_file("/proc/meminfo").splitlines():
@@ -106,7 +105,9 @@ def resolve_max_subagents(configured: int, per_agent_gb: float = 4.0) -> int:
         logger.info(
             "subagent auto-size: host facts unavailable (cpu=%s, mem=%.1fGB) — "
             "falling back to fixed cap %d",
-            cpu, total_gb, _MAX_CONCURRENT,
+            cpu,
+            total_gb,
+            _MAX_CONCURRENT,
         )
         return _MAX_CONCURRENT
     cpu_based = max(1, cpu - _CPU_HEADROOM)
@@ -114,8 +115,14 @@ def resolve_max_subagents(configured: int, per_agent_gb: float = 4.0) -> int:
     resolved = max(_AUTO_FLOOR, min(_AUTO_CEILING, min(cpu_based, mem_based)))
     logger.info(
         "subagent auto-size: %d (cpu=%d→%d, mem=%.1fGB/%.1f→%d, bounds[%d,%d])",
-        resolved, cpu, cpu_based, total_gb, per_agent_gb, mem_based,
-        _AUTO_FLOOR, _AUTO_CEILING,
+        resolved,
+        cpu,
+        cpu_based,
+        total_gb,
+        per_agent_gb,
+        mem_based,
+        _AUTO_FLOOR,
+        _AUTO_CEILING,
     )
     return resolved
 
@@ -338,7 +345,9 @@ class SubagentManager:
         self.hook_store: Any = None  # Optional ScriptHookStore, set by server.py
         self._agents: dict[str, SubagentInfo] = {}
         self._tasks: dict[str, asyncio.Task] = {}  # type: ignore[type-arg]
-        self._queue: list[tuple[str, str, str, int, str]] = []  # (task, parent, agent, max_turns, cwd)
+        self._queue: list[tuple[str, str, str, int, str]] = (
+            []
+        )  # (task, parent, agent, max_turns, cwd)
         self._reaper_task: asyncio.Task | None = None  # type: ignore[type-arg]
         # Cache global approval_mode at init to avoid disk I/O on every
         # parentless spawn (cron, webhooks).
@@ -469,8 +478,7 @@ class SubagentManager:
                     session_id = state.get("session_id", "")
                     if session_id:
                         try:
-                            provider = state.get("provider", "acp")
-                            _cleanup_session_files_sync(session_id, provider)
+                            _cleanup_session_files_sync(session_id)
                         except Exception:
                             logger.debug(
                                 "Session cleanup failed for orphan %s", agent_id, exc_info=True
@@ -478,7 +486,10 @@ class SubagentManager:
 
                     logger.info(
                         "Reconciled orphan %s: recovery=%s, pid=%s, has_result=%s",
-                        agent_id, recovery, pid, has_result,
+                        agent_id,
+                        recovery,
+                        pid,
+                        has_result,
                     )
                     # Notify user about the orphaned agent
                     try:
@@ -664,7 +675,7 @@ class SubagentManager:
 
         if not info.done:
             info.done = True
-            info.error = f"Reaped after {int(elapsed)}s (exceeded {self._default_timeout}s deadline) [{_timeout_context(info, include_elapsed=False)}]"
+            info.error = f"Reaped after {int(elapsed)}s (exceeded {self._default_timeout}s deadline) [{_timeout_context(info, include_elapsed=False)}]"  # noqa: E501
             self._running_count = max(0, self._running_count - 1)
             Stats().inc_subagent_failed()
             self._write_tombstone(info, "reaped")
@@ -941,7 +952,8 @@ class SubagentManager:
         if not mem_ok:
             logger.warning(
                 "Subagent spawn refused: only %.2f GB available (min %.1f GB required)",
-                avail_gb, min_mem,
+                avail_gb,
+                min_mem,
             )
             sel().log_tool_invocation(
                 session_key=parent_session_key or "",
@@ -959,7 +971,7 @@ class SubagentManager:
                 task=_redacted_task,
                 agent=agent,
                 done=True,
-                error=f"spawn refused: only {avail_gb:.1f} GB memory available (need {min_mem:.0f} GB)",
+                error=f"spawn refused: only {avail_gb:.1f} GB memory available (need {min_mem:.0f} GB)",  # noqa: E501
             )
             return info
 
@@ -1028,8 +1040,7 @@ class SubagentManager:
 
         # Check parent session trust (approval_policy="auto") set by dashboard trust toggle.
         parent_trusted = (
-            parent_session_key
-            and self._sessions.get_approval_policy(parent_session_key) == "auto"
+            parent_session_key and self._sessions.get_approval_policy(parent_session_key) == "auto"
         )
 
         if self._is_yolo and self._is_yolo():
@@ -1229,10 +1240,12 @@ class SubagentManager:
         """Execute a subagent task in its own session."""
         session_key = f"subagent:{info.id}"
         try:
-            await asyncio.wait_for(self._run_inner(info, session_key), timeout=self._default_timeout)
+            await asyncio.wait_for(
+                self._run_inner(info, session_key), timeout=self._default_timeout
+            )
         except asyncio.TimeoutError:
             if not info.reaped:
-                info.error = f"Timed out after {self._default_timeout // 60} minutes [{_timeout_context(info)}]"
+                info.error = f"Timed out after {self._default_timeout // 60} minutes [{_timeout_context(info)}]"  # noqa: E501
                 info.done = True
                 Stats().inc_subagent_failed()
                 self._write_tombstone(info, "timeout")
@@ -1302,7 +1315,9 @@ class SubagentManager:
                     try:
                         delete_agent_folder(info.id)
                     except Exception:
-                        logger.debug("Failed to clean up agent folder for %s", info.id, exc_info=True)
+                        logger.debug(
+                            "Failed to clean up agent folder for %s", info.id, exc_info=True
+                        )
                     # Clean up workspace result file (agent-{id}.md in parent session dir)
                     try:
                         parent_key = info.parent_session_key
@@ -1432,8 +1447,7 @@ class SubagentManager:
         # let the parent_policy=="auto" branch in _run auto-approve them (mirroring
         # the parent's permission mode), not strip them and auto-decline.
         has_interactive_parent = bool(
-            info.parent_session_key
-            and self._sessions.has_session(info.parent_session_key)
+            info.parent_session_key and self._sessions.has_session(info.parent_session_key)
         )
         if info.approval_mode == "auto" or (parent_policy == "auto" and not has_interactive_parent):
             extra_kwargs["unattended"] = True
@@ -1442,7 +1456,9 @@ class SubagentManager:
         if info.dry_run:
             extra_kwargs["dry_run"] = True
         client, is_new, _resumed = await self._sessions.get_or_create(
-            session_key, agent=agent or None, approval_policy=parent_policy,
+            session_key,
+            agent=agent or None,
+            approval_policy=parent_policy,
             **extra_kwargs,
         )
         # Intentionally check info.agent (not resolved `agent`) so only
@@ -1459,9 +1475,7 @@ class SubagentManager:
             prefix = render_snippet_block("subagent-system-prefix")
             prefix = (prefix + "\n\n") if prefix else _SYSTEM_PREFIX
             message = prefix + raw_task
-        full_message, _ = self._ctx_builder.build_message(
-            message, is_new, session_key
-        )
+        full_message, _ = self._ctx_builder.build_message(message, is_new, session_key)
 
         result_text = ""
         turns = 0
@@ -1599,7 +1613,9 @@ class SubagentManager:
                     metadata={"subagent_id": info.id},
                 )
                 await fire_tool_hooks(
-                    self.hook_store, event.title, event.tool_input,
+                    self.hook_store,
+                    event.title,
+                    event.tool_input,
                     subagent_id=info.id,
                     parent_session_key=info.parent_session_key,
                     agent_role=info.agent,

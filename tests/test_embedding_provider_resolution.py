@@ -16,7 +16,9 @@ import pytest
 from personalclaw.embedding_providers import registry as reg
 
 
-@pytest.mark.parametrize("provider_name", ["sentence-transformers", "sentence_transformers", "native"])
+@pytest.mark.parametrize(
+    "provider_name", ["sentence-transformers", "sentence_transformers", "native"]
+)
 def test_native_names_take_the_in_process_path(provider_name, monkeypatch):
     """For any native spelling, get_active_embed_fn uses the native provider and
     NEVER falls through to the LLM registry (which would raise for a non-model
@@ -24,15 +26,18 @@ def test_native_names_take_the_in_process_path(provider_name, monkeypatch):
     monkeypatch.setattr(reg, "_active_embedding_spec", lambda: (provider_name, "all-MiniLM-L6-v2"))
 
     called = {"llm": False}
+
     def _boom(*a, **k):
         called["llm"] = True
         raise AssertionError("native embedding must not route through the LLM registry")
+
     monkeypatch.setattr(reg, "_llm_embed_fn", _boom)
 
     # Stub the native provider so we don't need the model downloaded.
     class _FakeNative:
         def get_embed_fn(self, model_id):
             return lambda text: [0.0, 0.1, 0.2]
+
     monkeypatch.setattr(reg, "ensure_registered", lambda: None)
     monkeypatch.setattr(reg, "_providers", {"native": _FakeNative()})
 
@@ -45,7 +50,9 @@ def test_native_names_take_the_in_process_path(provider_name, monkeypatch):
 def test_hyphen_name_resolves_dimension(monkeypatch):
     """The dimension lookup accepts the hyphenated native name and reads the
     registered native provider's catalog (the sentence-transformers app)."""
-    monkeypatch.setattr(reg, "_active_embedding_spec", lambda: ("sentence-transformers", "all-MiniLM-L6-v2"))
+    monkeypatch.setattr(
+        reg, "_active_embedding_spec", lambda: ("sentence-transformers", "all-MiniLM-L6-v2")
+    )
 
     from personalclaw.embedding_providers.base import EmbeddingModel
 

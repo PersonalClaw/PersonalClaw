@@ -112,7 +112,22 @@ _AGENT_DENIED_ENV_KEYS: list[str] = [
 
 
 def _probe_unshare() -> bool:
-    """Return True if user + mount namespaces work (Linux)."""
+    """Return True if user + mount namespaces work (Linux).
+
+    Mirrors the SEQUENCE the real launcher uses: ``unshare(NEWUSER)`` first, then
+    a SEPARATE ``unshare(NEWNS)``. This matters — some hardened kernels (Ubuntu
+    23.10+ and the GitHub-hosted runners with
+    ``kernel.apparmor_restrict_unprivileged_userns=1``) permit the *atomic*
+    ``unshare(NEWUSER|NEWNS)`` but DENY a standalone ``unshare(NEWNS)`` once the
+    process is already in an unprivileged user namespace. Probing with the combined
+    flag gave a false positive on those hosts, so ``detect_backend()`` selected the
+    namespace backend and the launcher then died at runtime with
+    ``unshare(NEWNS) failed: errno 1`` — breaking every sandboxed script (hooks,
+    scheduled scripts) in restricted containers/CI. The two-step probe fails honestly
+    there, so the backend falls back to ``sandbox-exec``/``none`` instead. On a normal
+    unprivileged Linux host the sequential calls both succeed (exactly what the
+    launcher does in production), so this does not regress real sandboxing.
+    """
     if sys.platform != "linux":
         return False
     try:
@@ -123,8 +138,12 @@ def _probe_unshare() -> bool:
         _libc.unshare.restype = ctypes.c_int
         pid = os.fork()
         if pid == 0:
-            ret = _libc.unshare(_clone_newuser | _clone_newns)
-            os._exit(0 if ret == 0 else 1)
+            # Separate calls, matching the launcher — NOT a combined flag.
+            if _libc.unshare(_clone_newuser) != 0:
+                os._exit(1)
+            if _libc.unshare(_clone_newns) != 0:
+                os._exit(1)
+            os._exit(0)
         _, status = os.waitpid(pid, 0)
         return os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
     except Exception:
@@ -147,7 +166,10 @@ def _probe_sandbox_exec() -> bool:
         if mac_ver:
             major = int(mac_ver.split(".")[0])
             if major >= 26:
-                logger.info("sandbox-exec unavailable: macOS %s denies sandbox_apply for third-party binaries", mac_ver)
+                logger.info(
+                    "sandbox-exec unavailable: macOS %s denies sandbox_apply for third-party binaries",  # noqa: E501
+                    mac_ver,
+                )
                 return False
     except (ValueError, IndexError):
         pass
@@ -163,12 +185,14 @@ def _probe_sandbox_exec() -> bool:
         os.close(fd)
         r = subprocess.run(
             [sb, "-f", profile_path, target, *target_arg],
-            capture_output=True, timeout=5,
+            capture_output=True,
+            timeout=5,
         )
         if r.returncode != 0:
             logger.warning(
                 "sandbox-exec probe failed (exit %d): %s",
-                r.returncode, r.stderr.decode(errors="replace").strip(),
+                r.returncode,
+                r.stderr.decode(errors="replace").strip(),
             )
         return r.returncode == 0
     except Exception as exc:
@@ -193,9 +217,7 @@ def _ssh_supports_accept_new() -> bool:
     once (cached) and parse the major.minor version from stderr.
     """
     try:
-        result = subprocess.run(
-            ["ssh", "-V"], capture_output=True, timeout=2, check=False
-        )
+        result = subprocess.run(["ssh", "-V"], capture_output=True, timeout=2, check=False)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
     text = (result.stderr or b"").decode(errors="replace")

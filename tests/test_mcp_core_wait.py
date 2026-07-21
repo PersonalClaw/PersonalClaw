@@ -55,14 +55,19 @@ def test_spawn_run_empty_tasks():
 
 def test_spawn_run_passes_parent_session():
     """subagent_run resolves the parent session key and includes it in the spawn body."""
-    with patch("personalclaw.mcp_subagents._post") as mock_post, patch(
-        "personalclaw.mcp_subagents._resolve_session_key", return_value="dashboard:chat-1"
+    with (
+        patch("personalclaw.mcp_subagents._post") as mock_post,
+        patch("personalclaw.mcp_subagents._resolve_session_key", return_value="dashboard:chat-1"),
     ):
         mock_post.return_value = {"id": "x1"}
         result = _call_tool("subagent_run", {"task": "test"})
 
         assert "Spawned" in result
-        body = mock_post.call_args.args[1] if len(mock_post.call_args.args) > 1 else mock_post.call_args.kwargs.get("body", {})
+        body = (
+            mock_post.call_args.args[1]
+            if len(mock_post.call_args.args) > 1
+            else mock_post.call_args.kwargs.get("body", {})
+        )
         assert body.get("parent_session") == "dashboard:chat-1"
 
 

@@ -71,7 +71,7 @@ def _provider(request: web.Request):
 
 
 async def api_artifacts_list(request: web.Request) -> web.Response:
-    """GET /api/artifacts — list (no content). Filters: tag, kind, q, source, source_path, project_id."""
+    """GET /api/artifacts — list (no content). Filters: tag, kind, q, source, source_path, project_id."""  # noqa: E501
     prov = _provider(request)
     if prov is None:
         return web.json_response({"error": "unknown provider"}, status=400)
@@ -116,11 +116,16 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
         existing = prov.find_by_source_path(source_path)
         if existing is not None:
             updated = prov.update(
-                existing.slug, content=content, snapshot=False,
-                actor="user", session_id=session_id,
+                existing.slug,
+                content=content,
+                snapshot=False,
+                actor="user",
+                session_id=session_id,
             )
             _audit(request, "artifact.update", "ok", f"slug={existing.slug}")
-            return web.json_response(_serialize(updated, include_content=True) if updated else {}, status=200)
+            return web.json_response(
+                _serialize(updated, include_content=True) if updated else {}, status=200
+            )
 
     requested_slug = str(body.get("slug", "")).strip() or None
     if requested_slug and prov.get(requested_slug) is not None:
@@ -196,9 +201,7 @@ async def api_artifact_update(request: web.Request) -> web.Response:
         if from_version <= 0:
             return web.json_response({"error": "from_version is required to revert"}, status=400)
         try:
-            art = prov.revert(
-                slug, from_version, actor="user", session_id=_session_key(request)
-            )
+            art = prov.revert(slug, from_version, actor="user", session_id=_session_key(request))
         except (ValueError, PermissionError, NotImplementedError) as e:
             return web.json_response({"error": str(e)}, status=400)
         if art is None:
@@ -298,7 +301,9 @@ def _recover_image_gen_args(session_key: str, slug: str) -> dict[str, str] | Non
     try:
         # The FE passes the dashboard session id (e.g. "chat-1-…"); the history file
         # is keyed "dashboard:chat-1-…". Normalize so the lookup hits the log.
-        msgs = ConversationLog()._read_messages(_history_key_for(session_key))  # noqa: SLF001 — read-only history access
+        msgs = ConversationLog()._read_messages(
+            _history_key_for(session_key)
+        )  # noqa: SLF001 — read-only history access
     except Exception:
         return None
     # Prefer the GENERATION record that created this slug ("Generated image …") over
@@ -325,7 +330,9 @@ def _recover_image_gen_args(session_key: str, slug: str) -> dict[str, str] | Non
         if not prompt:
             continue
         entry = {"prompt": prompt, "size": str(args.get("size", "")).strip()}
-        is_edit = bool(str(args.get("edit_artifact", "")).strip()) or out.lstrip().startswith("Edited")
+        is_edit = bool(str(args.get("edit_artifact", "")).strip()) or out.lstrip().startswith(
+            "Edited"
+        )
         if is_edit:
             edit_match = edit_match or entry
         else:
@@ -372,8 +379,12 @@ async def api_artifact_regenerate(request: web.Request) -> web.Response:
     from personalclaw.mcp_artifacts import regenerate_image_at_slug
 
     ok, msg = await asyncio.to_thread(
-        regenerate_image_at_slug, prov, slug, prompt,
-        size=size, session_id=session_key or None,
+        regenerate_image_at_slug,
+        prov,
+        slug,
+        prompt,
+        size=size,
+        session_id=session_key or None,
     )
     if not ok:
         _audit(request, "artifact.regenerate", "error", f"slug={slug}: {msg}")

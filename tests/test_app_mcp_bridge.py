@@ -19,6 +19,7 @@ from personalclaw.apps import app_manager, manager, mcp_bridge
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
     import personalclaw.config.loader as loader
+
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(mcp_bridge, "config_dir", lambda: tmp_path)
@@ -43,9 +44,15 @@ def _live_servers(tmp_path):
 
 
 def test_install_registers_mcp_servers(tmp_path):
-    app_manager.install(_app(tmp_path, "notesync", servers={
-        "gdrive": {"command": "gdrive-mcp", "args": []},
-    }))
+    app_manager.install(
+        _app(
+            tmp_path,
+            "notesync",
+            servers={
+                "gdrive": {"command": "gdrive-mcp", "args": []},
+            },
+        )
+    )
     servers = _live_servers(tmp_path)
     assert "notesync:gdrive" in servers
     assert servers["notesync:gdrive"]["command"] == "gdrive-mcp"
@@ -69,7 +76,9 @@ def test_uninstall_removes_mcp(tmp_path):
 def test_namespacing_no_collision(tmp_path):
     # Two apps each ship a server named "gdrive" — both coexist, namespaced.
     app_manager.install(_app(tmp_path, "app-a", servers={"gdrive": {"url": "http://a"}}))
-    app_manager.install(_app(tmp_path, "app-b", subdir="s2", servers={"gdrive": {"url": "http://b"}}))
+    app_manager.install(
+        _app(tmp_path, "app-b", subdir="s2", servers={"gdrive": {"url": "http://b"}})
+    )
     servers = _live_servers(tmp_path)
     assert "app-a:gdrive" in servers and "app-b:gdrive" in servers
     assert servers["app-a:gdrive"]["url"] == "http://a"
@@ -90,9 +99,15 @@ def test_stdio_server_gets_app_dir_cwd(tmp_path):
     # registered with cwd=<app dir> so the MCP client can actually spawn it —
     # the client doesn't chdir per server, so a relative path otherwise resolves
     # against the gateway cwd and never starts.
-    app_manager.install(_app(tmp_path, "selfhosted", servers={
-        "local": {"command": "python3", "args": ["backend/mcp_server.py"]},
-    }))
+    app_manager.install(
+        _app(
+            tmp_path,
+            "selfhosted",
+            servers={
+                "local": {"command": "python3", "args": ["backend/mcp_server.py"]},
+            },
+        )
+    )
     servers = _live_servers(tmp_path)
     spec = servers["selfhosted:local"]
     assert spec["cwd"] == str(manager.app_dir("selfhosted"))
@@ -102,10 +117,16 @@ def test_stdio_server_gets_app_dir_cwd(tmp_path):
 def test_remote_and_absolute_cwd_servers_untouched(tmp_path):
     # A url (remote) server gets no cwd; a server that already set an absolute
     # cwd keeps its own.
-    app_manager.install(_app(tmp_path, "mixed", servers={
-        "remote": {"url": "http://x"},
-        "pinned": {"command": "foo", "cwd": "/opt/custom"},
-    }))
+    app_manager.install(
+        _app(
+            tmp_path,
+            "mixed",
+            servers={
+                "remote": {"url": "http://x"},
+                "pinned": {"command": "foo", "cwd": "/opt/custom"},
+            },
+        )
+    )
     servers = _live_servers(tmp_path)
     assert "cwd" not in servers["mixed:remote"]
     assert servers["mixed:pinned"]["cwd"] == "/opt/custom"

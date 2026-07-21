@@ -20,7 +20,9 @@ from personalclaw.channel_transports.webui import WebUITransport
 
 
 def test_channel_message_shape():
-    m = ChannelMessage(channel_id="C1", text="hi", sender="u", thread_id="t", message_id="m", ts=1.0)
+    m = ChannelMessage(
+        channel_id="C1", text="hi", sender="u", thread_id="t", message_id="m", ts=1.0
+    )
     assert m.channel_id == "C1" and m.attachments == [] and m.metadata == {}
 
 
@@ -41,9 +43,14 @@ class _BareTransport(ChannelTransportProvider):
     name = "bare"  # type: ignore[assignment]
     display_name = "Bare"  # type: ignore[assignment]
 
-    async def connect(self): return True
-    async def disconnect(self): return None
-    async def send(self, message: OutboundMessage): return True
+    async def connect(self):
+        return True
+
+    async def disconnect(self):
+        return None
+
+    async def send(self, message: OutboundMessage):
+        return True
 
 
 def test_default_capabilities_text_out_only():

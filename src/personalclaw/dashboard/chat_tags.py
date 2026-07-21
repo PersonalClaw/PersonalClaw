@@ -28,8 +28,14 @@ _VALID_MODES = {"any", "all", "none"}
 # Palette for AI-created tags — deterministic pick by name hash so repeated
 # runs color the same tag identically. Hues match the default status tags.
 _AUTO_TAG_COLORS = (
-    "#3b82f6", "#8b5cf6", "#f59e0b", "#10b981", "#ef4444",
-    "#06b6d4", "#ec4899", "#84cc16",
+    "#3b82f6",
+    "#8b5cf6",
+    "#f59e0b",
+    "#10b981",
+    "#ef4444",
+    "#06b6d4",
+    "#ec4899",
+    "#84cc16",
 )
 
 
@@ -48,14 +54,13 @@ def _tag_by_id(state: DashboardState, tag_id: str) -> dict | None:
 
 # ── Tag vocabulary ─────────────────────────────────────────────────────────
 
+
 def find_tag_by_name(state: DashboardState, name: str) -> dict | None:
     """Case-insensitive lookup of a tag definition by display name."""
     needle = (name or "").strip().lower()
     if not needle:
         return None
-    return next(
-        (t for t in state._tags if str(t.get("name", "")).strip().lower() == needle), None
-    )
+    return next((t for t in state._tags if str(t.get("name", "")).strip().lower() == needle), None)
 
 
 def create_tag(
@@ -106,8 +111,11 @@ async def api_chat_tag_create(request: web.Request) -> web.Response:
         return web.json_response({"error": "name required"}, status=400)
     state.push_sessions_update()
     sel().log_api_access(
-        caller="dashboard", operation="chat.tag_create",
-        outcome="allowed", source="dashboard", resources=str(tag["id"]),
+        caller="dashboard",
+        operation="chat.tag_create",
+        outcome="allowed",
+        source="dashboard",
+        resources=str(tag["id"]),
     )
     return web.json_response(tag, status=201)
 
@@ -140,8 +148,11 @@ async def api_chat_tag_update(request: web.Request) -> web.Response:
     state.save_tags()
     state.push_sessions_update()
     sel().log_api_access(
-        caller="dashboard", operation="chat.tag_update",
-        outcome="allowed", source="dashboard", resources=tid,
+        caller="dashboard",
+        operation="chat.tag_update",
+        outcome="allowed",
+        source="dashboard",
+        resources=tid,
     )
     return web.json_response(tag)
 
@@ -171,13 +182,17 @@ async def api_chat_tag_delete(request: web.Request) -> web.Response:
     state.save_tags()
     state.push_sessions_update()
     sel().log_api_access(
-        caller="dashboard", operation="chat.tag_delete",
-        outcome="allowed", source="dashboard", resources=tid,
+        caller="dashboard",
+        operation="chat.tag_delete",
+        outcome="allowed",
+        source="dashboard",
+        resources=tid,
     )
     return web.json_response({"ok": True})
 
 
 # ── Session tag assignment ────────────────────────────────────────────────────
+
 
 async def api_chat_session_tags(request: web.Request) -> web.Response:
     """PUT /api/chat/sessions/{session}/tags — replace the session's tag list."""
@@ -202,15 +217,21 @@ async def api_chat_session_tags(request: web.Request) -> web.Response:
     _save_session_to_history(state, session, force=True)
     state.push_sessions_update()
     sel().log_api_access(
-        caller="dashboard", operation="chat.session_tags",
-        outcome="allowed", source="dashboard", resources=name,
+        caller="dashboard",
+        operation="chat.session_tags",
+        outcome="allowed",
+        source="dashboard",
+        resources=name,
     )
     return web.json_response({"ok": True, "tags": session.tags})
 
 
 # ── Sidebar columns (Trello-style filtered lanes) ──────────────────────────
 
-def _normalize_column(state: DashboardState, raw: Any, *, existing: dict | None = None) -> dict | None:
+
+def _normalize_column(
+    state: DashboardState, raw: Any, *, existing: dict | None = None
+) -> dict | None:
     """Validate + coerce a column payload. Returns None if invalid."""
     if not isinstance(raw, dict):
         return None
@@ -278,8 +299,11 @@ async def api_chat_tag_column_create(request: web.Request) -> web.Response:
     state._tag_boards.append(column)
     state.save_tag_boards()
     sel().log_api_access(
-        caller="dashboard", operation="chat.tag_column_create",
-        outcome="allowed", source="dashboard", resources=str(column["id"]),
+        caller="dashboard",
+        operation="chat.tag_column_create",
+        outcome="allowed",
+        source="dashboard",
+        resources=str(column["id"]),
     )
     return web.json_response(column, status=201)
 
@@ -301,8 +325,11 @@ async def api_chat_tag_column_update(request: web.Request) -> web.Response:
     column.update(merged)
     state.save_tag_boards()
     sel().log_api_access(
-        caller="dashboard", operation="chat.tag_column_update",
-        outcome="allowed", source="dashboard", resources=cid,
+        caller="dashboard",
+        operation="chat.tag_column_update",
+        outcome="allowed",
+        source="dashboard",
+        resources=cid,
     )
     return web.json_response(column)
 
@@ -316,8 +343,11 @@ async def api_chat_tag_column_delete(request: web.Request) -> web.Response:
     state._tag_boards = [c for c in state._tag_boards if c.get("id") != cid]
     state.save_tag_boards()
     sel().log_api_access(
-        caller="dashboard", operation="chat.tag_column_delete",
-        outcome="allowed", source="dashboard", resources=cid,
+        caller="dashboard",
+        operation="chat.tag_column_delete",
+        outcome="allowed",
+        source="dashboard",
+        resources=cid,
     )
     return web.json_response({"ok": True})
 
@@ -346,13 +376,17 @@ async def api_chat_tag_columns_reorder(request: web.Request) -> web.Response:
     state._tag_boards.sort(key=lambda c: c.get("order", 0))
     state.save_tag_boards()
     sel().log_api_access(
-        caller="dashboard", operation="chat.tag_columns_reorder",
-        outcome="allowed", source="dashboard", resources=",".join(str(x) for x in ids[:10]),
+        caller="dashboard",
+        operation="chat.tag_columns_reorder",
+        outcome="allowed",
+        source="dashboard",
+        resources=",".join(str(x) for x in ids[:10]),
     )
     return web.json_response({"ok": True})
 
 
 # ── Drag-drop: move a session between columns (reassigns status tags) ──────
+
 
 async def api_chat_session_drop(request: web.Request) -> web.Response:
     """POST /api/chat/sessions/{session}/drop — move a session into a column.
@@ -384,18 +418,26 @@ async def api_chat_session_drop(request: web.Request) -> web.Response:
         # (covers both the unfiltered and the multi-status filter cases).
         # Audit the rejected drop so the SEL trail captures every attempt.
         sel().log_api_access(
-            caller="dashboard", operation="chat.session_drop",
-            outcome="rejected", source="dashboard",
-            resources=f"{name}->{column_id}", error="column is not a status lane",
+            caller="dashboard",
+            operation="chat.session_drop",
+            outcome="rejected",
+            source="dashboard",
+            resources=f"{name}->{column_id}",
+            error="column is not a status lane",
         )
-        return web.json_response({"ok": False, "reason": "column is not a status lane", "tags": session.tags})
+        return web.json_response(
+            {"ok": False, "reason": "column is not a status lane", "tags": session.tags}
+        )
     target_id = status_tags[0]["id"]
     kept = [t for t in session.tags if t in tag_index and not tag_index[t].get("status")]
     session.tags = kept + [target_id]
     _save_session_to_history(state, session, force=True)
     state.push_sessions_update()
     sel().log_api_access(
-        caller="dashboard", operation="chat.session_drop",
-        outcome="allowed", source="dashboard", resources=f"{name}->{column_id}",
+        caller="dashboard",
+        operation="chat.session_drop",
+        outcome="allowed",
+        source="dashboard",
+        resources=f"{name}->{column_id}",
     )
     return web.json_response({"ok": True, "tags": session.tags})

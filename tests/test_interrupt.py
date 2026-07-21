@@ -13,13 +13,14 @@ from unittest.mock import AsyncMock
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from chat_test_helpers import _make_state
 
 from personalclaw.dashboard.chat import api_chat_session_interrupt, api_chat_session_stop
-from chat_test_helpers import _make_state
 
 
 class _FakeTask:
     """A task that looks running (not done) to session.running."""
+
     def done(self) -> bool:
         return False
 
@@ -122,7 +123,9 @@ async def test_interrupt_queue_id_promotes_preserving_id(tmp_path) -> None:
     id_b = session.queue_append("second")
     client = await _client(state)
     try:
-        resp = await client.post(f"/api/chat/sessions/{session.key}/interrupt", json={"queue_id": id_b})
+        resp = await client.post(
+            f"/api/chat/sessions/{session.key}/interrupt", json={"queue_id": id_b}
+        )
         assert resp.status == 200
         # B promoted to front, id preserved.
         assert session._queue[0]["id"] == id_b
@@ -139,7 +142,9 @@ async def test_interrupt_unknown_queue_id_404(tmp_path) -> None:
     session = _running_session(state, queue=("only one",))
     client = await _client(state)
     try:
-        resp = await client.post(f"/api/chat/sessions/{session.key}/interrupt", json={"queue_id": "nonexistent"})
+        resp = await client.post(
+            f"/api/chat/sessions/{session.key}/interrupt", json={"queue_id": "nonexistent"}
+        )
         assert resp.status == 404
         state.sessions.stop_turn.assert_not_awaited()
     finally:

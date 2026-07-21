@@ -21,16 +21,23 @@ from personalclaw.apps import app_manager, manager
 @pytest.fixture(autouse=True)
 def _isolate_apps(tmp_path, monkeypatch):
     import personalclaw.config.loader as loader
+
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
     # Fresh provider registry per test so registrations don't leak.
     from personalclaw.providers import registry as reg
+
     monkeypatch.setattr(reg, "_registry", None, raising=False)
     return tmp_path
 
 
 _PROVIDER_PY = textwrap.dedent("""
-    from personalclaw.search_providers.base import SearchCapabilities, SearchHit, SearchProvider, SearchResult
+    from personalclaw.search_providers.base import (
+        SearchCapabilities,
+        SearchHit,
+        SearchProvider,
+        SearchResult,
+    )
     class FixtureSearch(SearchProvider):
         @property
         def name(self): return "fixture-search"
@@ -39,7 +46,11 @@ _PROVIDER_PY = textwrap.dedent("""
         async def is_available(self): return True
         def capabilities(self): return SearchCapabilities(depths=("balanced",))
         async def search(self, query, *, max_results=10, depth=None, **_):
-            return SearchResult(results=[SearchHit(url="https://x", title="X "+query)], provider=self.name, query=query)
+            return SearchResult(
+                results=[SearchHit(url="https://x", title="X " + query)],
+                provider=self.name,
+                query=query,
+            )
     def create_provider(config=None): return FixtureSearch()
 """)
 
@@ -47,18 +58,33 @@ _PROVIDER_PY = textwrap.dedent("""
 def _provider_app(tmp_path: Path) -> Path:
     d = tmp_path / "src" / "fixture-search"
     d.mkdir(parents=True)
-    (d / "app.json").write_text(json.dumps({
-        "name": "fixture-search", "version": "1.0.0", "displayName": "Fixture Search",
-        "description": "provider-only fixture",
-        "provider": {"type": "search", "implementation": "provider:create_provider", "capabilities": ["search"]},
-    }), encoding="utf-8")
+    (d / "app.json").write_text(
+        json.dumps(
+            {
+                "name": "fixture-search",
+                "version": "1.0.0",
+                "displayName": "Fixture Search",
+                "description": "provider-only fixture",
+                "provider": {
+                    "type": "search",
+                    "implementation": "provider:create_provider",
+                    "capabilities": ["search"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     (d / "provider.py").write_text(_PROVIDER_PY, encoding="utf-8")
     return d
 
 
 @pytest.mark.asyncio
 async def test_provider_only_app_registers_and_is_callable(tmp_path):
-    from personalclaw.search_providers.registry import get_provider, list_providers, unregister_provider
+    from personalclaw.search_providers.registry import (
+        get_provider,
+        list_providers,
+        unregister_provider,
+    )
 
     # clean any stale registration from a prior run
     unregister_provider("fixture-search")
@@ -127,13 +153,29 @@ def _provider_app_named(tmp_path: Path, app_name: str, provider_name: str) -> Pa
     # SearchProviders — the module-name-collision regression.
     d = tmp_path / "src" / app_name
     d.mkdir(parents=True)
-    (d / "app.json").write_text(json.dumps({
-        "name": app_name, "version": "1.0.0", "displayName": app_name,
-        "description": "collision fixture",
-        "provider": {"type": "search", "implementation": "provider:create_provider", "capabilities": ["search"]},
-    }), encoding="utf-8")
+    (d / "app.json").write_text(
+        json.dumps(
+            {
+                "name": app_name,
+                "version": "1.0.0",
+                "displayName": app_name,
+                "description": "collision fixture",
+                "provider": {
+                    "type": "search",
+                    "implementation": "provider:create_provider",
+                    "capabilities": ["search"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     body = textwrap.dedent(f"""
-        from personalclaw.search_providers.base import SearchCapabilities, SearchHit, SearchProvider, SearchResult
+        from personalclaw.search_providers.base import (
+            SearchCapabilities,
+            SearchHit,
+            SearchProvider,
+            SearchResult,
+        )
         class P(SearchProvider):
             @property
             def name(self): return "{provider_name}"
@@ -142,7 +184,11 @@ def _provider_app_named(tmp_path: Path, app_name: str, provider_name: str) -> Pa
             async def is_available(self): return True
             def capabilities(self): return SearchCapabilities(depths=("balanced",))
             async def search(self, query, *, max_results=10, depth=None, **_):
-                return SearchResult(results=[SearchHit(url="https://{provider_name}", title="{provider_name}")], provider=self.name, query=query)
+                return SearchResult(
+                    results=[SearchHit(url="https://{provider_name}", title="{provider_name}")],
+                    provider=self.name,
+                    query=query,
+                )
         def create_provider(config=None): return P()
     """)
     (d / "provider.py").write_text(body, encoding="utf-8")
@@ -168,7 +214,12 @@ def test_two_apps_same_module_name_dont_collide(tmp_path):
 
 
 _MULTI_PROVIDER_PY = textwrap.dedent("""
-    from personalclaw.search_providers.base import SearchCapabilities, SearchHit, SearchProvider, SearchResult
+    from personalclaw.search_providers.base import (
+        SearchCapabilities,
+        SearchHit,
+        SearchProvider,
+        SearchResult,
+    )
     class _Base(SearchProvider):
         _n = "x"
         @property
@@ -178,7 +229,11 @@ _MULTI_PROVIDER_PY = textwrap.dedent("""
         async def is_available(self): return True
         def capabilities(self): return SearchCapabilities(depths=("balanced",))
         async def search(self, query, *, max_results=10, depth=None, **_):
-            return SearchResult(results=[SearchHit(url="https://"+self._n, title=self._n)], provider=self.name, query=query)
+            return SearchResult(
+                results=[SearchHit(url="https://" + self._n, title=self._n)],
+                provider=self.name,
+                query=query,
+            )
     class Primary(_Base): _n = "multi-primary"
     class Secondary(_Base): _n = "multi-secondary"
     def make_primary(config=None): return Primary()
@@ -191,16 +246,29 @@ def _multi_provider_app(tmp_path: Path) -> Path:
     singular `provider` plus the plural `providers` list."""
     d = tmp_path / "src" / "multi-app"
     d.mkdir(parents=True)
-    (d / "app.json").write_text(json.dumps({
-        "name": "multi-app", "version": "1.0.0", "displayName": "Multi",
-        "description": "registers multiple providers",
-        "provider": {"type": "search", "implementation": "provider:make_primary",
-                     "capabilities": ["search"]},
-        "providers": [
-            {"type": "search", "implementation": "provider:make_secondary",
-             "capabilities": ["search"]},
-        ],
-    }), encoding="utf-8")
+    (d / "app.json").write_text(
+        json.dumps(
+            {
+                "name": "multi-app",
+                "version": "1.0.0",
+                "displayName": "Multi",
+                "description": "registers multiple providers",
+                "provider": {
+                    "type": "search",
+                    "implementation": "provider:make_primary",
+                    "capabilities": ["search"],
+                },
+                "providers": [
+                    {
+                        "type": "search",
+                        "implementation": "provider:make_secondary",
+                        "capabilities": ["search"],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     (d / "provider.py").write_text(_MULTI_PROVIDER_PY, encoding="utf-8")
     return d
 

@@ -122,6 +122,7 @@ def checker_for(app_name: str) -> PermissionChecker | None:
         return None
     try:
         from personalclaw.apps.app_manager import _manifest_of
+
         manifest = _manifest_of(app_name)
     except Exception:
         logger.debug("permission checker: manifest load failed for %s", app_name, exc_info=True)

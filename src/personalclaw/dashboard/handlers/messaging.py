@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 def _sel():
     """Late-binding _sel() for test monkeypatch compatibility."""
     import personalclaw.dashboard.handlers as _pkg  # noqa: F811
+
     return _pkg.sel()
 
 
@@ -341,7 +342,9 @@ def _sanitize_blocks(
     return _walk(deepcopy(blocks[:_MAX_BLOCKS]))
 
 
-def _resolve_session_target(state: DashboardState, target: str, caller_session: str) -> tuple[str, str] | tuple[None, None]:
+def _resolve_session_target(
+    state: DashboardState, target: str, caller_session: str
+) -> tuple[str, str] | tuple[None, None]:
     """Resolve a session target to a dashboard session key and job name.
 
     ``target="origin"`` looks up the cron job that owns *caller_session*
@@ -450,29 +453,19 @@ async def api_send_message(request: web.Request) -> web.Response:
             )
     reply_broadcast = body.get("reply_broadcast")
     if reply_broadcast is not None and not isinstance(reply_broadcast, bool):
-        return web.json_response(
-            {"error": "reply_broadcast must be a boolean"}, status=400
-        )
+        return web.json_response({"error": "reply_broadcast must be a boolean"}, status=400)
     if reply_broadcast and not thread_ts:
-        return web.json_response(
-            {"error": "reply_broadcast requires thread_ts"}, status=400
-        )
+        return web.json_response({"error": "reply_broadcast requires thread_ts"}, status=400)
 
     # Fail fast: mutual exclusion before any redaction/regex work
     if target_channel and target_user:
-        return web.json_response(
-            {"error": "specify channel or user, not both"}, status=400
-        )
+        return web.json_response({"error": "specify channel or user, not both"}, status=400)
 
     # Validate format first, then redact
     if target_channel and not CHANNEL_ID_RE.match(target_channel):
-        return web.json_response(
-            {"error": "invalid channel ID format"}, status=400
-        )
+        return web.json_response({"error": "invalid channel ID format"}, status=400)
     if target_user and not USER_ID_RE.match(target_user):
-        return web.json_response(
-            {"error": "invalid user ID format"}, status=400
-        )
+        return web.json_response({"error": "invalid user ID format"}, status=400)
 
     # Redact after format validation
     if target_channel:
@@ -580,7 +573,9 @@ async def api_send_message(request: web.Request) -> web.Response:
             # the owner's messaging channel (or channel/user if also set).
             target_session = None
         if target_session:
-            session_name, job_name = _resolve_session_target(state, target_session, body.get("caller_session", ""))
+            session_name, job_name = _resolve_session_target(
+                state, target_session, body.get("caller_session", "")
+            )
             if session_name:
                 # Resolve the origin session. get_session is the hot path (fast,
                 # O(1) dict lookup). On miss, _rehydrate_session_from_history
@@ -593,8 +588,11 @@ async def api_send_message(request: web.Request) -> web.Response:
                 if session is None:
                     session = _rehydrate_session_from_history(state, session_name)
                 logger.info(
-                    "send_message session=origin resolved session_name=%s job=%s was_loaded=%s rehydrated=%s",
-                    session_name, job_name, was_loaded, (session is not None and not was_loaded),
+                    "send_message session=origin resolved session_name=%s job=%s was_loaded=%s rehydrated=%s",  # noqa: E501
+                    session_name,
+                    job_name,
+                    was_loaded,
+                    (session is not None and not was_loaded),
                 )
                 if session:
                     label = job_name or "cron"
@@ -608,7 +606,9 @@ async def api_send_message(request: web.Request) -> web.Response:
                     if session.running:
                         if len(session._queue) >= 50:
                             evicted = session.queue_pop(0)
-                            logger.warning("Queue full for session %s — evicting oldest message", session_name)
+                            logger.warning(
+                                "Queue full for session %s — evicting oldest message", session_name
+                            )
                             _remove_queued_by_id(session.messages, evicted["id"])
                         qid = session.queue_append(wrapped)
                         _cls = json.loads(inject_cls)
@@ -652,15 +652,21 @@ async def api_send_message(request: web.Request) -> web.Response:
                         channel_attempted = True
                         if blocks:
                             channel_ts = await state.channel_delivery.deliver_rich(
-                                channel, blocks, text,
+                                channel,
+                                blocks,
+                                text,
                                 thread_ts=thread_ts,
-                                unfurl_links=unfurl_links, unfurl_media=unfurl_media,
+                                unfurl_links=unfurl_links,
+                                unfurl_media=unfurl_media,
                                 reply_broadcast=reply_broadcast,
                             )
                         else:
                             channel_ts = await state.channel_delivery.deliver_text(
-                                channel, text, thread_ts=thread_ts,
-                                unfurl_links=unfurl_links, unfurl_media=unfurl_media,
+                                channel,
+                                text,
+                                thread_ts=thread_ts,
+                                unfurl_links=unfurl_links,
+                                unfurl_media=unfurl_media,
                                 reply_broadcast=reply_broadcast,
                             )
                         sent_channel = True
@@ -681,8 +687,14 @@ async def api_send_message(request: web.Request) -> web.Response:
             _sel().log_tool_invocation(
                 session_key="dashboard",
                 tool_name="send_message",
-                outcome="completed" if sent_channel or sent_session or not channel_attempted else "error",
-                downstream_service="session" if sent_session else ("channel" if sent_channel else "dashboard"),
+                outcome=(
+                    "completed"
+                    if sent_channel or sent_session or not channel_attempted
+                    else "error"
+                ),
+                downstream_service=(
+                    "session" if sent_session else ("channel" if sent_channel else "dashboard")
+                ),
                 resources=base_res + thread_hint,
             )
         except Exception:
@@ -760,7 +772,9 @@ async def api_channel_profile(request: web.Request) -> web.Response:
             downstream_service="channel",
             resources=f"user={user_id} reason=rate_limit",
         )
-        return web.json_response({"error": "rate limit exceeded — max 5 profile lookups per minute"}, status=429)
+        return web.json_response(
+            {"error": "rate limit exceeded — max 5 profile lookups per minute"}, status=429
+        )
     history.append(now)
     state._profile_lookup_times = history  # type: ignore[attr-defined]
 

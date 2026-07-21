@@ -5,9 +5,23 @@ from personalclaw.loop import design_tokens as dt
 
 def test_default_tokens_cover_every_axis():
     tree = dt.default_tokens()
-    for axis in ("color", "typography", "spacing", "sizing", "radius", "border",
-                 "shadow", "elevation", "opacity", "blur", "motion", "zIndex",
-                 "breakpoint", "gradient", "component"):
+    for axis in (
+        "color",
+        "typography",
+        "spacing",
+        "sizing",
+        "radius",
+        "border",
+        "shadow",
+        "elevation",
+        "opacity",
+        "blur",
+        "motion",
+        "zIndex",
+        "breakpoint",
+        "gradient",
+        "component",
+    ):
         assert axis in tree, f"default tokens missing axis {axis}"
     # color has primitive scales + semantic light/dark role maps
     assert "primitive" in tree["color"] and "semantic" in tree["color"]
@@ -48,9 +62,11 @@ def test_css_variables_emit_prefixed_and_scheme_aware():
     assert ":root {" in css_light
     assert "--pc-radius-lg:" in css_light
     assert "--pc-color-fg-default:" in css_light
+
     # fg.default differs between schemes
     def _line(css, name):
-        return next(l for l in css.splitlines() if name in l)
+        return next(ln for ln in css.splitlines() if name in ln)
+
     assert _line(css_light, "--pc-color-fg-default:") != _line(css_dark, "--pc-color-fg-default:")
 
 
@@ -60,7 +76,11 @@ def test_unresolvable_ref_left_literal_not_crash():
 
 
 def _rem(v: str) -> float:
-    return float(v.replace("rem", "")) if v.endswith("rem") else (0.0 if v in ("0", "0px") else float("inf"))
+    return (
+        float(v.replace("rem", ""))
+        if v.endswith("rem")
+        else (0.0 if v in ("0", "0px") else float("inf"))
+    )
 
 
 def test_partial_spacing_override_does_not_scramble_the_scale():
@@ -68,8 +88,17 @@ def test_partial_spacing_override_does_not_scramble_the_scale():
     # must NOT key-merge onto the default 4px-grid scale (1=0.25rem, 3=0.75rem…) — that
     # produced a non-monotonic scale live (step 3 > step 4; 3 == 6; 12 < 9). The override
     # REPLACES the scale wholesale: only the keys it sets survive, in its own convention.
-    partial = {"spacing": {"1": "0.125rem", "2": "0.25rem", "4": "0.5rem",
-                           "6": "0.75rem", "8": "1rem", "12": "1.5rem", "16": "2rem"}}
+    partial = {
+        "spacing": {
+            "1": "0.125rem",
+            "2": "0.25rem",
+            "4": "0.5rem",
+            "6": "0.75rem",
+            "8": "1rem",
+            "12": "1.5rem",
+            "16": "2rem",
+        }
+    }
     sp = dt.resolve(partial)["spacing"]
     # The default numeric steps the override didn't set are GONE (no collision possible).
     assert "3" not in sp and "5" not in sp and "9" not in sp
@@ -93,16 +122,29 @@ def test_partial_typography_size_override_does_not_scramble_the_named_scale():
     # the high steps — live, the default 3xl=1.875rem survived next to the override 2xl=2.25rem
     # → 2xl > 3xl, a non-monotonic scale. The wholesale-replace must apply to named-key scales
     # too (the value-based step detector), so no stale default step survives to collide.
-    partial = {"typography": {"size": {
-        "xs": "0.75rem", "sm": "0.875rem", "base": "1rem", "md": "1.125rem",
-        "lg": "1.375rem", "xl": "1.75rem", "2xl": "2.25rem", "glyph": "3.5rem"}}}
+    partial = {
+        "typography": {
+            "size": {
+                "xs": "0.75rem",
+                "sm": "0.875rem",
+                "base": "1rem",
+                "md": "1.125rem",
+                "lg": "1.375rem",
+                "xl": "1.75rem",
+                "2xl": "2.25rem",
+                "glyph": "3.5rem",
+            }
+        }
+    }
     size = dt.resolve(partial)["typography"]["size"]
     # The default high steps the override didn't set are GONE (no 2xl>3xl collision).
     assert "3xl" not in size and "4xl" not in size and "8xl" not in size
     # The surviving named scale is monotonic in rem order (excluding the meta comment).
     order = ["xs", "sm", "base", "md", "lg", "xl", "2xl", "glyph"]
     vals = [_rem(size[k]) for k in order if k in size]
-    assert vals == sorted(vals), f"type size scale not monotonic: {[(k,size.get(k)) for k in order]}"
+    assert vals == sorted(
+        vals
+    ), f"type size scale not monotonic: {[(k, size.get(k)) for k in order]}"
     # The default's prose meta key is preserved (value-based detector keeps non-dimensions).
     assert "comment" in size
 

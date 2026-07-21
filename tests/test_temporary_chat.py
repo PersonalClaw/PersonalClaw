@@ -1,13 +1,13 @@
 """Tests for temporary chat mode (dashboard + Slack)."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Dashboard: _ChatSession temporary mode properties
 # ---------------------------------------------------------------------------
+
 
 class TestChatSessionTemporary:
     def test_temporary_mode(self):
@@ -28,6 +28,7 @@ class TestChatSessionTemporary:
 # ---------------------------------------------------------------------------
 # Dashboard: _save_session_to_history persists all modes (no skip)
 # ---------------------------------------------------------------------------
+
 
 class TestSaveSessionToHistory:
     def test_temporary_slot_still_saved(self):
@@ -74,6 +75,7 @@ class TestSaveSessionToHistory:
 # Dashboard: _persist_title skips restricted sessions
 # ---------------------------------------------------------------------------
 
+
 class TestPersistTitle:
     def test_temporary_slot_auto_title_skipped(self):
         """Auto-title skips restricted sessions."""
@@ -90,6 +92,7 @@ class TestPersistTitle:
 # ---------------------------------------------------------------------------
 # Dashboard: _is_restricted_session (header-based MCP gating)
 # ---------------------------------------------------------------------------
+
 
 class TestIsRestrictedSession:
     def _mock_request(self, session_key=""):
@@ -166,6 +169,7 @@ class TestIsRestrictedSession:
 # (the sensitive read path — semantic facts + episodic — must not be prompt-only)
 # ---------------------------------------------------------------------------
 
+
 class TestMemoryRecallGuard:
     def _mock_request(self, state, session_key, q="anything"):
         req = MagicMock()
@@ -176,6 +180,7 @@ class TestMemoryRecallGuard:
 
     def _state_with(self, session):
         from personalclaw.dashboard.state import _ChatSession  # noqa: F401
+
         state = MagicMock()
         state._restricted_keys = set()
         state._sessions = {session.key: session} if session else {}
@@ -193,10 +198,13 @@ class TestMemoryRecallGuard:
         state = self._state_with(sess)
         # If the guard is bypassed, _get_service would be hit — make it explode so a
         # bypass fails loudly rather than silently leaking.
-        with patch("personalclaw.dashboard.handlers.memory._get_service",
-                   side_effect=AssertionError("recall must not reach the service for a temporary session")):
+        with patch(
+            "personalclaw.dashboard.handlers.memory._get_service",
+            side_effect=AssertionError("recall must not reach the service for a temporary session"),
+        ):
             resp = await api_memory_recall(self._mock_request(state, "dashboard:chat-1-tmp"))
         import json
+
         body = json.loads(resp.body.decode())
         assert body["result"] == "No matching memory found."
 
@@ -214,11 +222,13 @@ class TestMemoryRecallGuard:
         with patch("personalclaw.dashboard.handlers.memory._get_service", return_value=svc):
             resp = await api_memory_recall(self._mock_request(state, "dashboard:chat-1-normal"))
         import json
+
         body = json.loads(resp.body.decode())
         assert "dark mode" in body["result"]
 
     def teardown_method(self):
         from personalclaw import session_restrictions as sr
+
         sr._temporary.clear()
         sr._incognito.clear()
 
@@ -226,6 +236,7 @@ class TestMemoryRecallGuard:
 # ---------------------------------------------------------------------------
 # MCP: session_key plumbed via X-Session-Key header (not body)
 # ---------------------------------------------------------------------------
+
 
 class TestMcpSessionKeyPlumbing:
     @patch.dict("os.environ", {"PERSONALCLAW_SESSION_KEY": "dashboard:chat-1-tmp"})
@@ -235,9 +246,7 @@ class TestMcpSessionKeyPlumbing:
         mock_post.return_value = {"ok": True}
         from personalclaw.mcp_memory import _call_tool_inner
 
-        result = _call_tool_inner(
-            "memory_remember", {"rule": "test rule", "category": "knowledge"}
-        )
+        result = _call_tool_inner("memory_remember", {"rule": "test rule", "category": "knowledge"})
         payload = mock_post.call_args[0][1]
         assert "session_key" not in payload
         assert "Saved" in result
@@ -271,17 +280,19 @@ class TestMcpSessionKeyPlumbing:
 # incognito chat landed in the lesson store via capture_preference_facet).
 # ---------------------------------------------------------------------------
 
+
 class TestAfterTurnReviewRestrictedGuard:
     def _run(self, session):
         from personalclaw.dashboard.chat_runner import _maybe_after_turn_review
 
         state = MagicMock()
-        with patch(
-            "personalclaw.memory_service.service_for"
-        ) as service_for, patch(
-            "personalclaw.after_turn_review.capture_preference_facet",
-            return_value=None,
-        ) as capture:
+        with (
+            patch("personalclaw.memory_service.service_for") as service_for,
+            patch(
+                "personalclaw.after_turn_review.capture_preference_facet",
+                return_value=None,
+            ) as capture,
+        ):
             _maybe_after_turn_review(state, session, "Never mention X", "ok", 0)
         return service_for, capture
 
@@ -315,9 +326,7 @@ class TestAfterTurnReviewRestrictedGuard:
 
         session = _ChatSession(key="inc-2", memory_mode="incognito")
         state = MagicMock()
-        with patch(
-            "personalclaw.after_turn_review.is_correction_signal"
-        ) as signal:
+        with patch("personalclaw.after_turn_review.is_correction_signal") as signal:
             _maybe_skill_ladder_review(state, session, "no, wrong", "ok", 9)
         assert not signal.called
 
@@ -327,6 +336,7 @@ class TestAfterTurnReviewRestrictedGuard:
 # incognito chats surfaced via /api/sessions, /api/sessions/search and the
 # channel !resume list even though the chat-history list filtered them).
 # ---------------------------------------------------------------------------
+
 
 class TestRestrictedSessionDiscovery:
     def _log_with_incognito(self, tmp_path):
@@ -341,9 +351,7 @@ class TestRestrictedSessionDiscovery:
     def test_search_sessions_excludes_incognito(self, tmp_path):
         log = self._log_with_incognito(tmp_path)
         assert log.search_sessions("ZANZIBAR") == []
-        assert [s["key"] for s in log.search_sessions("ALPHA")] == [
-            "dashboard_open-1"
-        ]
+        assert [s["key"] for s in log.search_sessions("ALPHA")] == ["dashboard_open-1"]
 
     def test_sync_bridge_resume_list_excludes_incognito(self, tmp_path):
         from personalclaw.sync_bridge import list_recent_sessions

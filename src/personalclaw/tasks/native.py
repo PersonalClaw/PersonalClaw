@@ -219,6 +219,7 @@ class NativeTaskProvider(TaskProvider):
         """Apply ``fields``, reject cycles, reconcile dependency-driven status, and
         return the edited task. The full set of tasks whose status changed via
         cascade is exposed on ``task._reconciled`` for the handler to return."""
+
         def _update() -> Task | None:
             tasks = self._task_map()
             task = tasks.get(task_id)

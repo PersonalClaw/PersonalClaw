@@ -49,12 +49,12 @@ class BrandedProviderSpec:
     """Everything that distinguishes one OpenAI-/Anthropic-compatible provider app
     from another. The rest of the wiring is identical (see module docstring)."""
 
-    type: str                       # the provider TYPE this app registers (e.g. "groq")
-    protocol: str = "openai"        # "openai" | "anthropic" — which wire client to build
-    default_base_url: str = ""      # the provider's OpenAI-/Anthropic-compatible base URL
-    api_key_env: str = ""           # env var consulted when config carries no api_key
-    default_model: str = ""         # model when neither entry nor config pins one
-    max_tokens: int | None = None   # anthropic requires a max_tokens; openai leaves None
+    type: str  # the provider TYPE this app registers (e.g. "groq")
+    protocol: str = "openai"  # "openai" | "anthropic" — which wire client to build
+    default_base_url: str = ""  # the provider's OpenAI-/Anthropic-compatible base URL
+    api_key_env: str = ""  # env var consulted when config carries no api_key
+    default_model: str = ""  # model when neither entry nor config pins one
+    max_tokens: int | None = None  # anthropic requires a max_tokens; openai leaves None
     capabilities: frozenset[Capability] = field(default_factory=frozenset)
     fallback_models: tuple[dict[str, Any], ...] = ()  # catalog rows when discovery is unavailable
     notes: str = ""
@@ -78,18 +78,29 @@ def _resolve_credential(entry: ProviderEntry, kwargs: dict, *, label: str) -> Cr
     return cred
 
 
-def _build_provider(spec: BrandedProviderSpec, *, model: str, credential: Credential,
-                    base_url: str, extra_options: dict[str, object] | None = None) -> ModelProvider:
+def _build_provider(
+    spec: BrandedProviderSpec,
+    *,
+    model: str,
+    credential: Credential,
+    base_url: str,
+    extra_options: dict[str, object] | None = None,
+) -> ModelProvider:
     """Construct the protocol client for ``spec`` with a resolved credential + base_url."""
     if spec.protocol == "anthropic":
         return AnthropicProvider(
-            model=model, credential=credential, base_url=base_url or None,
+            model=model,
+            credential=credential,
+            base_url=base_url or None,
             max_tokens=spec.max_tokens if spec.max_tokens is not None else 4096,
             extra_options=extra_options,
         )
     return OpenAIProvider(
-        model=model, credential=credential, base_url=base_url or None,
-        max_tokens=spec.max_tokens, extra_options=extra_options,
+        model=model,
+        credential=credential,
+        base_url=base_url or None,
+        max_tokens=spec.max_tokens,
+        extra_options=extra_options,
     )
 
 
@@ -100,17 +111,28 @@ class BrandedCatalog(ModelCatalog):
     providers don't expose one). Anthropic-compatible providers have no models
     endpoint, so they always use the fallback list."""
 
-    def __init__(self, spec: BrandedProviderSpec, *, endpoint: str = "", api_key: str = "",
-                 default_model: str = "") -> None:
+    def __init__(
+        self,
+        spec: BrandedProviderSpec,
+        *,
+        endpoint: str = "",
+        api_key: str = "",
+        default_model: str = "",
+    ) -> None:
         self._spec = spec
         self._endpoint = endpoint or spec.default_base_url
-        self._api_key = api_key or (os.environ.get(spec.api_key_env, "") if spec.api_key_env else "")
+        self._api_key = api_key or (
+            os.environ.get(spec.api_key_env, "") if spec.api_key_env else ""
+        )
         self._default_model = default_model
 
     def _fallback(self) -> list[ModelInfo]:
         rows = [
-            ModelInfo(id=m["id"], name=m.get("name", m["id"]),
-                      capabilities=list(m.get("capabilities", infer_capabilities(m["id"]))))
+            ModelInfo(
+                id=m["id"],
+                name=m.get("name", m["id"]),
+                capabilities=list(m.get("capabilities", infer_capabilities(m["id"]))),
+            )
             for m in self._spec.fallback_models
         ]
         # A no-discovery provider (e.g. an Anthropic-compatible endpoint) has no
@@ -118,23 +140,32 @@ class BrandedCatalog(ModelCatalog):
         # model is the one the user configured on the instance. Surface it, else the
         # picker is empty and the configured provider can't be bound at all.
         if self._default_model and not any(r.id == self._default_model for r in rows):
-            rows.insert(0, ModelInfo(
-                id=self._default_model, name=self._default_model,
-                capabilities=list(self._spec.capabilities) or infer_capabilities(self._default_model),
-            ))
+            rows.insert(
+                0,
+                ModelInfo(
+                    id=self._default_model,
+                    name=self._default_model,
+                    capabilities=list(self._spec.capabilities)
+                    or infer_capabilities(self._default_model),
+                ),
+            )
         return rows
 
     async def list_models(self) -> list[ModelInfo]:
         if self._spec.protocol == "anthropic":
             return self._fallback()  # no models endpoint on the Anthropic wire
         live = await openai_compatible_list_models(
-            self._endpoint, self._api_key, default_base=self._spec.default_base_url,
+            self._endpoint,
+            self._api_key,
+            default_base=self._spec.default_base_url,
         )
         return live if live else self._fallback()
 
     async def test_connection(self) -> ConnectionResult:
         if not self._api_key:
-            return ConnectionResult(ok=False, detail=f"No API key configured (set it or {self._spec.api_key_env})")
+            return ConnectionResult(
+                ok=False, detail=f"No API key configured (set it or {self._spec.api_key_env})"
+            )
         # Anthropic-wire providers expose NO models-list endpoint, so a models
         # count can't prove connectivity (a bring-your-own-endpoint app has an empty
         # fallback list → the old code wrongly reported "No models available" for a
@@ -160,8 +191,9 @@ class BrandedCatalog(ModelCatalog):
 
             prov = AnthropicProvider(
                 model=model,
-                credential=Credential(name=self._spec.type, kind="api_key",
-                                      secret=self._api_key, source="file"),
+                credential=Credential(
+                    name=self._spec.type, kind="api_key", secret=self._api_key, source="file"
+                ),
                 base_url=self._endpoint or None,
                 max_tokens=1,
             )
@@ -170,12 +202,28 @@ class BrandedCatalog(ModelCatalog):
             return ConnectionResult(ok=True, detail="Connected (completion probe)")
         except Exception as exc:  # noqa: BLE001
             msg = str(exc).lower()
-            if any(s in msg for s in ("401", "403", "authentication", "invalid api key",
-                                      "unauthorized", "permission", "x-api-key")):
-                return ConnectionResult(ok=False, detail=f"Auth failed — check the API key ({str(exc)[:80]})")
+            if any(
+                s in msg
+                for s in (
+                    "401",
+                    "403",
+                    "authentication",
+                    "invalid api key",
+                    "unauthorized",
+                    "permission",
+                    "x-api-key",
+                )
+            ):
+                return ConnectionResult(
+                    ok=False, detail=f"Auth failed — check the API key ({str(exc)[:80]})"
+                )
             # A model-not-found / bad-request still proves the endpoint authenticated.
-            if any(s in msg for s in ("not_found", "model", "400", "invalid_request", "bad request")):
-                return ConnectionResult(ok=True, detail="Connected (key valid; verify the model id)")
+            if any(
+                s in msg for s in ("not_found", "model", "400", "invalid_request", "bad request")
+            ):
+                return ConnectionResult(
+                    ok=True, detail="Connected (key valid; verify the model id)"
+                )
             return ConnectionResult(ok=False, detail=f"Connection failed: {str(exc)[:100]}")
 
 
@@ -190,7 +238,9 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
     ``implementation: "provider:create_provider"`` resolves.
     """
 
-    def _factory(*, entry: ProviderEntry, session_key: str | None = None, **kwargs: object) -> ModelProvider:
+    def _factory(
+        *, entry: ProviderEntry, session_key: str | None = None, **kwargs: object
+    ) -> ModelProvider:
         del session_key  # these providers are stateless
         cred = _resolve_credential(entry, kwargs, label=spec.type)
         options = dict(entry.options or {})
@@ -231,15 +281,25 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
             eff_spec = BrandedProviderSpec(**{**spec.__dict__, "max_tokens": max_tokens_value})
         else:
             eff_spec = spec
-        return _build_provider(eff_spec, model=entry.model or spec.default_model,
-                               credential=cred or _anon_credential(spec),
-                               base_url=base_url, extra_options=options)
+        return _build_provider(
+            eff_spec,
+            model=entry.model or spec.default_model,
+            credential=cred or _anon_credential(spec),
+            base_url=base_url,
+            extra_options=options,
+        )
 
     def create_provider(config: dict[str, Any] | None = None) -> ModelProvider:
         cfg = dict(config or {})
-        api_key = str(cfg.get("api_key", "") or (os.environ.get(spec.api_key_env, "") if spec.api_key_env else ""))
-        cred = (Credential(name=spec.type, kind="api_key", secret=api_key, source="file")
-                if api_key else _anon_credential(spec))
+        api_key = str(
+            cfg.get("api_key", "")
+            or (os.environ.get(spec.api_key_env, "") if spec.api_key_env else "")
+        )
+        cred = (
+            Credential(name=spec.type, kind="api_key", secret=api_key, source="file")
+            if api_key
+            else _anon_credential(spec)
+        )
         base_url = str(cfg.get("endpoint") or cfg.get("base_url") or spec.default_base_url)
         model = str(cfg.get("model") or cfg.get("default_model") or spec.default_model)
         return _build_provider(spec, model=model, credential=cred, base_url=base_url)

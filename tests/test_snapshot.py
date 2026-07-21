@@ -1,4 +1,5 @@
 """Tests for personalclaw.snapshot — snapshot and restore."""
+
 import argparse
 import json
 import os
@@ -21,8 +22,12 @@ def _no_gateway(monkeypatch):
 
 def _setup_fake_personalclaw(d: Path) -> None:
     """Create a realistic fake ~/.personalclaw directory."""
-    for sub in ("workspace/memory/history", "workspace/hygiene_data",
-                "skills/my-skill", "plan_memory"):
+    for sub in (
+        "workspace/memory/history",
+        "workspace/hygiene_data",
+        "skills/my-skill",
+        "plan_memory",
+    ):
         (d / sub).mkdir(parents=True, exist_ok=True)
 
     # memory.db with all tables
@@ -62,11 +67,21 @@ def _setup_fake_personalclaw(d: Path) -> None:
     """)
     conn.close()
 
-    (d / "crons.json").write_text(json.dumps({
-        "version": 2,
-        "jobs": [{"id": "abc123", "name": "test-job", "message": "hello",
-                  "cron_expr": "0 9 * * *"}]
-    }))
+    (d / "crons.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "jobs": [
+                    {
+                        "id": "abc123",
+                        "name": "test-job",
+                        "message": "hello",
+                        "cron_expr": "0 9 * * *",
+                    }
+                ],
+            }
+        )
+    )
     (d / "config.json").write_text('{"agent": {"model": "test"}}')
     (d / "session_map.json").write_text("{}")
     (d / "hooks.json").write_text("{}")
@@ -86,8 +101,9 @@ def _make_snapshot(src: Path, out: Path, extra_args: list[str] | None = None) ->
     """Create a snapshot and return the tarball path. Caller must set PERSONALCLAW_HOME."""
     args = [str(out)] + (extra_args or [])
     snapshot_main(args)
-    tarballs = sorted(out.glob("personalclaw-snapshot-*.tar.gz"),
-                      key=lambda p: p.stat().st_mtime, reverse=True)
+    tarballs = sorted(
+        out.glob("personalclaw-snapshot-*.tar.gz"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
     assert tarballs, "No tarball created"
     return tarballs[0]
 
@@ -104,6 +120,7 @@ def env(tmp_path, monkeypatch):
 
 
 # ── Snapshot Tests ────────────────────────────────────────────────────────────
+
 
 class TestSnapshot:
     def test_creates_valid_tarball(self, env):
@@ -146,8 +163,14 @@ class TestSnapshot:
         with tarfile.open(str(tarball)) as tar:
             tar.extractall(extract, filter=lambda t, _d="": t)
         snap = next(d for d in extract.iterdir() if d.name.startswith("personalclaw-snapshot-"))
-        for f in ("sel_hmac.key", "telemetry_salt", "notifications.jsonl",
-                  "project_dir", "workspace_dir", "plan_memory/plan1.json"):
+        for f in (
+            "sel_hmac.key",
+            "telemetry_salt",
+            "notifications.jsonl",
+            "project_dir",
+            "workspace_dir",
+            "plan_memory/plan1.json",
+        ):
             assert (snap / f).is_file(), f"{f} missing"
 
     def test_keep_prunes(self, env, monkeypatch):
@@ -182,6 +205,7 @@ class TestSnapshot:
 
 
 # ── Restore Tests ─────────────────────────────────────────────────────────────
+
 
 class TestRestoreDryRun:
     def test_dry_run(self, env, capsys, monkeypatch):
@@ -225,8 +249,9 @@ class TestRestoreReplace:
         (existing / "workspace/original.md").write_text("original")
         monkeypatch.setenv("PERSONALCLAW_HOME", str(existing))
         restore_main([str(tarball), "--mode", "replace"])
-        backups = [d for d in existing.iterdir()
-                   if d.is_dir() and d.name.startswith("pre-restore-")]
+        backups = [
+            d for d in existing.iterdir() if d.is_dir() and d.name.startswith("pre-restore-")
+        ]
         assert backups
         assert (backups[0] / "memory.db").is_file()
         assert (backups[0] / "sel_hmac.key").is_file()
@@ -241,8 +266,9 @@ class TestRestoreReplace:
         (existing / "workspace/local_only.md").write_text("local-only-file")
         monkeypatch.setenv("PERSONALCLAW_HOME", str(existing))
         restore_main([str(tarball), "--mode", "replace"])
-        backups = [d for d in existing.iterdir()
-                   if d.is_dir() and d.name.startswith("pre-restore-")]
+        backups = [
+            d for d in existing.iterdir() if d.is_dir() and d.name.startswith("pre-restore-")
+        ]
         assert backups
         assert (backups[0] / "workspace/local_only.md").is_file()
 
@@ -254,11 +280,14 @@ class TestRestoreMerge:
         dst = tmp_path / "dst7"
         _setup_fake_personalclaw(dst)
         conn = sqlite3.connect(str(dst / "memory.db"))
-        conn.execute("INSERT INTO semantic_memory (key, value_json, confidence, source, "
-                     "created_at, updated_at) VALUES ('dst.only', '\"local\"', 0.9, "
-                     "'test', '2026-02-01', '2026-02-01')")
-        conn.execute("UPDATE semantic_memory SET value_json='\"modified\"' "
-                     "WHERE key='test.key1'")
+        conn.execute(
+            "INSERT INTO semantic_memory (key, value_json, confidence, source, "
+            "created_at, updated_at) VALUES ('dst.only', '\"local\"', 0.9, "
+            "'test', '2026-02-01', '2026-02-01')"
+        )
+        conn.execute(
+            "UPDATE semantic_memory SET value_json='\"modified\"' " "WHERE key='test.key1'"
+        )
         conn.commit()
         conn.close()
         monkeypatch.setenv("PERSONALCLAW_HOME", str(dst))
@@ -266,12 +295,12 @@ class TestRestoreMerge:
         assert ret == 0
         conn = sqlite3.connect(str(dst / "memory.db"))
         val = conn.execute(
-            "SELECT value_json FROM semantic_memory "
-            "WHERE key='dst.only'").fetchone()[0]
+            "SELECT value_json FROM semantic_memory " "WHERE key='dst.only'"
+        ).fetchone()[0]
         assert val == '"local"'
         val = conn.execute(
-            "SELECT value_json FROM semantic_memory "
-            "WHERE key='test.key1'").fetchone()[0]
+            "SELECT value_json FROM semantic_memory " "WHERE key='test.key1'"
+        ).fetchone()[0]
         assert val == '"modified"'
         conn.close()
 
@@ -317,8 +346,10 @@ class TestRestoreMerge:
         dst = tmp_path / "dst12"
         _setup_fake_personalclaw(dst)
         conn = sqlite3.connect(str(dst / "memory.db"))
-        conn.execute("INSERT INTO episodic_memories (id, text, created_at) "
-                     "VALUES ('ep_local', 'local episode', '2026-02-01')")
+        conn.execute(
+            "INSERT INTO episodic_memories (id, text, created_at) "
+            "VALUES ('ep_local', 'local episode', '2026-02-01')"
+        )
         conn.commit()
         conn.close()
         monkeypatch.setenv("PERSONALCLAW_HOME", str(dst))
@@ -435,8 +466,7 @@ class TestComponents:
         """TEST 18"""
         restore_main(["--list-components"])
         out = capsys.readouterr().out
-        for c in ("memory", "crons", "config", "skills", "workspace",
-                  "notifications", "security"):
+        for c in ("memory", "crons", "config", "skills", "workspace", "notifications", "security"):
             assert c in out
 
     def test_memory_only(self, env, monkeypatch):
@@ -660,8 +690,12 @@ class TestParsedNamespace:
         fresh.mkdir()
         monkeypatch.setenv("PERSONALCLAW_HOME", str(fresh))
         ns = argparse.Namespace(
-            snapshot=str(tarball), mode="replace", dry_run=False,
-            components=None, list_components=False, force=True,
+            snapshot=str(tarball),
+            mode="replace",
+            dry_run=False,
+            components=None,
+            list_components=False,
+            force=True,
         )
         ret = restore_main(parsed=ns)
         assert ret == 0
@@ -763,6 +797,7 @@ class TestConcurrentSnapshot:
         snapshot_main([str(out)])
         # Ensure different timestamp by creating a second one
         import time
+
         time.sleep(1.1)
         snapshot_main([str(out)])
         tarballs = list(out.glob("personalclaw-snapshot-*.tar.gz"))

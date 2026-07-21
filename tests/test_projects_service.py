@@ -62,7 +62,8 @@ def test_maybe_rename_updates_auto_named_project(cfg):
 def test_maybe_rename_skips_locked_and_default_and_blank(cfg):
     store = HierarchyStore()
     # locked (user-renamed) is untouched
-    p = store.create_project("Mine"); store.update_project(p.id, name_locked=True)
+    p = store.create_project("Mine")
+    store.update_project(p.id, name_locked=True)
     svc.maybe_rename_from(p.id, "LLM Title")
     assert store.get_project(p.id).name == "Mine"
     # default catch-all is untouched
@@ -85,6 +86,7 @@ def test_maybe_rename_dedupes_on_collision(cfg):
 
 def test_context_dir_path_created_and_guards(cfg):
     from pathlib import Path
+
     p = HierarchyStore().create_project("Ctx")
     cd = svc.context_dir(p.id)
     assert cd.endswith(f"/projects/{p.id}/context") and Path(cd).is_dir()

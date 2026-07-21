@@ -87,7 +87,9 @@ def test_legacy_hooks_key_migrates_to_triggers(tmp_path, monkeypatch):
 
     cfg_path = config_dir() / "config.json"
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg_path.write_text(json.dumps({"agents": {"coder": {"hooks": ["legacy-a"]}}}), encoding="utf-8")
+    cfg_path.write_text(
+        json.dumps({"agents": {"coder": {"hooks": ["legacy-a"]}}}), encoding="utf-8"
+    )
 
     reloaded = AppConfig.load()
     assert reloaded.agents["coder"].triggers == ["legacy-a"]

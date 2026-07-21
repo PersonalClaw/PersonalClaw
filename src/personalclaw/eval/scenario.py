@@ -87,9 +87,7 @@ def _load_yaml(text: str) -> Any:
     try:
         import yaml as _yaml  # type: ignore[import-untyped]
     except ImportError as exc:
-        raise ImportError(
-            "PyYAML is required for YAML scenarios: pip install PyYAML"
-        ) from exc
+        raise ImportError("PyYAML is required for YAML scenarios: pip install PyYAML") from exc
     return _yaml.safe_load(text)
 
 
@@ -109,11 +107,7 @@ def load_scenarios(path: str | Path) -> list[Scenario]:
     p = Path(path)
     if p.is_file():
         return [load_scenario(p)]
-    return [
-        load_scenario(f)
-        for f in sorted(p.iterdir())
-        if f.suffix in (".yaml", ".yml", ".json")
-    ]
+    return [load_scenario(f) for f in sorted(p.iterdir()) if f.suffix in (".yaml", ".yml", ".json")]
 
 
 def _parse_scenario(data: dict[str, Any]) -> Scenario:

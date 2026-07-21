@@ -41,6 +41,6 @@ def test_acp_agent_entry_builds_via_registry():
     with patch("personalclaw.llm.registry.get_default_registry", return_value=registry):
         result = pb._resolve_from_config_registry("chat", session_key="s", agent="A")
 
-    assert result is built                       # built via the registry path
-    registry.build.assert_called_once()          # registry factory used
+    assert result is built  # built via the registry path
+    registry.build.assert_called_once()  # registry factory used
     assert registry.build.call_args.args[0] == "acp:claude-code"

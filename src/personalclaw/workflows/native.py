@@ -148,7 +148,9 @@ def parse_steps(body: str) -> list[WorkflowStep]:
             detail = re.sub(r"^Detail:\s*", "", detail, flags=re.IGNORECASE)
             if detail:
                 prev = steps[-1]
-                prev.instruction = (prev.instruction + " " + detail).strip() if prev.instruction else detail
+                prev.instruction = (
+                    (prev.instruction + " " + detail).strip() if prev.instruction else detail
+                )
     return steps
 
 
@@ -380,7 +382,12 @@ class NativeWorkflowProvider(WorkflowProvider):
             except ValueError:
                 scope = WorkflowScope.GLOBAL
             steps = [
-                WorkflowStep(id=f"s{i + 1}", title=s.get("title", ""), instruction=s.get("instruction", ""), ref=s.get("ref", ""))
+                WorkflowStep(
+                    id=f"s{i + 1}",
+                    title=s.get("title", ""),
+                    instruction=s.get("instruction", ""),
+                    ref=s.get("ref", ""),
+                )
                 for i, s in enumerate(fields.get("steps", []))
                 if s.get("title") or s.get("ref")
             ]
@@ -420,7 +427,12 @@ class NativeWorkflowProvider(WorkflowProvider):
                         pass
                 elif key == "steps":
                     wf.steps = [
-                        WorkflowStep(id=f"s{i + 1}", title=s.get("title", ""), instruction=s.get("instruction", ""), ref=s.get("ref", ""))
+                        WorkflowStep(
+                            id=f"s{i + 1}",
+                            title=s.get("title", ""),
+                            instruction=s.get("instruction", ""),
+                            ref=s.get("ref", ""),
+                        )
                         for i, s in enumerate(val)
                         if s.get("title") or s.get("ref")
                     ]
@@ -429,7 +441,12 @@ class NativeWorkflowProvider(WorkflowProvider):
                     if new_name and new_name != wf.name and _NAME_RE.match(new_name):
                         wf.name = new_name
                         renamed = True
-                elif hasattr(wf, key) and key not in ("id", "provider", "created_at", "match_embedding"):
+                elif hasattr(wf, key) and key not in (
+                    "id",
+                    "provider",
+                    "created_at",
+                    "match_embedding",
+                ):
                     setattr(wf, key, val)
             wf.updated_at = _now_iso()
             # On rename the directory changes; remove the old one after writing.

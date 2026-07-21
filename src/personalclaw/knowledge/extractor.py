@@ -1,4 +1,5 @@
 """Entity extraction using the LLM pool."""
+
 import json
 import re
 from typing import TYPE_CHECKING
@@ -6,12 +7,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from personalclaw.knowledge.llm_pool import LLMPool
 
+
 def _extraction_prompt(chunk: str) -> str:
     """Render the entity-extraction prompt (bundled ``task-knowledge-extraction``,
     bindable in Settings → Prompts) for a text chunk."""
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
     return render_use_case_prompt("knowledge_extraction", {"chunk": chunk}) or ""
+
 
 EXTRACTION_TIMEOUT = 180.0
 
@@ -64,7 +67,7 @@ class EntityExtractor:
                     return self._validate(data)
                 except (json.JSONDecodeError, ValueError):
                     pass
-        m = re.search(r'\{[\s\S]*\}', response)
+        m = re.search(r"\{[\s\S]*\}", response)
         if m:
             try:
                 data = json.loads(m.group())
@@ -75,7 +78,7 @@ class EntityExtractor:
 
     @staticmethod
     def _extract_code_block(response: str) -> str | None:
-        m = re.search(r'```(?:json)?\s*\n?([\s\S]*?)```', response)
+        m = re.search(r"```(?:json)?\s*\n?([\s\S]*?)```", response)
         return m.group(1).strip() if m else None
 
     @staticmethod
@@ -105,7 +108,11 @@ class EntityExtractor:
         if not isinstance(raw, list):
             return out
         for r in raw:
-            if isinstance(r, dict) and str(r.get("source") or "").strip() and str(r.get("target") or "").strip():
+            if (
+                isinstance(r, dict)
+                and str(r.get("source") or "").strip()
+                and str(r.get("target") or "").strip()
+            ):
                 out.append(r)
         return out
 

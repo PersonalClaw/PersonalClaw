@@ -39,23 +39,25 @@ ALLOWED_SCHEDULE_KINDS = frozenset({"every", "cron", "at"})
 # (SessionStart, AgentSpawn, UserPromptSubmit, PreToolUse, PostToolUse, Stop, Error);
 # the rest are reserved for future firing sites and currently never trigger
 # but are valid to register.
-ALLOWED_HOOK_EVENTS = frozenset({
-    "AgentSpawn",
-    "SessionStart",
-    "UserPromptSubmit",
-    "PreToolUse",
-    "PostToolUse",
-    "PreResponse",
-    "PostResponse",
-    "MemoryWrite",
-    "ContextCompact",
-    "SubagentSpawn",
-    "TaskComplete",
-    "ApprovalRequest",
-    "Error",
-    "SessionEnd",
-    "Stop",
-})
+ALLOWED_HOOK_EVENTS = frozenset(
+    {
+        "AgentSpawn",
+        "SessionStart",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "PreResponse",
+        "PostResponse",
+        "MemoryWrite",
+        "ContextCompact",
+        "SubagentSpawn",
+        "TaskComplete",
+        "ApprovalRequest",
+        "Error",
+        "SessionEnd",
+        "Stop",
+    }
+)
 
 # Valid agent name pattern (alphanumeric, hyphens, underscores)
 _AGENT_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}[a-zA-Z0-9]$|^[a-zA-Z0-9]$")
@@ -119,7 +121,7 @@ class FieldSpec:
     allowed: frozenset[str] | None = None  # enum allow-list
     pattern: re.Pattern[str] | None = None  # regex pattern
     default: Any = None
-    item_type: type | None = None  # type: ignore[valid-type]  # for list fields: expected type of each element
+    item_type: type | None = None  # type: ignore[valid-type]  # for list fields: expected type of each element  # noqa: E501
     item_max_len: int = 0  # for list fields: max length of each string element
     item_pattern: re.Pattern[str] | None = None  # for list fields: regex for each string element
     max_items: int = 0  # for list fields: max number of items (0 = no limit)
@@ -380,7 +382,9 @@ AUTONUDGE_STOP_SCHEMA = ToolSchema(
 
 # Derive from the artifact model's own ALLOWED_KINDS so the tool validator can never
 # drift from what the store actually accepts (artifacts.models is stdlib-only — no cycle).
-from personalclaw.artifacts.models import ALLOWED_KINDS as _ARTIFACT_KINDS
+from personalclaw.artifacts.models import ALLOWED_KINDS as _ALLOWED_KINDS  # noqa: E402
+
+_ARTIFACT_KINDS = frozenset(_ALLOWED_KINDS)
 
 ARTIFACT_SAVE_SCHEMA = ToolSchema(
     tool_name="artifact_save",
@@ -517,7 +521,14 @@ SCHEDULE_ADD_SCHEMA = ToolSchema(
         FieldSpec("channel", str, max_len=CHANNEL_MAX_LEN, pattern=CHANNEL_ID_RE),
         FieldSpec("thread_ts", str, max_len=30, pattern=_MESSAGE_TS_RE),
         FieldSpec("approval_mode", str, max_len=10, pattern=re.compile(r"^(auto)?$")),
-        FieldSpec("skip_dates", list, item_type=str, item_max_len=10, max_items=366, item_pattern=re.compile(r"^\d{4}-\d{2}-\d{2}$")),
+        FieldSpec(
+            "skip_dates",
+            list,
+            item_type=str,
+            item_max_len=10,
+            max_items=366,
+            item_pattern=re.compile(r"^\d{4}-\d{2}-\d{2}$"),
+        ),
         FieldSpec("timezone", str, max_len=50, pattern=re.compile(r"^[A-Za-z0-9_/+-]+$")),
         FieldSpec("persistent_session", bool),
         FieldSpec("strict_schedule", bool),
@@ -558,8 +569,15 @@ CRON_RESUME_SCHEMA = ToolSchema(
 # the lifecycle-trigger create path rejects them even though the UI offers them.
 ALLOWED_HOOK_PROVIDERS = frozenset(
     {
-        "bash", "webhook", "run-script", "notify", "send-message",
-        "create-task", "invoke-agent", "run-prompt", "run-workflow",
+        "bash",
+        "webhook",
+        "run-script",
+        "notify",
+        "send-message",
+        "create-task",
+        "invoke-agent",
+        "run-prompt",
+        "run-workflow",
     }
 )
 
@@ -622,8 +640,15 @@ SEND_MESSAGE_SCHEMA = ToolSchema(
         FieldSpec("unfurl_media", bool),
         FieldSpec("thread_ts", str, max_len=30, pattern=_MESSAGE_TS_RE),
         FieldSpec("reply_broadcast", bool),
-        FieldSpec("session", str, max_len=MAX_SHORT_STRING, pattern=re.compile(r"^(origin|channel)$")),
-        FieldSpec("caller_session", str, max_len=MAX_SHORT_STRING, pattern=re.compile(r"^(cron:[a-zA-Z0-9]+)?$")),
+        FieldSpec(
+            "session", str, max_len=MAX_SHORT_STRING, pattern=re.compile(r"^(origin|channel)$")
+        ),
+        FieldSpec(
+            "caller_session",
+            str,
+            max_len=MAX_SHORT_STRING,
+            pattern=re.compile(r"^(cron:[a-zA-Z0-9]+)?$"),
+        ),
     ],
 )
 
@@ -706,7 +731,14 @@ MCP_SCHEDULE_SCHEMAS: dict[str, ToolSchema] = {
             FieldSpec("approval_mode", str, max_len=10, pattern=re.compile(r"^(auto)?$")),
             FieldSpec("silent", bool),
             FieldSpec("strict_schedule", bool),
-            FieldSpec("skip_dates", list, item_type=str, item_max_len=10, max_items=366, item_pattern=re.compile(r"^\d{4}-\d{2}-\d{2}$")),
+            FieldSpec(
+                "skip_dates",
+                list,
+                item_type=str,
+                item_max_len=10,
+                max_items=366,
+                item_pattern=re.compile(r"^\d{4}-\d{2}-\d{2}$"),
+            ),
             FieldSpec("timezone", str, max_len=50, pattern=re.compile(r"^[A-Za-z0-9_/+-]+$")),
             FieldSpec("script", str, max_len=MAX_SHORT_STRING),
             FieldSpec("command", str, max_len=MAX_MEDIUM_STRING),

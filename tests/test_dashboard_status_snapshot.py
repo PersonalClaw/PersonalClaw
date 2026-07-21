@@ -47,9 +47,17 @@ class TestStatusSnapshot:
         """Any field added to status_snapshot is automatically in SSE/WS/API."""
         snap = state.status_snapshot()
         # These keys must exist — if one is missing, a caller will lose it
-        required = {"uptime", "start_time", "sessions", "messages",
-                    "cron_jobs", "lessons", "subagents", "update_available",
-                    "no_crons"}
+        required = {
+            "uptime",
+            "start_time",
+            "sessions",
+            "messages",
+            "cron_jobs",
+            "lessons",
+            "subagents",
+            "update_available",
+            "no_crons",
+        }
         assert required.issubset(snap.keys())
 
     def test_update_available_passthrough(self, state: DashboardState) -> None:
@@ -67,6 +75,7 @@ class TestAllStatusSnapshotCallersPassUpdateAvailable:
         import inspect
 
         from personalclaw.dashboard import ws
+
         source = inspect.getsource(ws)
         assert "status_snapshot" not in source
         assert "_push_status" not in source
@@ -79,5 +88,6 @@ class TestAllStatusSnapshotCallersPassUpdateAvailable:
         import inspect
 
         from personalclaw.dashboard import handlers_system
+
         source = inspect.getsource(handlers_system)
         assert "update_available=" in source

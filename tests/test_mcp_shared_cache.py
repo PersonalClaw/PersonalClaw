@@ -46,11 +46,13 @@ def fake_sel():
 
 # Helpers ──────────────────────────────────────────────────────────────
 
+
 def _make_http_response(payload: dict) -> MagicMock:
     body = MagicMock()
     body.read.return_value = b'{"exclude": ["bad-tool"]}'
     if payload is not None:
         import json
+
         body.read.return_value = json.dumps(payload).encode("utf-8")
     body.__enter__ = MagicMock(return_value=body)
     body.__exit__ = MagicMock(return_value=False)
@@ -85,6 +87,7 @@ def patch_session_setup(monkeypatch, tmp_path):
 # Successful resolution path.
 # ─────────────────────────────────────────────────────────────────────
 
+
 class TestSuccessCaching:
     def test_first_call_queries_gateway_then_caches(
         self, fake_sel, patch_session_setup, monkeypatch
@@ -107,13 +110,9 @@ class TestSuccessCaching:
         with patch.object(mcp_shared.urllib.request, "urlopen", urlopen):
             assert mcp_shared._resolve_excluded_tools() == set()
 
-    def test_filters_non_string_entries(
-        self, fake_sel, patch_session_setup, monkeypatch
-    ):
+    def test_filters_non_string_entries(self, fake_sel, patch_session_setup, monkeypatch):
         monkeypatch.setenv("PERSONALCLAW_SESSION_KEY", "subagent:abc")
-        urlopen = MagicMock(
-            return_value=_make_http_response({"exclude": ["foo", 42, None, "bar"]})
-        )
+        urlopen = MagicMock(return_value=_make_http_response({"exclude": ["foo", 42, None, "bar"]}))
         with patch.object(mcp_shared.urllib.request, "urlopen", urlopen):
             assert mcp_shared._resolve_excluded_tools() == {"foo", "bar"}
 
@@ -122,10 +121,9 @@ class TestSuccessCaching:
 # Startup-race short cache (no session key, 404).
 # ─────────────────────────────────────────────────────────────────────
 
+
 class TestShortCacheStartupRace:
-    def test_no_session_key_uses_short_cache(
-        self, fake_sel, patch_session_setup, monkeypatch
-    ):
+    def test_no_session_key_uses_short_cache(self, fake_sel, patch_session_setup, monkeypatch):
         monkeypatch.delenv("PERSONALCLAW_SESSION_KEY", raising=False)
         # No session_pid file in cfg_dir → resolver can't find a key.
         # urlopen should never be called.
@@ -140,9 +138,7 @@ class TestShortCacheStartupRace:
         assert mcp_shared._last_startup_race_time > 0
         assert mcp_shared._last_failure_time == 0.0
 
-    def test_404_response_uses_short_cache(
-        self, fake_sel, patch_session_setup, monkeypatch
-    ):
+    def test_404_response_uses_short_cache(self, fake_sel, patch_session_setup, monkeypatch):
         monkeypatch.setenv("PERSONALCLAW_SESSION_KEY", "subagent:abc")
         urlopen = MagicMock(side_effect=_make_http_error(404))
         with patch.object(mcp_shared.urllib.request, "urlopen", urlopen):
@@ -152,9 +148,7 @@ class TestShortCacheStartupRace:
         assert mcp_shared._last_startup_race_time > 0
         assert mcp_shared._last_failure_time == 0.0
 
-    def test_short_cache_window_short_circuits(
-        self, fake_sel, patch_session_setup, monkeypatch
-    ):
+    def test_short_cache_window_short_circuits(self, fake_sel, patch_session_setup, monkeypatch):
         # Trip the short cache, then ensure the next call doesn't re-query.
         monkeypatch.setenv("PERSONALCLAW_SESSION_KEY", "subagent:abc")
         urlopen = MagicMock(side_effect=_make_http_error(404))
@@ -169,9 +163,7 @@ class TestShortCacheStartupRace:
         ops = [c.kwargs.get("operation") for c in fake_sel.log_api_access.call_args_list]
         assert "tool_policy.negative_cache_hit" in ops
 
-    def test_short_cache_expires_after_ttl(
-        self, fake_sel, patch_session_setup, monkeypatch
-    ):
+    def test_short_cache_expires_after_ttl(self, fake_sel, patch_session_setup, monkeypatch):
         # Simulate the short TTL expiry by advancing monotonic.
         monkeypatch.setenv("PERSONALCLAW_SESSION_KEY", "subagent:abc")
         urlopen = MagicMock(side_effect=_make_http_error(404))
@@ -195,6 +187,7 @@ class TestShortCacheStartupRace:
 # ─────────────────────────────────────────────────────────────────────
 # Long failure cache.
 # ─────────────────────────────────────────────────────────────────────
+
 
 class TestLongCacheFailures:
     def test_500_uses_long_cache(self, fake_sel, patch_session_setup, monkeypatch):
@@ -233,6 +226,7 @@ class TestLongCacheFailures:
 # Warning suppression.
 # ─────────────────────────────────────────────────────────────────────
 
+
 class TestWarningSuppression:
     def _drive_failures(self, fake_sel, patch_session_setup, monkeypatch, n: int):
         """Trigger *n* sequential long-cache failures by busting the cache
@@ -246,15 +240,11 @@ class TestWarningSuppression:
             with patch.object(mcp_shared.urllib.request, "urlopen", urlopen):
                 mcp_shared._resolve_excluded_tools()
 
-    def test_first_failures_emit_warnings(
-        self, caplog, fake_sel, patch_session_setup, monkeypatch
-    ):
+    def test_first_failures_emit_warnings(self, caplog, fake_sel, patch_session_setup, monkeypatch):
         caplog.set_level(logging.WARNING, logger="personalclaw.mcp_shared")
         self._drive_failures(fake_sel, patch_session_setup, monkeypatch, n=2)
         warning_messages = [r.getMessage() for r in caplog.records]
-        warn_count = sum(
-            1 for m in warning_messages if "Tool policy resolution failed" in m
-        )
+        warn_count = sum(1 for m in warning_messages if "Tool policy resolution failed" in m)
         assert warn_count == 2
 
     def test_warning_after_threshold_is_suppressed_with_notice(
@@ -266,23 +256,15 @@ class TestWarningSuppression:
         self._drive_failures(fake_sel, patch_session_setup, monkeypatch, n=3)
         msgs = [r.getMessage() for r in caplog.records]
         full_warns = sum(1 for m in msgs if "Tool policy resolution failed" in m)
-        suppressed_notice = sum(
-            1 for m in msgs if "further warnings suppressed" in m
-        )
+        suppressed_notice = sum(1 for m in msgs if "further warnings suppressed" in m)
         assert full_warns == 2
         assert suppressed_notice == 1
 
-    def test_subsequent_failures_silent(
-        self, caplog, fake_sel, patch_session_setup, monkeypatch
-    ):
+    def test_subsequent_failures_silent(self, caplog, fake_sel, patch_session_setup, monkeypatch):
         caplog.set_level(logging.WARNING, logger="personalclaw.mcp_shared")
         # 5 failures total — only 3 log lines (2 warnings + 1 suppression notice).
         self._drive_failures(fake_sel, patch_session_setup, monkeypatch, n=5)
-        msgs = [
-            r.getMessage()
-            for r in caplog.records
-            if r.name == "personalclaw.mcp_shared"
-        ]
+        msgs = [r.getMessage() for r in caplog.records if r.name == "personalclaw.mcp_shared"]
         assert len(msgs) == 3
 
 
@@ -290,10 +272,9 @@ class TestWarningSuppression:
 # Cross-cache interaction.
 # ─────────────────────────────────────────────────────────────────────
 
+
 class TestCachesAreIndependent:
-    def test_short_cache_hit_alone_short_circuits(
-        self, fake_sel, patch_session_setup, monkeypatch
-    ):
+    def test_short_cache_hit_alone_short_circuits(self, fake_sel, patch_session_setup, monkeypatch):
         # Set the env var so the resolver would otherwise reach urlopen —
         # the cache short-circuit at the top is the ONLY thing preventing
         # the call, which is exactly what this test asserts.
@@ -306,9 +287,7 @@ class TestCachesAreIndependent:
             assert mcp_shared._resolve_excluded_tools() == set()
         assert urlopen.call_count == 0
 
-    def test_long_cache_hit_alone_short_circuits(
-        self, fake_sel, patch_session_setup, monkeypatch
-    ):
+    def test_long_cache_hit_alone_short_circuits(self, fake_sel, patch_session_setup, monkeypatch):
         # See ``test_short_cache_hit_alone_short_circuits`` rationale — set
         # the session key so urlopen would be reachable absent the cache.
         monkeypatch.setenv("PERSONALCLAW_SESSION_KEY", "subagent:abc")
@@ -319,9 +298,7 @@ class TestCachesAreIndependent:
             assert mcp_shared._resolve_excluded_tools() == set()
         assert urlopen.call_count == 0
 
-    def test_neither_cache_hit_does_query(
-        self, fake_sel, patch_session_setup, monkeypatch
-    ):
+    def test_neither_cache_hit_does_query(self, fake_sel, patch_session_setup, monkeypatch):
         # Both caches expired (or never set) → resolver MUST query.
         monkeypatch.setenv("PERSONALCLAW_SESSION_KEY", "subagent:abc")
         urlopen = MagicMock(return_value=_make_http_response({"exclude": []}))

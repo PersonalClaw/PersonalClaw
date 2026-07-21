@@ -41,6 +41,7 @@ class TestReaperUsesActiveSessionKey:
         svc._sessions = mock_sessions
 
         import asyncio
+
         asyncio.run(svc._force_reap(job.id, elapsed=1801.0))
 
         # reset must have been called with the ephemeral key, NOT f"cron:{job.id}".
@@ -61,6 +62,7 @@ class TestReaperUsesActiveSessionKey:
         svc._sessions = mock_sessions
 
         import asyncio
+
         asyncio.run(svc._force_reap(job.id, elapsed=1801.0))
 
         assert mock_sessions.reset.await_count == 1
@@ -80,6 +82,7 @@ class TestReaperUsesActiveSessionKey:
         svc._sessions = mock_sessions
 
         import asyncio
+
         asyncio.run(svc._force_reap(job.id, elapsed=1801.0))
 
         called_key = mock_sessions.reset.await_args.args[0]
@@ -128,9 +131,7 @@ class TestCronCallbackDeferredResetPreservesActiveKey:
         src = inspect.getsource(gateway)
         # The buggy pattern was an indentation-dedented clear right after
         # the if/else block. Pin that it is not present anymore.
-        buggy_pattern = (
-            '                # clear the active-session registration either way.'
-        )
+        buggy_pattern = "                # clear the active-session registration either way."
         assert buggy_pattern not in src, (
             "Unconditional clear_active_session_key removed — it must only run "
             "on the non-deferred branch (else: after sessions.reset)."

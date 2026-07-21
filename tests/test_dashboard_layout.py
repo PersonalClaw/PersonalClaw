@@ -4,6 +4,7 @@
 accept a valid layout, coerce/clamp numeric fields to the 12-col grid, drop
 unknown/duplicate widget ids, treat empty as reset, and reject malformed shapes
 (→ 400 at the handler)."""
+
 from personalclaw.dashboard.handlers.files import _sanitize_dashboard_layout
 
 
@@ -39,25 +40,34 @@ class TestSanitizeDashboardLayout:
 
     def test_drops_unknown_widget_ids(self) -> None:
         out = _sanitize_dashboard_layout(
-            {"widgets": [
-                {"id": "hero", "x": 0, "y": 0, "w": 12, "h": 1},
-                {"id": "totally-not-a-widget", "x": 0, "y": 1, "w": 4, "h": 2},
-            ]}
+            {
+                "widgets": [
+                    {"id": "hero", "x": 0, "y": 0, "w": 12, "h": 1},
+                    {"id": "totally-not-a-widget", "x": 0, "y": 1, "w": 4, "h": 2},
+                ]
+            }
         )
         assert [w["id"] for w in out["widgets"]] == ["hero"]
 
     def test_drops_duplicate_ids(self) -> None:
         out = _sanitize_dashboard_layout(
-            {"widgets": [
-                {"id": "hero", "x": 0, "y": 0, "w": 12, "h": 1},
-                {"id": "hero", "x": 0, "y": 2, "w": 6, "h": 1},
-            ]}
+            {
+                "widgets": [
+                    {"id": "hero", "x": 0, "y": 0, "w": 12, "h": 1},
+                    {"id": "hero", "x": 0, "y": 2, "w": 6, "h": 1},
+                ]
+            }
         )
         assert len(out["widgets"]) == 1
 
     def test_all_unknown_collapses_to_reset(self) -> None:
         # A layout whose every id is unknown yields no widgets → treated as reset.
-        assert _sanitize_dashboard_layout({"widgets": [{"id": "nope", "x": 0, "y": 0, "w": 4, "h": 2}]}) == {}
+        assert (
+            _sanitize_dashboard_layout(
+                {"widgets": [{"id": "nope", "x": 0, "y": 0, "w": 4, "h": 2}]}
+            )
+            == {}
+        )
 
     def test_rejects_non_dict(self) -> None:
         assert _sanitize_dashboard_layout("not-a-dict") is None
@@ -68,6 +78,9 @@ class TestSanitizeDashboardLayout:
         assert _sanitize_dashboard_layout({"widgets": ["not-a-dict"]}) is None
 
     def test_rejects_non_numeric_coords(self) -> None:
-        assert _sanitize_dashboard_layout(
-            {"widgets": [{"id": "hero", "x": "abc", "y": 0, "w": 12, "h": 1}]}
-        ) is None
+        assert (
+            _sanitize_dashboard_layout(
+                {"widgets": [{"id": "hero", "x": "abc", "y": 0, "w": 12, "h": 1}]}
+            )
+            is None
+        )

@@ -4,7 +4,7 @@ Commands:
     personalclaw chat -m "message"    Send a single message
     personalclaw chat                 Interactive chat mode
     personalclaw gateway              Start the PersonalClaw server (dashboard + channels)
-    personalclaw gateway --seed NAME  Populate $PERSONALCLAW_HOME from fixture NAME, then start the gateway
+    personalclaw gateway --seed NAME  Populate $PERSONALCLAW_HOME from a fixture, then start
     personalclaw status               Show runtime stats
     personalclaw update               Update PersonalClaw via git fetch + rebuild
     personalclaw cron list|add|remove Manage scheduled jobs
@@ -233,7 +233,7 @@ Examples:
         "--headless",
         dest="headless",
         action="store_true",
-        help="Headless mode — serve channels only; skip the dashboard web server and SSH tunnel instructions",
+        help="Headless mode — serve channels only; skip the dashboard web server and SSH tunnel instructions",  # noqa: E501
     )
     gw_parser.add_argument(
         "--no-crons",
@@ -359,7 +359,7 @@ Examples:
 Examples:
   personalclaw cron list
   personalclaw cron add 'daily-status' 'show status' --every 86400
-  personalclaw cron add 'weekday-9am' 'check open issues' --cron '0 9 * * MON-FRI' --approval-mode auto
+  personalclaw cron add 'weekday-9am' 'check issues' --cron '0 9 * * MON-FRI' --approval-mode auto
   personalclaw cron update <job-id> --approval-mode auto
   personalclaw cron remove <job-id>
 """,
@@ -488,7 +488,7 @@ Examples:
         "--port",
         type=int,
         default=None,
-        help="Dashboard port (default: resolved from PERSONALCLAW_PORT env or dashboard.url config)",
+        help="Dashboard port (default: resolved from PERSONALCLAW_PORT env or dashboard.url config)",  # noqa: E501
     )
 
     # restart
@@ -500,7 +500,7 @@ Examples:
         "--port",
         type=int,
         default=None,
-        help="Dashboard port (default: resolved from PERSONALCLAW_PORT env or dashboard.url config)",
+        help="Dashboard port (default: resolved from PERSONALCLAW_PORT env or dashboard.url config)",  # noqa: E501
     )
 
     # consolidate — run skill/memory extraction over a session's transcript on
@@ -550,13 +550,13 @@ Examples:
         "--port",
         type=int,
         default=None,
-        help="Dashboard port (default: resolved from PERSONALCLAW_PORT env or dashboard.url config)",
+        help="Dashboard port (default: resolved from PERSONALCLAW_PORT env or dashboard.url config)",  # noqa: E501
     )
     token_parser.add_argument(
         "--port",
         type=int,
         default=None,
-        help="Dashboard port (default: resolved from PERSONALCLAW_PORT env or dashboard.url config)",
+        help="Dashboard port (default: resolved from PERSONALCLAW_PORT env or dashboard.url config)",  # noqa: E501
     )
     token_parser.add_argument("--ttl", default="20h", help="Token TTL, e.g. 1h, 30m (default: 20h)")
 
@@ -566,7 +566,7 @@ Examples:
         "--port",
         type=int,
         default=None,
-        help="Dashboard port (default: resolved from PERSONALCLAW_PORT env or dashboard.url config)",
+        help="Dashboard port (default: resolved from PERSONALCLAW_PORT env or dashboard.url config)",  # noqa: E501
     )
 
     # mcp-schedule (MCP server — spawned by ACP agent, not user-facing)
@@ -956,7 +956,7 @@ def _handle_skills(args) -> None:  # noqa: ANN001
                 print("   This is a dangerous verdict — it cannot be force-installed.")
             for f in exc.report.findings[:8]:
                 print(
-                    f"     - [{f.severity.value}] {f.rule} in {f.path or '(content)'}: {f.evidence[:80]}"
+                    f"     - [{f.severity.value}] {f.rule} in {f.path or '(content)'}: {f.evidence[:80]}"  # noqa: E501
                 )
         except Exception as exc:
             print(f"❌ Install failed: {exc}")

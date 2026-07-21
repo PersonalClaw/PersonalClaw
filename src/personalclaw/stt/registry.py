@@ -62,10 +62,14 @@ def _register_remote_providers() -> None:
     for p in openai_family_providers():
         if p["name"] in _providers:
             continue
-        register_provider(OpenAISttProvider(
-            provider_name=p["name"], provider_type=p.get("type", ""),
-            endpoint=p["endpoint"], api_key=p["api_key"],
-        ))
+        register_provider(
+            OpenAISttProvider(
+                provider_name=p["name"],
+                provider_type=p.get("type", ""),
+                endpoint=p["endpoint"],
+                api_key=p["api_key"],
+            )
+        )
         _remote_names.add(p["name"])
 
     # App-contributed STT adapters (e.g. Bedrock, Gemini) for config entries the
@@ -77,6 +81,7 @@ def _register_remote_providers() -> None:
     # in the OpenAI family, so without the overwrite the family adapter would shadow
     # the real one. Tracked as remote so refresh_providers() re-reads on a change.
     from personalclaw.providers.media_scanners import scan
+
     for prov in scan("stt"):
         nm = getattr(prov, "name", "")
         if nm:

@@ -59,8 +59,12 @@ class TestFireToolHooks:
         with patch.object(hook_store, "fire", new_callable=AsyncMock) as mock_fire:
             await fire_tool_hooks(hook_store, "Running: echo hello")
             mock_fire.assert_called_once_with(
-                HOOK_EVENT_PRE_TOOL_USE, tool_name="echo hello", tool_input=None,
-                subagent_id="", parent_session_key="", agent_role="",
+                HOOK_EVENT_PRE_TOOL_USE,
+                tool_name="echo hello",
+                tool_input=None,
+                subagent_id="",
+                parent_session_key="",
+                agent_role="",
             )
 
     @pytest.mark.asyncio
@@ -68,8 +72,12 @@ class TestFireToolHooks:
         with patch.object(hook_store, "fire", new_callable=AsyncMock) as mock_fire:
             await fire_tool_hooks(hook_store, "@my-mcp-server/ReadFile")
             mock_fire.assert_called_once_with(
-                HOOK_EVENT_PRE_TOOL_USE, tool_name="@my-mcp-server/ReadFile", tool_input=None,
-                subagent_id="", parent_session_key="", agent_role="",
+                HOOK_EVENT_PRE_TOOL_USE,
+                tool_name="@my-mcp-server/ReadFile",
+                tool_input=None,
+                subagent_id="",
+                parent_session_key="",
+                agent_role="",
             )
 
     @pytest.mark.asyncio
@@ -81,7 +89,9 @@ class TestFireToolHooks:
                 HOOK_EVENT_PRE_TOOL_USE,
                 tool_name="ReadFile",
                 tool_input={"path": "/tmp/test.txt"},
-                subagent_id="", parent_session_key="", agent_role="",
+                subagent_id="",
+                parent_session_key="",
+                agent_role="",
             )
 
     @pytest.mark.asyncio
@@ -89,8 +99,12 @@ class TestFireToolHooks:
         with patch.object(hook_store, "fire", new_callable=AsyncMock) as mock_fire:
             await fire_tool_hooks(hook_store, "ReadFile", "not-json")
             mock_fire.assert_called_once_with(
-                HOOK_EVENT_PRE_TOOL_USE, tool_name="ReadFile", tool_input=None,
-                subagent_id="", parent_session_key="", agent_role="",
+                HOOK_EVENT_PRE_TOOL_USE,
+                tool_name="ReadFile",
+                tool_input=None,
+                subagent_id="",
+                parent_session_key="",
+                agent_role="",
             )
 
     @pytest.mark.asyncio
@@ -98,14 +112,21 @@ class TestFireToolHooks:
         with patch.object(hook_store, "fire", new_callable=AsyncMock) as mock_fire:
             await fire_tool_hooks(hook_store, "")
             mock_fire.assert_called_once_with(
-                HOOK_EVENT_PRE_TOOL_USE, tool_name="", tool_input=None,
-                subagent_id="", parent_session_key="", agent_role="",
+                HOOK_EVENT_PRE_TOOL_USE,
+                tool_name="",
+                tool_input=None,
+                subagent_id="",
+                parent_session_key="",
+                agent_role="",
             )
 
     @pytest.mark.asyncio
     async def test_fire_exception_swallowed(self, hook_store: ScriptHookStore):
         with patch.object(
-            hook_store, "fire", new_callable=AsyncMock, side_effect=RuntimeError("boom"),
+            hook_store,
+            "fire",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("boom"),
         ):
             # Should not raise
             await fire_tool_hooks(hook_store, "ReadFile")
@@ -115,6 +136,10 @@ class TestFireToolHooks:
         with patch.object(hook_store, "fire", new_callable=AsyncMock) as mock_fire:
             await fire_tool_hooks(hook_store, "ReadFile", None)
             mock_fire.assert_called_once_with(
-                HOOK_EVENT_PRE_TOOL_USE, tool_name="ReadFile", tool_input=None,
-                subagent_id="", parent_session_key="", agent_role="",
+                HOOK_EVENT_PRE_TOOL_USE,
+                tool_name="ReadFile",
+                tool_input=None,
+                subagent_id="",
+                parent_session_key="",
+                agent_role="",
             )

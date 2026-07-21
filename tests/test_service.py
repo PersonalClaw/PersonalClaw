@@ -22,32 +22,42 @@ from personalclaw.service.common import LAUNCHD_LABEL, SERVICE_NAME, Platform, c
 
 class TestPlatformDetection:
     def test_linux_with_systemctl_returns_systemd(self):
-        with patch("personalclaw.service.common.sys") as mock_sys, patch(
-            "personalclaw.service.common.shutil.which",
-            return_value="/usr/bin/systemctl",
+        with (
+            patch("personalclaw.service.common.sys") as mock_sys,
+            patch(
+                "personalclaw.service.common.shutil.which",
+                return_value="/usr/bin/systemctl",
+            ),
         ):
             mock_sys.platform = "linux"
             assert current_platform() == Platform.SYSTEMD
 
     def test_linux_without_systemctl_returns_unsupported(self):
-        with patch("personalclaw.service.common.sys") as mock_sys, patch(
-            "personalclaw.service.common.shutil.which", return_value=None
+        with (
+            patch("personalclaw.service.common.sys") as mock_sys,
+            patch("personalclaw.service.common.shutil.which", return_value=None),
         ):
             mock_sys.platform = "linux"
             assert current_platform() == Platform.UNSUPPORTED
 
     def test_darwin_with_launchctl_returns_launchd(self):
-        with patch("personalclaw.service.common.sys") as mock_sys, patch(
-            "personalclaw.service.common.shutil.which",
-            return_value="/bin/launchctl",
+        with (
+            patch("personalclaw.service.common.sys") as mock_sys,
+            patch(
+                "personalclaw.service.common.shutil.which",
+                return_value="/bin/launchctl",
+            ),
         ):
             mock_sys.platform = "darwin"
             assert current_platform() == Platform.LAUNCHD
 
     def test_unknown_platform_returns_unsupported(self):
-        with patch("personalclaw.service.common.sys") as mock_sys, patch(
-            "personalclaw.service.common.shutil.which",
-            return_value="/usr/bin/anything",
+        with (
+            patch("personalclaw.service.common.sys") as mock_sys,
+            patch(
+                "personalclaw.service.common.shutil.which",
+                return_value="/usr/bin/anything",
+            ),
         ):
             mock_sys.platform = "win32"
             assert current_platform() == Platform.UNSUPPORTED
@@ -63,11 +73,12 @@ class TestLinuxUnitRendering:
         # `id -gn tester` would return some real group; mock it to a known value
         # so the test asserts both User= and Group= are populated correctly.
         gid_result = MagicMock(returncode=0, stdout="staff\n", stderr="")
-        with patch(
-            "personalclaw.service.common.shutil.which",
-            return_value="/home/u/.local/bin/personalclaw",
-        ), patch(
-            "personalclaw.service.linux.subprocess.run", return_value=gid_result
+        with (
+            patch(
+                "personalclaw.service.common.shutil.which",
+                return_value="/home/u/.local/bin/personalclaw",
+            ),
+            patch("personalclaw.service.linux.subprocess.run", return_value=gid_result),
         ):
             unit = svc_linux.render_unit()
         assert "ExecStart=/home/u/.local/bin/personalclaw gateway" in unit
@@ -93,8 +104,9 @@ class TestLinuxUnitRendering:
         from personalclaw.service import linux as svc_linux
 
         monkeypatch.setenv("USER", "tester")
-        with patch("personalclaw.service.common.shutil.which", return_value=None), patch.object(
-            sys, "argv", ["/some/path/personalclaw"]
+        with (
+            patch("personalclaw.service.common.shutil.which", return_value=None),
+            patch.object(sys, "argv", ["/some/path/personalclaw"]),
         ):
             unit = svc_linux.render_unit()
         # argv[0] is realpathed; just check the unit references *something*
@@ -110,12 +122,13 @@ class TestLinuxUnitRendering:
 
         # Capture every subprocess.run call. All return success.
         ok = MagicMock(returncode=0, stdout="", stderr="")
-        with patch(
-            "personalclaw.service.common.shutil.which",
-            return_value="/usr/local/bin/personalclaw",
-        ), patch(
-            "personalclaw.service.linux.subprocess.run", return_value=ok
-        ) as run:
+        with (
+            patch(
+                "personalclaw.service.common.shutil.which",
+                return_value="/usr/local/bin/personalclaw",
+            ),
+            patch("personalclaw.service.linux.subprocess.run", return_value=ok) as run,
+        ):
             svc_linux.install()
 
         # Four things must happen:
@@ -140,24 +153,21 @@ class TestLinuxUnitRendering:
         assert ["sudo", "systemctl", "enable", f"{SERVICE_NAME}.service"] in called
         assert ["sudo", "systemctl", "restart", f"{SERVICE_NAME}.service"] in called
 
-    def test_install_raises_with_clear_error_when_sudo_install_fails(
-        self, tmp_path, monkeypatch
-    ):
+    def test_install_raises_with_clear_error_when_sudo_install_fails(self, tmp_path, monkeypatch):
         """If `sudo install` fails (user denies password, sudoers misconfigured),
         install MUST raise with a clear message rather than continuing on
         and silently leaving the system half-configured."""
         from personalclaw.service import linux as svc_linux
 
         monkeypatch.setenv("USER", "tester")
-        install_failed = MagicMock(
-            returncode=1, stdout="", stderr="sudo: a password is required"
-        )
+        install_failed = MagicMock(returncode=1, stdout="", stderr="sudo: a password is required")
 
-        with patch(
-            "personalclaw.service.common.shutil.which",
-            return_value="/usr/local/bin/personalclaw",
-        ), patch(
-            "personalclaw.service.linux.subprocess.run", return_value=install_failed
+        with (
+            patch(
+                "personalclaw.service.common.shutil.which",
+                return_value="/usr/local/bin/personalclaw",
+            ),
+            patch("personalclaw.service.linux.subprocess.run", return_value=install_failed),
         ):
             with pytest.raises(svc_linux.ServiceInstallError) as exc_info:
                 svc_linux.install()
@@ -237,10 +247,13 @@ class TestMacOSPlistRendering:
         monkeypatch.setattr(svc_macos, "STDERR_LOG", log_dir / "gateway.err")
 
         run = MagicMock(returncode=0, stdout="", stderr="")
-        with patch(
-            "personalclaw.service.common.shutil.which",
-            return_value="/opt/homebrew/bin/personalclaw",
-        ), patch("personalclaw.service.macos.subprocess.run", return_value=run) as proc:
+        with (
+            patch(
+                "personalclaw.service.common.shutil.which",
+                return_value="/opt/homebrew/bin/personalclaw",
+            ),
+            patch("personalclaw.service.macos.subprocess.run", return_value=run) as proc,
+        ):
             svc_macos.install()
 
         assert plist_path.exists()
@@ -263,10 +276,13 @@ class TestControllerDispatch:
         from personalclaw.service import controller
         from personalclaw.service import linux as svc_linux
 
-        with patch(
-            "personalclaw.service.controller.current_platform",
-            return_value=Platform.SYSTEMD,
-        ), patch.object(svc_linux, "install") as mock_install:
+        with (
+            patch(
+                "personalclaw.service.controller.current_platform",
+                return_value=Platform.SYSTEMD,
+            ),
+            patch.object(svc_linux, "install") as mock_install,
+        ):
             rc = controller.install_service()
         assert rc == 0
         mock_install.assert_called_once()
@@ -294,12 +310,14 @@ class TestControllerDispatch:
         from personalclaw.service import controller
         from personalclaw.service import linux as svc_linux
 
-        with patch(
-            "personalclaw.service.controller.current_platform",
-            return_value=Platform.SYSTEMD,
-        ), patch.object(svc_linux, "is_active", return_value=False), patch.object(
-            svc_linux, "stop"
-        ) as mock_stop:
+        with (
+            patch(
+                "personalclaw.service.controller.current_platform",
+                return_value=Platform.SYSTEMD,
+            ),
+            patch.object(svc_linux, "is_active", return_value=False),
+            patch.object(svc_linux, "stop") as mock_stop,
+        ):
             assert controller.stop_service() is False
         mock_stop.assert_not_called()
 
@@ -307,12 +325,14 @@ class TestControllerDispatch:
         from personalclaw.service import controller
         from personalclaw.service import linux as svc_linux
 
-        with patch(
-            "personalclaw.service.controller.current_platform",
-            return_value=Platform.SYSTEMD,
-        ), patch.object(svc_linux, "is_active", return_value=True), patch.object(
-            svc_linux, "stop"
-        ) as mock_stop:
+        with (
+            patch(
+                "personalclaw.service.controller.current_platform",
+                return_value=Platform.SYSTEMD,
+            ),
+            patch.object(svc_linux, "is_active", return_value=True),
+            patch.object(svc_linux, "stop") as mock_stop,
+        ):
             assert controller.stop_service() is True
         mock_stop.assert_called_once()
 
@@ -320,12 +340,14 @@ class TestControllerDispatch:
         from personalclaw.service import controller
         from personalclaw.service import macos as svc_macos
 
-        with patch(
-            "personalclaw.service.controller.current_platform",
-            return_value=Platform.LAUNCHD,
-        ), patch.object(svc_macos, "is_active", return_value=True), patch.object(
-            svc_macos, "stop"
-        ) as mock_stop:
+        with (
+            patch(
+                "personalclaw.service.controller.current_platform",
+                return_value=Platform.LAUNCHD,
+            ),
+            patch.object(svc_macos, "is_active", return_value=True),
+            patch.object(svc_macos, "stop") as mock_stop,
+        ):
             assert controller.stop_service() is True
         mock_stop.assert_called_once()
 
@@ -333,12 +355,14 @@ class TestControllerDispatch:
         from personalclaw.service import controller
         from personalclaw.service import macos as svc_macos
 
-        with patch(
-            "personalclaw.service.controller.current_platform",
-            return_value=Platform.LAUNCHD,
-        ), patch.object(svc_macos, "is_active", return_value=False), patch.object(
-            svc_macos, "stop"
-        ) as mock_stop:
+        with (
+            patch(
+                "personalclaw.service.controller.current_platform",
+                return_value=Platform.LAUNCHD,
+            ),
+            patch.object(svc_macos, "is_active", return_value=False),
+            patch.object(svc_macos, "stop") as mock_stop,
+        ):
             assert controller.stop_service() is False
         mock_stop.assert_not_called()
 
@@ -357,13 +381,16 @@ class TestControllerDispatch:
         from personalclaw.service import controller
         from personalclaw.service import linux as svc_linux
 
-        with patch(
-            "personalclaw.service.controller.current_platform",
-            return_value=Platform.SYSTEMD,
-        ), patch.object(
-            svc_linux,
-            "install",
-            side_effect=svc_linux.ServiceInstallError("simulated failure"),
+        with (
+            patch(
+                "personalclaw.service.controller.current_platform",
+                return_value=Platform.SYSTEMD,
+            ),
+            patch.object(
+                svc_linux,
+                "install",
+                side_effect=svc_linux.ServiceInstallError("simulated failure"),
+            ),
         ):
             rc = controller.install_service()
         captured = capsys.readouterr()
@@ -374,10 +401,13 @@ class TestControllerDispatch:
         from personalclaw.service import controller
         from personalclaw.service import macos as svc_macos
 
-        with patch(
-            "personalclaw.service.controller.current_platform",
-            return_value=Platform.LAUNCHD,
-        ), patch.object(svc_macos, "install") as mock_install:
+        with (
+            patch(
+                "personalclaw.service.controller.current_platform",
+                return_value=Platform.LAUNCHD,
+            ),
+            patch.object(svc_macos, "install") as mock_install,
+        ):
             rc = controller.install_service()
         assert rc == 0
         mock_install.assert_called_once()
@@ -390,10 +420,13 @@ class TestControllerDispatch:
         from personalclaw.service import controller
         from personalclaw.service import linux as svc_linux
 
-        with patch(
-            "personalclaw.service.controller.current_platform",
-            return_value=Platform.SYSTEMD,
-        ), patch.object(svc_linux, "uninstall") as mock_un:
+        with (
+            patch(
+                "personalclaw.service.controller.current_platform",
+                return_value=Platform.SYSTEMD,
+            ),
+            patch.object(svc_linux, "uninstall") as mock_un,
+        ):
             rc = controller.uninstall_service()
         assert rc == 0
         mock_un.assert_called_once()
@@ -402,10 +435,13 @@ class TestControllerDispatch:
         from personalclaw.service import controller
         from personalclaw.service import macos as svc_macos
 
-        with patch(
-            "personalclaw.service.controller.current_platform",
-            return_value=Platform.LAUNCHD,
-        ), patch.object(svc_macos, "uninstall") as mock_un:
+        with (
+            patch(
+                "personalclaw.service.controller.current_platform",
+                return_value=Platform.LAUNCHD,
+            ),
+            patch.object(svc_macos, "uninstall") as mock_un,
+        ):
             rc = controller.uninstall_service()
         assert rc == 0
         mock_un.assert_called_once()
@@ -415,12 +451,14 @@ class TestControllerDispatch:
         from personalclaw.service import controller
         from personalclaw.service import linux as svc_linux
 
-        with patch(
-            "personalclaw.service.controller.current_platform",
-            return_value=Platform.SYSTEMD,
-        ), patch.object(
-            svc_linux, "status", return_value="● personalclaw.service\n"
-        ), patch.object(svc_linux, "is_active", return_value=True):
+        with (
+            patch(
+                "personalclaw.service.controller.current_platform",
+                return_value=Platform.SYSTEMD,
+            ),
+            patch.object(svc_linux, "status", return_value="● personalclaw.service\n"),
+            patch.object(svc_linux, "is_active", return_value=True),
+        ):
             rc = controller.service_status()
         assert rc == 0
         assert "personalclaw.service" in capsys.readouterr().out
@@ -429,11 +467,13 @@ class TestControllerDispatch:
         from personalclaw.service import controller
         from personalclaw.service import linux as svc_linux
 
-        with patch(
-            "personalclaw.service.controller.current_platform",
-            return_value=Platform.SYSTEMD,
-        ), patch.object(svc_linux, "status", return_value=""), patch.object(
-            svc_linux, "is_active", return_value=False
+        with (
+            patch(
+                "personalclaw.service.controller.current_platform",
+                return_value=Platform.SYSTEMD,
+            ),
+            patch.object(svc_linux, "status", return_value=""),
+            patch.object(svc_linux, "is_active", return_value=False),
         ):
             rc = controller.service_status()
         assert rc == 1
@@ -442,12 +482,14 @@ class TestControllerDispatch:
         from personalclaw.service import controller
         from personalclaw.service import macos as svc_macos
 
-        with patch(
-            "personalclaw.service.controller.current_platform",
-            return_value=Platform.LAUNCHD,
-        ), patch.object(
-            svc_macos, "status", return_value='"PID" = 1234;\n'
-        ), patch.object(svc_macos, "is_active", return_value=True):
+        with (
+            patch(
+                "personalclaw.service.controller.current_platform",
+                return_value=Platform.LAUNCHD,
+            ),
+            patch.object(svc_macos, "status", return_value='"PID" = 1234;\n'),
+            patch.object(svc_macos, "is_active", return_value=True),
+        ):
             rc = controller.service_status()
         assert rc == 0
         assert "PID" in capsys.readouterr().out
@@ -456,11 +498,13 @@ class TestControllerDispatch:
         from personalclaw.service import controller
         from personalclaw.service import macos as svc_macos
 
-        with patch(
-            "personalclaw.service.controller.current_platform",
-            return_value=Platform.LAUNCHD,
-        ), patch.object(svc_macos, "status", return_value=""), patch.object(
-            svc_macos, "is_active", return_value=False
+        with (
+            patch(
+                "personalclaw.service.controller.current_platform",
+                return_value=Platform.LAUNCHD,
+            ),
+            patch.object(svc_macos, "status", return_value=""),
+            patch.object(svc_macos, "is_active", return_value=False),
         ):
             rc = controller.service_status()
         assert rc == 1
@@ -479,20 +523,26 @@ class TestControllerDispatch:
         from personalclaw.service import controller
         from personalclaw.service import linux as svc_linux
 
-        with patch(
-            "personalclaw.service.controller.current_platform",
-            return_value=Platform.SYSTEMD,
-        ), patch.object(svc_linux, "is_active", return_value=True):
+        with (
+            patch(
+                "personalclaw.service.controller.current_platform",
+                return_value=Platform.SYSTEMD,
+            ),
+            patch.object(svc_linux, "is_active", return_value=True),
+        ):
             assert controller.is_service_active() is True
 
     def test_is_service_active_macos_routes(self):
         from personalclaw.service import controller
         from personalclaw.service import macos as svc_macos
 
-        with patch(
-            "personalclaw.service.controller.current_platform",
-            return_value=Platform.LAUNCHD,
-        ), patch.object(svc_macos, "is_active", return_value=True):
+        with (
+            patch(
+                "personalclaw.service.controller.current_platform",
+                return_value=Platform.LAUNCHD,
+            ),
+            patch.object(svc_macos, "is_active", return_value=True),
+        ):
             assert controller.is_service_active() is True
 
 
@@ -509,9 +559,7 @@ class TestLinuxControlPaths:
         unit_path.write_text("")
         monkeypatch.setattr(svc_linux, "UNIT_PATH", unit_path)
         ok = MagicMock(returncode=0, stdout="", stderr="")
-        with patch(
-            "personalclaw.service.linux.subprocess.run", return_value=ok
-        ) as run:
+        with patch("personalclaw.service.linux.subprocess.run", return_value=ok) as run:
             svc_linux.uninstall()
         called = [list(c.args[0]) for c in run.call_args_list]
         # Each step must use sudo since /etc/systemd/system requires root.
@@ -526,32 +574,24 @@ class TestLinuxControlPaths:
         from personalclaw.service import linux as svc_linux
 
         active_result = MagicMock(returncode=0, stdout="active\n", stderr="")
-        with patch(
-            "personalclaw.service.linux.subprocess.run", return_value=active_result
-        ) as run:
+        with patch("personalclaw.service.linux.subprocess.run", return_value=active_result) as run:
             assert svc_linux.is_active() is True
         # is_active must NOT use sudo (status is queryable as a regular user).
         called = [list(c.args[0]) for c in run.call_args_list]
-        assert all("sudo" not in c for c in called), (
-            f"is_active must not call sudo; got {called}"
-        )
+        assert all("sudo" not in c for c in called), f"is_active must not call sudo; got {called}"
 
     def test_is_active_returns_false_when_inactive(self):
         from personalclaw.service import linux as svc_linux
 
         inactive_result = MagicMock(returncode=3, stdout="inactive\n", stderr="")
-        with patch(
-            "personalclaw.service.linux.subprocess.run", return_value=inactive_result
-        ):
+        with patch("personalclaw.service.linux.subprocess.run", return_value=inactive_result):
             assert svc_linux.is_active() is False
 
     def test_stop_invokes_systemctl_stop(self):
         from personalclaw.service import linux as svc_linux
 
         ok = MagicMock(returncode=0, stdout="", stderr="")
-        with patch(
-            "personalclaw.service.linux.subprocess.run", return_value=ok
-        ) as run:
+        with patch("personalclaw.service.linux.subprocess.run", return_value=ok) as run:
             svc_linux.stop()
         called = [list(c.args[0]) for c in run.call_args_list]
         assert ["sudo", "systemctl", "stop", f"{SERVICE_NAME}.service"] in called
@@ -559,12 +599,8 @@ class TestLinuxControlPaths:
     def test_status_returns_systemctl_output(self):
         from personalclaw.service import linux as svc_linux
 
-        result = MagicMock(
-            returncode=0, stdout="● personalclaw.service - active\n", stderr=""
-        )
-        with patch(
-            "personalclaw.service.linux.subprocess.run", return_value=result
-        ) as run:
+        result = MagicMock(returncode=0, stdout="● personalclaw.service - active\n", stderr="")
+        with patch("personalclaw.service.linux.subprocess.run", return_value=result) as run:
             out = svc_linux.status()
         assert "personalclaw.service" in out
         # status() must NOT use sudo.
@@ -575,9 +611,7 @@ class TestLinuxControlPaths:
         from personalclaw.service import linux as svc_linux
 
         result = MagicMock(returncode=4, stdout="", stderr="not found\n")
-        with patch(
-            "personalclaw.service.linux.subprocess.run", return_value=result
-        ):
+        with patch("personalclaw.service.linux.subprocess.run", return_value=result):
             out = svc_linux.status()
         assert "not found" in out
 
@@ -610,16 +644,15 @@ class TestLinuxControlPaths:
         from personalclaw.service import linux as svc_linux
 
         monkeypatch.setenv("USER", "tester")
-        reload_failed = MagicMock(
-            returncode=1, stdout="", stderr="systemctl: bad config"
-        )
+        reload_failed = MagicMock(returncode=1, stdout="", stderr="systemctl: bad config")
         responder = self._run_responder(("daemon-reload", reload_failed))
 
-        with patch(
-            "personalclaw.service.common.shutil.which",
-            return_value="/usr/local/bin/personalclaw",
-        ), patch(
-            "personalclaw.service.linux.subprocess.run", side_effect=responder
+        with (
+            patch(
+                "personalclaw.service.common.shutil.which",
+                return_value="/usr/local/bin/personalclaw",
+            ),
+            patch("personalclaw.service.linux.subprocess.run", side_effect=responder),
         ):
             with pytest.raises(svc_linux.ServiceInstallError) as exc_info:
                 svc_linux.install()
@@ -629,18 +662,17 @@ class TestLinuxControlPaths:
         from personalclaw.service import linux as svc_linux
 
         monkeypatch.setenv("USER", "tester")
-        enable_failed = MagicMock(
-            returncode=1, stdout="", stderr="enable failed: unit invalid"
-        )
+        enable_failed = MagicMock(returncode=1, stdout="", stderr="enable failed: unit invalid")
         responder = self._run_responder(
             ("enable", enable_failed),
         )
 
-        with patch(
-            "personalclaw.service.common.shutil.which",
-            return_value="/usr/local/bin/personalclaw",
-        ), patch(
-            "personalclaw.service.linux.subprocess.run", side_effect=responder
+        with (
+            patch(
+                "personalclaw.service.common.shutil.which",
+                return_value="/usr/local/bin/personalclaw",
+            ),
+            patch("personalclaw.service.linux.subprocess.run", side_effect=responder),
         ):
             with pytest.raises(svc_linux.ServiceInstallError) as exc_info:
                 svc_linux.install()
@@ -653,11 +685,12 @@ class TestLinuxControlPaths:
         restart_failed = MagicMock(returncode=1, stdout="", stderr="job failed")
         responder = self._run_responder(("restart", restart_failed))
 
-        with patch(
-            "personalclaw.service.common.shutil.which",
-            return_value="/usr/local/bin/personalclaw",
-        ), patch(
-            "personalclaw.service.linux.subprocess.run", side_effect=responder
+        with (
+            patch(
+                "personalclaw.service.common.shutil.which",
+                return_value="/usr/local/bin/personalclaw",
+            ),
+            patch("personalclaw.service.linux.subprocess.run", side_effect=responder),
         ):
             with pytest.raises(svc_linux.ServiceInstallError) as exc_info:
                 svc_linux.install()
@@ -702,21 +735,18 @@ class TestMacOSControlPaths:
         monkeypatch.setattr(svc_macos, "STDERR_LOG", log_dir / "gateway.err")
 
         ok = MagicMock(returncode=0, stdout="", stderr="")
-        with patch(
-            "personalclaw.service.common.shutil.which",
-            return_value="/opt/homebrew/bin/personalclaw",
-        ), patch(
-            "personalclaw.service.macos.subprocess.run", return_value=ok
-        ) as run:
+        with (
+            patch(
+                "personalclaw.service.common.shutil.which",
+                return_value="/opt/homebrew/bin/personalclaw",
+            ),
+            patch("personalclaw.service.macos.subprocess.run", return_value=ok) as run,
+        ):
             svc_macos.install()
         called = [c.args[0] for c in run.call_args_list]
         # The unload must come BEFORE the load for the new plist to take effect.
-        unload_idx = next(
-            i for i, c in enumerate(called) if c[:2] == ["launchctl", "unload"]
-        )
-        load_idx = next(
-            i for i, c in enumerate(called) if c[:2] == ["launchctl", "load"]
-        )
+        unload_idx = next(i for i, c in enumerate(called) if c[:2] == ["launchctl", "unload"])
+        load_idx = next(i for i, c in enumerate(called) if c[:2] == ["launchctl", "load"])
         assert unload_idx < load_idx
 
     def test_uninstall_unloads_and_removes_plist(self, tmp_path, monkeypatch):
@@ -729,9 +759,7 @@ class TestMacOSControlPaths:
         monkeypatch.setattr(svc_macos, "PLIST_PATH", plist_path)
 
         ok = MagicMock(returncode=0, stdout="", stderr="")
-        with patch(
-            "personalclaw.service.macos.subprocess.run", return_value=ok
-        ) as run:
+        with patch("personalclaw.service.macos.subprocess.run", return_value=ok) as run:
             svc_macos.uninstall()
         assert not plist_path.exists()
         called = [c.args[0] for c in run.call_args_list]
@@ -774,9 +802,7 @@ class TestMacOSControlPaths:
             stdout='{\n\t"Label" = "io.personalclaw.gateway";\n}\n',
             stderr="",
         )
-        with patch(
-            "personalclaw.service.macos.subprocess.run", return_value=loaded_no_pid
-        ):
+        with patch("personalclaw.service.macos.subprocess.run", return_value=loaded_no_pid):
             assert svc_macos.is_active() is True
 
     def test_stop_unloads_plist_when_present(self, tmp_path, monkeypatch):
@@ -790,9 +816,7 @@ class TestMacOSControlPaths:
         plist_path.write_text("<plist/>")
         monkeypatch.setattr(svc_macos, "PLIST_PATH", plist_path)
         ok = MagicMock(returncode=0, stdout="", stderr="")
-        with patch(
-            "personalclaw.service.macos.subprocess.run", return_value=ok
-        ) as run:
+        with patch("personalclaw.service.macos.subprocess.run", return_value=ok) as run:
             svc_macos.stop()
         called = [c.args[0] for c in run.call_args_list]
         assert ["launchctl", "unload", str(plist_path)] in called

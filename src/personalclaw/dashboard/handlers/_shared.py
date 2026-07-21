@@ -32,6 +32,7 @@ def _get_memory(state: DashboardState):
     if hasattr(mem, "vector_store") and mem.vector_store and not mem.vector_store.embed_fn:
         try:
             from personalclaw.embedding_providers.registry import get_active_embed_fn
+
             embed_fn = get_active_embed_fn()
             if embed_fn:
                 mem.vector_store.embed_fn = embed_fn
@@ -87,7 +88,9 @@ async def _list_marketplace_skills() -> list[dict[str, Any]]:
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            "personalclaw", "skills", "list",
+            "personalclaw",
+            "skills",
+            "list",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -184,9 +187,11 @@ def _path_home_pclaw():
     """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
     try:
         from personalclaw.config.loader import config_dir as _cd
+
         return _cd()
     except Exception:
         from pathlib import Path as _P
+
         return _P.home() / ".personalclaw"
 
 
@@ -236,8 +241,9 @@ def _session_has_persisted_history(session_name: str) -> bool:
     # the ``dashboard_`` prefix fallback for dashboard sessions.
     if (sess_dir / f"{session_name}.jsonl").exists():
         return True
-    if not session_name.startswith("dashboard_") and (
-        sess_dir / f"dashboard_{session_name}.jsonl"
-    ).exists():
+    if (
+        not session_name.startswith("dashboard_")
+        and (sess_dir / f"dashboard_{session_name}.jsonl").exists()
+    ):
         return True
     return False

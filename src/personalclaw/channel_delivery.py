@@ -15,7 +15,7 @@ the dashboard only. This is the outbound half of the core↔channel seam
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -28,8 +28,13 @@ class ChannelDelivery(Protocol):
         ...
 
     async def deliver_text(
-        self, channel: str, text: str, thread_ts: str = "", *,
-        unfurl_links: "bool | None" = None, unfurl_media: "bool | None" = None,
+        self,
+        channel: str,
+        text: str,
+        thread_ts: str = "",
+        *,
+        unfurl_links: "bool | None" = None,
+        unfurl_media: "bool | None" = None,
         reply_broadcast: "bool | None" = None,
     ) -> str:
         """Post plain-markdown text to a channel/thread; return the message ts. The
@@ -38,8 +43,14 @@ class ChannelDelivery(Protocol):
         ...
 
     async def deliver_rich(
-        self, channel: str, payload: "object", fallback_text: str, *,
-        thread_ts: str = "", unfurl_links: bool = True, unfurl_media: bool = True,
+        self,
+        channel: str,
+        payload: "object",
+        fallback_text: str,
+        *,
+        thread_ts: str = "",
+        unfurl_links: bool = True,
+        unfurl_media: bool = True,
         reply_broadcast: bool = False,
     ) -> str:
         """Deliver a caller-supplied structured/rich payload (e.g. Block Kit) with a
@@ -61,9 +72,7 @@ class ChannelDelivery(Protocol):
         """Deliver a titled notification (heartbeat/subagent) to a channel/thread."""
         ...
 
-    async def deliver_chat_mirror(
-        self, channel: str, text: str, thread_ts: str = ""
-    ) -> None:
+    async def deliver_chat_mirror(self, channel: str, text: str, thread_ts: str = "") -> None:
         """Mirror a dashboard chat reply to a linked channel thread, rendering any
         trailing ``[OPTIONS: …]`` block as the channel's interactive affordance."""
         ...
@@ -112,8 +121,14 @@ class ChannelDelivery(Protocol):
     # ── Attachment + streaming primitives (the surface core used to reach via the
     # raw client). All channel-specific rendering stays in the implementation. ──
     async def upload_attachment(
-        self, channel: str, file_path: str, *, filename: str = "", thread_ts: str = "",
-        title: str = "", initial_comment: str = "",
+        self,
+        channel: str,
+        file_path: str,
+        *,
+        filename: str = "",
+        thread_ts: str = "",
+        title: str = "",
+        initial_comment: str = "",
     ) -> str:
         """Upload a file to a channel/thread; return the delivered message ts (or "")."""
         ...
@@ -124,7 +139,12 @@ class ChannelDelivery(Protocol):
         ...
 
     async def append_stream_task(
-        self, channel: str, stream_ts: str, task_id: str, title: str, status: str,
+        self,
+        channel: str,
+        stream_ts: str,
+        task_id: str,
+        title: str,
+        status: str,
     ) -> None:
         """Append/update a progress item on an in-flight stream started by
         start_stream. ``status`` is a generic progress state ("in_progress" /
@@ -141,6 +161,8 @@ class ChannelDelivery(Protocol):
         *,
         source: str,
         parent_session_key: str = "",
+        sessions: "object | None" = None,
+        on_prompted: "Callable[[object], None] | None" = None,
     ) -> "bool | None":
         """Prompt the owner to approve a tool call on this channel.
 
@@ -148,6 +170,6 @@ class ChannelDelivery(Protocol):
         channel can't prompt (no owner/channel) so the gateway falls back to the
         dashboard. Implementations own the channel-specific approval UI + the wait
         for the owner's response, and should coordinate with the dashboard via the
-        ``on_dashboard_race`` hook if provided by the caller."""
+        ``on_prompted`` hook (invoked with the pending record) when provided by the
+        caller. ``sessions`` is the live SessionManager for cross-surface reconcile."""
         ...
-

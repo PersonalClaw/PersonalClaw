@@ -35,6 +35,7 @@ def get_default_provider() -> Any:
     not a provider itself (post-M2)."""
     if "native" not in _providers:
         from personalclaw.vector_memory import VectorMemoryStore
+
         store = VectorMemoryStore()
         store.init()
         register_provider("native", store)
@@ -44,4 +45,3 @@ def get_default_provider() -> Any:
 def create_default_provider(config=None):
     """Extension factory for the default memory provider."""
     return get_default_provider()
-

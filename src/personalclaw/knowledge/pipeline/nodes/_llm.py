@@ -51,7 +51,10 @@ async def complete_text(use_case: str, prompt: str, *, images: list[str] | None 
         # and "silently misconfigured", which otherwise both look like an empty node.
         logger.warning(
             "knowledge node: use-case %s returned EMPTY text (images=%d) — "
-            "provider produced no content", use_case, len(images or []))
+            "provider produced no content",
+            use_case,
+            len(images or []),
+        )
     return result
 
 

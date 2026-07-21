@@ -37,7 +37,7 @@ class EgressBlocked(Exception):
 class FetchResponse:
     """A completed, guarded fetch."""
 
-    url: str            # final URL (after redirects)
+    url: str  # final URL (after redirects)
     status: int
     headers: dict[str, str] = field(default_factory=dict)
     body: bytes = b""
@@ -56,9 +56,14 @@ def _audit(url: str, policy: EgressPolicy, *, outcome: str, reason: str = "") ->
     """Emit a SEL audit event for an egress allow/deny (best-effort)."""
     try:
         from personalclaw.sel import sel
+
         sel().log_api_access(
-            caller=f"net.fetch:{policy.name}", operation="egress_fetch",
-            outcome=outcome, source="net", resources=url[:200], error=reason[:200],
+            caller=f"net.fetch:{policy.name}",
+            operation="egress_fetch",
+            outcome=outcome,
+            source="net",
+            resources=url[:200],
+            error=reason[:200],
         )
     except Exception:
         logger.debug("egress SEL audit failed", exc_info=True)
@@ -81,12 +86,21 @@ def _pinned_resolver(host_to_ips: dict[str, list[str]]):
             if not ips:
                 return await self._fallback.resolve(host, port, family)
             import socket as _s
+
             hosts = []
             for ip in ips:
                 fam = _s.AF_INET6 if ":" in ip else _s.AF_INET
                 if family in (0, fam):
-                    hosts.append({"hostname": host, "host": ip, "port": port,
-                                  "family": fam, "proto": 0, "flags": 0})
+                    hosts.append(
+                        {
+                            "hostname": host,
+                            "host": ip,
+                            "port": port,
+                            "family": fam,
+                            "proto": 0,
+                            "flags": 0,
+                        }
+                    )
             return hosts or await self._fallback.resolve(host, port, family)
 
         async def close(self) -> None:
@@ -125,10 +139,16 @@ async def fetch(
         # Pin this hop's host to its validated IPs (when the policy pins).
         connector = None
         if policy.pin_resolved_ip and cur_decision.pinned_ips:
-            connector = aiohttp.TCPConnector(resolver=_pinned_resolver({host: cur_decision.pinned_ips}))
+            connector = aiohttp.TCPConnector(
+                resolver=_pinned_resolver({host: cur_decision.pinned_ips})
+            )
         async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
             async with session.request(
-                method, cur_url, headers=headers, data=data, allow_redirects=False,
+                method,
+                cur_url,
+                headers=headers,
+                data=data,
+                allow_redirects=False,
             ) as resp:
                 if resp.status in (301, 302, 303, 307, 308) and resp.headers.get("Location"):
                     # Re-evaluate the redirect target against the SAME policy — a
@@ -138,7 +158,9 @@ async def fetch(
                     nxt = _absolutize(cur_url, nxt)
                     hop_decision = evaluate(nxt, policy, **guard_kw)
                     if not hop_decision.allow:
-                        _audit(nxt, policy, outcome="denied", reason=f"redirect: {hop_decision.reason}")
+                        _audit(
+                            nxt, policy, outcome="denied", reason=f"redirect: {hop_decision.reason}"
+                        )
                         raise EgressBlocked(hop_decision)
                     # 303 (and commonly 301/302 from POST) → GET; 307/308 preserve method.
                     if resp.status == 303:
@@ -148,14 +170,21 @@ async def fetch(
 
                 body, truncated = await _read_capped(resp, policy.max_bytes)
                 return FetchResponse(
-                    url=cur_url, status=resp.status,
+                    url=cur_url,
+                    status=resp.status,
                     headers={k: v for k, v in resp.headers.items()},
-                    body=body, truncated=truncated,
+                    body=body,
+                    truncated=truncated,
                 )
 
     # Exhausted the redirect budget.
-    blocked = GuardDecision(allow=False, url=cur_url, reason=f"too many redirects (> {policy.max_redirects})",
-                            risk_level="caution", recovery_hints=["The URL redirects too many times; fetch the final URL directly."])
+    blocked = GuardDecision(
+        allow=False,
+        url=cur_url,
+        reason=f"too many redirects (> {policy.max_redirects})",
+        risk_level="caution",
+        recovery_hints=["The URL redirects too many times; fetch the final URL directly."],
+    )
     _audit(cur_url, policy, outcome="denied", reason=blocked.reason)
     raise EgressBlocked(blocked)
 
@@ -178,4 +207,5 @@ async def _read_capped(resp, max_bytes: int) -> tuple[bytes, bool]:
 def _absolutize(base: str, location: str) -> str:
     """Resolve a (possibly relative) redirect Location against the current URL."""
     from urllib.parse import urljoin
+
     return urljoin(base, location)

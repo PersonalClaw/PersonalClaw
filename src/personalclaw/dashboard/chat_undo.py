@@ -47,8 +47,11 @@ async def api_chat_session_undo(request: web.Request) -> web.Response:
     # App-isolation: an app may only undo sessions it owns (mirrors fork/stop).
     if request_app and session._app != request_app:
         sel().log_api_access(
-            caller=request_app, operation="chat.session_undo", outcome="denied",
-            source="app_isolation", resources=f"session={name}",
+            caller=request_app,
+            operation="chat.session_undo",
+            outcome="denied",
+            source="app_isolation",
+            resources=f"session={name}",
             error="app does not own this session",
         )
         return web.json_response({"error": "app does not own this session"}, status=403)
@@ -89,15 +92,19 @@ async def api_chat_session_undo(request: web.Request) -> web.Response:
     _sync_dashboard_sessions(state)
     state.broadcast_ws("chat_undone", {"session": session.key, "turns": removed})
     sel().log_api_access(
-        caller=request_app or "dashboard", operation="chat.session_undo",
-        outcome="success", source="dashboard",
+        caller=request_app or "dashboard",
+        operation="chat.session_undo",
+        outcome="success",
+        source="dashboard",
         resources=f"session={name},turns={removed}",
     )
-    return web.json_response({
-        "ok": True,
-        "turns_undone": removed,
-        "notice": (
-            f"Rolled back {removed} turn(s). Side effects from those turns "
-            "(files written, tasks created, tools run) were NOT reverted."
-        ),
-    })
+    return web.json_response(
+        {
+            "ok": True,
+            "turns_undone": removed,
+            "notice": (
+                f"Rolled back {removed} turn(s). Side effects from those turns "
+                "(files written, tasks created, tools run) were NOT reverted."
+            ),
+        }
+    )

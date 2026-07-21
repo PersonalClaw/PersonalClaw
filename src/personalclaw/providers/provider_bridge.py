@@ -42,6 +42,7 @@ def _capability_enum(capability: str):
     """Map a Settings→Models capability string to the provider Capability enum, or None
     if it isn't a provider-type capability (caller then can't match by capability)."""
     from personalclaw.llm.capabilities import Capability
+
     try:
         return Capability(_CAPABILITY_TO_ENUM.get(capability, capability))
     except ValueError:
@@ -70,7 +71,11 @@ def _agent_provider_kind(agent: str | None) -> str:
 
         cfg = AppConfig.load()
         prof = (cfg.agents or {}).get(agent) if agent else None
-        kind = (getattr(prof, "provider", "") if prof else "") or getattr(cfg.agent, "provider", "") or "native"
+        kind = (
+            (getattr(prof, "provider", "") if prof else "")
+            or getattr(cfg.agent, "provider", "")
+            or "native"
+        )
     except Exception:
         kind = "native"
     return "acp" if str(kind).startswith("acp") else "native"
@@ -237,6 +242,8 @@ def _strip_provider_prefix(model: str) -> str:
         return model
     prefix = model.split(":", 1)[0]
     try:
+        from personalclaw.llm.registry import get_default_registry
+
         registry = get_default_registry()
         if any(e.name == prefix for e in registry.list_entries()):
             return model.split(":", 1)[1]
@@ -333,6 +340,7 @@ def _build_native_runtime(
         _model_axis_only=True,
         **kwargs,
     )
+    name = agent or "PersonalClaw"
     if not hasattr(model_provider, "complete"):
         raise ProviderResolutionError(
             f"Native agent {name!r} resolved its inference model to "
@@ -345,7 +353,6 @@ def _build_native_runtime(
     # Strip any "<provider>:" prefix so the bare model id reaches complete()
     # (the inner ModelProvider is resolved above; this is the id label the SDK
     # call uses — a "Bedrock:…" ref here means an invalid AWS model identifier).
-    name = agent or "PersonalClaw"
     system_prompt = ""
     # Reconcile the per-turn override too (not just the profile pin): a chat
     # session persists its model as a "<provider>:model" ref, and after a
@@ -367,15 +374,18 @@ def _build_native_runtime(
             # operating rules) so its personality survives a long system prompt.
             from personalclaw.config.loader import _compose_voice
 
-            system_prompt = _compose_voice(getattr(prof, "voice", ""), getattr(prof, "system_prompt", "") or "")
+            system_prompt = _compose_voice(
+                getattr(prof, "voice", ""), getattr(prof, "system_prompt", "") or ""
+            )
             # Heal a stale pin: an explicit agent model (or per-turn override)
             # that's no longer active reconciles to "" → the chat-binding
             # fallback below. Both the override and the profile pin may be the
             # "<provider>:model" ref a chat session stores; reconcile BOTH so a
             # ref naming an uninstalled provider doesn't slip through as a bare
             # (dead) model id.
-            model = _strip_provider_prefix(_reconcile_agent_model(model_override or "")) \
-                or _strip_provider_prefix(_reconcile_agent_model(getattr(prof, "model", "") or ""))
+            model = _strip_provider_prefix(
+                _reconcile_agent_model(model_override or "")
+            ) or _strip_provider_prefix(_reconcile_agent_model(getattr(prof, "model", "") or ""))
             tools = list(getattr(prof, "tools", []) or [])
             skills = list(getattr(prof, "skills", []) or [])
             hook_ids = list(getattr(prof, "triggers", []) or [])
@@ -414,7 +424,8 @@ def _build_native_runtime(
     # global set. An agent with none (the seeded default) gets no callable → fires nothing.
     hook_fire = None
     if hook_ids:
-        async def hook_fire(tool_name: str, args_json: str | None) -> list[str]:
+
+        async def hook_fire(tool_name: str, args_json: str | None) -> list[str]:  # noqa: F811
             from personalclaw.hooks import HOOK_EVENT_PRE_TOOL_USE, get_global_hook_store
 
             store = get_global_hook_store()
@@ -425,8 +436,10 @@ def _build_native_runtime(
             except (ValueError, TypeError):
                 tool_input = None
             results = await store.fire_for_ids(
-                HOOK_EVENT_PRE_TOOL_USE, hook_ids,
-                tool_name=tool_name, tool_input=tool_input,
+                HOOK_EVENT_PRE_TOOL_USE,
+                hook_ids,
+                tool_name=tool_name,
+                tool_input=tool_input,
             )
             # Mirror chat_runner._fire's contract: exit-2 → BLOCKED sentinel,
             # exit-0 stdout → context injection.
@@ -452,7 +465,9 @@ def _build_native_runtime(
     from personalclaw.tool_providers.registry import list_providers as _list_tool_providers
 
     platform = NativeBuiltinToolProvider(
-        cwd=_cwd, agent=name or "", session_key=session_key or "",
+        cwd=_cwd,
+        agent=name or "",
+        session_key=session_key or "",
         extra_roots=[Path(r) for r in (extra_tool_roots or [])],
         categories=PLATFORM_CATEGORIES,
         provider_name="personalclaw-filesystem",
@@ -460,7 +475,7 @@ def _build_native_runtime(
     )
     tool_providers = [platform, *_list_tool_providers()]
 
-    return NativeAgentRuntime(
+    return NativeAgentRuntime(  # type: ignore[return-value]  # CI-2
         definition=definition,
         model_provider=model_provider,  # type: ignore[arg-type]
         tool_providers=tool_providers,
@@ -548,11 +563,7 @@ def resolve_provider_for_use_case(
         if _provider_kind
         else _agent_provider_kind(agent)
     )
-    if (
-        not _force_model_axis
-        and use_case in ("chat", "code_tools")
-        and _kind == "native"
-    ):
+    if not _force_model_axis and use_case in ("chat", "code_tools") and _kind == "native":
         # reasoning_effort_override is meaningful to the native runtime as the
         # per-turn effort, but the native builder's downstream (model-axis resolver)
         # doesn't expect it — pop it and pass as the explicit reasoning_effort arg.
@@ -718,7 +729,6 @@ def can_resolve_use_case(use_case: str) -> bool:
     try:
         # Trigger provider modules' register_type() side effects (idempotent).
         import personalclaw.llm.acp_agent  # noqa: F401
-
         from personalclaw.llm.registry import get_default_registry
 
         target_cap = _capability_enum(capability)
@@ -765,7 +775,6 @@ def _resolve_from_config_registry(
         # Trigger provider modules' register_type() side effects so the
         # registry can resolve types loaded lazily.
         import personalclaw.llm.acp_agent  # noqa: F401
-
         from personalclaw.llm.registry import get_default_registry
     except Exception:
         return None
@@ -798,8 +807,10 @@ def _resolve_from_config_registry(
     # contains a slash (NVIDIA "nvidia:meta/llama-3.1-8b-instruct", OpenRouter
     # "or:meta-llama/llama-3.3"), so splitting on "/" first would mis-parse the
     # provider as "nvidia:meta" → unknown → wrong provider (fell back to Bedrock).
-    if model_override and ":" in model_override and any(
-        e.name == model_override.split(":", 1)[0] for e in entries
+    if (
+        model_override
+        and ":" in model_override
+        and any(e.name == model_override.split(":", 1)[0] for e in entries)
     ):
         _hint, model_override = model_override.split(":", 1)
         provider_hint = provider_hint or _hint
@@ -868,8 +879,9 @@ def _resolve_from_config_registry(
         build_kwargs["model"] = model_override
     if "credential_store" not in build_kwargs and candidate.credential:
         try:
-            from personalclaw.llm.credentials import CredentialStore
             from personalclaw.config import config_dir
+            from personalclaw.llm.credentials import CredentialStore
+
             build_kwargs["credential_store"] = CredentialStore(config_dir())
         except Exception:
             pass
@@ -880,14 +892,20 @@ def _resolve_from_config_registry(
         inline_key = (candidate.options or {}).get("api_key")
         if inline_key and isinstance(inline_key, str):
             from personalclaw.llm.credentials import Credential
-            _synth = Credential(name=candidate.name, kind="api_key", secret=inline_key, source="file")
+
+            _synth = Credential(
+                name=candidate.name, kind="api_key", secret=inline_key, source="file"
+            )
             build_kwargs["_inline_credential"] = _synth
     try:
-        return registry.build(candidate.name, session_key=session_key, cwd=cwd, agent=agent, **build_kwargs)
+        return registry.build(
+            candidate.name, session_key=session_key, cwd=cwd, agent=agent, **build_kwargs
+        )
     except Exception:
         logger.exception(
             "Config-registry fallback failed to build provider %r for %s",
-            candidate.name, use_case,
+            candidate.name,
+            use_case,
         )
         return None
 

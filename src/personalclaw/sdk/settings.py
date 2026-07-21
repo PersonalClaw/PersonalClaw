@@ -8,4 +8,4 @@ core module, so the core path can move without breaking installed apps.
 
 from personalclaw.providers.settings import ProviderSettings  # noqa: F401
 
-__all__ = ['ProviderSettings']
+__all__ = ["ProviderSettings"]

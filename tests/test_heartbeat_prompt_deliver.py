@@ -61,7 +61,9 @@ class TestPromptDashboardDeliver:
         assert call_args.args[2] is state
 
     @pytest.mark.asyncio()
-    async def test_prompt_warns_on_missing_session(self, orchestrator, dashboard_state, caplog, monkeypatch):
+    async def test_prompt_warns_on_missing_session(
+        self, orchestrator, dashboard_state, caplog, monkeypatch
+    ):
         state, _ = dashboard_state
         state.resolve_session.return_value = None
         sel_mock = MagicMock()
@@ -91,9 +93,7 @@ class TestPromptDashboardDeliver:
         assert call_args[1]["meta"]["session"] == "chat-1"
 
     @pytest.mark.asyncio()
-    async def test_prompt_skips_notify_and_push_when_queued(
-        self, orchestrator, dashboard_state
-    ):
+    async def test_prompt_skips_notify_and_push_when_queued(self, orchestrator, dashboard_state):
         """Queued prompts (session busy) must NOT fire notify() or push_sessions_update() —
         the prompt has no visible effect until it's dequeued, so notifying now would
         send the user to an empty session.
@@ -108,9 +108,7 @@ class TestPromptDashboardDeliver:
         state.push_sessions_update.assert_not_called()
 
     @pytest.mark.asyncio()
-    async def test_prompt_fires_notify_and_push_when_run(
-        self, orchestrator, dashboard_state
-    ):
+    async def test_prompt_fires_notify_and_push_when_run(self, orchestrator, dashboard_state):
         """Counterpart to queued case: when session is idle, both notify and
         push_sessions_update must fire so the UI reflects the new agent turn.
         """
@@ -133,9 +131,7 @@ class TestPromptDashboardDeliver:
         )
         # Assert the observability log fires so a silent regression removing
         # the logger.debug would fail the test (not just the no-crash case).
-        assert any(
-            "no dashboard_state" in r.message for r in caplog.records
-        )
+        assert any("no dashboard_state" in r.message for r in caplog.records)
 
     @pytest.mark.asyncio()
     async def test_prompt_empty_session_name_ignored(self, orchestrator, dashboard_state, caplog):
@@ -181,9 +177,7 @@ class TestPromptDashboardDeliver:
         prefix_bytes = len(f"{title}\n\n".encode("utf-8"))
         ascii_pad_len = MAX_PROMPT_BYTES - prefix_bytes - 1
         content = "x" * ascii_pad_len + "你" + "y" * 100
-        await orchestrator._deliver_result(
-            title, summary, content, "prompt:dashboard:chat-1"
-        )
+        await orchestrator._deliver_result(title, summary, content, "prompt:dashboard:chat-1")
         delivered = session.enqueue_or_run_prompt.call_args.args[0]
         delivered.encode("utf-8").decode("utf-8")  # raises if invalid
         assert len(delivered.encode("utf-8")) <= MAX_PROMPT_BYTES
@@ -199,9 +193,7 @@ class TestPromptDashboardDeliver:
         summary = "CR check"
         prefix_bytes = len(f"{title}\n\n".encode("utf-8"))
         content = "x" * (MAX_PROMPT_BYTES - prefix_bytes)
-        await orchestrator._deliver_result(
-            title, summary, content, "prompt:dashboard:chat-1"
-        )
+        await orchestrator._deliver_result(title, summary, content, "prompt:dashboard:chat-1")
         delivered = session.enqueue_or_run_prompt.call_args.args[0]
         assert content in delivered
         assert len(delivered.encode("utf-8")) == MAX_PROMPT_BYTES
@@ -243,20 +235,18 @@ class TestDashboardSessionInjectDeliver:
 
         state.resolve_session = lambda name: DashboardState.resolve_session(state, name)
 
-        await orchestrator._deliver_result(
-            "💓 Heartbeat", "test", "result", "dashboard:chat-1"
-        )
+        await orchestrator._deliver_result("💓 Heartbeat", "test", "result", "dashboard:chat-1")
         session.append.assert_called_once()
 
     @pytest.mark.asyncio()
-    async def test_inject_no_notify_when_session_missing(self, orchestrator, dashboard_state, monkeypatch):
+    async def test_inject_no_notify_when_session_missing(
+        self, orchestrator, dashboard_state, monkeypatch
+    ):
         state, _ = dashboard_state
         state.resolve_session.return_value = None
         sel_mock = MagicMock()
         monkeypatch.setattr("personalclaw.gateway.sel", lambda: sel_mock)
-        await orchestrator._deliver_result(
-            "💓 Heartbeat", "test", "result", "dashboard:chat-99"
-        )
+        await orchestrator._deliver_result("💓 Heartbeat", "test", "result", "dashboard:chat-99")
         state.notify.assert_not_called()
         # SEL audit event fires on not_found for inject path too
         sel_mock.log_api_access.assert_called_once()
@@ -346,7 +336,9 @@ class TestLogTaskException:
         from personalclaw.dashboard.state import _log_task_exception
 
         caplog.set_level(logging.ERROR)
-        monkeypatch.setattr(state_mod, "redact_credentials", lambda _tb: (_ for _ in ()).throw(ValueError("boom")))
+        monkeypatch.setattr(
+            state_mod, "redact_credentials", lambda _tb: (_ for _ in ()).throw(ValueError("boom"))
+        )
 
         async def failing():
             raise RuntimeError("original error")
@@ -406,6 +398,7 @@ class TestSessionPrefixMatch:
 
     def _state_with_sessions(self, sessions: dict):
         from unittest.mock import MagicMock
+
         state = MagicMock()
         state._sessions = sessions
         return state
@@ -490,6 +483,7 @@ class TestSessionPrefixMatch:
         session.key = "chat-1-1776476208"
         state._sessions = {"chat-1-1776476208": session}
         from personalclaw.dashboard.state import DashboardState
+
         state.resolve_session = lambda name: DashboardState.resolve_session(state, name)
 
         await orchestrator._deliver_result(
@@ -506,6 +500,7 @@ class TestSessionPrefixMatch:
         session.key = "chat-1-1776476208"
         state._sessions = {"chat-1-1776476208": session}
         from personalclaw.dashboard.state import DashboardState
+
         state.resolve_session = lambda name: DashboardState.resolve_session(state, name)
 
         await orchestrator._deliver_result(

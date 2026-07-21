@@ -1,7 +1,5 @@
 """Tests for the shared filetype-keyed upload size policy (personalclaw.uploads.policy)."""
 
-import importlib
-
 import pytest
 
 from personalclaw.uploads import policy as P
@@ -14,13 +12,24 @@ class TestCategoryMapping:
     @pytest.mark.parametrize(
         "filename,expected",
         [
-            ("clip.mp4", "video"), ("movie.mov", "video"), ("x.mkv", "video"),
-            ("song.mp3", "audio"), ("voice.wav", "audio"), ("a.flac", "audio"),
-            ("photo.png", "image"), ("iphone.heic", "image"), ("scan.tiff", "image"),
-            ("doc.pdf", "document"), ("report.docx", "document"),
-            ("data.csv", "document"), ("script.py", "document"),
-            ("bundle.zip", "archive"), ("t.tar.gz", "archive"), ("a.7z", "archive"),
-            ("mystery.bin", "other"), ("noext", "other"),
+            ("clip.mp4", "video"),
+            ("movie.mov", "video"),
+            ("x.mkv", "video"),
+            ("song.mp3", "audio"),
+            ("voice.wav", "audio"),
+            ("a.flac", "audio"),
+            ("photo.png", "image"),
+            ("iphone.heic", "image"),
+            ("scan.tiff", "image"),
+            ("doc.pdf", "document"),
+            ("report.docx", "document"),
+            ("data.csv", "document"),
+            ("script.py", "document"),
+            ("bundle.zip", "archive"),
+            ("t.tar.gz", "archive"),
+            ("a.7z", "archive"),
+            ("mystery.bin", "other"),
+            ("noext", "other"),
         ],
     )
     def test_category_for(self, filename: str, expected: str):

@@ -17,7 +17,10 @@ from personalclaw.schedule import ScheduleDefinition, ScheduleJob, make_agent_ac
 def _make_request(body: dict, raw_id: str = "abc123") -> MagicMock:
     mock_state = MagicMock()
     mock_state.crons.update_job.return_value = ScheduleJob(
-        id=raw_id, name="t", action=make_agent_action(message="m"), schedule=ScheduleDefinition(kind="every", every_secs=300)
+        id=raw_id,
+        name="t",
+        action=make_agent_action(message="m"),
+        schedule=ScheduleDefinition(kind="every", every_secs=300),
     )
     mock_state.crons.is_running.return_value = False
     mock_state.crons.running_since.return_value = None
@@ -56,7 +59,9 @@ class TestScheduleTriggerUpdateAgent:
         resp = await api_trigger_detail(request)
         assert resp.status == 200
         # The canonical action is written back onto the job.
-        assert request.app["state"].crons.update_job.return_value.action["provider"] == "invoke-agent"
+        assert (
+            request.app["state"].crons.update_job.return_value.action["provider"] == "invoke-agent"
+        )
 
     @pytest.mark.asyncio
     async def test_other_fields_patched_alongside_action(self):

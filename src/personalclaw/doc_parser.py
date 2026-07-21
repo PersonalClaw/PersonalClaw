@@ -98,7 +98,9 @@ def _safe_decompress(data: bytes, max_size: int | None = None) -> bytes:
 
 
 def _read_zip_entry(
-    zf: zipfile.ZipFile, name: str, max_size: int | None = None,
+    zf: zipfile.ZipFile,
+    name: str,
+    max_size: int | None = None,
 ) -> bytes | None:
     """Read a ZIP entry with an *actual* decompressed-size limit.
 

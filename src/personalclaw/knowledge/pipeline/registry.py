@@ -42,6 +42,7 @@ def can_resolve_use_case(use_case: str | None) -> bool:
         return True
     try:
         from personalclaw.providers.provider_bridge import can_resolve_use_case as _can
+
         return bool(_can(use_case))
     except Exception:
         logger.debug("use-case resolvability check failed for %s", use_case, exc_info=True)

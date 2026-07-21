@@ -176,7 +176,8 @@ class ProviderRegistry:
         else:
             logger.debug(
                 "register_entry: type %r not yet registered for %r; storing entry anyway",
-                entry.type, entry.name,
+                entry.type,
+                entry.name,
             )
 
         self._entries[entry.name] = entry
@@ -388,7 +389,11 @@ def sync_entries_from_config() -> int:
             # becomes resolvable by name (chat resolution uses it), and the type
             # will be available by the time inference runs.
             cap = None
-            logger.debug("sync_entries_from_config: type %r not registered yet for %r; registering entry anyway", ptype, name)
+            logger.debug(
+                "sync_entries_from_config: type %r not registered yet for %r; registering entry anyway",  # noqa: E501
+                ptype,
+                name,
+            )
         options = dict(p.get("options") or {})
         if ptype != registry_type:
             options["_original_type"] = ptype
@@ -407,5 +412,7 @@ def sync_entries_from_config() -> int:
         except ProviderResolutionError:
             logger.debug("sync_entries_from_config: skip %r (already/invalid)", name)
     if count:
-        logger.info("Registered %d provider entr%s from config", count, "y" if count == 1 else "ies")
+        logger.info(
+            "Registered %d provider entr%s from config", count, "y" if count == 1 else "ies"
+        )
     return count

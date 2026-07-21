@@ -30,8 +30,7 @@ async def test_reveal_path_no_crash(mock_sel, tmp_path):
     f = tmp_path / "hello.txt"
     f.write_text("hi")
     # Mock xdg-open as available so the full code path (including SEL) executes
-    with patch("shutil.which", return_value="/usr/bin/xdg-open"), \
-         patch("subprocess.Popen"):
+    with patch("shutil.which", return_value="/usr/bin/xdg-open"), patch("subprocess.Popen"):
         async with TestClient(TestServer(_make_app())) as client:
             resp = await client.post(
                 "/api/reveal",
@@ -55,9 +54,7 @@ async def test_reveal_path_no_crash(mock_sel, tmp_path):
 async def test_reveal_path_sensitive_denied(mock_sel):
     """Given a path containing ~/.ssh/id_rsa, when POST /api/reveal is called,
     then response is 403 with {"error": "access denied"} and SEL logs the denial."""
-    with patch(
-        "personalclaw.dashboard.handlers.files.is_sensitive_path", return_value=True
-    ):
+    with patch("personalclaw.dashboard.handlers.files.is_sensitive_path", return_value=True):
         async with TestClient(TestServer(_make_app())) as client:
             resp = await client.post(
                 "/api/reveal",

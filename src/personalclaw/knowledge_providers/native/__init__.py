@@ -20,8 +20,18 @@ logger = logging.getLogger(__name__)
 
 # The 12 native typed-create entry points.
 NATIVE_TYPES = (
-    "note", "fleeting", "journal", "gist", "bookmark",
-    "image", "audio", "video", "pdf", "document", "sheet", "slides",
+    "note",
+    "fleeting",
+    "journal",
+    "gist",
+    "bookmark",
+    "image",
+    "audio",
+    "video",
+    "pdf",
+    "document",
+    "sheet",
+    "slides",
 )
 _TEXT_TYPES = {"note", "fleeting", "journal", "gist", "bookmark"}
 
@@ -44,10 +54,19 @@ class NativeKnowledgeProvider(KnowledgeProvider):
         return "PersonalClaw Knowledge"
 
     def create_typed(
-        self, *, item_type: str, title: str = "", content: str = "", url: str = "",
-        tags=None, summary: str = "",
-        file_path: str = "", mime_type: str = "", file_size: int = 0,
-        gist_language: str = "", extra: dict | None = None,
+        self,
+        *,
+        item_type: str,
+        title: str = "",
+        content: str = "",
+        url: str = "",
+        tags=None,
+        summary: str = "",
+        file_path: str = "",
+        mime_type: str = "",
+        file_size: int = 0,
+        gist_language: str = "",
+        extra: dict | None = None,
     ) -> str:
         """Create a typed item, register it into the library, and enqueue ingestion.
 
@@ -67,9 +86,14 @@ class NativeKnowledgeProvider(KnowledgeProvider):
             ex["gist_language"] = gist_language
         ex["processing_status"] = "queued"
         item_id = self._store.create_typed_item(
-            item_type=item_type, title=title or (url or content[:60].strip() or "Untitled"),
-            content=content, tags=tags or [], url=url,
-            summary=summary, provider="native", extra=ex,
+            item_type=item_type,
+            title=title or (url or content[:60].strip() or "Untitled"),
+            content=content,
+            tags=tags or [],
+            url=url,
+            summary=summary,
+            provider="native",
+            extra=ex,
         )
         if self._enqueue:
             try:
@@ -85,14 +109,25 @@ class NativeKnowledgeProvider(KnowledgeProvider):
         count = self._store.db.execute(
             "SELECT COUNT(*) c FROM items WHERE status='active' AND provider='native'"
         ).fetchone()["c"]
-        return [KnowledgeSource(id="native", name="PersonalClaw Knowledge",
-                                source_type="library", item_count=count, provider="native")]
+        return [
+            KnowledgeSource(
+                id="native",
+                name="PersonalClaw Knowledge",
+                source_type="library",
+                item_count=count,
+                provider="native",
+            )
+        ]
 
     async def search(self, query: str, limit: int = 10) -> list[KnowledgeItem]:
         rows = self._store.search_items_fts(query, limit=limit)
         return [
-            KnowledgeItem(id=r["id"], title=r.get("title", ""), content=r.get("content", ""),
-                          metadata={"type": r.get("item_type", ""), "provider": "native"})
+            KnowledgeItem(
+                id=r["id"],
+                title=r.get("title", ""),
+                content=r.get("content", ""),
+                metadata={"type": r.get("item_type", ""), "provider": "native"},
+            )
             for r in rows
         ]
 
@@ -100,8 +135,12 @@ class NativeKnowledgeProvider(KnowledgeProvider):
         it = self._store.get_item(item_id)
         if not it:
             return None
-        return KnowledgeItem(id=it["id"], title=it.get("title", ""), content=it.get("content", ""),
-                             metadata={"type": it.get("type", ""), "provider": it.get("provider", "native")})
+        return KnowledgeItem(
+            id=it["id"],
+            title=it.get("title", ""),
+            content=it.get("content", ""),
+            metadata={"type": it.get("type", ""), "provider": it.get("provider", "native")},
+        )
 
     async def delete_item(self, item_id: str) -> bool:
         # store.delete_item returns None — report found/not-found ourselves.

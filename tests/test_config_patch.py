@@ -18,7 +18,13 @@ def _make_app() -> web.Application:
 
 def _seed_config() -> dict:
     return {
-        "agents": {"personalclaw": {"provider_agent": "personalclaw", "workspace": "default", "memory_store": "default"}},
+        "agents": {
+            "personalclaw": {
+                "provider_agent": "personalclaw",
+                "workspace": "default",
+                "memory_store": "default",
+            }
+        },
         "default_agent": "personalclaw",
         "session": {"pool_agent": "", "timeout_secs": 3600, "autocompact_pct": 50.0},
         "agent": {"approval_mode": "auto", "sandbox": "auto"},
@@ -40,6 +46,7 @@ async def _patch(client, path, value):
 
 # ── General ──────────────────────────────────────────────────────────────
 
+
 class TestPatchGeneral:
     @pytest.mark.asyncio
     async def test_unknown_field_returns_400(self, tmp_config) -> None:
@@ -50,11 +57,16 @@ class TestPatchGeneral:
     @pytest.mark.asyncio
     async def test_invalid_json_body_returns_400(self, tmp_config) -> None:
         async with TestClient(TestServer(_make_app())) as c:
-            resp = await c.patch("/api/config/personalclaw", data=b"not json", headers={"Content-Type": "application/json"})
+            resp = await c.patch(
+                "/api/config/personalclaw",
+                data=b"not json",
+                headers={"Content-Type": "application/json"},
+            )
             assert resp.status == 400
 
 
 # ── Enum validator ───────────────────────────────────────────────────────
+
 
 class TestEnumValidator:
     @pytest.mark.asyncio
@@ -94,6 +106,7 @@ class TestEnumValidator:
         parent (e.g. dashboard.terminal.enabled stays when persist is added)."""
         # seed a sibling first
         import json as _json
+
         data = _json.loads(tmp_config.read_text(encoding="utf-8"))
         data.setdefault("dashboard", {}).setdefault("terminal", {})["enabled"] = True
         tmp_config.write_text(_json.dumps(data), encoding="utf-8")
@@ -106,6 +119,7 @@ class TestEnumValidator:
 
 
 # ── Int validator ────────────────────────────────────────────────────────
+
 
 class TestIntValidator:
     @pytest.mark.asyncio
@@ -134,6 +148,7 @@ class TestIntValidator:
 
 
 # ── Float validator ──────────────────────────────────────────────────────
+
 
 class TestFloatValidator:
     @pytest.mark.asyncio
@@ -169,6 +184,7 @@ class TestFloatValidator:
 
 # ── Bool validator ───────────────────────────────────────────────────────
 
+
 class TestBoolValidator:
     @pytest.mark.asyncio
     async def test_valid_bool_passes(self, tmp_config) -> None:
@@ -184,6 +200,7 @@ class TestBoolValidator:
 
 
 # ── Str validator (pool_agent) ───────────────────────────────────────────
+
 
 class TestStrValidator:
     @pytest.mark.asyncio
@@ -221,21 +238,36 @@ class TestStrValidator:
 
 # ── Egress validator (security.egress operator overrides) ──────────────────
 
+
 class TestEgressValidator:
     @pytest.mark.asyncio
     async def test_valid_egress_persists(self, tmp_config) -> None:
         async with TestClient(TestServer(_make_app())) as c:
-            resp = await _patch(c, "security.egress", {
-                "allow_hosts": ["nas.local"], "deny_hosts": ["evil.com"], "allow_private": True,
-            })
+            resp = await _patch(
+                c,
+                "security.egress",
+                {
+                    "allow_hosts": ["nas.local"],
+                    "deny_hosts": ["evil.com"],
+                    "allow_private": True,
+                },
+            )
             assert resp.status == 200
             saved = json.loads(tmp_config.read_text())["security"]["egress"]
-            assert saved == {"allow_hosts": ["nas.local"], "deny_hosts": ["evil.com"], "allow_private": True}
+            assert saved == {
+                "allow_hosts": ["nas.local"],
+                "deny_hosts": ["evil.com"],
+                "allow_private": True,
+            }
 
     @pytest.mark.asyncio
     async def test_rejects_url_host(self, tmp_config) -> None:
         async with TestClient(TestServer(_make_app())) as c:
-            resp = await _patch(c, "security.egress", {"allow_hosts": ["http://evil.com/x"], "deny_hosts": [], "allow_private": False})
+            resp = await _patch(
+                c,
+                "security.egress",
+                {"allow_hosts": ["http://evil.com/x"], "deny_hosts": [], "allow_private": False},
+            )
             assert resp.status == 400
             assert "bare domain" in (await resp.json())["error"]
 
@@ -248,14 +280,20 @@ class TestEgressValidator:
     @pytest.mark.asyncio
     async def test_rejects_non_bool_private(self, tmp_config) -> None:
         async with TestClient(TestServer(_make_app())) as c:
-            resp = await _patch(c, "security.egress", {"allow_hosts": [], "deny_hosts": [], "allow_private": "yes"})
+            resp = await _patch(
+                c, "security.egress", {"allow_hosts": [], "deny_hosts": [], "allow_private": "yes"}
+            )
             assert resp.status == 400
 
     @pytest.mark.asyncio
     async def test_strips_unknown_keys(self, tmp_config) -> None:
         """Only the three known keys are persisted — a stray field can't be smuggled in."""
         async with TestClient(TestServer(_make_app())) as c:
-            resp = await _patch(c, "security.egress", {"allow_hosts": [], "deny_hosts": [], "allow_private": False, "evil": "x"})
+            resp = await _patch(
+                c,
+                "security.egress",
+                {"allow_hosts": [], "deny_hosts": [], "allow_private": False, "evil": "x"},
+            )
             assert resp.status == 200
             saved = json.loads(tmp_config.read_text())["security"]["egress"]
             assert "evil" not in saved
@@ -263,35 +301,48 @@ class TestEgressValidator:
 
 # ── Projection-rules validator (tools.projection_rules, TokenJuice OP6) ──────
 
+
 class TestProjectionRulesValidator:
     def teardown_method(self):
         from personalclaw.tool_providers.projection import set_user_rules
+
         set_user_rules([])
 
     @pytest.mark.asyncio
     async def test_valid_rules_persist_and_apply_live(self, tmp_config) -> None:
         async with TestClient(TestServer(_make_app())) as c:
-            resp = await _patch(c, "tools.projection_rules", [
-                {"name": "acme", "match_regex": r"^\[ACME\]", "strategy": "log"},
-            ])
+            resp = await _patch(
+                c,
+                "tools.projection_rules",
+                [
+                    {"name": "acme", "match_regex": r"^\[ACME\]", "strategy": "log"},
+                ],
+            )
             assert resp.status == 200
             saved = json.loads(tmp_config.read_text())["tools"]["projection_rules"]
             assert saved == [{"name": "acme", "match_regex": r"^\[ACME\]", "strategy": "log"}]
         # Live-applied: the engine now dispatches a matching sample to 'log'.
         from personalclaw.tool_providers.projection import infer_content_type
+
         assert infer_content_type("[ACME] boot\nstep\n") == "log"
 
     @pytest.mark.asyncio
     async def test_rejects_invalid_regex(self, tmp_config) -> None:
         async with TestClient(TestServer(_make_app())) as c:
-            resp = await _patch(c, "tools.projection_rules", [{"name": "x", "match_regex": "(", "strategy": "log"}])
+            resp = await _patch(
+                c, "tools.projection_rules", [{"name": "x", "match_regex": "(", "strategy": "log"}]
+            )
             assert resp.status == 400
             assert "regex" in (await resp.json())["error"].lower()
 
     @pytest.mark.asyncio
     async def test_rejects_unknown_strategy(self, tmp_config) -> None:
         async with TestClient(TestServer(_make_app())) as c:
-            resp = await _patch(c, "tools.projection_rules", [{"name": "x", "match_regex": "foo", "strategy": "nonsense"}])
+            resp = await _patch(
+                c,
+                "tools.projection_rules",
+                [{"name": "x", "match_regex": "foo", "strategy": "nonsense"}],
+            )
             assert resp.status == 400
             assert "strategy" in (await resp.json())["error"].lower()
 
@@ -305,9 +356,13 @@ class TestProjectionRulesValidator:
     async def test_strips_unknown_keys(self, tmp_config) -> None:
         """Only name/match_regex/strategy persist — a stray field can't be smuggled in."""
         async with TestClient(TestServer(_make_app())) as c:
-            resp = await _patch(c, "tools.projection_rules", [
-                {"name": "acme", "match_regex": "foo", "strategy": "test", "evil": "x"},
-            ])
+            resp = await _patch(
+                c,
+                "tools.projection_rules",
+                [
+                    {"name": "acme", "match_regex": "foo", "strategy": "test", "evil": "x"},
+                ],
+            )
             assert resp.status == 200
             saved = json.loads(tmp_config.read_text())["tools"]["projection_rules"][0]
             assert set(saved) == {"name", "match_regex", "strategy"}
@@ -316,6 +371,7 @@ class TestProjectionRulesValidator:
 # ── P11 engagement-ranking flag: the full config-flag thread (PATCH → config.json →
 #    AppConfig.load reads it back). Guards the [[feedback_config_flag_two_maps]] footgun —
 #    a flag missing from the load-map silently reads its default forever. ──
+
 
 class TestEngagementRankingFlag:
     @pytest.mark.asyncio
@@ -343,10 +399,14 @@ class TestEngagementRankingFlag:
         """The load-map leg: a value in config.json must actually reach AppConfig — the
         exact gap the two-maps footgun creates (field on the dataclass but absent from
         AppConfig.load → always the default)."""
-        from personalclaw.config.loader import AppConfig, config_path
+        from personalclaw.config.loader import AppConfig
+
         cfg = _seed_config()
-        cfg["inbox"] = {"enabled": True, "engagement_ranking_enabled": True,
-                        "engagement_half_life_days": 3.25}
+        cfg["inbox"] = {
+            "enabled": True,
+            "engagement_ranking_enabled": True,
+            "engagement_half_life_days": 3.25,
+        }
         p = tmp_path / "config.json"
         p.write_text(json.dumps(cfg), encoding="utf-8")
         with patch("personalclaw.config.loader.config_path", return_value=p):
@@ -360,6 +420,7 @@ class TestEngagementRankingFlag:
 # ── agent.bot_name: sanitize at the WRITE boundary (S05 C6) — the file must
 #    match what load() produces, or config.json carries markdown/braces while
 #    runtime sees the stripped name (split-brain). ──
+
 
 class TestBotNamePatch:
     @pytest.mark.asyncio

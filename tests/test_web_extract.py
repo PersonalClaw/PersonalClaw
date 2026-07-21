@@ -7,11 +7,8 @@ hit the network — extraction is pure over an HTML string.
 
 from __future__ import annotations
 
-import pytest
-
 from personalclaw.web import extract as ex
 from personalclaw.web.extract import ExtractedDoc, extract_main_content, sanitize_html
-
 
 _PAGE = """
 <!DOCTYPE html>
@@ -78,7 +75,9 @@ def test_fallback_path_when_trafilatura_absent(monkeypatch):
 
 def test_fallback_title_from_title_tag(monkeypatch):
     monkeypatch.setattr(ex, "_trafilatura", None)
-    doc = extract_main_content("<html><head><title>Just A Title</title></head><body><p>hi there friend</p></body></html>")
+    doc = extract_main_content(
+        "<html><head><title>Just A Title</title></head><body><p>hi there friend</p></body></html>"
+    )
     assert doc.title == "Just A Title"
 
 

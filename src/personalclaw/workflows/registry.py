@@ -64,17 +64,6 @@ async def list_all_workflows(
     return all_wf[offset : offset + limit], total
 
 
-async def get_workflow(workflow_id: str, provider_name: str | None = None) -> Workflow | None:
-    _ensure_native()
-    if provider_name and provider_name in _providers:
-        return await _providers[provider_name].get_workflow(workflow_id)
-    for prov in _providers.values():
-        wf = await prov.get_workflow(workflow_id)
-        if wf:
-            return wf
-    return None
-
-
 async def create_workflow(provider_name: str = "native", **fields: Any) -> Workflow:
     _ensure_native()
     prov = _providers.get(provider_name)
@@ -133,7 +122,8 @@ async def update_workflow(
                 await prov.update_workflow(
                     workflow_id,
                     steps=[s.to_dict() for s in prior.steps],
-                    scope=prior.scope.value, scope_ref=prior.scope_ref,
+                    scope=prior.scope.value,
+                    scope_ref=prior.scope_ref,
                 )
             raise
     return wf
@@ -230,15 +220,21 @@ async def promote_workflow(
         new_ref = (scope_ref or "").strip()
 
     return await update_workflow(
-        workflow_id, provider_name=provider_name,
-        scope=target_scope.value, scope_ref=new_ref,
+        workflow_id,
+        provider_name=provider_name,
+        scope=target_scope.value,
+        scope_ref=new_ref,
     )
 
 
 async def get_workflow(workflow_id: str, provider_name: str | None = None) -> Workflow | None:
     """Fetch one workflow by id across providers (or a named provider)."""
     _ensure_native()
-    provs = [_providers[provider_name]] if provider_name and provider_name in _providers else list(_providers.values())
+    provs = (
+        [_providers[provider_name]]
+        if provider_name and provider_name in _providers
+        else list(_providers.values())
+    )
     for p in provs:
         w = await p.get_workflow(workflow_id)
         if w:

@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -37,15 +36,26 @@ def state(tmp_path):
 
 # ── model ──
 
+
 def test_item_source_can_reply_round_trip():
-    item = InboxItem(id="agent_1", channel="agent", channel_name="agent", thread_ts=None,
-                     message="hi", sender_id="coder", sender_name="coder",
-                     source="native", can_reply=True, reply_target="cron:x")
+    item = InboxItem(
+        id="agent_1",
+        channel="agent",
+        channel_name="agent",
+        thread_ts=None,
+        message="hi",
+        sender_id="coder",
+        sender_name="coder",
+        source="native",
+        can_reply=True,
+        reply_target="cron:x",
+    )
     rt = InboxItem.from_dict(item.to_dict())
     assert rt.source == "native" and rt.can_reply is True and rt.reply_target == "cron:x"
 
 
 # ── native source push ──
+
 
 def test_post_notification_is_fyi_no_reply(state):
     item = ns.post_to_inbox("done with X", kind="notification", sender_name="coder")
@@ -53,10 +63,14 @@ def test_post_notification_is_fyi_no_reply(state):
     assert item.classification == "fyi" and item.can_reply is False
     assert state.events[-1][0] == "inbox_new_item"
 
+
 def test_post_question_needs_reply_routes(state):
-    item = ns.post_to_inbox("approve deploy?", kind="question", sender_name="coder", reply_target="chat:1")
+    item = ns.post_to_inbox(
+        "approve deploy?", kind="question", sender_name="coder", reply_target="chat:1"
+    )
     assert item.classification == "needs_reply" and item.can_reply is True
     assert item.reply_target == "chat:1"
+
 
 def test_post_persists_to_shared_store(state):
     ns.post_to_inbox("a", kind="fyi")
@@ -65,6 +79,7 @@ def test_post_persists_to_shared_store(state):
     reloaded.load()
     assert len(reloaded.items) == 2
 
+
 def test_post_without_state_is_noop():
     ns.set_dashboard_state(None)
     assert ns.post_to_inbox("x") is None
@@ -72,12 +87,14 @@ def test_post_without_state_is_noop():
 
 # ── /send native routing ──
 
+
 def _send_req(state, body):
     app = web.Application()
     app["state"] = state
     req = make_mocked_request("POST", "/api/inbox/send", app=app)
     req.json = lambda: _coro(body)
     return req
+
 
 async def _coro(v):
     return v
@@ -89,6 +106,7 @@ def test_send_routes_native_reply_to_live_session(state):
     state.get_session = lambda key: session if key == "chat:1" else None
     # patch the chat runner import target
     import personalclaw.dashboard.chat_runner as cr
+
     cr._run_chat = MagicMock()
     resp = _run(H.api_inbox_send(_send_req(state, {"id": item.id, "text": "yes, go"})))
     assert resp.status == 200
@@ -98,10 +116,12 @@ def test_send_routes_native_reply_to_live_session(state):
     # item marked handled
     assert state._inbox_store.items[item.id].status == ItemStatus.HANDLED.value
 
+
 def test_send_rejects_non_replyable(state):
     item = ns.post_to_inbox("fyi only", kind="notification")
     resp = _run(H.api_inbox_send(_send_req(state, {"id": item.id, "text": "x"})))
     assert resp.status == 400
+
 
 def test_send_captures_when_session_gone(state):
     item = ns.post_to_inbox("approve?", kind="question", reply_target="gone:1")
@@ -115,6 +135,7 @@ def test_send_captures_when_session_gone(state):
 
 
 # ── /status per-source health ──
+
 
 def test_status_reports_native_source_active(state, monkeypatch):
     app = web.Application()

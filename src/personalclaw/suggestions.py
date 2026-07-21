@@ -34,6 +34,7 @@ _FALLBACK_SUGGESTIONS = [
     "Review my latest PR",
 ]
 
+
 @dataclass
 class SuggestionsCache:
     """Holds pre-computed suggestions with a timestamp."""
@@ -161,6 +162,7 @@ async def generate_suggestions(state: "DashboardState") -> list[str]:
     client, _is_new, _resumed = await state.sessions.get_or_create(BACKGROUND_KEY)
     text = ""
     try:
+
         async def _stream() -> str:
             nonlocal text
             async for event in client.stream(prompt):
@@ -260,8 +262,14 @@ async def api_suggestions(request: web.Request) -> web.Response:
     else:
         await maybe_refresh(state, cache)
 
-    return web.json_response({
-        "suggestions": cache.suggestions,
-        "generated_at": cache.generated_at,
-        "stale": (time.time() - cache.generated_at) > _REFRESH_INTERVAL_SECS if cache.generated_at else True,
-    })
+    return web.json_response(
+        {
+            "suggestions": cache.suggestions,
+            "generated_at": cache.generated_at,
+            "stale": (
+                (time.time() - cache.generated_at) > _REFRESH_INTERVAL_SECS
+                if cache.generated_at
+                else True
+            ),
+        }
+    )

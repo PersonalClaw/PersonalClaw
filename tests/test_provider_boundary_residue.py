@@ -23,8 +23,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
 _CORE = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 _KEEPS_FILE = (
     Path(__file__).resolve().parents[1] / "docs" / "architecture" / "provider-boundary-keeps.txt"

@@ -447,15 +447,14 @@ class SessionConfig:
         default=1800,
         metadata=_meta(
             "Warm Pool TTL",
-            "Max age in seconds for pooled processes. Stale processes are discarded at claim time. 0 disables.",
+            "Max age in seconds for pooled processes. Stale processes are discarded at claim time. 0 disables.",  # noqa: E501
         ),
     )
 
 
 @dataclass
 class LoopsConfig:
-    """Settings for autonomous goal loops (the unified autonomous goal engine).
-    """
+    """Settings for autonomous goal loops (the unified autonomous goal engine)."""
 
     max_cycles_hard_cap: int = field(
         default=100,
@@ -613,7 +612,6 @@ class MemoryConfig:
     )
 
 
-
 @dataclass
 class DashboardConfig:
     url: str = field(
@@ -650,7 +648,7 @@ class DashboardConfig:
         default=False,
         metadata=_meta(
             "Merge Queued Messages",
-            "Concatenate follow-up messages while the agent is busy instead of queueing them separately.",
+            "Concatenate follow-up messages while the agent is busy instead of queueing them separately.",  # noqa: E501
         ),
     )
     auto_tag_sessions: bool = field(
@@ -806,7 +804,9 @@ class AgentProfile:
     )
     approval_mode: str = field(
         default="",
-        metadata=_meta("Approval Mode", "Tool approval mode: auto, interactive, or empty (inherit global)."),
+        metadata=_meta(
+            "Approval Mode", "Tool approval mode: auto, interactive, or empty (inherit global)."
+        ),
     )
     skills: list = field(
         default_factory=list,
@@ -955,7 +955,10 @@ class LearningConfig:
     )
     surface_chip: bool = field(
         default=True,
-        metadata=_meta("Surface Learned Chip", "Show a quiet 'Learned: …' chip in chat when something is captured."),
+        metadata=_meta(
+            "Surface Learned Chip",
+            "Show a quiet 'Learned: …' chip in chat when something is captured.",
+        ),
     )
     skill_ladder: bool = field(
         default=True,
@@ -1091,7 +1094,6 @@ def _is_sensitive_path(schema: dict, dot_path: str) -> bool:
     if node is None:
         return False
     return node.get("x-meta", {}).get("sensitive", False)
-
 
 
 def _mask_value(value: object, sensitive: bool) -> str:
@@ -1378,7 +1380,10 @@ class ProjectionRuleConfig:
     )
     match_regex: str = field(
         default="",
-        metadata=_meta("Match Regex", "Regex matched against the start of a tool's output; a match selects this rule's strategy."),
+        metadata=_meta(
+            "Match Regex",
+            "Regex matched against the start of a tool's output; a match selects this rule's strategy.",  # noqa: E501
+        ),
     )
     strategy: str = field(
         default="log",
@@ -1584,7 +1589,7 @@ class AppConfig:
                         # Renamed hooks→triggers (P4b). Migrate the legacy key on
                         # read so an existing personalclaw.json keeps its scoped
                         # lifecycle triggers; the write side only emits ``triggers``.
-                        triggers=entry.get("triggers", entry.get("hooks", [])),
+                        triggers=entry.get("triggers", entry.get("hooks", [])) or [],
                         source=entry.get("source", "personalclaw"),
                     )
 
@@ -1672,7 +1677,8 @@ class AppConfig:
                 active_recall_timeout_ms=memory_data.get("active_recall_timeout_ms", 1500),
                 proactive_commitments=memory_data.get("proactive_commitments", False),
                 proactive_commitments_max_per_day=memory_data.get(
-                    "proactive_commitments_max_per_day", 3),
+                    "proactive_commitments_max_per_day", 3
+                ),
                 auto_promote_enabled=memory_data.get("auto_promote_enabled", True),
                 auto_promote_every_n=memory_data.get("auto_promote_every_n", 10),
                 auto_promote_max_per_run=memory_data.get("auto_promote_max_per_run", 5),
@@ -1719,8 +1725,12 @@ class AppConfig:
                     str(r) for r in inbox_data.get("style_rules", []) if isinstance(r, str)
                 ],
                 test_mode=bool(inbox_data.get("test_mode", False)),
-                engagement_ranking_enabled=bool(inbox_data.get("engagement_ranking_enabled", False)),
-                engagement_half_life_days=float(inbox_data.get("engagement_half_life_days", 0.0) or 0.0),
+                engagement_ranking_enabled=bool(
+                    inbox_data.get("engagement_ranking_enabled", False)
+                ),
+                engagement_half_life_days=float(
+                    inbox_data.get("engagement_half_life_days", 0.0) or 0.0
+                ),
             ),
             tools=ToolsConfig(
                 projection_rules=[
@@ -1739,7 +1749,9 @@ class AppConfig:
                 auto_refine_on_deviation=bool(skills_data.get("auto_refine_on_deviation", False)),
                 auto_min_tool_calls=int(skills_data.get("auto_min_tool_calls", 5)),
                 auto_similarity_threshold=float(skills_data.get("auto_similarity_threshold", 0.85)),
-                progressive_disclosure_threshold=int(skills_data.get("progressive_disclosure_threshold", 8)),
+                progressive_disclosure_threshold=int(
+                    skills_data.get("progressive_disclosure_threshold", 8)
+                ),
             ),
             workflows=WorkflowsConfig(
                 enabled=bool(workflows_data.get("enabled", True)),
@@ -1758,14 +1770,18 @@ class AppConfig:
                 ],
                 egress=EgressConfig(
                     allow_hosts=[
-                        str(h) for h in (security_data.get("egress", {}) or {}).get("allow_hosts", [])
+                        str(h)
+                        for h in (security_data.get("egress", {}) or {}).get("allow_hosts", [])
                         if isinstance(h, str)
                     ],
                     deny_hosts=[
-                        str(h) for h in (security_data.get("egress", {}) or {}).get("deny_hosts", [])
+                        str(h)
+                        for h in (security_data.get("egress", {}) or {}).get("deny_hosts", [])
                         if isinstance(h, str)
                     ],
-                    allow_private=bool((security_data.get("egress", {}) or {}).get("allow_private", False)),
+                    allow_private=bool(
+                        (security_data.get("egress", {}) or {}).get("allow_private", False)
+                    ),
                 ),
             ),
             observe_max_messages=max(1, int(data.get("observe_max_messages", 200))),
@@ -1788,7 +1804,10 @@ class AppConfig:
                 cfg.agent.provider = "native"
                 needs_migration = True
                 for _prof in (cfg.agents or {}).values():
-                    if not getattr(_prof, "provider", "") and getattr(_prof, "provider_agent", "") == "personalclaw":
+                    if (
+                        not getattr(_prof, "provider", "")
+                        and getattr(_prof, "provider_agent", "") == "personalclaw"
+                    ):
                         _prof.provider = "native"
                         _prof.provider_agent = ""
 
@@ -1824,9 +1843,7 @@ class AppConfig:
             )
 
             if LOOP_WORKER_AGENT_NAME not in cfg.agents:
-                cfg.agents[LOOP_WORKER_AGENT_NAME] = make_loop_worker_profile(
-                    AgentProfile
-                )
+                cfg.agents[LOOP_WORKER_AGENT_NAME] = make_loop_worker_profile(AgentProfile)
                 needs_migration = True
 
             # Seed the built-in Code worker (the SDLC engine) if absent. Same
@@ -1847,9 +1864,7 @@ class AppConfig:
             # idempotent add-if-missing contract — ships with the package, inert
             # until intake invokes it.
             if LOOP_PLANNER_AGENT_NAME not in cfg.agents:
-                cfg.agents[LOOP_PLANNER_AGENT_NAME] = make_loop_planner_profile(
-                    AgentProfile
-                )
+                cfg.agents[LOOP_PLANNER_AGENT_NAME] = make_loop_planner_profile(AgentProfile)
                 needs_migration = True
 
             # Seed the built-in lite background worker if absent. Same idempotent
@@ -2012,7 +2027,10 @@ class AppConfig:
         (ollama, anthropic, openai, vllm, bedrock) flow through that registry;
         ACP is the agent-runtime backend.
         """
-        from personalclaw.providers.provider_bridge import create_provider_factory as _create_ext_factory
+        from personalclaw.providers.provider_bridge import (
+            create_provider_factory as _create_ext_factory,
+        )
+
         return _create_ext_factory("chat")
 
 
@@ -2067,9 +2085,7 @@ def resolve_agent_bindings(
     # store rather than a phantom name.
     store_name = agent_cfg.memory_store
     if store_name and store_name not in config.memory_stores:
-        logger.warning(
-            "Agent memory_store '%s' not found; using filesystem fallback", store_name
-        )
+        logger.warning("Agent memory_store '%s' not found; using filesystem fallback", store_name)
         store_name = ""
 
     provider_agent = agent_cfg.provider_agent

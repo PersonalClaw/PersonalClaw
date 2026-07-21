@@ -82,27 +82,32 @@ def test_pool_warmed_runtime_answered_without_probe(monkeypatch):
     """A runtime with a live warmed pool connection is reported ready INSTANTLY —
     probe_readiness is never called (this is what kept /api/agent-providers fast
     so the chat picker's discovered section appears immediately)."""
-    from personalclaw.agents.registry import get_agent_provider_class
     from personalclaw.acp import connection_pool as cp
+    from personalclaw.agents.registry import get_agent_provider_class
 
     _fresh_registry()
     try:
         registry = get_default_registry()
         registry.register_entry(
             ProviderEntry(
-                name="acp:test-cli", type="acp_agent", model="",
+                name="acp:test-cli",
+                type="acp_agent",
+                model="",
                 options={"command": ["/x/test-cli", "acp"], "dialect": "test-cli"},
-                credential=None, declared_capabilities=ACP_AGENT_CAPABILITY.capabilities,
+                credential=None,
+                declared_capabilities=ACP_AGENT_CAPABILITY.capabilities,
             )
         )
 
         class _FakePool:
             def is_warmed(self, runtime_id):
                 return runtime_id == "acp:test-cli"
+
         cp.set_acp_pool(_FakePool())
 
         async def boom(cls, options):
             raise AssertionError("probe_readiness must NOT run for a pool-warmed runtime")
+
         monkeypatch.setattr(get_agent_provider_class("acp"), "probe_readiness", classmethod(boom))
 
         data = _call()
@@ -116,10 +121,10 @@ def test_pool_warmed_runtime_answered_without_probe(monkeypatch):
 def test_readiness_cache_avoids_reprobe(monkeypatch):
     """A not-pooled runtime is probed once, then served from the readiness cache
     on subsequent calls (so codex's slow-failing probe isn't re-paid each time)."""
-    from personalclaw.agents.registry import get_agent_provider_class
-    from personalclaw.agents.provider import ReadinessStatus
-    from personalclaw.dashboard.handlers import providers as prov_mod
     from personalclaw.acp import connection_pool as cp
+    from personalclaw.agents.provider import ReadinessStatus
+    from personalclaw.agents.registry import get_agent_provider_class
+    from personalclaw.dashboard.handlers import providers as prov_mod
 
     _fresh_registry()
     try:
@@ -128,9 +133,12 @@ def test_readiness_cache_avoids_reprobe(monkeypatch):
         registry = get_default_registry()
         registry.register_entry(
             ProviderEntry(
-                name="acp:codex", type="acp_agent", model="",
+                name="acp:codex",
+                type="acp_agent",
+                model="",
                 options={"command": ["npx", "codex-acp"], "dialect": "codex"},
-                credential=None, declared_capabilities=ACP_AGENT_CAPABILITY.capabilities,
+                credential=None,
+                declared_capabilities=ACP_AGENT_CAPABILITY.capabilities,
             )
         )
         calls = {"n": 0}
@@ -138,7 +146,10 @@ def test_readiness_cache_avoids_reprobe(monkeypatch):
         async def fake_probe(cls, options):
             calls["n"] += 1
             return ReadinessStatus(ready=False, state="not_found", detail="no engine")
-        monkeypatch.setattr(get_agent_provider_class("acp"), "probe_readiness", classmethod(fake_probe))
+
+        monkeypatch.setattr(
+            get_agent_provider_class("acp"), "probe_readiness", classmethod(fake_probe)
+        )
 
         _call()
         _call()
@@ -168,6 +179,7 @@ def test_native_row_always_present_and_ready():
 
 def _call_agents(runtime_id: str, query: str = "") -> tuple[int, dict]:
     from personalclaw.dashboard.handlers.providers import api_agent_provider_agents
+
     path = f"/api/agent-providers/{runtime_id}/agents" + (f"?{query}" if query else "")
     req = make_mocked_request("GET", path, match_info={"id": runtime_id})
     resp = asyncio.run(api_agent_provider_agents(req))
@@ -196,9 +208,9 @@ def test_discovery_unknown_runtime_404():
 
 def test_discovery_lists_agents_and_caches(monkeypatch):
     """Discovery surfaces discover_agents output + caches it (2nd call cached)."""
-    from personalclaw.dashboard.handlers import providers as prov_mod
     from personalclaw.agents.provider import DiscoveredAgent
     from personalclaw.agents.registry import get_agent_provider_class
+    from personalclaw.dashboard.handlers import providers as prov_mod
 
     _fresh_registry()
     try:
@@ -206,9 +218,12 @@ def test_discovery_lists_agents_and_caches(monkeypatch):
         registry = get_default_registry()
         registry.register_entry(
             ProviderEntry(
-                name="acp:test-cli", type="acp_agent", model="",
+                name="acp:test-cli",
+                type="acp_agent",
+                model="",
                 options={"command": ["/x/test-cli", "acp"], "dialect": "test-cli"},
-                credential=None, declared_capabilities=ACP_AGENT_CAPABILITY.capabilities,
+                credential=None,
+                declared_capabilities=ACP_AGENT_CAPABILITY.capabilities,
             )
         )
         calls = {"n": 0}
@@ -217,9 +232,16 @@ def test_discovery_lists_agents_and_caches(monkeypatch):
             calls["n"] += 1
             assert options.get("runtime_id") == "acp:test-cli"
             assert options.get("runtime_label") == "Test Cli"  # title-cased label
-            return [DiscoveredAgent(id="acp:test-cli/gpu-dev", name="gpu-dev",
-                                    runtime="acp:test-cli", provider_agent="gpu-dev",
-                                    models=["auto"])]
+            return [
+                DiscoveredAgent(
+                    id="acp:test-cli/gpu-dev",
+                    name="gpu-dev",
+                    runtime="acp:test-cli",
+                    provider_agent="gpu-dev",
+                    models=["auto"],
+                )
+            ]
+
         # Patch the class the handler actually resolves (acp_agent was reloaded by
         # _fresh_registry, so a stale import would miss).
         acp_cls = get_agent_provider_class("acp")
@@ -246,9 +268,9 @@ def test_discovery_lists_agents_and_caches(monkeypatch):
 def test_discovery_uses_pool_snapshot_without_spawn(monkeypatch):
     """When a warmed pool connection holds a live snapshot, discovery maps it
     directly (agents_from_snapshot) and never calls the spawning discover_agents."""
-    from personalclaw.dashboard.handlers import providers as prov_mod
-    from personalclaw.agents.registry import get_agent_provider_class
     from personalclaw.acp import connection_pool as cp
+    from personalclaw.agents.registry import get_agent_provider_class
+    from personalclaw.dashboard.handlers import providers as prov_mod
 
     _fresh_registry()
     try:
@@ -256,9 +278,12 @@ def test_discovery_uses_pool_snapshot_without_spawn(monkeypatch):
         registry = get_default_registry()
         registry.register_entry(
             ProviderEntry(
-                name="acp:test-cli", type="acp_agent", model="",
+                name="acp:test-cli",
+                type="acp_agent",
+                model="",
                 options={"command": ["/x/test-cli", "acp"], "dialect": "test-cli"},
-                credential=None, declared_capabilities=ACP_AGENT_CAPABILITY.capabilities,
+                credential=None,
+                declared_capabilities=ACP_AGENT_CAPABILITY.capabilities,
             )
         )
 
@@ -266,14 +291,18 @@ def test_discovery_uses_pool_snapshot_without_spawn(monkeypatch):
         class _FakePool:
             def snapshot(self, runtime_id):
                 if runtime_id == "acp:test-cli":
-                    return {"modes": {"availableModes": [{"id": "gpu-dev", "name": "gpu-dev"}]},
-                            "models": {"availableModels": [{"modelId": "auto"}]}}
+                    return {
+                        "modes": {"availableModes": [{"id": "gpu-dev", "name": "gpu-dev"}]},
+                        "models": {"availableModels": [{"modelId": "auto"}]},
+                    }
                 return None
+
         cp.set_acp_pool(_FakePool())
 
         # discover_agents (the spawning path) must NOT be called.
         async def boom(cls, options):
             raise AssertionError("discover_agents should not spawn when pool snapshot exists")
+
         monkeypatch.setattr(get_agent_provider_class("acp"), "discover_agents", classmethod(boom))
 
         status, data = _call_agents("acp:test-cli")

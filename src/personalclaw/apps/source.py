@@ -33,8 +33,8 @@ class SourceError(Exception):
 @dataclass
 class ResolvedSource:
     path: Path
-    origin: str          # "local" | "external"
-    cleanup: bool        # caller should rmtree(cleanup_root or path) when done
+    origin: str  # "local" | "external"
+    cleanup: bool  # caller should rmtree(cleanup_root or path) when done
     _cleanup_root: Path | None = None  # when set, rmtree this instead of path (subdir installs)
 
     @property
@@ -45,10 +45,7 @@ class ResolvedSource:
 
 def _looks_like_git_url(source: str) -> bool:
     s = source.strip()
-    return (
-        s.startswith(("http://", "https://", "git://", "ssh://", "git@"))
-        or s.endswith(".git")
-    )
+    return s.startswith(("http://", "https://", "git://", "ssh://", "git@")) or s.endswith(".git")
 
 
 def resolve(source: str) -> ResolvedSource:
@@ -76,11 +73,11 @@ def resolve(source: str) -> ResolvedSource:
             target = resolved.path / subdir
             if not target.is_dir():
                 _rmtree(resolved.path)
-                raise SourceError(
-                    f"subdirectory '{subdir}' not found in cloned repo"
-                )
+                raise SourceError(f"subdirectory '{subdir}' not found in cloned repo")
             resolved = ResolvedSource(
-                path=target, origin="external", cleanup=True,
+                path=target,
+                origin="external",
+                cleanup=True,
                 _cleanup_root=resolved.path,
             )
         return resolved
@@ -96,7 +93,9 @@ def _clone_git(url: str) -> ResolvedSource:
     try:
         proc = subprocess.run(
             ["git", "clone", "--depth", "1", "--", url, str(tmp)],
-            capture_output=True, text=True, timeout=_CLONE_TIMEOUT,
+            capture_output=True,
+            text=True,
+            timeout=_CLONE_TIMEOUT,
         )
     except subprocess.TimeoutExpired as exc:
         _rmtree(tmp)

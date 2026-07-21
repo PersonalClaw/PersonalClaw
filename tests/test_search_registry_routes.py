@@ -22,12 +22,21 @@ class _Fake(SearchProvider):
         self._name, self._available, self._fetch = name, available, fetch
 
     @property
-    def name(self): return self._name
+    def name(self):
+        return self._name
+
     @property
-    def display_name(self): return self._name.title()
-    async def is_available(self): return self._available
-    def capabilities(self): return SearchCapabilities(supports_fetch=self._fetch)
-    async def search(self, query, **kw): return SearchResult(provider=self._name, query=query)
+    def display_name(self):
+        return self._name.title()
+
+    async def is_available(self):
+        return self._available
+
+    def capabilities(self):
+        return SearchCapabilities(supports_fetch=self._fetch)
+
+    async def search(self, query, **kw):
+        return SearchResult(provider=self._name, query=query)
 
 
 @pytest.fixture(autouse=True)
@@ -64,8 +73,9 @@ async def test_active_returns_all_use_cases():
 @pytest.mark.asyncio
 async def test_set_active_binds_provider():
     reg.register_provider(_Fake("tavily"))  # must be registered to bind (set-time validation)
-    req = make_mocked_request("PUT", "/api/search/active/search-general",
-                              match_info={"use_case": "search-general"})
+    req = make_mocked_request(
+        "PUT", "/api/search/active/search-general", match_info={"use_case": "search-general"}
+    )
     req.json = _async_return({"providers": ["tavily"]})
     resp = await sr.api_search_active_set(req)
     data = await _json(resp)
@@ -80,8 +90,9 @@ async def test_set_active_rejects_unknown_provider():
     strand the use-case on a dead name. Regression for the set-time validation gap
     (the search sibling of model bug #16)."""
     reg.register_provider(_Fake("tavily"))
-    req = make_mocked_request("PUT", "/api/search/active/search-general",
-                              match_info={"use_case": "search-general"})
+    req = make_mocked_request(
+        "PUT", "/api/search/active/search-general", match_info={"use_case": "search-general"}
+    )
     req.json = _async_return({"providers": ["nosuchsearch"]})
     resp = await sr.api_search_active_set(req)
     assert resp.status == 400
@@ -93,8 +104,9 @@ async def test_set_active_rejects_unknown_provider():
 @pytest.mark.asyncio
 async def test_set_active_empty_clears_binding():
     uc.set_active_search_provider("search-news", "tavily")
-    req = make_mocked_request("PUT", "/api/search/active/search-news",
-                              match_info={"use_case": "search-news"})
+    req = make_mocked_request(
+        "PUT", "/api/search/active/search-news", match_info={"use_case": "search-news"}
+    )
     req.json = _async_return({"providers": []})
     resp = await sr.api_search_active_set(req)
     assert (await _json(resp))["providers"] == []
@@ -104,8 +116,7 @@ async def test_set_active_empty_clears_binding():
 
 @pytest.mark.asyncio
 async def test_set_active_rejects_invalid_use_case():
-    req = make_mocked_request("PUT", "/api/search/active/bogus",
-                              match_info={"use_case": "bogus"})
+    req = make_mocked_request("PUT", "/api/search/active/bogus", match_info={"use_case": "bogus"})
     req.json = _async_return({"providers": ["tavily"]})
     resp = await sr.api_search_active_set(req)
     assert resp.status == 400
@@ -113,8 +124,9 @@ async def test_set_active_rejects_invalid_use_case():
 
 @pytest.mark.asyncio
 async def test_set_active_rejects_multiple_providers():
-    req = make_mocked_request("PUT", "/api/search/active/search-general",
-                              match_info={"use_case": "search-general"})
+    req = make_mocked_request(
+        "PUT", "/api/search/active/search-general", match_info={"use_case": "search-general"}
+    )
     req.json = _async_return({"providers": ["a", "b"]})
     resp = await sr.api_search_active_set(req)
     assert resp.status == 400
@@ -123,4 +135,5 @@ async def test_set_active_rejects_multiple_providers():
 def _async_return(value):
     async def _f():
         return value
+
     return _f

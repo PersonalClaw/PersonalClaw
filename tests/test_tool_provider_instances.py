@@ -55,10 +55,18 @@ def _stub_factory(monkeypatch):
 
 def test_create_iterates_enabled_instances(_cfg_home, monkeypatch):
     _stub_factory(monkeypatch)
-    inst_mod.create_instance("openai-tools", display_name="a", config={"endpoint": "https://a.example/1"})
-    inst_mod.create_instance("openai-tools", display_name="b", config={"endpoint": "https://b.example/2"})
+    inst_mod.create_instance(
+        "openai-tools", display_name="a", config={"endpoint": "https://a.example/1"}
+    )
+    inst_mod.create_instance(
+        "openai-tools", display_name="b", config={"endpoint": "https://b.example/2"}
+    )
     # disable the "b" instance (match by endpoint, not creation order).
-    b = next(i for i in inst_mod.list_instances("openai-tools") if i.config.get("endpoint", "").startswith("https://b"))
+    b = next(
+        i
+        for i in inst_mod.list_instances("openai-tools")
+        if i.config.get("endpoint", "").startswith("https://b")
+    )
     inst_mod.update_instance("openai-tools", b.id, enabled=False)
 
     handler = ToolTypeHandler()
@@ -90,7 +98,9 @@ def test_register_and_deregister_normalize_a_list(_cfg_home, monkeypatch):
         lambda n: unregistered.append(n),
     )
     handler = ToolTypeHandler()
-    p1, p2 = _FakeToolProvider({"endpoint": "https://a/1"}), _FakeToolProvider({"endpoint": "https://b/2"})
+    p1, p2 = _FakeToolProvider({"endpoint": "https://a/1"}), _FakeToolProvider(
+        {"endpoint": "https://b/2"}
+    )
     handler.register(_Ext("openai-tools"), [p1, p2])
     assert registered == [p1.name, p2.name]
     handler.deregister(_Ext("openai-tools"), [p1, p2])

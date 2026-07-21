@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import os
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -108,7 +107,11 @@ class TestListServers:
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
         agents_dir = tmp_path / ".personalclaw" / "agents"
         agents_dir.mkdir(parents=True)
-        installed = {"mcpServers": {"personalclaw-schedule": {"command": "personalclaw", "args": ["mcp-schedule"]}}}
+        installed = {
+            "mcpServers": {
+                "personalclaw-schedule": {"command": "personalclaw", "args": ["mcp-schedule"]}
+            }
+        }
         (agents_dir / "personalclaw.json").write_text(json.dumps(installed))
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
         monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (tmp_path / "nope.json",))
@@ -279,7 +282,14 @@ class TestListServers:
 
         legacy_mcp = tmp_path / "legacy_mcp.json"
         legacy_mcp.write_text(
-            json.dumps({"mcpServers": {"shared": {"command": "legacy-cmd"}, "legacy-only": {"command": "k"}}})
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "shared": {"command": "legacy-cmd"},
+                        "legacy-only": {"command": "k"},
+                    }
+                }
+            )
         )
         personalclaw_mcp = tmp_path / "personalclaw_mcp.json"
         personalclaw_mcp.write_text(
@@ -396,9 +406,7 @@ class TestDiscoverNew:
         new = discover_servers_to_sync()
         assert new == []
 
-    def test_discover_includes_existing_with_divergent_env(
-        self, tmp_path, monkeypatch
-    ) -> None:
+    def test_discover_includes_existing_with_divergent_env(self, tmp_path, monkeypatch) -> None:
         """Existing servers with new env keys in mcp.json are included."""
         agent_dir = tmp_path / "agents"
         agent_dir.mkdir()
@@ -407,9 +415,7 @@ class TestDiscoverNew:
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
         mcp_json = tmp_path / "mcp.json"
         mcp_json.write_text(
-            json.dumps(
-                {"mcpServers": {"srv": {"command": "a", "env": {"KEY": "val"}}}}
-            )
+            json.dumps({"mcpServers": {"srv": {"command": "a", "env": {"KEY": "val"}}}})
         )
         monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (mcp_json,))
         result = discover_servers_to_sync()
@@ -417,9 +423,7 @@ class TestDiscoverNew:
         assert result[0].name == "srv"
         assert result[0].env == {"KEY": "val"}
 
-    def test_discover_skips_existing_with_identical_env(
-        self, tmp_path, monkeypatch
-    ) -> None:
+    def test_discover_skips_existing_with_identical_env(self, tmp_path, monkeypatch) -> None:
         """Existing servers with identical env are not flagged for sync."""
         agent_dir = tmp_path / "agents"
         agent_dir.mkdir()
@@ -428,32 +432,22 @@ class TestDiscoverNew:
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
         mcp_json = tmp_path / "mcp.json"
         mcp_json.write_text(
-            json.dumps(
-                {"mcpServers": {"srv": {"command": "a", "env": {"KEY": "val"}}}}
-            )
+            json.dumps({"mcpServers": {"srv": {"command": "a", "env": {"KEY": "val"}}}})
         )
         monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (mcp_json,))
         result = discover_servers_to_sync()
         assert result == []
 
-    def test_discover_skips_existing_when_source_env_is_subset(
-        self, tmp_path, monkeypatch
-    ) -> None:
+    def test_discover_skips_existing_when_source_env_is_subset(self, tmp_path, monkeypatch) -> None:
         """Server not flagged when all mcp.json env keys already exist in agent config."""
         agent_dir = tmp_path / "agents"
         agent_dir.mkdir()
-        cfg = {
-            "mcpServers": {
-                "srv": {"command": "a", "env": {"EXISTING": "keep", "NEW": "val"}}
-            }
-        }
+        cfg = {"mcpServers": {"srv": {"command": "a", "env": {"EXISTING": "keep", "NEW": "val"}}}}
         (agent_dir / "defaults.json").write_text(json.dumps(cfg))
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
         mcp_json = tmp_path / "mcp.json"
         mcp_json.write_text(
-            json.dumps(
-                {"mcpServers": {"srv": {"command": "a", "env": {"NEW": "val"}}}}
-            )
+            json.dumps({"mcpServers": {"srv": {"command": "a", "env": {"NEW": "val"}}}})
         )
         monkeypatch.setattr("personalclaw.mcp_discovery._MCP_JSON_PATHS", (mcp_json,))
         result = discover_servers_to_sync()
@@ -555,16 +549,16 @@ class TestSyncToAgentConfig:
         assert ok is True
         assert install_called
 
-    def test_sync_handles_remote_and_local_via_rebuild_agent_config(self, tmp_path, monkeypatch) -> None:
+    def test_sync_handles_remote_and_local_via_rebuild_agent_config(
+        self, tmp_path, monkeypatch
+    ) -> None:
         """Both remote (url) and local (command) servers are merged via rebuild_agent_config()."""
         monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
 
         agents_dir = tmp_path / ".personalclaw" / "agents"
         agents_dir.mkdir(parents=True)
         config_path = agents_dir / "personalclaw.json"
-        config_path.write_text(
-            json.dumps({"mcpServers": {}, "tools": [], "allowedTools": []})
-        )
+        config_path.write_text(json.dumps({"mcpServers": {}, "tools": [], "allowedTools": []}))
 
         install_called: list[bool] = []
         monkeypatch.setattr(
@@ -584,9 +578,7 @@ class TestSyncToAgentConfig:
         agents_dir = tmp_path / ".personalclaw" / "agents"
         agents_dir.mkdir(parents=True)
         cfg = {
-            "mcpServers": {
-                "email-mcp": {"command": "node", "args": ["server.js"], "env": {}}
-            },
+            "mcpServers": {"email-mcp": {"command": "node", "args": ["server.js"], "env": {}}},
             "tools": ["@email-mcp"],
             "allowedTools": ["@email-mcp"],
         }
@@ -645,16 +637,12 @@ class TestSyncToAgentConfig:
         sync_to_agent_config([srv])
         assert install_called, "rebuild_agent_config() handles env merge"
 
-    def test_sync_updates_command_for_existing_local_server(
-        self, tmp_path, monkeypatch
-    ) -> None:
+    def test_sync_updates_command_for_existing_local_server(self, tmp_path, monkeypatch) -> None:
         """Existing servers are refreshed via rebuild_agent_config() which reads source files."""
         agents_dir = tmp_path / ".personalclaw" / "agents"
         agents_dir.mkdir(parents=True)
         cfg = {
-            "mcpServers": {
-                "my-mcp": {"command": "old-cmd", "args": ["--old"], "env": {}}
-            },
+            "mcpServers": {"my-mcp": {"command": "old-cmd", "args": ["--old"], "env": {}}},
             "tools": ["@my-mcp"],
             "allowedTools": ["@my-mcp"],
         }
@@ -675,9 +663,7 @@ class TestSyncToAgentConfig:
         assert result is True
         assert install_called, "rebuild_agent_config() should be called to re-merge config"
 
-    def test_sync_source_env_overrides_existing_on_conflict(
-        self, tmp_path, monkeypatch
-    ) -> None:
+    def test_sync_source_env_overrides_existing_on_conflict(self, tmp_path, monkeypatch) -> None:
         """Config changes are handled by rebuild_agent_config() re-merge, not direct edit."""
         agents_dir = tmp_path / ".personalclaw" / "agents"
         agents_dir.mkdir(parents=True)
@@ -909,7 +895,9 @@ class TestProbeRemote:
         """probe_server dispatches to _probe_remote for url-based servers."""
         server = McpServerInfo(name="remote", url="https://example.com/mcp")
 
-        with patch("personalclaw.mcp_discovery._probe_remote", new_callable=AsyncMock) as mock_remote:
+        with patch(
+            "personalclaw.mcp_discovery._probe_remote", new_callable=AsyncMock
+        ) as mock_remote:
             mock_remote.return_value = server
             result = await probe_server(server)
 
@@ -921,7 +909,9 @@ class TestProbeRemote:
         """probe_server does NOT dispatch to _probe_remote for command-based servers."""
         server = McpServerInfo(name="local", command="nonexistent-cmd-xyz")
 
-        with patch("personalclaw.mcp_discovery._probe_remote", new_callable=AsyncMock) as mock_remote:
+        with patch(
+            "personalclaw.mcp_discovery._probe_remote", new_callable=AsyncMock
+        ) as mock_remote:
             result = await probe_server(server)
 
         mock_remote.assert_not_awaited()
@@ -949,9 +939,10 @@ class TestProbeServerProcessCleanup:
         proc = self._make_mock_proc()
         server = McpServerInfo(name="test", command="echo")
 
-        with patch(
-            "personalclaw.mcp_discovery.asyncio.create_subprocess_exec", return_value=proc
-        ), patch("personalclaw.mcp_discovery.shutil.which", return_value="/usr/bin/echo"):
+        with (
+            patch("personalclaw.mcp_discovery.asyncio.create_subprocess_exec", return_value=proc),
+            patch("personalclaw.mcp_discovery.shutil.which", return_value="/usr/bin/echo"),
+        ):
             proc.stdout = AsyncMock()
             proc.stdout.readline = AsyncMock(return_value=b"")
             await probe_server(server)
@@ -967,9 +958,10 @@ class TestProbeServerProcessCleanup:
         )
         server = McpServerInfo(name="test", command="echo")
 
-        with patch(
-            "personalclaw.mcp_discovery.asyncio.create_subprocess_exec", return_value=proc
-        ), patch("personalclaw.mcp_discovery.shutil.which", return_value="/usr/bin/echo"):
+        with (
+            patch("personalclaw.mcp_discovery.asyncio.create_subprocess_exec", return_value=proc),
+            patch("personalclaw.mcp_discovery.shutil.which", return_value="/usr/bin/echo"),
+        ):
             proc.stdout = AsyncMock()
             proc.stdout.readline = AsyncMock(return_value=b"")
             await probe_server(server)
@@ -985,9 +977,10 @@ class TestProbeServerProcessCleanup:
         )
         server = McpServerInfo(name="test", command="echo")
 
-        with patch(
-            "personalclaw.mcp_discovery.asyncio.create_subprocess_exec", return_value=proc
-        ), patch("personalclaw.mcp_discovery.shutil.which", return_value="/usr/bin/echo"):
+        with (
+            patch("personalclaw.mcp_discovery.asyncio.create_subprocess_exec", return_value=proc),
+            patch("personalclaw.mcp_discovery.shutil.which", return_value="/usr/bin/echo"),
+        ):
             proc.stdout = AsyncMock()
             proc.stdout.readline = AsyncMock(return_value=b"")
             await probe_server(server)
@@ -1003,9 +996,10 @@ class TestProbeServerProcessCleanup:
         proc.stdin = None
         server = McpServerInfo(name="test", command="echo")
 
-        with patch(
-            "personalclaw.mcp_discovery.asyncio.create_subprocess_exec", return_value=proc
-        ), patch("personalclaw.mcp_discovery.shutil.which", return_value="/usr/bin/echo"):
+        with (
+            patch("personalclaw.mcp_discovery.asyncio.create_subprocess_exec", return_value=proc),
+            patch("personalclaw.mcp_discovery.shutil.which", return_value="/usr/bin/echo"),
+        ):
             proc.stdout = AsyncMock()
             proc.stdout.readline = AsyncMock(return_value=b"")
             await probe_server(server)
@@ -1127,15 +1121,15 @@ class TestProbeServerTimeout:
         mock_proc.stdin.write = MagicMock()
         mock_proc.stdin.close = MagicMock()
         mock_proc.stdout = AsyncMock()
-        mock_proc.stdout.readline = AsyncMock(
-            side_effect=[init_resp, asyncio.TimeoutError]
-        )
+        mock_proc.stdout.readline = AsyncMock(side_effect=[init_resp, asyncio.TimeoutError])
         mock_proc.returncode = None
         mock_proc.kill = MagicMock()
         mock_proc.wait = AsyncMock(return_value=0)
 
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc), \
-             patch("personalclaw.config.loader.AppConfig") as mock_cls:
+        with (
+            patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+            patch("personalclaw.config.loader.AppConfig") as mock_cls,
+        ):
             mock_cfg = MagicMock()
             mock_cfg.dashboard.mcp_probe_timeout_secs = 42
             mock_cls.load.return_value = mock_cfg
@@ -1159,8 +1153,10 @@ class TestProbeServerTimeout:
         mock_proc.kill = MagicMock()
         mock_proc.wait = AsyncMock(return_value=0)
 
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc), \
-             patch("personalclaw.config.loader.AppConfig") as mock_cls:
+        with (
+            patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+            patch("personalclaw.config.loader.AppConfig") as mock_cls,
+        ):
             mock_cls.load.side_effect = RuntimeError("corrupt config")
 
             result = await probe_server(server)
@@ -1177,8 +1173,10 @@ class TestProbeRemoteTimeout:
         """Remote probe uses _get_probe_timeout() for aiohttp timeout."""
         server = McpServerInfo(name="remote", url="https://example.com/mcp")
 
-        with patch("personalclaw.config.loader.AppConfig") as mock_cls, \
-             patch("aiohttp.ClientSession") as mock_session_cls:
+        with (
+            patch("personalclaw.config.loader.AppConfig") as mock_cls,
+            patch("aiohttp.ClientSession") as mock_session_cls,
+        ):
             mock_cfg = MagicMock()
             mock_cfg.dashboard.mcp_probe_timeout_secs = 60
             mock_cls.load.return_value = mock_cfg
@@ -1205,6 +1203,7 @@ class TestFixStaleManagedCommand:
     @pytest.fixture(autouse=True)
     def _reset_cache(self):
         import personalclaw.mcp_discovery as _d
+
         _d._resolved_managed_bin = None
         yield
         _d._resolved_managed_bin = None
@@ -1214,7 +1213,9 @@ class TestFixStaleManagedCommand:
         from personalclaw.mcp_discovery import _fix_stale_managed_command
 
         spec = {"command": "/stale/build/bin/personalclaw", "args": ["mcp-core"]}
-        with patch("personalclaw.mcp_discovery.shutil.which", return_value="/runtime/bin/personalclaw"):
+        with patch(
+            "personalclaw.mcp_discovery.shutil.which", return_value="/runtime/bin/personalclaw"
+        ):
             _fix_stale_managed_command("personalclaw-core", spec)
         assert spec["command"] == "/runtime/bin/personalclaw"
 
@@ -1241,7 +1242,9 @@ class TestFixStaleManagedCommand:
         real = tmp_path / "personalclaw"
         real.write_text("#!/bin/sh")
         spec = {"command": str(real), "args": ["mcp-schedule"]}
-        with patch("personalclaw.mcp_discovery.shutil.which", return_value="/new/path/personalclaw"):
+        with patch(
+            "personalclaw.mcp_discovery.shutil.which", return_value="/new/path/personalclaw"
+        ):
             _fix_stale_managed_command("personalclaw-schedule", spec)
         assert spec["command"] == "/new/path/personalclaw"
 
@@ -1249,7 +1252,9 @@ class TestFixStaleManagedCommand:
         from personalclaw.mcp_discovery import _fix_stale_managed_command
 
         spec = {"command": "/current/bin/personalclaw", "args": ["mcp-core"]}
-        with patch("personalclaw.mcp_discovery.shutil.which", return_value="/current/bin/personalclaw"):
+        with patch(
+            "personalclaw.mcp_discovery.shutil.which", return_value="/current/bin/personalclaw"
+        ):
             _fix_stale_managed_command("personalclaw-core", spec)
         assert spec["command"] == "/current/bin/personalclaw"
 
@@ -1287,9 +1292,15 @@ class TestSharedServerToolsRegistration:
         agents_dir.mkdir(parents=True)
 
         user_dir = tmp_path / ".personalclaw"
-        (user_dir / "mcp.json").write_text(json.dumps({"mcpServers": {
-            "my-srv": {"command": "srv"},
-        }}))
+        (user_dir / "mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "my-srv": {"command": "srv"},
+                    }
+                }
+            )
+        )
 
         monkeypatch.setattr("personalclaw.agent.AGENTS_DIR", agents_dir)
         monkeypatch.setattr("personalclaw.agent._USER_DIR", user_dir)
@@ -1315,16 +1326,26 @@ class TestSharedServerToolsRegistration:
 
         agents_dir = tmp_path / ".personalclaw" / "agents"
         agents_dir.mkdir(parents=True)
-        (agents_dir / "personalclaw.json").write_text(json.dumps({
-            "mcpServers": {"my-srv": {"command": "srv"}},
-            "tools": ["@my-srv"],
-            "allowedTools": ["@my-srv"],
-        }))
+        (agents_dir / "personalclaw.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {"my-srv": {"command": "srv"}},
+                    "tools": ["@my-srv"],
+                    "allowedTools": ["@my-srv"],
+                }
+            )
+        )
 
         user_dir = tmp_path / ".personalclaw"
-        (user_dir / "mcp.json").write_text(json.dumps({"mcpServers": {
-            "my-srv": {"command": "srv", "disabled": True},
-        }}))
+        (user_dir / "mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "my-srv": {"command": "srv", "disabled": True},
+                    }
+                }
+            )
+        )
 
         monkeypatch.setattr("personalclaw.agent.AGENTS_DIR", agents_dir)
         monkeypatch.setattr("personalclaw.agent._USER_DIR", user_dir)
@@ -1349,16 +1370,26 @@ class TestSharedServerToolsRegistration:
 
         agents_dir = tmp_path / ".personalclaw" / "agents"
         agents_dir.mkdir(parents=True)
-        (agents_dir / "personalclaw.json").write_text(json.dumps({
-            "mcpServers": {"my-srv": {"command": "srv", "disabled": True}},
-            "tools": [],
-            "allowedTools": [],
-        }))
+        (agents_dir / "personalclaw.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {"my-srv": {"command": "srv", "disabled": True}},
+                    "tools": [],
+                    "allowedTools": [],
+                }
+            )
+        )
 
         user_dir = tmp_path / ".personalclaw"
-        (user_dir / "mcp.json").write_text(json.dumps({"mcpServers": {
-            "my-srv": {"command": "srv"},
-        }}))
+        (user_dir / "mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "my-srv": {"command": "srv"},
+                    }
+                }
+            )
+        )
 
         monkeypatch.setattr("personalclaw.agent.AGENTS_DIR", agents_dir)
         monkeypatch.setattr("personalclaw.agent._USER_DIR", user_dir)
@@ -1386,9 +1417,15 @@ class TestSharedServerToolsRegistration:
         agents_dir.mkdir(parents=True)
 
         user_dir = tmp_path / ".personalclaw"
-        (user_dir / "mcp.json").write_text(json.dumps({"mcpServers": {
-            "disabled-srv": {"command": "srv", "disabled": True},
-        }}))
+        (user_dir / "mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "disabled-srv": {"command": "srv", "disabled": True},
+                    }
+                }
+            )
+        )
 
         monkeypatch.setattr("personalclaw.agent.AGENTS_DIR", agents_dir)
         monkeypatch.setattr("personalclaw.agent._USER_DIR", user_dir)

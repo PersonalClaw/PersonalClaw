@@ -21,8 +21,10 @@ def _make_app() -> web.Application:
 
 @pytest.fixture
 def mock_sel():
-    with patch("personalclaw.sel.sel") as m, \
-         patch("personalclaw.security.is_sensitive_path", return_value=False):
+    with (
+        patch("personalclaw.sel.sel") as m,
+        patch("personalclaw.security.is_sensitive_path", return_value=False),
+    ):
         instance = MagicMock()
         m.return_value = instance
         yield instance
@@ -43,15 +45,18 @@ _SVG_WITH_BOM = b"\xef\xbb\xbf<svg></svg>"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("ext,data", [
-    ("png", _PNG_HEADER),
-    ("jpg", _JPEG_HEADER),
-    ("gif", _GIF89_HEADER),
-    ("webp", _WEBP_HEADER),
-    ("bmp", _BMP_HEADER),
-    ("tiff", _TIFF_LE_HEADER),
-    ("ico", _ICO_HEADER),
-])
+@pytest.mark.parametrize(
+    "ext,data",
+    [
+        ("png", _PNG_HEADER),
+        ("jpg", _JPEG_HEADER),
+        ("gif", _GIF89_HEADER),
+        ("webp", _WEBP_HEADER),
+        ("bmp", _BMP_HEADER),
+        ("tiff", _TIFF_LE_HEADER),
+        ("ico", _ICO_HEADER),
+    ],
+)
 async def test_serves_valid_image_formats(tmp_path, mock_sel, ext, data):
     f = tmp_path / f"test.{ext}"
     f.write_bytes(data)
@@ -85,6 +90,7 @@ async def test_serves_pdf(tmp_path, mock_sel):
 
 
 # --- Rejected cases ---
+
 
 @pytest.mark.asyncio
 async def test_rejects_non_image_mime(tmp_path, mock_sel):
@@ -143,8 +149,10 @@ async def test_rejects_symlink(tmp_path, mock_sel):
 async def test_rejects_sensitive_path(tmp_path, mock_sel):
     f = tmp_path / "creds.png"
     f.write_bytes(_PNG_HEADER)
-    with patch("personalclaw.dashboard.handlers._validate_dashboard_path", return_value=str(f)), \
-         patch("personalclaw.security.is_sensitive_path", return_value=True):
+    with (
+        patch("personalclaw.dashboard.handlers._validate_dashboard_path", return_value=str(f)),
+        patch("personalclaw.security.is_sensitive_path", return_value=True),
+    ):
         async with TestClient(TestServer(_make_app())) as client:
             resp = await client.get(f"/api/file-raw?path={f}")
             assert resp.status == 403
@@ -159,6 +167,7 @@ async def test_rejects_sensitive_path(tmp_path, mock_sel):
 @pytest.mark.asyncio
 async def test_resolve_serves_relative_workspace_media(tmp_path, mock_sel):
     import os
+
     from personalclaw.config.loader import workspace_root
 
     ws = str(workspace_root())

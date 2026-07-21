@@ -15,10 +15,15 @@ FAKE_MODEL_TYPE = "fake-model"
 
 FAKE_MODEL_CAPABILITY = ProviderCapability(
     type=FAKE_MODEL_TYPE,
-    capabilities=frozenset({
-        Capability.CHAT, Capability.CODE_TOOLS, Capability.STREAMING,
-        Capability.VISION, Capability.EMBEDDING,
-    }),
+    capabilities=frozenset(
+        {
+            Capability.CHAT,
+            Capability.CODE_TOOLS,
+            Capability.STREAMING,
+            Capability.VISION,
+            Capability.EMBEDDING,
+        }
+    ),
     supports_streaming=True,
     supports_tools=True,
     supports_embeddings=True,

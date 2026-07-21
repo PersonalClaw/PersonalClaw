@@ -151,9 +151,30 @@ _READONLY_TOOL_KINDS = {"read", "fetch", "search", "think"}
 # they create a persisted artifact + may spend a paid API call, so they are NOT
 # read-only and must be blocked in ask/plan (and allowed in build via the hints below).
 _MUTATING_NAME_HINTS = (
-    "write", "edit", "create", "save", "update", "delete", "remove", "move",
-    "rename", "append", "set_", "put_", "install", "deploy", "run", "exec",
-    "spawn", "subagent", "schedule", "notify", "post_", "send", "commit", "push",
+    "write",
+    "edit",
+    "create",
+    "save",
+    "update",
+    "delete",
+    "remove",
+    "move",
+    "rename",
+    "append",
+    "set_",
+    "put_",
+    "install",
+    "deploy",
+    "run",
+    "exec",
+    "spawn",
+    "subagent",
+    "schedule",
+    "notify",
+    "post_",
+    "send",
+    "commit",
+    "push",
     "generate",
 )
 
@@ -172,7 +193,18 @@ _DESTRUCTIVE_NAME_HINTS = ("delete", "remove", "destroy", "drop_", "purge", "for
 # infer_risk_from_name to short-circuit to 'safe' BEFORE the broad mutating hints
 # (so `schedule_list`/`task_get`/`*_status` aren't mislabeled by a hint like
 # "schedule"). Not used by the task-mode gate (which keys off tool_kind + input).
-_READ_VERB_HINTS = ("list", "get", "search", "read", "status", "info", "find", "inspect", "show", "view")
+_READ_VERB_HINTS = (
+    "list",
+    "get",
+    "search",
+    "read",
+    "status",
+    "info",
+    "find",
+    "inspect",
+    "show",
+    "view",
+)
 
 
 def _is_read_only_tool(title: str, tool_kind: str, tool_input: object) -> bool:
@@ -313,4 +345,6 @@ def task_mode_denies(task_mode: str, title: str, tool_kind: str, tool_input: obj
         return "Ask mode — only read-only tools run (switch to Agent to make changes)"
     if task_mode == "plan":
         return "Plan mode — inspection only, nothing is executed (switch to Agent to run it)"
-    return "Build mode — only read-only + artifact-producing tools run (switch to Agent for the rest)"
+    return (
+        "Build mode — only read-only + artifact-producing tools run (switch to Agent for the rest)"
+    )

@@ -19,7 +19,10 @@ def test_compose_item_text_anchors_thin_summary_with_body():
     from personalclaw.knowledge.embedder import compose_item_text as c
 
     # No summary → body anchors the vector.
-    assert c("Meeting notes", None, "quantum dot solar coating") == "Meeting notes quantum dot solar coating"
+    assert (
+        c("Meeting notes", None, "quantum dot solar coating")
+        == "Meeting notes quantum dot solar coating"
+    )
     # Rich summary (≥80 chars) → body is NOT appended (summary already carries signal).
     rich = "x" * 90
     assert c("T", rich, "body text") == f"T {rich}"
@@ -34,11 +37,13 @@ def test_unified_embedder_exposes_model_name(monkeypatch):
     UnifiedEmbedder wraps an embed_fn and must expose `model_name` (from the active
     embedding selection) instead. `.model` used to AttributeError → /api/knowledge/
     stats 500 → the FE header showed 'semantic search off' even with embeddings live."""
-    from personalclaw.knowledge.embedder import UnifiedEmbedder
     import personalclaw.embedding_providers.registry as emb_reg
+    from personalclaw.knowledge.embedder import UnifiedEmbedder
 
     # A bound embedding selection → model_name is the bare model id (prefix stripped).
-    monkeypatch.setattr(emb_reg, "_active_embedding_spec", lambda: ("sentence-transformers", "all-MiniLM-L6-v2"))
+    monkeypatch.setattr(
+        emb_reg, "_active_embedding_spec", lambda: ("sentence-transformers", "all-MiniLM-L6-v2")
+    )
     e = UnifiedEmbedder(embed_fn=lambda t: [0.1, 0.2], dim_hint=2)
     assert e.model_name == "all-MiniLM-L6-v2"
     assert e.is_available() is True
@@ -70,13 +75,17 @@ def mk(store, title, content, item_type="note", *, summary="", tags=None, embedd
     """Create one logical-document item (the only ingestion shape). Replaces the
     removed legacy add_item chunk-inserter. Embedding is set post-create."""
     iid = store.create_typed_item(
-        item_type=item_type, title=title, content=content,
-        summary=summary, tags=tags or [],
+        item_type=item_type,
+        title=title,
+        content=content,
+        summary=summary,
+        tags=tags or [],
     )
     if embedding is not None:
         store.db.execute("UPDATE items SET embedding = ? WHERE id = ?", (embedding, iid))
         store.db.commit()
     return iid
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -109,10 +118,17 @@ def store_factory(tmp_path):
 # 1. KnowledgeStore
 # ---------------------------------------------------------------------------
 
+
 class TestKnowledgeStore:
     def test_create_and_get_item(self, store):
-        item_id = mk(store, "Auth Design", "JWT tokens with 1h expiry", "design_doc",
-                                 summary="Auth overview", tags=["auth", "jwt"])
+        item_id = mk(
+            store,
+            "Auth Design",
+            "JWT tokens with 1h expiry",
+            "design_doc",
+            summary="Auth overview",
+            tags=["auth", "jwt"],
+        )
         item = store.get_item(item_id)
         assert item is not None
         assert item["title"] == "Auth Design"
@@ -148,12 +164,18 @@ class TestKnowledgeStore:
         r2 = store.add_entity_relation(e1, e2, "uses", description="deploy again")
         assert r1 == r2  # same edge returned, not a new one
         n = store.db.execute(
-            "SELECT COUNT(*) FROM entity_relations WHERE source_id=? AND target_id=? AND relation_type='uses'",
-            (e1, e2)).fetchone()[0]
+            "SELECT COUNT(*) FROM entity_relations WHERE source_id=? AND target_id=? AND relation_type='uses'",  # noqa: E501
+            (e1, e2),
+        ).fetchone()[0]
         assert n == 1
         # A different relation type between the same pair is still distinct.
         store.add_entity_relation(e1, e2, "depends_on")
-        assert store.db.execute("SELECT COUNT(*) FROM entity_relations WHERE source_id=? AND target_id=?", (e1, e2)).fetchone()[0] == 2
+        assert (
+            store.db.execute(
+                "SELECT COUNT(*) FROM entity_relations WHERE source_id=? AND target_id=?", (e1, e2)
+            ).fetchone()[0]
+            == 2
+        )
 
     def test_entity_subgraph(self, store):
         e1 = store.add_entity("ServiceA", "service")
@@ -177,6 +199,7 @@ class TestKnowledgeStore:
         """The raw embedding vector is an internal pipeline detail no API consumer reads —
         get_item/list expose only a has_embedding flag, never the bytes."""
         import struct
+
         emb = struct.pack("4f", 0.1, 0.2, 0.3, 0.4)
         iid = mk(store, "Vec", "body", "note", embedding=emb)
 
@@ -227,11 +250,10 @@ class TestKnowledgeStore:
         assert len(mentions) == 1
 
 
-
-
 # ---------------------------------------------------------------------------
 # 3. FileReader
 # ---------------------------------------------------------------------------
+
 
 class TestFileReader:
     def test_read_markdown(self, tmp_path):
@@ -270,8 +292,8 @@ class TestFileReader:
         assert meta["format"] == "csv" and meta["content_type"] == "markdown"
         assert meta["row_count"] == 3
         assert "| Name | Role |" in text and "| --- | --- |" in text
-        assert "Smith, Alice" in text          # quoted comma kept in one cell
-        assert "a \\| b" in text                # embedded pipe escaped
+        assert "Smith, Alice" in text  # quoted comma kept in one cell
+        assert "a \\| b" in text  # embedded pipe escaped
 
     def test_read_tsv_uses_tab_delimiter(self, tmp_path):
         """A .tsv is the tab-separated sibling of .csv — rendered as a markdown table with
@@ -290,9 +312,9 @@ class TestFileReader:
         f = tmp_path / "big.csv"
         f.write_text("n\n" + "\n".join(str(i) for i in range(600)) + "\n", encoding="utf-8")
         text, meta = FileReader().read(str(f))
-        assert meta["row_count"] == 601           # header + 600 data rows
-        assert "more rows" in text                # truncation note present
-        assert text.count("\n| ") < 600           # not every row rendered
+        assert meta["row_count"] == 601  # header + 600 data rows
+        assert "more rows" in text  # truncation note present
+        assert text.count("\n| ") < 600  # not every row rendered
 
     def test_read_unsupported(self, tmp_path):
         f = tmp_path / "data.xyz"
@@ -304,25 +326,33 @@ class TestFileReader:
 
     def test_supported_formats(self):
         reader = FileReader()
-        for ext in ('.md', '.txt', '.py', '.html', '.json', '.yaml', '.csv'):
+        for ext in (".md", ".txt", ".py", ".html", ".json", ".yaml", ".csv"):
             assert ext in reader.SUPPORTED, f"{ext} missing from SUPPORTED"
 
     def test_pdf_reader_dependency_present(self):
         """pdfplumber is a declared core dep (#71): the PDF path must NOT
         degrade to the format:'error' missing-dependency sentinel."""
         import personalclaw.knowledge.readers as rd
+
         assert rd.pdfplumber is not None, "pdfplumber missing — PDF upload silently yields 0 items"
 
     def test_read_xlsx_as_markdown_tables(self, tmp_path):
         """A spreadsheet extracts as markdown tables (one per sheet), not binary text."""
         import personalclaw.knowledge.readers as rd
+
         if rd._load_workbook is None:
             import pytest as _pytest
+
             _pytest.skip("openpyxl not installed")
         from openpyxl import Workbook
-        wb = Workbook(); ws = wb.active; ws.title = "Sales"
-        ws.append(["product", "qty"]); ws.append(["widget", 120])
-        p = tmp_path / "report.xlsx"; wb.save(str(p))
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Sales"
+        ws.append(["product", "qty"])
+        ws.append(["widget", 120])
+        p = tmp_path / "report.xlsx"
+        wb.save(str(p))
         text, meta = FileReader().read(str(p))
         assert meta["format"] == "xlsx" and meta["sheet_count"] == 1
         assert "## Sales" in text and "| product | qty |" in text and "widget" in text
@@ -372,6 +402,7 @@ class TestFileReader:
     def test_pptx_and_html_readers_present(self):
         """python-pptx + html2text are declared core deps (#71)."""
         import personalclaw.knowledge.readers as rd
+
         assert rd.Presentation is not None, "python-pptx missing — .pptx upload yields 0 items"
         assert rd._html2text_mod is not None, "html2text missing — HTML extraction degrades"
 
@@ -380,6 +411,7 @@ class TestFileReader:
         format:'error' sentinel (which the ingest handler turns into a visible
         sync_error) rather than a silent empty/0-item result."""
         import personalclaw.knowledge.readers as rd
+
         monkeypatch.setattr(rd, "pdfplumber", None)
         f = tmp_path / "x.pdf"
         f.write_bytes(b"%PDF-1.4\n%%EOF")
@@ -392,24 +424,35 @@ class TestFileReader:
 # 4. EntityExtractor
 # ---------------------------------------------------------------------------
 
+
 class TestEntityExtractor:
     def test_extract_no_agent(self):
         import asyncio
+
         ext = EntityExtractor(pool=None)
         result = asyncio.get_event_loop().run_until_complete(ext.extract("some text"))
-        assert result == {"title": "", "entities": [], "relations": [], "category": "document", "summary": ""}
+        assert result == {
+            "title": "",
+            "entities": [],
+            "relations": [],
+            "category": "document",
+            "summary": "",
+        }
 
     def test_extract_caps_content_sent_to_llm(self):
         """A large document's full text must not flood the extraction prompt (context-window
         blowout → empty graph). extract() sends only the leading _MAX_CHARS to the model."""
         import asyncio
+
         from personalclaw.knowledge.extractor import _MAX_CHARS
 
         sent = {}
+
         class _Pool:
             async def send(self, prompt, timeout=None):
                 sent["prompt"] = prompt
                 return '{"entities": [], "relations": [], "category": "document", "summary": ""}'
+
         # Use a sentinel char absent from the prompt template so the count is exact.
         big = "é" * (_MAX_CHARS * 3)
         asyncio.get_event_loop().run_until_complete(EntityExtractor(pool=_Pool()).extract(big))
@@ -417,19 +460,21 @@ class TestEntityExtractor:
 
     def test_parse_json_response(self):
         ext = EntityExtractor()
-        raw = json.dumps({
-            "entities": [{"name": "Svc", "type": "service", "description": "A service"}],
-            "relations": [],
-            "category": "design_doc",
-            "summary": "A service doc."
-        })
+        raw = json.dumps(
+            {
+                "entities": [{"name": "Svc", "type": "service", "description": "A service"}],
+                "relations": [],
+                "category": "design_doc",
+                "summary": "A service doc.",
+            }
+        )
         result = ext._parse_response(raw)
         assert len(result["entities"]) == 1
         assert result["category"] == "design_doc"
 
     def test_parse_code_block_response(self):
         ext = EntityExtractor()
-        raw = '```json\n{"entities": [], "relations": [], "category": "runbook", "summary": "ops"}\n```'
+        raw = '```json\n{"entities": [], "relations": [], "category": "runbook", "summary": "ops"}\n```'  # noqa: E501
         result = ext._parse_response(raw)
         assert result["category"] == "runbook"
         assert result["summary"] == "ops"
@@ -440,16 +485,32 @@ class TestEntityExtractor:
         the broad except would turn into dropping the WHOLE item's graph). Bare strings →
         {'name': ...}; unnamed/junk dropped; relations need both source + target."""
         ext = EntityExtractor()
-        raw = json.dumps({
-            "entities": ["MongoDB", "Redis", {"name": "Kafka", "type": "technology"},
-                         {"type": "no-name"}, 42, {"name": "  "}],
-            "relations": [{"source": "Kafka", "target": "MongoDB", "type": "feeds"},
-                          "bad", {"source": "A"}, {"target": "B"}],
-            "category": "document", "summary": "s",
-        })
+        raw = json.dumps(
+            {
+                "entities": [
+                    "MongoDB",
+                    "Redis",
+                    {"name": "Kafka", "type": "technology"},
+                    {"type": "no-name"},
+                    42,
+                    {"name": "  "},
+                ],
+                "relations": [
+                    {"source": "Kafka", "target": "MongoDB", "type": "feeds"},
+                    "bad",
+                    {"source": "A"},
+                    {"target": "B"},
+                ],
+                "category": "document",
+                "summary": "s",
+            }
+        )
         result = ext._parse_response(raw)
-        assert result["entities"] == [{"name": "MongoDB"}, {"name": "Redis"},
-                                      {"name": "Kafka", "type": "technology"}]
+        assert result["entities"] == [
+            {"name": "MongoDB"},
+            {"name": "Redis"},
+            {"name": "Kafka", "type": "technology"},
+        ]
         assert result["relations"] == [{"source": "Kafka", "target": "MongoDB", "type": "feeds"}]
         # Every surviving entity is a dict with a usable name (no downstream AttributeError).
         assert all(isinstance(e, dict) and e.get("name") for e in result["entities"])
@@ -466,6 +527,7 @@ class TestEntityExtractor:
 # 5. HybridRetriever
 # ---------------------------------------------------------------------------
 
+
 class TestHybridRetriever:
     def test_keyword_search(self, store):
         mk(store, "Auth Design", "JWT tokens with refresh flow", "design_doc")
@@ -479,8 +541,11 @@ class TestHybridRetriever:
     def test_search_excludes_archived(self, store):
         """Archived items are hidden from retrieval (keyword + graph + vector), matching
         the default-list semantics — they shouldn't leak into agent search."""
-        iid = store.create_typed_item(item_type="note", title="Flibberprotocol",
-                                      content="The flibberprotocol is a unique searchable term.")
+        iid = store.create_typed_item(
+            item_type="note",
+            title="Flibberprotocol",
+            content="The flibberprotocol is a unique searchable term.",
+        )
         retriever = HybridRetriever(store)
         assert any(r["id"] == iid for r in retriever.search("flibberprotocol"))
         # Archive it → gone from search.
@@ -492,8 +557,11 @@ class TestHybridRetriever:
         """The Archived UI view searches WITH include_archived=True — so searching there
         finds archived items (the no-query Archived list shows them; search should match).
         Default (agents, chat context) still excludes them."""
-        iid = store.create_typed_item(item_type="note", title="Zarquon",
-                                      content="The zarquon device is a unique searchable term.")
+        iid = store.create_typed_item(
+            item_type="note",
+            title="Zarquon",
+            content="The zarquon device is a unique searchable term.",
+        )
         store.update_item(iid, is_archived=1)
         store.db.commit()
         retriever = HybridRetriever(store)
@@ -507,18 +575,25 @@ class TestHybridRetriever:
         skipped, not compared via a truncated-prefix cosine. After a model switch, such
         items fall back to keyword/graph retrieval until re-embedded — they never get a
         meaningless similarity score from zip()-truncated dimensions."""
+
         def _bytes(vec):
             return struct.pack(f"{len(vec)}f", *vec)
+
         # Two items: one embedded with the CURRENT model (4-dim), one with an OLD model
         # (6-dim) whose text is otherwise identical so only the vector path differs.
         cur = mk(store, "Current model doc", "alpha bravo", embedding=_bytes([1.0, 0.0, 0.0, 0.0]))
-        old = mk(store, "Old model doc", "charlie delta", embedding=_bytes([1.0, 0.0, 0.0, 0.0, 9.9, 9.9]))
+        old = mk(
+            store,
+            "Old model doc",
+            "charlie delta",
+            embedding=_bytes([1.0, 0.0, 0.0, 0.0, 9.9, 9.9]),
+        )
         # Query embedder returns a 4-dim vector aligned with the current-model item.
         retriever = HybridRetriever(store, embedder=lambda q: [1.0, 0.0, 0.0, 0.0])
         vec = retriever._vector_search("anything", limit=10)
         ids = {iid for iid, _ in (vec or [])}
-        assert cur in ids            # current-dimension item is vector-matched
-        assert old not in ids        # mismatched-dimension item is skipped (not prefix-scored)
+        assert cur in ids  # current-dimension item is vector-matched
+        assert old not in ids  # mismatched-dimension item is skipped (not prefix-scored)
 
     def test_search_is_or_not_and(self, store):
         # A conversational query must match a doc that contains only SOME terms
@@ -539,15 +614,20 @@ class TestHybridRetriever:
         mentions the terms in passing — title match is a top relevance signal that raw
         BM25 (favoring term-dense long docs) otherwise buries."""
         # A long doc that mentions 'widget config' deep in a wall of other text.
-        mk(store, "Platform Engineering Handbook",
-           "intro " * 200 + " the widget config lives in settings " + "more " * 200, "document")
+        mk(
+            store,
+            "Platform Engineering Handbook",
+            "intro " * 200 + " the widget config lives in settings " + "more " * 200,
+            "document",
+        )
         # A short item literally titled for the query.
         mk(store, "Widget Config", "see the dashboard", "note")
         retriever = HybridRetriever(store)
         results = retriever.search("widget config")
         assert results, "expected matches"
-        assert results[0]["title"] == "Widget Config", \
-            f"title match should rank first, got {[r['title'] for r in results]}"
+        assert (
+            results[0]["title"] == "Widget Config"
+        ), f"title match should rank first, got {[r['title'] for r in results]}"
 
     def test_graph_search_matches_multiword_entity(self, store):
         # A 3-word entity name must be found via the graph (its words may not all
@@ -564,14 +644,17 @@ class TestHybridRetriever:
     def test_search_result_carries_citation_locator(self, store):
         """Every hit gains the four locator fields; for a doc with a markdown header
         above the match, section names it, line_range spans it, deep_link points in."""
-        mk(store, "Runbook",
-           "# Overview\nboilerplate\n## Rollback Procedure\nrun the rollback script to revert\nmore",
-           "document")
+        mk(
+            store,
+            "Runbook",
+            "# Overview\nboilerplate\n## Rollback Procedure\nrun the rollback script to revert\nmore",  # noqa: E501
+            "document",
+        )
         results = HybridRetriever(store).search("rollback script")
         hit = next((r for r in results if r["title"] == "Runbook"), None)
         assert hit is not None
         assert hit["source_type"] == "document"
-        assert hit["section"] == "Rollback Procedure"      # nearest header above the match
+        assert hit["section"] == "Rollback Procedure"  # nearest header above the match
         assert hit["line_range"] and len(hit["line_range"]) == 2
         assert hit["deep_link"].startswith(f"/knowledge/items/{hit['id']}")
         assert "loc=L" in hit["deep_link"]
@@ -587,8 +670,8 @@ class TestHybridRetriever:
     def test_locator_no_query_match_yields_no_line_range(self):
         # Content exists but no query term hits any line → no fabricated span.
         loc = _attach_locator(
-            {"id": "n1", "item_type": "note", "content": "alpha beta\ngamma delta"},
-            {"zeta"})
+            {"id": "n1", "item_type": "note", "content": "alpha beta\ngamma delta"}, {"zeta"}
+        )
         assert loc["line_range"] is None and loc["section"] is None
         assert loc["deep_link"] == "/knowledge/items/n1"
 
@@ -746,7 +829,10 @@ class TestKnowledgeStoreExtended:
         eid = store.add_entity("Svc", "service")
         store.add_mention(item_id, eid, context="test")
         store.delete_item(item_id)
-        assert store.db.execute("SELECT * FROM mentions WHERE item_id = ?", (item_id,)).fetchone() is None
+        assert (
+            store.db.execute("SELECT * FROM mentions WHERE item_id = ?", (item_id,)).fetchone()
+            is None
+        )
 
     def test_get_stats(self, store):
         mk(store, "A", "a", "doc")
@@ -762,7 +848,8 @@ class TestKnowledgeStoreExtended:
         mk(store, "A", "a", "note", tags=["python", "caching"])
         mk(store, "B", "b", "note", tags=["caching", "redis"])
         arch = mk(store, "C", "c", "note", tags=["archived-only"])
-        store.update_item(arch, is_archived=1); store.db.commit()
+        store.update_item(arch, is_archived=1)
+        store.db.commit()
         tags = store.all_tags()
         assert tags[0] == "caching"  # appears twice → first
         assert set(tags) == {"caching", "python", "redis"}
@@ -774,7 +861,8 @@ class TestKnowledgeStoreExtended:
         so archived items never inflate total/by_type/top_tags."""
         mk(store, "Keep", "k", "note", tags=["live"])
         arch = mk(store, "Gone", "g", "gist", tags=["stale"])
-        store.update_item(arch, is_archived=1); store.db.commit()
+        store.update_item(arch, is_archived=1)
+        store.db.commit()
         ov = store.corpus_overview()
         assert ov["total"] == 1
         assert ov["by_type"] == {"note": 1}  # archived gist excluded
@@ -935,19 +1023,30 @@ class TestHybridRetrieverExtended:
 class TestEntityExtractorExtended:
     def test_extract_empty_text(self):
         import asyncio
+
         ext = EntityExtractor(pool=None)
         result = asyncio.get_event_loop().run_until_complete(ext.extract(""))
-        assert result == {"title": "", "entities": [], "relations": [], "category": "document", "summary": ""}
+        assert result == {
+            "title": "",
+            "entities": [],
+            "relations": [],
+            "category": "document",
+            "summary": "",
+        }
 
     def test_extract_with_agent(self):
         import asyncio
 
         class MockPool:
             async def send(self, prompt, timeout=60.0):
-                return json.dumps({
-                    "entities": [{"name": "Svc", "type": "service", "description": "A"}],
-                    "relations": [], "category": "design_doc", "summary": "test"
-                })
+                return json.dumps(
+                    {
+                        "entities": [{"name": "Svc", "type": "service", "description": "A"}],
+                        "relations": [],
+                        "category": "design_doc",
+                        "summary": "test",
+                    }
+                )
 
             async def send_batch(self, prompts, timeout=60.0):
                 return [await self.send(p, timeout) for p in prompts]
@@ -969,18 +1068,30 @@ class TestEntityExtractorExtended:
 
         ext = EntityExtractor(pool=BadPool())
         result = asyncio.get_event_loop().run_until_complete(ext.extract("text"))
-        assert result == {"title": "", "entities": [], "relations": [], "category": "document", "summary": ""}
+        assert result == {
+            "title": "",
+            "entities": [],
+            "relations": [],
+            "category": "document",
+            "summary": "",
+        }
 
     def test_parse_response_regex_fallback(self):
         ext = EntityExtractor()
-        raw = 'Some preamble text {"entities": [], "relations": [], "category": "runbook", "summary": "ok"} trailing'
+        raw = 'Some preamble text {"entities": [], "relations": [], "category": "runbook", "summary": "ok"} trailing'  # noqa: E501
         result = ext._parse_response(raw)
         assert result["category"] == "runbook"
 
     def test_parse_response_garbage(self):
         ext = EntityExtractor()
         result = ext._parse_response("totally invalid garbage")
-        assert result == {"title": "", "entities": [], "relations": [], "category": "document", "summary": ""}
+        assert result == {
+            "title": "",
+            "entities": [],
+            "relations": [],
+            "category": "document",
+            "summary": "",
+        }
 
     def test_extract_code_block(self):
         ext = EntityExtractor()
@@ -995,8 +1106,6 @@ class TestEntityExtractorExtended:
         assert result["relations"] == []
         assert result["summary"] == ""
         assert result["category"] == "runbook"
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -1055,9 +1164,7 @@ class TestPysqlite3Fallback:
 
         parent_name, _, leaf = module_name.rpartition(".")
         parent_mod = sys.modules.get(parent_name) if parent_name else None
-        saved_parent_attr = (
-            getattr(parent_mod, leaf, None) if parent_mod is not None else None
-        )
+        saved_parent_attr = getattr(parent_mod, leaf, None) if parent_mod is not None else None
 
         evicted: dict[str, object] = {}
         saved_pysqlite3 = sys.modules.pop("pysqlite3", None)
@@ -1091,8 +1198,6 @@ class TestPysqlite3Fallback:
         self._reload_without_pysqlite3("personalclaw.snapshot")
 
 
-
-
 # ---------------------------------------------------------------------------
 # 13. FileReader -- .docx content_type metadata
 # ---------------------------------------------------------------------------
@@ -1121,4 +1226,4 @@ class TestDocxContentType:
     def test_docx_content_type_in_dispatch(self):
         """Verify .docx is in the dispatch table."""
         reader = FileReader()
-        assert '.docx' in reader._DISPATCH
+        assert ".docx" in reader._DISPATCH

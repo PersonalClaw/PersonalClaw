@@ -293,6 +293,7 @@ class SkillsLoader:
         if self._scoped:
             return results
         from personalclaw.skills.marketplace import SKILL_DISCOVERY_PATHS
+
         seen = {name for name, _ in results}
         for extra_dir in SKILL_DISCOVERY_PATHS:
             if extra_dir.is_dir() and extra_dir != self._dir:
@@ -371,6 +372,7 @@ class SkillsLoader:
         if self._scoped:
             return [self._dir]
         from personalclaw.skills.marketplace import SKILL_DISCOVERY_PATHS
+
         # Agent-local dir leads so an agent's own skill overrides a global one.
         agent_dirs = [self._agent_dir] if self._agent_dir is not None else []
         return agent_dirs + [self._dir] + SKILL_DISCOVERY_PATHS
@@ -760,8 +762,7 @@ class SkillsLoader:
         # (curator #27) are kept off the index. Phase 2 = the agent pulls a full
         # body via skill_invoke{name}, which also records the use (#25).
         on_demand = [
-            s for s in all_skills
-            if s["name"] not in always and s.get("status") != "archived"
+            s for s in all_skills if s["name"] not in always and s.get("status") != "archived"
         ]
         if on_demand:
             summary_lines = [
@@ -773,9 +774,7 @@ class SkillsLoader:
                 "",
             ]
             for s in on_demand:
-                summary_lines.append(
-                    f"- **{s['name']}**: {s['description']} (dir: `{s['dir']}`)"
-                )
+                summary_lines.append(f"- **{s['name']}**: {s['description']} (dir: `{s['dir']}`)")
             parts.append("\n".join(summary_lines))
 
         return "[Skills:]\n" + "\n\n---\n\n".join(parts) + "\n[End of skills]\n\n"

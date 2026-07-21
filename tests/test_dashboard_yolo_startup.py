@@ -80,6 +80,7 @@ class TestDashboardYoloFromConfig:
 
     def test_from_config_sets_flag_and_no_ttl(self) -> None:
         import personalclaw.trust_mode as tm
+
         state = _make_state()
         state.enable_yolo(from_config=True)
         assert state.is_yolo_active() is True
@@ -101,6 +102,7 @@ class TestDashboardYoloFromConfig:
 
     def test_disable_clears_from_config(self) -> None:
         import personalclaw.trust_mode as tm
+
         state = _make_state()
         state.enable_yolo(from_config=True)
         state.disable_yolo()

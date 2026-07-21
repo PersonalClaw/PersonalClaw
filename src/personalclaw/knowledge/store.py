@@ -16,12 +16,34 @@ except ImportError:
 # Query params that only track marketing/analytics — never identify the resource.
 # Stripped during URL normalization so a link saved with a tracking tag dedups
 # against the same link saved without it.
-_TRACKING_PARAMS = frozenset({
-    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-    "utm_id", "utm_name", "utm_reader", "fbclid", "gclid", "gclsrc", "dclid",
-    "msclkid", "mc_cid", "mc_eid", "igshid", "ref", "ref_src", "ref_url",
-    "yclid", "_hsenc", "_hsmi", "vero_id", "spm",
-})
+_TRACKING_PARAMS = frozenset(
+    {
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "utm_term",
+        "utm_content",
+        "utm_id",
+        "utm_name",
+        "utm_reader",
+        "fbclid",
+        "gclid",
+        "gclsrc",
+        "dclid",
+        "msclkid",
+        "mc_cid",
+        "mc_eid",
+        "igshid",
+        "ref",
+        "ref_src",
+        "ref_url",
+        "yclid",
+        "_hsenc",
+        "_hsmi",
+        "vero_id",
+        "spm",
+    }
+)
 
 
 def normalize_url(url: str) -> str:
@@ -30,7 +52,7 @@ def normalize_url(url: str) -> str:
     fragment. Returns the input unchanged if it isn't parseable as http(s). So
     ``https://Example.com/`` and ``https://example.com?utm_source=x`` both canonicalize
     to ``https://example.com`` — saving either one dedups against the other."""
-    from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
     raw = (url or "").strip()
     if not raw:
@@ -43,7 +65,10 @@ def normalize_url(url: str) -> str:
         return raw  # mailto:, relative, or junk — leave as-is
     host = parts.hostname or ""
     netloc = host.lower()
-    if parts.port and not ((parts.scheme == "http" and parts.port == 80) or (parts.scheme == "https" and parts.port == 443)):
+    if parts.port and not (
+        (parts.scheme == "http" and parts.port == 80)
+        or (parts.scheme == "https" and parts.port == 443)
+    ):
         netloc = f"{netloc}:{parts.port}"
     if parts.username:
         cred = parts.username + (f":{parts.password}" if parts.password else "")
@@ -51,8 +76,11 @@ def normalize_url(url: str) -> str:
     path = parts.path
     if path == "/":
         path = ""
-    kept = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
-            if k.lower() not in _TRACKING_PARAMS]
+    kept = [
+        (k, v)
+        for k, v in parse_qsl(parts.query, keep_blank_values=True)
+        if k.lower() not in _TRACKING_PARAMS
+    ]
     query = urlencode(sorted(kept))
     return urlunsplit((parts.scheme.lower(), netloc, path, query, ""))
 
@@ -140,7 +168,9 @@ class KnowledgeStore:
         # touched from both the event loop and run_in_executor threads (agent tools).
         # Access is serialized by the single ingest queue + WAL + busy_timeout, so
         # cross-thread use is safe; without this it raises ProgrammingError.
-        self.db = sqlite3.connect(db_path, timeout=30, isolation_level=None, check_same_thread=False)
+        self.db = sqlite3.connect(
+            db_path, timeout=30, isolation_level=None, check_same_thread=False
+        )
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA busy_timeout=10000")
         self.db.execute("PRAGMA foreign_keys=ON")
@@ -209,8 +239,10 @@ class KnowledgeStore:
                 created_at TEXT NOT NULL
             );
 
-            CREATE INDEX IF NOT EXISTS idx_entity_relations_source_id ON entity_relations(source_id);
-            CREATE INDEX IF NOT EXISTS idx_entity_relations_target_id ON entity_relations(target_id);
+            CREATE INDEX IF NOT EXISTS idx_entity_relations_source_id
+                ON entity_relations(source_id);
+            CREATE INDEX IF NOT EXISTS idx_entity_relations_target_id
+                ON entity_relations(target_id);
 
             CREATE TABLE IF NOT EXISTS mentions (
                 item_id TEXT NOT NULL REFERENCES items(id),
@@ -313,9 +345,15 @@ class KnowledgeStore:
                 self.db.execute("DROP TABLE IF EXISTS sources")
                 # Drop dependents of the chunk rows we're about to remove.
                 chunk_items = "SELECT id FROM items WHERE COALESCE(chunk_index, 0) <> 0"
-                self.db.execute(f"DELETE FROM mentions WHERE item_id IN ({chunk_items})")  # noqa: S608
-                self.db.execute(f"DELETE FROM entity_relations WHERE source_item_id IN ({chunk_items})")  # noqa: S608
-                self.db.execute(f"DELETE FROM extracted_contents WHERE item_id IN ({chunk_items})")  # noqa: S608
+                self.db.execute(
+                    f"DELETE FROM mentions WHERE item_id IN ({chunk_items})"
+                )  # noqa: S608
+                self.db.execute(
+                    f"DELETE FROM entity_relations WHERE source_item_id IN ({chunk_items})"
+                )  # noqa: S608
+                self.db.execute(
+                    f"DELETE FROM extracted_contents WHERE item_id IN ({chunk_items})"
+                )  # noqa: S608
                 self.db.execute("DELETE FROM items WHERE COALESCE(chunk_index, 0) <> 0")
                 self.db.execute("DROP INDEX IF EXISTS idx_items_source_id")
                 for col in ("source_id", "chunk_index"):
@@ -330,7 +368,9 @@ class KnowledgeStore:
         # Prune orphan entities (no mentions/relations) + stale relations.
         self.db.execute("BEGIN")
         try:
-            self.db.execute("DELETE FROM entity_relations WHERE source_id NOT IN (SELECT id FROM entities) OR target_id NOT IN (SELECT id FROM entities)")
+            self.db.execute(
+                "DELETE FROM entity_relations WHERE source_id NOT IN (SELECT id FROM entities) OR target_id NOT IN (SELECT id FROM entities)"  # noqa: E501
+            )
             self.db.execute("""
                 DELETE FROM entities WHERE id NOT IN (SELECT entity_id FROM mentions)
                 AND id NOT IN (SELECT source_id FROM entity_relations)
@@ -345,14 +385,28 @@ class KnowledgeStore:
         self.graph.clear()
         for row in self.db.execute("SELECT id, name, entity_type FROM entities"):
             self.graph.add_node(row["id"], name=row["name"], entity_type=row["entity_type"])
-        for row in self.db.execute("SELECT id, source_id, target_id, relation_type, weight FROM entity_relations"):
-            self.graph.add_edge(row["source_id"], row["target_id"],
-                                id=row["id"], relation_type=row["relation_type"], weight=row["weight"])
+        for row in self.db.execute(
+            "SELECT id, source_id, target_id, relation_type, weight FROM entity_relations"
+        ):
+            self.graph.add_edge(
+                row["source_id"],
+                row["target_id"],
+                id=row["id"],
+                relation_type=row["relation_type"],
+                weight=row["weight"],
+            )
 
     def create_typed_item(
-        self, *, item_type: str, title: str, content: str = "", tags=None,
-        url: str = "", provider: str = "native",
-        summary: str = "", extra: dict | None = None,
+        self,
+        *,
+        item_type: str,
+        title: str,
+        content: str = "",
+        tags=None,
+        url: str = "",
+        provider: str = "native",
+        summary: str = "",
+        extra: dict | None = None,
     ) -> str:
         """Create one logical-document typed item (note/gist/bookmark/…) directly.
 
@@ -376,12 +430,27 @@ class KnowledgeStore:
                 "INSERT INTO items (id, title, content, item_type, "
                 "summary, tags, status, url, word_count, provider, created_at, updated_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)",
-                (item_id, title, content, item_type, summary,
-                 tags_json, url, word_count, provider, now, now))
-            rowid = self.db.execute("SELECT rowid FROM items WHERE id = ?", (item_id,)).fetchone()[0]
+                (
+                    item_id,
+                    title,
+                    content,
+                    item_type,
+                    summary,
+                    tags_json,
+                    url,
+                    word_count,
+                    provider,
+                    now,
+                    now,
+                ),
+            )
+            rowid = self.db.execute("SELECT rowid FROM items WHERE id = ?", (item_id,)).fetchone()[
+                0
+            ]
             self.db.execute(
                 "INSERT INTO items_fts (rowid, title, content, tags) VALUES (?, ?, ?, ?)",
-                (rowid, title, content, tags_json))
+                (rowid, title, content, tags_json),
+            )
             self.db.execute("COMMIT")
         except Exception:
             self.db.execute("ROLLBACK")
@@ -432,9 +501,8 @@ class KnowledgeStore:
         serializer strips it — the resolver needs the raw floats for cosine). Cheap SQL narrows
         by type so the Python cosine loop stays bounded; ordered newest-first, capped."""
         from personalclaw.knowledge.embedder import bytes_to_floats
-        anchor = self.db.execute(
-            "SELECT item_type FROM items WHERE id = ?", (item_id,)
-        ).fetchone()
+
+        anchor = self.db.execute("SELECT item_type FROM items WHERE id = ?", (item_id,)).fetchone()
         if anchor is None:
             return []
         item_type = anchor["item_type"] if not isinstance(anchor, tuple) else anchor[0]
@@ -457,14 +525,19 @@ class KnowledgeStore:
     # ── Extracted-content pool (node-graph engine, #30) ──
 
     def add_extracted_content(
-        self, item_id: str, node_type: str, *, backend: str = "",
-        text: str = "", metadata: dict | None = None,
+        self,
+        item_id: str,
+        node_type: str,
+        *,
+        backend: str = "",
+        text: str = "",
+        metadata: dict | None = None,
     ) -> str:
         """Append one node's output to an item's extracted-content pool. Returns its id."""
         ec_id = uuid4().hex
         now = datetime.now().isoformat()
         self.db.execute(
-            "INSERT INTO extracted_contents (id, item_id, node_type, backend, text, metadata, created_at) "
+            "INSERT INTO extracted_contents (id, item_id, node_type, backend, text, metadata, created_at) "  # noqa: E501
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (ec_id, item_id, node_type, backend, text or "", json.dumps(metadata or {}), now),
         )
@@ -495,8 +568,14 @@ class KnowledgeStore:
     # -- Intent outcomes (Tier-3, stored by value with a soft back-ref) -----------
 
     def record_intent_outcome(
-        self, intent_id: str, *, intent_name: str = "", item_id: str | None = None,
-        item_title: str = "", takeaway: str = "", fields: list | None = None,
+        self,
+        intent_id: str,
+        *,
+        intent_name: str = "",
+        item_id: str | None = None,
+        item_title: str = "",
+        takeaway: str = "",
+        fields: list | None = None,
     ) -> str:
         """Persist one intent match BY VALUE. ``item_id`` is a soft back-ref only.
 
@@ -514,8 +593,16 @@ class KnowledgeStore:
             "INSERT INTO intent_outcomes "
             "(id, intent_id, intent_name, item_id, item_title, takeaway, fields, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (oid, intent_id, intent_name, item_id, item_title, takeaway,
-             json.dumps(fields or []), now),
+            (
+                oid,
+                intent_id,
+                intent_name,
+                item_id,
+                item_title,
+                takeaway,
+                json.dumps(fields or []),
+                now,
+            ),
         )
         self.db.commit()
         return oid
@@ -532,7 +619,7 @@ class KnowledgeStore:
     def outcomes_for_intent(self, intent_id: str) -> list[dict]:
         """All recorded outcomes for an intent (newest first), fields parsed."""
         rows = self.db.execute(
-            "SELECT * FROM intent_outcomes WHERE intent_id = ? ORDER BY created_at DESC, rowid DESC",
+            "SELECT * FROM intent_outcomes WHERE intent_id = ? ORDER BY created_at DESC, rowid DESC",  # noqa: E501
             (intent_id,),
         ).fetchall()
         return [self._serialize_outcome(r) for r in rows]
@@ -593,15 +680,33 @@ class KnowledgeStore:
         return d
 
     _ITEM_COLUMNS = {
-        "title", "content", "item_type", "summary", "tags", "embedding", "status",
+        "title",
+        "content",
+        "item_type",
+        "summary",
+        "tags",
+        "embedding",
+        "status",
         "updated_at",
         # typed-item fields (P6b)
         "gist_language",
-        "url", "url_title", "url_description", "mime_type", "file_size",
-        "thumbnail_path", "file_path", "file_metadata", "word_count",
-        "is_pinned", "is_archived", "insights", "ai_title", "provider",
+        "url",
+        "url_title",
+        "url_description",
+        "mime_type",
+        "file_size",
+        "thumbnail_path",
+        "file_path",
+        "file_metadata",
+        "word_count",
+        "is_pinned",
+        "is_archived",
+        "insights",
+        "ai_title",
+        "provider",
         # ingestion node-graph lifecycle (#30)
-        "processing_status", "processing_error",
+        "processing_status",
+        "processing_error",
     }
 
     def update_item(self, item_id, *, touch: bool = True, **fields):
@@ -635,13 +740,17 @@ class KnowledgeStore:
             self.db.execute(f"UPDATE items SET {cols} WHERE id = ?", (*vals, item_id))  # noqa: S608
             # Sync FTS: delete with OLD values, insert with NEW values
             if old_row:
-                self.db.execute("INSERT INTO items_fts (items_fts, rowid, title, content, tags) VALUES ('delete', ?, ?, ?, ?)",
-                                (old_row["rowid"], old_row["title"], old_row["content"], old_row["tags"]))
+                self.db.execute(
+                    "INSERT INTO items_fts (items_fts, rowid, title, content, tags) VALUES ('delete', ?, ?, ?, ?)",  # noqa: E501
+                    (old_row["rowid"], old_row["title"], old_row["content"], old_row["tags"]),
+                )
                 new_row = self.db.execute(
                     "SELECT title, content, tags FROM items WHERE id = ?", (item_id,)
                 ).fetchone()
-                self.db.execute("INSERT INTO items_fts (rowid, title, content, tags) VALUES (?, ?, ?, ?)",
-                                (old_row["rowid"], new_row["title"], new_row["content"], new_row["tags"]))
+                self.db.execute(
+                    "INSERT INTO items_fts (rowid, title, content, tags) VALUES (?, ?, ?, ?)",
+                    (old_row["rowid"], new_row["title"], new_row["content"], new_row["tags"]),
+                )
             self.db.execute("COMMIT")
         except Exception:
             self.db.execute("ROLLBACK")
@@ -649,10 +758,14 @@ class KnowledgeStore:
 
     def _delete_item_cascade(self, item_id):
         """Delete item and its dependents without commit/graph reload (for batch use)."""
-        row = self.db.execute("SELECT rowid, title, content, tags FROM items WHERE id = ?", (item_id,)).fetchone()
+        row = self.db.execute(
+            "SELECT rowid, title, content, tags FROM items WHERE id = ?", (item_id,)
+        ).fetchone()
         if row:
-            self.db.execute("INSERT INTO items_fts (items_fts, rowid, title, content, tags) VALUES ('delete', ?, ?, ?, ?)",
-                            (row["rowid"], row["title"], row["content"], row["tags"]))
+            self.db.execute(
+                "INSERT INTO items_fts (items_fts, rowid, title, content, tags) VALUES ('delete', ?, ?, ?, ?)",  # noqa: E501
+                (row["rowid"], row["title"], row["content"], row["tags"]),
+            )
         self.db.execute("DELETE FROM mentions WHERE item_id = ?", (item_id,))
         self.db.execute("DELETE FROM entity_relations WHERE source_item_id = ?", (item_id,))
         self.db.execute("DELETE FROM extracted_contents WHERE item_id = ?", (item_id,))
@@ -694,15 +807,13 @@ class KnowledgeStore:
         """Null every item embedding. Used on an embedding-model switch — vectors
         from different models are incompatible. Item text/title/summary is
         preserved so they can be re-embedded. Returns the count cleared."""
-        cur = self.db.execute(
-            "UPDATE items SET embedding = NULL WHERE embedding IS NOT NULL")
+        cur = self.db.execute("UPDATE items SET embedding = NULL WHERE embedding IS NOT NULL")
         self.db.commit()
         return cur.rowcount
 
     def count_items_to_reembed(self) -> int:
         """How many active items carry embeddable text (title or content)."""
-        row = self.db.execute(
-            "SELECT COUNT(*) AS n FROM items WHERE status = 'active'").fetchone()
+        row = self.db.execute("SELECT COUNT(*) AS n FROM items WHERE status = 'active'").fetchone()
         return int(row["n"]) if row else 0
 
     def count_items_missing_embedding(self) -> int:
@@ -745,10 +856,12 @@ class KnowledgeStore:
         vector-less and fall back to keyword/FTS retrieval. Returns counts.
         """
         rows = self.db.execute(
-            "SELECT id, title, summary, content FROM items WHERE status = 'active'").fetchall()
+            "SELECT id, title, summary, content FROM items WHERE status = 'active'"
+        ).fetchall()
         total = len(rows)
         done = reembedded = failed = 0
         from personalclaw.knowledge.embedder import floats_to_bytes
+
         for r in rows:
             title = r["title"] or ""
             summary = r["summary"] if "summary" in r.keys() else None
@@ -762,8 +875,8 @@ class KnowledgeStore:
                 vec = None
             if vec:
                 self.db.execute(
-                    "UPDATE items SET embedding = ? WHERE id = ?",
-                    (floats_to_bytes(vec), r["id"]))
+                    "UPDATE items SET embedding = ? WHERE id = ?", (floats_to_bytes(vec), r["id"])
+                )
                 reembedded += 1
             else:
                 failed += 1
@@ -782,7 +895,8 @@ class KnowledgeStore:
                 "SELECT i.*, fts.rank FROM items_fts fts "
                 "JOIN items i ON i.rowid = fts.rowid "
                 "WHERE items_fts MATCH ? ORDER BY fts.rank LIMIT ? OFFSET ?",
-                (safe, limit, offset)).fetchall()
+                (safe, limit, offset),
+            ).fetchall()
         except sqlite3.OperationalError:
             return []
         return [self._serialize_item(r) for r in rows]
@@ -793,8 +907,8 @@ class KnowledgeStore:
             return 0
         try:
             row = self.db.execute(
-                "SELECT COUNT(*) FROM items_fts WHERE items_fts MATCH ?",
-                (safe,)).fetchone()
+                "SELECT COUNT(*) FROM items_fts WHERE items_fts MATCH ?", (safe,)
+            ).fetchone()
             return row[0] if row else 0
         except sqlite3.OperationalError:
             return 0
@@ -808,9 +922,10 @@ class KnowledgeStore:
         eid = str(uuid4())
         now = datetime.now().isoformat()
         self.db.execute(
-            "INSERT INTO entities (id, name, entity_type, description, aliases, created_at, updated_at) "
+            "INSERT INTO entities (id, name, entity_type, description, aliases, created_at, updated_at) "  # noqa: E501
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (eid, name, entity_type, description, json.dumps(aliases or []), now, now))
+            (eid, name, entity_type, description, json.dumps(aliases or []), now, now),
+        )
         self.graph.add_node(eid, name=name, entity_type=entity_type)
         self.db.commit()
         return eid
@@ -822,12 +937,15 @@ class KnowledgeStore:
         desc = (description or "").strip()
         if not desc:
             return False
-        row = self.db.execute("SELECT description FROM entities WHERE id = ?", (entity_id,)).fetchone()
+        row = self.db.execute(
+            "SELECT description FROM entities WHERE id = ?", (entity_id,)
+        ).fetchone()
         if row is None or (row["description"] or "").strip():
             return False
         self.db.execute(
             "UPDATE entities SET description = ?, updated_at = ? WHERE id = ?",
-            (desc, datetime.now().isoformat(), entity_id))
+            (desc, datetime.now().isoformat(), entity_id),
+        )
         self.db.commit()
         return True
 
@@ -835,7 +953,9 @@ class KnowledgeStore:
         row = self.db.execute("SELECT * FROM entities WHERE name = ?", (name,)).fetchone()
         if row:
             return dict(row)
-        row = self.db.execute("SELECT * FROM entities WHERE LOWER(name) = LOWER(?)", (name,)).fetchone()
+        row = self.db.execute(
+            "SELECT * FROM entities WHERE LOWER(name) = LOWER(?)", (name,)
+        ).fetchone()
         if row:
             return dict(row)
         for row in self.db.execute("SELECT * FROM entities"):
@@ -845,47 +965,62 @@ class KnowledgeStore:
         return None
 
     def merge_entities(self, keep_id, merge_id):
-        self.db.execute("UPDATE entity_relations SET source_id = ? WHERE source_id = ?", (keep_id, merge_id))
-        self.db.execute("UPDATE entity_relations SET target_id = ? WHERE target_id = ?", (keep_id, merge_id))
+        self.db.execute(
+            "UPDATE entity_relations SET source_id = ? WHERE source_id = ?", (keep_id, merge_id)
+        )
+        self.db.execute(
+            "UPDATE entity_relations SET target_id = ? WHERE target_id = ?", (keep_id, merge_id)
+        )
         # Remove self-loops created by the merge
         self.db.execute(
-            "DELETE FROM entity_relations WHERE source_id = ? AND target_id = ?",
-            (keep_id, keep_id))
+            "DELETE FROM entity_relations WHERE source_id = ? AND target_id = ?", (keep_id, keep_id)
+        )
         # Delete mentions that would conflict, then update the rest
         self.db.execute(
-            "DELETE FROM mentions WHERE entity_id = ? AND item_id IN (SELECT item_id FROM mentions WHERE entity_id = ?)",
-            (merge_id, keep_id))
-        self.db.execute("UPDATE mentions SET entity_id = ? WHERE entity_id = ?", (keep_id, merge_id))
+            "DELETE FROM mentions WHERE entity_id = ? AND item_id IN (SELECT item_id FROM mentions WHERE entity_id = ?)",  # noqa: E501
+            (merge_id, keep_id),
+        )
+        self.db.execute(
+            "UPDATE mentions SET entity_id = ? WHERE entity_id = ?", (keep_id, merge_id)
+        )
         self.db.execute("DELETE FROM entities WHERE id = ?", (merge_id,))
         self.db.commit()
         self._load_graph()
 
-    def add_entity_relation(self, source_id, target_id, relation_type,
-                            description=None, weight=1.0, source_item_id=None) -> str:
+    def add_entity_relation(
+        self, source_id, target_id, relation_type, description=None, weight=1.0, source_item_id=None
+    ) -> str:
         # Idempotent on (source, target, type): the LLM often states the same relation
         # more than once in a single document, and a re-ingest re-extracts it — without
         # this guard each pass appended a duplicate edge, bloating the entity graph.
         existing = self.db.execute(
-            "SELECT id FROM entity_relations WHERE source_id = ? AND target_id = ? AND relation_type = ? LIMIT 1",
-            (source_id, target_id, relation_type)).fetchone()
+            "SELECT id FROM entity_relations WHERE source_id = ? AND target_id = ? AND relation_type = ? LIMIT 1",  # noqa: E501
+            (source_id, target_id, relation_type),
+        ).fetchone()
         if existing:
-            self.graph.add_edge(source_id, target_id, id=existing["id"], relation_type=relation_type, weight=weight)
+            self.graph.add_edge(
+                source_id, target_id, id=existing["id"], relation_type=relation_type, weight=weight
+            )
             return existing["id"]
         rid = str(uuid4())
         now = datetime.now().isoformat()
         self.db.execute(
-            "INSERT INTO entity_relations (id, source_id, target_id, relation_type, description, weight, source_item_id, created_at) "
+            "INSERT INTO entity_relations (id, source_id, target_id, relation_type, description, weight, source_item_id, created_at) "  # noqa: E501
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (rid, source_id, target_id, relation_type, description, weight, source_item_id, now))
-        self.graph.add_edge(source_id, target_id, id=rid, relation_type=relation_type, weight=weight)
+            (rid, source_id, target_id, relation_type, description, weight, source_item_id, now),
+        )
+        self.graph.add_edge(
+            source_id, target_id, id=rid, relation_type=relation_type, weight=weight
+        )
         self.db.commit()
         return rid
 
     def add_mention(self, item_id, entity_id, context=None):
         now = datetime.now().isoformat()
         self.db.execute(
-            "INSERT OR IGNORE INTO mentions (item_id, entity_id, context, created_at) VALUES (?, ?, ?, ?)",
-            (item_id, entity_id, context, now))
+            "INSERT OR IGNORE INTO mentions (item_id, entity_id, context, created_at) VALUES (?, ?, ?, ?)",  # noqa: E501
+            (item_id, entity_id, context, now),
+        )
         self.db.commit()
 
     def get_neighbors(self, entity_id, depth=1) -> list:
@@ -907,7 +1042,9 @@ class KnowledgeStore:
         result = []
         for nid in visited:
             data = self.graph.nodes.get(nid, {})
-            result.append({"id": nid, "name": data.get("name"), "entity_type": data.get("entity_type")})
+            result.append(
+                {"id": nid, "name": data.get("name"), "entity_type": data.get("entity_type")}
+            )
         return result
 
     def get_entity_subgraph(self, entity_id, depth=2) -> dict:
@@ -930,7 +1067,14 @@ class KnowledgeStore:
         edges = []
         for u, v, data in self.graph.edges(data=True):
             if u in visited and v in visited:
-                edges.append({"source": u, "target": v, "type": data.get("relation_type"), "weight": data.get("weight")})
+                edges.append(
+                    {
+                        "source": u,
+                        "target": v,
+                        "type": data.get("relation_type"),
+                        "weight": data.get("weight"),
+                    }
+                )
         return {"nodes": nodes, "edges": edges}
 
     def get_stats(self) -> dict:
@@ -952,7 +1096,8 @@ class KnowledgeStore:
             f"SELECT COUNT(*) FROM items WHERE {active}",  # noqa: S608
         ).fetchone()[0]
         by_type = {
-            r["item_type"]: r["c"] for r in self.db.execute(
+            r["item_type"]: r["c"]
+            for r in self.db.execute(
                 f"SELECT item_type, COUNT(*) c FROM items WHERE {active} "  # noqa: S608
                 "GROUP BY item_type ORDER BY c DESC",
             )

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from personalclaw.llm.base import LLMEvent
 
+from personalclaw import task_modes
 from personalclaw.dashboard.state import (
     CRON_NOTIFY_PREFIX,
     SUBAGENT_COMPLETION_PREFIX,
@@ -22,7 +23,6 @@ from personalclaw.dashboard.state import (
     _ChatSession,
     parse_cls_meta,
 )
-from personalclaw import task_modes
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import SecurityEvent, sel
 from personalclaw.validation import MAX_TOOL_NAME_LEN, sanitize_string
@@ -65,9 +65,13 @@ def _build_stream_chunk(msg: dict) -> str:
     else:
         cls_val = _redact_deep(cls_val)
     return json.dumps(
-        {"type": msg["role"], "content": content, "ts": msg.get("ts", ""),
-         "cls": cls_val,
-         **({"meta": meta} if meta else {})}
+        {
+            "type": msg["role"],
+            "content": content,
+            "ts": msg.get("ts", ""),
+            "cls": cls_val,
+            **({"meta": meta} if meta else {}),
+        }
     )
 
 
@@ -78,7 +82,9 @@ def _build_stream_chunk(msg: dict) -> str:
 _extract_bash_command = task_modes.extract_bash_command
 
 
-def task_mode_denies(session: "_ChatSession", title: str, tool_kind: str, tool_input: object) -> str:
+def task_mode_denies(
+    session: "_ChatSession", title: str, tool_kind: str, tool_input: object
+) -> str:
     """Return a deny-reason for the session's TASK mode, or '' to allow the tool.
 
     Thin session-aware wrapper over the canonical gate in ``task_modes`` (the same
@@ -145,7 +151,8 @@ _TASK_MODE_FRAMING = {
         "effects, no creating artifacts, no spawning work. Mutating tools are blocked "
         "in this mode; don't attempt them. If the user clearly wants you to *do* "
         "something, answer their question, then tell them to do the work."
-        + _MODE_LIFT + _SWITCH_HINT
+        + _MODE_LIFT
+        + _SWITCH_HINT
     ),
     "plan": (
         "## Task mode: Plan\n"
@@ -155,7 +162,8 @@ _TASK_MODE_FRAMING = {
         "actual state of things — but you MUST NOT execute or mutate anything "
         "(no writes/edits, no commands with side effects). Inspect as needed, then "
         "present the plan for the user to review, then tell them to run it."
-        + _MODE_LIFT + _SWITCH_HINT
+        + _MODE_LIFT
+        + _SWITCH_HINT
     ),
     "build": (
         "## Task mode: Build\n"
@@ -165,8 +173,7 @@ _TASK_MODE_FRAMING = {
         "artifact/widget/skill production; unrelated mutating tools are blocked. Lead "
         "with the produced artifact rather than a long explanation. If the user asks for "
         "non-build work (e.g. editing project files, running commands), explain it's out "
-        "of scope for Build, then tell them how to do it."
-        + _MODE_LIFT + _SWITCH_HINT
+        "of scope for Build, then tell them how to do it." + _MODE_LIFT + _SWITCH_HINT
     ),
 }
 
@@ -263,9 +270,7 @@ _SLASH_COMMAND_HINTS: dict[str, str] = {
 # sentinel, so new writes carry the bare title/text. This strips a leading
 # pictographic sentinel + following space from ALREADY-PERSISTED sessions on read,
 # so historical turns still render a clean tool name. No-op for new content.
-_LEADING_STATUS_EMOJI_RE = re.compile(
-    r"^[\U0001F000-\U0001FAFF☀-➿️⬀-⯿]+\s*"
-)
+_LEADING_STATUS_EMOJI_RE = re.compile(r"^[\U0001F000-\U0001FAFF☀-➿️⬀-⯿]+\s*")
 
 
 def strip_status_sentinel(content: str) -> str:
@@ -305,9 +310,17 @@ def _broadcast_auto_tool(state: DashboardState, session: _ChatSession, event: "L
     state.broadcast_ws(
         "tool_call",
         {
-            "session": session.key, "tool": title, "kind": kind, "auto": True, "tool_call_id": tcid,
-            "purpose": redact_credentials(redact_exfiltration_urls((event.tool_purpose or "")[:200])[0])[0],
-            "input_preview": redact_credentials(redact_exfiltration_urls(tool_input_to_str(event.tool_input)[:4000])[0])[0],
+            "session": session.key,
+            "tool": title,
+            "kind": kind,
+            "auto": True,
+            "tool_call_id": tcid,
+            "purpose": redact_credentials(
+                redact_exfiltration_urls((event.tool_purpose or "")[:200])[0]
+            )[0],
+            "input_preview": redact_credentials(
+                redact_exfiltration_urls(tool_input_to_str(event.tool_input)[:4000])[0]
+            )[0],
         },
     )
     return title
@@ -321,9 +334,7 @@ def _broadcast_compaction_result(
     if status_type == "completed":
         summary, _ = redact_credentials(event.title)
         summary, _ = redact_exfiltration_urls(summary)
-        msg_text = (
-            f"Conversation compacted: {summary}" if summary else "Conversation compacted."
-        )
+        msg_text = f"Conversation compacted: {summary}" if summary else "Conversation compacted."
     elif status_type == "failed":
         error, _ = redact_credentials(event.title or "unknown error")
         error, _ = redact_exfiltration_urls(error)
@@ -375,7 +386,7 @@ def _history_key_for(session_name: str) -> str:
     if session_name.startswith("dashboard:"):
         return session_name
     while session_name.startswith("dashboard_"):
-        session_name = session_name[len("dashboard_"):]
+        session_name = session_name[len("dashboard_") :]
     return f"dashboard:{session_name}"
 
 
@@ -457,6 +468,7 @@ def _project_context_preamble(project_id: str) -> str:
     any failure or unknown project (best-effort, never blocks the turn)."""
     try:
         from personalclaw.tasks.hierarchy import HierarchyStore
+
         store = HierarchyStore()
         proj = store.get_project(project_id)
         if proj is None:
@@ -470,7 +482,9 @@ def _project_context_preamble(project_id: str) -> str:
         # brief's _project_brief_block). Foundational context, so it leads the preamble.
         brief = str(getattr(proj, "brief", "") or "").strip()
         if brief:
-            lines.append(f"- Project brief (the goal/scope/background of this project — treat as foundational context): {brief}")
+            lines.append(
+                f"- Project brief (the goal/scope/background of this project — treat as foundational context): {brief}"  # noqa: E501
+            )
         ws = str(getattr(proj, "workspace_dir", "") or "").strip()
         if ws:
             lines.append(f"- Workspace: {ws}")
@@ -479,12 +493,15 @@ def _project_context_preamble(project_id: str) -> str:
         except Exception:
             cdir = ""
         if cdir:
-            lines.append(f"- Project context directory (shared outcomes + intermediate files from this project's loops + chats — read it for continuity): {cdir}")
+            lines.append(
+                f"- Project context directory (shared outcomes + intermediate files from this project's loops + chats — read it for continuity): {cdir}"  # noqa: E501
+            )
             # List what's actually IN the context dir so the chat knows the shared
             # context that exists (e.g. decisions.md a loop wrote) without guessing —
             # the path alone left the agent unable to enumerate it (Slice 6 gap).
             try:
                 from pathlib import Path
+
                 entries = sorted(
                     (p for p in Path(cdir).iterdir() if p.is_file() and not p.name.startswith(".")),
                     key=lambda p: p.name,
@@ -501,6 +518,7 @@ def _project_context_preamble(project_id: str) -> str:
                 logger.debug("project context-dir listing for preamble failed", exc_info=True)
         try:
             from personalclaw.loop import store as _loop_store
+
             loops = _loop_store.list_for_project(project_id)
             if loops:
                 lines.append(f"- Loops run on this project ({len(loops)}):")
@@ -528,17 +546,17 @@ def _maybe_consolidate(state, session) -> None:
         state.consolidator.maybe_consolidate(_history_key_for(session.key))
     elif state.consolidator and session.is_restricted:
         sel().log_api_access(
-            caller=f"dashboard:{session.key}", operation="consolidate",
-            outcome="denied", source="dashboard",
+            caller=f"dashboard:{session.key}",
+            operation="consolidate",
+            outcome="denied",
+            source="dashboard",
             resources="restricted_session_block",
         )
 
 
 def _sync_dashboard_sessions(state: "DashboardState") -> None:
     """Push current session keys to SessionManager so orphaned sessions get reaped."""
-    state.sessions.set_active_dashboard_sessions(
-        {_history_key_for(k) for k in state._sessions}
-    )
+    state.sessions.set_active_dashboard_sessions({_history_key_for(k) for k in state._sessions})
 
 
 def _redact_for_display(text: str) -> str:
@@ -568,11 +586,13 @@ def _dequeue_next_message(session, merge_enabled: bool) -> tuple:
     if merge_enabled and len(session._queue) > 1:
         to_merge: list[dict] = []
         for item in list(session._queue):
-            if item["content"].startswith(CRON_NOTIFY_PREFIX) or item["content"].startswith(SUBAGENT_COMPLETION_PREFIX):
+            if item["content"].startswith(CRON_NOTIFY_PREFIX) or item["content"].startswith(
+                SUBAGENT_COMPLETION_PREFIX
+            ):
                 break
             to_merge.append(item)
         if len(to_merge) > 1:
-            del session._queue[:len(to_merge)]
+            del session._queue[: len(to_merge)]
             merged = "\n\n".join(item["content"] for item in to_merge)
             return f"[{len(to_merge)} queued messages merged]\n\n{merged}", to_merge
     item = session.queue_pop(0)
@@ -603,8 +623,14 @@ def _prepare_messages(messages: list[dict], running: bool) -> list[dict]:
             msg_out = dict(m)
             if msg_out.get("variants"):
                 msg_out["variants"] = [
-                    {**v, "content": redact_credentials(redact_exfiltration_urls(v.get("content", ""))[0])[0]}
-                    for v in msg_out["variants"] if isinstance(v, dict)
+                    {
+                        **v,
+                        "content": redact_credentials(
+                            redact_exfiltration_urls(v.get("content", ""))[0]
+                        )[0],
+                    }
+                    for v in msg_out["variants"]
+                    if isinstance(v, dict)
                 ]
             meta = parse_cls_meta(m.get("cls", ""))
             if meta is not None:

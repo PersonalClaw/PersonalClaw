@@ -44,6 +44,7 @@ DEFAULT_SEARCH_USE_CASE = "search-general"
 
 def _active_path() -> Path:
     from personalclaw.config.loader import config_dir
+
     return config_dir() / "active_search_providers.json"
 
 

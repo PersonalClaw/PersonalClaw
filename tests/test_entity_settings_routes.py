@@ -20,8 +20,7 @@ from personalclaw.providers import entity_routes as er
 @pytest.fixture(autouse=True)
 def _isolate_settings(monkeypatch, tmp_path):
     # Point the entity-settings dir at a tmp path so the live store is untouched.
-    monkeypatch.setattr(er, "_entity_settings_path",
-                        lambda entity: tmp_path / f"{entity}.json")
+    monkeypatch.setattr(er, "_entity_settings_path", lambda entity: tmp_path / f"{entity}.json")
 
 
 def _req(body):
@@ -38,7 +37,9 @@ async def _json(resp):
 async def test_notifications_put_persists_known_keys():
     # NB: "warn" (the old fixture value) is now correctly a 400 — it was
     # out-of-domain all along and ranked as info in the delivery gate.
-    resp = await er.handle_notifications_settings_put(_req({"mute_all": True, "min_severity": "warning"}))
+    resp = await er.handle_notifications_settings_put(
+        _req({"mute_all": True, "min_severity": "warning"})
+    )
     data = await _json(resp)
     assert data["ok"] is True
     assert data["settings"]["mute_all"] is True
@@ -52,9 +53,9 @@ async def test_notifications_put_drops_unknown_keys():
         _req({"mute_all": True, "totally_bogus_key_xyz": "junk", "sound_enabled": None})
     )
     settings = (await _json(resp))["settings"]
-    assert settings["mute_all"] is True          # known key applied
+    assert settings["mute_all"] is True  # known key applied
     assert "totally_bogus_key_xyz" not in settings  # garbage rejected
-    assert "sound_enabled" not in settings          # not-in-schema rejected
+    assert "sound_enabled" not in settings  # not-in-schema rejected
     # And it's not on disk either (GET would otherwise leak it back).
     get_resp = await er.handle_notifications_settings_get(_req({}))
     got = (await _json(get_resp))["settings"]
@@ -83,9 +84,7 @@ async def test_notifications_migrates_legacy_master_mute_key(tmp_path):
 @pytest.mark.asyncio
 async def test_inbox_put_drops_unknown_keys():
     """The inbox settings handler has the same guard."""
-    resp = await er.handle_inbox_settings_put(
-        _req({"retention_days": 30, "nope_not_a_setting": 1})
-    )
+    resp = await er.handle_inbox_settings_put(_req({"retention_days": 30, "nope_not_a_setting": 1}))
     settings = (await _json(resp))["settings"]
     assert settings["retention_days"] == 30
     assert "nope_not_a_setting" not in settings
@@ -184,7 +183,15 @@ class TestNotificationAllowed:
         er._save_entity_settings("notifications", settings)
 
     def test_defaults_allow_everything(self):
-        for kind in ("info", "cron", "heartbeat", "warning", "inbox_alert", "error", "unknown-kind"):
+        for kind in (
+            "info",
+            "cron",
+            "heartbeat",
+            "warning",
+            "inbox_alert",
+            "error",
+            "unknown-kind",
+        ):
             assert er.notification_allowed(kind) is True
 
     def test_mute_all_blocks_everything(self):
@@ -194,7 +201,7 @@ class TestNotificationAllowed:
 
     def test_min_severity_warning_filters_info_kinds(self):
         self._write(min_severity="warning")
-        assert er.notification_allowed("cron") is False       # info-ranked
+        assert er.notification_allowed("cron") is False  # info-ranked
         assert er.notification_allowed("heartbeat") is False  # info-ranked
         assert er.notification_allowed("warning") is True
         assert er.notification_allowed("inbox_alert") is True  # user-configured alert = warning
@@ -209,7 +216,7 @@ class TestNotificationAllowed:
         from datetime import datetime
 
         self._write(quiet_hours_enabled=True, quiet_hours_start="22:00", quiet_hours_end="08:00")
-        inside = datetime(2026, 1, 1, 23, 30)   # wraps midnight
+        inside = datetime(2026, 1, 1, 23, 30)  # wraps midnight
         inside2 = datetime(2026, 1, 1, 7, 59)
         outside = datetime(2026, 1, 1, 12, 0)
         assert er.notification_allowed("info", now=inside) is False

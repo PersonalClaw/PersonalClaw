@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 # ── shared helpers ──
 
+
 def _as_list(v) -> list:
     return v if isinstance(v, list) else []
 
@@ -60,14 +61,33 @@ def _agent_exists(body: dict) -> bool:
 
 # Top-level spine fields a create body may set directly on the Loop.
 _SPINE_FIELDS = (
-    "summary", "intake_rigor", "execution", "agent", "model", "provider",
-    "provider_agent", "reasoning_effort", "strategy_id", "workspace_dir",
+    "summary",
+    "intake_rigor",
+    "execution",
+    "agent",
+    "model",
+    "provider",
+    "provider_agent",
+    "reasoning_effort",
+    "strategy_id",
+    "workspace_dir",
 )
 # Fields that, when present in the body, fold into kind_config (the kind owns them).
 _KIND_CONFIG_FIELDS = (
-    "goal_type", "granularity", "sub_goals", "deliverables", "scope", "rubric",
-    "ratchet_mode", "verify_command", "test_command", "entry_stage", "project_kind",
-    "token_overrides", "targets", "exports",
+    "goal_type",
+    "granularity",
+    "sub_goals",
+    "deliverables",
+    "scope",
+    "rubric",
+    "ratchet_mode",
+    "verify_command",
+    "test_command",
+    "entry_stage",
+    "project_kind",
+    "token_overrides",
+    "targets",
+    "exports",
 )
 
 
@@ -89,12 +109,16 @@ def _build_loop_from_body(body: dict) -> Loop:
         if f in body:
             kc[f] = body[f]
     loop = Loop(
-        id="", kind=kind, task=task,
+        id="",
+        kind=kind,
+        task=task,
         name=str(body.get("name") or "").strip(),
         project_id=str(body.get("project_id", "")),
-        plan=[p for p in _as_list(body.get("plan") or body.get("stage_plan")) if isinstance(p, dict)],
+        plan=[
+            p for p in _as_list(body.get("plan") or body.get("stage_plan")) if isinstance(p, dict)
+        ],
         roster=[r for r in _as_list(body.get("roster")) if isinstance(r, dict)],
-        strategy_config=body.get("strategy_config") if isinstance(body.get("strategy_config"), dict) else {},
+        strategy_config=(_sc if isinstance((_sc := body.get("strategy_config")), dict) else {}),
         skill_ids=[str(s) for s in _as_list(body.get("skill_ids")) if str(s).strip()],
         workflow_ids=[str(w) for w in _as_list(body.get("workflow_ids")) if str(w).strip()],
         attended=bool(body.get("attended", False)),
@@ -107,8 +131,15 @@ def _build_loop_from_body(body: dict) -> Loop:
     )
     for f in _SPINE_FIELDS:
         if f in body and body[f] is not None:
-            setattr(loop, f, body[f] if f != "execution" else
-                    ("multi_agent" if str(body[f]) == "multi_agent" else "solo"))
+            setattr(
+                loop,
+                f,
+                (
+                    body[f]
+                    if f != "execution"
+                    else ("multi_agent" if str(body[f]) == "multi_agent" else "solo")
+                ),
+            )
     # A loop scoped under a project runs in that project's working area: when the
     # caller didn't pick a workspace, inherit the project's bound workspace_dir so the
     # loop's outputs land alongside the project's other loops + chats (the cohesive
@@ -116,6 +147,7 @@ def _build_loop_from_body(body: dict) -> Loop:
     if loop.project_id and not str(loop.workspace_dir or "").strip():
         try:
             from personalclaw.tasks.hierarchy import HierarchyStore
+
             proj = HierarchyStore().get_project(loop.project_id)
             pws = str(getattr(proj, "workspace_dir", "") or "").strip() if proj else ""
             if pws:
@@ -149,21 +181,32 @@ async def _installed_capability_catalogs() -> tuple[list[dict], list[dict]]:
     skills: list[dict] = []
     workflows: list[dict] = []
     try:
-        from personalclaw.skills import registry as skill_reg
-        skills = [{"id": s.id, "name": s.name, "description": getattr(s, "description", "")}
-                  for s in skill_reg.list_installed()]
+        from personalclaw.skills.marketplace import list_local_skills
+
+        skills = [
+            {
+                "id": s.get("name", ""),
+                "name": s.get("name", ""),
+                "description": s.get("description", ""),
+            }
+            for s in list_local_skills()
+        ]
     except Exception:
         logger.debug("skills catalog for classify failed", exc_info=True)
     try:
-        from personalclaw.workflows import registry as wf_reg
-        workflows = [{"id": w.id, "name": w.name, "description": getattr(w, "description", "")}
-                     for w in wf_reg.list_installed()]
+        from personalclaw.workflows.registry import list_all_workflows
+
+        wfs, _ = await list_all_workflows()
+        workflows = [
+            {"id": w.id, "name": w.name, "description": getattr(w, "description", "")} for w in wfs
+        ]
     except Exception:
         logger.debug("workflows catalog for classify failed", exc_info=True)
     return skills, workflows
 
 
 # ── validate (deterministic pre-flight) ──
+
 
 async def api_loop_validate(request: web.Request) -> web.Response:
     """POST /api/loops/validate — deterministic pre-flight on a create payload
@@ -177,6 +220,7 @@ async def api_loop_validate(request: web.Request) -> web.Response:
 
 
 # ── classify (intake brain) ──
+
 
 async def api_loop_classify(request: web.Request) -> web.Response:
     """POST /api/loops/classify {kind, task|goal} — the kind-aware intake analyze
@@ -196,8 +240,12 @@ async def api_loop_classify(request: web.Request) -> web.Response:
     # / MBs would blow up the prompt). Same cap the create validator enforces.
     if len(task) > validation._MAX_TASK_LEN:
         return web.json_response(
-            {"error": f"Task is too large ({len(task):,} characters) — trim it to under "
-                      f"{validation._MAX_TASK_LEN:,} characters."}, status=400)
+            {
+                "error": f"Task is too large ({len(task):,} characters) — trim it to under "
+                f"{validation._MAX_TASK_LEN:,} characters."
+            },
+            status=400,
+        )
     strat = kinds.get(kind)
     from personalclaw.llm_helpers import one_shot_completion
 
@@ -210,8 +258,9 @@ async def api_loop_classify(request: web.Request) -> web.Response:
         agents_catalog = [n for n in AppConfig.load().agents if n not in _reserved]
     except Exception:
         agents_catalog = []
-    result = await strat.classify(task, _ask, skills=skills_catalog,
-                                  workflows=workflows_catalog, agents=agents_catalog)
+    result = await strat.classify(
+        task, _ask, skills=skills_catalog, workflows=workflows_catalog, agents=agents_catalog
+    )
     result["kind"] = kind
     return web.json_response(result)
 
@@ -255,6 +304,7 @@ async def api_loop_grill_tree(request: web.Request) -> web.Response:
         try:
             from personalclaw.dashboard.handlers.memory import _get_provider
             from personalclaw.memory_service import MemoryService
+
             svc = MemoryService.over_vector_store(_get_provider(state))
             return svc.semantic_context(query, cap=1500) or ""
         except Exception:
@@ -270,6 +320,7 @@ async def api_loop_grill_tree(request: web.Request) -> web.Response:
 
 # ── CRUD ──
 
+
 async def api_loop_create(request: web.Request) -> web.Response:
     """POST /api/loops {kind, task|goal, …} — create a READY loop of any kind."""
     body = await _json_body(request)
@@ -280,7 +331,9 @@ async def api_loop_create(request: web.Request) -> web.Response:
         return web.json_response({"error": f"Unknown loop kind: {kind!r}"}, status=400)
     task = str(body.get("task") or body.get("goal") or "").strip()
     if len(task) < 12:
-        return web.json_response({"error": "Task is too short — describe it in more detail."}, status=400)
+        return web.json_response(
+            {"error": "Task is too short — describe it in more detail."}, status=400
+        )
     # Validate BEFORE persisting — this is the gate that stops a dangerous verify/test
     # command (rm -rf /, …) from ever landing in the store where the watchdog would
     # auto-run it unattended. Workspace-binding is a warning here (picked later, then
@@ -345,16 +398,22 @@ async def api_loop_update(request: web.Request) -> web.Response:
     # that create rejects. A name-only patch skips this (nothing security-relevant).
     if set(body) - {"name"}:
         edit_errs = validation.spec_edit_errors(
-            body, kind=existing.kind, existing_kind_config=existing.kind_config or {})
+            body, kind=existing.kind, existing_kind_config=existing.kind_config or {}
+        )
         if edit_errs:
-            return web.json_response({"error": " · ".join(edit_errs), "errors": edit_errs}, status=400)
+            return web.json_response(
+                {"error": " · ".join(edit_errs), "errors": edit_errs}, status=400
+            )
     updated = store.update_spec(cid, body)
     if updated is None:
         # spec frozen — allow a name-only patch via rename
         if set(body) <= {"name"}:
             renamed = store.rename(cid, str(body.get("name", "")))
-            return web.json_response(store.get_redacted(cid)) if renamed else \
-                web.json_response({"error": "Not found"}, status=404)
+            return (
+                web.json_response(store.get_redacted(cid))
+                if renamed
+                else web.json_response({"error": "Not found"}, status=404)
+            )
         # workspace_dir-only re-bind: the recovery path when a brownfield workspace
         # went missing mid-run and the loop paused to NEEDS_INPUT/BLOCKED. The spec is
         # frozen, but this single field must be re-pickable or the user is stuck (the
@@ -365,7 +424,9 @@ async def api_loop_update(request: web.Request) -> web.Response:
             if rebound is not None:
                 return web.json_response(store.get_redacted(cid))
             return web.json_response(
-                {"error": "Workspace can't be changed while the loop is running or finished."}, status=409)
+                {"error": "Workspace can't be changed while the loop is running or finished."},
+                status=409,
+            )
         return web.json_response({"error": "Loop spec is frozen (already started)"}, status=409)
     return web.json_response(store.get_redacted(cid))
 
@@ -386,7 +447,8 @@ async def api_loop_action(request: web.Request) -> web.Response:
         return web.json_response({"error": "Not found"}, status=404)
     if LoopStatus(loop.status) not in ACTION_SOURCE_STATES[action]:
         return web.json_response(
-            {"error": f"Cannot {action} a loop in '{loop.status}' state"}, status=409)
+            {"error": f"Cannot {action} a loop in '{loop.status}' state"}, status=409
+        )
     # Launch-time re-validation: a kind may block start (e.g. a brownfield code loop
     # with no bound workspace). Generic — the rule lives in the strategy, not here.
     # Only on a fresh start (resume of a paused, already-launched loop is exempt).
@@ -399,6 +461,7 @@ async def api_loop_action(request: web.Request) -> web.Response:
             return web.json_response({"error": reason}, status=422)
     state = request.app["state"]
     from personalclaw.autonudge import get_instance
+
     svc = get_instance()
     if svc is None:
         return web.json_response({"error": "autonudge unavailable"}, status=503)
@@ -418,6 +481,7 @@ async def _reap_loop_sessions(state, loop_id: str) -> None:
     in-memory _sessions entry AND the history .jsonl both go — no orphan leak."""
     from personalclaw.dashboard.chat_utils import _history_key_for
     from personalclaw.dashboard.handlers.sessions import _remove_session_for_history_key
+
     keys = [f"loop-{loop_id}", f"loop-plan-{loop_id}", f"code-plan-{loop_id}"]
     for k in keys:
         try:
@@ -436,6 +500,7 @@ async def api_loop_delete(request: web.Request) -> web.Response:
     if not store.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
     from personalclaw.autonudge import get_instance
+
     svc = get_instance()
     if svc is not None:
         try:
@@ -474,8 +539,11 @@ async def api_loop_nudge(request: web.Request) -> web.Response:
     if proj is None:
         return web.json_response({"error": "Not found"}, status=404)
     from personalclaw.loop.loop import PRELAUNCH_STATUSES, TERMINAL_STATUSES
+
     if LoopStatus(proj.status) in TERMINAL_STATUSES:
-        return web.json_response({"error": f"Cannot steer a loop in '{proj.status}' state"}, status=409)
+        return web.json_response(
+            {"error": f"Cannot steer a loop in '{proj.status}' state"}, status=409
+        )
     # A steer only reaches a worker that's running or resumable. A pre-launch loop
     # (ready/review/intake/planning) has no worker + no cycle loop, so a nudge here is
     # orphaned — persisted with applied_cycle=null and never seen (the worker applies
@@ -485,8 +553,12 @@ async def api_loop_nudge(request: web.Request) -> web.Response:
     # (chat tools / direct API / a future surface). Edit the plan before launch instead.
     if LoopStatus(proj.status) in PRELAUNCH_STATUSES:
         return web.json_response(
-            {"error": f"Can't steer a loop that hasn't started (it's '{proj.status}'). "
-                      "Launch it first, or edit the plan before launch."}, status=409)
+            {
+                "error": f"Can't steer a loop that hasn't started (it's '{proj.status}'). "
+                "Launch it first, or edit the plan before launch."
+            },
+            status=409,
+        )
     task_id = str(body.get("task_id", "")).strip()
     if task_id and not store.valid_task_guidance_id(task_id):
         return web.json_response({"error": "Invalid task_id"}, status=400)
@@ -501,8 +573,10 @@ async def api_loop_nudge(request: web.Request) -> web.Response:
         known = await _loop_task_ids(cid)
         if known and task_id not in known:
             return web.json_response(
-                {"error": f"Unknown task id for this loop: {task_id}"}, status=400)
+                {"error": f"Unknown task id for this loop: {task_id}"}, status=400
+            )
     from personalclaw.autonudge import get_instance
+
     svc = get_instance()
     if svc is None:
         return web.json_response({"error": "autonudge unavailable"}, status=503)
@@ -521,14 +595,17 @@ async def api_loop_stream(request: web.Request) -> web.StreamResponse:
     if view is None:
         return web.json_response({"error": "Not found"}, status=404)
     from personalclaw.dashboard.sse import stream_response
+
     registry = request.app["state"].loop_sse()
     key = registry_key(cid)
     hub = registry.hub(key)
-    return await stream_response(request, hub, on_connect=[("snapshot", view)],
-                                 registry_evict=(registry, key))
+    return await stream_response(
+        request, hub, on_connect=[("snapshot", view)], registry_evict=(registry, key)
+    )
 
 
 # ── queue / autopilot (execution drive) ──
+
 
 async def _loop_task_ids(loop_id: str) -> set[str]:
     """All task ids across a loop's per-phase TaskLists. Empty (→ "can't confirm,
@@ -540,6 +617,7 @@ async def _loop_task_ids(loop_id: str) -> set[str]:
         if loop is None:
             return ids
         from personalclaw.tasks import registry
+
         for list_id in (loop.task_list_ids or {}).values():
             if not list_id:
                 continue
@@ -569,12 +647,14 @@ async def api_loop_queue(request: web.Request) -> web.Response:
     if action not in ("queue", "unqueue"):
         return web.json_response({"error": f"Unknown action: {action}"}, status=400)
     from personalclaw.loop.loop import PRELAUNCH_STATUSES, TERMINAL_STATUSES
+
     if action == "queue":
         # A terminal loop has no scheduler — a queued task would sit forever. Reject
         # honestly (unqueue is never guarded — clearing a stale id must always work).
         if LoopStatus(loop.status) in TERMINAL_STATUSES:
             return web.json_response(
-                {"error": f"Cannot queue tasks on a loop in '{loop.status}' state"}, status=409)
+                {"error": f"Cannot queue tasks on a loop in '{loop.status}' state"}, status=409
+            )
         # A pre-launch loop (ready/review/intake/planning) hasn't provisioned its
         # per-phase TaskLists yet, so _loop_task_ids is empty → the unknown-id guard
         # below ALLOWs by design (can't-confirm-during-provision). That bypass let a
@@ -583,15 +663,25 @@ async def api_loop_queue(request: web.Request) -> web.Response:
         # anyway, so reject queueing here (mirrors the nudge pre-launch gate).
         if LoopStatus(loop.status) in PRELAUNCH_STATUSES:
             return web.json_response(
-                {"error": f"Can't queue tasks before the loop starts (it's '{loop.status}'). "
-                          "Launch it first — tasks are provisioned at launch."}, status=409)
+                {
+                    "error": f"Can't queue tasks before the loop starts (it's '{loop.status}'). "
+                    "Launch it first — tasks are provisioned at launch."
+                },
+                status=409,
+            )
         known = await _loop_task_ids(cid)
         if known:
             unknown = [t for t in task_ids if t not in known]
             if unknown:
                 return web.json_response(
-                    {"error": f"Unknown task id(s) for this loop: {', '.join(unknown[:5])}"}, status=400)
-    queue = store.unqueue_tasks(cid, task_ids) if action == "unqueue" else store.queue_tasks(cid, task_ids)
+                    {"error": f"Unknown task id(s) for this loop: {', '.join(unknown[:5])}"},
+                    status=400,
+                )
+    queue = (
+        store.unqueue_tasks(cid, task_ids)
+        if action == "unqueue"
+        else store.queue_tasks(cid, task_ids)
+    )
     try:
         request.app["state"].loop_sse().publish(registry_key(cid), "queued", {"loop_id": cid})
         request.app["state"].push_refresh("loops")
@@ -613,21 +703,28 @@ async def api_loop_autopilot(request: web.Request) -> web.Response:
     if loop is None:
         return web.json_response({"error": "Not found"}, status=404)
     from personalclaw.loop.loop import TERMINAL_STATUSES
+
     if LoopStatus(loop.status) in TERMINAL_STATUSES:
         return web.json_response(
-            {"error": f"Cannot change autopilot on a loop in '{loop.status}' state"}, status=409)
+            {"error": f"Cannot change autopilot on a loop in '{loop.status}' state"}, status=409
+        )
     # Require an explicit boolean `on`. A defaulted bool(body.get("on", True)) silently
     # turned autopilot ON for a missing/malformed body — and ON is the consequential
     # direction (the system takes over driving the plan). A toggle must say which way.
     raw = body.get("on")
     if not isinstance(raw, bool):
-        return web.json_response({"error": "'on' must be a boolean (true to enable autopilot, false for one-by-one)"}, status=400)
+        return web.json_response(
+            {"error": "'on' must be a boolean (true to enable autopilot, false for one-by-one)"},
+            status=400,
+        )
     on = raw
     updated = store.set_autopilot(cid, on)
     if updated is None:
         return web.json_response({"error": "Not found"}, status=404)
     try:
-        request.app["state"].loop_sse().publish(registry_key(cid), "autopilot", {"loop_id": cid, "on": on})
+        request.app["state"].loop_sse().publish(
+            registry_key(cid), "autopilot", {"loop_id": cid, "on": on}
+        )
         request.app["state"].push_refresh("loops")
     except Exception:
         logger.debug("loop autopilot publish failed", exc_info=True)
@@ -635,6 +732,7 @@ async def api_loop_autopilot(request: web.Request) -> web.Response:
 
 
 # ── plan walkthrough (stepwise, gated planning) ──
+
 
 def _kick_plan_advance(request: web.Request, cid: str) -> web.Response:
     """Run ONE planning walkthrough pass in the background (it spawns the planner —
@@ -693,6 +791,7 @@ async def api_loop_plan_start(request: web.Request) -> web.Response:
     if loop is None:
         return web.json_response({"error": "Not found"}, status=404)
     from personalclaw.loop.loop import PRELAUNCH_STATUSES
+
     if LoopStatus(loop.status) not in PRELAUNCH_STATUSES:
         return web.json_response({"error": "Loop spec is frozen (already started)"}, status=409)
     return _kick_plan_advance(request, cid)
@@ -707,6 +806,7 @@ async def api_loop_plan_retry(request: web.Request) -> web.Response:
     if store.get(cid) is None:
         return web.json_response({"error": "Not found"}, status=404)
     from personalclaw.loop import plan_walkthrough as pw
+
     pw.clear_design_error(cid)
     return _kick_plan_advance(request, cid)
 
@@ -723,6 +823,7 @@ async def api_loop_plan_approve(request: web.Request) -> web.Response:
     if not step_id:
         return web.json_response({"error": "step_id required"}, status=400)
     from personalclaw.planning import session as PS
+
     session = store.read_plan_session(cid)
     if session is None:
         return web.json_response({"error": "No planning session"}, status=404)
@@ -747,7 +848,9 @@ async def api_loop_plan_comment(request: web.Request) -> web.Response:
     if not text:
         return web.json_response({"error": "Comment text required"}, status=400)
     import time as _time
+
     from personalclaw.planning import session as PS
+
     session = store.read_plan_session(cid)
     if session is None:
         return web.json_response({"error": "No planning session"}, status=404)
@@ -771,6 +874,7 @@ async def api_loop_plan_edit(request: web.Request) -> web.Response:
         return web.json_response({"error": "step_id required"}, status=400)
     markdown = str(body.get("markdown", ""))
     from personalclaw.planning import session as PS
+
     session = store.read_plan_session(cid)
     if session is None:
         return web.json_response({"error": "No planning session"}, status=404)
@@ -782,6 +886,7 @@ async def api_loop_plan_edit(request: web.Request) -> web.Response:
 
 # ── design tokens (Design kind) ──
 
+
 async def api_design_default_tokens(request: web.Request) -> web.Response:
     """GET /api/design/tokens/default[?scheme=light|dark] — PersonalClaw's canonical
     default token set. Returns both the raw set (`tokens`, with {ref}s intact) + its
@@ -791,17 +896,20 @@ async def api_design_default_tokens(request: web.Request) -> web.Response:
     (swatches, contrast) before any loop exists, reusing the cockpit's token views.
     Global (not per-loop)."""
     from personalclaw.loop import design_tokens as dt
+
     scheme = request.query.get("scheme", "light").strip().lower()
     if scheme not in ("light", "dark"):
         scheme = "light"
-    return web.json_response({
-        "tokens": dt.default_tokens(),
-        "schema": dt.tokens_schema(),
-        "resolved": dt.resolve(),
-        "css": dt.to_css_variables(scheme=scheme),
-        "overrides": {},
-        "scheme": scheme,
-    })
+    return web.json_response(
+        {
+            "tokens": dt.default_tokens(),
+            "schema": dt.tokens_schema(),
+            "resolved": dt.resolve(),
+            "css": dt.to_css_variables(scheme=scheme),
+            "overrides": {},
+            "scheme": scheme,
+        }
+    )
 
 
 async def api_loop_design_tokens(request: web.Request) -> web.Response:
@@ -820,14 +928,19 @@ async def api_loop_design_tokens(request: web.Request) -> web.Response:
     if scheme not in ("light", "dark"):
         scheme = "light"
     from personalclaw.loop import design_tokens as dt
-    overrides = loop.kind_config.get("token_overrides") if isinstance(loop.kind_config, dict) else {}
+
+    overrides = (
+        loop.kind_config.get("token_overrides") if isinstance(loop.kind_config, dict) else {}
+    )
     overrides = overrides if isinstance(overrides, dict) else {}
-    return web.json_response({
-        "resolved": dt.resolve(overrides),
-        "css": dt.to_css_variables(overrides, scheme=scheme),
-        "overrides": overrides,
-        "scheme": scheme,
-    })
+    return web.json_response(
+        {
+            "resolved": dt.resolve(overrides),
+            "css": dt.to_css_variables(overrides, scheme=scheme),
+            "overrides": overrides,
+            "scheme": scheme,
+        }
+    )
 
 
 def register_unified_loop_routes(app: web.Application) -> None:

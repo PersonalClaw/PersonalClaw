@@ -9,7 +9,7 @@ delete, and the schedule action↔exec bridge + action derivation on read.
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from aiohttp import web
@@ -29,9 +29,12 @@ def state(tmp_path):
     st.crons.is_running.return_value = False
     st.crons.running_since.return_value = None
     # one schedule job (invoke-agent exec mode → action derived on read)
-    job = ScheduleJob(id="job1", name="Nightly",
-                      action=make_agent_action(message="do it", agent="coder"),
-                      schedule=ScheduleDefinition(kind="every", every_secs=3600))
+    job = ScheduleJob(
+        id="job1",
+        name="Nightly",
+        action=make_agent_action(message="do it", agent="coder"),
+        schedule=ScheduleDefinition(kind="every", every_secs=3600),
+    )
     st.crons.list_jobs.return_value = [job]
     st._job = job
     return st
@@ -44,8 +47,10 @@ def _req(method, path, state, *, body=None, match_info=None, query=None):
     req = make_mocked_request(method, full, match_info=match_info or {}, app=app)
     req["user"] = "tester"
     if body is not None:
+
         async def _json():
             return body
+
         req.json = _json  # type: ignore[assignment]
     return req
 
@@ -56,6 +61,7 @@ def _body(resp):
 
 def _run(coro):
     import asyncio
+
     return asyncio.run(coro)
 
 
@@ -67,8 +73,14 @@ def _patch_store(monkeypatch, state):
 
 
 def test_list_both_kinds(state):
-    state._hook_store.create({"name": "on-stop", "event": "Stop", "provider": "bash",
-                              "provider_config": {"command": "echo hi"}})
+    state._hook_store.create(
+        {
+            "name": "on-stop",
+            "event": "Stop",
+            "provider": "bash",
+            "provider_config": {"command": "echo hi"},
+        }
+    )
     resp = _run(T.api_triggers(_req("GET", "/api/triggers", state)))
     data = _body(resp)
     kinds = {t["kind"] for t in data["triggers"]}
@@ -81,16 +93,22 @@ def test_list_both_kinds(state):
 
 
 def test_type_filter(state):
-    state._hook_store.create({"name": "h", "event": "Stop", "provider": "bash",
-                              "provider_config": {"command": "x"}})
+    state._hook_store.create(
+        {"name": "h", "event": "Stop", "provider": "bash", "provider_config": {"command": "x"}}
+    )
     resp = _run(T.api_triggers(_req("GET", "/api/triggers", state, query="type=lifecycle")))
     data = _body(resp)
     assert data["triggers"] and all(t["kind"] == "lifecycle" for t in data["triggers"])
 
 
 def test_create_lifecycle(state):
-    body = {"trigger_type": "lifecycle", "name": "auditor", "event": "PreToolUse",
-            "matcher": "write_file", "action": {"provider": "bash", "config": {"command": "log"}}}
+    body = {
+        "trigger_type": "lifecycle",
+        "name": "auditor",
+        "event": "PreToolUse",
+        "matcher": "write_file",
+        "action": {"provider": "bash", "config": {"command": "log"}},
+    }
     resp = _run(T.api_trigger_create(_req("POST", "/api/triggers", state, body=body)))
     assert resp.status == 200
     t = _body(resp)["trigger"]
@@ -100,16 +118,23 @@ def test_create_lifecycle(state):
 
 
 def test_create_rejects_unknown_kind(state):
-    resp = _run(T.api_trigger_create(_req("POST", "/api/triggers", state, body={"trigger_type": "bogus"})))
+    resp = _run(
+        T.api_trigger_create(_req("POST", "/api/triggers", state, body={"trigger_type": "bogus"}))
+    )
     assert resp.status == 400
 
 
 def test_toggle_and_delete_lifecycle_route_by_id(state):
-    hook = state._hook_store.create({"name": "h", "event": "Stop", "provider": "bash",
-                                     "provider_config": {"command": "x"}})
+    hook = state._hook_store.create(
+        {"name": "h", "event": "Stop", "provider": "bash", "provider_config": {"command": "x"}}
+    )
     tid = f"lifecycle:{hook.id}"
     # toggle
-    resp = _run(T.api_trigger_toggle(_req("POST", f"/api/triggers/{tid}/toggle", state, match_info={"id": tid})))
+    resp = _run(
+        T.api_trigger_toggle(
+            _req("POST", f"/api/triggers/{tid}/toggle", state, match_info={"id": tid})
+        )
+    )
     assert resp.status == 200
     assert state._hook_store.get(hook.id).enabled is False
     # delete
@@ -137,6 +162,7 @@ def test_schedule_run_dispatches(state):
 
 
 # ── P4d: variable catalog ──
+
 
 def test_variables_catalog(state):
     from personalclaw.hooks import HOOK_EVENTS

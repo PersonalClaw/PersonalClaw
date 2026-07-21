@@ -23,40 +23,40 @@ _CASES = [
     ("agent", "write_file", "edit", "{}", False),
     ("agent", "bash", "command", '{"command":"rm -rf x"}', False),
     # plan: read-only inspection ALLOWED (so the plan is grounded), mutation DENIED
-    ("plan", "read_file", "read", "{}", False),                      # inspect to plan
+    ("plan", "read_file", "read", "{}", False),  # inspect to plan
     ("plan", "grep", "read", "{}", False),
-    ("plan", "bash", "command", '{"command":"ls -la"}', False),      # read-only bash
-    ("plan", "write_file", "edit", "{}", True),                      # no execution
+    ("plan", "bash", "command", '{"command":"ls -la"}', False),  # read-only bash
+    ("plan", "write_file", "edit", "{}", True),  # no execution
     ("plan", "bash", "command", '{"command":"rm -rf x"}', True),
-    ("plan", "artifact_save", "", "{}", True),                       # plan != build
+    ("plan", "artifact_save", "", "{}", True),  # plan != build
     # ask: read-only allowed, every mutation denied (deny-by-default)
     ("ask", "read_file", "read", "{}", False),
     ("ask", "grep", "read", "{}", False),
-    ("ask", "bash", "command", '{"command":"ls -la"}', False),       # read-only bash
-    ("ask", "bash", "command", '{"command":"rm -rf x"}', True),      # mutating bash
-    ("ask", "bash", "command", '{"command":"cat a > b"}', True),     # redirect = write
+    ("ask", "bash", "command", '{"command":"ls -la"}', False),  # read-only bash
+    ("ask", "bash", "command", '{"command":"rm -rf x"}', True),  # mutating bash
+    ("ask", "bash", "command", '{"command":"cat a > b"}', True),  # redirect = write
     ("ask", "write_file", "edit", "{}", True),
-    ("ask", "artifact_save", "", "{}", True),                        # 'save' verb
-    ("ask", "memory_recall", "", "{}", False),                       # read-ish name
+    ("ask", "artifact_save", "", "{}", True),  # 'save' verb
+    ("ask", "memory_recall", "", "{}", False),  # read-ish name
     ("ask", "delete_thing", "delete", "{}", True),
-    ("ask", "subagent_run", "", "{}", True),                         # 'run'/'subagent'
+    ("ask", "subagent_run", "", "{}", True),  # 'run'/'subagent'
     # build: read-only + artifact/widget/skill producers; other mutations denied
     ("build", "read_file", "read", "{}", False),
-    ("build", "artifact_save", "", "{}", False),                     # producer
-    ("build", "widget_create", "", "{}", False),                     # 'widget' hint
-    ("build", "skill_invoke", "", "{}", False),                      # 'skill' hint
+    ("build", "artifact_save", "", "{}", False),  # producer
+    ("build", "widget_create", "", "{}", False),  # 'widget' hint
+    ("build", "skill_invoke", "", "{}", False),  # 'skill' hint
     ("build", "bash", "command", '{"command":"rm -rf x"}', True),
     ("build", "write_file", "edit", "{}", True),
-    ("build", "delete_artifact", "", "{}", True),                    # TM11: destructive, NOT a producer
-    ("build", "remove_widget", "", "{}", True),                      # TM11: destructive despite 'widget' hint
-    ("ask", "delete_artifact", "", "{}", True),                      # ask never honors build hints
+    ("build", "delete_artifact", "", "{}", True),  # TM11: destructive, NOT a producer
+    ("build", "remove_widget", "", "{}", True),  # TM11: destructive despite 'widget' hint
+    ("ask", "delete_artifact", "", "{}", True),  # ask never honors build hints
     # image_generate: a media PRODUCER (creates a kind:image artifact + paid call) —
     # NOT read-only, so ask/plan block it; build allows it (producing is the point).
-    ("ask", "image_generate", "", '{"prompt":"a cat"}', True),       # GAP6: was wrongly read-only
+    ("ask", "image_generate", "", '{"prompt":"a cat"}', True),  # GAP6: was wrongly read-only
     ("plan", "image_generate", "", '{"prompt":"a cat"}', True),
-    ("build", "image_generate", "", '{"prompt":"a cat"}', False),    # 'image' producer hint
+    ("build", "image_generate", "", '{"prompt":"a cat"}', False),  # 'image' producer hint
     ("agent", "image_generate", "", '{"prompt":"a cat"}', False),
-    ("ask", "prompt_render", "read", "{}", False),                   # regression: read-only stays allowed
+    ("ask", "prompt_render", "read", "{}", False),  # regression: read-only stays allowed
 ]
 
 

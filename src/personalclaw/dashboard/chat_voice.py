@@ -106,7 +106,9 @@ async def api_voice_synthesize(request: web.Request) -> web.Response:
         # hollow success so the UI can tell the user instead of going silent.
         if not chunk_paths:
             return web.json_response(
-                {"error": "Speech synthesis produced no audio — check the TTS runtime in Settings → AI & Models"},
+                {
+                    "error": "Speech synthesis produced no audio — check the TTS runtime in Settings → AI & Models"  # noqa: E501
+                },
                 status=502,
             )
         return web.json_response({"ok": True, "chunks": len(chunk_paths)})

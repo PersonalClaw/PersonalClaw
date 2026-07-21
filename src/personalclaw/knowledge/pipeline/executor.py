@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from personalclaw.knowledge.pipeline.graph import PipelineGraph
@@ -57,7 +58,7 @@ class PipelineExecutor:
 
     def __init__(self, graph: PipelineGraph, *, params_for=None, on_node=None):
         self._graph = graph
-        self._params_for = params_for or (lambda nt: {})
+        self._params_for: Callable[[str], dict] = params_for or (lambda nt: {})
         self._on_node = on_node
 
     async def run(self, ctx: NodeContext) -> ExecutionResult:
@@ -119,7 +120,9 @@ class PipelineExecutor:
                 stack.append(e.to_node)
         return seen
 
-    async def _run_subset(self, order: list[str], ctx: NodeContext, result: ExecutionResult) -> None:
+    async def _run_subset(
+        self, order: list[str], ctx: NodeContext, result: ExecutionResult
+    ) -> None:
         """Run the given nodes (a topological sub-order) wave-by-wave — a node is ready
         when every FORWARD predecessor within this subset has resolved."""
         subset = set(order)
@@ -162,8 +165,13 @@ class PipelineExecutor:
         params["loop_iteration"] = iteration
         params["dense_regions"] = (src.metadata or {}).get("dense_regions", [])
         return NodeContext(
-            item_id=ctx.item_id, item_type=ctx.item_type, file_path=ctx.file_path,
-            content=ctx.content, url=ctx.url, work_dir=ctx.work_dir, params=params,
+            item_id=ctx.item_id,
+            item_type=ctx.item_type,
+            file_path=ctx.file_path,
+            content=ctx.content,
+            url=ctx.url,
+            work_dir=ctx.work_dir,
+            params=params,
         )
 
     def _deps_resolved(self, node_type: str, resolved: set[str]) -> bool:
@@ -231,13 +239,17 @@ class PipelineExecutor:
         try:
             out = await asyncio.wait_for(node.run(inputs, ctx), timeout=timeout_s)
         except asyncio.TimeoutError:
-            result.outputs[node_type] = NodeOutput(node_type=node_type, backend=backend, success=False, error="timeout")
+            result.outputs[node_type] = NodeOutput(
+                node_type=node_type, backend=backend, success=False, error="timeout"
+            )
             result.failed.append(node_type)
             self._notify(node_type, "failed")
             return
         except Exception as exc:  # a node bug must not abort the item
             logger.exception("knowledge node %s failed", node_type)
-            result.outputs[node_type] = NodeOutput(node_type=node_type, backend=backend, success=False, error=str(exc))
+            result.outputs[node_type] = NodeOutput(
+                node_type=node_type, backend=backend, success=False, error=str(exc)
+            )
             result.failed.append(node_type)
             self._notify(node_type, "failed")
             return
@@ -286,9 +298,19 @@ class PipelineExecutor:
             if ffprobe:
                 try:
                     out = subprocess.run(
-                        [ffprobe, "-v", "error", "-show_entries", "format=duration",
-                         "-of", "default=noprint_wrappers=1:nokey=1", path],
-                        capture_output=True, text=True, timeout=15,
+                        [
+                            ffprobe,
+                            "-v",
+                            "error",
+                            "-show_entries",
+                            "format=duration",
+                            "-of",
+                            "default=noprint_wrappers=1:nokey=1",
+                            path,
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=15,
                     )
                     dur = float((out.stdout or "").strip() or 0)
                 except (ValueError, OSError, subprocess.SubprocessError):

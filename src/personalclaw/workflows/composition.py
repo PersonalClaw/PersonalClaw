@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from personalclaw.workflows.models import Workflow, WorkflowStep
+from personalclaw.workflows.models import Workflow
 
 # Max ref-expansion depth at surface time. Beyond this we stop recursing and
 # leave a marker step (cycles are already rejected on write, but expansion
@@ -118,7 +118,7 @@ class ExpandedStep:
     title: str
     instruction: str = ""
     source_workflow: str = ""  # name of the workflow this step came from (provenance)
-    depth: int = 0             # nesting depth (0 = the top workflow's own steps)
+    depth: int = 0  # nesting depth (0 = the top workflow's own steps)
 
 
 def expand_steps(
@@ -135,22 +135,36 @@ def expand_steps(
     def walk(w: Workflow, depth: int, on_stack: set[str]) -> None:
         for step in w.steps:
             if not step.is_ref():
-                out.append(ExpandedStep(
-                    title=step.title, instruction=step.instruction,
-                    source_workflow=w.name, depth=depth,
-                ))
+                out.append(
+                    ExpandedStep(
+                        title=step.title,
+                        instruction=step.instruction,
+                        source_workflow=w.name,
+                        depth=depth,
+                    )
+                )
                 continue
             sub = by_id.get(step.ref)
             if sub is None:
-                out.append(ExpandedStep(
-                    title=f"[missing workflow: {step.ref}]", source_workflow=w.name, depth=depth,
-                ))
+                out.append(
+                    ExpandedStep(
+                        title=f"[missing workflow: {step.ref}]",
+                        source_workflow=w.name,
+                        depth=depth,
+                    )
+                )
                 continue
             if depth + 1 > max_depth or sub.id in on_stack:
-                reason = "max workflow depth reached" if depth + 1 > max_depth else "recursive reference"
-                out.append(ExpandedStep(
-                    title=f"[{reason}: {sub.name}]", source_workflow=w.name, depth=depth,
-                ))
+                reason = (
+                    "max workflow depth reached" if depth + 1 > max_depth else "recursive reference"
+                )
+                out.append(
+                    ExpandedStep(
+                        title=f"[{reason}: {sub.name}]",
+                        source_workflow=w.name,
+                        depth=depth,
+                    )
+                )
                 continue
             walk(sub, depth + 1, on_stack | {sub.id})
 
@@ -183,8 +197,12 @@ def build_graph(workflow_id: str, all_workflows: list[Workflow]) -> dict:
         "edges": edges,
         "cycles": [cycle] if cycle else [],
         "expanded": [
-            {"title": s.title, "instruction": s.instruction,
-             "source_workflow": s.source_workflow, "depth": s.depth}
+            {
+                "title": s.title,
+                "instruction": s.instruction,
+                "source_workflow": s.source_workflow,
+                "depth": s.depth,
+            }
             for s in expand_steps(target, by_id)
         ],
     }
@@ -192,7 +210,10 @@ def build_graph(workflow_id: str, all_workflows: list[Workflow]) -> dict:
 
 # ── agent identity resolution (agent-scope eligibility) ──
 
-def resolve_agent_id(agent: str | None, provider_kind: str | None, provider_agent: str | None) -> str:
+
+def resolve_agent_id(
+    agent: str | None, provider_kind: str | None, provider_agent: str | None
+) -> str:
     """Normalize the turn's agent identity to the binding-id form the workflow
     ``scope_ref`` uses (matching the FE agent catalog values):
 

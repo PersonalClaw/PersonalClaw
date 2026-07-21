@@ -227,14 +227,15 @@ def _parse_launcher_output(stdout: str) -> dict:
     for line in reversed(stdout.splitlines()):
         if line.startswith(_RESULT_SENTINEL):
             try:
-                return json.loads(line[len(_RESULT_SENTINEL):])
+                return json.loads(line[len(_RESULT_SENTINEL) :])
             except json.JSONDecodeError:
                 break
     return {"status": "error", "error": "no result emitted by script"}
 
 
-def run_script_sandboxed(script_spec: str, job_id: str, job_message: str,
-                         timeout: int = 0, *, session_key: str = "") -> dict:
+def run_script_sandboxed(
+    script_spec: str, job_id: str, job_message: str, timeout: int = 0, *, session_key: str = ""
+) -> dict:
     """Run a ``file.py:func`` script in the sandbox; return a status dict.
 
     Returns ``{"status": "ok"|"skip"|"done"|"report"|"error", "message"|"error"}``.
@@ -267,8 +268,11 @@ def run_script_sandboxed(script_spec: str, job_id: str, job_message: str,
         env = {k: v for k, v in os.environ.items() if not k.startswith("PERSONALCLAW_SECRET")}
         try:
             proc = subprocess.run(
-                wrapped, capture_output=True, text=True,
-                timeout=timeout, env=env,
+                wrapped,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
             )
         except subprocess.TimeoutExpired:
             return {"status": "error", "error": f"script timed out after {timeout}s"}
@@ -290,4 +294,3 @@ def run_script_sandboxed(script_spec: str, job_id: str, job_message: str,
                 os.unlink(p)
             except OSError:
                 pass
-

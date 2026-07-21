@@ -15,6 +15,7 @@ from personalclaw.sel import sel
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class JudgeVerdict:
     score: float

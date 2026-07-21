@@ -22,14 +22,20 @@ from personalclaw.supply_chain import Verdict
 def _isolate_apps(tmp_path, monkeypatch):
     """Point config_dir at a tmp dir so apps install into an isolated tree."""
     import personalclaw.config.loader as loader
+
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
     # apps.manager imported config_dir by reference — patch there too.
     monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
     return tmp_path
 
 
-def _make_app_source(tmp_path: Path, *, name: str = "demo-app", manifest_extra: dict | None = None,
-                     files: dict[str, str] | None = None) -> Path:
+def _make_app_source(
+    tmp_path: Path,
+    *,
+    name: str = "demo-app",
+    manifest_extra: dict | None = None,
+    files: dict[str, str] | None = None,
+) -> Path:
     src = tmp_path / "src" / name
     src.mkdir(parents=True)
     mani = {
@@ -93,7 +99,8 @@ class TestInstall:
     def test_install_runs_oninstall_hook(self, tmp_path):
         # onInstall writes a marker file into the app dir.
         src = _make_app_source(
-            tmp_path, manifest_extra={"setup": {"onInstall": "echo hi > installed_marker.txt"}},
+            tmp_path,
+            manifest_extra={"setup": {"onInstall": "echo hi > installed_marker.txt"}},
         )
         res = app_manager.install(src)
         assert res.ok
@@ -102,7 +109,8 @@ class TestInstall:
     def test_oninstall_hook_can_write_data_dir(self, tmp_path):
         # Regression: data/ must exist before the hook runs (apps seed state there).
         src = _make_app_source(
-            tmp_path, manifest_extra={"setup": {"onInstall": "echo seeded > data/seed.txt"}},
+            tmp_path,
+            manifest_extra={"setup": {"onInstall": "echo seeded > data/seed.txt"}},
         )
         res = app_manager.install(src)
         assert res.ok, res.error
@@ -110,7 +118,8 @@ class TestInstall:
 
     def test_dangerous_content_refused_non_overridable(self, tmp_path):
         src = _make_app_source(
-            tmp_path, files={"scripts/evil.sh": "rm -rf / --no-preserve-root\n"},
+            tmp_path,
+            files={"scripts/evil.sh": "rm -rf / --no-preserve-root\n"},
         )
         # Even with confirm=True, a dangerous verdict is terminal.
         res = app_manager.install(src, confirm=True)
@@ -119,7 +128,8 @@ class TestInstall:
 
     def test_warning_needs_consent_then_installs(self, tmp_path):
         src = _make_app_source(
-            tmp_path, files={"scripts/fetch.sh": "curl https://api.example.com/data\n"},
+            tmp_path,
+            files={"scripts/fetch.sh": "curl https://api.example.com/data\n"},
         )
         # Community/local tier: a plain curl is a warning → needs consent.
         res1 = app_manager.install(src, origin="local")
@@ -132,7 +142,8 @@ class TestInstall:
 
     def test_oninstall_failure_rolls_back(self, tmp_path):
         src = _make_app_source(
-            tmp_path, manifest_extra={"setup": {"onInstall": "exit 7"}},
+            tmp_path,
+            manifest_extra={"setup": {"onInstall": "exit 7"}},
         )
         res = app_manager.install(src)
         assert not res.ok and "onInstall" in res.error
@@ -202,6 +213,7 @@ class TestUninstall:
 
 # ── path-traversal guard on app_dir (defense-in-depth, #44) ──────────────────
 
+
 def test_app_dir_rejects_path_traversal():
     """app_dir is the single chokepoint for every app-scoped path (config, backend
     entry, lifecycle hooks, uninstall rmtree). A traversal/escape name must be
@@ -226,6 +238,7 @@ def test_config_path_helpers_are_traversal_safe():
     app_dir, so a traversal name can't reach the filesystem via them either."""
     from personalclaw.apps.app_config import read_config
     from personalclaw.providers.settings import ProviderSettings
+
     with pytest.raises(ValueError):
         read_config("../../etc/passwd")
     with pytest.raises(ValueError):
@@ -238,25 +251,40 @@ class TestPlatformGate:
     result WITHOUT committing to the live tree; a normal server app is unaffected."""
 
     def test_client_install_mode_does_not_commit(self, tmp_path):
-        src = _make_app_source(tmp_path, name="sampleapp", manifest_extra={
-            "platform": {"installMode": "client",
-                         "clientInstall": {"shell": "brew install --cask sampleapp",
-                                           "postInstall": "open ~/Applications/SampleApp.app"}},
-        })
+        src = _make_app_source(
+            tmp_path,
+            name="sampleapp",
+            manifest_extra={
+                "platform": {
+                    "installMode": "client",
+                    "clientInstall": {
+                        "shell": "brew install --cask sampleapp",
+                        "postInstall": "open ~/Applications/SampleApp.app",
+                    },
+                },
+            },
+        )
         res = app_manager.install(src, confirm=True)
         assert res.ok is False and res.needs_client_install is True
-        assert res.client_install == {"shell": "brew install --cask sampleapp",
-                                      "postInstall": "open ~/Applications/SampleApp.app"}
+        assert res.client_install == {
+            "shell": "brew install --cask sampleapp",
+            "postInstall": "open ~/Applications/SampleApp.app",
+        }
         # Nothing committed to the live tree.
         assert not (manager.app_dir("sampleapp")).exists()
 
     def test_unsupported_os_short_circuits(self, tmp_path):
         # An app that only supports an OS this machine isn't → client-install result.
         import sys
+
         other = "windows" if sys.platform != "win32" else "linux"
-        src = _make_app_source(tmp_path, name="winonly", manifest_extra={
-            "platform": {"os": [other]},
-        })
+        src = _make_app_source(
+            tmp_path,
+            name="winonly",
+            manifest_extra={
+                "platform": {"os": [other]},
+            },
+        )
         res = app_manager.install(src, confirm=True)
         assert res.ok is False and res.needs_client_install is True
         assert not (manager.app_dir("winonly")).exists()
@@ -264,17 +292,23 @@ class TestPlatformGate:
     def test_supported_server_app_installs_normally(self, tmp_path):
         # Default platform (macos/linux, server) → installs on darwin/linux CI, no gate.
         import sys
+
         if sys.platform not in ("darwin", "linux"):
             pytest.skip("default platform gate only clears on darwin/linux")
-        src = _make_app_source(tmp_path, name="server-ok", manifest_extra={
-            "platform": {"os": ["macos", "linux"], "installMode": "server"},
-        })
+        src = _make_app_source(
+            tmp_path,
+            name="server-ok",
+            manifest_extra={
+                "platform": {"os": ["macos", "linux"], "installMode": "server"},
+            },
+        )
         res = app_manager.install(src, confirm=True)
         assert res.ok is True and res.needs_client_install is False
         assert (manager.app_dir("server-ok") / "app.json").is_file()
 
     def test_to_dict_carries_client_install_fields(self):
-        r = app_manager.InstallResult(ok=False, name="x", needs_client_install=True,
-                                      client_install={"shell": "s"})
+        r = app_manager.InstallResult(
+            ok=False, name="x", needs_client_install=True, client_install={"shell": "s"}
+        )
         d = r.to_dict()
         assert d["needs_client_install"] is True and d["client_install"] == {"shell": "s"}

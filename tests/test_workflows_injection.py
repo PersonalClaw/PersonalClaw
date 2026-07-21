@@ -43,7 +43,9 @@ def _build(text: str, *, cwd=None, agent=None, resolved_agent_id=None, is_new=Fa
 @pytest.mark.asyncio
 async def test_workspace_sop_injects_on_matching_followup_turn(temp_native):
     await registry.create_workflow(
-        name="git-commit", scope="workspace", scope_ref="/repo/a",
+        name="git-commit",
+        scope="workspace",
+        scope_ref="/repo/a",
         match_text="committing changes, making a git commit, saving work",
         steps=[{"title": "Run tests"}, {"title": "Write conventional message"}],
     )
@@ -58,7 +60,9 @@ async def test_workspace_sop_injects_on_matching_followup_turn(temp_native):
 @pytest.mark.asyncio
 async def test_scope_isolation_other_cwd_no_injection(temp_native):
     await registry.create_workflow(
-        name="git-commit", scope="workspace", scope_ref="/repo/a",
+        name="git-commit",
+        scope="workspace",
+        scope_ref="/repo/a",
         match_text="committing changes, making a git commit",
     )
     out = _build("help me make a git commit", cwd="/repo/b")
@@ -68,7 +72,8 @@ async def test_scope_isolation_other_cwd_no_injection(temp_native):
 @pytest.mark.asyncio
 async def test_global_sop_injects_regardless_of_cwd(temp_native):
     await registry.create_workflow(
-        name="git-commit", scope="global",
+        name="git-commit",
+        scope="global",
         match_text="committing changes, making a git commit",
     )
     out = _build("how do I make a git commit", cwd="/anywhere")
@@ -78,7 +83,8 @@ async def test_global_sop_injects_regardless_of_cwd(temp_native):
 @pytest.mark.asyncio
 async def test_no_match_no_injection(temp_native):
     await registry.create_workflow(
-        name="git-commit", scope="global",
+        name="git-commit",
+        scope="global",
         match_text="committing changes, making a git commit",
     )
     out = _build("what is the weather in paris", cwd="/repo/a")
@@ -92,7 +98,8 @@ async def test_global_sop_injects_for_custom_agent(temp_native):
     # (Previously gated out by is_custom — that gate was removed so agent-scoped
     # SOPs can reach their specific custom agent.)
     await registry.create_workflow(
-        name="git-commit", scope="global",
+        name="git-commit",
+        scope="global",
         match_text="committing changes, making a git commit",
     )
     out = _build("make a git commit", cwd="/repo/a", agent="my-custom-agent")
@@ -102,7 +109,8 @@ async def test_global_sop_injects_for_custom_agent(temp_native):
 @pytest.mark.asyncio
 async def test_disabled_kill_switch(temp_native, monkeypatch):
     await registry.create_workflow(
-        name="git-commit", scope="global",
+        name="git-commit",
+        scope="global",
         match_text="committing changes, making a git commit",
     )
     # Force workflows.enabled = False via the loaded config.
@@ -125,11 +133,15 @@ async def test_agent_scoped_sop_injects_for_matching_agent(temp_native):
     # P5b scope_ref model: an agent-scoped SOP carries scope_ref = the agent id
     # and surfaces only on that agent's turns.
     await registry.create_workflow(
-        name="review-flow", scope="agent", scope_ref="reviewer",
+        name="review-flow",
+        scope="agent",
+        scope_ref="reviewer",
         match_text="reviewing code, doing a code review",
     )
     # Different agent → not eligible.
-    out_other = _build("do a code review", cwd="/x", agent="personalclaw", resolved_agent_id="personalclaw")
+    out_other = _build(
+        "do a code review", cwd="/x", agent="personalclaw", resolved_agent_id="personalclaw"
+    )
     assert "[PREFERRED WORKFLOW" not in out_other
     # Matching resolved agent id → eligible and injected.
     out_match = _build("do a code review", cwd="/x", agent="reviewer", resolved_agent_id="reviewer")

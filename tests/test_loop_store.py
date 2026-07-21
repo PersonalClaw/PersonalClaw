@@ -18,15 +18,27 @@ def _tmp_config(monkeypatch, tmp_path):
 
 
 def _goal(**over):
-    base = dict(id="", name="G", kind="goal", task="investigate the latency regression",
-                project_id="p-1", kind_config={"goal_type": "open_ended", "granularity": "balanced"})
+    base = dict(
+        id="",
+        name="G",
+        kind="goal",
+        task="investigate the latency regression",
+        project_id="p-1",
+        kind_config={"goal_type": "open_ended", "granularity": "balanced"},
+    )
     base.update(over)
     return store.create(Loop(**base))
 
 
 def _code(**over):
-    base = dict(id="", name="C", kind="code", task="add oauth login to the app",
-                project_id="p-1", kind_config={"entry_stage": "design", "queued_task_ids": []})
+    base = dict(
+        id="",
+        name="C",
+        kind="code",
+        task="add oauth login to the app",
+        project_id="p-1",
+        kind_config={"entry_stage": "design", "queued_task_ids": []},
+    )
     base.update(over)
     return store.create(Loop(**base))
 
@@ -46,8 +58,8 @@ class TestCrud:
     def test_list_and_list_for_project(self):
         g, c = _goal(), _code()
         _goal(project_id="p-2")
-        assert {l.id for l in store.list_all()} >= {g.id, c.id}
-        assert {l.id for l in store.list_for_project("p-1")} == {g.id, c.id}
+        assert {lp.id for lp in store.list_all()} >= {g.id, c.id}
+        assert {lp.id for lp in store.list_for_project("p-1")} == {g.id, c.id}
 
     def test_list_for_project_matches_tasks_project_id(self):
         # A loop bound to a project only via tasks_project_id (a project-less launch's
@@ -56,7 +68,7 @@ class TestCrud:
         explicit = _goal(project_id="p-9")
         provisioned = _code(project_id="")
         store.set_tasks_links(provisioned.id, tasks_project_id="p-9", task_list_ids={})
-        ids = {l.id for l in store.list_for_project("p-9")}
+        ids = {lp.id for lp in store.list_for_project("p-9")}
         assert ids == {explicit.id, provisioned.id}
         # blank project id never matches everything
         assert store.list_for_project("") == []
@@ -94,8 +106,9 @@ class TestStatusTransitions:
 class TestSpecEditFreeze:
     def test_update_spec_allowed_prelaunch(self):
         c = _code()  # READY = prelaunch
-        store.update_spec(c.id, {"task": "add oauth + SSO",
-                                 "kind_config": {"entry_stage": "implementation"}})
+        store.update_spec(
+            c.id, {"task": "add oauth + SSO", "kind_config": {"entry_stage": "implementation"}}
+        )
         got = store.get(c.id)
         assert got.task == "add oauth + SSO"
         assert got.kind_config["entry_stage"] == "implementation"
@@ -123,13 +136,18 @@ class TestKindConfigQueue:
     def test_queue_dedupes_and_preserves_sibling_keys(self):
         # queue_tasks mutates only queued_task_ids — sibling kind_config keys
         # (entry_stage, execution_plan, …) must survive the round-trip, and dupes drop.
-        c = _code(kind_config={"entry_stage": "design", "queued_task_ids": [],
-                               "execution_plan": [{"role": "impl"}]})
+        c = _code(
+            kind_config={
+                "entry_stage": "design",
+                "queued_task_ids": [],
+                "execution_plan": [{"role": "impl"}],
+            }
+        )
         store.queue_tasks(c.id, ["t-a", "t-a", "t-b"])
         cfg = store.get(c.id).kind_config
-        assert cfg["queued_task_ids"] == ["t-a", "t-b"]          # deduped
-        assert cfg["entry_stage"] == "design"                     # sibling preserved
-        assert cfg["execution_plan"] == [{"role": "impl"}]        # nested sibling preserved
+        assert cfg["queued_task_ids"] == ["t-a", "t-b"]  # deduped
+        assert cfg["entry_stage"] == "design"  # sibling preserved
+        assert cfg["execution_plan"] == [{"role": "impl"}]  # nested sibling preserved
 
 
 class TestFileHelpers:
@@ -137,7 +155,9 @@ class TestFileHelpers:
         g = _goal()
         d = store.loop_dir(g.id)
         (d / "findings" / "cycle_001.json").write_text(json.dumps({"cycle": 1, "summary": "did x"}))
-        (d / "findings" / "task_t-abc_001.json").write_text(json.dumps({"cycle": 1, "summary": "task work"}))
+        (d / "findings" / "task_t-abc_001.json").write_text(
+            json.dumps({"cycle": 1, "summary": "task work"})
+        )
         f = store.get_findings(g.id)
         assert f[0]["summary"] == "did x"
         # task finding gets its task_id derived from the filename
@@ -158,8 +178,9 @@ class TestFileHelpers:
 
     def test_question_round_trip_redacts(self):
         c = _code()
-        store.write_question(c.id, "Postgres or SQLite?",
-                             why="the key AKIAIOSFODNN7EXAMPLE implies scale")
+        store.write_question(
+            c.id, "Postgres or SQLite?", why="the key AKIAIOSFODNN7EXAMPLE implies scale"
+        )
         q = store.pending_question(c.id)
         assert q["question"] == "Postgres or SQLite?"
         assert "AKIAIOSFODNN7EXAMPLE" not in q["why"]
@@ -201,7 +222,8 @@ class TestRedactedView:
     def test_list_redacted_attaches_findings_and_filters(self):
         g = _goal()
         (store.loop_dir(g.id) / "findings" / "cycle_001.json").write_text(
-            json.dumps({"cycle": 1, "summary": "found it"}))
+            json.dumps({"cycle": 1, "summary": "found it"})
+        )
         _goal(project_id="p-2")
         rows = store.list_redacted()
         row = next(r for r in rows if r["id"] == g.id)
@@ -229,8 +251,9 @@ class TestReapOrphans:
         root = tmp_path / "loop"
         (root / "loops.db").write_text("x") if not (root / "loops.db").exists() else None
         (root / "not-a-loop-id").mkdir(exist_ok=True)
-        orphan = root / "deadbeef"; orphan.mkdir()
+        orphan = root / "deadbeef"
+        orphan.mkdir()
         store.reap_orphan_dirs()
-        assert live_dir.exists()                      # backing row → spared
-        assert (root / "not-a-loop-id").exists()      # wrong shape → never a candidate
-        assert not orphan.exists()                    # valid id, no row → reaped
+        assert live_dir.exists()  # backing row → spared
+        assert (root / "not-a-loop-id").exists()  # wrong shape → never a candidate
+        assert not orphan.exists()  # valid id, no row → reaped

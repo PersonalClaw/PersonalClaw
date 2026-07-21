@@ -6,7 +6,9 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-def discover_providers(group: str, base_class: Type[T] = object) -> dict[str, Type[T]]:
+def discover_providers(
+    group: str, base_class: Type[T] = object  # type: ignore[assignment]
+) -> dict[str, Type[T]]:
     """Load entry points in *group*; return {name: class} for valid providers."""
     providers: dict[str, Type[T]] = {}
     eps = importlib.metadata.entry_points(group=group)

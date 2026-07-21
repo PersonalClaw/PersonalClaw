@@ -21,8 +21,8 @@ from typing import Any
 
 from personalclaw.action_providers.base import (
     ActionContext,
-    ActionResult,
     ActionProvider,
+    ActionResult,
 )
 from personalclaw.action_providers.template import render_template
 
@@ -44,9 +44,7 @@ class CreateTaskActionProvider(ActionProvider):
     ) -> ActionResult:
         title = render_template(action_config.get("title_template", ""), ctx).strip()
         if not title:
-            return ActionResult(
-                success=False, error="create-task hook is missing 'title_template'"
-            )
+            return ActionResult(success=False, error="create-task hook is missing 'title_template'")
         provider_name = (action_config.get("provider") or "native").strip() or "native"
         fields: dict[str, Any] = {"title": title}
         body = render_template(action_config.get("body_template", ""), ctx)
@@ -68,7 +66,9 @@ class CreateTaskActionProvider(ActionProvider):
         except Exception as exc:  # noqa: BLE001 - error result, never raise
             return ActionResult(success=False, error=f"create-task failed: {exc}")
         return ActionResult(
-            success=True, exit_code=0, stdout=f"created task {getattr(task, 'id', '?')}: {title[:80]}"
+            success=True,
+            exit_code=0,
+            stdout=f"created task {getattr(task, 'id', '?')}: {title[:80]}",
         )
 
 

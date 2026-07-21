@@ -40,8 +40,14 @@ class ConfigFsWatcher:
     SseRegistry.publish). *suffixes* filters which files matter (config + skill/agent
     authoring formats)."""
 
-    def __init__(self, roots, *, publish=None, interval: float = 3.0,
-                 suffixes=(".json", ".md", ".yaml", ".yml")):
+    def __init__(
+        self,
+        roots,
+        *,
+        publish=None,
+        interval: float = 3.0,
+        suffixes=(".json", ".md", ".yaml", ".yml"),
+    ):
         self._roots = [Path(r) for r in roots]
         self._publish = publish
         self._interval = interval

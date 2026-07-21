@@ -48,34 +48,43 @@ class EventTrigger:
     """One data-event trigger spec."""
 
     id: str
-    pattern: str                       # one of EVENT_PATTERNS
-    action_provider: str = "notify"    # action-provider name
+    pattern: str  # one of EVENT_PATTERNS
+    action_provider: str = "notify"  # action-provider name
     action_config: dict = field(default_factory=dict)
-    key_glob: str = ""                 # for MemoryKeyPattern
-    content_re: str = ""               # for ContentMatch
+    key_glob: str = ""  # for MemoryKeyPattern
+    content_re: str = ""  # for ContentMatch
     enabled: bool = True
-    max_fires: int = 0                 # 0 = unlimited
+    max_fires: int = 0  # 0 = unlimited
     fire_count: int = 0
     debounce_secs: float = _DEFAULT_DEBOUNCE_SECS
     last_fired_at: float = 0.0
 
     def to_dict(self) -> dict:
         return {
-            "id": self.id, "pattern": self.pattern, "action_provider": self.action_provider,
-            "action_config": self.action_config, "key_glob": self.key_glob,
-            "content_re": self.content_re, "enabled": self.enabled,
-            "max_fires": self.max_fires, "fire_count": self.fire_count,
-            "debounce_secs": self.debounce_secs, "last_fired_at": self.last_fired_at,
+            "id": self.id,
+            "pattern": self.pattern,
+            "action_provider": self.action_provider,
+            "action_config": self.action_config,
+            "key_glob": self.key_glob,
+            "content_re": self.content_re,
+            "enabled": self.enabled,
+            "max_fires": self.max_fires,
+            "fire_count": self.fire_count,
+            "debounce_secs": self.debounce_secs,
+            "last_fired_at": self.last_fired_at,
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> "EventTrigger":
         return cls(
-            id=str(d.get("id", "")), pattern=str(d.get("pattern", MEMORY_UPDATE)),
+            id=str(d.get("id", "")),
+            pattern=str(d.get("pattern", MEMORY_UPDATE)),
             action_provider=str(d.get("action_provider", "notify")),
             action_config=dict(d.get("action_config") or {}),
-            key_glob=str(d.get("key_glob", "")), content_re=str(d.get("content_re", "")),
-            enabled=bool(d.get("enabled", True)), max_fires=int(d.get("max_fires", 0) or 0),
+            key_glob=str(d.get("key_glob", "")),
+            content_re=str(d.get("content_re", "")),
+            enabled=bool(d.get("enabled", True)),
+            max_fires=int(d.get("max_fires", 0) or 0),
             fire_count=int(d.get("fire_count", 0) or 0),
             debounce_secs=float(d.get("debounce_secs", _DEFAULT_DEBOUNCE_SECS) or 0.0),
             last_fired_at=float(d.get("last_fired_at", 0.0) or 0.0),
@@ -98,7 +107,7 @@ def matches(trigger: EventTrigger, *, event_type: str, key: str, value: str) -> 
         try:
             return re.search(trigger.content_re, value or "") is not None
         except re.error:
-            return (trigger.content_re in (value or ""))
+            return trigger.content_re in (value or "")
     return False
 
 
@@ -170,6 +179,7 @@ class EventTriggerEngine:
     def _get_store(self) -> EventTriggerStore:
         if self._store is None:
             from personalclaw.config.loader import config_dir
+
             self._store = EventTriggerStore(config_dir() / "event_triggers.json")
         return self._store
 
@@ -197,7 +207,9 @@ class EventTriggerEngine:
         self._fire_times = [ts for ts in self._fire_times if now - ts < _RATE_WINDOW_SECS]
         return len(self._fire_times) < _RATE_MAX_FIRES
 
-    def _schedule_fire(self, t: EventTrigger, *, event_type: str, key: str, value: str, now: float) -> None:
+    def _schedule_fire(
+        self, t: EventTrigger, *, event_type: str, key: str, value: str, now: float
+    ) -> None:
         # Record the fire synchronously (auto-disable is immediate); dispatch async.
         try:
             self._get_store().record_fire(t.id, now=now)
@@ -216,8 +228,15 @@ class EventTriggerEngine:
             provider = get_action_provider(t.action_provider)
             if provider is None:
                 return
-            payload = {"event_type": event_type, "key": key, "value": value[:2000], "trigger_id": t.id}
-            ctx = ActionContext(event=f"memory.{event_type}", context=f"{key}: {value[:200]}", payload=payload)
+            payload = {
+                "event_type": event_type,
+                "key": key,
+                "value": value[:2000],
+                "trigger_id": t.id,
+            }
+            ctx = ActionContext(
+                event=f"memory.{event_type}", context=f"{key}: {value[:200]}", payload=payload
+            )
             await provider.execute(t.action_config, ctx)
         except Exception:
             logger.debug("event-trigger action failed for %s", t.id, exc_info=True)

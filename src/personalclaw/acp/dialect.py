@@ -111,7 +111,9 @@ class ACPDialect:
             return None
         return AcpRequest(METHOD_SET_MODE, {"sessionId": session_id, "modeId": agent})
 
-    def set_model_request(self, *, session_id: str, model: str, default_model: str) -> AcpRequest | None:
+    def set_model_request(
+        self, *, session_id: str, model: str, default_model: str
+    ) -> AcpRequest | None:
         """Request that sets the model, or ``None`` when the dialect has no
         model verb / the model is the agent default (``model == default_model``)."""
         if model and model != default_model:
@@ -286,7 +288,9 @@ class ZedAdapterDialect(ACPDialect):
         # Zed adapters select the agent at launch — no set_mode message.
         return None
 
-    def set_model_request(self, *, session_id: str, model: str, default_model: str) -> AcpRequest | None:
+    def set_model_request(
+        self, *, session_id: str, model: str, default_model: str
+    ) -> AcpRequest | None:
         if model and model != default_model:
             return AcpRequest(
                 METHOD_SET_CONFIG_OPTION,
@@ -356,17 +360,26 @@ class ZedAdapterDialect(ACPDialect):
             value = str(o.get("value", "")).strip()
             if not value or value == "default":
                 continue
-            supported_efforts.append({
-                "value": value,
-                "label": str(o.get("name") or value).strip(),
-            })
-        agents: list[dict] = [{
-            "id": "", "label": "", "description": "",
-            "provider_agent": "", "reasoning_effort": "",
-            "use_runtime_prefix": True,
-        }]
+            supported_efforts.append(
+                {
+                    "value": value,
+                    "label": str(o.get("name") or value).strip(),
+                }
+            )
+        agents: list[dict] = [
+            {
+                "id": "",
+                "label": "",
+                "description": "",
+                "provider_agent": "",
+                "reasoning_effort": "",
+                "use_runtime_prefix": True,
+            }
+        ]
         return DiscoveryResult(
-            agents=agents, models=models, permission_modes=permission_modes,
+            agents=agents,
+            models=models,
+            permission_modes=permission_modes,
             supported_efforts=supported_efforts,
         )
 

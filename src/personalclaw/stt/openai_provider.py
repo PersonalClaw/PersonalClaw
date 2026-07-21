@@ -20,7 +20,9 @@ logger = logging.getLogger(__name__)
 class OpenAISttProvider(SttProvider):
     """Transcribe audio via an OpenAI-compatible hosted Whisper endpoint."""
 
-    def __init__(self, *, provider_name: str, provider_type: str = "", endpoint: str = "", api_key: str = "") -> None:
+    def __init__(
+        self, *, provider_name: str, provider_type: str = "", endpoint: str = "", api_key: str = ""
+    ) -> None:
         self._provider_name = provider_name
         self._provider_type = provider_type
         self._endpoint = endpoint
@@ -79,7 +81,8 @@ class OpenAISttProvider(SttProvider):
         if not model_id:
             logger.error(
                 "No STT model selected for %r (this endpoint has no contributed "
-                "default); pin one in Settings → Models.", self._provider_name,
+                "default); pin one in Settings → Models.",
+                self._provider_name,
             )
             return None
         lang = language.split("-")[0] if language else None

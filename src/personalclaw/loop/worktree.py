@@ -70,10 +70,15 @@ def _git(workspace: str, *args: str, timeout: int = _TIMEOUT) -> tuple[int, str]
     """Run a git command in ``workspace``; return (returncode, combined output)."""
     try:
         p = subprocess.run(
-            ["git", *args], cwd=workspace, capture_output=True,
-            timeout=timeout, check=False,
+            ["git", *args],
+            cwd=workspace,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
         )
-        out = (p.stdout or b"").decode("utf-8", "replace") + (p.stderr or b"").decode("utf-8", "replace")
+        out = (p.stdout or b"").decode("utf-8", "replace") + (p.stderr or b"").decode(
+            "utf-8", "replace"
+        )
         return p.returncode, out
     except (OSError, subprocess.SubprocessError) as e:
         return 1, str(e)
@@ -158,8 +163,16 @@ def ensure_base_commit(workspace: str) -> bool:
         return True  # already has a commit
     _git(workspace, "add", "-A")
     rc, _ = _git(
-        workspace, "-c", "user.name=PersonalClaw", "-c", "user.email=code@personalclaw.local",
-        "commit", "-q", "--allow-empty", "-m", "Initial commit (PersonalClaw Code)",
+        workspace,
+        "-c",
+        "user.name=PersonalClaw",
+        "-c",
+        "user.email=code@personalclaw.local",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "Initial commit (PersonalClaw Code)",
     )
     rc2, _ = _git(workspace, "rev-parse", "--verify", "HEAD")
     return rc2 == 0
@@ -171,6 +184,7 @@ class MergeResult(NamedTuple):
     captured BEFORE the merge is aborted, since the abort clears the unmerged state
     and a post-abort ``conflict_paths`` would always read empty (the bug this fixes:
     the caller would misreport every real conflict as a 'git error')."""
+
     ok: bool
     conflicts: list[str] = []
 
@@ -192,8 +206,15 @@ def merge_worktree(workspace: str, task_id: str, project_id: str = "") -> MergeR
     if os.path.isdir(wt):
         _git(wt, "add", "-A")
         _git(
-            wt, "-c", "user.name=PersonalClaw", "-c", "user.email=code@personalclaw.local",
-            "commit", "-q", "-m", f"task {task_id}: work",
+            wt,
+            "-c",
+            "user.name=PersonalClaw",
+            "-c",
+            "user.email=code@personalclaw.local",
+            "commit",
+            "-q",
+            "-m",
+            f"task {task_id}: work",
         )
     # merge into base from the main workspace checkout. A non-fast-forward merge
     # (the common case — multiple task branches diverge from base) creates a MERGE
@@ -201,8 +222,14 @@ def merge_worktree(workspace: str, task_id: str, project_id: str = "") -> MergeR
     # used elsewhere so a freshly git-init'd workspace with no user/email configured
     # (e.g. a clean container) doesn't fail the merge + falsely wedge as a conflict.
     rc, out = _git(
-        workspace, "-c", "user.name=PersonalClaw", "-c", "user.email=code@personalclaw.local",
-        "merge", "--no-edit", branch,
+        workspace,
+        "-c",
+        "user.name=PersonalClaw",
+        "-c",
+        "user.email=code@personalclaw.local",
+        "merge",
+        "--no-edit",
+        branch,
     )
     if rc != 0:
         # rc != 0 is NOT necessarily a conflict — only abort an in-progress merge
@@ -211,8 +238,12 @@ def merge_worktree(workspace: str, task_id: str, project_id: str = "") -> MergeR
         # conflicted paths BEFORE aborting — the abort clears them, so reading them
         # afterward (in the caller) would always be empty → every conflict misreported.
         conflicts = conflict_paths(workspace)
-        logger.info("worktree merge %s for %s: %s",
-                    "conflict" if conflicts else "failed", task_id, out.strip()[:200])
+        logger.info(
+            "worktree merge %s for %s: %s",
+            "conflict" if conflicts else "failed",
+            task_id,
+            out.strip()[:200],
+        )
         if conflicts:
             _git(workspace, "merge", "--abort")
         return MergeResult(ok=False, conflicts=conflicts)
@@ -237,7 +268,9 @@ def branch_exists(workspace: str, task_id: str) -> bool:
     skipping it past forever once its worker session is gone."""
     if not _safe_task_id(task_id):
         return False
-    rc, _ = _git(workspace, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch_name(task_id)}")
+    rc, _ = _git(
+        workspace, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch_name(task_id)}"
+    )
     return rc == 0
 
 
@@ -279,7 +312,9 @@ def cleanup_all(workspace: str, project_id: str = "") -> None:
     # branches, and a global sweep would delete their in-flight work — the per-dir
     # loop above already dropped this project's branches.
     if not project_id:
-        rc, out = _git(workspace, "for-each-ref", "--format=%(refname:short)", f"refs/heads/{_BRANCH_PREFIX}*")
+        rc, out = _git(
+            workspace, "for-each-ref", "--format=%(refname:short)", f"refs/heads/{_BRANCH_PREFIX}*"
+        )
         if rc == 0:
             for ref in (ln.strip() for ln in out.splitlines() if ln.strip()):
                 _git(workspace, "branch", "-D", ref)

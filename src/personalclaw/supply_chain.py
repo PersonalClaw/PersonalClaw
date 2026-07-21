@@ -36,9 +36,9 @@ from personalclaw.history import _SENSITIVE_TOOL_PATTERNS
 class Verdict(str, Enum):
     """Scan outcome, ascending severity. ``dangerous`` is non-overridable."""
 
-    CLEAN = "clean"        # nothing matched
-    LOW = "low"            # benign-but-notable (advisory)
-    WARNING = "warning"    # ambiguous risk — overridable with explicit confirm
+    CLEAN = "clean"  # nothing matched
+    LOW = "low"  # benign-but-notable (advisory)
+    WARNING = "warning"  # ambiguous risk — overridable with explicit confirm
     DANGEROUS = "dangerous"  # high-confidence malice — terminal, no override
 
     @property
@@ -50,9 +50,9 @@ class Verdict(str, Enum):
 # trusted provenance (a bundled skill's `curl` is not the same risk as a random
 # community one). They never upgrade — a dangerous pattern stays dangerous.
 class TrustTier(str, Enum):
-    BUILTIN = "builtin"      # shipped with PClaw — scan advisory-only (cap at low)
-    OFFICIAL = "official"    # curated registry — warnings non-blocking
-    TRUSTED = "trusted"      # user-trusted registry — warnings non-blocking
+    BUILTIN = "builtin"  # shipped with PClaw — scan advisory-only (cap at low)
+    OFFICIAL = "official"  # curated registry — warnings non-blocking
+    TRUSTED = "trusted"  # user-trusted registry — warnings non-blocking
     COMMUNITY = "community"  # arbitrary — full gate (the default)
 
 
@@ -61,11 +61,11 @@ class Finding:
     """One matched signal. ``severity`` is this finding's own classification;
     the report's verdict is the max across findings (after tier modulation)."""
 
-    surface: str    # "script" | "manifest" | "frontmatter" | "supply_chain"
+    surface: str  # "script" | "manifest" | "frontmatter" | "supply_chain"
     severity: Verdict
-    rule: str       # stable short id, e.g. "destructive_root"
-    path: str       # staged-relative file path ("" for whole-content surfaces)
-    evidence: str   # the matched snippet (truncated, for the UX)
+    rule: str  # stable short id, e.g. "destructive_root"
+    path: str  # staged-relative file path ("" for whole-content surfaces)
+    evidence: str  # the matched snippet (truncated, for the UX)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -105,13 +105,24 @@ class ScanReport:
 # so the non-overridable floor doesn't trap legitimate skills (risk #1).
 _DANGEROUS_SCRIPT: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     # destructive-root: rm -rf / , rm -rf ~ , rm -rf $HOME, rm -fr /
-    ("destructive_root", re.compile(r"\brm\s+-[rf]{1,2}\s+(?:-[rf]{1,2}\s+)*(?:/|~|\$HOME|\*)(?:\s|$|;)")),
+    (
+        "destructive_root",
+        re.compile(r"\brm\s+-[rf]{1,2}\s+(?:-[rf]{1,2}\s+)*(?:/|~|\$HOME|\*)(?:\s|$|;)"),
+    ),
     # fork bomb :(){ :|:& };:
     ("fork_bomb", re.compile(r":\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:")),
     # disk wipe: mkfs, dd of=/dev/sdX, > /dev/sda
-    ("disk_wipe", re.compile(r"\b(?:mkfs\.\w+|dd\s+[^\n]*\bof=/dev/(?:sd|nvme|disk)|>\s*/dev/(?:sd|nvme|disk))")),
+    (
+        "disk_wipe",
+        re.compile(
+            r"\b(?:mkfs\.\w+|dd\s+[^\n]*\bof=/dev/(?:sd|nvme|disk)|>\s*/dev/(?:sd|nvme|disk))"
+        ),
+    ),
     # pipe-to-shell exec of remote content: curl|wget … | sh/bash
-    ("remote_exec_pipe", re.compile(r"\b(?:curl|wget|fetch)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b")),
+    (
+        "remote_exec_pipe",
+        re.compile(r"\b(?:curl|wget|fetch)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b"),
+    ),
     # obfuscated exec: base64 -d | sh , echo … | base64 -d | bash
     ("obfuscated_exec", re.compile(r"base64\s+(?:--decode|-d|-D)\b[^\n|]*\|\s*(?:ba|z|da)?sh\b")),
 )
@@ -138,7 +149,7 @@ _INJECTION_PROSE: tuple[tuple[str, "re.Pattern[str]"], ...] = (
 _SCRIPT_EXTS = {".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".cjs", ".rb", ".pl", ".ps1"}
 # Text surfaces scanned for injection / invisible-Unicode (skill + app manifests).
 _MANIFEST_NAMES = {"skill.md", "app.json", "readme.md", "manifest.json"}
-_MAX_FILE_BYTES = 512 * 1024   # don't read huge blobs into the scanner
+_MAX_FILE_BYTES = 512 * 1024  # don't read huge blobs into the scanner
 _EVIDENCE_CAP = 120
 # Directories that are tooling/dependency noise, not the app's own content. A git
 # clone carries .git/ (whose hooks/*.sample trip the script rules — a false
@@ -183,11 +194,23 @@ def _strip_line_comments(text: str) -> str:
 def _line_of(text: str, pos: int) -> int:
     return text.count("\n", 0, pos)
 
+
 # Zero-width + bidi-override codepoints used to hide steering text in prose.
 _INVISIBLE_CHARS = {
-    "​", "‌", "‍", "⁠", "﻿",  # zero-width
-    "‪", "‫", "‬", "‭", "‮",  # bidi overrides
-    "⁦", "⁧", "⁨", "⁩",            # isolates
+    "​",
+    "‌",
+    "‍",
+    "⁠",
+    "﻿",  # zero-width
+    "‪",
+    "‫",
+    "‬",
+    "‭",
+    "‮",  # bidi overrides
+    "⁦",
+    "⁧",
+    "⁨",
+    "⁩",  # isolates
 }
 
 
@@ -233,15 +256,22 @@ class SkillScanner:
                 if path.suffix.lower() in _SCRIPT_EXTS or _is_under_scripts(rel):
                     surfaces.add("script")
                     findings.extend(self._scan_script(text, rel))
-                if lname in _MANIFEST_NAMES or path.suffix.lower() in {".md", ".json", ".yaml", ".yml"}:
+                if lname in _MANIFEST_NAMES or path.suffix.lower() in {
+                    ".md",
+                    ".json",
+                    ".yaml",
+                    ".yml",
+                }:
                     surface = "frontmatter" if lname in _MANIFEST_NAMES else "manifest"
                     surfaces.add(surface)
                     findings.extend(self._scan_text(text, rel, surface))
 
         verdict = self._aggregate(findings, tier)
         return ScanReport(
-            verdict=verdict, findings=findings,
-            surfaces_scanned=sorted(surfaces), tier=tier,
+            verdict=verdict,
+            findings=findings,
+            surfaces_scanned=sorted(surfaces),
+            tier=tier,
         )
 
     def scan_text(self, text: str, *, surface: str = "manifest") -> ScanReport:
@@ -250,12 +280,15 @@ class SkillScanner:
         surface runs the prose/injection + invisible-char rules (the memory-write
         injection gate, S5)."""
         findings = (
-            self._scan_script(text, "") if surface == "script"
+            self._scan_script(text, "")
+            if surface == "script"
             else self._scan_text(text, "", surface)
         )
         return ScanReport(
             verdict=self._aggregate(findings, TrustTier.COMMUNITY),
-            findings=findings, surfaces_scanned=[surface], tier=TrustTier.COMMUNITY,
+            findings=findings,
+            surfaces_scanned=[surface],
+            tier=TrustTier.COMMUNITY,
         )
 
     # ── per-surface scans ──
@@ -275,8 +308,13 @@ class SkillScanner:
         sens_hits = list(_SENSITIVE_RE.finditer(code))
         net_hits = list(_NET_EGRESS_RE.finditer(code))
         exfil = next(
-            (s for s in sens_hits for n in net_hits
-             if abs(_line_of(code, s.start()) - _line_of(code, n.start())) <= _EXFIL_PROXIMITY_LINES),
+            (
+                s
+                for s in sens_hits
+                for n in net_hits
+                if abs(_line_of(code, s.start()) - _line_of(code, n.start()))
+                <= _EXFIL_PROXIMITY_LINES
+            ),
             None,
         )
         # The WARNING (a credential read, no adjacent egress) still fires on the
@@ -284,9 +322,21 @@ class SkillScanner:
         # file, and a lone read is not downgraded by stripping comments.
         sens_raw = _SENSITIVE_RE.search(text)
         if exfil is not None:
-            out.append(Finding("script", Verdict.DANGEROUS, "exfil_sensitive_path", rel, _evidence(code, exfil)))
+            out.append(
+                Finding(
+                    "script", Verdict.DANGEROUS, "exfil_sensitive_path", rel, _evidence(code, exfil)
+                )
+            )
         elif sens_raw is not None and _SENSITIVE_RE.search(code) is not None:
-            out.append(Finding("script", Verdict.WARNING, "reads_sensitive_path", rel, _evidence(text, sens_raw)))
+            out.append(
+                Finding(
+                    "script",
+                    Verdict.WARNING,
+                    "reads_sensitive_path",
+                    rel,
+                    _evidence(text, sens_raw),
+                )
+            )
         for rule, pat in _WARNING_SCRIPT:
             m = pat.search(text)
             if m:
@@ -306,16 +356,35 @@ class SkillScanner:
     def _scan_invisible(self, text: str, rel: str, surface: str) -> list[Finding]:
         # Bidi overrides are a known steering/spoofing vector → dangerous;
         # zero-width chars are suspicious but lower-confidence → warning.
-        bidi = {c for c in text if c in _INVISIBLE_CHARS and unicodedata.category(c) == "Cf" and c in
-                {"‪", "‫", "‬", "‭", "‮", "⁦", "⁧", "⁨", "⁩"}}
+        bidi = {
+            c
+            for c in text
+            if c in _INVISIBLE_CHARS
+            and unicodedata.category(c) == "Cf"
+            and c in {"‪", "‫", "‬", "‭", "‮", "⁦", "⁧", "⁨", "⁩"}
+        }
         zw = {c for c in text if c in _INVISIBLE_CHARS} - bidi
         out: list[Finding] = []
         if bidi:
-            out.append(Finding(surface, Verdict.DANGEROUS, "bidi_override", rel,
-                               "bidirectional override codepoints present"))
+            out.append(
+                Finding(
+                    surface,
+                    Verdict.DANGEROUS,
+                    "bidi_override",
+                    rel,
+                    "bidirectional override codepoints present",
+                )
+            )
         if zw:
-            out.append(Finding(surface, Verdict.WARNING, "zero_width_chars", rel,
-                               "zero-width/invisible codepoints present"))
+            out.append(
+                Finding(
+                    surface,
+                    Verdict.WARNING,
+                    "zero_width_chars",
+                    rel,
+                    "zero-width/invisible codepoints present",
+                )
+            )
         return out
 
     # ── aggregation ──

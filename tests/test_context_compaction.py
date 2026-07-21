@@ -2,28 +2,34 @@
 
 from __future__ import annotations
 
-import pytest
-
 from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.agents.provider import AgentRuntimeDefinition
 from personalclaw.context_compaction import (
+    _drop_orphan_tool_results,
     compact,
     extract_file_refs,
     prune_tool_outputs,
     should_compact,
     total_chars,
-    _drop_orphan_tool_results,
 )
 
 
 def _convo(n_tool_rounds: int, tool_size: int = 2000) -> list[dict]:
     msgs: list[dict] = [{"role": "user", "content": "system + first message"}]
     for i in range(n_tool_rounds):
-        msgs.append({
-            "role": "assistant", "content": f"step {i}",
-            "tool_calls": [{"id": f"c{i}", "type": "function",
-                            "function": {"name": "bash", "arguments": f'{{"path": "src/f{i}.py"}}'}}],
-        })
+        msgs.append(
+            {
+                "role": "assistant",
+                "content": f"step {i}",
+                "tool_calls": [
+                    {
+                        "id": f"c{i}",
+                        "type": "function",
+                        "function": {"name": "bash", "arguments": f'{{"path": "src/f{i}.py"}}'},
+                    }
+                ],
+            }
+        )
         msgs.append({"role": "tool", "tool_call_id": f"c{i}", "content": "X" * tool_size})
     msgs.append({"role": "user", "content": "latest request"})
     msgs.append({"role": "assistant", "content": "latest reply"})
@@ -127,8 +133,13 @@ def test_drop_orphan_tool_results():
     msgs = [
         {"role": "user", "content": "q"},
         {"role": "tool", "tool_call_id": "orphan", "content": "no matching call"},
-        {"role": "assistant", "content": "a",
-         "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "x", "arguments": "{}"}}]},
+        {
+            "role": "assistant",
+            "content": "a",
+            "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "x", "arguments": "{}"}}
+            ],
+        },
         {"role": "tool", "tool_call_id": "c1", "content": "paired"},
     ]
     out = _drop_orphan_tool_results(msgs)
@@ -143,7 +154,7 @@ def test_should_compact_anti_thrash():
     assert should_compact([]) is True
     assert should_compact([0.5]) is True
     assert should_compact([0.05, 0.05]) is False  # 2 weak saves → skip
-    assert should_compact([0.5, 0.05]) is True   # only 1 weak → still try
+    assert should_compact([0.5, 0.05]) is True  # only 1 weak → still try
     assert should_compact([0.05, 0.5]) is True
 
 

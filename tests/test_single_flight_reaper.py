@@ -1,6 +1,7 @@
 """Tests for cross-process single-flight locks + the orphan-reaper seam."""
 
 import multiprocessing
+from pathlib import Path
 
 import pytest
 
@@ -8,9 +9,24 @@ from personalclaw.concurrency import lock_path, reap_orphans, single_flight
 
 
 @pytest.fixture(autouse=True)
-def _tmp_home(monkeypatch, tmp_path):
-    """Point config_dir() at a tmp dir so lock files land in isolation."""
+def _tmp_home(monkeypatch, tmp_path, _isolate_single_flight_locks):
+    """Point config_dir() at a tmp dir so lock files land in isolation.
+
+    This suite tests the REAL single-flight primitive, including a cross-PROCESS
+    case where a spawned child (which re-sets PERSONALCLAW_HOME and re-imports
+    concurrency) must contend on the SAME lock file as the parent. So here the lock
+    dir must derive from PERSONALCLAW_HOME — not from the fixed per-test dir the root
+    conftest's ``_isolate_single_flight_locks`` patches in for every other test (that
+    patch lives only in the parent process, so it would desync parent and child).
+    Depending on that fixture forces this override to run last, so it wins."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+
+    def _derive() -> Path:
+        d = tmp_path / "locks"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    monkeypatch.setattr("personalclaw.concurrency._locks_dir", _derive)
     return tmp_path
 
 

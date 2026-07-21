@@ -30,7 +30,11 @@ def _friendly_fetch_error(exc: Exception) -> tuple[str, str]:
             # 5xx / 429 are transient (server-side / rate-limit) → retryable; other 4xx
             # (404/403/410) mean the page genuinely isn't there for us, also retryable as
             # 'unreachable' (the URL is still saved; the user may fix it or try later).
-            msg = f"The site returned HTTP {code}." if code else "The site returned an error response."
+            msg = (
+                f"The site returned HTTP {code}."
+                if code
+                else "The site returned an error response."
+            )
             return msg, "unreachable"
         timeout_err = getattr(_httpx, "TimeoutException", None)
         if timeout_err and isinstance(exc, timeout_err):
@@ -52,7 +56,7 @@ class WebUrlConnector(BaseConnector):
     """Connector that fetches and stores text content from any web URL."""
 
     _HEADERS = {
-        "User-Agent": "PersonalClaw-KnowledgeBot/1.0 (compatible; +https://github.com/personalclaw/personalclaw)"
+        "User-Agent": "PersonalClaw-KnowledgeBot/1.0 (compatible; +https://github.com/personalclaw/personalclaw)"  # noqa: E501
     }
 
     def source_type(self) -> str:
@@ -85,9 +89,14 @@ class WebUrlConnector(BaseConnector):
                 # net.fetch returns the status (unlike httpx.raise_for_status); a 4xx/5xx
                 # means the page isn't retrievable for us now — retryable 'unreachable'
                 # (the URL stays saved; the user may fix it or try later).
-                return "", {"error": f"The site returned HTTP {resp.status}.",
-                            "error_kind": "unreachable", "url": url}
-            content_type = resp.headers.get("Content-Type", "") or resp.headers.get("content-type", "")
+                return "", {
+                    "error": f"The site returned HTTP {resp.status}.",
+                    "error_kind": "unreachable",
+                    "url": url,
+                }
+            content_type = resp.headers.get("Content-Type", "") or resp.headers.get(
+                "content-type", ""
+            )
             raw = resp.text
             page_meta: dict = {}
             if "html" in content_type:
@@ -102,7 +111,8 @@ class WebUrlConnector(BaseConnector):
             meta = {
                 "url": resp.url,
                 "etag": resp.headers.get("ETag", "") or resp.headers.get("etag", ""),
-                "last_modified": resp.headers.get("Last-Modified", "") or resp.headers.get("last-modified", ""),
+                "last_modified": resp.headers.get("Last-Modified", "")
+                or resp.headers.get("last-modified", ""),
                 "content_hash": content_hash,
                 "content_type": content_type,
                 # Real page title/description from the HTML head (preferred over the
@@ -115,7 +125,11 @@ class WebUrlConnector(BaseConnector):
             # A blocked fetch (SSRF/private/redirect-to-IMDS) is a security refusal, not a
             # transient network error — surface it clearly, non-retryable.
             logger.warning("WebUrl fetch blocked by egress guard for %s: %s", url, e)
-            return "", {"error": f"Blocked by the network security guard: {e}", "error_kind": "blocked", "url": url}
+            return "", {
+                "error": f"Blocked by the network security guard: {e}",
+                "error_kind": "blocked",
+                "url": url,
+            }
         except Exception as e:
             logger.error("WebUrl fetch failed for %s: %s", url, e)
             reason, kind = _friendly_fetch_error(e)

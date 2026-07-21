@@ -72,6 +72,7 @@ def _fetch(url: str) -> dict:
 
 # ── Service path fixture ──────────────────────────────────────────────────────
 
+
 @pytest.fixture(scope="module")
 def service_gateway():
     """Start the gateway via `personalclaw gateway` subprocess."""
@@ -102,6 +103,7 @@ def service_gateway():
 
 
 # ── Compose path fixture ──────────────────────────────────────────────────────
+
 
 def _container_runtime() -> str | None:
     for rt in ("docker", "finch"):
@@ -162,19 +164,20 @@ def compose_gateway():
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.parametrize("endpoint", _REQUIRED_ENDPOINTS)
 def test_service_path_endpoint_responds(service_gateway, endpoint):
     """Every required endpoint responds on the service path."""
     data = _fetch(f"{service_gateway}{endpoint}")
-    assert "_error" not in data or data.get("_auth_required"), (
-        f"Endpoint {endpoint} returned error on service path: {data}"
-    )
+    assert "_error" not in data or data.get(
+        "_auth_required"
+    ), f"Endpoint {endpoint} returned error on service path: {data}"
 
 
 @pytest.mark.parametrize("endpoint", _REQUIRED_ENDPOINTS)
 def test_compose_path_endpoint_responds(compose_gateway, endpoint):
     """Every required endpoint responds on the Compose path."""
     data = _fetch(f"{compose_gateway}{endpoint}")
-    assert "_error" not in data or data.get("_auth_required"), (
-        f"Endpoint {endpoint} returned error on Compose path: {data}"
-    )
+    assert "_error" not in data or data.get(
+        "_auth_required"
+    ), f"Endpoint {endpoint} returned error on Compose path: {data}"

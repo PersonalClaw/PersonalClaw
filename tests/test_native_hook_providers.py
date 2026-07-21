@@ -12,8 +12,6 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-import pytest
-
 from personalclaw.action_providers.base import ActionContext
 from personalclaw.action_providers.create_task_provider import CreateTaskActionProvider
 from personalclaw.action_providers.notify_provider import NotifyActionProvider
@@ -37,11 +35,16 @@ def test_bash_payload_vars_resolve_via_env():
     ctx = ActionContext(
         event="schedule:j1",
         context="prev result",
-        payload={"job_id": "j1", "job_name": "pulse", "now": "2026-07-11T00:00:00",
-                 "not-an-identifier": "skipped"},
+        payload={
+            "job_id": "j1",
+            "job_name": "pulse",
+            "now": "2026-07-11T00:00:00",
+            "not-an-identifier": "skipped",
+        },
     )
-    res = asyncio.run(BashActionProvider().execute(
-        {"command": 'echo "e=$EVENT id=$job_id at=$now"'}, ctx))
+    res = asyncio.run(
+        BashActionProvider().execute({"command": 'echo "e=$EVENT id=$job_id at=$now"'}, ctx)
+    )
     assert res.success
     assert res.stdout == "e=schedule:j1 id=j1 at=2026-07-11T00:00:00"
 
@@ -137,8 +140,12 @@ def test_create_task_honors_assignee_due_labels(monkeypatch):
     monkeypatch.setattr(reg, "create_task", fake_create)
     res = asyncio.run(
         CreateTaskActionProvider().execute(
-            {"title_template": "T", "assignee": "kay", "due": "2026-07-31",
-             "labels": ["follow-up", "auto"]},
+            {
+                "title_template": "T",
+                "assignee": "kay",
+                "due": "2026-07-31",
+                "labels": ["follow-up", "auto"],
+            },
             _ctx(),
         )
     )
@@ -164,13 +171,24 @@ def test_create_task_manifest_schema_exposes_every_honored_field():
 
     src_manifest = (
         Path(personalclaw.__file__).resolve().parent
-        / "apps" / "native" / "create-task-action" / "app.json"
+        / "apps"
+        / "native"
+        / "create-task-action"
+        / "app.json"
     )
     schema = json.loads(src_manifest.read_text())["provider"]["settingsSchema"]
     schema_fields = set(schema.get("properties", {}))
     # The full set the executor reads from action_config (title/body are templated).
-    honored = {"title_template", "body_template", "provider", "priority", "project",
-               "assignee", "due", "labels"}
+    honored = {
+        "title_template",
+        "body_template",
+        "provider",
+        "priority",
+        "project",
+        "assignee",
+        "due",
+        "labels",
+    }
     missing = honored - schema_fields
     assert not missing, f"executor honors {sorted(missing)} but the schema doesn't expose them"
 
@@ -207,11 +225,11 @@ def test_hook_provider_allowlist_includes_all_action_providers():
     provider — incl. run-prompt/run-workflow/run-script — so a lifecycle trigger
     can run anything a schedule trigger can (the UI offers them; the backend must
     not reject them). Regression for the hardcoded allowlist that omitted them."""
-    from personalclaw.validation import ALLOWED_HOOK_PROVIDERS
     from personalclaw.action_providers.registry import (
         _ensure_default_providers_registered,
         list_action_providers,
     )
+    from personalclaw.validation import ALLOWED_HOOK_PROVIDERS
 
     _ensure_default_providers_registered()
     registered = set(list_action_providers())

@@ -9,12 +9,16 @@ from personalclaw.loop import design_plan_briefs as pw
 def test_design_brief_lists_multimodal_inputs():
     # D2: each provided reference input must appear in the design-pass brief with a
     # concrete "how to consume it" instruction so the planner works through every one.
-    brief = pw.build_design_brief("a warm recipe-app system", "", [
-        {"type": "url", "ref": "https://example.com"},
-        {"type": "image", "ref": "moodboard.png"},
-        {"type": "react", "ref": "Button.tsx"},
-        {"type": "design_md", "ref": "DESIGN.md"},
-    ])
+    brief = pw.build_design_brief(
+        "a warm recipe-app system",
+        "",
+        [
+            {"type": "url", "ref": "https://example.com"},
+            {"type": "image", "ref": "moodboard.png"},
+            {"type": "react", "ref": "Button.tsx"},
+            {"type": "design_md", "ref": "DESIGN.md"},
+        ],
+    )
     assert "REFERENCE INPUTS" in brief
     assert "https://example.com" in brief and "FETCH" in brief
     assert "moodboard.png" in brief and "READ the image" in brief
@@ -38,17 +42,22 @@ def test_design_inputs_block_skips_blank_refs():
 def test_parse_steps_sentinel_roundtrip():
     parsed = pw.parse_steps_sentinel(
         '{"summary":"warm","steps":[{"kind":"brief","title":"Brief","objective":"intent"},'
-        '{"kind":"build_plan","title":"Build plan","objective":"phases"}]}')
+        '{"kind":"build_plan","title":"Build plan","objective":"phases"}]}'
+    )
     assert parsed is not None
     summary, steps = parsed
     assert summary == "warm" and [s["kind"] for s in steps] == ["brief", "build_plan"]
 
 
 def test_build_plan_to_phases_projection():
-    phases = pw.build_plan_to_phases({"phases": [
-        {"step": "foundations", "title": "Foundations", "objective": "anchors"},
-        {"title": "Document & export", "objective": "DESIGN.md"},  # step derived from title
-    ]})
+    phases = pw.build_plan_to_phases(
+        {
+            "phases": [
+                {"step": "foundations", "title": "Foundations", "objective": "anchors"},
+                {"title": "Document & export", "objective": "DESIGN.md"},  # step derived from title
+            ]
+        }
+    )
     assert phases[0]["step"] == "foundations"
     assert phases[1]["step"] == "document_export" and phases[1]["title"] == "Document & export"
 

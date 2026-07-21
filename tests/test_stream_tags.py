@@ -1,11 +1,6 @@
 """Tests for the cross-chunk streaming tag splitter."""
 
-from personalclaw.llm.stream_tags import (
-    KIND_OUTSIDE,
-    Segment,
-    StreamingTagSplitter,
-)
-
+from personalclaw.llm.stream_tags import KIND_OUTSIDE, StreamingTagSplitter
 
 _DEFAULT_TAGS = {"think": "thinking"}
 

@@ -20,24 +20,52 @@ except ImportError:
 # accepted-MIME map the create UI offers.
 _EXT_TYPE: dict[str, str] = {
     # images (.heic/.heif = the default iPhone photo format; .tif/.tiff = scans/cameras)
-    ".png": "image", ".jpg": "image", ".jpeg": "image", ".gif": "image",
-    ".webp": "image", ".bmp": "image", ".svg": "image",
-    ".heic": "image", ".heif": "image", ".tiff": "image", ".tif": "image",
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".gif": "image",
+    ".webp": "image",
+    ".bmp": "image",
+    ".svg": "image",
+    ".heic": "image",
+    ".heif": "image",
+    ".tiff": "image",
+    ".tif": "image",
     # audio
-    ".mp3": "audio", ".wav": "audio", ".ogg": "audio", ".flac": "audio",
-    ".m4a": "audio", ".aac": "audio",
+    ".mp3": "audio",
+    ".wav": "audio",
+    ".ogg": "audio",
+    ".flac": "audio",
+    ".m4a": "audio",
+    ".aac": "audio",
     # video (.m4v = the MPEG-4 video container Apple/iTunes uses, sibling of .mp4)
-    ".mp4": "video", ".mov": "video", ".avi": "video", ".mkv": "video",
-    ".webm": "video", ".m4v": "video",
+    ".mp4": "video",
+    ".mov": "video",
+    ".avi": "video",
+    ".mkv": "video",
+    ".webm": "video",
+    ".m4v": "video",
     # documents (text-extractable via the reader stack → Document graph)
-    ".pdf": "pdf", ".docx": "document", ".doc": "document",
+    ".pdf": "pdf",
+    ".docx": "document",
+    ".doc": "document",
     # tabular → sheet (.tsv is the tab-separated sibling of .csv, rendered as a table)
-    ".xlsx": "sheet", ".xls": "sheet", ".csv": "sheet", ".tsv": "sheet",
-    ".pptx": "slides", ".ppt": "slides",
+    ".xlsx": "sheet",
+    ".xls": "sheet",
+    ".csv": "sheet",
+    ".tsv": "sheet",
+    ".pptx": "slides",
+    ".ppt": "slides",
     # prose / markup → document (one logical doc; read inline). .markdown/.text are the
     # full-word forms of .md/.txt that some editors emit.
-    ".md": "document", ".markdown": "document", ".txt": "document", ".text": "document",
-    ".rst": "document", ".html": "document", ".htm": "document", ".log": "document",
+    ".md": "document",
+    ".markdown": "document",
+    ".txt": "document",
+    ".text": "document",
+    ".rst": "document",
+    ".html": "document",
+    ".htm": "document",
+    ".log": "document",
     # source code → gist (code, with a language for syntax highlighting + the
     # "Gist · <Language>" label). Routed via _CODE_EXT_LANGUAGE, not _EXT_TYPE,
     # so classify() can both pick the gist type AND carry the language.
@@ -49,19 +77,29 @@ _EXT_TYPE: dict[str, str] = {
 # language values match the FE's GIST_LANGUAGES (highlight.js identifiers).
 _CODE_EXT_LANGUAGE: dict[str, str] = {
     ".py": "python",
-    ".ts": "typescript", ".tsx": "typescript",
-    ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".mjs": "javascript",
     ".java": "java",
     ".go": "go",
     ".rs": "rust",
     ".rb": "ruby",
-    ".c": "c", ".h": "c",
-    ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp", ".hpp": "cpp",
-    ".sh": "bash", ".bash": "bash", ".zsh": "bash",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
+    ".hpp": "cpp",
+    ".sh": "bash",
+    ".bash": "bash",
+    ".zsh": "bash",
     ".sql": "sql",
     ".css": "css",
     ".json": "json",
-    ".yaml": "yaml", ".yml": "yaml",
+    ".yaml": "yaml",
+    ".yml": "yaml",
 }
 
 
@@ -72,6 +110,7 @@ def code_language(filename: str) -> str | None:
     ``gist_language`` so the item gets syntax highlighting + a "Gist · <Language>"
     label, instead of landing as a generic ``document``."""
     return _CODE_EXT_LANGUAGE.get(Path(filename).suffix.lower())
+
 
 # The binary media types that have no text to chunk → stored as previewable items.
 BINARY_MEDIA_TYPES = {"image", "audio", "video"}
@@ -136,9 +175,9 @@ def make_image_thumbnail(src_path: str, dest_path: str) -> bool:
         return False
     try:
         with Image.open(src_path) as im:
-            im = im.convert("RGB")
-            im.thumbnail(_THUMBNAIL_MAX)
-            im.save(dest_path, "WEBP", quality=80)
+            rgb = im.convert("RGB")
+            rgb.thumbnail(_THUMBNAIL_MAX)
+            rgb.save(dest_path, "WEBP", quality=80)
         return True
     except Exception:
         return False

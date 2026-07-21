@@ -13,6 +13,7 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 ### Added
 
 - **App-contributed CLI seams**
+- **CI & release engineering**
 
 ### Changed
 

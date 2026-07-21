@@ -16,7 +16,6 @@ from personalclaw.event_triggers import (
     matches,
 )
 
-
 # ── pure matching ──
 
 
@@ -94,13 +93,25 @@ def test_engine_fires_action(store, monkeypatch):
         async def execute(self, cfg, ctx, timeout=30):
             fired.append((cfg, ctx.payload))
 
-    monkeypatch.setattr("personalclaw.action_providers.get_action_provider", lambda n: _StubProvider())
-    store.upsert(EventTrigger(id="t", pattern=MEMORY_KEY_PATTERN, key_glob="x.*", action_provider="notify", action_config={"title": "hi"}, debounce_secs=0))
+    monkeypatch.setattr(
+        "personalclaw.action_providers.get_action_provider", lambda n: _StubProvider()
+    )
+    store.upsert(
+        EventTrigger(
+            id="t",
+            pattern=MEMORY_KEY_PATTERN,
+            key_glob="x.*",
+            action_provider="notify",
+            action_config={"title": "hi"},
+            debounce_secs=0,
+        )
+    )
     eng = EventTriggerEngine(store=store)
 
     async def go():
         eng.on_memory_event(event_type="create", key="x.y", value="v", now=10.0)
         await asyncio.sleep(0.05)  # let the scheduled task run
+
     asyncio.run(go())
     assert fired and fired[0][1]["key"] == "x.y"
     # fire recorded
@@ -122,5 +133,6 @@ def test_engine_debounce_suppresses_rapid_refire(store, monkeypatch):
         eng.on_memory_event(event_type="create", key="k", value="v", now=10.0)
         eng.on_memory_event(event_type="create", key="k", value="v", now=11.0)  # within debounce
         await asyncio.sleep(0.05)
+
     asyncio.run(go())
     assert n["count"] == 1  # second suppressed

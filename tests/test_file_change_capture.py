@@ -11,8 +11,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from personalclaw.dashboard import chat_runner as cr
 from personalclaw.dashboard.state import _ChatSession
 
@@ -29,7 +27,7 @@ def test_write_file_captures_new_file(tmp_path: Path):
     assert len(s._file_changes) == 1
     c = s._file_changes[0]
     assert c["path"] == "new.txt"
-    assert c["before"] == ""          # file did not exist
+    assert c["before"] == ""  # file did not exist
     assert c["after"] == "hello world"
 
 
@@ -45,7 +43,9 @@ def test_write_file_captures_overwrite(tmp_path: Path):
 def test_edit_file_computes_after_in_memory(tmp_path: Path):
     (tmp_path / "code.py").write_text("def foo(): return 1\n", encoding="utf-8")
     s = _session(tmp_path)
-    cr._capture_file_change(s, "edit_file", {"path": "code.py", "old_str": "return 1", "new_str": "return 2"})
+    cr._capture_file_change(
+        s, "edit_file", {"path": "code.py", "old_str": "return 1", "new_str": "return 2"}
+    )
     c = s._file_changes[0]
     assert c["before"] == "def foo(): return 1\n"
     assert c["after"] == "def foo(): return 2\n"
@@ -95,7 +95,13 @@ def test_flush_dedups_by_path_first_before_last_after(tmp_path: Path):
 
 def test_flush_redacts_secrets(tmp_path: Path):
     s = _session(tmp_path)
-    s._file_changes = [{"path": "cfg", "before": "", "after": "AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE0000000000000000000X"}]
+    s._file_changes = [
+        {
+            "path": "cfg",
+            "before": "",
+            "after": "AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE0000000000000000000X",
+        }
+    ]
     s.messages = [{"role": "assistant", "content": "wrote config"}]
     cr._flush_file_changes(s)
     after = s.messages[-1]["meta"]["file_changes"][0]["after"]

@@ -43,6 +43,7 @@ def test_undo_update_restores_old_value(vs):
     ok, _ = vs.undo_event(_event_id(vs, "update", "pref.x"))
     assert ok
     import json
+
     assert json.loads(vs.get_semantic("pref.x")["value_json"]) == "A"
 
 

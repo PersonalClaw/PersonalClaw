@@ -216,12 +216,12 @@ _403_HTML = (
     "@media(prefers-reduced-motion:reduce){{*{{transition-duration:.001ms!important}}}}"
     "</style></head><body>"
     "<div class='c'>"
-    "<div class='logo'><svg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg' aria-label='PersonalClaw'>"
+    "<div class='logo'><svg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg' aria-label='PersonalClaw'>"  # noqa: E501
     "<defs><linearGradient id='cg' x1='0' y1='0' x2='512' y2='512' gradientUnits='userSpaceOnUse'>"
     "<stop stop-color='#8e75b2'/><stop offset='0.45' stop-color='#9d8bff'/>"
     "<stop offset='0.75' stop-color='#c597ff'/><stop offset='1' stop-color='#d8627e'/>"
     "</linearGradient></defs>"
-    "<path fill='url(#cg)' d='M256 16C106 76 46 226 46 226c0 45 60 90 90 90 90 0 180-195 135-285l-15-15zm45 15c30 60 0 135 0 135 120 30 120 180 75 330 75-75 90-150 90-210 0-90-15-225-165-255z'/></svg></div>"
+    "<path fill='url(#cg)' d='M256 16C106 76 46 226 46 226c0 45 60 90 90 90 90 0 180-195 135-285l-15-15zm45 15c30 60 0 135 0 135 120 30 120 180 75 330 75-75 90-150 90-210 0-90-15-225-165-255z'/></svg></div>"  # noqa: E501
     "<h1>403 — {reason}</h1>"
     "<p>Run <code>personalclaw token</code> in your terminal, then paste the URL below.</p>"
     "<input id='u' type='text' placeholder='Paste token URL or raw token…' autofocus>"
@@ -456,9 +456,7 @@ def token_auth_middleware(
         )
         return forwarded if (forwarded and is_proxy) else raw
 
-    def _extract_and_validate_token(
-        request: web.Request, _port: int
-    ) -> tuple[bool, str, str]:
+    def _extract_and_validate_token(request: web.Request, _port: int) -> tuple[bool, str, str]:
         """Extract token from query param or cookie and validate it.
 
         Used by internal-path browser auth (no secret header).  The main
@@ -494,8 +492,7 @@ def token_auth_middleware(
         # If the secret is missing (browser request), fall through to
         # normal cookie auth so dashboard pages can call these routes.
         _matches_strict = internal_paths and (
-            path in internal_paths
-            or any(path.startswith(p + "/") for p in internal_paths)
+            path in internal_paths or any(path.startswith(p + "/") for p in internal_paths)
         )
         _matches_mixed = mixed_internal_paths and (
             path in mixed_internal_paths
@@ -514,17 +511,37 @@ def token_auth_middleware(
                 # Secret header present — validate it strictly
                 if not internal_secret:
                     _sel = _sel_fn()
-                    _sel.log_api_access(caller=request.remote or "", operation="internal_auth", outcome="denied", source="token_auth", resources=path, error="no internal secret configured")
+                    _sel.log_api_access(
+                        caller=request.remote or "",
+                        operation="internal_auth",
+                        outcome="denied",
+                        source="token_auth",
+                        resources=path,
+                        error="no internal secret configured",
+                    )
                     _log_auth(request, "internal", "denied", "no internal secret configured")
                     return _deny(request, "Forbidden")
                 if hmac.compare_digest(internal_secret, _provided_secret):
                     _sel = _sel_fn()
-                    _sel.log_api_access(caller=request.remote or "", operation="internal_auth", outcome="granted", source="token_auth", resources=path)
+                    _sel.log_api_access(
+                        caller=request.remote or "",
+                        operation="internal_auth",
+                        outcome="granted",
+                        source="token_auth",
+                        resources=path,
+                    )
                     _log_auth(request, "internal", "granted", "")
                     return await handler(request)  # type: ignore[operator]
                 # Wrong secret → deny (don't fall through)
                 _sel = _sel_fn()
-                _sel.log_api_access(caller=request.remote or "", operation="internal_auth", outcome="denied", source="token_auth", resources=path, error="wrong secret")
+                _sel.log_api_access(
+                    caller=request.remote or "",
+                    operation="internal_auth",
+                    outcome="denied",
+                    source="token_auth",
+                    resources=path,
+                    error="wrong secret",
+                )
                 _log_auth(request, "internal", "denied", "wrong secret")
                 return _deny(request, "Forbidden")
             # No secret header (browser request) → verify cookie/query-param auth
@@ -535,11 +552,25 @@ def token_auth_middleware(
             _valid, _uid, _reason = _extract_and_validate_token(request, port)
             if not _valid:
                 _sel = _sel_fn()
-                _sel.log_api_access(caller=request.remote or "", operation="internal_auth", outcome="denied", source="token_auth", resources=path, error=f"cookie auth failed: {_reason}")
+                _sel.log_api_access(
+                    caller=request.remote or "",
+                    operation="internal_auth",
+                    outcome="denied",
+                    source="token_auth",
+                    resources=path,
+                    error=f"cookie auth failed: {_reason}",
+                )
                 _log_auth(request, "internal", "denied", f"cookie auth failed: {_reason}")
                 return _deny(request, "Forbidden")
             _sel = _sel_fn()
-            _sel.log_api_access(caller=request.remote or "", operation="internal_auth", outcome="granted", source="token_auth", resources=path, error="cookie auth (no secret header)")
+            _sel.log_api_access(
+                caller=request.remote or "",
+                operation="internal_auth",
+                outcome="granted",
+                source="token_auth",
+                resources=path,
+                error="cookie auth (no secret header)",
+            )
             _log_auth(request, "internal", "granted", f"cookie auth for {_uid}")
             return await handler(request)  # type: ignore[operator]
         elif _matches_internal:
@@ -552,20 +583,52 @@ def token_auth_middleware(
                 # If X-Internal-Secret header is present, validate it first
                 # (defense-in-depth: wrong secret = deny, even with valid cookie)
                 if "X-Internal-Secret" in request.headers:
-                    if not internal_secret or not hmac.compare_digest(internal_secret, request.headers["X-Internal-Secret"]):
+                    if not internal_secret or not hmac.compare_digest(
+                        internal_secret, request.headers["X-Internal-Secret"]
+                    ):
                         _sel = _sel_fn()
-                        _sel.log_api_access(caller=request.remote or "", operation="internal_auth", outcome="denied", source="token_auth", resources=path, error="wrong secret (non-loopback mixed)")
-                        _log_auth(request, "internal", "denied", "wrong secret (non-loopback mixed)")
+                        _sel.log_api_access(
+                            caller=request.remote or "",
+                            operation="internal_auth",
+                            outcome="denied",
+                            source="token_auth",
+                            resources=path,
+                            error="wrong secret (non-loopback mixed)",
+                        )
+                        _log_auth(
+                            request, "internal", "denied", "wrong secret (non-loopback mixed)"
+                        )
                         return _deny(request, "Forbidden")
                 _valid, _uid, _reason = _extract_and_validate_token(request, port)
                 if not _valid:
                     _sel = _sel_fn()
-                    _sel.log_api_access(caller=request.remote or "", operation="internal_auth", outcome="denied", source="token_auth", resources=path, error=f"mixed non-loopback cookie auth failed: {_reason}")
-                    _log_auth(request, "internal", "denied", f"mixed non-loopback cookie auth failed: {_reason}")
+                    _sel.log_api_access(
+                        caller=request.remote or "",
+                        operation="internal_auth",
+                        outcome="denied",
+                        source="token_auth",
+                        resources=path,
+                        error=f"mixed non-loopback cookie auth failed: {_reason}",
+                    )
+                    _log_auth(
+                        request,
+                        "internal",
+                        "denied",
+                        f"mixed non-loopback cookie auth failed: {_reason}",
+                    )
                     return _deny(request, "Forbidden")
                 _sel = _sel_fn()
-                _sel.log_api_access(caller=request.remote or "", operation="internal_auth", outcome="granted", source="token_auth", resources=path, error="mixed non-loopback cookie auth")
-                _log_auth(request, "internal", "granted", f"mixed non-loopback cookie auth for {_uid}")
+                _sel.log_api_access(
+                    caller=request.remote or "",
+                    operation="internal_auth",
+                    outcome="granted",
+                    source="token_auth",
+                    resources=path,
+                    error="mixed non-loopback cookie auth",
+                )
+                _log_auth(
+                    request, "internal", "granted", f"mixed non-loopback cookie auth for {_uid}"
+                )
                 return await handler(request)  # type: ignore[operator]
             else:
                 # INVARIANT: non-loopback access to strict internal paths is
@@ -574,7 +637,14 @@ def token_auth_middleware(
                 # normal cookie auth, defeating the machine-to-machine
                 # isolation that the internal-secret design provides.
                 _sel = _sel_fn()
-                _sel.log_api_access(caller=request.remote or "", operation="internal_auth", outcome="denied", source="token_auth", resources=path, error="non-loopback source")
+                _sel.log_api_access(
+                    caller=request.remote or "",
+                    operation="internal_auth",
+                    outcome="denied",
+                    source="token_auth",
+                    resources=path,
+                    error="non-loopback source",
+                )
                 _log_auth(request, "internal", "denied", "non-loopback source")
                 return _deny(request, "Forbidden")
 
@@ -595,7 +665,9 @@ def token_auth_middleware(
             _log_auth(request, "", "denied", "Token required")
             return _deny(request, "Token required")
 
-        valid, user_id, reason, app_name = validate_token_with_app(token, use_session_exp=from_cookie)
+        valid, user_id, reason, app_name = validate_token_with_app(
+            token, use_session_exp=from_cookie
+        )
         if not valid:
             _log_auth(request, "", "denied", reason)
             return _deny(request, reason)
@@ -669,7 +741,7 @@ def token_auth_middleware(
         _log_auth(request, user_id, "ok", "")
         return resp  # type: ignore[return-value]
 
-    middleware._is_token_auth = True  # type: ignore[attr-defined]  # sentinel for server.py security gate
+    middleware._is_token_auth = True  # type: ignore[attr-defined]  # sentinel for server.py security gate  # noqa: E501
     return middleware
 
 
@@ -704,6 +776,7 @@ def auth_middleware(
     mode: AuthMode = auth_cfg.mode
 
     if mode == AuthMode.NONE:
+
         @web.middleware
         async def _passthrough(request: web.Request, handler: object) -> web.StreamResponse:
             return await handler(request)  # type: ignore[operator]
@@ -736,7 +809,7 @@ def auth_middleware(
             if not auth_header.startswith("Bearer "):
                 logger.debug("api_key_mw: missing Bearer header for %s", path)
                 return _deny_401(request, "Unauthorized")
-            provided = auth_header[len("Bearer "):]
+            provided = auth_header[len("Bearer ") :]
             if not api_key_env:
                 logger.warning("api_key_mw: api_key_env not configured")
                 return _deny_401(request, "Unauthorized")
@@ -778,7 +851,7 @@ def auth_middleware(
             if not auth_header.startswith("Bearer "):
                 logger.debug("oauth2_mw: missing Bearer header for %s", path)
                 return _deny_401(request, "Unauthorized")
-            token = auth_header[len("Bearer "):]
+            token = auth_header[len("Bearer ") :]
             try:
                 claims = _verifier.verify(token)
             except OidcVerificationError as exc:

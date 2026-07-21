@@ -162,14 +162,10 @@ async def task_graph(provider_filter: str | None = None) -> dict[str, Any]:
     return await asyncio.to_thread(prov.graph)  # type: ignore[attr-defined]
 
 
-async def ready_tasks(
-    project: str | None = None, task_list_id: str | None = None
-) -> list[Task]:
+async def ready_tasks(project: str | None = None, task_list_id: str | None = None) -> list[Task]:
     """Tasks that can be started now (no unfinished prerequisites), optionally
     scoped to a project label or a task list."""
-    tasks, _ = await list_all_tasks(
-        project=project, task_list_id=task_list_id, limit=10_000
-    )
+    tasks, _ = await list_all_tasks(project=project, task_list_id=task_list_id, limit=10_000)
     task_map = {t.id: t for t in tasks}
     ready_ids = set(reconcile.ready_task_ids(task_map))
     return [t for t in tasks if t.id in ready_ids]
@@ -189,9 +185,7 @@ async def search_tasks(
     """Full task search: case-folded substring over title+description, plus
     status/priority/tag/project/task-list filters and a sort key
     (relevance|created_at|updated_at|priority)."""
-    tasks, _ = await list_all_tasks(
-        project=project, task_list_id=task_list_id, limit=10_000
-    )
+    tasks, _ = await list_all_tasks(project=project, task_list_id=task_list_id, limit=10_000)
     q = (query or "").strip().lower()
     status_set = {s for s in (statuses or []) if s}
     prio_set = {p for p in (priorities or []) if p}
@@ -222,8 +216,11 @@ async def search_tasks(
         matched.sort(key=lambda st: (st[0], st[1].created_at), reverse=True)
     elif sort_by == "priority":
         weight = {
-            TaskPriority.CRITICAL: 5, TaskPriority.HIGH: 4, TaskPriority.MEDIUM: 3,
-            TaskPriority.LOW: 2, TaskPriority.TRIVIAL: 1,
+            TaskPriority.CRITICAL: 5,
+            TaskPriority.HIGH: 4,
+            TaskPriority.MEDIUM: 3,
+            TaskPriority.LOW: 2,
+            TaskPriority.TRIVIAL: 1,
         }
         matched.sort(key=lambda st: (weight.get(st[1].priority, 3), st[1].created_at), reverse=True)
     elif sort_by == "created_at":

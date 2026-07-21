@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from personalclaw.model_windows import (
     DEFAULT_CONTEXT_WINDOW,
-    model_context_window,
     active_chat_model_window,
+    model_context_window,
 )
 
 
@@ -32,7 +32,8 @@ def test_active_chat_window_resolves_or_defaults():
 
 
 def test_caps_scale_with_window():
-    from personalclaw.context import _memory_caps, _MEMORY_HISTORY_CAP, _MEMORY_PREFS_CAP
+    from personalclaw.context import _MEMORY_HISTORY_CAP, _MEMORY_PREFS_CAP, _memory_caps
+
     base = _memory_caps(200_000)
     assert base["history_cap"] == _MEMORY_HISTORY_CAP  # baseline unchanged at 200k
     assert base["prefs_cap"] == _MEMORY_PREFS_CAP
@@ -44,13 +45,15 @@ def test_caps_scale_with_window():
 
 
 def test_caps_floor_at_baseline_for_small_and_unknown():
-    from personalclaw.context import _memory_caps, _MEMORY_HISTORY_CAP
+    from personalclaw.context import _MEMORY_HISTORY_CAP, _memory_caps
+
     # a 128k model must not go BELOW the calibrated baseline (floor = 1.0×)
     assert _memory_caps(128_000)["history_cap"] == _MEMORY_HISTORY_CAP
     assert _memory_caps(None)["history_cap"] == _MEMORY_HISTORY_CAP
 
 
 def test_caps_ceiling_clamps_beyond_5x():
-    from personalclaw.context import _memory_caps, _MEMORY_HISTORY_CAP
+    from personalclaw.context import _MEMORY_HISTORY_CAP, _memory_caps
+
     # a hypothetical 10M window still clamps at ×5 (bounded injection)
     assert _memory_caps(10_000_000)["history_cap"] == _MEMORY_HISTORY_CAP * 5

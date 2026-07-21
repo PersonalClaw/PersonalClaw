@@ -32,8 +32,8 @@ from typing import Any
 
 from personalclaw.action_providers.base import (
     ActionContext,
-    ActionResult,
     ActionProvider,
+    ActionResult,
 )
 from personalclaw.action_providers.services import get_action_services
 from personalclaw.action_providers.template import render_template
@@ -72,15 +72,11 @@ class InvokeAgentActionProvider(ActionProvider):
 
         task = render_template(action_config.get("task_template", ""), ctx).strip()
         if not task:
-            return ActionResult(
-                success=False, error="invoke-agent hook is missing 'task_template'"
-            )
+            return ActionResult(success=False, error="invoke-agent hook is missing 'task_template'")
 
         services = get_action_services()
         if services is None or services.subagents is None:
-            return ActionResult(
-                success=False, error="invoke-agent: subagent manager unavailable"
-            )
+            return ActionResult(success=False, error="invoke-agent: subagent manager unavailable")
 
         if _invoke_agent_sem.locked():
             return ActionResult(
@@ -99,8 +95,9 @@ class InvokeAgentActionProvider(ActionProvider):
         if approval_mode is None:
             try:
                 from personalclaw.config.loader import AppConfig
+                from personalclaw.hooks import HooksConfig
 
-                if AppConfig.load().hooks.auto_approve_subagent_spawn:
+                if HooksConfig.from_dict(AppConfig.load().hooks).auto_approve_subagent_spawn:
                     approval_mode = "auto"
             except Exception:
                 logger.debug("invoke-agent: auto-approve config lookup failed", exc_info=True)
@@ -130,7 +127,9 @@ class InvokeAgentActionProvider(ActionProvider):
         # "launched", not "succeeded": the spawned agent's real outcome is recorded
         # by its own run, not known here (T7 honest "started ≠ succeeded" status).
         return ActionResult(
-            success=True, exit_code=0, stdout=f"spawned agent for: {task[:80]}",
+            success=True,
+            exit_code=0,
+            stdout=f"spawned agent for: {task[:80]}",
             outcome="launched",
         )
 

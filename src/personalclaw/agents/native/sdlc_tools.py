@@ -84,8 +84,11 @@ async def _launch(kind: str, lid: str, deep_path: str, label: str) -> ToolResult
         # skips it: already validated at start, don't re-block on a transient.
         v = validation.validate(loop.to_dict(), agent_exists=_agent_exists(loop.to_dict()))
         if not v.can_start:
-            return ToolResult(success=False, error="; ".join(v.errors) or "validation failed",
-                              recovery_hints=["Fix the listed issues, then start again."])
+            return ToolResult(
+                success=False,
+                error="; ".join(v.errors) or "validation failed",
+                recovery_hints=["Fix the listed issues, then start again."],
+            )
         # Surface non-blocking warnings at the moment autonomous work (+ spend) begins —
         # the cost estimate matters MOST here, and a UI-created project started via chat
         # never saw the create-time relay. RESUME skips re-validation, so no warnings there.
@@ -95,16 +98,29 @@ async def _launch(kind: str, lid: str, deep_path: str, label: str) -> ToolResult
         blocker = getattr(strat, "launch_blocker", None) if strat else None
         reason = blocker(loop) if blocker else None
         if reason:
-            return ToolResult(success=False, error=reason,
-                              recovery_hints=["A brownfield code loop needs a workspace dir; have the user pick one first."])
+            return ToolResult(
+                success=False,
+                error=reason,
+                recovery_hints=[
+                    "A brownfield code loop needs a workspace dir; have the user pick one first."
+                ],
+            )
     elif LoopStatus(loop.status) == LoopStatus.RUNNING:
         # Already running — not an error to relay as a failure; tell the agent it's live
         # so it reassures the user + offers sdlc_status rather than implying a problem.
-        return ToolResult(success=False, error=f"this {label} is already running.",
-                          recovery_hints=["It's live — call sdlc_status with this id to report progress, no need to start it again."])
+        return ToolResult(
+            success=False,
+            error=f"this {label} is already running.",
+            recovery_hints=[
+                "It's live — call sdlc_status with this id to report progress, no need to start it again."  # noqa: E501
+            ],
+        )
     elif LoopStatus(loop.status) in (LoopStatus.COMPLETE, LoopStatus.STOPPED):
-        return ToolResult(success=False, error=f"this {label} already finished ('{loop.status}') — a terminal run can't be restarted.",
-                          recovery_hints=["Create a new project/loop for follow-up work."])
+        return ToolResult(
+            success=False,
+            error=f"this {label} already finished ('{loop.status}') — a terminal run can't be restarted.",  # noqa: E501
+            recovery_hints=["Create a new project/loop for follow-up work."],
+        )
     elif LoopStatus(loop.status) not in ACTION_SOURCE_STATES["resume"]:
         return ToolResult(success=False, error=f"can't start a {label} in '{loop.status}' state.")
     state, svc = _state(), _svc()
@@ -116,13 +132,17 @@ async def _launch(kind: str, lid: str, deep_path: str, label: str) -> ToolResult
         logger.debug("%s start failed", label, exc_info=True)
         return ToolResult(success=False, error=f"could not start {label}: {exc}")
     warn = (" ⚠ " + " ".join(launch_warnings)) if launch_warnings else ""
-    return ToolResult(success=True, output=(
-        f"Started {label} `{lid}` — it's now running. Watch progress at {deep_path}{lid} "
-        f"or call sdlc_status with this id.{warn}"
-    ))
+    return ToolResult(
+        success=True,
+        output=(
+            f"Started {label} `{lid}` — it's now running. Watch progress at {deep_path}{lid} "
+            f"or call sdlc_status with this id.{warn}"
+        ),
+    )
 
 
 # ── Code projects ──────────────────────────────────────────────────────────────
+
 
 async def code_project_create(a: dict) -> ToolResult:
     """Create a Code project DRAFT from a plan the agent shaped with the user.
@@ -132,14 +152,20 @@ async def code_project_create(a: dict) -> ToolResult:
     (list of {stage,title,objective,exit_criteria?,tasks?}), attended?, max_cycles?,
     verify_command?, test_command?, success_criteria?. Validates like the create API;
     returns the project id + cockpit link. Does NOT start it."""
+    from personalclaw.dashboard.handlers.loop_routes import (
+        _build_loop_from_body,
+        _installed_capability_catalogs,
+    )
     from personalclaw.loop import store, validation
     from personalclaw.loop.code_classify import _normalize_plan
-    from personalclaw.dashboard.handlers.loop_routes import _build_loop_from_body, _installed_capability_catalogs
 
     task = str(a.get("task", "")).strip()
     if len(task) < 12:
-        return ToolResult(success=False, error="task is too vague — describe it in more detail (min 12 chars).",
-                          recovery_hints=["Give a concrete SDLC task: an idea, a bugfix, a refactor, a feature."])
+        return ToolResult(
+            success=False,
+            error="task is too vague — describe it in more detail (min 12 chars).",
+            recovery_hints=["Give a concrete SDLC task: an idea, a bugfix, a refactor, a feature."],
+        )
     project_kind = str(a.get("project_kind", "greenfield")) or "greenfield"
     # Normalize the agent-supplied stage_plan through the SAME guard the classify path
     # uses (_normalize_plan): dedupe rows by their effective downstream key (stage ||
@@ -172,25 +198,35 @@ async def code_project_create(a: dict) -> ToolResult:
     # exactly like POST /api/loops, so a brownfield project can be saved without a dir.
     v = validation.validate(body, agent_exists=_agent_exists(body))
     if not v.can_start:
-        return ToolResult(success=False, error="; ".join(v.errors) or "validation failed",
-                          recovery_hints=["Fix the listed issues and call code_project_create again."])
+        return ToolResult(
+            success=False,
+            error="; ".join(v.errors) or "validation failed",
+            recovery_hints=["Fix the listed issues and call code_project_create again."],
+        )
     try:
         loop = store.create(_build_loop_from_body(body))
     except Exception as exc:  # noqa: BLE001
         logger.debug("code_project_create failed", exc_info=True)
         return ToolResult(success=False, error=f"could not create project: {exc}")
     needs_ws = project_kind == "brownfield" and not body["workspace_dir"]
-    note = (" It's a brownfield project with no workspace yet — ask the user to pick the "
-            "codebase directory (or pass workspace_dir) before starting." if needs_ws else "")
+    note = (
+        " It's a brownfield project with no workspace yet — ask the user to pick the "
+        "codebase directory (or pass workspace_dir) before starting."
+        if needs_ws
+        else ""
+    )
     # Relay non-blocking validation warnings (e.g. duplicate stages that drop at launch,
     # a not-yet-existing workspace) so the agent can flag them to the user / fix the plan
     # — they were silently discarded before, surfacing only in the FE.
     warn = (" ⚠ " + " ".join(v.warnings)) if v.warnings else ""
-    return ToolResult(success=True, output=(
-        f"Created Code project draft `{loop.id}` — \"{loop.name}\" "
-        f"({project_kind}, entry stage {body['entry_stage']}, {len(body['plan'])} stages). "
-        f"Open: /#/code/{loop.id} . Not started yet — call code_project_start when the user gives the go.{note}{warn}"
-    ))
+    return ToolResult(
+        success=True,
+        output=(
+            f'Created Code project draft `{loop.id}` — "{loop.name}" '
+            f"({project_kind}, entry stage {body['entry_stage']}, {len(body['plan'])} stages). "
+            f"Open: /#/code/{loop.id} . Not started yet — call code_project_start when the user gives the go.{note}{warn}"  # noqa: E501
+        ),
+    )
 
 
 async def code_project_start(a: dict) -> ToolResult:
@@ -206,7 +242,12 @@ async def code_project_start(a: dict) -> ToolResult:
 # share the goal-shaped arg surface (task + sub_goals/deliverables/scope), so ONE tool
 # covers them via a `kind` arg rather than three near-duplicate tools.
 _LOOP_CREATE_KINDS = ("goal", "general", "design", "research")
-_KIND_LABEL = {"goal": "Goal Loop", "general": "Loop", "design": "Design loop", "research": "Research loop"}
+_KIND_LABEL = {
+    "goal": "Goal Loop",
+    "general": "Loop",
+    "design": "Design loop",
+    "research": "Research loop",
+}
 
 
 async def goal_loop_create(a: dict) -> ToolResult:
@@ -219,17 +260,25 @@ async def goal_loop_create(a: dict) -> ToolResult:
     rubric? ([str]). For kind 'research', sub_goals seed the initial subtopics and the
     loop does deep web research → a synthesized report. Returns the loop id + link.
     Does NOT start it."""
-    from personalclaw.loop import store, validation
     from personalclaw.dashboard.handlers.loop_routes import _build_loop_from_body
+    from personalclaw.loop import store, validation
 
     goal = str(a.get("goal", "")).strip()
     if len(goal) < 12:
-        return ToolResult(success=False, error="goal is too vague — describe it in more detail (min 12 chars).",
-                          recovery_hints=["State a concrete outcome the loop should drive toward."])
+        return ToolResult(
+            success=False,
+            error="goal is too vague — describe it in more detail (min 12 chars).",
+            recovery_hints=["State a concrete outcome the loop should drive toward."],
+        )
     kind = str(a.get("kind", "goal")).strip().lower() or "goal"
     if kind not in _LOOP_CREATE_KINDS:
-        return ToolResult(success=False, error=f"kind must be one of {', '.join(_LOOP_CREATE_KINDS)} (code uses code_project_create).",
-                          recovery_hints=["Pick goal for research/action, general for a generic iterative task, research for deep web research → a report, design for a design system."])
+        return ToolResult(
+            success=False,
+            error=f"kind must be one of {', '.join(_LOOP_CREATE_KINDS)} (code uses code_project_create).",  # noqa: E501
+            recovery_hints=[
+                "Pick goal for research/action, general for a generic iterative task, research for deep web research → a report, design for a design system."  # noqa: E501
+            ],
+        )
     body = {
         "kind": kind,
         "task": goal,
@@ -253,6 +302,7 @@ async def goal_loop_create(a: dict) -> ToolResult:
     # general self-phases at run — neither needs a pre-seeded plan here.)
     if kind == "design":
         from personalclaw.loop import kinds as _kinds
+
         _kinds.ensure_loaded()
         _strat = _kinds.get_or_none("design")
         _phases = _strat.default_phases() if _strat and hasattr(_strat, "default_phases") else []
@@ -264,8 +314,11 @@ async def goal_loop_create(a: dict) -> ToolResult:
     # screened verify command) that a UI-created one gets.
     v = validation.validate(body, agent_exists=_agent_exists(body))
     if not v.can_start:
-        return ToolResult(success=False, error="; ".join(v.errors) or "validation failed",
-                          recovery_hints=["Fix the listed issues and call goal_loop_create again."])
+        return ToolResult(
+            success=False,
+            error="; ".join(v.errors) or "validation failed",
+            recovery_hints=["Fix the listed issues and call goal_loop_create again."],
+        )
     try:
         loop = store.create(_build_loop_from_body(body))
     except Exception as exc:  # noqa: BLE001
@@ -274,23 +327,30 @@ async def goal_loop_create(a: dict) -> ToolResult:
     n_sub = len(loop.kind_config.get("sub_goals", []) or [])
     label = _KIND_LABEL.get(kind, "Loop")
     # Goal's defining trait is its goal_type; general/design lead with their phase plan.
-    detail = (f"{loop.kind_config.get('goal_type', 'open_ended')}, {n_sub} sub-goals"
-              if kind == "goal" else f"{len(loop.plan or [])} phases")
+    detail = (
+        f"{loop.kind_config.get('goal_type', 'open_ended')}, {n_sub} sub-goals"
+        if kind == "goal"
+        else f"{len(loop.plan or [])} phases"
+    )
     # Relay non-blocking validation warnings (e.g. the high-cycle-count COST estimate,
     # a not-yet-existing workspace) so the agent can flag them to the user — they were
     # silently discarded before, surfacing only in the FE. Mirrors code_project_create.
     warn = (" ⚠ " + " ".join(v.warnings)) if v.warnings else ""
-    return ToolResult(success=True, output=(
-        f"Created {label} draft `{loop.id}` — \"{loop.name}\" "
-        f"({detail}). Open: /#/loops/{loop.id} . "
-        f"Not started yet — call goal_loop_start when the user gives the go.{warn}"
-    ))
+    return ToolResult(
+        success=True,
+        output=(
+            f'Created {label} draft `{loop.id}` — "{loop.name}" '
+            f"({detail}). Open: /#/loops/{loop.id} . "
+            f"Not started yet — call goal_loop_start when the user gives the go.{warn}"
+        ),
+    )
 
 
 async def goal_loop_start(a: dict) -> ToolResult:
     """Launch a created Goal / General / Design Loop draft (or resume one). Args:
     loop_id (str, required). The kind is read from the stored loop."""
     from personalclaw.loop import store
+
     lid = str(a.get("loop_id", "")).strip()
     loop = store.get(lid) if store.valid_loop_id(lid) else None
     kind = loop.kind if loop else "goal"
@@ -322,10 +382,15 @@ async def project_create(a: dict) -> ToolResult:
     """
     kind = str(a.get("kind", "")).strip().lower()
     if kind not in _PROJECT_KINDS:
-        return ToolResult(success=False, error=f"kind must be one of {', '.join(_PROJECT_KINDS)}.",
-                          recovery_hints=["'code' for SDLC work in a codebase; 'goal' for research/action toward "
-                                          "an outcome; 'research' for deep web research → a report; 'design' for a "
-                                          "design system; 'general' for a generic iterative task."])
+        return ToolResult(
+            success=False,
+            error=f"kind must be one of {', '.join(_PROJECT_KINDS)}.",
+            recovery_hints=[
+                "'code' for SDLC work in a codebase; 'goal' for research/action toward "
+                "an outcome; 'research' for deep web research → a report; 'design' for a "
+                "design system; 'general' for a generic iterative task."
+            ],
+        )
     if kind == "code":
         return await code_project_create(a)
     # goal/general/design/research share the goal-shaped surface; goal_loop_create
@@ -339,6 +404,7 @@ async def project_start(a: dict) -> ToolResult:
     """Launch a created Project (any kind), or resume a paused/failed one. Args:
     project_id (str, required). The kind is read from the stored project."""
     from personalclaw.loop import store
+
     pid = str(a.get("project_id", "")).strip()
     loop = store.get(pid) if store.valid_loop_id(pid) else None
     kind = loop.kind if loop else "goal"
@@ -358,6 +424,7 @@ async def project_list(a: dict) -> ToolResult:
     you can find one to report on or resume. Args: optional kind (filter), limit
     (int, default 25). Newest first."""
     from personalclaw.loop import store
+
     kind_filter = str(a.get("kind", "")).strip().lower()
     try:
         limit = max(1, int(a.get("limit", 25) or 25))
@@ -367,18 +434,23 @@ async def project_list(a: dict) -> ToolResult:
         rows = store.list_redacted(kind=kind_filter if kind_filter in _PROJECT_KINDS else "")
     except Exception:
         logger.debug("project_list failed", exc_info=True)
-        return ToolResult(success=False, error="could not list projects (execution service unavailable).")
+        return ToolResult(
+            success=False, error="could not list projects (execution service unavailable)."
+        )
     if not rows:
-        return ToolResult(success=True, output="(no projects yet — use project_create to start one)")
+        return ToolResult(
+            success=True, output="(no projects yet — use project_create to start one)"
+        )
     rows = rows[:limit]
     body = "\n".join(
-        f"- [{r.get('kind', '?')}] {r.get('name') or r.get('id')} (id={r.get('id')}) — {r.get('status', '?')}"
+        f"- [{r.get('kind', '?')}] {r.get('name') or r.get('id')} (id={r.get('id')}) — {r.get('status', '?')}"  # noqa: E501
         for r in rows
     )
     return ToolResult(success=True, output=f"{len(rows)} project(s):\n{body}")
 
 
 # ── shared status read (powers the chat progress widget) ────────────────────────
+
 
 async def sdlc_status(a: dict) -> ToolResult:
     """Read the live progress of any loop — Code project, Goal, General, or Design.
@@ -407,7 +479,11 @@ async def sdlc_status(a: dict) -> ToolResult:
     else:
         stages = red.get("plan", []) or []
         done = sum(1 for s in (red.get("phase_status") or {}).values() if s == "done")
-        prog = f"{done}/{len(stages)} {'stages' if kind == 'code' else 'phases'} done" if stages else "no phase plan"
+        prog = (
+            f"{done}/{len(stages)} {'stages' if kind == 'code' else 'phases'} done"
+            if stages
+            else "no phase plan"
+        )
     last = findings[-1].get("summary", "") if findings else ""
     # When the run is parked ON the user, the WHY is the whole point of asking for
     # status — surface it so the agent can relay what to do, not just "it's waiting".
@@ -420,7 +496,9 @@ async def sdlc_status(a: dict) -> ToolResult:
         q = str(pq.get("question") or "").strip()
         why = str(pq.get("why") or "").strip()
         if q:
-            waiting = f"⚠ Needs your input: {q[:300]}" + (f" (why: {why[:200]})" if why else "") + " "
+            waiting = (
+                f"⚠ Needs your input: {q[:300]}" + (f" (why: {why[:200]})" if why else "") + " "
+            )
         else:
             waiting = "⚠ Waiting on your input. "
     elif status in ("blocked", "failed", "stagnant"):
@@ -432,15 +510,20 @@ async def sdlc_status(a: dict) -> ToolResult:
         # exhausted before all stages cleared) — the FE shows this as "Ended early", so
         # relay the distinction here too instead of a misleading bare "complete". Mirrors
         # effectiveLoopStatus on the chat card / list / cockpit.
-        waiting = f"⚠ Ended early (didn't fully finish): {str(red.get('error_message')).strip()[:300]} "
+        waiting = (
+            f"⚠ Ended early (didn't fully finish): {str(red.get('error_message')).strip()[:300]} "
+        )
     # Emit the cockpit deep-link so the in-chat progress widget (sdlcRefFromTool)
     # recognizes this segment + renders the live auto-refreshing card — same as the
     # create/start tools. The FE still routes code kinds under /#/code and the rest
     # under /#/loops (unified front door lands in step 10).
     link = f"/#/{'code' if kind == 'code' else 'loops'}/{cid}"
-    return ToolResult(success=True, output=(
-        f"{kind} `{cid}` — status: {status}; {prog}; {len(findings)} cycles. "
-        + waiting
-        + (f"Latest: {last[:200]} " if last else "No findings yet. ")
-        + f"Open: {link}"
-    ))
+    return ToolResult(
+        success=True,
+        output=(
+            f"{kind} `{cid}` — status: {status}; {prog}; {len(findings)} cycles. "
+            + waiting
+            + (f"Latest: {last[:200]} " if last else "No findings yet. ")
+            + f"Open: {link}"
+        ),
+    )

@@ -216,7 +216,7 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
             # that suppress the TUI). Prefer the bundle-declared login argv (e.g.
             # ``claude /login``) — the vendor knows its own auth verb; the core
             # never names it. Fall back to bare invocation of the adapter binary.
-            login_cmd = [str(p) for p in declared] if has_login_cmd else [command[0]]
+            login_cmd = [str(p) for p in (declared or [])] if has_login_cmd else [command[0]]
 
             if signalled:
                 return ReadinessStatus(
@@ -235,9 +235,7 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
                     ),
                     login_command=login_cmd,
                 )
-            return ReadinessStatus(
-                ready=False, state="error", detail=f"handshake failed: {exc}"
-            )
+            return ReadinessStatus(ready=False, state="error", detail=f"handshake failed: {exc}")
 
     @classmethod
     async def discover_agents(cls, options: dict) -> list["DiscoveredAgent"]:
@@ -313,9 +311,7 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
                 },
                 timeout=timeout,
             )
-            await connection.new_session(
-                {"cwd": str(work_dir), "mcpServers": []}, timeout=timeout
-            )
+            await connection.new_session({"cwd": str(work_dir), "mcpServers": []}, timeout=timeout)
             session_new = dict(connection.last_session_new_snapshot or {})
         except Exception as exc:  # noqa: BLE001 - discovery never raises into the API
             logger.debug("discover_agents failed for %s: %s", options.get("runtime_id"), exc)
@@ -341,9 +337,8 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
         from personalclaw.agents.provider import DiscoveredAgent
 
         runtime_id = str(options.get("runtime_id") or "").strip() or "acp"
-        runtime_label = (
-            str(options.get("runtime_label") or "").strip()
-            or (runtime_id.split(":", 1)[-1] if ":" in runtime_id else runtime_id)
+        runtime_label = str(options.get("runtime_label") or "").strip() or (
+            runtime_id.split(":", 1)[-1] if ":" in runtime_id else runtime_id
         )
         dialect = get_dialect(options.get("dialect"))
         result = dialect.normalize_discovery(snapshot or {})
@@ -774,8 +769,7 @@ def _factory(
     # native brand here would send a modeId no ACP backend defines (the default dialect errors
     # ``Mode 'PersonalClaw' not found``).
     agent_name = (
-        str(kwargs.get("agent") or "").strip()
-        or str(options.get("agent_name") or "").strip()
+        str(kwargs.get("agent") or "").strip() or str(options.get("agent_name") or "").strip()
     )
 
     # Model is likewise per session. The bridge maps the session's

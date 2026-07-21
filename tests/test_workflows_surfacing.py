@@ -11,11 +11,11 @@ from personalclaw.workflows.models import Workflow, WorkflowScope, WorkflowStep
 from personalclaw.workflows.native import NativeWorkflowProvider
 from personalclaw.workflows.surfacing import (
     TurnScope,
+    _is_eligible,
+    _keyword_score,
     best_match,
     eligible_workflows,
     render_injection,
-    _is_eligible,
-    _keyword_score,
 )
 
 
@@ -76,8 +76,12 @@ def test_agent_scope_matches_resolved_agent_id():
 @pytest.mark.asyncio
 async def test_eligible_workflows_unions_scopes(temp_native):
     await registry.create_workflow(name="g", scope="global", match_text="a")
-    await registry.create_workflow(name="ws", scope="workspace", scope_ref="/repo/a", match_text="b")
-    await registry.create_workflow(name="other", scope="workspace", scope_ref="/repo/b", match_text="c")
+    await registry.create_workflow(
+        name="ws", scope="workspace", scope_ref="/repo/a", match_text="b"
+    )
+    await registry.create_workflow(
+        name="other", scope="workspace", scope_ref="/repo/b", match_text="c"
+    )
     elig = await eligible_workflows(TurnScope(cwd="/repo/a"))
     names = sorted(w.name for w in elig)
     assert names == ["g", "ws"]
@@ -95,9 +99,12 @@ def test_keyword_score_per_phrase():
 
 
 def test_best_match_keyword_path_returns_match():
-    wf = _wf(name="git-commit", scope=WorkflowScope.GLOBAL,
-             match_text="committing changes, making a git commit, saving work",
-             steps=[WorkflowStep(id="s1", title="Run tests")])
+    wf = _wf(
+        name="git-commit",
+        scope=WorkflowScope.GLOBAL,
+        match_text="committing changes, making a git commit, saving work",
+        steps=[WorkflowStep(id="s1", title="Run tests")],
+    )
     m = best_match("I want to make a git commit", [wf])
     assert m is not None
     assert m.workflow.name == "git-commit"
@@ -105,8 +112,11 @@ def test_best_match_keyword_path_returns_match():
 
 
 def test_best_match_no_match_returns_none():
-    wf = _wf(name="git-commit", scope=WorkflowScope.GLOBAL,
-             match_text="committing changes, making a git commit")
+    wf = _wf(
+        name="git-commit",
+        scope=WorkflowScope.GLOBAL,
+        match_text="committing changes, making a git commit",
+    )
     assert best_match("the weather in paris today", [wf]) is None
 
 
@@ -132,10 +142,22 @@ def _patch_embed(monkeypatch, query_vec, model="native:test"):
 
 def test_embedding_ranking_picks_highest_cosine(monkeypatch):
     _patch_embed(monkeypatch, [1.0, 0.0])
-    near = _wf(id="a", name="near", scope=WorkflowScope.GLOBAL,
-               match_text="x", match_embedding=[0.99, 0.14], embedding_model="native:test")
-    far = _wf(id="b", name="far", scope=WorkflowScope.GLOBAL,
-              match_text="y", match_embedding=[0.0, 1.0], embedding_model="native:test")
+    near = _wf(
+        id="a",
+        name="near",
+        scope=WorkflowScope.GLOBAL,
+        match_text="x",
+        match_embedding=[0.99, 0.14],
+        embedding_model="native:test",
+    )
+    far = _wf(
+        id="b",
+        name="far",
+        scope=WorkflowScope.GLOBAL,
+        match_text="y",
+        match_embedding=[0.0, 1.0],
+        embedding_model="native:test",
+    )
     m = best_match("q", [far, near], threshold=0.62)
     assert m is not None and m.workflow.name == "near" and m.method == "embedding"
 
@@ -143,8 +165,14 @@ def test_embedding_ranking_picks_highest_cosine(monkeypatch):
 def test_embedding_threshold_boundary(monkeypatch):
     _patch_embed(monkeypatch, [1.0, 0.0])
     # cosine([1,0],[0.5,0.5]) = 0.707 > 0.62 → matches
-    hi = _wf(id="a", name="hi", scope=WorkflowScope.GLOBAL,
-             match_text="x", match_embedding=[0.5, 0.5], embedding_model="native:test")
+    hi = _wf(
+        id="a",
+        name="hi",
+        scope=WorkflowScope.GLOBAL,
+        match_text="x",
+        match_embedding=[0.5, 0.5],
+        embedding_model="native:test",
+    )
     assert best_match("q", [hi], threshold=0.62) is not None
     # raise threshold above 0.707 → no match
     assert best_match("q", [hi], threshold=0.8) is None
@@ -153,10 +181,23 @@ def test_embedding_threshold_boundary(monkeypatch):
 def test_scope_specificity_tiebreak_within_epsilon(monkeypatch):
     _patch_embed(monkeypatch, [1.0, 0.0])
     # Two near-equal cosines (within epsilon); session scope should win.
-    glob = _wf(id="g", name="glob", scope=WorkflowScope.GLOBAL,
-               match_text="x", match_embedding=[1.0, 0.02], embedding_model="native:test")
-    sess = _wf(id="s", name="sess", scope=WorkflowScope.SESSION, scope_ref="k",
-               match_text="y", match_embedding=[1.0, 0.0], embedding_model="native:test")
+    glob = _wf(
+        id="g",
+        name="glob",
+        scope=WorkflowScope.GLOBAL,
+        match_text="x",
+        match_embedding=[1.0, 0.02],
+        embedding_model="native:test",
+    )
+    sess = _wf(
+        id="s",
+        name="sess",
+        scope=WorkflowScope.SESSION,
+        scope_ref="k",
+        match_text="y",
+        match_embedding=[1.0, 0.0],
+        embedding_model="native:test",
+    )
     m = best_match("q", [glob, sess], threshold=0.5)
     assert m.workflow.name == "sess"
 
@@ -164,10 +205,23 @@ def test_scope_specificity_tiebreak_within_epsilon(monkeypatch):
 def test_relevance_dominates_outside_epsilon(monkeypatch):
     _patch_embed(monkeypatch, [1.0, 0.0])
     # Global is much more relevant; specificity must NOT override a big gap.
-    glob = _wf(id="g", name="glob", scope=WorkflowScope.GLOBAL,
-               match_text="x", match_embedding=[1.0, 0.0], embedding_model="native:test")
-    sess = _wf(id="s", name="sess", scope=WorkflowScope.SESSION, scope_ref="k",
-               match_text="y", match_embedding=[0.4, 0.92], embedding_model="native:test")
+    glob = _wf(
+        id="g",
+        name="glob",
+        scope=WorkflowScope.GLOBAL,
+        match_text="x",
+        match_embedding=[1.0, 0.0],
+        embedding_model="native:test",
+    )
+    sess = _wf(
+        id="s",
+        name="sess",
+        scope=WorkflowScope.SESSION,
+        scope_ref="k",
+        match_text="y",
+        match_embedding=[0.4, 0.92],
+        embedding_model="native:test",
+    )
     m = best_match("q", [sess, glob], threshold=0.5)
     assert m.workflow.name == "glob"
 
@@ -175,9 +229,13 @@ def test_relevance_dominates_outside_epsilon(monkeypatch):
 def test_stale_embedding_falls_back_to_keyword(monkeypatch):
     # active model differs from the candidate's embedding_model → keyword path.
     _patch_embed(monkeypatch, [1.0, 0.0], model="native:NEW-model")
-    wf = _wf(name="git-commit", scope=WorkflowScope.GLOBAL,
-             match_text="making a git commit",
-             match_embedding=[1.0, 0.0], embedding_model="native:OLD-model")
+    wf = _wf(
+        name="git-commit",
+        scope=WorkflowScope.GLOBAL,
+        match_text="making a git commit",
+        match_embedding=[1.0, 0.0],
+        embedding_model="native:OLD-model",
+    )
     m = best_match("make a git commit", [wf])
     assert m is not None and m.method == "keyword"
 
@@ -186,10 +244,16 @@ def test_stale_embedding_falls_back_to_keyword(monkeypatch):
 
 
 def test_render_injection_format():
-    wf = _wf(name="git-commit", description="my flow", scope=WorkflowScope.GLOBAL,
-             match_text="x",
-             steps=[WorkflowStep(id="s1", title="Run tests", instruction="green first"),
-                    WorkflowStep(id="s2", title="Commit")])
+    wf = _wf(
+        name="git-commit",
+        description="my flow",
+        scope=WorkflowScope.GLOBAL,
+        match_text="x",
+        steps=[
+            WorkflowStep(id="s1", title="Run tests", instruction="green first"),
+            WorkflowStep(id="s2", title="Commit"),
+        ],
+    )
     from personalclaw.workflows.surfacing import WorkflowMatch
 
     block = render_injection(WorkflowMatch(workflow=wf, score=0.9, scope=WorkflowScope.GLOBAL))
