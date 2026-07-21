@@ -118,10 +118,11 @@ jobs:
         with:
           enable-cache: true
       - name: Build the client (proves packaging metadata is valid)
+        # `uv build` runs the build backend in its own isolated env — no
+        # `pip install --system` against the runner's PEP-668 /usr (which errors).
         run: |
           uv python install 3.12
-          uv pip install --system build
-          python -m build packages/personalclaw-client-py --outdir dist-client
+          uv build packages/personalclaw-client-py --out-dir dist-client
       - name: Test the client (its own deps)
         run: |
           uv venv .venv-client
