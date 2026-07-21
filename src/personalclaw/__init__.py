@@ -1,8 +1,19 @@
 """PersonalClaw — personal AI agent with pluggable LLM providers."""
 
 import asyncio
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 
-__version__ = "0.1.0"
+# Version single-sourcing (plan 34 T1.2): pyproject.toml is the single source of
+# truth. An installed package reports its version via importlib.metadata; a raw
+# source-tree run (no dist-info, e.g. `python -m personalclaw` from a checkout
+# without `pip install -e .`) falls back to the literal below. The consistency
+# test (tests/test_version_consistency.py) asserts the three agree at release time.
+_FALLBACK_VERSION = "0.1.0"
+try:
+    __version__ = _pkg_version("personalclaw")
+except PackageNotFoundError:  # running from an uninstalled source tree
+    __version__ = _FALLBACK_VERSION
 
 
 class _ShutdownEvent:

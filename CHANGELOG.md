@@ -36,6 +36,35 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
   the app-install pipeline installs). A residue-sweep test + a machine-checked keeps
   table (`docs/architecture/provider-boundary-keeps.txt`) prevent vendor residue from
   regrowing in core.
+- **LLM SDKs demoted out of core dependencies (`openai`, `anthropic`):** a bare
+  `pip install personalclaw` no longer pulls the OpenAI or Anthropic SDKs. They now
+  ship via (a) the `[openai]` / `[anthropic]` packaging extras for pip/uv users, and
+  (b) the branded provider apps' manifest `dependencies.pythonDependencies`, which the
+  app-install pipeline installs into the shared venv (plan 32 T2.1). The provider
+  adapters import their SDK lazily and now raise a clear `MissingSDKError` naming the
+  exact `pip install 'personalclaw[openai]'` remedy (and `personalclaw doctor`) when a
+  hosted provider is used without its SDK. This trims the default install; users who
+  install a provider app or the matching extra are unaffected (plan 34 T1.4).
+- **Self-update is now install-kind aware (git · pip · container · desktop):** the
+  in-app updater (Settings → Updates) and the update check no longer assume a git
+  checkout. The availability signal is the **latest GitHub release tag** (ETag-cached,
+  offline-tolerant) compared against the running version — tags are the release truth
+  for every install path. Apply adapts to the install kind: a **git** checkout runs the
+  existing pull → reinstall → rebuild → restart pipeline (with a new *Developer update
+  mode* toggle, `dashboard.update_dev_mode`, to track every commit instead of only
+  tagged releases); a **pip/uv/pipx** install runs `pip install -U personalclaw==<tag>`
+  into its own interpreter and gracefully re-execs (no web build — the wheel ships the
+  dashboard); a **container** install shows the exact `docker compose … pull && up -d`
+  commands (no in-place apply); a **desktop** install delegates to the app shell. The
+  Updates panel renders the right affordance per kind, and git installs also surface
+  commits-behind as secondary info.
+
+  This is a **clean break** (pre-1.0): the old git-only updater is replaced directly,
+  not gated — LIFECYCLE-DOCTRINE's gate machinery is deferred, so there is no
+  `update_kind_aware` gate to flip (owner decision 2026-07-20). Behavior change: a git
+  checkout now updates on new *release tags* by default instead of every commit — flip
+  *Developer update mode* on to restore per-commit updates. **Run `personalclaw
+  snapshot` before updating.** (plan 34 S4.)
 
 ### Removed
 

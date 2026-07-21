@@ -274,6 +274,9 @@ class TestUpdateEndpoints:
         nothing-to-pull apply degrades to restart instead, tested below)."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        (tmp_path / ".git").mkdir(
+            exist_ok=True
+        )  # mark as a git checkout (T4.1 detect_install_kind)
 
         from personalclaw.dashboard.handlers import api_update_apply
 
@@ -327,6 +330,9 @@ class TestUpdateApplyPipeline:
         masking a dead restart tail)."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        (tmp_path / ".git").mkdir(
+            exist_ok=True
+        )  # mark as a git checkout (T4.1 detect_install_kind)
         import personalclaw.dashboard.handlers.updates as upd
 
         monkeypatch.setattr(upd, "_apply_in_flight", False)
@@ -398,6 +404,9 @@ class TestUpdateApplyPipeline:
         and the in-flight guard is released."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        (tmp_path / ".git").mkdir(
+            exist_ok=True
+        )  # mark as a git checkout (T4.1 detect_install_kind)
         import personalclaw.dashboard.handlers.updates as upd
 
         monkeypatch.setattr(upd, "_apply_in_flight", False)
@@ -436,6 +445,61 @@ class TestUpdateApplyPipeline:
         reexec.assert_not_awaited()
         assert upd._apply_in_flight is False
 
+    @pytest.mark.asyncio
+    async def test_dev_mode_off_on_latest_tag_restarts_only(self, monkeypatch, tmp_path) -> None:
+        """Git checkout, commits ahead upstream, but on the latest release TAG
+        and update_dev_mode OFF → ride tags, not commits: degrade to restart-only
+        (no git pull), even though the upstream has new commits (plan 34 T4.3)."""
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        (tmp_path / ".git").mkdir(exist_ok=True)
+        import personalclaw.dashboard.handlers.updates as upd
+        from personalclaw import __version__ as _ver
+
+        monkeypatch.setattr(upd, "_apply_in_flight", False)
+        # Upstream is ahead (commits exist to pull) …
+        monkeypatch.setattr(upd, "_commits_behind_upstream", AsyncMock(return_value=3))
+        # … but the cached release tag == our running version (on the latest tag).
+        import personalclaw.dashboard.handlers.updates_kind as uk
+
+        monkeypatch.setattr(uk, "_read_cache", lambda: {"tag": f"v{_ver}"})
+        # update_dev_mode defaults OFF (no config file).
+        state = _make_state(monkeypatch, tmp_path)
+        steps_seen: list[str] = []
+        orig = state.push_update_progress
+        monkeypatch.setattr(
+            state,
+            "push_update_progress",
+            lambda step, detail="": (steps_seen.append(step), orig(step, detail))[1],
+        )
+        pulled: list = []
+
+        async def fake_exec(*args, **kwargs):  # type: ignore[no-untyped-def]
+            pulled.append(args)
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.communicate = AsyncMock(return_value=(b"", b""))
+            return proc
+
+        monkeypatch.setattr("asyncio.create_subprocess_exec", fake_exec)
+        monkeypatch.setattr(upd, "_graceful_reexec", AsyncMock())
+
+        app = web.Application()
+        app["state"] = state
+        app["auth_cfg"] = None
+        request = MagicMock()
+        request.app = app
+
+        resp = await upd.api_update_apply(request)
+        assert resp.status == 200
+        await asyncio.sleep(0.05)
+        # Restart-only path: 'restarting' fired, 'pulling' never did, and no
+        # git subprocess (pull/status) ran.
+        assert "restarting" in steps_seen
+        assert "pulling" not in steps_seen
+        assert not any("pull" in a for a in pulled)
+        assert upd._apply_in_flight is False
+
     async def _run_nothing_to_pull(self, monkeypatch, tmp_path, *, rev_list):
         """Drive api_update_apply with a mocked git where `rev-list HEAD..@{u}`
         behaves per `rev_list` (a (returncode, stdout) tuple) and the tree is
@@ -443,6 +507,9 @@ class TestUpdateApplyPipeline:
         Returns (resp_data, steps_seen, reexec_calls, commands)."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        (tmp_path / ".git").mkdir(
+            exist_ok=True
+        )  # mark as a git checkout (T4.1 detect_install_kind)
         import personalclaw.dashboard.handlers.updates as upd
 
         monkeypatch.setattr(upd, "_apply_in_flight", False)
@@ -537,6 +604,9 @@ class TestUpdateApplyPipeline:
         """While one apply is in flight, a second POST /api/update is 409."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        (tmp_path / ".git").mkdir(
+            exist_ok=True
+        )  # mark as a git checkout (T4.1 detect_install_kind)
         import personalclaw.dashboard.handlers.updates as upd
 
         monkeypatch.setattr(upd, "_apply_in_flight", True)  # one already running

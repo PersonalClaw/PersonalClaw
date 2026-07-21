@@ -25,6 +25,7 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
+from personalclaw._sdk_deps import require_sdk
 from personalclaw.llm.base import (
     EVENT_COMPLETE,
     EVENT_TEXT_CHUNK,
@@ -205,7 +206,9 @@ class AnthropicProvider(ModelProvider):
         extra_options: dict[str, object] | None = None,
     ) -> None:
         # Lazy import per R6.3 / Property 11. Do NOT lift to module top.
-        import anthropic  # noqa: WPS433
+        # anthropic is an OPTIONAL SDK (plan 34 T1.4) — require_sdk raises a clear
+        # MissingSDKError naming `pip install personalclaw[anthropic]` when absent.
+        anthropic = require_sdk("anthropic", "anthropic", feature="the Anthropic chat provider")
 
         if credential is None or not credential.secret:
             raise CredentialMissing(

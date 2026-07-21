@@ -53,14 +53,32 @@ dependencies = [
     "openpyxl>=3.1,<4",
     # Knowledge media thumbnails (media.py): downscale uploaded images to WebP.
     "Pillow>=10,<13",
-    "openai>=1.0",
-    "anthropic>=0.20",
+    # NOTE — openai / anthropic are NOT core deps (plan 34 T1.4). Their provider
+    # adapters (llm/openai.py, llm/anthropic.py, stt/tts openai_provider.py) import
+    # the SDK LAZILY and raise MissingSDKError naming the exact remedy when absent.
+    # The SDKs ship via the branded provider apps' manifest `pythonDependencies`
+    # (verified: apps/app_manager.py::_install_python_deps installs them into the
+    # shared venv — plan 32 T2.1), and the `[openai]` / `[anthropic]` extras remain
+    # the documented install path for pip/uv users. This keeps a bare
+    # `pip install personalclaw` lean without breaking any provider that's actually used.
     "httpx>=0.27",
     "PyYAML>=6,<7",
     # cli.py loads .env (CWD + PERSONALCLAW_HOME) so credentials resolve via
     # os.environ without hand-copying .env — an unconditional import at startup.
     "python-dotenv>=1.0",
 ]
+
+# Project URLs — surfaced by `pip show personalclaw` and the PyPI project page.
+# NOTE: this sub-table MUST come AFTER the bare `dependencies`/`version`/etc. keys
+# of [project] — a `[project.urls]` header placed earlier would capture every
+# subsequent bare key (e.g. `dependencies`) into the urls table (TOML tables run
+# until the next header), silently zeroing out the runtime dependency set.
+[project.urls]
+Homepage      = "https://personalclaw.dev"
+Documentation = "https://github.com/PersonalClaw/PersonalClaw/tree/main/docs"
+Source        = "https://github.com/PersonalClaw/PersonalClaw"
+Changelog     = "https://github.com/PersonalClaw/PersonalClaw/blob/main/CHANGELOG.md"
+Issues        = "https://github.com/PersonalClaw/PersonalClaw/issues"
 
 [project.optional-dependencies]
 # Provider SDK extras — install only what your provider requires
@@ -130,7 +148,10 @@ filesystem = "personalclaw.inbox_providers.filesystem_source"
 
 # ── Setuptools ────────────────────────────────────────────────────────────────
 [tool.setuptools]
-zip-safe = true
+# zip-safe intentionally NOT set (defaults to unzipped install): the runtime reads
+# packaged files by filesystem path — frontend.py serves personalclaw/static/dist/*,
+# config/defaults.json is read directly, and bundled skills/apps are globbed on disk.
+# A zipped egg would break those path reads; safe > clever (plan 34 T1.3).
 
 [tool.setuptools.packages.find]
 where = ["src"]

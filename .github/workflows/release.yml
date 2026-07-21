@@ -42,15 +42,14 @@ jobs:
           uv python install 3.12
           uv pip install --system build
           python -m build
-      - name: Verify the wheel carries the SPA
+      - name: Verify the wheel contract (SPA packaged + Node-free serve)
         run: |
-          python - <<'PY'
-          import glob, zipfile, sys
-          whl = glob.glob("dist/*.whl")[0]
-          names = zipfile.ZipFile(whl).namelist()
-          assert any(n.endswith("static/dist/index.html") for n in names), "wheel missing SPA (web/dist)"
-          print("OK: wheel carries the SPA —", whl)
-          PY
+          # Full C4 contract (scripts/verify_wheel.py): asserts the SPA is in the
+          # wheel, installs it into a scratch venv from the wheel alone (this runner
+          # has Node for the SPA build, but the verify venv installs only the wheel),
+          # boots `personalclaw gateway --test-mode`, and probes / (200 HTML) +
+          # /api/healthz (200). Replaces the old shallow namelist check.
+          python scripts/verify_wheel.py --wheel "dist/*.whl"
       - name: Derive version from tag
         id: ver
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
