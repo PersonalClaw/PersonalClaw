@@ -274,6 +274,9 @@ class TestUpdateEndpoints:
         nothing-to-pull apply degrades to restart instead, tested below)."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        (tmp_path / ".git").mkdir(
+            exist_ok=True
+        )  # mark as a git checkout (T4.1 detect_install_kind)
 
         from personalclaw.dashboard.handlers import api_update_apply
 
@@ -327,6 +330,9 @@ class TestUpdateApplyPipeline:
         masking a dead restart tail)."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        (tmp_path / ".git").mkdir(
+            exist_ok=True
+        )  # mark as a git checkout (T4.1 detect_install_kind)
         import personalclaw.dashboard.handlers.updates as upd
 
         monkeypatch.setattr(upd, "_apply_in_flight", False)
@@ -398,6 +404,9 @@ class TestUpdateApplyPipeline:
         and the in-flight guard is released."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        (tmp_path / ".git").mkdir(
+            exist_ok=True
+        )  # mark as a git checkout (T4.1 detect_install_kind)
         import personalclaw.dashboard.handlers.updates as upd
 
         monkeypatch.setattr(upd, "_apply_in_flight", False)
@@ -443,6 +452,9 @@ class TestUpdateApplyPipeline:
         Returns (resp_data, steps_seen, reexec_calls, commands)."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        (tmp_path / ".git").mkdir(
+            exist_ok=True
+        )  # mark as a git checkout (T4.1 detect_install_kind)
         import personalclaw.dashboard.handlers.updates as upd
 
         monkeypatch.setattr(upd, "_apply_in_flight", False)
@@ -537,6 +549,9 @@ class TestUpdateApplyPipeline:
         """While one apply is in flight, a second POST /api/update is 409."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
+        (tmp_path / ".git").mkdir(
+            exist_ok=True
+        )  # mark as a git checkout (T4.1 detect_install_kind)
         import personalclaw.dashboard.handlers.updates as upd
 
         monkeypatch.setattr(upd, "_apply_in_flight", True)  # one already running

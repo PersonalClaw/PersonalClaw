@@ -37,12 +37,32 @@ def get_update_info() -> dict[str, object]:
 
 
 async def api_update_check(request: web.Request) -> web.Response:
-    """GET /api/update/check — check if git remote has new commits."""
+    """GET /api/update/check — kind-aware update check (contract C2).
+
+    Returns the tag-driven cross-kind status ({kind, current, latest,
+    update_available, commits_behind, apply_method, instructions}) merged with
+    the legacy git changelog-diff fields (available/changes) for backward
+    compatibility with the existing panel. The git kind still runs the
+    commits-behind probe; every kind gets the release-tag comparison.
+    """
+    from personalclaw.dashboard.handlers.updates_kind import build_update_status
+
     await _do_update_check()
     cfg = AppConfig.load()
-    return web.json_response(
-        {**_update_info, "auto_update": cfg.auto_update, "version": _local_version}
-    )
+    try:
+        status = await build_update_status(_local_version)
+    except Exception:
+        logger.debug("build_update_status failed; returning legacy view", exc_info=True)
+        status = {}
+    # Prefer the tag-driven `update_available` when we have a latest tag; else
+    # fall back to the git changelog-diff `available` signal (offline git view).
+    merged: dict[str, object] = {**_update_info, **status}
+    if status.get("latest"):
+        merged["available"] = bool(status.get("update_available"))
+    merged["auto_update"] = cfg.auto_update
+    merged["update_dev_mode"] = cfg.dashboard.update_dev_mode
+    merged["version"] = _local_version
+    return web.json_response(merged)
 
 
 def _version_tuple(v: str) -> tuple[int, ...]:
@@ -322,6 +342,81 @@ async def _commits_behind_upstream(proj: str) -> int | None:
 _apply_in_flight = False
 
 
+async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.Response:
+    """Upgrade a pip/uv/pipx install in place, then graceful re-exec (T4.3).
+
+    Runs ``pip install -U personalclaw==<tag>`` (pinned to the latest release
+    tag when known; unpinned ``-U`` otherwise) using ``sys.executable`` so the
+    upgrade lands in the SAME interpreter/prefix the gateway runs from — mirrors
+    the git path's ``pip install -e .`` step. No web build: the wheel already
+    carries the SPA. The 409 concurrent-apply guard is shared with the git path.
+    """
+    global _apply_in_flight
+
+    if _apply_in_flight:
+        return web.json_response({"error": "An update is already in progress"}, status=409)
+    _apply_in_flight = True
+    state.push_refresh("updating")
+
+    from personalclaw.dashboard.handlers.updates_kind import build_update_status
+
+    try:
+        status = await build_update_status(_local_version)
+    except Exception:
+        status = {}
+    latest = str(status.get("latest") or "")
+    spec = f"personalclaw=={latest}" if latest else "personalclaw"
+    auth_mode = _live_auth_mode(request)
+
+    async def _apply() -> None:
+        global _apply_in_flight
+        try:
+            state.push_update_progress("installing", f"Upgrading {spec}…")
+            pip_up = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "-U",
+                spec,
+                "--quiet",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                _, pip_err = await asyncio.wait_for(pip_up.communicate(), timeout=400)
+            except asyncio.TimeoutError:
+                try:
+                    pip_up.kill()
+                except ProcessLookupError:
+                    pass
+                await pip_up.communicate()
+                state.push_update_progress("error", "pip upgrade timed out")
+                return
+            if pip_up.returncode != 0:
+                logger.error(
+                    "pip self-update failed (rc=%d): %s",
+                    pip_up.returncode,
+                    (pip_err or b"").decode(errors="replace")[:500],
+                )
+                state.push_update_progress("error", "pip upgrade failed")
+                return
+            # No frontend build — assets ship in the wheel.
+            state.push_update_progress("restarting", "Restarting server…")
+            await _graceful_reexec(state, auth_mode=auth_mode)
+        except Exception:
+            logger.exception("pip self-update failed")
+            state.push_update_progress("failed", "Update failed — check logs")
+            state.push_refresh("update_failed")
+        finally:
+            _apply_in_flight = False
+
+    task = asyncio.create_task(_apply())
+    state._background_tasks.add(task)
+    task.add_done_callback(state._background_tasks.discard)
+    return web.json_response({"ok": True, "status": "updating", "kind": "pip"})
+
+
 async def api_update_apply(request: web.Request) -> web.Response:
     """POST /api/update — git pull, reinstall, rebuild, restart gateway.
 
@@ -342,9 +437,55 @@ async def api_update_apply(request: web.Request) -> web.Response:
     global _apply_in_flight
     state: DashboardState = request.app["state"]
 
+    from personalclaw.dashboard.handlers.updates_kind import (
+        build_update_status,
+        detect_install_kind,
+    )
+
+    kind = detect_install_kind()
+
+    # Container / desktop: no in-place apply. Return the structured instructions
+    # (honest commands beat pretending) — the panel renders them. No in-flight
+    # slot is claimed because nothing runs here.
+    if kind in ("container", "desktop"):
+        try:
+            status = await build_update_status(_local_version)
+        except Exception:
+            status = {"kind": kind, "instructions": [], "apply_method": ""}
+        return web.json_response(
+            {
+                "ok": True,
+                "status": "instructions",
+                "kind": kind,
+                "apply_method": status.get("apply_method", ""),
+                "instructions": status.get("instructions", []),
+                "detail": (
+                    "This is a container install — update by pulling the new "
+                    "image and recreating."
+                    if kind == "container"
+                    else "This is a desktop install — the app updates itself."
+                ),
+            }
+        )
+
+    # pip / uv / pipx: upgrade the wheel into the RUNNING interpreter's prefix,
+    # then graceful re-exec. No web build (assets ship in the wheel).
+    if kind == "pip":
+        return await _apply_pip_update(request, state)
+
+    # git: the existing source-tree pipeline (below).
     proj = os.environ.get("PERSONALCLAW_PROJECT_DIR", "")
     if not proj:
         return web.json_response({"error": "PERSONALCLAW_PROJECT_DIR not set"}, status=400)
+
+    # Ride releases by default vs track every commit: dashboard.update_dev_mode
+    # selects the git updater's cadence. The existing commits-behind probe below
+    # already short-circuits to a plain restart when there is nothing new to
+    # pull, so tag-vs-commit gating is advisory here — the tag-driven
+    # availability signal is surfaced by GET /api/update/check (build_update_status);
+    # the apply path stays hermetic (no network) and reuses the pull pipeline.
+    _dev_mode = AppConfig.load().dashboard.update_dev_mode
+    logger.debug("git update apply: update_dev_mode=%s", _dev_mode)
 
     if _apply_in_flight:
         return web.json_response(

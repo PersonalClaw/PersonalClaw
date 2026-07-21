@@ -719,6 +719,17 @@ class DashboardConfig:
             "Open the dashboard URL in the default browser on gateway startup.",
         ),
     )
+    update_dev_mode: bool = field(
+        default=False,
+        metadata=_meta(
+            "Developer Update Mode",
+            "Git checkouts only: update on every new commit on the current branch "
+            "instead of only when a new release TAG exists. Off (default) means the "
+            "in-app updater rides releases like every other install kind; on is the "
+            "contributor 'track main' behavior. No effect on pip/container/desktop "
+            "installs (they always update per release).",
+        ),
+    )
     terminal: dict = field(
         default_factory=lambda: {"enabled": True},
         metadata=_meta(
@@ -1704,6 +1715,7 @@ class AppConfig:
                 simplified_tool_names=dashboard_data.get("simplified_tool_names", False),
                 confirm_close_session=dashboard_data.get("confirm_close_session", False),
                 auto_open_browser=dashboard_data.get("auto_open_browser", True),
+                update_dev_mode=dashboard_data.get("update_dev_mode", False),
                 terminal=dashboard_data.get("terminal", {"enabled": True}),
                 dashboard_layout=dashboard_data.get("dashboard_layout", {}) or {},
             ),
