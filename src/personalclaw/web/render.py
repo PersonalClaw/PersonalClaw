@@ -33,6 +33,7 @@ def is_available() -> bool:
     """Whether the Playwright dependency is importable (the browser binary is a
     separate `playwright install` step, surfaced as a runtime error if missing)."""
     import importlib.util
+
     return importlib.util.find_spec("playwright") is not None
 
 
@@ -67,10 +68,14 @@ async def render_url(
     """
     if not is_available():
         return RenderResult(
-            ok=False, url=url, unavailable=True,
+            ok=False,
+            url=url,
+            unavailable=True,
             error="JS rendering is not available (Playwright is not installed).",
-            recovery_hints=["Install it: pip install 'personalclaw[js-render]' && playwright install chromium.",
-                            "Without it, web_fetch uses the plain HTTP fetch (no JS execution)."],
+            recovery_hints=[
+                "Install it: pip install 'personalclaw[js-render]' && playwright install chromium.",
+                "Without it, web_fetch uses the plain HTTP fetch (no JS execution).",
+            ],
         )
 
     # Egress pre-flight — a headless browser bypasses net.fetch's IP pinning, so the
@@ -78,13 +83,20 @@ async def render_url(
     guard_kw = {"resolver": resolver} if resolver is not None else {}
     decision = evaluate(url, policy, **guard_kw)
     if not decision.allow:
-        return RenderResult(ok=False, url=url, error=decision.reason,
-                            recovery_hints=list(decision.recovery_hints), risk_level=decision.risk_level)
+        return RenderResult(
+            ok=False,
+            url=url,
+            error=decision.reason,
+            recovery_hints=list(decision.recovery_hints),
+            risk_level=decision.risk_level,
+        )
 
     try:
         from playwright.async_api import async_playwright
     except Exception as exc:  # pragma: no cover - guarded by is_available()
-        return RenderResult(ok=False, url=url, unavailable=True, error=f"Playwright import failed: {exc}")
+        return RenderResult(
+            ok=False, url=url, unavailable=True, error=f"Playwright import failed: {exc}"
+        )
 
     try:
         async with async_playwright() as pw:
@@ -99,8 +111,12 @@ async def render_url(
     except Exception as exc:
         logger.warning("render_url failed for %s: %s", url, exc, exc_info=True)
         return RenderResult(
-            ok=False, url=url, error=f"render failed: {exc}",
-            recovery_hints=["The page may be slow or block automation; retry, or use web_fetch without render."],
+            ok=False,
+            url=url,
+            error=f"render failed: {exc}",
+            recovery_hints=[
+                "The page may be slow or block automation; retry, or use web_fetch without render."
+            ],
         )
 
     return RenderResult(ok=True, url=url, html=html, status=status)

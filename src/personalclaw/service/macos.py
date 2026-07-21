@@ -20,11 +20,7 @@ STDERR_LOG = LOG_DIR / "gateway.err"
 
 
 def _xml_escape(value: str) -> str:
-    return (
-        value.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
+    return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def render_plist() -> str:
@@ -84,9 +80,7 @@ def _write_plist_atomic(contents: str) -> None:
     or crash mid-write leaves either the old plist or no plist at all —
     never a partial XML document that ``launchctl load`` would reject.
     """
-    fd, tmp_path = tempfile.mkstemp(
-        prefix=PLIST_PATH.name + ".", suffix=".tmp", dir=str(PLIST_DIR)
-    )
+    fd, tmp_path = tempfile.mkstemp(prefix=PLIST_PATH.name + ".", suffix=".tmp", dir=str(PLIST_DIR))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(contents)

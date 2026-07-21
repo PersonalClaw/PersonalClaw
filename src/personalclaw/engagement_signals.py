@@ -62,7 +62,9 @@ class EngagementStore:
 
     def __init__(self, path: Path | None = None, *, half_life_days: float | None = None) -> None:
         self._path = path or (config_dir() / _STATE_FILE)
-        self._half_life = half_life_days if (half_life_days and half_life_days > 0) else DEFAULT_HALF_LIFE_DAYS
+        self._half_life = (
+            half_life_days if (half_life_days and half_life_days > 0) else DEFAULT_HALF_LIFE_DAYS
+        )
         # topic_key → {weight: float, updated_at: epoch_secs, count: int}
         self._rows: dict[str, dict] = {}
 
@@ -124,8 +126,11 @@ class EngagementStore:
     def prune(self, *, now: float, min_deviation: float = 0.02) -> int:
         """Drop topics that have decayed back to ~neutral (free storage). Returns count
         pruned. Safe to call from an existing maintenance block (no new scheduler)."""
-        stale = [k for k, r in self._rows.items()
-                 if abs(self._decayed_weight(r, now) - _NEUTRAL) < min_deviation]
+        stale = [
+            k
+            for k, r in self._rows.items()
+            if abs(self._decayed_weight(r, now) - _NEUTRAL) < min_deviation
+        ]
         for k in stale:
             del self._rows[k]
         return len(stale)
@@ -145,10 +150,12 @@ def rank_by_engagement(items, *, recency_key, topic_key, store, now):
     ``topic_key(item) -> str`` (the engagement topic — inbox channel/sender/classification,
     or a digest tag). Returns a new list, highest-ranked first. A warm-up/unknown topic has
     weight 1.0 → pure recency, so this degrades to the current behavior on cold start."""
+
     def _score(item):
         base = recency_key(item)
         tk = topic_key(item)
         w = store.weight_for(tk, now=now) if tk else _NEUTRAL
         return base * w
+
     # Sort by blended score desc; Python's sort is stable so equal scores keep input order.
     return sorted(items, key=_score, reverse=True)

@@ -98,7 +98,7 @@ class TestSanitizeCssValue:
         ],
     )
     def test_dangerous_values_rejected(self, val: object, reason: str) -> None:
-        assert _sanitize_css_value(val) is None, f"dangerous value accepted ({reason}): {val!r}"  # type: ignore[arg-type]
+        assert _sanitize_css_value(val) is None, f"dangerous value accepted ({reason}): {val!r}"  # type: ignore[arg-type]  # noqa: E501
 
     def test_trims_whitespace(self) -> None:
         result = _sanitize_css_value("  #fff  ")
@@ -111,8 +111,16 @@ class TestValidateThemeData:
     def _minimal_theme(self, **overrides: object) -> dict:
         base: dict = {
             "name": "Test",
-            "dark": {"--color-primary": "#000", "--color-surface": "#111", "--color-on-surface": "#fff"},
-            "light": {"--color-primary": "#fff", "--color-surface": "#eee", "--color-on-surface": "#000"},
+            "dark": {
+                "--color-primary": "#000",
+                "--color-surface": "#111",
+                "--color-on-surface": "#fff",
+            },
+            "light": {
+                "--color-primary": "#fff",
+                "--color-surface": "#eee",
+                "--color-on-surface": "#000",
+            },
         }
         base.update(overrides)
         return base

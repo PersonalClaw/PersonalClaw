@@ -28,9 +28,14 @@ def provider():
 
 # ── snippet CRUD ─────────────────────────────────────────────────────────────
 
+
 def test_snippet_create_get_list_delete(provider):
-    snip = PromptSnippet(name="sig", title="Signature", content="— {{author}}",
-                         variables=[PromptVariable(name="author")])
+    snip = PromptSnippet(
+        name="sig",
+        title="Signature",
+        content="— {{author}}",
+        variables=[PromptVariable(name="author")],
+    )
     provider.create_snippet(snip)
     got = provider.get_snippet("sig")
     assert got is not None and got.content == "— {{author}}"
@@ -67,25 +72,31 @@ def test_prompts_and_snippets_are_separate_stores(provider):
 
 # ── migration on read ────────────────────────────────────────────────────────
 
+
 def test_legacy_prompt_migrated_on_read(provider, tmp_path):
     # Write a pre-`kind` record with legacy variable types directly to disk.
     path = _prompt_path("legacy")
-    path.write_text(yaml.safe_dump({
-        "name": "legacy",
-        "description": "old one",
-        "content": "Hi {{who}} {{path}}",
-        "variables": [
-            {"name": "who", "type": "string", "required": True},
-            {"name": "path", "type": "file_path"},
-        ],
-    }), encoding="utf-8")
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "name": "legacy",
+                "description": "old one",
+                "content": "Hi {{who}} {{path}}",
+                "variables": [
+                    {"name": "who", "type": "string", "required": True},
+                    {"name": "path", "type": "file_path"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     tpl = provider.get_prompt("legacy")
     assert tpl is not None
-    assert tpl.kind == "user"            # no system- prefix → user
-    assert tpl.title == "Legacy"          # humanized
-    assert tpl.variables[0].type == "text"   # string → text
-    assert tpl.variables[1].type == "text"   # file_path → text
+    assert tpl.kind == "user"  # no system- prefix → user
+    assert tpl.title == "Legacy"  # humanized
+    assert tpl.variables[0].type == "text"  # string → text
+    assert tpl.variables[1].type == "text"  # file_path → text
 
     # And the on-disk file was rewritten in the new shape (no dual support).
     rewritten = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -97,8 +108,9 @@ def test_legacy_prompt_migrated_on_read(provider, tmp_path):
 
 def test_legacy_system_prompt_kind_inferred(provider):
     path = _prompt_path("system-chat")
-    path.write_text(yaml.safe_dump({"name": "system-chat", "content": "You are X."}),
-                    encoding="utf-8")
+    path.write_text(
+        yaml.safe_dump({"name": "system-chat", "content": "You are X."}), encoding="utf-8"
+    )
     tpl = provider.get_prompt("system-chat")
     assert tpl.kind == "system"  # system- prefix
     rewritten = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -130,8 +142,13 @@ def test_bundled_sha_stamp_survives_read_no_migrate_pingpong(provider):
     path = _snippet_path("stamped")
     path.write_text(
         yaml.safe_dump(
-            {"name": "stamped", "title": "Stamped", "content": content,
-             "tags": ["bundled"], "bundled_sha": sha}
+            {
+                "name": "stamped",
+                "title": "Stamped",
+                "content": content,
+                "tags": ["bundled"],
+                "bundled_sha": sha,
+            }
         ),
         encoding="utf-8",
     )
@@ -150,6 +167,7 @@ def test_seed_writes_system_kind(provider, monkeypatch, tmp_path):
     # Allow seeding for this test, then confirm seeded prompts are kind=system.
     monkeypatch.delenv("PERSONALCLAW_SKIP_PROMPT_SEED", raising=False)
     from personalclaw.prompt_providers.native_provider import seed_bundled_system_prompts
+
     seed_bundled_system_prompts()
     chat = provider.get_prompt("system-chat")
     assert chat is not None and chat.kind == "system"
@@ -160,20 +178,30 @@ def test_seed_writes_shared_snippets_and_prompts_include_them(provider, monkeypa
     """The bundled system prompts include shared snippets via {{> name}}, which seed
     alongside them and resolve through the compose-aware engine."""
     monkeypatch.delenv("PERSONALCLAW_SKIP_PROMPT_SEED", raising=False)
-    from personalclaw.prompt_providers.native_provider import seed_bundled_system_prompts
     from personalclaw.prompt_providers.engine import render_template
+    from personalclaw.prompt_providers.native_provider import seed_bundled_system_prompts
+
     seed_bundled_system_prompts()
 
     # All bundled snippets seeded (the 2 from S7 + the 5 atomic ones from the
     # full breakdown).
-    for sname in ("safety-rules", "diff-output", "skills-syntax", "memory-discipline",
-                  "parallel-subagents", "subagent-orchestration", "mcp-reconnect"):
+    for sname in (
+        "safety-rules",
+        "diff-output",
+        "skills-syntax",
+        "memory-discipline",
+        "parallel-subagents",
+        "subagent-orchestration",
+        "mcp-reconnect",
+    ):
         assert provider.get_snippet(sname) is not None, f"snippet {sname} did not seed"
     assert "git push" in provider.get_snippet("safety-rules").content
 
     # EVERY bundled system prompt is composed from snippets and renders with every
     # {{> include}} resolved (no leftover marker, no [missing snippet:]).
-    resolver = lambda n: provider.get_snippet(n)
+    def resolver(n):
+        return provider.get_snippet(n)
+
     for pname in ("system-chat", "system-background", "system-code", "system-goal-loop"):
         p = provider.get_prompt(pname)
         assert p is not None and "{{>" in p.content, f"{pname} should include snippets"
@@ -181,24 +209,36 @@ def test_seed_writes_shared_snippets_and_prompts_include_them(provider, monkeypa
         assert "{{>" not in rendered, f"{pname} left an unresolved include"
         assert "[missing snippet:" not in rendered, f"{pname} references a missing snippet"
     # The chat prompt inlines representative snippet prose end-to-end.
-    chat_rendered = render_template(provider.get_prompt("system-chat"), {"bot_name": "X", "widget_block": ""}, resolver=resolver)
+    chat_rendered = render_template(
+        provider.get_prompt("system-chat"), {"bot_name": "X", "widget_block": ""}, resolver=resolver
+    )
     assert "git push" in chat_rendered and "subagent_run" in chat_rendered
 
 
 # ── bundled-snippet re-seed: propagate bundled updates, never clobber user edits ──
+
 
 def test_reseed_updates_pristine_bundled_snippet(provider, monkeypatch):
     """A snippet still pristine from a PRIOR bundled seed (its content hashes to the
     recorded bundled_sha) is refreshed when the bundled source changes — so a security
     rule added to a bundled snippet reaches an existing instance. (#150)"""
     import hashlib
+
     monkeypatch.delenv("PERSONALCLAW_SKIP_PROMPT_SEED", raising=False)
     from personalclaw.prompt_providers import native_provider as N
+
     p = _snippet_path("safety-rules")
     p.parent.mkdir(parents=True, exist_ok=True)
     old = "- an older bundled rule"
-    p.write_text(yaml.safe_dump({"name": "safety-rules", "content": old,
-                                 "bundled_sha": hashlib.sha256(old.encode()).hexdigest()}))
+    p.write_text(
+        yaml.safe_dump(
+            {
+                "name": "safety-rules",
+                "content": old,
+                "bundled_sha": hashlib.sha256(old.encode()).hexdigest(),
+            }
+        )
+    )
     N.seed_bundled_snippets()
     # now matches the current bundled safety-rules (which includes the fence rule)
     assert "untrusted_content" in provider.get_snippet("safety-rules").content
@@ -209,6 +249,7 @@ def test_reseed_preserves_user_edited_snippet(provider, monkeypatch):
     across repeated seeds — the non-clobber guarantee."""
     monkeypatch.delenv("PERSONALCLAW_SKIP_PROMPT_SEED", raising=False)
     from personalclaw.prompt_providers import native_provider as N
+
     p = _snippet_path("safety-rules")
     p.parent.mkdir(parents=True, exist_ok=True)
     mine = "- MY OWN custom safety rule the bundled update must not overwrite"

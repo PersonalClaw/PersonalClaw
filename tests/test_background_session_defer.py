@@ -26,6 +26,7 @@ def _cfg() -> AppConfig:
 async def test_defers_quietly_when_no_model_resolves(caplog):
     """Factory raises ProviderResolutionError ⇒ no background session, INFO not
     WARNING, and _ensure_background does NOT raise."""
+
     def factory(*_a, **_k):
         raise ProviderResolutionError("No provider configured for use case 'chat'.")
 
@@ -51,6 +52,7 @@ async def test_defers_quietly_when_no_model_resolves(caplog):
 async def test_genuine_error_still_warns(caplog):
     """A non-resolution failure (e.g. the provider's start() blows up) keeps the
     existing WARNING path — we only special-case the 'no model yet' signal."""
+
     class _BoomProvider:
         async def start(self):
             raise RuntimeError("socket exploded")
@@ -75,6 +77,7 @@ async def test_genuine_error_still_warns(caplog):
 @pytest.mark.asyncio
 async def test_creates_session_when_factory_succeeds(caplog):
     """Happy path unchanged: a working factory ⇒ background session created."""
+
     class _OkProvider:
         async def start(self):
             return None

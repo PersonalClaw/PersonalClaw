@@ -17,7 +17,11 @@ import asyncio
 import personalclaw.sdk.model  # noqa: F401 — ensure package import order
 from personalclaw.llm.capabilities import Capability
 from personalclaw.llm.registry import ProviderEntry
-from personalclaw.sdk.provider_helpers import BrandedCatalog, BrandedProviderSpec, register_branded_app
+from personalclaw.sdk.provider_helpers import (
+    BrandedCatalog,
+    BrandedProviderSpec,
+    register_branded_app,
+)
 
 
 def _run(coro):
@@ -26,9 +30,12 @@ def _run(coro):
 
 def _spec(protocol: str = "anthropic") -> BrandedProviderSpec:
     return BrandedProviderSpec(
-        type=f"test_{protocol}", protocol=protocol,
-        default_base_url="https://example.invalid", api_key_env="",
-        default_model="test-model", capabilities=frozenset({Capability.CHAT, Capability.STREAMING}),
+        type=f"test_{protocol}",
+        protocol=protocol,
+        default_base_url="https://example.invalid",
+        api_key_env="",
+        default_model="test-model",
+        capabilities=frozenset({Capability.CHAT, Capability.STREAMING}),
     )
 
 
@@ -36,9 +43,17 @@ def test_factory_strips_credential_and_routing_fields_from_extra_options():
     spec = _spec("anthropic")
     factory, _, _ = register_branded_app(spec)
     entry = ProviderEntry(
-        name="T", type=spec.type, model="test-model",
-        options={"api_key": "secret", "endpoint": "https://x", "base_url": "https://x",
-                 "model": "test-model", "temperature": 0.5, "top_p": 0.9},
+        name="T",
+        type=spec.type,
+        model="test-model",
+        options={
+            "api_key": "secret",
+            "endpoint": "https://x",
+            "base_url": "https://x",
+            "model": "test-model",
+            "temperature": 0.5,
+            "top_p": 0.9,
+        },
     )
     prov = factory(entry=entry)
     extra = getattr(prov, "_extra_options", {})
@@ -54,14 +69,21 @@ def test_factory_uses_per_instance_key_over_env(monkeypatch):
     otherwise a ZAI/Alibaba instance sends a global ANTHROPIC_API_KEY/OPENAI_API_KEY
     meant for a DIFFERENT provider → 'token expired or incorrect' 401."""
     spec = BrandedProviderSpec(
-        type="test_perinstance", protocol="anthropic", default_base_url="https://x",
-        api_key_env="SOME_GLOBAL_KEY", default_model="m",
+        type="test_perinstance",
+        protocol="anthropic",
+        default_base_url="https://x",
+        api_key_env="SOME_GLOBAL_KEY",
+        default_model="m",
         capabilities=frozenset({Capability.CHAT}),
     )
     factory, _, _ = register_branded_app(spec)
     monkeypatch.setenv("SOME_GLOBAL_KEY", "GLOBAL-WRONG-KEY")
-    entry = ProviderEntry(name="ZAIlike", type=spec.type, model="m",
-                          options={"api_key": "PER-INSTANCE-RIGHT-KEY", "endpoint": "https://z"})
+    entry = ProviderEntry(
+        name="ZAIlike",
+        type=spec.type,
+        model="m",
+        options={"api_key": "PER-INSTANCE-RIGHT-KEY", "endpoint": "https://z"},
+    )
     prov = factory(entry=entry)
     # the provider must carry the per-instance key, NOT the env key
     assert prov._client.api_key == "PER-INSTANCE-RIGHT-KEY"  # noqa: SLF001
@@ -69,13 +91,18 @@ def test_factory_uses_per_instance_key_over_env(monkeypatch):
 
 def test_factory_falls_back_to_env_key_when_no_options_key(monkeypatch):
     spec = BrandedProviderSpec(
-        type="test_envfallback", protocol="anthropic", default_base_url="https://x",
-        api_key_env="MY_ENV_KEY", default_model="m",
+        type="test_envfallback",
+        protocol="anthropic",
+        default_base_url="https://x",
+        api_key_env="MY_ENV_KEY",
+        default_model="m",
         capabilities=frozenset({Capability.CHAT}),
     )
     factory, _, _ = register_branded_app(spec)
     monkeypatch.setenv("MY_ENV_KEY", "ENV-KEY-USED")
-    entry = ProviderEntry(name="EnvOnly", type=spec.type, model="m", options={"endpoint": "https://z"})
+    entry = ProviderEntry(
+        name="EnvOnly", type=spec.type, model="m", options={"endpoint": "https://z"}
+    )
     prov = factory(entry=entry)
     assert prov._client.api_key == "ENV-KEY-USED"  # noqa: SLF001
 
@@ -93,6 +120,7 @@ def test_anthropic_test_connection_probes_completion(monkeypatch):
 
     cat = BrandedCatalog(spec, endpoint="https://x", api_key="k")
     import personalclaw.llm.anthropic as anth
+
     monkeypatch.setattr(anth.AnthropicProvider, "complete", lambda self, *a, **k: _auth_fail())
     res = _run(cat.test_connection())
     assert res.ok is False and "auth" in (res.detail or "").lower()

@@ -110,7 +110,7 @@ def _resolve(host: str) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     for info in infos:
-        ip = info[4][0]
+        ip = str(info[4][0])
         # Strip an IPv6 scope/zone id (fe80::1%eth0) before classification.
         ip = ip.split("%", 1)[0]
         if ip not in seen:
@@ -128,22 +128,42 @@ def evaluate(url: str, policy: EgressPolicy, *, resolver=_resolve) -> GuardDecis
     try:
         parsed = urlparse(url)
     except Exception as exc:
-        return GuardDecision(allow=False, url=url, reason=f"invalid URL: {exc}",
-                             risk_level="caution", recovery_hints=["Pass a well-formed http(s) URL."])
+        return GuardDecision(
+            allow=False,
+            url=url,
+            reason=f"invalid URL: {exc}",
+            risk_level="caution",
+            recovery_hints=["Pass a well-formed http(s) URL."],
+        )
 
     scheme = (parsed.scheme or "").lower()
     if scheme not in policy.allow_schemes:
-        return GuardDecision(allow=False, url=url, reason=f"scheme {scheme!r} not allowed (only {list(policy.allow_schemes)})",
-                             risk_level="caution", recovery_hints=["Use an http or https URL."])
+        return GuardDecision(
+            allow=False,
+            url=url,
+            reason=f"scheme {scheme!r} not allowed (only {list(policy.allow_schemes)})",
+            risk_level="caution",
+            recovery_hints=["Use an http or https URL."],
+        )
     host = parsed.hostname or ""
     if not host:
-        return GuardDecision(allow=False, url=url, reason="URL is missing a host",
-                             risk_level="caution", recovery_hints=["Include a host in the URL."])
+        return GuardDecision(
+            allow=False,
+            url=url,
+            reason="URL is missing a host",
+            risk_level="caution",
+            recovery_hints=["Include a host in the URL."],
+        )
 
     # Operator deny always wins, before any resolution.
     if _host_matches(host, policy.deny_hosts):
-        return GuardDecision(allow=False, url=url, host=host,
-                             reason=f"host {host!r} is on the egress deny list", risk_level="destructive")
+        return GuardDecision(
+            allow=False,
+            url=url,
+            host=host,
+            reason=f"host {host!r} is on the egress deny list",
+            risk_level="destructive",
+        )
     # An operator allow-listed host bypasses the private-range block (the homelab
     # LAN-webhook opt-in) — but still resolves + pins so the connection is honest.
     operator_allowed = _host_matches(host, policy.allow_hosts)
@@ -151,12 +171,22 @@ def evaluate(url: str, policy: EgressPolicy, *, resolver=_resolve) -> GuardDecis
     try:
         ips = resolver(host)
     except socket.gaierror:
-        return GuardDecision(allow=False, url=url, host=host,
-                             reason=f"host {host!r} is not resolvable", risk_level="caution",
-                             recovery_hints=["Check the hostname; the fetch fails closed on an unresolvable host."])
+        return GuardDecision(
+            allow=False,
+            url=url,
+            host=host,
+            reason=f"host {host!r} is not resolvable",
+            risk_level="caution",
+            recovery_hints=["Check the hostname; the fetch fails closed on an unresolvable host."],
+        )
     if not ips:
-        return GuardDecision(allow=False, url=url, host=host,
-                             reason=f"host {host!r} resolved to no addresses", risk_level="caution")
+        return GuardDecision(
+            allow=False,
+            url=url,
+            host=host,
+            reason=f"host {host!r} resolved to no addresses",
+            risk_level="caution",
+        )
 
     verdicts = [classify_host(ip) for ip in ips]
 
@@ -164,10 +194,16 @@ def evaluate(url: str, policy: EgressPolicy, *, resolver=_resolve) -> GuardDecis
     if policy.loopback_only:
         non_loopback = [v for v in verdicts if v.category != "loopback"]
         if non_loopback:
-            return GuardDecision(allow=False, url=url, host=host,
-                                 reason=f"LOOPBACK_INTERNAL policy: {host!r} resolves to non-loopback {non_loopback[0].ip}",
-                                 risk_level="destructive")
-        return GuardDecision(allow=True, url=url, host=host, pinned_ips=[v.ip for v in verdicts], risk_level="safe")
+            return GuardDecision(
+                allow=False,
+                url=url,
+                host=host,
+                reason=f"LOOPBACK_INTERNAL policy: {host!r} resolves to non-loopback {non_loopback[0].ip}",  # noqa: E501
+                risk_level="destructive",
+            )
+        return GuardDecision(
+            allow=True, url=url, host=host, pinned_ips=[v.ip for v in verdicts], risk_level="safe"
+        )
 
     # Public-only policy: every resolved IP must be public, unless the host is
     # operator-allow-listed or the policy opts into private ranges.
@@ -175,12 +211,20 @@ def evaluate(url: str, policy: EgressPolicy, *, resolver=_resolve) -> GuardDecis
         bad = [v for v in verdicts if not v.public]
         if bad:
             return GuardDecision(
-                allow=False, url=url, host=host,
-                reason=(f"host {host!r} resolves to a non-public address ({bad[0].ip}, {bad[0].category}); "
-                        "egress guard blocks loopback, private, link-local, multicast, and reserved IPs"),
+                allow=False,
+                url=url,
+                host=host,
+                reason=(
+                    f"host {host!r} resolves to a non-public address ({bad[0].ip}, {bad[0].category}); "  # noqa: E501
+                    "egress guard blocks loopback, private, link-local, multicast, and reserved IPs"
+                ),
                 risk_level="destructive",
-                recovery_hints=["Fetch a public URL.",
-                                "An operator can allow-list an internal host via security.egress allow_hosts."],
+                recovery_hints=[
+                    "Fetch a public URL.",
+                    "An operator can allow-list an internal host via security.egress allow_hosts.",
+                ],
             )
 
-    return GuardDecision(allow=True, url=url, host=host, pinned_ips=[v.ip for v in verdicts], risk_level="safe")
+    return GuardDecision(
+        allow=True, url=url, host=host, pinned_ips=[v.ip for v in verdicts], risk_level="safe"
+    )

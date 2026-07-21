@@ -4,8 +4,8 @@ import uuid
 
 import pytest
 
-from personalclaw.schedule import ScheduleService, make_agent_action
 from personalclaw.mcp_schedule import _call_tool_inner
+from personalclaw.schedule import ScheduleService, make_agent_action
 
 
 def _unique_name() -> str:

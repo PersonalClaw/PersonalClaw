@@ -131,6 +131,7 @@ async def api_sessions_search(request: web.Request) -> web.Response:
         title = s.get("title")
         if title:
             import personalclaw.dashboard.handlers as _h  # noqa: F811
+
             title, _ = _h.redact_exfiltration_urls(title)
             title, _ = _h.redact_credentials(title)
             s["title"] = title
@@ -141,9 +142,11 @@ def _path_home_pclaw():
     """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
     try:
         from personalclaw.config.loader import config_dir as _cd
+
         return _cd()
     except Exception:
         from pathlib import Path as _P
+
         return _P.home() / ".personalclaw"
 
 

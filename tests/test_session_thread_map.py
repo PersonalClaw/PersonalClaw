@@ -210,7 +210,9 @@ class TestChannelAccessors:
         await sm.close_all()
 
     @pytest.mark.asyncio
-    async def test_get_channel_returns_none_for_unknown(self, config, tmp_path, monkeypatch) -> None:
+    async def test_get_channel_returns_none_for_unknown(
+        self, config, tmp_path, monkeypatch
+    ) -> None:
         monkeypatch.setattr("personalclaw.session_map.config_dir", lambda: tmp_path)
         sm = SessionManager(config, provider_factory=_mock_provider_factory())
         assert sm.get_channel("nonexistent") is None

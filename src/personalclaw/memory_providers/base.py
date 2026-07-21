@@ -19,7 +19,7 @@ and projecting them (mem-fs-mirror), so there is one source of truth.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from personalclaw.memory_record import MemoryCapabilities, MemoryRecord
@@ -30,8 +30,7 @@ class MemoryProvider(ABC):
 
     @property
     @abstractmethod
-    def name(self) -> str:
-        ...
+    def name(self) -> str: ...
 
     @abstractmethod
     def init(self) -> None:

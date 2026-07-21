@@ -26,15 +26,18 @@ def provider(tmp_path):
 @pytest.fixture
 def wired(provider):
     """Resolve the native provider as our tmp-rooted instance + fixed session."""
-    with patch("personalclaw.artifacts.registry.get_provider", return_value=provider), patch(
-        "personalclaw.mcp_artifacts._resolve_session_key", return_value="dashboard:chat-1"
+    with (
+        patch("personalclaw.artifacts.registry.get_provider", return_value=provider),
+        patch("personalclaw.mcp_artifacts._resolve_session_key", return_value="dashboard:chat-1"),
     ):
         yield provider
 
 
 class TestArtifactMcpTools:
     def test_save_returns_slug(self, wired) -> None:
-        out = _call_tool("artifact_save", {"name": "My Chart", "content": "<div>x</div>", "kind": "widget"})
+        out = _call_tool(
+            "artifact_save", {"name": "My Chart", "content": "<div>x</div>", "kind": "widget"}
+        )
         assert "my-chart" in out
         assert wired.get("my-chart") is not None
 
@@ -47,6 +50,7 @@ class TestArtifactMcpTools:
         """S5: artifact_save ties the artifact to the Project bound for this turn, so it
         surfaces in the Project detail page (/api/projects/{id}/linked filters by it)."""
         from personalclaw.agents.native import builtin_tools as _bt
+
         toks = _bt.bind_tool_context(cwd="/tmp", agent="a", project_id="proj-xyz")
         try:
             _call_tool("artifact_save", {"name": "Scoped", "content": "x", "kind": "text"})
@@ -105,13 +109,17 @@ class TestArtifactMcpTools:
     def test_content_file_read(self, wired, tmp_path) -> None:
         f = tmp_path / "body.md"
         f.write_text("# from file")
-        out = _call_tool("artifact_save", {"name": "FromFile", "content_file": str(f), "kind": "markdown"})
+        out = _call_tool(
+            "artifact_save", {"name": "FromFile", "content_file": str(f), "kind": "markdown"}
+        )
         assert "fromfile" in out.lower()
         assert wired.get("fromfile").content == "# from file"
 
     def test_content_file_sensitive_refused(self, wired) -> None:
         sensitive = str(Path.home() / ".aws" / "credentials")
-        out = _call_tool("artifact_save", {"name": "Steal", "content_file": sensitive, "kind": "text"})
+        out = _call_tool(
+            "artifact_save", {"name": "Steal", "content_file": sensitive, "kind": "text"}
+        )
         assert "sensitive" in out.lower()
         # Nothing was created.
         assert wired.list() == []
@@ -131,10 +139,14 @@ class TestArtifactMcpTools:
         # The Design loop saves generated components as kind='react' (rendered live on
         # the design Canvas); the tool enum must accept it (regression: it was omitted,
         # so a design worker could never produce a canvas-renderable component).
-        out = _call_tool("artifact_save", {
-            "name": "Button", "kind": "react",
-            "content": "function App(){return React.createElement('button',null,'Hi')}",
-        })
+        out = _call_tool(
+            "artifact_save",
+            {
+                "name": "Button",
+                "kind": "react",
+                "content": "function App(){return React.createElement('button',null,'Hi')}",
+            },
+        )
         assert "saved artifact" in out.lower()
         saved = wired.list()
         assert any(a.kind == "react" for a in saved)

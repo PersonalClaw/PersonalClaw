@@ -106,18 +106,23 @@ class TestAppScopedWs:
     def _app_state_with(self, state, monkeypatch, allowed_events):
         from personalclaw.apps.manifest import Permissions
         from personalclaw.apps.permissions import PermissionChecker
+
         monkeypatch.setattr(
             "personalclaw.apps.permissions.checker_for",
-            lambda name: PermissionChecker(app_name=name, permissions=Permissions(events=allowed_events)),
+            lambda name: PermissionChecker(
+                app_name=name, permissions=Permissions(events=allowed_events)
+            ),
         )
         return state
 
     def test_app_ws_only_gets_declared_events(self, state, monkeypatch) -> None:
         self._app_state_with(state, monkeypatch, ["chat_message"])
-        owner = MagicMock(closed=False); owner.send_str = AsyncMock()
-        app = MagicMock(closed=False); app.send_str = AsyncMock()
-        state.register_ws(owner)                 # owner: full stream
-        state.register_ws(app, app="notes")      # app: filtered
+        owner = MagicMock(closed=False)
+        owner.send_str = AsyncMock()
+        app = MagicMock(closed=False)
+        app.send_str = AsyncMock()
+        state.register_ws(owner)  # owner: full stream
+        state.register_ws(app, app="notes")  # app: filtered
 
         # An event the app DID declare → both get it.
         state.broadcast_ws("chat_message", {"x": 1})
@@ -125,14 +130,16 @@ class TestAppScopedWs:
         app.send_str.assert_called_once()
 
         # An event the app did NOT declare → only the owner gets it.
-        owner.send_str.reset_mock(); app.send_str.reset_mock()
+        owner.send_str.reset_mock()
+        app.send_str.reset_mock()
         state.broadcast_ws("approval", {"y": 2})
         owner.send_str.assert_called_once()
         app.send_str.assert_not_called()
 
     def test_app_identity_cleared_on_unregister(self, state, monkeypatch) -> None:
         self._app_state_with(state, monkeypatch, ["chat_message"])
-        app = MagicMock(closed=False); app.send_str = AsyncMock()
+        app = MagicMock(closed=False)
+        app.send_str = AsyncMock()
         state.register_ws(app, app="notes")
         assert state._ws_app.get(app) == "notes"
         state.unregister_ws(app)
@@ -140,7 +147,8 @@ class TestAppScopedWs:
 
     def test_no_app_connections_uses_fast_path(self, state) -> None:
         # With zero app-scoped connections, broadcast delivers to everyone (owner).
-        ws = MagicMock(closed=False); ws.send_str = AsyncMock()
+        ws = MagicMock(closed=False)
+        ws.send_str = AsyncMock()
         state.register_ws(ws)
         state.broadcast_ws("anything_at_all", {"z": 3})
         ws.send_str.assert_called_once()
@@ -263,9 +271,7 @@ class TestCompactCallbackWiring:
         assert "92%" in added["content"]
 
     @pytest.mark.asyncio
-    async def test_callback_broadcasts_context_usage_reset(
-        self, state: DashboardState
-    ) -> None:
+    async def test_callback_broadcasts_context_usage_reset(self, state: DashboardState) -> None:
         ws = MagicMock(closed=False)
         ws.send_str = AsyncMock()
         state.register_ws(ws)
@@ -309,8 +315,10 @@ class TestCompactCallbackWiring:
         cb = self._captured_callback(state)
         # Force broadcast to raise — append should still land, callback should return cleanly
         with pytest.MonkeyPatch.context() as mp:
+
             def boom(*a, **kw):
                 raise RuntimeError("ws boom")
+
             mp.setattr(state, "broadcast_ws", boom)
 
             await cb("dashboard:chat-1", 92.0)

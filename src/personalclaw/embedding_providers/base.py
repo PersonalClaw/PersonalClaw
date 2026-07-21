@@ -31,17 +31,14 @@ class EmbeddingProvider(ABC):
 
     @property
     @abstractmethod
-    def name(self) -> str:
-        ...
+    def name(self) -> str: ...
 
     @property
     @abstractmethod
-    def display_name(self) -> str:
-        ...
+    def display_name(self) -> str: ...
 
     @abstractmethod
-    async def is_available(self) -> bool:
-        ...
+    async def is_available(self) -> bool: ...
 
     @abstractmethod
     async def embed(self, text: str, model: str = "") -> list[float] | None:
@@ -64,6 +61,7 @@ class EmbeddingProvider(ABC):
             try:
                 asyncio.get_running_loop()
                 import concurrent.futures
+
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     future = pool.submit(asyncio.run, _embed(text))
                     return future.result(timeout=30)

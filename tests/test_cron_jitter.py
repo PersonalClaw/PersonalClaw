@@ -14,8 +14,8 @@ import pytest
 from personalclaw.schedule import (
     _JITTER_DAILY_MAX,
     _JITTER_HOURLY_MAX,
-    ScheduleJob,
     ScheduleDefinition,
+    ScheduleJob,
     ScheduleService,
     make_agent_action,
 )
@@ -28,11 +28,18 @@ def _isolate_schedule_dir(tmp_path, monkeypatch):
     record runs) don't leak crons.json + run history into the live
     ~/.personalclaw. Observed polluting real run history during validation."""
     import personalclaw.schedule as sched
+
     monkeypatch.setattr(sched, "_DEFAULT_DIR", tmp_path, raising=False)
 
 
 def _job(schedule: ScheduleDefinition, strict: bool = False, job_id: str = "t1") -> ScheduleJob:
-    return ScheduleJob(id=job_id, name="test", action=make_agent_action(message="msg"), schedule=schedule, strict_schedule=strict)
+    return ScheduleJob(
+        id=job_id,
+        name="test",
+        action=make_agent_action(message="msg"),
+        schedule=schedule,
+        strict_schedule=strict,
+    )
 
 
 class TestComputeJitterStrictSchedule:

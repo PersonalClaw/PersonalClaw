@@ -1,7 +1,5 @@
 """Tests for host-aware subagent concurrency auto-sizing (max_subagents=0)."""
 
-import pytest
-
 from personalclaw import subagent
 from personalclaw.subagent import _AUTO_CEILING, _AUTO_FLOOR, _MAX_CONCURRENT, resolve_max_subagents
 
@@ -40,7 +38,9 @@ def test_auto_clamps_to_ceiling(monkeypatch):
 
 def test_auto_clamps_to_floor(monkeypatch):
     """A tiny (Pi-class) host still gets the floor so 'auto' beats single-agent."""
-    monkeypatch.setattr(subagent.os, "cpu_count", lambda: 2)  # cpu_based = 1 (after headroom 2 → max(1,0))
+    monkeypatch.setattr(
+        subagent.os, "cpu_count", lambda: 2
+    )  # cpu_based = 1 (after headroom 2 → max(1,0))
     monkeypatch.setattr(subagent, "_total_memory_gb", lambda: 4.0)  # mem_based = 1
     # min(1, 1) = 1, clamped UP to floor 2
     assert resolve_max_subagents(0, per_agent_gb=4.0) == _AUTO_FLOOR

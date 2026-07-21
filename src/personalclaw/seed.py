@@ -334,9 +334,7 @@ def seed_cmd(args) -> int:  # noqa: ANN001 — argparse.Namespace at call site
         # ``target_set`` records presence-only (captured pre-``seed()``) —
         # never the raw path, which would leak ``$HOME``-derived info.
         # ``replace`` records whether the rmtree path was taken.
-        resources=(
-            f"fixture={fixture!r} target_set={target_set} replace={replace}"
-        ),
+        resources=(f"fixture={fixture!r} target_set={target_set} replace={replace}"),
     )
     return EXIT_OK
 
@@ -375,6 +373,4 @@ def _safe_audit(*, outcome: str, resources: str) -> None:
             resources=resources,
         )
     except Exception:  # noqa: BLE001 — audit must never fail the tool.
-        logging.getLogger(__name__).warning(
-            "seed: SEL audit emit failed", exc_info=True
-        )
+        logging.getLogger(__name__).warning("seed: SEL audit emit failed", exc_info=True)

@@ -158,7 +158,7 @@ Gate `update_kind_aware` (class **B**, plan 31 §4.1; default OFF, → ON for fr
 
 ## Owner tasks (real world)
 
-1. **Reserve/publish PyPI names**: `personalclaw` (verified free 2026-07-18) and `personalclaw-client` (**availability unverified — check and reserve now**), via the Trusted Publishing setup from plan 33 owner-task 1 (TestPyPI too).
+1. **Reserve/publish PyPI names**: `personalclaw` ✅ (pending publisher registered 2026-07-20, env `release`) and `personalclaw-client` (verified free 2026-07-20; register its pending publisher under a SEPARATE GitHub environment `release-client` — PyPI rejects a duplicate (owner, repo, workflow, environment) tuple while pending. The `release-client` env exists with reviewer=keyurgolani). **No TestPyPI** (owner 2026-07-20). release.yml publishes `personalclaw-client` from its own job under `environment: release-client`.
 2. **Clean-machine validations** (S1, S3, S4): each needs a machine/VM that has never seen the project — a fresh cloud VM or a wiped container works; ~30 min each, following the validation scripts above.
 3. **Homebrew tap decision** (S5): personal tap (`personalclaw/homebrew-tap`) now vs. homebrew-core submission later (core requires notability; tap first).
 4. Approve the docs restructure (getting-started leads with uv; venv path moves to CONTRIBUTING) — it changes the project's public "how do I run this" answer.

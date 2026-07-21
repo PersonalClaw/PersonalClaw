@@ -1,0 +1,104 @@
+# CI — PR + feature-branch push. Fast verification gate (≤10-min budget).
+# Jobs are the stable ids other roadmap plans reference (CI-RELEASE-ENGINEERING C1):
+# lint · test · web · rails. Heavier matrix/coverage/audit live in full.yml (main + nightly).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]  # main runs full.yml; feature branches run this
+
+# One in-flight run per ref — a new push cancels the previous run (soul guardrail:
+# no wasted runner time).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: lint (black --check · isort --check · flake8 · mypy)
+        run: |
+          uv run black --check src/personalclaw tests
+          uv run isort --check-only src/personalclaw tests
+          uv run flake8 src/personalclaw tests
+          uv run mypy src/personalclaw
+
+  test:
+    runs-on: ubuntu-latest
+    env:
+      # NOTE: do NOT set PERSONALCLAW_HOME here. The suite runs under the documented
+      # no-global-home contract (CONTRIBUTING: destructive tests isolate via per-test
+      # config_dir/tmp_path, NOT a global override) — several tests assert the DEFAULT
+      # ~/.personalclaw resolution or patch Path.home(), and config_dir() gives
+      # PERSONALCLAW_HOME precedence over Path.home(), so a global value defeats those
+      # patches and reds them. The runner's $HOME is already ephemeral.
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: pytest (full suite, xdist)
+        run: uv run pytest
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      # npm runs from the REPO ROOT (single-root workspace lockfile — npm/cli#4828);
+      # never `cd web && npm ci`. typecheck + vitest + build all run against the web workspace.
+      - name: npm ci (root)
+        run: npm ci
+      - name: typecheck
+        run: npm run typecheck:web
+      - name: test (vitest)
+        run: npm run test:web
+      - name: build (tsc + vite)
+        run: npm run build
+
+  rails:
+    # Cheap anti-regression rails: the machine-checked invariants roadmap plans add.
+    # Today: plan-32 provider-boundary residue sweep (present on main). The plan-31
+    # gate-lifetime + stability-drift rails mount here when LIFECYCLE-DOCTRINE lands
+    # (it is deferred — see the workspace execution order); guarded so this job is
+    # green until then instead of erroring on a missing file.
+    runs-on: ubuntu-latest
+    # No PERSONALCLAW_HOME (see the test job) — the residue sweep is a static
+    # import-boundary check and the suite runs under the no-global-home contract.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      # -n0 forces serial (these rails are tiny) while keeping the pyproject
+      # addopts intact — `-p no:xdist` would break because addopts injects
+      # -n/--dist, which pytest then can't parse with the xdist plugin disabled.
+      - name: provider-boundary residue sweep (plan 32)
+        run: uv run pytest tests/test_provider_boundary_residue.py -n0
+      - name: lifecycle + stability rails (plan 31 — deferred; run when present)
+        run: |
+          for t in tests/test_lifecycle_gates.py tests/test_stability_inventory.py; do
+            if [ -f "$t" ]; then uv run pytest "$t" -n0; fi
+          done

@@ -1,12 +1,12 @@
 """Tests for process tree tracking, recursive kill, and session cleanup."""
 
 import signal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from personalclaw.acp.client import (
-    AcpClient,
+    AcpProcess,
     _direct_children,
     _get_child_pids,
     _is_our_child,
@@ -26,30 +26,34 @@ class TestGetChildPidsVisitedSet:
             call_count += 1
             return {1: [2], 2: [1]}.get(pid, [])
 
-        with patch("personalclaw.acp.client._direct_children", side_effect=fake_direct):
+        with patch("personalclaw.acp.transport._direct_children", side_effect=fake_direct):
             result = _get_child_pids(1)
         assert result == [2]
         assert call_count <= 3
 
     def test_self_loop(self):
-        with patch("personalclaw.acp.client._direct_children", return_value=[42]):
+        with patch("personalclaw.acp.transport._direct_children", return_value=[42]):
             assert _get_child_pids(42) == []
 
     def test_diamond_deduplicates(self):
         tree = {1: [2, 3], 2: [4], 3: [4]}
-        with patch("personalclaw.acp.client._direct_children", side_effect=lambda p: tree.get(p, [])):
+        with patch(
+            "personalclaw.acp.transport._direct_children", side_effect=lambda p: tree.get(p, [])
+        ):
             assert sorted(_get_child_pids(1)) == [2, 3, 4]
 
     def test_none_pid(self):
         assert _get_child_pids(None) == []
 
     def test_no_children(self):
-        with patch("personalclaw.acp.client._direct_children", return_value=[]):
+        with patch("personalclaw.acp.transport._direct_children", return_value=[]):
             assert _get_child_pids(999) == []
 
     def test_deep_chain(self):
         tree = {1: [2], 2: [3], 3: [4], 4: [5]}
-        with patch("personalclaw.acp.client._direct_children", side_effect=lambda p: tree.get(p, [])):
+        with patch(
+            "personalclaw.acp.transport._direct_children", side_effect=lambda p: tree.get(p, [])
+        ):
             assert _get_child_pids(1) == [2, 3, 4, 5]
 
 
@@ -69,7 +73,7 @@ class TestKillEscapedChildren:
 
         with (
             patch("os.kill", side_effect=fake_kill),
-            patch("personalclaw.acp.client._is_our_child", return_value=True),
+            patch("personalclaw.acp.transport._is_our_child", return_value=True),
         ):
             _kill_escaped_children({42: 100})
 
@@ -83,7 +87,7 @@ class TestKillEscapedChildren:
 
         with (
             patch("os.kill", side_effect=fake_kill),
-            patch("personalclaw.acp.client._is_our_child", return_value=False),
+            patch("personalclaw.acp.transport._is_our_child", return_value=False),
         ):
             _kill_escaped_children({42: 100})
         assert all(sig == 0 for _, sig in kills)
@@ -97,7 +101,7 @@ class TestKillEscapedChildren:
 
         with (
             patch("os.kill", side_effect=fake_kill),
-            patch("personalclaw.acp.client._is_our_child", return_value=True),
+            patch("personalclaw.acp.transport._is_our_child", return_value=True),
         ):
             _kill_escaped_children({10: 1, 20: 2, 30: 3})
         assert killed == [30, 20, 10]
@@ -109,17 +113,17 @@ class TestKillEscapedChildren:
 class TestIsOurChild:
     @pytest.fixture(autouse=True)
     def _force_linux(self):
-        with patch("personalclaw.acp.client.sys") as mock_sys:
+        with patch("personalclaw.acp.transport.sys") as mock_sys:
             mock_sys.platform = "linux"
             yield
 
     def test_rejects_missing_proc(self):
-        with patch("personalclaw.acp.client.Path") as mock_path_cls:
+        with patch("personalclaw.acp.transport.Path") as mock_path_cls:
             mock_path_cls.return_value.exists.return_value = False
             assert _is_our_child(999, expected_start=1) is False
 
     def test_rejects_unknown_binary(self):
-        with patch("personalclaw.acp.client.Path") as mock_path_cls:
+        with patch("personalclaw.acp.transport.Path") as mock_path_cls:
             inst = mock_path_cls.return_value
             inst.exists.return_value = True
             inst.read_bytes.return_value = b"postgres\x00--flag"
@@ -127,8 +131,8 @@ class TestIsOurChild:
 
     def test_rejects_start_time_mismatch(self):
         with (
-            patch("personalclaw.acp.client.Path") as mock_path_cls,
-            patch("personalclaw.acp.client._get_start_time", return_value=200),
+            patch("personalclaw.acp.transport.Path") as mock_path_cls,
+            patch("personalclaw.acp.transport._get_start_time", return_value=200),
         ):
             inst = mock_path_cls.return_value
             inst.exists.return_value = True
@@ -137,8 +141,8 @@ class TestIsOurChild:
 
     def test_accepts_matching_agent(self):
         with (
-            patch("personalclaw.acp.client.Path") as mock_path_cls,
-            patch("personalclaw.acp.client._get_start_time", return_value=100),
+            patch("personalclaw.acp.transport.Path") as mock_path_cls,
+            patch("personalclaw.acp.transport._get_start_time", return_value=100),
         ):
             inst = mock_path_cls.return_value
             inst.exists.return_value = True
@@ -149,8 +153,8 @@ class TestIsOurChild:
 
     def test_accepts_mcp_in_name(self):
         with (
-            patch("personalclaw.acp.client.Path") as mock_path_cls,
-            patch("personalclaw.acp.client._get_start_time", return_value=50),
+            patch("personalclaw.acp.transport.Path") as mock_path_cls,
+            patch("personalclaw.acp.transport._get_start_time", return_value=50),
         ):
             inst = mock_path_cls.return_value
             inst.exists.return_value = True
@@ -158,7 +162,7 @@ class TestIsOurChild:
             assert _is_our_child(999, expected_start=50) is True
 
     def test_none_start_time_denied(self):
-        with patch("personalclaw.acp.client.Path") as mock_path_cls:
+        with patch("personalclaw.acp.transport.Path") as mock_path_cls:
             inst = mock_path_cls.return_value
             inst.exists.return_value = True
             inst.read_bytes.return_value = b"personalclaw-cli\x00acp"
@@ -171,8 +175,8 @@ class TestIsOurChild:
 class TestDirectChildren:
     def test_proc_children_parsed(self):
         with (
-            patch("personalclaw.acp.client.sys") as mock_sys,
-            patch("personalclaw.acp.client.Path") as mock_path_cls,
+            patch("personalclaw.acp.transport.sys") as mock_sys,
+            patch("personalclaw.acp.transport.Path") as mock_path_cls,
         ):
             mock_sys.platform = "linux"
             mock_path = MagicMock()
@@ -192,20 +196,25 @@ class TestDirectChildren:
 
 
 class TestSnapshotProcessTree:
+    # PID-tree tracking moved onto AcpProcess (transport.py) in the client/transport
+    # split: the snapshot is AcpProcess.snapshot_process_tree(); _pid/_child_pids are
+    # the transport's own attributes (the AcpClient properties just delegate to them).
+    # These tests build a bare AcpProcess via __new__ and set only what the method reads.
+
     @pytest.mark.asyncio
     async def test_tracks_all_descendants(self, tmp_path):
-        client = AcpClient.__new__(AcpClient)
-        client._pid = 100
-        client._child_pids = {}
+        proc = AcpProcess.__new__(AcpProcess)
+        proc._pid = 100
+        proc._child_pids = {}
 
         with (
-            patch("personalclaw.acp.client._get_child_pids", return_value=[200, 300, 400]),
-            patch("personalclaw.acp.client._get_start_time", side_effect=lambda p: p * 10),
+            patch("personalclaw.acp.transport._get_child_pids", return_value=[200, 300, 400]),
+            patch("personalclaw.acp.transport._get_start_time", side_effect=lambda p: p * 10),
             patch("personalclaw.session_pid.config_dir", return_value=tmp_path),
         ):
-            await client._snapshot_process_tree()
+            await proc.snapshot_process_tree()
 
-        assert client._child_pids == {200: 2000, 300: 3000, 400: 4000}
+        assert proc._child_pids == {200: 2000, 300: 3000, 400: 4000}
         # Verify child:parent lines written to agent_pids.txt
         content = (tmp_path / "agent_pids.txt").read_text()
         lines = {ln.strip() for ln in content.splitlines() if ln.strip()}
@@ -213,32 +222,32 @@ class TestSnapshotProcessTree:
 
     @pytest.mark.asyncio
     async def test_no_descendants_no_tracking(self):
-        client = AcpClient.__new__(AcpClient)
-        client._pid = 100
-        client._child_pids = {}
+        proc = AcpProcess.__new__(AcpProcess)
+        proc._pid = 100
+        proc._child_pids = {}
 
-        with patch("personalclaw.acp.client._get_child_pids", return_value=[]):
-            await client._snapshot_process_tree()
+        with patch("personalclaw.acp.transport._get_child_pids", return_value=[]):
+            await proc.snapshot_process_tree()
 
-        assert client._child_pids == {}
+        assert proc._child_pids == {}
 
     @pytest.mark.asyncio
     async def test_merges_early_and_late_snapshots(self, tmp_path):
-        """Early snapshot from _spawn + late snapshot from _snapshot_process_tree merge."""
-        client = AcpClient.__new__(AcpClient)
-        client._pid = 100
+        """Early snapshot from spawn() + late snapshot from snapshot_process_tree() merge."""
+        proc = AcpProcess.__new__(AcpProcess)
+        proc._pid = 100
         # Simulate early snapshot already captured PID 200
-        client._child_pids = {200: 2000}
+        proc._child_pids = {200: 2000}
 
         with (
-            patch("personalclaw.acp.client._get_child_pids", return_value=[200, 300]),
-            patch("personalclaw.acp.client._get_start_time", side_effect=lambda p: p * 10),
+            patch("personalclaw.acp.transport._get_child_pids", return_value=[200, 300]),
+            patch("personalclaw.acp.transport._get_start_time", side_effect=lambda p: p * 10),
             patch("personalclaw.session_pid.config_dir", return_value=tmp_path),
         ):
-            await client._snapshot_process_tree()
+            await proc.snapshot_process_tree()
 
         # PID 200 keeps original start_time, PID 300 is new
-        assert client._child_pids == {200: 2000, 300: 3000}
+        assert proc._child_pids == {200: 2000, 300: 3000}
 
 
 # ── 6. _track_pid / _untrack_pid file operations ──

@@ -15,14 +15,12 @@ import asyncio
 import pytest
 
 from personalclaw.llm.catalog import (
-    ConnectionResult,
     ModelCatalog,
     ModelInfo,
-    ModelManager,
     infer_capabilities,
     openai_compatible_list_models,
 )
-from personalclaw.llm.registry import ProviderEntry, ProviderRegistry, get_default_registry
+from personalclaw.llm.registry import ProviderEntry, ProviderRegistry
 
 
 def _run(coro):
@@ -44,6 +42,7 @@ def test_register_and_build_catalog_round_trip():
     class Cat(ModelCatalog):
         def __init__(self, opts, model=""):
             self.opts, self.model = opts, model
+
         async def list_models(self):
             return [ModelInfo(id="m", name="m", capabilities=["chat"])]
 
@@ -76,13 +75,16 @@ def test_register_catalog_last_wins():
 # ── infer_capabilities (moved from the handler onto the shared seam) ──────
 
 
-@pytest.mark.parametrize("mid,expected_contains", [
-    ("text-embedding-3-small", ["embedding"]),
-    ("whisper-1", ["stt"]),
-    ("gpt-4o", ["chat", "image_modality"]),
-    ("llama3", ["chat"]),
-    ("dall-e-3", ["image_gen"]),
-])
+@pytest.mark.parametrize(
+    "mid,expected_contains",
+    [
+        ("text-embedding-3-small", ["embedding"]),
+        ("whisper-1", ["stt"]),
+        ("gpt-4o", ["chat", "image_modality"]),
+        ("llama3", ["chat"]),
+        ("dall-e-3", ["image_gen"]),
+    ],
+)
 def test_infer_capabilities(mid, expected_contains):
     caps = infer_capabilities(mid)
     for c in expected_contains:
@@ -129,6 +131,8 @@ def test_openai_compatible_discovery_layers_operator_egress(monkeypatch):
     monkeypatch.setattr("personalclaw.sdk.net.fetch", fake_fetch, raising=False)
 
     out = _run(openai_compatible_list_models("http://127.0.0.1:11434/v1", ""))
-    assert seen.get("policy") is sentinel, "discovery must use egress_policy_for(CONNECTOR), not raw CONNECTOR"
+    assert (
+        seen.get("policy") is sentinel
+    ), "discovery must use egress_policy_for(CONNECTOR), not raw CONNECTOR"
     assert seen["url"].endswith("/v1/models")
     assert [m.id for m in out] == ["qwen2.5:0.5b"]

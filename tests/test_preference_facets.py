@@ -35,24 +35,32 @@ def test_style_decays_faster_than_identity():
 
 
 def test_fresh_facet_is_active_when_explicit():
-    f = pf.Facet(cls="style", text="x", stability=pf.base_stability("explicit"), updated_at=NOW.isoformat())
+    f = pf.Facet(
+        cls="style", text="x", stability=pf.base_stability("explicit"), updated_at=NOW.isoformat()
+    )
     assert pf.facet_state(f, now=NOW) == "Active"
 
 
 def test_decayed_facet_drops_through_states():
-    f = pf.Facet(cls="channel", text="x", stability=1.0, updated_at=(NOW - timedelta(days=21)).isoformat())
+    f = pf.Facet(
+        cls="channel", text="x", stability=1.0, updated_at=(NOW - timedelta(days=21)).isoformat()
+    )
     # channel half-life 7d → 21d = 3 half-lives → ~0.125 → Dropped
     assert pf.facet_state(f, now=NOW) == "Dropped"
 
 
 def test_pinned_is_active_regardless_of_age():
-    f = pf.Facet(cls="channel", text="x", stability=0.01, updated_at="2000-01-01T00:00:00+00:00", pinned=True)
+    f = pf.Facet(
+        cls="channel", text="x", stability=0.01, updated_at="2000-01-01T00:00:00+00:00", pinned=True
+    )
     assert pf.decayed_stability(f, now=NOW) == 1.0
     assert pf.facet_state(f, now=NOW) == "Active"
 
 
 def test_forgotten_is_dropped():
-    f = pf.Facet(cls="identity", text="x", stability=1.0, updated_at=NOW.isoformat(), forgotten=True)
+    f = pf.Facet(
+        cls="identity", text="x", stability=1.0, updated_at=NOW.isoformat(), forgotten=True
+    )
     assert pf.decayed_stability(f, now=NOW) == 0.0
     assert pf.facet_state(f, now=NOW) == "Dropped"
 
@@ -63,7 +71,9 @@ def test_veto_does_not_decay():
 
 
 def test_reinforce_raises_stability():
-    f = pf.Facet(cls="style", text="x", stability=0.3, updated_at=(NOW - timedelta(days=10)).isoformat())
+    f = pf.Facet(
+        cls="style", text="x", stability=0.3, updated_at=(NOW - timedelta(days=10)).isoformat()
+    )
     before = pf.decayed_stability(f, now=NOW)
     pf.reinforce(f, "explicit", now=NOW)
     assert f.stability > before

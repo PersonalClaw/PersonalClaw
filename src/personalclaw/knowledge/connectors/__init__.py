@@ -8,4 +8,4 @@ bookmark node-graph (``BookmarkScrapeNode``) to scrape a bookmark's URL at inges
 from personalclaw.knowledge.connectors.base import BaseConnector
 from personalclaw.knowledge.connectors.web_url import WebUrlConnector
 
-__all__ = ['BaseConnector', 'WebUrlConnector']
+__all__ = ["BaseConnector", "WebUrlConnector"]

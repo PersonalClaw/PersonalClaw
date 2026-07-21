@@ -37,7 +37,7 @@ class LintReport:
     """Outcome of a memory-health sweep."""
 
     auto_fixed: dict[str, int] = field(default_factory=dict)  # check → count fixed
-    flags: list[dict] = field(default_factory=list)           # {check, key, detail}
+    flags: list[dict] = field(default_factory=list)  # {check, key, detail}
 
     def add_flag(self, check: str, key: str, detail: str) -> None:
         self.flags.append({"check": check, "key": key, "detail": detail})
@@ -58,6 +58,7 @@ def _parse_iso(s: str | None) -> datetime | None:
 
 def _keywords(text: str) -> set[str]:
     import re
+
     stop = {"the", "a", "an", "to", "in", "for", "and", "or", "not", "is", "of", "on"}
     return {w for w in re.split(r"\W+", text.lower()) if len(w) > 2 and w not in stop}
 
@@ -144,9 +145,9 @@ def lint_memory(vs, *, now: datetime | None = None, judge=None) -> LintReport:
                 if judge(va, vb):
                     report.add_flag("contradiction", key_a, f"contradicts {key_b}")
             except Exception:
-                logger.debug("lint: contradiction judge failed for %s/%s", key_a, key_b, exc_info=True)
+                logger.debug(
+                    "lint: contradiction judge failed for %s/%s", key_a, key_b, exc_info=True
+                )
 
-    logger.info(
-        "memory lint: auto-fixed %s, %d flags", report.auto_fixed, len(report.flags)
-    )
+    logger.info("memory lint: auto-fixed %s, %d flags", report.auto_fixed, len(report.flags))
     return report

@@ -39,9 +39,7 @@ def test_no_prompt_id_and_no_loop_md_is_error(monkeypatch):
 
 
 def test_bad_vars_type_is_error():
-    res = asyncio.run(
-        RunPromptActionProvider().execute({"prompt_id": "p", "vars": "nope"}, _ctx())
-    )
+    res = asyncio.run(RunPromptActionProvider().execute({"prompt_id": "p", "vars": "nope"}, _ctx()))
     assert res.success is False and "vars" in res.error
 
 
@@ -74,9 +72,7 @@ def test_render_error_is_value_error_and_caught(monkeypatch):
         raise ValueError("missing required variable: project")
 
     monkeypatch.setattr(mod, "render_saved_prompt", _raise)
-    res = asyncio.run(
-        RunPromptActionProvider().execute({"prompt_id": "p", "vars": {}}, _ctx())
-    )
+    res = asyncio.run(RunPromptActionProvider().execute({"prompt_id": "p", "vars": {}}, _ctx()))
     assert res.success is False and "missing required variable" in res.error
 
 
@@ -84,19 +80,24 @@ def test_render_saved_prompt_normalizes_prompt_render_error():
     """The real render_saved_prompt maps a PromptRenderError -> ValueError so the
     caller's `except ValueError` contract holds (PromptRenderError is a bare
     Exception, not a ValueError subclass)."""
-    from personalclaw.prompt_providers.registry import _ensure_default_providers_registered
-    from personalclaw.prompt_providers.base import PromptTemplate, PromptVariable
     import personalclaw.action_providers.run_prompt_provider as mod
+    from personalclaw.prompt_providers.base import PromptTemplate, PromptVariable
+    from personalclaw.prompt_providers.registry import _ensure_default_providers_registered
 
     _ensure_default_providers_registered()
     from personalclaw.prompt_providers import get_default_provider
 
     prov = get_default_provider()
-    tmpl = PromptTemplate(name="_t_reqvar", kind="user", content="Hi {{who}}",
-                          variables=[PromptVariable(name="who", type="string", required=True)])
+    tmpl = PromptTemplate(
+        name="_t_reqvar",
+        kind="user",
+        content="Hi {{who}}",
+        variables=[PromptVariable(name="who", type="string", required=True)],
+    )
     prov.create_prompt(tmpl)
     try:
         import pytest as _pytest
+
         with _pytest.raises(ValueError):
             mod.render_saved_prompt("_t_reqvar", {})  # required var unset
     finally:
@@ -108,8 +109,8 @@ def test_bundled_digest_prompt_resolves_and_renders():
     ``run-prompt`` can fire — resolve it and render its three vars (sources/window/
     target) through the SAME render_saved_prompt path the action uses. Proves the
     digest primitive is composition (a Prompt fired by a trigger), no new service."""
-    from personalclaw.prompt_providers.registry import _ensure_default_providers_registered
     import personalclaw.action_providers.run_prompt_provider as mod
+    from personalclaw.prompt_providers.registry import _ensure_default_providers_registered
 
     _ensure_default_providers_registered()
     out = mod.render_saved_prompt(
@@ -128,6 +129,7 @@ def test_bundled_digest_prompt_is_in_use_case_vocabulary():
     catalog) so binding/resolution work — without polluting the model-capability vocab."""
     from personalclaw.providers.prompt_use_cases import PROMPT_USE_CASES, active_prompt_ref
     from personalclaw.providers.use_cases import USE_CASES
+
     assert "digest" in PROMPT_USE_CASES
     assert active_prompt_ref("digest") == "native:task-digest"
     # It's a PROMPT use_case, not a model capability — the two vocabularies stay separate.
@@ -137,7 +139,9 @@ def test_bundled_digest_prompt_is_in_use_case_vocabulary():
 def test_success_spawns_auto_approved_with_framing(monkeypatch):
     import personalclaw.action_providers.run_prompt_provider as mod
 
-    monkeypatch.setattr(mod, "render_saved_prompt", lambda pid, v: f"BODY for {pid} team={(v or {}).get('team')}")
+    monkeypatch.setattr(
+        mod, "render_saved_prompt", lambda pid, v: f"BODY for {pid} team={(v or {}).get('team')}"
+    )
     spawn_sink: dict = {}
     scheduled: list = []
     monkeypatch.setattr(mod, "get_action_services", lambda: _services(spawn_sink, scheduled))
@@ -201,7 +205,8 @@ def test_services_unavailable_is_error(monkeypatch):
 
     monkeypatch.setattr(mod, "render_saved_prompt", lambda pid, v: "body")
     monkeypatch.setattr(
-        mod, "get_action_services",
+        mod,
+        "get_action_services",
         lambda: SimpleNamespace(subagents=None, spawn_background=lambda c: None),
     )
     res = asyncio.run(RunPromptActionProvider().execute({"prompt_id": "p"}, _ctx()))
@@ -214,7 +219,9 @@ def test_invalid_cwd_is_honest_error(monkeypatch):
     import personalclaw.action_providers.run_prompt_provider as mod
 
     monkeypatch.setattr(mod, "render_saved_prompt", lambda pid, v: "body")
-    monkeypatch.setattr(mod, "validate_spawn_cwd", lambda cwd: "cwd is not under any allowed root: ['~/ok']")
+    monkeypatch.setattr(
+        mod, "validate_spawn_cwd", lambda cwd: "cwd is not under any allowed root: ['~/ok']"
+    )
     spawn_sink: dict = {}
     scheduled: list = []
     monkeypatch.setattr(mod, "get_action_services", lambda: _services(spawn_sink, scheduled))

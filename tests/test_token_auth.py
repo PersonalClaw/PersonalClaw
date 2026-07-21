@@ -1,9 +1,7 @@
 """Property tests for dashboard token authentication."""
 
-import os
-import socket
 import string
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from aiohttp import web
@@ -346,9 +344,7 @@ async def test_internal_path_non_loopback_cookie_auth_when_not_local_only() -> N
     mw = token_auth_middleware(
         internal_paths=frozenset({"/api/spawn"}), internal_secret="s", local_only=False
     )
-    req = _make_request(
-        path="/api/spawn", remote="10.0.0.1", cookies={"pc_token_10000": token}
-    )
+    req = _make_request(path="/api/spawn", remote="10.0.0.1", cookies={"pc_token_10000": token})
     resp = await mw(req, _ok_handler)
     assert resp.status == 200
 
@@ -372,7 +368,8 @@ async def test_internal_path_non_loopback_wrong_secret_denied() -> None:
         internal_paths=frozenset({"/api/spawn"}), internal_secret="real", local_only=False
     )
     req = _make_request(
-        path="/api/spawn", remote="10.0.0.1",
+        path="/api/spawn",
+        remote="10.0.0.1",
         headers={"X-Internal-Secret": "wrong"},
         cookies={"pc_token_10000": token},
     )
@@ -388,7 +385,8 @@ async def test_internal_path_non_loopback_valid_secret_and_cookie_granted() -> N
         internal_paths=frozenset({"/api/spawn"}), internal_secret="real", local_only=False
     )
     req = _make_request(
-        path="/api/spawn", remote="10.0.0.1",
+        path="/api/spawn",
+        remote="10.0.0.1",
         headers={"X-Internal-Secret": "real"},
         cookies={"pc_token_10000": token},
     )
@@ -403,7 +401,8 @@ async def test_internal_path_non_loopback_valid_secret_no_cookie_denied() -> Non
         internal_paths=frozenset({"/api/spawn"}), internal_secret="real", local_only=False
     )
     req = _make_request(
-        path="/api/spawn", remote="10.0.0.1",
+        path="/api/spawn",
+        remote="10.0.0.1",
         headers={"X-Internal-Secret": "real"},
     )
     resp = await mw(req, _ok_handler)
@@ -462,9 +461,7 @@ async def test_mixed_path_non_loopback_with_valid_cookie_granted() -> None:
     token = generate_token("dcvuser", ttl_seconds=300)
     bind_token_ip(token, "10.0.0.1")
     mark_consumed(token)
-    req = _make_request(
-        path="/api/spawn", remote="10.0.0.1", cookies={"pc_token_10000": token}
-    )
+    req = _make_request(path="/api/spawn", remote="10.0.0.1", cookies={"pc_token_10000": token})
     resp = await mw(req, _ok_handler)
     assert resp.status == 200
 
@@ -820,7 +817,8 @@ async def test_app_token_bearer_sets_request_app() -> None:
     app claim (owner user unchanged). This is how an app's fetch is scoped."""
     mw = token_auth_middleware()
     owner = generate_token("alice", ttl_seconds=300)
-    bind_token_ip(owner, "127.0.0.1"); mark_consumed(owner)
+    bind_token_ip(owner, "127.0.0.1")
+    mark_consumed(owner)
     app_tok = generate_token("alice", ttl_seconds=300, app="notes")
     req = _capturing_request(
         cookies={"pc_token_10000": owner},
@@ -837,10 +835,12 @@ async def test_app_token_via_query_param_sets_request_app() -> None:
     """The /api/ws handshake can't set headers, so the app token rides ?app_token=."""
     mw = token_auth_middleware()
     owner = generate_token("alice", ttl_seconds=300)
-    bind_token_ip(owner, "127.0.0.1"); mark_consumed(owner)
+    bind_token_ip(owner, "127.0.0.1")
+    mark_consumed(owner)
     app_tok = generate_token("alice", ttl_seconds=300, app="notes")
     req = _capturing_request(
-        cookies={"pc_token_10000": owner}, query={"app_token": app_tok},
+        cookies={"pc_token_10000": owner},
+        query={"app_token": app_tok},
     )
     resp = await mw(req, _ok_handler)
     assert resp.status == 200
@@ -853,7 +853,8 @@ async def test_app_token_for_other_user_is_ignored() -> None:
     layered token can only narrow within the SAME authenticated user."""
     mw = token_auth_middleware()
     owner = generate_token("alice", ttl_seconds=300)
-    bind_token_ip(owner, "127.0.0.1"); mark_consumed(owner)
+    bind_token_ip(owner, "127.0.0.1")
+    mark_consumed(owner)
     foreign = generate_token("mallory", ttl_seconds=300, app="notes")
     req = _capturing_request(
         cookies={"pc_token_10000": owner},

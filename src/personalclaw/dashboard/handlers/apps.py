@@ -46,11 +46,22 @@ def _redact(text: str) -> str:
     text, _ = redact_credentials(text)
     return text
 
+
 # Hop-by-hop headers that must not be forwarded across the proxy boundary.
-_HOP_BY_HOP = frozenset({
-    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-    "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length",
-})
+_HOP_BY_HOP = frozenset(
+    {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailers",
+        "transfer-encoding",
+        "upgrade",
+        "host",
+        "content-length",
+    }
+)
 _PROXY_TIMEOUT = 30  # seconds for an app-backend round trip
 
 
@@ -88,9 +99,14 @@ def register_app_routes(app: web.Application) -> None:
 def _sel_log(op: str, outcome: str, resources: str, request: web.Request, error: str = "") -> None:
     try:
         from personalclaw.sel import sel as _s
+
         _s().log_api_access(
-            caller=request.get("user", "dashboard"), operation=op, outcome=outcome,
-            source="apps", resources=resources, error=error,
+            caller=request.get("user", "dashboard"),
+            operation=op,
+            outcome=outcome,
+            source="apps",
+            resources=resources,
+            error=error,
         )
     except Exception:
         pass
@@ -114,6 +130,7 @@ def _reconcile_app_crons(request: web.Request) -> None:
         if crons is None:
             return
         from personalclaw.apps.app_crons import reconcile_app_crons
+
         reconcile_app_crons(crons)
     except Exception:
         logger.debug("app cron reconcile after lifecycle transition failed", exc_info=True)
@@ -133,6 +150,7 @@ def _app_status(name: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Read
 # ---------------------------------------------------------------------------
+
 
 async def api_apps_list(request: web.Request) -> web.Response:
     """GET /api/apps — installed apps with manifest summary + runtime state."""
@@ -167,35 +185,39 @@ async def api_apps_list(request: web.Request) -> web.Response:
             for p in (manifest.get("ui", {}) or {}).get("pages", [])
             if p.get("route")
         ]
-        out.append({
-            "name": name,
-            "displayName": manifest.get("displayName") or name,
-            "version": app.get("version", ""),
-            "description": manifest.get("description", ""),
-            "enabled": app.get("enabled", False),
-            "origin": app.get("origin", ""),
-            # A native app is locked on — the FE hides uninstall/disable and
-            # shows a "native, always-on" notice, offering Configure/Update only.
-            "native": bool(manifest.get("native", False)),
-            # Concrete provenance (path / git URL / "builtin" / "registry:name") so
-            # the Store/Library can group installed apps under their source divider.
-            "source": app.get("source", ""),
-            "icon": manifest.get("icon", ""),
-            # Optional hero/banner image → resolved to a data: URI from the
-            # installed app dir (empty when the manifest declares none / unreadable).
-            "heroUrl": resolve_hero_url(app_dir(name), str(manifest.get("heroImage", ""))),
-            "hasBackend": bool(manifest.get("backend", {}).get("entryPoint")),
-            "hasUI": bool(manifest.get("ui", {}).get("pages")),
-            "uiPages": ui_pages,
-            "isProvider": is_provider,
-            "providerType": (manifest.get("provider") or {}).get("type", "") if is_provider else "",
-            "hasConfig": has_config,
-            "permissions": manifest.get("permissions", {}),
-            "tags": [str(t) for t in manifest.get("tags", []) if t],
-            "installedAt": app.get("installedAt", ""),
-            "updatedAt": app.get("updatedAt", ""),
-            **_app_status(name),
-        })
+        out.append(
+            {
+                "name": name,
+                "displayName": manifest.get("displayName") or name,
+                "version": app.get("version", ""),
+                "description": manifest.get("description", ""),
+                "enabled": app.get("enabled", False),
+                "origin": app.get("origin", ""),
+                # A native app is locked on — the FE hides uninstall/disable and
+                # shows a "native, always-on" notice, offering Configure/Update only.
+                "native": bool(manifest.get("native", False)),
+                # Concrete provenance (path / git URL / "builtin" / "registry:name") so
+                # the Store/Library can group installed apps under their source divider.
+                "source": app.get("source", ""),
+                "icon": manifest.get("icon", ""),
+                # Optional hero/banner image → resolved to a data: URI from the
+                # installed app dir (empty when the manifest declares none / unreadable).
+                "heroUrl": resolve_hero_url(app_dir(name), str(manifest.get("heroImage", ""))),
+                "hasBackend": bool(manifest.get("backend", {}).get("entryPoint")),
+                "hasUI": bool(manifest.get("ui", {}).get("pages")),
+                "uiPages": ui_pages,
+                "isProvider": is_provider,
+                "providerType": (
+                    (manifest.get("provider") or {}).get("type", "") if is_provider else ""
+                ),
+                "hasConfig": has_config,
+                "permissions": manifest.get("permissions", {}),
+                "tags": [str(t) for t in manifest.get("tags", []) if t],
+                "installedAt": app.get("installedAt", ""),
+                "updatedAt": app.get("updatedAt", ""),
+                **_app_status(name),
+            }
+        )
 
     # UT6: the bundled PROVIDER extensions (native tool/knowledge/memory/… providers
     # + the mcp/openai adapters) register via the extension loader, not the app
@@ -213,51 +235,66 @@ async def api_apps_list(request: web.Request) -> web.Response:
         # entry Settings>Providers shows — so both surfaces list the identical
         # provider universe.
         if "personalclaw-filesystem" not in have:
-            out.append({
-                "name": "personalclaw-filesystem",
-                "displayName": "Filesystem & Shell Tools",
-                "version": "1.0.0",
-                "description": "Always-on platform tools — read/write/edit/list/glob/grep/repo_map, "
-                               "bash, full-result retrieval. Required by the agent.",
-                "enabled": True, "origin": "bundled", "icon": "FolderCog", "heroUrl": "",
-                "hasBackend": False, "hasUI": False, "uiPages": [],
-                "isProvider": True, "providerType": "tool", "hasConfig": False,
-                "permissions": {}, "tags": [], "installedAt": "", "updatedAt": "",
-                # Always-on, non-uninstallable ⇒ a NATIVE app (the one tier flag).
-                # No separate `platform` flag — the app category is `native`; whether
-                # it has settings is `hasConfig` (False here → UI shows "manage elsewhere").
-                "native": True, "status": "running",
-            })
+            out.append(
+                {
+                    "name": "personalclaw-filesystem",
+                    "displayName": "Filesystem & Shell Tools",
+                    "version": "1.0.0",
+                    "description": "Always-on platform tools — read/write/edit/list/glob/grep/repo_map, "  # noqa: E501
+                    "bash, full-result retrieval. Required by the agent.",
+                    "enabled": True,
+                    "origin": "bundled",
+                    "icon": "FolderCog",
+                    "heroUrl": "",
+                    "hasBackend": False,
+                    "hasUI": False,
+                    "uiPages": [],
+                    "isProvider": True,
+                    "providerType": "tool",
+                    "hasConfig": False,
+                    "permissions": {},
+                    "tags": [],
+                    "installedAt": "",
+                    "updatedAt": "",
+                    # Always-on, non-uninstallable ⇒ a NATIVE app (the one tier flag).
+                    # No separate `platform` flag — the app category is `native`; whether
+                    # it has settings is `hasConfig` (False here → UI shows "manage elsewhere").
+                    "native": True,
+                    "status": "running",
+                }
+            )
             have.add("personalclaw-filesystem")
         for ext in get_provider_registry().list_extensions():
             if ext.name in have:
                 continue
-            out.append({
-                "name": ext.name,
-                "displayName": ext.manifest.displayName or ext.name,
-                "version": ext.manifest.version,
-                "description": ext.manifest.description,
-                "enabled": ext.enabled,
-                "origin": "bundled",
-                "icon": ext.manifest.icon,
-                # Extension providers installed on disk may ship a hero image; resolve
-                # from their app dir (no-op → "" when absent or not disk-installed).
-                "heroUrl": resolve_hero_url(app_dir(ext.name), ext.manifest.heroImage),
-                "hasBackend": False,
-                "hasUI": False,
-                "uiPages": [],
-                "isProvider": True,
-                "providerType": ext.provider_config.type,
-                "hasConfig": bool((ext.provider_config.settingsSchema or {}).get("properties")),
-                "permissions": {},
-                "tags": [],
-                "installedAt": "",
-                "updatedAt": "",
-                # Always-on, non-uninstallable ⇒ NATIVE (the single tier flag). Config
-                # affordance is driven by `hasConfig` above, not a separate flag.
-                "native": True,
-                "status": "running" if ext.enabled else "stopped",
-            })
+            out.append(
+                {
+                    "name": ext.name,
+                    "displayName": ext.manifest.displayName or ext.name,
+                    "version": ext.manifest.version,
+                    "description": ext.manifest.description,
+                    "enabled": ext.enabled,
+                    "origin": "bundled",
+                    "icon": ext.manifest.icon,
+                    # Extension providers installed on disk may ship a hero image; resolve
+                    # from their app dir (no-op → "" when absent or not disk-installed).
+                    "heroUrl": resolve_hero_url(app_dir(ext.name), ext.manifest.heroImage),
+                    "hasBackend": False,
+                    "hasUI": False,
+                    "uiPages": [],
+                    "isProvider": True,
+                    "providerType": ext.provider_config.type,
+                    "hasConfig": bool((ext.provider_config.settingsSchema or {}).get("properties")),
+                    "permissions": {},
+                    "tags": [],
+                    "installedAt": "",
+                    "updatedAt": "",
+                    # Always-on, non-uninstallable ⇒ NATIVE (the single tier flag). Config
+                    # affordance is driven by `hasConfig` above, not a separate flag.
+                    "native": True,
+                    "status": "running" if ext.enabled else "stopped",
+                }
+            )
     except Exception:
         logger.debug("apps list: bundled provider extensions append skipped", exc_info=True)
 
@@ -353,38 +390,42 @@ async def api_app_local_sources_remove(request: web.Request) -> web.Response:
 async def api_app_get(request: web.Request) -> web.Response:
     """GET /api/apps/{name} — full manifest + status + saved config."""
     from personalclaw.apps.app_config import read_config
-    from personalclaw.apps.manager import _read_installed
     from personalclaw.apps.app_manager import _manifest_of
+    from personalclaw.apps.manager import _read_installed
 
     name = request.match_info["name"]
     meta = _read_installed(name)
     if meta is None:
         return web.json_response({"error": f"app {name!r} not installed"}, status=404)
     manifest = _manifest_of(name)
-    return web.json_response({
-        "name": name,
-        "installed": meta.to_dict(),
-        "manifest": manifest.to_dict() if manifest else None,
-        "config": read_config(name),
-        # Effective schema (setup.configSchema OR a provider app's provider.
-        # settingsSchema) — same source the dedicated /config endpoint uses, so a
-        # provider app's detail view shows its real config surface, not empty (the
-        # #29 class: reading only setup.configSchema hides provider settings).
-        "configSchema": _effective_config_schema(manifest) if manifest else {},
-        **_app_status(name),
-    })
+    return web.json_response(
+        {
+            "name": name,
+            "installed": meta.to_dict(),
+            "manifest": manifest.to_dict() if manifest else None,
+            "config": read_config(name),
+            # Effective schema (setup.configSchema OR a provider app's provider.
+            # settingsSchema) — same source the dedicated /config endpoint uses, so a
+            # provider app's detail view shows its real config surface, not empty (the
+            # #29 class: reading only setup.configSchema hides provider settings).
+            "configSchema": _effective_config_schema(manifest) if manifest else {},
+            **_app_status(name),
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Lifecycle
 # ---------------------------------------------------------------------------
 
+
 async def api_app_install(request: web.Request) -> web.Response:
     """POST /api/apps — install from ``{source, confirm?}``.
 
     ``source`` is a local directory path or a git URL. ``confirm:true`` consents
     to a ``warning`` scan verdict; a ``dangerous`` verdict is always refused."""
-    from personalclaw.apps import app_manager, source as app_source
+    from personalclaw.apps import app_manager
+    from personalclaw.apps import source as app_source
 
     try:
         body: dict[str, Any] = await request.json()
@@ -404,7 +445,9 @@ async def api_app_install(request: web.Request) -> web.Response:
     def _do_install():
         try:
             return app_manager.install(
-                resolved.path, origin=resolved.origin, confirm=confirm,
+                resolved.path,
+                origin=resolved.origin,
+                confirm=confirm,
                 caller=request.get("user", "dashboard"),
                 source_ref=src,
             )
@@ -425,8 +468,13 @@ async def api_app_install(request: web.Request) -> web.Response:
         status = 200
     else:
         status = 400
-    _sel_log("apps.install", "ok" if result.ok else "refused", result.name or src, request,
-             error=result.error)
+    _sel_log(
+        "apps.install",
+        "ok" if result.ok else "refused",
+        result.name or src,
+        request,
+        error=result.error,
+    )
     if result.ok:
         _reconcile_app_crons(request)  # register a freshly-installed app's crons now
     return web.json_response(result.to_dict(), status=status)
@@ -434,7 +482,8 @@ async def api_app_install(request: web.Request) -> web.Response:
 
 async def api_app_update(request: web.Request) -> web.Response:
     """POST /api/apps/{name}/update — atomic update from ``{source, confirm?}``."""
-    from personalclaw.apps import app_manager, source as app_source
+    from personalclaw.apps import app_manager
+    from personalclaw.apps import source as app_source
 
     name = request.match_info["name"]
     try:
@@ -454,7 +503,10 @@ async def api_app_update(request: web.Request) -> web.Response:
     def _do_update():
         try:
             return app_manager.update(
-                resolved.path, name, origin=resolved.origin, confirm=confirm,
+                resolved.path,
+                name,
+                origin=resolved.origin,
+                confirm=confirm,
                 caller=request.get("user", "dashboard"),
             )
         finally:
@@ -475,7 +527,9 @@ async def api_app_enable(request: web.Request) -> web.Response:
 
     name = request.match_info["name"]
     ok = await asyncio.to_thread(
-        app_manager.enable, name, caller=request.get("user", "dashboard"),
+        app_manager.enable,
+        name,
+        caller=request.get("user", "dashboard"),
     )
     _sel_log("apps.enable", "ok" if ok else "error", name, request)
     if not ok:
@@ -489,7 +543,9 @@ async def api_app_disable(request: web.Request) -> web.Response:
 
     name = request.match_info["name"]
     ok = await asyncio.to_thread(
-        app_manager.disable, name, caller=request.get("user", "dashboard"),
+        app_manager.disable,
+        name,
+        caller=request.get("user", "dashboard"),
     )
     _sel_log("apps.disable", "ok" if ok else "error", name, request)
     if not ok:
@@ -509,12 +565,16 @@ async def api_app_uninstall(request: web.Request) -> web.Response:
     caller = request.get("user", "dashboard")
     if force:
         ok = await asyncio.to_thread(
-            app_manager.force_uninstall, name, caller=caller,
+            app_manager.force_uninstall,
+            name,
+            caller=caller,
         )
         op = "apps.force_uninstall"
     else:
         ok = await asyncio.to_thread(
-            app_manager.uninstall, name, caller=caller,
+            app_manager.uninstall,
+            name,
+            caller=caller,
         )
         op = "apps.uninstall"
     _sel_log(op, "ok" if ok else "error", name, request)
@@ -530,15 +590,18 @@ async def api_app_uninstall_preview(request: web.Request) -> web.Response:
 
     name = request.match_info["name"]
     classifications = app_manager.preview_uninstall(name)
-    return web.json_response({
-        "name": name,
-        "dependencies": [c.to_dict() for c in classifications],
-    })
+    return web.json_response(
+        {
+            "name": name,
+            "dependencies": [c.to_dict() for c in classifications],
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
+
 
 def _effective_config_schema(manifest) -> dict[str, Any]:
     """The schema that drives an app's config UI: an explicit ``setup.configSchema``
@@ -572,7 +635,9 @@ def _sensitive_field_names(schema: dict[str, Any]) -> set[str]:
     return out
 
 
-def _mask_secret_config(config: dict[str, Any], schema: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+def _mask_secret_config(
+    config: dict[str, Any], schema: dict[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
     """Return (masked_config, set_field_names): sensitive fields with a stored
     non-empty value are replaced by the mask sentinel; the second element lists
     which sensitive fields are currently set (so the UI can show "saved")."""
@@ -598,12 +663,14 @@ async def api_app_config_get(request: web.Request) -> web.Response:
     # Write-only sensitive fields: mask the stored secret, never send it in the clear
     # (#43). ``_secret_set`` tells the UI which sensitive fields are already set.
     masked, secret_set = _mask_secret_config(read_config(name), schema)
-    return web.json_response({
-        "name": name,
-        "config": masked,
-        "schema": schema,
-        "_secret_set": secret_set,
-    })
+    return web.json_response(
+        {
+            "name": name,
+            "config": masked,
+            "schema": schema,
+            "_secret_set": secret_set,
+        }
+    )
 
 
 async def api_app_config_put(request: web.Request) -> web.Response:
@@ -642,7 +709,9 @@ async def api_app_config_put(request: web.Request) -> web.Response:
     _sel_log("apps.config", "ok", name, request)
     # Never echo the freshly-saved secret back either — mask on the response too.
     masked, secret_set = _mask_secret_config(saved, schema)
-    return web.json_response({"ok": True, "name": name, "config": masked, "_secret_set": secret_set})
+    return web.json_response(
+        {"ok": True, "name": name, "config": masked, "_secret_set": secret_set}
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -650,6 +719,7 @@ async def api_app_config_put(request: web.Request) -> web.Response:
 # This is the NON-iframe agentic path — for apps that act on agent output
 # rather than show a human a chat window. Gated by permissions.agent.
 # ---------------------------------------------------------------------------
+
 
 def _app_agent_allowed(name: str) -> bool:
     """Whether the installed app declares the `agent` permission."""
@@ -669,7 +739,8 @@ async def api_app_agent_run(request: web.Request) -> web.Response:
     if not _app_agent_allowed(name):
         _sel_log("apps.agent_run", "denied", name, request, error="agent permission not granted")
         return web.json_response(
-            {"error": f"app {name!r} does not declare the 'agent' permission"}, status=403)
+            {"error": f"app {name!r} does not declare the 'agent' permission"}, status=403
+        )
 
     state = request.app["state"]
     if not getattr(state, "subagents", None):
@@ -690,12 +761,17 @@ async def api_app_agent_run(request: web.Request) -> web.Response:
     # App-run agents are headless: auto-approve tools + silent (no chat surfacing),
     # tagged by the app so the run is attributable.
     info = state.subagents.spawn(
-        task, parent_session_key=f"app:{name}", agent=agent,
-        max_turns=max_turns, approval_mode="auto", silent=True,
+        task,
+        parent_session_key=f"app:{name}",
+        agent=agent,
+        max_turns=max_turns,
+        approval_mode="auto",
+        silent=True,
     )
     if not info:
         return web.json_response(
-            {"error": f"capacity reached ({state.subagents.max_concurrent})"}, status=429)
+            {"error": f"capacity reached ({state.subagents.max_concurrent})"}, status=429
+        )
     if info.done and info.error:
         _sel_log("apps.agent_run", "error", name, request, error=info.error)
         return web.json_response({"error": info.error}, status=400)
@@ -712,7 +788,8 @@ async def api_app_agent_run_status(request: web.Request) -> web.StreamResponse:
     run_id = request.match_info["run_id"]
     if not _app_agent_allowed(name):
         return web.json_response(
-            {"error": f"app {name!r} does not declare the 'agent' permission"}, status=403)
+            {"error": f"app {name!r} does not declare the 'agent' permission"}, status=403
+        )
 
     state = request.app["state"]
     if not getattr(state, "subagents", None):
@@ -720,14 +797,20 @@ async def api_app_agent_run_status(request: web.Request) -> web.StreamResponse:
     info = state.subagents.get(run_id)
     if not info:
         return web.json_response({"error": "not found"}, status=404)
-    data: dict[str, Any] = {"id": info.id, "task": info.task, "done": info.done,
-                            "turns": info.turns, "elapsed": round(time.time() - info.started)}
+    data: dict[str, Any] = {
+        "id": info.id,
+        "task": info.task,
+        "done": info.done,
+        "turns": info.turns,
+        "elapsed": round(time.time() - info.started),
+    }
     if info.done:
         result = info.result
         if getattr(info, "result_path", "") and not is_sensitive_path(info.result_path):
             try:
                 result = await asyncio.to_thread(
-                    Path(info.result_path).read_text, encoding="utf-8", errors="replace")
+                    Path(info.result_path).read_text, encoding="utf-8", errors="replace"
+                )
             except OSError:
                 pass
         data["result"] = _redact(result or "")
@@ -779,6 +862,7 @@ async def api_app_token(request: web.Request) -> web.Response:
 # Reverse proxy: /apps/{name}/api/{tail} → the app's backend subprocess
 # ---------------------------------------------------------------------------
 
+
 async def api_app_proxy(request: web.Request) -> web.StreamResponse:
     """Reverse-proxy a request to an app's backend subprocess.
 
@@ -815,15 +899,20 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
     _STRIP = _HOP_BY_HOP | {"cookie", "authorization", "x-personalclaw-app"}
     fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in _STRIP}
     user_id = request.get("user", "dashboard")
-    fwd_headers["Authorization"] = f"Bearer {generate_token(user_id, ttl_seconds=_APP_TOKEN_TTL_SECS, app=name)}"
+    fwd_headers["Authorization"] = (
+        f"Bearer {generate_token(user_id, ttl_seconds=_APP_TOKEN_TTL_SECS, app=name)}"
+    )
     fwd_headers["X-PersonalClaw-App"] = name
     body = await request.read()
     timeout = aiohttp.ClientTimeout(total=_PROXY_TIMEOUT)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.request(
-                request.method, target, headers=fwd_headers,
-                params=request.rel_url.query, data=body or None,
+                request.method,
+                target,
+                headers=fwd_headers,
+                params=request.rel_url.query,
+                data=body or None,
                 allow_redirects=False,
             ) as upstream:
                 resp = web.StreamResponse(status=upstream.status)
@@ -847,9 +936,14 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
 # ---------------------------------------------------------------------------
 
 _UI_CONTENT_TYPES = {
-    ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css",
-    ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png",
-    ".woff2": "font/woff2", ".map": "application/json",
+    ".js": "text/javascript",
+    ".mjs": "text/javascript",
+    ".css": "text/css",
+    ".json": "application/json",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".woff2": "font/woff2",
+    ".map": "application/json",
 }
 
 

@@ -8,6 +8,7 @@ Design follows the same pattern as :class:`backend.plugins.manifest.PluginManife
 (dataclass + ``from_dict`` / ``to_dict`` / ``validate`` / round-trip) but with
 app-specific fields.
 """
+
 import json
 import re
 from dataclasses import dataclass, field
@@ -390,7 +391,11 @@ class Dependencies:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Dependencies":
         mkt_raw = data.get("marketplace", {})
-        marketplace = MarketplaceDependencies.from_dict(mkt_raw) if isinstance(mkt_raw, dict) else MarketplaceDependencies()
+        marketplace = (
+            MarketplaceDependencies.from_dict(mkt_raw)
+            if isinstance(mkt_raw, dict)
+            else MarketplaceDependencies()
+        )
         return cls(
             managedBy=str(data.get("managedBy", "gateway")),  # noqa: N815
             marketplace=marketplace,
@@ -408,7 +413,9 @@ class ClientInstallConfig:
     """
 
     shell: str = ""  # one-liner for the user to run in their terminal
-    postInstall: str = ""  # command to run after install (e.g. "open ~/Applications/MyApp.app")  # noqa: N815
+    postInstall: str = (
+        ""  # command to run after install (e.g. "open ~/Applications/MyApp.app")  # noqa: N815
+    )
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {}
@@ -456,6 +463,7 @@ class PlatformConfig:
     def current_os() -> str:
         """Return the user-friendly OS name for the current platform."""
         import sys
+
         return PlatformConfig._PLATFORM_TO_OS.get(sys.platform, sys.platform)
 
     def to_dict(self) -> dict[str, Any]:
@@ -474,7 +482,11 @@ class PlatformConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PlatformConfig":
         ci_raw = data.get("clientInstall", {})
-        ci = ClientInstallConfig.from_dict(ci_raw) if isinstance(ci_raw, dict) else ClientInstallConfig()
+        ci = (
+            ClientInstallConfig.from_dict(ci_raw)
+            if isinstance(ci_raw, dict)
+            else ClientInstallConfig()
+        )
         return cls(
             os=[str(o) for o in data.get("os", ["macos", "linux"])],
             arch=[str(a) for a in data.get("arch", [])],
@@ -487,11 +499,24 @@ class PlatformConfig:
 # Provider declaration (extension system)
 # ---------------------------------------------------------------------------
 
-PROVIDER_TYPES = frozenset({
-    "model", "agent", "task", "channel", "inbox",
-    "skills", "knowledge", "memory", "notification", "tool", "workflow",
-    "search", "action", "prompt",
-})
+PROVIDER_TYPES = frozenset(
+    {
+        "model",
+        "agent",
+        "task",
+        "channel",
+        "inbox",
+        "skills",
+        "knowledge",
+        "memory",
+        "notification",
+        "tool",
+        "workflow",
+        "search",
+        "action",
+        "prompt",
+    }
+)
 # NOTE: this set MUST equal the runtime type-handler registry
 # (providers/registry.py register_type_handler(...) calls). ``prompt`` was a
 # registered handler (PromptTypeHandler) but was missing here (#47, the split-era
@@ -588,16 +613,39 @@ class ProviderConfig:
 # ---------------------------------------------------------------------------
 
 # Fields that are parsed into typed dataclass attributes
-_KNOWN_FIELDS = frozenset({
-    "name", "version", "displayName", "description", "icon", "heroImage", "author",
-    "license", "minPersonalClawVersion", "prompts",
-    "mcpServers", "crons", "ui", "backend", "permissions", "setup", "tags",
-    "platform", "dependencies", "provider", "providers", "native",
-    "cli", "loggerRoots",
-    # Legacy fields (stripped — no runtime consumer): parsed to extra for
-    # forward-compat but no longer modeled as typed attributes.
-    "agents", "skills", "sops",
-})
+_KNOWN_FIELDS = frozenset(
+    {
+        "name",
+        "version",
+        "displayName",
+        "description",
+        "icon",
+        "heroImage",
+        "author",
+        "license",
+        "minPersonalClawVersion",
+        "prompts",
+        "mcpServers",
+        "crons",
+        "ui",
+        "backend",
+        "permissions",
+        "setup",
+        "tags",
+        "platform",
+        "dependencies",
+        "provider",
+        "providers",
+        "native",
+        "cli",
+        "loggerRoots",
+        # Legacy fields (stripped — no runtime consumer): parsed to extra for
+        # forward-compat but no longer modeled as typed attributes.
+        "agents",
+        "skills",
+        "sops",
+    }
+)
 
 
 @dataclass
@@ -730,9 +778,7 @@ class AppManifest:
         # Path traversal check on prompt paths
         for p in self.prompts:
             if ".." in str(p):
-                errors.append(
-                    f"prompts path contains path traversal: {p!r}"
-                )
+                errors.append(f"prompts path contains path traversal: {p!r}")
 
         # UI entry path traversal check
         if self.ui.entry and ".." in self.ui.entry:
@@ -745,9 +791,7 @@ class AppManifest:
             if not page.label:
                 errors.append("ui page missing required field: label")
             if page.entryPoint and ".." in page.entryPoint:
-                errors.append(
-                    f"ui page entryPoint contains path traversal: {page.entryPoint!r}"
-                )
+                errors.append(f"ui page entryPoint contains path traversal: {page.entryPoint!r}")
 
         # Cron validation
         for cron in self.crons:
@@ -871,27 +915,17 @@ class AppManifest:
 
         perms_raw = data.get("permissions", {})
         permissions = (
-            Permissions.from_dict(perms_raw)
-            if isinstance(perms_raw, dict)
-            else Permissions()
+            Permissions.from_dict(perms_raw) if isinstance(perms_raw, dict) else Permissions()
         )
 
         setup_raw = data.get("setup", {})
-        setup = (
-            SetupConfig.from_dict(setup_raw)
-            if isinstance(setup_raw, dict)
-            else SetupConfig()
-        )
+        setup = SetupConfig.from_dict(setup_raw) if isinstance(setup_raw, dict) else SetupConfig()
 
         cli_raw = data.get("cli", {})
         cli = CliConfig.from_dict(cli_raw) if isinstance(cli_raw, dict) else CliConfig()
 
         deps_raw = data.get("dependencies", {})
-        deps = (
-            Dependencies.from_dict(deps_raw)
-            if isinstance(deps_raw, dict)
-            else Dependencies()
-        )
+        deps = Dependencies.from_dict(deps_raw) if isinstance(deps_raw, dict) else Dependencies()
 
         platform_raw = data.get("platform", {})
         platform_cfg = (
@@ -902,15 +936,11 @@ class AppManifest:
 
         provider_raw = data.get("provider")
         provider_cfg = (
-            ProviderConfig.from_dict(provider_raw)
-            if isinstance(provider_raw, dict)
-            else None
+            ProviderConfig.from_dict(provider_raw) if isinstance(provider_raw, dict) else None
         )
 
         providers_cfg = [
-            ProviderConfig.from_dict(p)
-            for p in data.get("providers", [])
-            if isinstance(p, dict)
+            ProviderConfig.from_dict(p) for p in data.get("providers", []) if isinstance(p, dict)
         ]
 
         return cls(

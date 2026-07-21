@@ -38,15 +38,23 @@ _KEYWORD_GATE = 0.5  # word-overlap fraction to count a keyword hit
 # Cheap detectors (Odysseus-style) for the obvious "this turn clearly needs X".
 _STRUCTURAL_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (r"https?://|www\.|\.com\b|\.org\b", ("web", "fetch", "url", "search", "browse")),
-    (r"\bschedul|\bremind|\bcron\b|every (day|week|hour)|daily|weekly", ("schedule", "cron", "trigger")),
-    (r"/|\.py\b|\.ts\b|\.md\b|\bfile\b|\bdirectory\b|\bfolder\b", ("read", "write", "edit", "file", "dir", "glob", "grep")),
+    (
+        r"\bschedul|\bremind|\bcron\b|every (day|week|hour)|daily|weekly",
+        ("schedule", "cron", "trigger"),
+    ),
+    (
+        r"/|\.py\b|\.ts\b|\.md\b|\bfile\b|\bdirectory\b|\bfolder\b",
+        ("read", "write", "edit", "file", "dir", "glob", "grep"),
+    ),
     # shell/exec → bash (the single env interface). Covers "run the command", a
     # CLI verb, AND git/test/lint language — those are bash commands now, not their
     # own tools, so all of it should surface bash.
-    (r"\bshell\b|\bbash\b|\bcommand\b|\bterminal\b|\bexecute\b|\brun\b|\$\s"
-     r"|\b(npm|pip|make|cargo|go|node|python|pytest|ls|cat|echo|chmod|mkdir|curl)\b"
-     r"|\bgit\b|commit|diff|branch|stage|\btest|\bpytest|\bspec\b|assert|lint|build",
-     ("bash", "shell", "exec", "run", "command", "terminal")),
+    (
+        r"\bshell\b|\bbash\b|\bcommand\b|\bterminal\b|\bexecute\b|\brun\b|\$\s"
+        r"|\b(npm|pip|make|cargo|go|node|python|pytest|ls|cat|echo|chmod|mkdir|curl)\b"
+        r"|\bgit\b|commit|diff|branch|stage|\btest|\bpytest|\bspec\b|assert|lint|build",
+        ("bash", "shell", "exec", "run", "command", "terminal"),
+    ),
     (r"\bremember|\brecall|\bmemor|\blesson", ("memory", "recall", "lesson")),
     (r"\btask\b|\btodo\b|\bbacklog", ("task",)),
 )
@@ -63,6 +71,7 @@ def _active_embedder():
     """``(embed_fn, model_label)`` or ``(None, "")``. Reuses surfacing's resolver."""
     try:
         from personalclaw.skills.surfacing import _active_embedder as resolve
+
         return resolve()
     except Exception:
         return None, ""
@@ -78,8 +87,13 @@ class ToolRetriever:
     fail-open: any error or no-embed-model returns the FULL catalog.
     """
 
-    def __init__(self, defs: list, *, k: int = DEFAULT_K,
-                 semantic_threshold: float = DEFAULT_SEMANTIC_THRESHOLD) -> None:
+    def __init__(
+        self,
+        defs: list,
+        *,
+        k: int = DEFAULT_K,
+        semantic_threshold: float = DEFAULT_SEMANTIC_THRESHOLD,
+    ) -> None:
         self._defs = list(defs)
         self._k = max(1, int(k))
         self._threshold = semantic_threshold
@@ -155,15 +169,16 @@ class ToolRetriever:
         for name, d in self._by_name.items():
             if name in selected:
                 continue
-            desc_words = set(re.findall(r"\w+", f"{name} {getattr(d, 'description', '') or ''}".lower()))
+            desc_words = set(
+                re.findall(r"\w+", f"{name} {getattr(d, 'description', '') or ''}".lower())
+            )
             kw = (len(query_words & desc_words) / len(query_words)) if query_words else 0.0
             sem = 0.0
             if query_vec is not None:
                 vec = self._embed_cache.get(name)
                 if vec:
                     sem = _cosine(query_vec, vec)
-            score = max(kw if kw >= _KEYWORD_GATE else 0.0,
-                        sem if sem >= self._threshold else 0.0)
+            score = max(kw if kw >= _KEYWORD_GATE else 0.0, sem if sem >= self._threshold else 0.0)
             if score > 0:
                 scored.append((score, name))
 
@@ -275,21 +290,38 @@ class ToolRetriever:
 #   • control/orientation — tools the model can't recover from losing.
 # Exact match (not substring) so a huge MCP catalog can't accidentally inflate the
 # core set (e.g. a substring "read" would pull in every `*Read*` MCP tool).
-_CORE_NAMES: frozenset[str] = frozenset({
-    # universal coding primitives (git/tests/lint are done via bash, not own tools)
-    "bash", "read_file", "write_file", "edit_file", "grep", "glob", "list_dir",
-    # progressive discovery — tools AND skills (the model can't recover without these)
-    "tool_search", "tool_schema", "skill_search", "skill_invoke",
-    # control / orientation (always recoverable-from only if present)
-    "tool_result_get", "ask_user", "finish",
-})
+_CORE_NAMES: frozenset[str] = frozenset(
+    {
+        # universal coding primitives (git/tests/lint are done via bash, not own tools)
+        "bash",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "grep",
+        "glob",
+        "list_dir",
+        # progressive discovery — tools AND skills (the model can't recover without these)
+        "tool_search",
+        "tool_schema",
+        "skill_search",
+        "skill_invoke",
+        # control / orientation (always recoverable-from only if present)
+        "tool_result_get",
+        "ask_user",
+        "finish",
+    }
+)
 
 # Name FRAGMENTS for CROSS-PROVIDER control tools (ACP/MCP dialects name these
 # differently, e.g. "ask_followup_question", "attempt_completion"). Kept tight to
 # avoid substring false positives — notably NOT "ask" (collides with "task"),
 # "run"/"read" (collide with MCP tool names).
 _CORE_NAME_FRAGS: tuple[str, ...] = (
-    "ask_user", "ask_followup", "attempt_completion", "memory_recall", "tool_search",
+    "ask_user",
+    "ask_followup",
+    "attempt_completion",
+    "memory_recall",
+    "tool_search",
 )
 
 

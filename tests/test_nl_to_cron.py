@@ -50,6 +50,7 @@ def test_parse_non_cron_text_rejected():
 def test_nl_to_cron_with_stub_ask():
     async def ask(_p):
         return "0 9 * * 1-5"
+
     expr, err = _run(nl_to_cron("every weekday at 9am", ask=ask))
     assert expr == "0 9 * * 1-5" and not err
 
@@ -57,6 +58,7 @@ def test_nl_to_cron_with_stub_ask():
 def test_nl_to_cron_one_off_rejected():
     async def ask(_p):
         return "NONE"
+
     expr, err = _run(nl_to_cron("in 5 minutes", ask=ask))
     assert expr == "" and "one-off" in err.lower()
 
@@ -69,6 +71,7 @@ def test_nl_to_cron_empty_request():
 def test_nl_to_cron_llm_failure():
     async def boom(_p):
         raise RuntimeError("no model")
+
     expr, err = _run(nl_to_cron("every hour", ask=boom))
     assert expr == "" and "model" in err.lower()
 
@@ -90,7 +93,10 @@ def test_schedule_natural_dispatch(monkeypatch, tmp_path):
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     # stub the NL→cron conversion (no LLM) + capture the delegated schedule_add
     monkeypatch.setattr(ms, "_nl_to_cron_blocking", lambda cadence: ("0 9 * * 1-5", ""))
-    out = ms._call_tool_inner("schedule_natural", {"name": "Standup", "message": "post standup", "cadence": "weekdays 9am"})
+    out = ms._call_tool_inner(
+        "schedule_natural",
+        {"name": "Standup", "message": "post standup", "cadence": "weekdays 9am"},
+    )
     assert not out.startswith("Error")
     assert "0 9 * * 1-5" in out  # the derived cron is surfaced back
 
@@ -99,6 +105,12 @@ def test_schedule_natural_conversion_error(monkeypatch, tmp_path):
     import personalclaw.mcp_schedule as ms
 
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    monkeypatch.setattr(ms, "_nl_to_cron_blocking", lambda cadence: ("", "Not a recurring schedule — use a one-off time instead."))
-    out = ms._call_tool_inner("schedule_natural", {"name": "x", "message": "y", "cadence": "in 5 minutes"})
+    monkeypatch.setattr(
+        ms,
+        "_nl_to_cron_blocking",
+        lambda cadence: ("", "Not a recurring schedule — use a one-off time instead."),
+    )
+    out = ms._call_tool_inner(
+        "schedule_natural", {"name": "x", "message": "y", "cadence": "in 5 minutes"}
+    )
     assert out.startswith("Error") and "one-off" in out.lower()

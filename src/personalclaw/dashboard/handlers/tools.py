@@ -20,6 +20,7 @@ _MCP_LIST_TIMEOUT_SECS = 5.0
 def _sel():
     """Late-binding sel() — allows monkeypatching at parent package level."""
     import personalclaw.dashboard.handlers as _pkg
+
     return _pkg.sel()
 
 
@@ -28,9 +29,12 @@ def _audit_toggle(request: web.Request, op: str, ok: bool, resources: str, error
     available capability surface, a security-relevant state change. Best-effort."""
     try:
         _sel().log_api_access(
-            caller=request.get("user", "dashboard"), operation=op,
-            outcome="ok" if ok else "error", source="tools",
-            resources=resources, error=error,
+            caller=request.get("user", "dashboard"),
+            operation=op,
+            outcome="ok" if ok else "error",
+            source="tools",
+            resources=resources,
+            error=error,
         )
     except Exception:
         pass
@@ -74,32 +78,42 @@ async def api_tools_list(request: web.Request) -> web.Response:
     tools_out: list[dict] = []
     seen: set[tuple[str, str]] = set()
 
-    def _add(name: str, description: str, provider: str, parameters: dict, requires_approval: bool = True, risk_level: object = "safe") -> None:
+    def _add(
+        name: str,
+        description: str,
+        provider: str,
+        parameters: dict,
+        requires_approval: bool = True,
+        risk_level: object = "safe",
+    ) -> None:
         key = (provider, name)
         if key in seen or not name:
             return
         seen.add(key)
         locked = tool_prefs.is_locked(name)
         prov_off = provider in disabled_provs
-        tools_out.append({
-            "name": name,
-            "description": description,
-            "provider": provider,
-            "parameters": parameters,
-            "requires_approval": requires_approval,
-            # Declared risk gradient (safe|caution|destructive) — a user-facing
-            # indicator on the Tools page; the approval gate resolves per-invocation
-            # effective risk from it. External tools with no declaration read 'safe'
-            # here (static default); the gate treats unclassified non-reads as caution.
-            "risk_level": getattr(risk_level, "value", risk_level) or "safe",
-            # PT3/UT4: user enable/disable state. A locked tool is always enabled and
-            # not user-toggleable. `disabled` is true if the tool is off individually
-            # OR its whole provider is off; `providerDisabled` distinguishes the two
-            # so the UI can show "off because the provider is off".
-            "locked": locked,
-            "providerDisabled": prov_off,
-            "disabled": (not locked) and (prov_off or tool_prefs.key_for(provider, name) in disabled_keys),
-        })
+        tools_out.append(
+            {
+                "name": name,
+                "description": description,
+                "provider": provider,
+                "parameters": parameters,
+                "requires_approval": requires_approval,
+                # Declared risk gradient (safe|caution|destructive) — a user-facing
+                # indicator on the Tools page; the approval gate resolves per-invocation
+                # effective risk from it. External tools with no declaration read 'safe'
+                # here (static default); the gate treats unclassified non-reads as caution.
+                "risk_level": getattr(risk_level, "value", risk_level) or "safe",
+                # PT3/UT4: user enable/disable state. A locked tool is always enabled and
+                # not user-toggleable. `disabled` is true if the tool is off individually
+                # OR its whole provider is off; `providerDisabled` distinguishes the two
+                # so the UI can show "off because the provider is off".
+                "locked": locked,
+                "providerDisabled": prov_off,
+                "disabled": (not locked)
+                and (prov_off or tool_prefs.key_for(provider, name) in disabled_keys),
+            }
+        )
 
     # Source 1: the always-on PLATFORM tool provider (filesystem + shell + the
     # tool_result_get affordance). This is built per-session in the runtime (it's
@@ -110,10 +124,17 @@ async def api_tools_list(request: web.Request) -> web.Response:
     # platform slice ONLY here is what stops them double-appearing under "builtin".
     try:
         from personalclaw.agents.native.builtin_tools import create_platform_tools_provider
+
         _platform = create_platform_tools_provider()
         for t in await _platform.list_tools():
-            _add(t.name, t.description, getattr(t, "provider", "") or _platform.name,
-                 t.parameters, getattr(t, "requires_approval", True), getattr(t, "risk_level", "safe"))
+            _add(
+                t.name,
+                t.description,
+                getattr(t, "provider", "") or _platform.name,
+                t.parameters,
+                getattr(t, "requires_approval", True),
+                getattr(t, "risk_level", "safe"),
+            )
     except Exception as exc:
         logger.warning("Failed to enumerate native platform tools", exc_info=True)
         record_failure("personalclaw-filesystem", str(exc))
@@ -131,7 +152,14 @@ async def api_tools_list(request: web.Request) -> web.Response:
         for t in registry_tools:
             if t.provider == "mcp":
                 continue
-            _add(t.name, t.description, t.provider, t.parameters, t.requires_approval, getattr(t, "risk_level", "safe"))
+            _add(
+                t.name,
+                t.description,
+                t.provider,
+                t.parameters,
+                t.requires_approval,
+                getattr(t, "risk_level", "safe"),
+            )
     except Exception as exc:
         logger.warning("Failed to list tools from registry", exc_info=True)
         record_failure("tool-registry", str(exc))
@@ -157,10 +185,16 @@ async def api_tools_list(request: web.Request) -> web.Response:
 
             async def _list_one(name: str, conn) -> tuple[str, list]:
                 try:
-                    tools = await asyncio.wait_for(conn.list_tools(), timeout=_MCP_LIST_TIMEOUT_SECS)
+                    tools = await asyncio.wait_for(
+                        conn.list_tools(), timeout=_MCP_LIST_TIMEOUT_SECS
+                    )
                     return name, list(tools)
                 except (asyncio.TimeoutError, Exception):  # noqa: BLE001
-                    logger.debug("MCP server '%s' tool listing skipped (slow/unreachable)", name, exc_info=True)
+                    logger.debug(
+                        "MCP server '%s' tool listing skipped (slow/unreachable)",
+                        name,
+                        exc_info=True,
+                    )
                     return name, []
 
             results = await asyncio.gather(*(_list_one(n, c) for n, c in conns))
@@ -213,18 +247,26 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     app_name = request.get("app", "")
     if app_name:
         from personalclaw.apps.permissions import checker_for
+
         checker = checker_for(app_name)
         if checker is None or not checker.can_use_mcp_tool(str(body.get("tool") or "")):
             try:
                 _sel().log_tool_invocation(
-                    session_key=f"app:{app_name}", agent="", source="tool_invoke",
-                    tool_name=str(body.get("tool") or ""), tool_kind="", outcome="denied",
+                    session_key=f"app:{app_name}",
+                    agent="",
+                    source="tool_invoke",
+                    tool_name=str(body.get("tool") or ""),
+                    tool_kind="",
+                    outcome="denied",
                     error="tool not in app's declared mcpTools",
                 )
             except Exception:
                 pass
             return web.json_response(
-                {"ok": False, "error": f"app {app_name!r} not permitted to invoke {tool_name!r} — declare it in permissions.mcpTools"},
+                {
+                    "ok": False,
+                    "error": f"app {app_name!r} not permitted to invoke {tool_name!r} — declare it in permissions.mcpTools",  # noqa: E501
+                },
                 status=403,
             )
 
@@ -235,7 +277,9 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     if provider_name:
         provider = get_provider(provider_name)
         if provider is None:
-            return web.json_response({"ok": False, "error": f"unknown tool provider: {provider_name}"}, status=404)
+            return web.json_response(
+                {"ok": False, "error": f"unknown tool provider: {provider_name}"}, status=404
+            )
     else:
         for p in list_providers():
             try:
@@ -252,9 +296,17 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     # destructive tool ran"). Resolve the declared risk from the provider's tool
     # def, then downgrade per-invocation (a read-only bash call is safe).
     from personalclaw.task_modes import resolve_effective_risk
+
     _declared = ""
     try:
-        _declared = next((getattr(t, "risk_level", "") for t in await provider.list_tools() if t.name == tool_name), "")
+        _declared = next(
+            (
+                getattr(t, "risk_level", "")
+                for t in await provider.list_tools()
+                if t.name == tool_name
+            ),
+            "",
+        )
     except Exception:
         _declared = ""
     _risk = resolve_effective_risk(_declared, tool_name, "", arguments)
@@ -264,15 +316,23 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
         result = await provider.invoke(tool_name, arguments)
     except Exception as exc:
         _sel().log_tool_invocation(
-            session_key=caller, agent="", source="tool_invoke",
-            tool_name=tool_name, tool_kind=provider.name, outcome="error",
-            error=str(exc)[:200], metadata={"risk": _risk},
+            session_key=caller,
+            agent="",
+            source="tool_invoke",
+            tool_name=tool_name,
+            tool_kind=provider.name,
+            outcome="error",
+            error=str(exc)[:200],
+            metadata={"risk": _risk},
         )
         return web.json_response({"ok": False, "error": str(exc)[:500]}, status=500)
 
     _sel().log_tool_invocation(
-        session_key=caller, agent="", source="tool_invoke",
-        tool_name=tool_name, tool_kind=provider.name,
+        session_key=caller,
+        agent="",
+        source="tool_invoke",
+        tool_name=tool_name,
+        tool_kind=provider.name,
         outcome="completed" if result.success else "error",
         metadata={"risk": _risk},
     )
@@ -305,8 +365,13 @@ async def api_tools_toggle(request: web.Request) -> web.Response:
     if not name:
         return web.json_response({"ok": False, "error": "name is required"}, status=400)
     result = tool_prefs.set_enabled(provider, name, enabled)
-    _audit_toggle(request, "tools.toggle", result.get("ok", False),
-                  f"{provider}:{name}={'on' if enabled else 'off'}", result.get("error", ""))
+    _audit_toggle(
+        request,
+        "tools.toggle",
+        result.get("ok", False),
+        f"{provider}:{name}={'on' if enabled else 'off'}",
+        result.get("error", ""),
+    )
     if not result.get("ok"):
         # locked-tool rejection → 409 Conflict (a real, expected denial, not a bug).
         return web.json_response(result, status=409 if result.get("locked") else 400)
@@ -334,8 +399,13 @@ async def api_providers_toggle(request: web.Request) -> web.Response:
     if not provider:
         return web.json_response({"ok": False, "error": "provider is required"}, status=400)
     result = tool_prefs.set_provider_enabled(provider, enabled)
-    _audit_toggle(request, "tools.provider_toggle", result.get("ok", False),
-                  f"{provider}={'on' if enabled else 'off'}", result.get("error", ""))
+    _audit_toggle(
+        request,
+        "tools.provider_toggle",
+        result.get("ok", False),
+        f"{provider}={'on' if enabled else 'off'}",
+        result.get("error", ""),
+    )
     if not result.get("ok"):
         return web.json_response(result, status=409 if result.get("locked") else 400)
     return web.json_response(result)

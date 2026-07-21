@@ -29,8 +29,8 @@ class LocalModel:
     description: str = ""
     downloaded: bool = False
     capabilities: list[str] = field(default_factory=list)
-    gated: bool = False          # needs a token / license acceptance (e.g. pyannote)
-    source: str = ""             # display-only origin hint (HF repo, GitHub release, ollama.com)
+    gated: bool = False  # needs a token / license acceptance (e.g. pyannote)
+    source: str = ""  # display-only origin hint (HF repo, GitHub release, ollama.com)
 
     def to_dict(self) -> dict[str, Any]:
         return {

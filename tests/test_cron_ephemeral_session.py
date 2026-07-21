@@ -82,7 +82,9 @@ class TestBuildCronSessionContext:
         """persistent_session=True → key == f'cron:{job.id}' (unchanged)."""
         from personalclaw.schedule import build_schedule_session_context
 
-        job = ScheduleJob(id="abc123", name="x", action=make_agent_action(message="hi"), persistent_session=True)
+        job = ScheduleJob(
+            id="abc123", name="x", action=make_agent_action(message="hi"), persistent_session=True
+        )
         key, _prompt = build_schedule_session_context(job)
         assert key == "cron:abc123"
 
@@ -105,7 +107,9 @@ class TestBuildCronSessionContext:
         """persistent_session=False → two calls return two different keys."""
         from personalclaw.schedule import build_schedule_session_context
 
-        job = ScheduleJob(id="abc123", name="x", action=make_agent_action(message="hi"), persistent_session=False)
+        job = ScheduleJob(
+            id="abc123", name="x", action=make_agent_action(message="hi"), persistent_session=False
+        )
         key1, _ = build_schedule_session_context(job)
         key2, _ = build_schedule_session_context(job)
         assert key1 != key2
@@ -114,7 +118,9 @@ class TestBuildCronSessionContext:
         """Ephemeral key must still start with 'cron:{job.id}:' for reaper matching."""
         from personalclaw.schedule import build_schedule_session_context
 
-        job = ScheduleJob(id="abc123", name="x", action=make_agent_action(message="hi"), persistent_session=False)
+        job = ScheduleJob(
+            id="abc123", name="x", action=make_agent_action(message="hi"), persistent_session=False
+        )
         key, _ = build_schedule_session_context(job)
         assert key.startswith("cron:abc123:")
         # Suffix is non-empty
@@ -161,8 +167,12 @@ class TestBuildCronSessionContext:
         the model doesn't ask questions / emit [OPTIONS:] menus to an absent user."""
         from personalclaw.schedule import build_schedule_session_context
 
-        persistent = ScheduleJob(id="p", name="x", action=make_agent_action(message="brief me"), persistent_session=True)
-        stateless = ScheduleJob(id="s", name="x", action=make_agent_action(message="brief me"), persistent_session=False)
+        persistent = ScheduleJob(
+            id="p", name="x", action=make_agent_action(message="brief me"), persistent_session=True
+        )
+        stateless = ScheduleJob(
+            id="s", name="x", action=make_agent_action(message="brief me"), persistent_session=False
+        )
         for job in (persistent, stateless):
             _key, prompt = build_schedule_session_context(job)
             assert "AUTONOMOUS RUN" in prompt

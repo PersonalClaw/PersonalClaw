@@ -14,29 +14,39 @@ from __future__ import annotations
 import logging
 import time
 
-from personalclaw.loop.kinds import register
+from personalclaw.loop.kinds import LoopKindStrategy, register
 from personalclaw.loop.loop import Loop, LoopStatus
 
 logger = logging.getLogger(__name__)
 
 
-_POOL_CAP = 4              # max concurrent task-workers per loop
-_CONFLICT_REDO_CAP = 2     # auto-resolve a task's merge conflict at most this many times
-_STALL_FINDINGS = 5        # a stage grinding this many findings w/o clearing its gate is "stuck"
+_POOL_CAP = 4  # max concurrent task-workers per loop
+_CONFLICT_REDO_CAP = 2  # auto-resolve a task's merge conflict at most this many times
+_STALL_FINDINGS = 5  # a stage grinding this many findings w/o clearing its gate is "stuck"
 
 # Manifests that signal a workspace is buildable by a given toolchain. A verify/test
 # command only gates a stage once the project it drives actually exists — else a
 # planning/pre-scaffold stage hard-fails the gate (e.g. `npm run build` → ENOENT 254).
 _BUILD_MANIFESTS: dict[str, tuple[str, ...]] = {
     # token found in the command → manifest file(s) whose presence means it can run
-    "npm": ("package.json",), "pnpm": ("package.json",), "yarn": ("package.json",),
-    "node": ("package.json",), "vite": ("package.json",), "tsc": ("package.json", "tsconfig.json"),
-    "eslint": ("package.json",), "vitest": ("package.json",), "jest": ("package.json",),
-    "cargo": ("Cargo.toml",), "go": ("go.mod",),
+    "npm": ("package.json",),
+    "pnpm": ("package.json",),
+    "yarn": ("package.json",),
+    "node": ("package.json",),
+    "vite": ("package.json",),
+    "tsc": ("package.json", "tsconfig.json"),
+    "eslint": ("package.json",),
+    "vitest": ("package.json",),
+    "jest": ("package.json",),
+    "cargo": ("Cargo.toml",),
+    "go": ("go.mod",),
     "pytest": ("pyproject.toml", "setup.py", "setup.cfg", "tox.ini"),
-    "python": ("pyproject.toml", "setup.py"), "ruff": ("pyproject.toml", "setup.cfg"),
-    "make": ("Makefile", "makefile"), "gradle": ("build.gradle", "build.gradle.kts"),
-    "mvn": ("pom.xml",), "maven": ("pom.xml",),
+    "python": ("pyproject.toml", "setup.py"),
+    "ruff": ("pyproject.toml", "setup.cfg"),
+    "make": ("Makefile", "makefile"),
+    "gradle": ("build.gradle", "build.gradle.kts"),
+    "mvn": ("pom.xml",),
+    "maven": ("pom.xml",),
 }
 
 
@@ -52,6 +62,7 @@ def _command_runnable_here(cmd: str, workspace_dir: str) -> bool:
     same `verify_command` simply doesn't gate a stage whose project isn't built yet,
     and starts gating once the scaffold stage creates the manifest."""
     import os
+
     cmd = (cmd or "").strip().lower()
     ws = (workspace_dir or "").strip()
     if not cmd or not ws:
@@ -59,8 +70,10 @@ def _command_runnable_here(cmd: str, workspace_dir: str) -> bool:
     manifests: tuple[str, ...] = ()
     for token, mans in _BUILD_MANIFESTS.items():
         # word-ish match: the toolchain token appears as a command word
-        if token in cmd.split() or any(seg.strip().startswith(token + " ") or seg.strip() == token
-                                       for seg in cmd.replace("&&", ";").replace("||", ";").split(";")):
+        if token in cmd.split() or any(
+            seg.strip().startswith(token + " ") or seg.strip() == token
+            for seg in cmd.replace("&&", ";").replace("||", ";").split(";")
+        ):
             manifests = mans
             break
     if not manifests:
@@ -68,13 +81,13 @@ def _command_runnable_here(cmd: str, workspace_dir: str) -> bool:
     return any(os.path.isfile(os.path.join(ws, m)) for m in manifests)
 
 
-class CodeKind:
+class CodeKind(LoopKindStrategy):
     kind = "code"
     label = "Code"
     description = "SDLC work in a codebase — staged plan, gated execution, mini-IDE."
     wants_workspace = True
     default_agent = "personalclaw-coder"
-    provisions_tasks = True   # task-driven: stages → per-stage TaskLists + seeded tasks at launch
+    provisions_tasks = True  # task-driven: stages → per-stage TaskLists + seeded tasks at launch
 
     def __init__(self) -> None:
         # Per-(loop:task) merge-conflict auto-resolve budget (in-memory; the loser
@@ -94,11 +107,13 @@ class CodeKind:
         """Parallel mode: queued work + a git workspace (worktrees available). Set
         PERSONALCLAW_CODE_PARALLEL=0 to force sequential everywhere (escape hatch)."""
         import os
+
         if os.environ.get("PERSONALCLAW_CODE_PARALLEL") == "0":
             return False
         if not (loop.kind_config or {}).get("queued_task_ids"):
             return False
         from personalclaw.loop import worktree
+
         ws = (loop.workspace_dir or "").strip()
         return bool(ws) and worktree.can_parallelize(ws)
 
@@ -106,13 +121,17 @@ class CodeKind:
         """Queued task ids that currently have an armed worker loop (occupying a pool
         slot) — loop existence, not session.running (a worker idles between cycles)."""
         from personalclaw.loop.manager import task_session_key
-        return [tid for tid in ((loop.kind_config or {}).get("queued_task_ids", []) or [])
-                if svc.get_by_session(task_session_key(loop.id, tid)) is not None]
+
+        return [
+            tid
+            for tid in ((loop.kind_config or {}).get("queued_task_ids", []) or [])
+            if svc.get_by_session(task_session_key(loop.id, tid)) is not None
+        ]
 
     def default_kind_config(self) -> dict:
         return {
             "entry_stage": "ideation",
-            "project_kind": "greenfield",   # greenfield | brownfield
+            "project_kind": "greenfield",  # greenfield | brownfield
             "verify_command": "",
             "test_command": "",
             "queued_task_ids": [],
@@ -124,9 +143,10 @@ class CodeKind:
         (errors, warnings) folded into the shared validator's result."""
         from personalclaw.loop.sdlc_meta import ENTRY_STAGES, PROJECT_KINDS
         from personalclaw.security import audit_bash_command
+
         errors: list[str] = []
         warnings: list[str] = []
-        cfg = config.get("kind_config") if isinstance(config.get("kind_config"), dict) else config
+        cfg = _kc if isinstance((_kc := config.get("kind_config")), dict) else config
         entry_stage = (str(cfg.get("entry_stage", "ideation")).strip() or "ideation").lower()
         if entry_stage not in ENTRY_STAGES:
             errors.append(f"Unknown entry stage {entry_stage!r}.")
@@ -166,7 +186,8 @@ class CodeKind:
                 uniq = list(dict.fromkeys(dups))
                 warnings.append(
                     f"Duplicate stage{'s' if len(uniq) > 1 else ''} ({', '.join(uniq)}) — "
-                    "only the first of each is kept at launch; give each a distinct type or title.")
+                    "only the first of each is kept at launch; give each a distinct type or title."
+                )
         return errors, warnings
 
     def launch_blocker(self, loop: Loop) -> str | None:
@@ -178,19 +199,20 @@ class CodeKind:
         Ported from the legacy launch-time ``require_workspace=True`` re-validation +
         the reaper's workspace-existence guard."""
         import os
+
         if str((loop.kind_config or {}).get("project_kind", "greenfield")) != "brownfield":
             return None
         ws = (loop.workspace_dir or "").strip()
         if not ws:
-            return "This brownfield code loop needs a workspace — pick the codebase directory before starting."
+            return "This brownfield code loop needs a workspace — pick the codebase directory before starting."  # noqa: E501
         if not os.path.isdir(ws):
-            return f"The workspace folder {ws!r} is missing (moved or deleted) — re-pick the codebase directory."
+            return f"The workspace folder {ws!r} is missing (moved or deleted) — re-pick the codebase directory."  # noqa: E501
         return None
 
     def phase_key(self, phase: dict) -> str:
         # A code phase is keyed by its SDLC stage id, falling back to title for a
         # stageless row — matching the legacy store's `_stage_of` keying exactly.
-        return (str(phase.get("stage", "")).strip() or str(phase.get("title", "")).strip())
+        return str(phase.get("stage", "")).strip() or str(phase.get("title", "")).strip()
 
     async def is_done_signal(self, loop: Loop, findings: list[dict]) -> bool | None:
         # The full code signal is "every stage's gate passed" (verify/test command
@@ -221,10 +243,10 @@ class CodeKind:
         plan = loop.plan or []
         if 0 <= idx < len(plan):
             stage = plan[idx]
-            for sid in (stage.get("skill_ids") or []):
+            for sid in stage.get("skill_ids") or []:
                 if sid not in skills:
                     skills.append(str(sid))
-            for wid in (stage.get("workflow_ids") or []):
+            for wid in stage.get("workflow_ids") or []:
                 if wid not in workflows:
                     workflows.append(str(wid))
         return skills, workflows
@@ -247,17 +269,27 @@ class CodeKind:
         title = str(phase.get("title", "")).strip()
         objective = str(phase.get("objective", "")).strip()
         agent_name = str(phase.get("agent_name", "")).strip()
-        exit_criteria = [str(c).strip() for c in (phase.get("exit_criteria") or []) if str(c).strip()]
+        exit_criteria = [
+            str(c).strip() for c in (phase.get("exit_criteria") or []) if str(c).strip()
+        ]
         if not (stage or objective):
             return ""
-        label = f"stage {idx + 1}/{len(plan)}" + (f" — {title or stage}" if (title or stage) else "")
+        label = f"stage {idx + 1}/{len(plan)}" + (
+            f" — {title or stage}" if (title or stage) else ""
+        )
         deliverable = str(phase.get("deliverable", "")).strip()
         from personalclaw.prompt_providers.runtime import render_snippet_block
-        rendered = render_snippet_block("loop-code-stage-directive", {
-            "label": label, "objective": objective,
-            "criteria_joined": "; ".join(exit_criteria),
-            "deliverable": deliverable, "agent_name": agent_name,
-        })
+
+        rendered = render_snippet_block(
+            "loop-code-stage-directive",
+            {
+                "label": label,
+                "objective": objective,
+                "criteria_joined": "; ".join(exit_criteria),
+                "deliverable": deliverable,
+                "agent_name": agent_name,
+            },
+        )
         if rendered:
             return rendered
         body = f"You are in {label}."
@@ -279,23 +311,31 @@ class CodeKind:
         plan / verify+test commands) and normalize: stage_plan → plan; entry_stage/
         project_kind/verify_command/test_command → kind_config."""
         from personalclaw.loop import code_classify as code_classify
-        c = await code_classify.classify(task, ask, skills_catalog=skills,
-                                         workflows_catalog=workflows, agents_catalog=agents)
+
+        c = await code_classify.classify(
+            task, ask, skills_catalog=skills, workflows_catalog=workflows, agents_catalog=agents
+        )
         d = c.to_dict()
         return {
-            "title": d.get("title", ""), "summary": d.get("summary", ""),
+            "title": d.get("title", ""),
+            "summary": d.get("summary", ""),
             "classified": d.get("classified", True),
-            "intake_rigor": d.get("intake_rigor", "auto"), "execution": d.get("execution", "solo"),
-            "roster": d.get("roster", []), "strategy_id": d.get("strategy_id", "orchestrator"),
+            "intake_rigor": d.get("intake_rigor", "auto"),
+            "execution": d.get("execution", "solo"),
+            "roster": d.get("roster", []),
+            "strategy_id": d.get("strategy_id", "orchestrator"),
             # The planner's rationale for its entry-stage / rigor picks — the Plan Review
             # surfaces them (RigorChip tooltip etc.) so the user sees WHY before approving.
-            "entry_reason": d.get("entry_reason", ""), "rigor_reason": d.get("rigor_reason", ""),
+            "entry_reason": d.get("entry_reason", ""),
+            "rigor_reason": d.get("rigor_reason", ""),
             "clarifying_questions": d.get("clarifying_questions", []),
             "suggested_skill_ids": d.get("suggested_skill_ids", []),
             "suggested_workflow_ids": d.get("suggested_workflow_ids", []),
             "marketplace_suggestions": d.get("marketplace_suggestions", []),
             "success_criteria": d.get("success_criteria", ""),
-            "plan": d.get("stage_plan", []),     # already phase-shaped (stage/title/exit_criteria/tasks)
+            "plan": d.get(
+                "stage_plan", []
+            ),  # already phase-shaped (stage/title/exit_criteria/tasks)
             "kind_config": {
                 "entry_stage": d.get("entry_stage", "ideation"),
                 "project_kind": d.get("project_kind", "greenfield"),
@@ -329,65 +369,89 @@ class CodeKind:
             f"**Max cycles:** {loop.max_cycles}",
         ]
         if loop.workspace_dir:
-            lines += ["",
-                      "Work INSIDE the workspace directory above — that is the codebase. Read "
-                      "before you write; verify after you edit."]
+            lines += [
+                "",
+                "Work INSIDE the workspace directory above — that is the codebase. Read "
+                "before you write; verify after you edit.",
+            ]
         if loop.plan:
-            lines += ["",
-                      "**Stage plan — work through these IN ORDER.** A stage is done when its "
-                      "exit criteria are met; the supervisor advances you to the next stage. "
-                      "Each stage tracks its work in its own TaskList (see below)."]
+            lines += [
+                "",
+                "**Stage plan — work through these IN ORDER.** A stage is done when its "
+                "exit criteria are met; the supervisor advances you to the next stage. "
+                "Each stage tracks its work in its own TaskList (see below).",
+            ]
             for i, ph in enumerate(loop.plan):
                 if not isinstance(ph, dict):
                     continue
-                title = str(ph.get("title", "")).strip() or str(ph.get("stage", "")).strip() or "(stage)"
+                title = (
+                    str(ph.get("title", "")).strip()
+                    or str(ph.get("stage", "")).strip()
+                    or "(stage)"
+                )
                 objective = str(ph.get("objective", "")).strip()
-                lines.append(f"{i+1}. **{title}** — {objective}" if objective else f"{i+1}. **{title}**")
-                for crit in (ph.get("exit_criteria") or []):
+                lines.append(
+                    f"{i+1}. **{title}** — {objective}" if objective else f"{i+1}. **{title}**"
+                )
+                for crit in ph.get("exit_criteria") or []:
                     lines.append(f"   - done when: {crit}")
                 deliverable = str(ph.get("deliverable", "")).strip()
                 if deliverable:
                     lines.append(f"   - deliverable: {deliverable}")
         if loop.task_list_ids:
-            lines += ["",
-                      "**Per-stage task tracking.** Each stage has a TaskList in the Tasks "
-                      "system. Use the task tools to keep them honest: `task_list` to see the "
-                      "current stage's tasks, `task_update {id, status}` to mark in_progress / "
-                      "done as you work. Do not leave finished work marked open."]
+            lines += [
+                "",
+                "**Per-stage task tracking.** Each stage has a TaskList in the Tasks "
+                "system. Use the task tools to keep them honest: `task_list` to see the "
+                "current stage's tasks, `task_update {id, status}` to mark in_progress / "
+                "done as you work. Do not leave finished work marked open.",
+            ]
         if context_dir:
-            lines += ["",
-                      f"**Project context dir:** `{context_dir}`",
-                      "Shared, durable context for the PROJECT this work belongs to (other "
-                      "loops on the same project share it). READ it for prior context at the "
-                      "start; WRITE concise notes there (e.g. `context/decisions.md`, "
-                      "`context/conventions.md`) when you make a durable decision or learn "
-                      "something future work needs. High-signal long-term memory — not this "
-                      "run's scratch (that goes in your finding)."]
+            lines += [
+                "",
+                f"**Project context dir:** `{context_dir}`",
+                "Shared, durable context for the PROJECT this work belongs to (other "
+                "loops on the same project share it). READ it for prior context at the "
+                "start; WRITE concise notes there (e.g. `context/decisions.md`, "
+                "`context/conventions.md`) when you make a durable decision or learn "
+                "something future work needs. High-signal long-term memory — not this "
+                "run's scratch (that goes in your finding).",
+            ]
         if loop.attended:
-            lines += ["",
-                      "**Clarification allowed (attended):** if the task is genuinely ambiguous "
-                      "in a way that would change your direction, you MAY write "
-                      "{\"question\", \"why\"} to questions.json in the loop files dir and end "
-                      "the turn — the project pauses for the user. Keep the bar high; otherwise "
-                      "proceed on a best-reasoned assumption."]
+            lines += [
+                "",
+                "**Clarification allowed (attended):** if the task is genuinely ambiguous "
+                "in a way that would change your direction, you MAY write "
+                '{"question", "why"} to questions.json in the loop files dir and end '
+                "the turn — the project pauses for the user. Keep the bar high; otherwise "
+                "proceed on a best-reasoned assumption.",
+            ]
         else:
-            lines += ["",
-                      "**Unattended:** do NOT pause to ask the user. Investigate ambiguities "
-                      "yourself, pick the best-reasoned answer, record the assumption in your "
-                      "finding, and proceed. Never write questions.json in this mode."]
+            lines += [
+                "",
+                "**Unattended:** do NOT pause to ask the user. Investigate ambiguities "
+                "yourself, pick the best-reasoned answer, record the assumption in your "
+                "finding, and proceed. Never write questions.json in this mode.",
+            ]
         if verify_command:
-            lines += ["",
-                      f"**Build check:** `{verify_command}` should pass. Drive your work toward "
-                      "keeping it green; the supervisor may run it."]
+            lines += [
+                "",
+                f"**Build check:** `{verify_command}` should pass. Drive your work toward "
+                "keeping it green; the supervisor may run it.",
+            ]
         if test_command:
-            lines += ["",
-                      f"**Test check:** `{test_command}` is the test runner. The verification "
-                      "stage is done when it passes."]
+            lines += [
+                "",
+                f"**Test check:** `{test_command}` is the test runner. The verification "
+                "stage is done when it passes.",
+            ]
         if loop.success_criteria:
             lines += ["", f"**Definition of Done:** {loop.success_criteria}"]
-        lines += ["",
-                  "Never push to git, never run destructive operations, never read credential "
-                  "files as text. Grind through obstacles rather than stopping at the first one."]
+        lines += [
+            "",
+            "Never push to git, never run destructive operations, never read credential "
+            "files as text. Grind through obstacles rather than stopping at the first one.",
+        ]
         return "\n".join(lines)
 
     @staticmethod
@@ -405,6 +469,7 @@ class CodeKind:
         Handles two ordinal shapes: ``N/M`` (a progress chip like ``2/3``, optionally then
         a separator) and ``N<sep>`` (``1.`` / ``1 —`` / ``Stage 1:``)."""
         import re
+
         t = (s or "").strip()
         # First drop a leading "N/M" progress chip (the directive's "stage N/M …" shape),
         # with or without a following separator: "2/3 Implementation", "2/3 — Impl".
@@ -425,6 +490,7 @@ class CodeKind:
         verification finding was tagged ``test_suite``). Folding separators makes the id,
         the title, and any slug variant of the title collapse to one canonical key."""
         import re
+
         return re.sub(r"[\s_\-]+", " ", (s or "").strip().lower()).strip()
 
     def _findings_for_stage(self, loop: Loop, idx: int, findings: list[dict]) -> list[dict]:
@@ -446,8 +512,10 @@ class CodeKind:
             return []
 
         def _norm_ids(phase: dict) -> set[str]:
-            return {self._norm_stage(self.phase_key(phase)),
-                    self._norm_stage(str(phase.get("title", "")))} - {""}
+            return {
+                self._norm_stage(self.phase_key(phase)),
+                self._norm_stage(str(phase.get("title", ""))),
+            } - {""}
 
         def _cands(f: dict) -> tuple[str, str]:
             raw = str(f.get("stage", ""))
@@ -470,7 +538,7 @@ class CodeKind:
             best = 0
             for cand in _cands(f):
                 for a in accept:
-                    if a and cand.startswith(a) and cand[len(a):len(a) + 1] in ("", " "):
+                    if a and cand.startswith(a) and cand[len(a) : len(a) + 1] in ("", " "):
                         best = max(best, len(a))
             return best
 
@@ -501,8 +569,9 @@ class CodeKind:
                 out.append(f)
         return out
 
-    async def _escalate_stall_if_stuck(self, loop: Loop, idx: int, stage: str,
-                                       findings: list[dict], ctx, *, cause: str = "gate") -> bool:
+    async def _escalate_stall_if_stuck(
+        self, loop: Loop, idx: int, stage: str, findings: list[dict], ctx, *, cause: str = "gate"
+    ) -> bool:
         """A stage that has produced _STALL_FINDINGS+ findings without ever advancing is
         stuck. ONCE per stuck stage: publish stage_stalled, pause the worker's nudge loop
         (stop spinning), and flip the loop to BLOCKED so the cockpit prompts a steer instead
@@ -531,36 +600,63 @@ class CodeKind:
         # (A stage with no queued tasks — e.g. a doc-only stage — reports 0 and is
         # gated by the finding count alone, exactly as before.)
         from personalclaw.loop import tasks_link
+
         resolved_now = await tasks_link.resolved_stage_task_count(loop, stage)
         if resolved_now > self._stall_progress.get(key, 0):
             self._stall_progress[key] = resolved_now
             logger.info(
                 "code: stage %r for %s deferring stall — %d task(s) resolved "
-                "(real progress, not spinning)", stage, loop.id, resolved_now)
+                "(real progress, not spinning)",
+                stage,
+                loop.id,
+                resolved_now,
+            )
             return False
         self._stall_notified.add(key)
         from personalclaw.loop import store
         from personalclaw.loop.loop import LoopStatus
         from personalclaw.loop.manager import session_key
+
         title = str((loop.plan[idx] or {}).get("title", "")).strip() or stage
-        logger.info("code: stage %r stalled (%s) after %d findings for %s",
-                    stage, cause, _STALL_FINDINGS, loop.id)
-        ctx.publish(loop.id, "stage_stalled",
-                    {"loop_id": loop.id, "stage": stage, "title": title,
-                     "findings": _STALL_FINDINGS, "cause": cause})
+        logger.info(
+            "code: stage %r stalled (%s) after %d findings for %s",
+            stage,
+            cause,
+            _STALL_FINDINGS,
+            loop.id,
+        )
+        ctx.publish(
+            loop.id,
+            "stage_stalled",
+            {
+                "loop_id": loop.id,
+                "stage": stage,
+                "title": title,
+                "findings": _STALL_FINDINGS,
+                "cause": cause,
+            },
+        )
         try:  # pause the worker's nudge loop so it stops spinning while it waits on the user
             nl = ctx.svc.get_by_session(session_key(loop.id))
             if nl is not None:
                 await ctx.svc.update(nl.id, active=False)
         except Exception:
             logger.debug("code: stall-pause of nudge loop failed for %s", loop.id, exc_info=True)
-        detail = ("its exit criteria — paused to avoid spinning. Steer it (or relax a criterion), "
-                  "then resume." if cause == "gate" else
-                  "its quality bar — the work meets the exit criteria but keeps scoring below the "
-                  "stage's quality gate. Paused to avoid spinning; steer it (or relax the bar), then resume.")
+        detail = (
+            "its exit criteria — paused to avoid spinning. Steer it (or relax a criterion), "
+            "then resume."
+            if cause == "gate"
+            else "its quality bar — the work meets the exit criteria but keeps scoring below the "
+            "stage's quality gate. Paused to avoid spinning; steer it (or relax the bar), then resume."  # noqa: E501
+        )
         try:
-            store.update_status(loop.id, LoopStatus.BLOCKED, error_message=(
-                f"Stage '{title}' produced {_STALL_FINDINGS}+ cycles without clearing {detail}"))
+            store.update_status(
+                loop.id,
+                LoopStatus.BLOCKED,
+                error_message=(
+                    f"Stage '{title}' produced {_STALL_FINDINGS}+ cycles without clearing {detail}"
+                ),
+            )
         except (KeyError, store.TransitionError):
             pass
         ctx.publish(loop.id, "blocked", {"loop_id": loop.id, "stage": stage})
@@ -588,6 +684,7 @@ class CodeKind:
         the workspace (a worker may place it in a different but valid dir)."""
         import os
         import re
+
         ws = (workspace_dir or "").strip()
         if not ws or not os.path.isdir(ws):
             return (False, None)  # can't verify → don't block (the judge still gates)
@@ -623,6 +720,7 @@ class CodeKind:
         artifact, not the worker's narration (Slice B). Bounded (head of the file); binary
         or unreadable files return ""; a middle-truncation marker shows the cap was hit."""
         import os
+
         try:
             if os.path.getsize(path) == 0:
                 return ""
@@ -634,8 +732,9 @@ class CodeKind:
             return text[:max_chars] + "\n… (deliverable truncated for the gate)"
         return text
 
-    def _tick_decide(self, loop: Loop, idx: int, findings: list[dict], *,
-                     gate_passed: bool, metric: float | None):
+    def _tick_decide(
+        self, loop: Loop, idx: int, findings: list[dict], *, gate_passed: bool, metric: float | None
+    ):
         """Build the immutable TickState snapshot for the ACTIVE stage and return the
         pure ``tick.evaluate`` Decision — the single authority for advance/hold/rollback/
         complete. The snapshot is derived entirely from persisted state (plan + phase
@@ -648,6 +747,7 @@ class CodeKind:
         (the finest per-stage clock persisted today); dwell is opt-in and coarse, so this
         is sufficient and honest rather than inventing a per-stage timestamp column."""
         from personalclaw.loop import tick
+
         plan = loop.plan or []
         tcfg = tick.tick_config_from_plan(plan, max_cycles=loop.max_cycles or 0)
         prior_floor = None
@@ -660,7 +760,7 @@ class CodeKind:
             step_index=idx,
             step_started_at=loop.started_at or 0.0,
             findings_total=stage_findings,
-            findings_at_step_start=0,   # stage_findings is ALREADY per-stage → delta is itself
+            findings_at_step_start=0,  # stage_findings is ALREADY per-stage → delta is itself
             gate_passed=gate_passed,
             metric=metric,
             prior_step_floor=prior_floor,
@@ -669,8 +769,9 @@ class CodeKind:
         )
         return tick.evaluate(tcfg, state, time.time())
 
-    async def _observe_stage_metric(self, loop: Loop, idx: int, stage: str,
-                                    findings: list[dict], ctx) -> float | None:
+    async def _observe_stage_metric(
+        self, loop: Loop, idx: int, stage: str, findings: list[dict], ctx
+    ) -> float | None:
         """The graded quality metric for a METRIC-GATED stage — the P4 scored judge's
         ``quality_score`` (0-5) for the latest stage finding, persisted to the quality
         trail (mirroring goal.py) so the tick metric gate + rollback reason over a real,
@@ -678,25 +779,30 @@ class CodeKind:
         tick metric branch stays inert) for a stage with no ``metric_pass`` OR when the
         judge can't score — never fabricates a number, and never raises into the cycle."""
         from personalclaw.loop import store, tick
+
         plan = loop.plan or []
         if not (0 <= idx < len(plan)):
             return None
         if tick.step_config_from_phase(plan[idx]).metric_pass is None:
-            return None   # stage not metric-gated → structural gate is the whole gate
+            return None  # stage not metric-gated → structural gate is the whole gate
         stage_findings = self._findings_for_stage(loop, idx, findings)
         if not stage_findings:
             return None
         try:
             from personalclaw.loop import judge as judge_mod
             from personalclaw.loop.loop import effective_dir
+
             cfg = loop.kind_config or {}
             deliverable = str((plan[idx] or {}).get("deliverable", "")).strip()
             verdict = await judge_mod.assess_cycle(
-                loop.task, "\n".join(str(c) for c in (plan[idx].get("exit_criteria") or [])),
-                stage_findings[-1], stage_findings[:-1],
+                loop.task,
+                "\n".join(str(c) for c in (plan[idx].get("exit_criteria") or [])),
+                stage_findings[-1],
+                stage_findings[:-1],
                 verify_command=str(cfg.get("verify_command", "")),
                 workspace=effective_dir(loop) or None,
-                deliverables=[deliverable] if deliverable else None)
+                deliverables=[deliverable] if deliverable else None,
+            )
         except Exception:
             logger.debug("loop %s: stage-metric judge failed (non-fatal)", loop.id, exc_info=True)
             return None
@@ -705,19 +811,30 @@ class CodeKind:
         cycle = int((stage_findings[-1] or {}).get("cycle", loop.total_cycles or 0))
         store.record_quality_score(loop.id, verdict.quality_score)
         store.write_verdict(loop.id, cycle, {"cycle": cycle, "stage": stage, **verdict.to_dict()})
-        ctx.publish(loop.id, "cycle_verdict", {
-            "loop_id": loop.id, "cycle": cycle, "stage": stage,
-            "quality_score": verdict.quality_score, "done": bool(verdict.done),
-            "marginal_value": verdict.marginal_value, "regressed": bool(verdict.regressed)})
+        ctx.publish(
+            loop.id,
+            "cycle_verdict",
+            {
+                "loop_id": loop.id,
+                "cycle": cycle,
+                "stage": stage,
+                "quality_score": verdict.quality_score,
+                "done": bool(verdict.done),
+                "marginal_value": verdict.marginal_value,
+                "regressed": bool(verdict.regressed),
+            },
+        )
         return float(verdict.quality_score)
 
-    async def _apply_advance(self, loop: Loop, idx: int, stage: str, decision,
-                             metric: float | None, ctx) -> bool:
+    async def _apply_advance(
+        self, loop: Loop, idx: int, stage: str, decision, metric: float | None, ctx
+    ) -> bool:
         """Apply an ADVANCE/COMPLETE Decision: mark the stage done, reconcile its tasks,
         then either COMPLETE the loop (last stage) or activate the next stage + re-arm the
         brief/nudge. The stage-advance side-effects the pure engine can't own."""
         from personalclaw.loop import store, tasks_link
         from personalclaw.loop.manager import write_brief
+
         cid = loop.id
         plan = loop.plan or []
         store.set_phase_status(cid, stage, "done")
@@ -729,6 +846,7 @@ class CodeKind:
         # still-open tasks so the cockpit doesn't show a done stage with open tasks.
         await tasks_link.reconcile_phase_done(cid, stage)
         from personalclaw.loop import tick
+
         if decision.action is tick.Action.COMPLETE or idx >= len(plan) - 1:
             await ctx.complete(cid, "all stages complete")
             return True
@@ -737,13 +855,17 @@ class CodeKind:
             store.set_phase_status(cid, next_stage, "active")
         refreshed = store.get(cid)
         if refreshed is not None:
-            write_brief(refreshed)     # re-arm the brief so the worker targets the new stage
+            write_brief(refreshed)  # re-arm the brief so the worker targets the new stage
         # Refresh the live worker's autonudge MESSAGE (cycle_nudge embeds the stage
         # directive, set once at start) so it names the new stage, not the old one.
         from personalclaw.loop.manager import rearm_nudge_message
+
         await rearm_nudge_message(ctx.svc, cid)
-        ctx.publish(cid, "stage_advance", {"loop_id": cid, "completed_stage": stage,
-                                           "next_stage": next_stage, "metric": metric})
+        ctx.publish(
+            cid,
+            "stage_advance",
+            {"loop_id": cid, "completed_stage": stage, "next_stage": next_stage, "metric": metric},
+        )
         return False
 
     async def _apply_rollback(self, loop: Loop, idx: int, stage: str, decision, ctx) -> bool:
@@ -754,6 +876,7 @@ class CodeKind:
         re-arm the brief/nudge, and emit the ``rolled_back`` SSE the cockpit listens for."""
         from personalclaw.loop import store
         from personalclaw.loop.manager import rearm_nudge_message, write_brief
+
         cid = loop.id
         plan = loop.plan or []
         prior_idx = max(0, decision.step_index)
@@ -774,9 +897,17 @@ class CodeKind:
             write_brief(refreshed)
         await rearm_nudge_message(ctx.svc, cid)
         logger.info("loop %s: P6 ROLLBACK stage %d→%d (%s)", cid, idx, prior_idx, decision.reason)
-        ctx.publish(cid, "rolled_back", {"loop_id": cid, "from_stage": stage,
-                                         "to_stage": prior_stage, "reason": decision.reason,
-                                         "metric": decision.metric})
+        ctx.publish(
+            cid,
+            "rolled_back",
+            {
+                "loop_id": cid,
+                "from_stage": stage,
+                "to_stage": prior_stage,
+                "reason": decision.reason,
+                "metric": decision.metric,
+            },
+        )
         return False
 
     async def _stage_gate_passed(self, loop: Loop, idx: int, findings: list[dict], ctx) -> bool:
@@ -799,11 +930,13 @@ class CodeKind:
             return False
         phase = plan[idx]
         stage = self.phase_key(phase)
-        exit_criteria = [str(c).strip() for c in (phase.get("exit_criteria") or []) if str(c).strip()]
+        exit_criteria = [
+            str(c).strip() for c in (phase.get("exit_criteria") or []) if str(c).strip()
+        ]
         stage_findings = self._findings_for_stage(loop, idx, findings)
         work_done = len(stage_findings) >= 1
         if not exit_criteria:
-            return work_done            # no explicit gate → advance once work happened
+            return work_done  # no explicit gate → advance once work happened
         if not work_done:
             return False
         # The dir the worker actually wrote to — workspace_dir when a codebase was bound,
@@ -811,6 +944,7 @@ class CodeKind:
         # deliverable for a context-dir loop (no explicit workspace) and silently skip the
         # ground-truth check. `effective_dir` is the one resolver both gate paths share.
         from personalclaw.loop.loop import effective_dir
+
         ws = effective_dir(loop)
         # Independent ground-truth check (no self-report): if the stage declares a
         # document deliverable, it MUST exist on disk before the stage can pass. This
@@ -822,45 +956,89 @@ class CodeKind:
             verifiable, path = self._resolve_deliverable(ws, deliverable)
             if verifiable and path is None:
                 # A concrete file was named but does NOT exist → block (ground truth).
-                ctx.publish(loop.id, "gate_check", {"loop_id": loop.id, "label": "deliverable",
-                                                    "deliverable": deliverable, "ok": False, "stage": stage})
+                ctx.publish(
+                    loop.id,
+                    "gate_check",
+                    {
+                        "loop_id": loop.id,
+                        "label": "deliverable",
+                        "deliverable": deliverable,
+                        "ok": False,
+                        "stage": stage,
+                    },
+                )
                 return False
             if path is not None:
                 # Slice B — feed the deliverable's REAL content to the judge, not just an
                 # "exists" note: the gate scores the observed artifact, not the worker's
                 # narration. Read is bounded; binary/empty files add only the exists note.
                 content = self._read_deliverable(path)
-                check_evidence += f"\nSupervisor confirmed the deliverable `{deliverable}` exists on disk."
+                check_evidence += (
+                    f"\nSupervisor confirmed the deliverable `{deliverable}` exists on disk."
+                )
                 if content:
                     check_evidence += (
                         f"\n\n--- Deliverable content ({deliverable}), observed directly by the "
                         f"supervisor ---\n{content}\n--- end deliverable ---"
                     )
-                ctx.publish(loop.id, "gate_check", {"loop_id": loop.id, "label": "deliverable",
-                                                    "deliverable": deliverable, "ok": True, "stage": stage,
-                                                    "content_bytes": len(content)})
-        from personalclaw.loop.gates import judge_verdict, run_verify_command, verdict_is_pass, verdict_rendered
+                ctx.publish(
+                    loop.id,
+                    "gate_check",
+                    {
+                        "loop_id": loop.id,
+                        "label": "deliverable",
+                        "deliverable": deliverable,
+                        "ok": True,
+                        "stage": stage,
+                        "content_bytes": len(content),
+                    },
+                )
+        from personalclaw.loop.gates import (
+            judge_verdict,
+            run_verify_command,
+            verdict_is_pass,
+            verdict_rendered,
+        )
+
         cfg = loop.kind_config or {}
         checks = []
         if str(cfg.get("verify_command", "")).strip():
             checks.append(("build", cfg["verify_command"]))
         if stage == "verification" and str(cfg.get("test_command", "")).strip():
             checks.append(("tests", cfg["test_command"]))
-        passed_a_command = False     # a deterministic check actually RAN and PASSED
+        passed_a_command = False  # a deterministic check actually RAN and PASSED
         for label, cmd in checks:
             # Skip a command that can't meaningfully run yet — a planning/pre-scaffold
             # stage has no project manifest, so the command would exit ENOENT (254) and
             # hard-fail the gate forever. Treat "not buildable yet" as can't-run (fall
             # through to the judge), exactly like the 127 tool-missing tristate.
             if not _command_runnable_here(cmd, ws):
-                ctx.publish(loop.id, "gate_check", {"loop_id": loop.id, "label": label,
-                                                    "command": cmd, "ok": None, "stage": stage,
-                                                    "skipped": "project not buildable yet"})
+                ctx.publish(
+                    loop.id,
+                    "gate_check",
+                    {
+                        "loop_id": loop.id,
+                        "label": label,
+                        "command": cmd,
+                        "ok": None,
+                        "stage": stage,
+                        "skipped": "project not buildable yet",
+                    },
+                )
                 continue
             ok = await run_verify_command(cmd, ws or None, label=label)
             if ok is False:
-                ctx.publish(loop.id, "gate_check", {"loop_id": loop.id, "label": label,
-                                                    "command": cmd, "ok": False, "stage": stage})
+                ctx.publish(
+                    loop.id,
+                    "gate_check",
+                    {
+                        "loop_id": loop.id,
+                        "label": label,
+                        "command": cmd,
+                        "ok": False,
+                        "stage": stage,
+                    },
+                )
                 return False
             if ok is True:
                 passed_a_command = True
@@ -869,20 +1047,30 @@ class CodeKind:
         if checks:
             ctx.publish(loop.id, "gate_check", {"loop_id": loop.id, "ok": True, "stage": stage})
         recent = stage_findings[-4:]
-        evidence = "\n".join(
-            f"- cycle {f.get('cycle')}: {str(f.get('summary', '') or f.get('key_insight', ''))[:300]}"
-            for f in recent) + check_evidence
+        evidence = (
+            "\n".join(
+                f"- cycle {f.get('cycle')}: {str(f.get('summary', '') or f.get('key_insight', ''))[:300]}"  # noqa: E501
+                for f in recent
+            )
+            + check_evidence
+        )
         criteria = "\n".join(f"- {c}" for c in exit_criteria)
         # The stage-gate instruction lives in the prompt system (bundled
         # ``task-sdlc-stage-gate``), rendered with the stage + evidence.
         from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
-        prompt = render_use_case_prompt("sdlc_stage_gate", {
-            "stage_title": phase.get("title", stage),
-            "objective": phase.get("objective", ""),
-            "criteria": criteria,
-            "evidence": evidence,
-        }) or ""
+        prompt = (
+            render_use_case_prompt(
+                "sdlc_stage_gate",
+                {
+                    "stage_title": phase.get("title", stage),
+                    "objective": phase.get("objective", ""),
+                    "criteria": criteria,
+                    "evidence": evidence,
+                },
+            )
+            or ""
+        )
         raw = await judge_verdict(prompt)
         if verdict_is_pass(raw):
             return True
@@ -895,8 +1083,16 @@ class CodeKind:
         # stage stuck for cycles on judge timeouts). Fall back to the deterministic pass;
         # only block when there's no deterministic pass to stand on.
         if not verdict_rendered(raw) and passed_a_command:
-            ctx.publish(loop.id, "gate_check", {"loop_id": loop.id, "ok": True, "stage": stage,
-                                                "note": "judge unavailable; passed on deterministic checks"})
+            ctx.publish(
+                loop.id,
+                "gate_check",
+                {
+                    "loop_id": loop.id,
+                    "ok": True,
+                    "stage": stage,
+                    "note": "judge unavailable; passed on deterministic checks",
+                },
+            )
             return True
         return False
 
@@ -907,6 +1103,7 @@ class CodeKind:
         the refreshed loop if it queued anything, else None. Never raises. Ported from
         code/watchdog._autopilot_queue."""
         from personalclaw.loop import store, tasks_link
+
         cid = loop.id
         try:
             idx = self.active_stage_index(loop)
@@ -917,10 +1114,12 @@ class CodeKind:
             if not list_id:
                 return None
             from personalclaw.tasks import registry
+
             tasks, _ = await registry.list_all_tasks(task_list_id=list_id, limit=500)
             queued = set((loop.kind_config or {}).get("queued_task_ids", []) or [])
-            to_queue = [t.id for t in tasks
-                        if t.id not in queued and not tasks_link._is_resolved(t.status)]
+            to_queue = [
+                t.id for t in tasks if t.id not in queued and not tasks_link._is_resolved(t.status)
+            ]
             if not to_queue:
                 return None
             store.queue_tasks(cid, to_queue)
@@ -937,6 +1136,7 @@ class CodeKind:
         task-worker SCHEDULER (worktree spawn/merge) lands in 2c(iv.e). Owns this
         cycle's done-ness (the watchdog skips its generic signal)."""
         from personalclaw.loop import store
+
         cid = loop.id
         # Autopilot: ensure the active stage's tasks are queued (the scheduler/worker
         # always has the full stage to drive). One-by-one mode leaves queueing to the user.
@@ -958,16 +1158,17 @@ class CodeKind:
         if self._is_parallel(loop):
             paused = await self._schedule_parallel(loop, stage, ws, ctx)
             if paused:
-                return False           # paused NEEDS_INPUT — watchdog stops the cycle
+                return False  # paused NEEDS_INPUT — watchdog stops the cycle
             loop = store.get(cid) or loop
         # Don't let a lenient gate advance a stage while it still has READY QUEUED
         # tasks the worker hasn't run — that would skip the user's other queued work.
         # (Only bites when work is actually queued; an empty queue = the old free-run.)
         from personalclaw.loop import tasks_link
+
         if await tasks_link.ready_queued_tasks(loop, stage):
-            return False               # real queued work pending → keep cycling
+            return False  # real queued work pending → keep cycling
         if self._live_task_workers(loop, ctx.svc):
-            return False               # task-workers still running → wait for them
+            return False  # task-workers still running → wait for them
         # ── P6: the stepwise lifecycle decision IS the one pure tick.evaluate ────────
         # Observe the two inputs the decision needs — the adapter's I/O, per the tick
         # purity contract (loop/tick.py): the STRUCTURAL gate (the supervisor runs the
@@ -979,8 +1180,13 @@ class CodeKind:
         # plan that declares no tick keys (every plan by default) evaluate degrades to the
         # exact prior behavior: gate passed → advance/complete, else → keep executing.
         from personalclaw.loop import tick
+
         gate_passed = await self._stage_gate_passed(loop, idx, findings, ctx)
-        metric = await self._observe_stage_metric(loop, idx, stage, findings, ctx) if gate_passed else None
+        metric = (
+            await self._observe_stage_metric(loop, idx, stage, findings, ctx)
+            if gate_passed
+            else None
+        )
         decision = self._tick_decide(loop, idx, findings, gate_passed=gate_passed, metric=metric)
         if decision.action is tick.Action.ROLLBACK:
             return await self._apply_rollback(loop, idx, stage, decision, ctx)
@@ -1003,6 +1209,7 @@ class CodeKind:
 
     async def _get_task(self, task_id: str):
         from personalclaw.tasks import registry
+
         try:
             return await registry.get_task(task_id, provider_name="native")
         except Exception:
@@ -1015,16 +1222,23 @@ class CodeKind:
         (NEEDS_INPUT on a merge conflict that couldn't auto-resolve). Ported from
         code/watchdog._schedule_parallel onto the Loop entity + ctx."""
         from personalclaw.loop import store, tasks_link, worktree
-        from personalclaw.loop.manager import (spawn_task_worker, task_session_key,
-                                               teardown_task_worker)
+        from personalclaw.loop.manager import (
+            spawn_task_worker,
+            task_session_key,
+            teardown_task_worker,
+        )
+
         # 1. Reap finished task-workers.
         for tid in list((loop.kind_config or {}).get("queued_task_ids", []) or []):
             skey = task_session_key(loop.id, tid)
             sess = ctx.state._sessions.get(skey)
             if sess is None:
                 task = await self._get_task(tid)
-                if (task is not None and tasks_link._is_done(task.status)
-                        and worktree.branch_exists(ws, tid)):
+                if (
+                    task is not None
+                    and tasks_link._is_done(task.status)
+                    and worktree.branch_exists(ws, tid)
+                ):
                     if await self._reap_merge_done(loop, tid, task, ws, ctx):
                         return True
                 continue
@@ -1037,9 +1251,11 @@ class CodeKind:
                 elif loop_gone:
                     # Worker exhausted its budget with no finding → tear down + pause.
                     await teardown_task_worker(ctx.svc, loop.id, tid)
-                    store.write_question(loop.id,
+                    store.write_question(
+                        loop.id,
                         f'Task "{task.title}" ran out of cycles without producing a result '
-                        "— it may be under-specified or blocked. Steer it, or remove it, then resume.")
+                        "— it may be under-specified or blocked. Steer it, or remove it, then resume.",  # noqa: E501
+                    )
                     store.update_status(loop.id, LoopStatus.NEEDS_INPUT)
                     ctx.publish(loop.id, "needs_input", {"loop_id": loop.id})
                     return True
@@ -1062,7 +1278,9 @@ class CodeKind:
             if wt_path is None:
                 continue
             await spawn_task_worker(ctx.state, ctx.svc, loop, t, wt_path)
-            ctx.publish(loop.id, "task_started", {"loop_id": loop.id, "task_id": t.id, "title": t.title})
+            ctx.publish(
+                loop.id, "task_started", {"loop_id": loop.id, "task_id": t.id, "title": t.title}
+            )
         return False
 
     async def _reap_merge_done(self, loop: Loop, tid: str, task, ws: str, ctx) -> bool:
@@ -1071,6 +1289,7 @@ class CodeKind:
         to re-run on the merged base) up to _CONFLICT_REDO_CAP, else pause NEEDS_INPUT.
         Returns True iff the merge did NOT integrate (caller stops + awaits the user)."""
         from personalclaw.loop import store, worktree
+
         result = worktree.merge_worktree(ws, tid, loop.tasks_project_id)
         redo_key = f"{loop.id}:{tid}"
         if result.ok:
@@ -1088,22 +1307,41 @@ class CodeKind:
                 worktree.remove_worktree(ws, tid, loop.tasks_project_id)
                 try:
                     from personalclaw.tasks import registry
+
                     await registry.update_task(tid, status="open")
                 except Exception:
-                    logger.warning("conflict auto-resolve: reset task %s failed", tid, exc_info=True)
-                ctx.publish(loop.id, "gate_check", {"loop_id": loop.id, "ok": False, "label": "merge",
-                    "output": f'Conflict in {shown} — re-running "{task.title}" on the updated base.'})
+                    logger.warning(
+                        "conflict auto-resolve: reset task %s failed", tid, exc_info=True
+                    )
+                ctx.publish(
+                    loop.id,
+                    "gate_check",
+                    {
+                        "loop_id": loop.id,
+                        "ok": False,
+                        "label": "merge",
+                        "output": f'Conflict in {shown} — re-running "{task.title}" on the updated base.',  # noqa: E501
+                    },
+                )
                 return False
-            question = (f'Task "{task.title}" keeps conflicting on {shown} after {redos} auto-retries '
-                        f"— resolve it on branch {branch} in the workspace, then resume.")
+            question = (
+                f'Task "{task.title}" keeps conflicting on {shown} after {redos} auto-retries '
+                f"— resolve it on branch {branch} in the workspace, then resume."
+            )
             out = f"Merge conflict in: {shown} — resolve in the workspace, then resume."
         else:
-            question = (f'Task "{task.title}" finished but its branch {branch} could not be merged '
-                        "(a git error, not a content conflict). Check the workspace's git state, then resume.")
+            question = (
+                f'Task "{task.title}" finished but its branch {branch} could not be merged '
+                "(a git error, not a content conflict). Check the workspace's git state, then resume."  # noqa: E501
+            )
             out = "Merge failed (not a content conflict) — check git state, then resume."
         store.write_question(loop.id, question)
         store.update_status(loop.id, LoopStatus.NEEDS_INPUT)
-        ctx.publish(loop.id, "gate_check", {"loop_id": loop.id, "ok": False, "label": "merge", "output": out})
+        ctx.publish(
+            loop.id,
+            "gate_check",
+            {"loop_id": loop.id, "ok": False, "label": "merge", "output": out},
+        )
         ctx.publish(loop.id, "needs_input", {"loop_id": loop.id})
         return True
 
@@ -1114,12 +1352,16 @@ class CodeKind:
         if not findings:
             return False
         from personalclaw.loop.gates import run_verify_command
+
         cfg = loop.kind_config or {}
-        for cmd in (str(cfg.get("verify_command", "")).strip(), str(cfg.get("test_command", "")).strip()):
+        for cmd in (
+            str(cfg.get("verify_command", "")).strip(),
+            str(cfg.get("test_command", "")).strip(),
+        ):
             if cmd:
                 ok = await run_verify_command(cmd, loop.workspace_dir or None)
                 if ok is False:
-                    return False        # a real failure holds completion
+                    return False  # a real failure holds completion
         return True
 
     def cycle_nudge(self, loop: Loop, loop_dir: str) -> str:
@@ -1161,6 +1403,7 @@ class _CodeWalkthrough:
 
     def __init__(self) -> None:
         from personalclaw.agents.defaults import CODE_PLANNER_AGENT_NAME
+
         self.planner_agent = CODE_PLANNER_AGENT_NAME
 
     def default_steps(self) -> list[dict]:
@@ -1168,18 +1411,22 @@ class _CodeWalkthrough:
 
     def build_design_brief(self, task: str, workspace_dir: str, design_inputs=None) -> str:
         from personalclaw.loop import code_plan_briefs as pw
+
         return pw.build_design_brief(task, workspace_dir)
 
     def parse_steps_sentinel(self, raw: str):
         from personalclaw.loop import code_plan_briefs as pw
+
         return pw.parse_steps_sentinel(raw)
 
     def build_step_brief(self, task, step, *, approved, workspace_dir):
         from personalclaw.loop import code_plan_briefs as pw
+
         return pw.build_step_brief(task, step, approved=approved, workspace_dir=workspace_dir)
 
     def parse_artifact_sentinel(self, raw: str):
         from personalclaw.loop import code_plan_briefs as pw
+
         return pw.parse_artifact_sentinel(raw)
 
     def project_to_spec(self, session) -> dict:
@@ -1188,13 +1435,17 @@ class _CodeWalkthrough:
         generic implement→verify ladder if the walkthrough produced no decomposition,
         so the user always lands on a launchable Plan Review."""
         from personalclaw.loop import code_plan_briefs as pw
+
         decomp = next((s for s in reversed(session.steps) if s.kind == "decomposition"), None)
         stage_plan = pw.decomposition_to_stage_plan(decomp.artifact) if decomp else []
         if not stage_plan:
             from personalclaw.loop.code_classify import _fallback_classification
+
             stage_plan = _fallback_classification().stage_plan
-            logger.info("code walkthrough: no decomposition for %s — using fallback ladder",
-                        session.project_id)
+            logger.info(
+                "code walkthrough: no decomposition for %s — using fallback ladder",
+                session.project_id,
+            )
         spec: dict = {"plan": stage_plan}
         for s in session.steps:
             md = str((s.artifact or {}).get("markdown", "")).strip()
@@ -1216,7 +1467,13 @@ class _CodeWalkthrough:
                 # wholesale, so a bare {verify,test} dict would clobber entry_stage/
                 # project_kind/queued_task_ids set at create). session.project_id == loop id.
                 from personalclaw.loop import store
-                existing = dict((store.get(session.project_id) or Loop(id="", name="", kind="code", task="")).kind_config or {})
+
+                existing = dict(
+                    (
+                        store.get(session.project_id) or Loop(id="", name="", kind="code", task="")
+                    ).kind_config
+                    or {}
+                )
                 existing["verify_command"] = verify_command
                 existing["test_command"] = test_command
                 spec["kind_config"] = existing

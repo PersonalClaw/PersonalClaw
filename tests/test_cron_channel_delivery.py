@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from personalclaw.schedule import ScheduleJob, ScheduleDefinition, make_agent_action
+from personalclaw.schedule import ScheduleDefinition, ScheduleJob, make_agent_action
 
 
 def _make_gateway():
@@ -64,9 +64,10 @@ def _run_callback(gw, job, stream_result="done", stream_side_effect=None):
             raise stream_side_effect
         return stream_result
 
-    with patch("personalclaw.gateway.stream_and_collect", fake_stream), patch(
-        "personalclaw.gateway.ScheduleService"
-    ) as mock_cron_cls:
+    with (
+        patch("personalclaw.gateway.stream_and_collect", fake_stream),
+        patch("personalclaw.gateway.ScheduleService") as mock_cron_cls,
+    ):
 
         def capture_cron(on_job=None, **kw):
             nonlocal captured_cb
@@ -90,14 +91,18 @@ class TestChannelDeliveryFailureDoesNotFailJob:
 
     def test_job_returns_result_when_delivery_throws(self) -> None:
         gw = _make_gateway()
-        gw._channel_delivery.deliver_cron_result = AsyncMock(side_effect=Exception("not_in_channel"))
+        gw._channel_delivery.deliver_cron_result = AsyncMock(
+            side_effect=Exception("not_in_channel")
+        )
         job = _make_job()
         result = _run_callback(gw, job)
         assert result == "done"
 
     def test_dashboard_gets_delivery_failure_notification(self) -> None:
         gw = _make_gateway()
-        gw._channel_delivery.deliver_cron_result = AsyncMock(side_effect=Exception("channel_not_found"))
+        gw._channel_delivery.deliver_cron_result = AsyncMock(
+            side_effect=Exception("channel_not_found")
+        )
         job = _make_job()
         _run_callback(gw, job)
         calls = gw.dashboard_state.notify.call_args_list
@@ -124,9 +129,10 @@ class TestDashboardNotificationRedaction:
         gw._channel_delivery = None  # skip channel-delivery path
         job = _make_job()
 
-        with patch("personalclaw.gateway.redact_exfiltration_urls") as mock_url, patch(
-            "personalclaw.gateway.redact_credentials"
-        ) as mock_cred:
+        with (
+            patch("personalclaw.gateway.redact_exfiltration_urls") as mock_url,
+            patch("personalclaw.gateway.redact_credentials") as mock_cred,
+        ):
             mock_url.return_value = ("redacted_url", False)
             mock_cred.return_value = ("fully_redacted", False)
             _run_callback(gw, job, stream_result="secret http://evil.com data")

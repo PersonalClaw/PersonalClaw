@@ -16,8 +16,8 @@ from personalclaw.tasks.models import (
 )
 from personalclaw.tasks.native import NativeTaskProvider
 
-
 # ── Normalizers ──
+
 
 class TestExitCriterionNormalize:
     def test_legacy_met_true_maps_to_complete(self):
@@ -73,6 +73,7 @@ class TestNoteNormalize:
 
 # ── can_mark_complete gate ──
 
+
 class TestCompleteGate:
     def test_no_criteria_completable(self):
         assert Task(id="t", title="x").can_mark_complete() is True
@@ -93,10 +94,13 @@ class TestCompleteGate:
 
 # ── Native provider: evolved fields + gate + derivation ──
 
+
 @pytest.fixture()
 def provider(tmp_path):
-    with patch("personalclaw.tasks.native.config_dir", return_value=tmp_path), \
-         patch("personalclaw.tasks.hierarchy.config_dir", return_value=tmp_path):
+    with (
+        patch("personalclaw.tasks.native.config_dir", return_value=tmp_path),
+        patch("personalclaw.tasks.hierarchy.config_dir", return_value=tmp_path),
+    ):
         yield NativeTaskProvider()
 
 
@@ -116,9 +120,7 @@ class TestNativeEvolvedFields:
 
     @pytest.mark.asyncio
     async def test_exit_criteria_stored_statused(self, provider):
-        t = await provider.create_task(
-            title="x", exit_criteria=[{"description": "a", "met": True}]
-        )
+        t = await provider.create_task(title="x", exit_criteria=[{"description": "a", "met": True}])
         d = (await provider.get_task(t.id)).to_dict()
         assert d["exit_criteria"][0]["status"] == "complete"
         assert d["exit_criteria"][0]["met"] is True
@@ -136,9 +138,7 @@ class TestNativeEvolvedFields:
         t = await provider.create_task(
             title="x", exit_criteria=[{"description": "ship it", "met": False}]
         )
-        await provider.update_task(
-            t.id, exit_criteria=[{"description": "ship it", "met": True}]
-        )
+        await provider.update_task(t.id, exit_criteria=[{"description": "ship it", "met": True}])
         done = await provider.update_task(t.id, status="done")
         assert done.status == TaskStatus.DONE
 
@@ -174,6 +174,7 @@ class TestNativeEvolvedFields:
         t = await provider.create_task(title="legacy", task_list_id="")
         # simulate the pre-reform on-disk shape: a project id stamped in `project`
         import json
+
         p = provider._task_path(t.id)
         data = json.loads(p.read_text())
         data["project"] = "p-deadbeef-xy"

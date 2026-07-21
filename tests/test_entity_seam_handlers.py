@@ -50,18 +50,18 @@ def _handlers() -> dict[str, object]:
 def test_seam_types_use_entity_seam_handler():
     handlers = _handlers()
     for t in SEAM_TYPES:
-        assert isinstance(handlers[t], EntitySeamHandler), (
-            f"{t!r} must use EntitySeamHandler (honest no-op), not a real handler"
-        )
+        assert isinstance(
+            handlers[t], EntitySeamHandler
+        ), f"{t!r} must use EntitySeamHandler (honest no-op), not a real handler"
 
 
 def test_real_registry_types_are_not_seam_handlers():
     handlers = _handlers()
     for t in REAL_REGISTRY_TYPES:
         assert t in handlers
-        assert not isinstance(handlers[t], EntitySeamHandler), (
-            f"{t!r} owns a consumed registry — it must keep its real handler"
-        )
+        assert not isinstance(
+            handlers[t], EntitySeamHandler
+        ), f"{t!r} owns a consumed registry — it must keep its real handler"
 
 
 def test_every_seam_names_its_source_of_truth():
@@ -80,13 +80,13 @@ def test_known_contract_mismatches_are_flagged():
     labelled MISMATCH."""
     handlers = _handlers()
     for t in MISMATCH_TYPES:
-        assert "MISMATCH" in handlers[t].source_of_truth, (
-            f"{t!r} has a factory↔registry contract mismatch that must be flagged"
-        )
+        assert (
+            "MISMATCH" in handlers[t].source_of_truth
+        ), f"{t!r} has a factory↔registry contract mismatch that must be flagged"
     for t in SEAM_TYPES - MISMATCH_TYPES:
-        assert "MISMATCH" not in handlers[t].source_of_truth, (
-            f"{t!r} is a clean seam — it must not be labelled MISMATCH"
-        )
+        assert (
+            "MISMATCH" not in handlers[t].source_of_truth
+        ), f"{t!r} is a clean seam — it must not be labelled MISMATCH"
 
 
 def test_register_is_a_no_op_and_does_not_leak_instances():

@@ -38,7 +38,9 @@ def fake_personalclaw_home(tmp_path):
     (pc / "hooks.json").write_text(json.dumps({"hooks": [{"id": "h1", "cmd": "echo hi"}]}))
 
     # crons.json
-    crons = {"jobs": [{"id": "c1", "name": "daily-check", "schedule": "0 9 * * *", "message": "check"}]}
+    crons = {
+        "jobs": [{"id": "c1", "name": "daily-check", "schedule": "0 9 * * *", "message": "check"}]
+    }
     (pc / "crons.json").write_text(json.dumps(crons, indent=2))
 
     # notifications.jsonl
@@ -47,44 +49,70 @@ def fake_personalclaw_home(tmp_path):
     )
 
     # memory.db (SQLite)
-    db_path =pc / "memory.db"
+    db_path = pc / "memory.db"
     conn = sqlite3.connect(str(db_path))
-    conn.execute("CREATE TABLE semantic_memory (key TEXT PRIMARY KEY, value_json TEXT, confidence REAL, source TEXT, created_at TEXT, updated_at TEXT, embedding BLOB, is_deleted INTEGER DEFAULT 0)")
-    conn.execute("INSERT INTO semantic_memory (key, value_json, confidence, source, created_at, updated_at, is_deleted) VALUES ('user.name', '\"Alice\"', 0.9, 'agent', '2026-01-01', '2026-01-01', 0)")
-    conn.execute("CREATE TABLE episodic_memories (id TEXT PRIMARY KEY, conversation_id TEXT, text TEXT, embedding BLOB, tags TEXT, importance REAL, created_at TEXT, last_accessed_at TEXT, is_deleted INTEGER DEFAULT 0)")
-    conn.execute("INSERT INTO episodic_memories (id, conversation_id, text, importance, created_at, last_accessed_at, is_deleted) VALUES ('ep1', 'conv1', 'user asked about deployment', 0.8, '2026-01-01', '2026-01-01', 0)")
-    conn.execute("CREATE TABLE knowledge_facts (subject TEXT, predicate TEXT, object TEXT, episode_id TEXT, created_at TEXT)")
-    conn.execute("CREATE TABLE knowledge_edges (source_key TEXT, target_key TEXT, relation TEXT, weight REAL, metadata TEXT, created_at TEXT)")
+    conn.execute(
+        "CREATE TABLE semantic_memory (key TEXT PRIMARY KEY, value_json TEXT, confidence REAL, source TEXT, created_at TEXT, updated_at TEXT, embedding BLOB, is_deleted INTEGER DEFAULT 0)"  # noqa: E501
+    )
+    conn.execute(
+        "INSERT INTO semantic_memory (key, value_json, confidence, source, created_at, updated_at, is_deleted) VALUES ('user.name', '\"Alice\"', 0.9, 'agent', '2026-01-01', '2026-01-01', 0)"  # noqa: E501
+    )
+    conn.execute(
+        "CREATE TABLE episodic_memories (id TEXT PRIMARY KEY, conversation_id TEXT, text TEXT, embedding BLOB, tags TEXT, importance REAL, created_at TEXT, last_accessed_at TEXT, is_deleted INTEGER DEFAULT 0)"  # noqa: E501
+    )
+    conn.execute(
+        "INSERT INTO episodic_memories (id, conversation_id, text, importance, created_at, last_accessed_at, is_deleted) VALUES ('ep1', 'conv1', 'user asked about deployment', 0.8, '2026-01-01', '2026-01-01', 0)"  # noqa: E501
+    )
+    conn.execute(
+        "CREATE TABLE knowledge_facts (subject TEXT, predicate TEXT, object TEXT, episode_id TEXT, created_at TEXT)"  # noqa: E501
+    )
+    conn.execute(
+        "CREATE TABLE knowledge_edges (source_key TEXT, target_key TEXT, relation TEXT, weight REAL, metadata TEXT, created_at TEXT)"  # noqa: E501
+    )
     conn.commit()
     conn.close()
 
     # memory_index.db (FTS5)
-    idx_path =pc / "memory_index.db"
+    idx_path = pc / "memory_index.db"
     conn = sqlite3.connect(str(idx_path))
-    conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(path, content, tokenize='porter unicode61')")
-    conn.execute("INSERT INTO memory_fts (path, content) VALUES ('preferences.md', 'user prefers dark mode')")
+    conn.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(path, content, tokenize='porter unicode61')"  # noqa: E501
+    )
+    conn.execute(
+        "INSERT INTO memory_fts (path, content) VALUES ('preferences.md', 'user prefers dark mode')"
+    )
     conn.commit()
     conn.close()
 
     # workspace/memory/
-    mem_dir =pc / "workspace" / "memory"
+    mem_dir = pc / "workspace" / "memory"
     mem_dir.mkdir(parents=True)
-    (mem_dir / "preferences.md").write_text("# User Preferences\n\n- Prefers dark mode\n- Uses vim\n")
-    (mem_dir / "projects.md").write_text("# Active Projects\n\n## PersonalClaw\nWorking on portability feature\n")
+    (mem_dir / "preferences.md").write_text(
+        "# User Preferences\n\n- Prefers dark mode\n- Uses vim\n"
+    )
+    (mem_dir / "projects.md").write_text(
+        "# Active Projects\n\n## PersonalClaw\nWorking on portability feature\n"
+    )
     hist_dir = mem_dir / "history"
     hist_dir.mkdir()
-    (hist_dir / "2026-05-17.md").write_text("# 2026-05-17\n\n#### 09:00 PDT\nDiscussed architecture\n")
-    (hist_dir / "2026-05-18.md").write_text("# 2026-05-18\n\n#### 10:00 PDT\nImplemented export feature\n")
+    (hist_dir / "2026-05-17.md").write_text(
+        "# 2026-05-17\n\n#### 09:00 PDT\nDiscussed architecture\n"
+    )
+    (hist_dir / "2026-05-18.md").write_text(
+        "# 2026-05-18\n\n#### 10:00 PDT\nImplemented export feature\n"
+    )
 
     # plan_memory/
-    pm_dir =pc / "plan_memory"
+    pm_dir = pc / "plan_memory"
     pm_dir.mkdir()
     (pm_dir / "current_plan.md").write_text("# Plan\n\nStep 1: Export\nStep 2: Import\n")
 
     # skills/
-    sk_dir =pc / "skills" / "my-skill"
+    sk_dir = pc / "skills" / "my-skill"
     sk_dir.mkdir(parents=True)
-    (sk_dir / "SKILL.md").write_text("---\nname: my-skill\ndescription: Test skill\n---\n# My Skill\n")
+    (sk_dir / "SKILL.md").write_text(
+        "---\nname: my-skill\ndescription: Test skill\n---\n# My Skill\n"
+    )
 
     # Credential files that must be EXCLUDED
     (pc / ".env").write_text("SLACK_BOT_TOKEN=xoxb-secret\nSLACK_APP_TOKEN=xapp-secret\n")
@@ -382,11 +410,21 @@ class TestImportMerge:
             target.mkdir()
             dst_db = target / "memory.db"
             conn = sqlite3.connect(str(dst_db))
-            conn.execute("CREATE TABLE semantic_memory (key TEXT PRIMARY KEY, value_json TEXT, confidence REAL, source TEXT, created_at TEXT, updated_at TEXT, embedding BLOB, is_deleted INTEGER DEFAULT 0)")
-            conn.execute("INSERT INTO semantic_memory (key, value_json, confidence, source, created_at, updated_at, is_deleted) VALUES ('user.team', '\"Platform\"', 0.95, 'agent', '2026-01-01', '2026-01-01', 0)")
-            conn.execute("CREATE TABLE episodic_memories (id TEXT PRIMARY KEY, conversation_id TEXT, text TEXT, embedding BLOB, tags TEXT, importance REAL, created_at TEXT, last_accessed_at TEXT, is_deleted INTEGER DEFAULT 0)")
-            conn.execute("CREATE TABLE knowledge_facts (subject TEXT, predicate TEXT, object TEXT, episode_id TEXT, created_at TEXT)")
-            conn.execute("CREATE TABLE knowledge_edges (source_key TEXT, target_key TEXT, relation TEXT, weight REAL, metadata TEXT, created_at TEXT)")
+            conn.execute(
+                "CREATE TABLE semantic_memory (key TEXT PRIMARY KEY, value_json TEXT, confidence REAL, source TEXT, created_at TEXT, updated_at TEXT, embedding BLOB, is_deleted INTEGER DEFAULT 0)"  # noqa: E501
+            )
+            conn.execute(
+                "INSERT INTO semantic_memory (key, value_json, confidence, source, created_at, updated_at, is_deleted) VALUES ('user.team', '\"Platform\"', 0.95, 'agent', '2026-01-01', '2026-01-01', 0)"  # noqa: E501
+            )
+            conn.execute(
+                "CREATE TABLE episodic_memories (id TEXT PRIMARY KEY, conversation_id TEXT, text TEXT, embedding BLOB, tags TEXT, importance REAL, created_at TEXT, last_accessed_at TEXT, is_deleted INTEGER DEFAULT 0)"  # noqa: E501
+            )
+            conn.execute(
+                "CREATE TABLE knowledge_facts (subject TEXT, predicate TEXT, object TEXT, episode_id TEXT, created_at TEXT)"  # noqa: E501
+            )
+            conn.execute(
+                "CREATE TABLE knowledge_edges (source_key TEXT, target_key TEXT, relation TEXT, weight REAL, metadata TEXT, created_at TEXT)"  # noqa: E501
+            )
             conn.commit()
             conn.close()
 
@@ -442,7 +480,11 @@ class TestImportMerge:
                     apply_import_zip(zip_path, mode="merge")
 
             # Should still have only 1 entry (same ts)
-            lines = [line for line in (target / "notifications.jsonl").read_text().splitlines() if line.strip()]
+            lines = [
+                line
+                for line in (target / "notifications.jsonl").read_text().splitlines()
+                if line.strip()
+            ]
             assert len(lines) == 1
         finally:
             os.unlink(str(zip_path))
@@ -504,35 +546,43 @@ class TestImportReplace:
 class TestExclusionLogic:
     def test_excludes_env_file(self):
         from pathlib import PurePosixPath
+
         assert _is_excluded(PurePosixPath(".env"))
 
     def test_excludes_local_secret(self):
         from pathlib import PurePosixPath
+
         assert _is_excluded(PurePosixPath(".local_secret"))
 
     def test_excludes_pid_files(self):
         from pathlib import PurePosixPath
+
         assert _is_excluded(PurePosixPath("gateway.pid"))
         assert _is_excluded(PurePosixPath("some/nested/thing.pid"))
 
     def test_excludes_snapshots_dir(self):
         from pathlib import PurePosixPath
+
         assert _is_excluded(PurePosixPath("snapshots/backup.tar.gz"))
 
     def test_excludes_outbox_dir(self):
         from pathlib import PurePosixPath
+
         assert _is_excluded(PurePosixPath("outbox/file.txt"))
 
     def test_allows_config_json(self):
         from pathlib import PurePosixPath
+
         assert not _is_excluded(PurePosixPath("config.json"))
 
     def test_allows_memory_files(self):
         from pathlib import PurePosixPath
+
         assert not _is_excluded(PurePosixPath("workspace/memory/preferences.md"))
 
     def test_allows_skills(self):
         from pathlib import PurePosixPath
+
         assert not _is_excluded(PurePosixPath("skills/my-skill/SKILL.md"))
 
 
@@ -563,7 +613,9 @@ class TestRoundTrip:
                 _, manifest_b = create_export_zip()
 
         # Content counts should match
-        assert manifest_b["contents"]["workspace_files"] == manifest_a["contents"]["workspace_files"]
+        assert (
+            manifest_b["contents"]["workspace_files"] == manifest_a["contents"]["workspace_files"]
+        )
         assert manifest_b["contents"]["skill_count"] == manifest_a["contents"]["skill_count"]
 
     def test_export_import_preserves_semantic_memory(self, patched_config_dir, tmp_path):

@@ -11,9 +11,7 @@ def _isolate_discovery_paths(monkeypatch):
     SKILL_DISCOVERY_PATHS (~/.agents/skills, ~/.personalclaw/skills), which on
     a developer machine contains real user-installed skills. Empty them so
     tests see only the skills they create under tmp_path."""
-    monkeypatch.setattr(
-        "personalclaw.skills.marketplace.SKILL_DISCOVERY_PATHS", []
-    )
+    monkeypatch.setattr("personalclaw.skills.marketplace.SKILL_DISCOVERY_PATHS", [])
 
 
 def _create_skill(skills_dir, name, content):
@@ -96,7 +94,7 @@ class TestTriggeredSkills:
         _create_skill(
             skills_dir,
             "tiny-url",
-            f"---\nname: tiny-url\ndescription: Shorten URLs\ntriggers: {triggers}\n---\n# Tiny URL\n",
+            f"---\nname: tiny-url\ndescription: Shorten URLs\ntriggers: {triggers}\n---\n# Tiny URL\n",  # noqa: E501
         )
         loader = SkillsLoader(skills_path=skills_dir, install_builtins=False)
         if monkeypatch is not None:
@@ -279,7 +277,7 @@ class TestTriggerMatching:
         _create_skill(
             skills_dir,
             "code-search",
-            "---\nname: code-search\ndescription: Search code\ntriggers: search code, !search examples\n---\n",
+            "---\nname: code-search\ndescription: Search code\ntriggers: search code, !search examples\n---\n",  # noqa: E501
         )
         loader = SkillsLoader(skills_path=skills_dir, install_builtins=False)
 
@@ -349,9 +347,7 @@ class TestTriggerMatching:
         _create_skill(
             skills_dir, "always", "---\nname: always\nalways: true\ntriggers: test\n---\n"
         )
-        _create_skill(
-            skills_dir, "normal", "---\nname: normal\ntriggers: test\n---\n"
-        )
+        _create_skill(skills_dir, "normal", "---\nname: normal\ntriggers: test\n---\n")
         loader = SkillsLoader(skills_path=skills_dir, install_builtins=False)
 
         mock_config = MagicMock()
@@ -371,7 +367,7 @@ class TestTriggerMatching:
         _create_skill(
             skills_dir,
             "tiny-url",
-            "---\nname: tiny-url\ndescription: Shorten URLs\ntriggers: shorten url, create tiny link, make short url\n---\n",
+            "---\nname: tiny-url\ndescription: Shorten URLs\ntriggers: shorten url, create tiny link, make short url\n---\n",  # noqa: E501
         )
         loader = SkillsLoader(skills_path=skills_dir, install_builtins=False)
 
@@ -399,7 +395,9 @@ class TestAutoSkillProvenance:
     def test_frontmatter_lines_minimum(self):
         from personalclaw.skills import AutoSkillProvenance
 
-        prov = AutoSkillProvenance(session_key="dashboard:chat-1", created_at="2026-05-05T11:30:00+00:00")
+        prov = AutoSkillProvenance(
+            session_key="dashboard:chat-1", created_at="2026-05-05T11:30:00+00:00"
+        )
         lines = prov.to_frontmatter_lines()
         assert "source: auto" in lines
         assert "session_key: dashboard:chat-1" in lines
@@ -444,7 +442,7 @@ class TestFindSimilar:
         _create_skill(
             skills_dir,
             "ssh-timber",
-            "---\nname: ssh-timber\ndescription: SSH chained log search on Timber production hosts\n---\n",
+            "---\nname: ssh-timber\ndescription: SSH chained log search on Timber production hosts\n---\n",  # noqa: E501
         )
         loader = SkillsLoader(skills_path=skills_dir, install_builtins=False)
         match = loader.find_similar(
@@ -531,68 +529,89 @@ class TestCreateAutoSkill:
     def test_rejects_invalid_slug(self, tmp_path):
         loader = SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False)
         # Too short
-        assert loader.create_auto_skill(
-            "ab",
-            description="desc",
-            triggers="",
-            procedure_md="body",
-            provenance=self._make_provenance(),
-        ) is None
+        assert (
+            loader.create_auto_skill(
+                "ab",
+                description="desc",
+                triggers="",
+                procedure_md="body",
+                provenance=self._make_provenance(),
+            )
+            is None
+        )
         # Spaces
-        assert loader.create_auto_skill(
-            "bad name",
-            description="desc",
-            triggers="",
-            procedure_md="body",
-            provenance=self._make_provenance(),
-        ) is None
+        assert (
+            loader.create_auto_skill(
+                "bad name",
+                description="desc",
+                triggers="",
+                procedure_md="body",
+                provenance=self._make_provenance(),
+            )
+            is None
+        )
         # Leading hyphen
-        assert loader.create_auto_skill(
-            "-bad",
-            description="desc",
-            triggers="",
-            procedure_md="body",
-            provenance=self._make_provenance(),
-        ) is None
+        assert (
+            loader.create_auto_skill(
+                "-bad",
+                description="desc",
+                triggers="",
+                procedure_md="body",
+                provenance=self._make_provenance(),
+            )
+            is None
+        )
         # Path traversal
-        assert loader.create_auto_skill(
-            "../evil",
-            description="desc",
-            triggers="",
-            procedure_md="body",
-            provenance=self._make_provenance(),
-        ) is None
+        assert (
+            loader.create_auto_skill(
+                "../evil",
+                description="desc",
+                triggers="",
+                procedure_md="body",
+                provenance=self._make_provenance(),
+            )
+            is None
+        )
 
     def test_rejects_oversized_procedure(self, tmp_path):
         from personalclaw.skills import AUTO_SKILL_MAX_PROCEDURE_CHARS
 
         loader = SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False)
         huge = "x" * (AUTO_SKILL_MAX_PROCEDURE_CHARS + 1)
-        assert loader.create_auto_skill(
-            "test-skill",
-            description="desc",
-            triggers="",
-            procedure_md=huge,
-            provenance=self._make_provenance(),
-        ) is None
+        assert (
+            loader.create_auto_skill(
+                "test-skill",
+                description="desc",
+                triggers="",
+                procedure_md=huge,
+                provenance=self._make_provenance(),
+            )
+            is None
+        )
 
     def test_refuses_duplicate(self, tmp_path):
         loader = SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False)
-        assert loader.create_auto_skill(
-            "duplicate-name",
-            description="desc",
-            triggers="",
-            procedure_md="body",
-            provenance=self._make_provenance(),
-        ) == "auto/duplicate-name"
+        assert (
+            loader.create_auto_skill(
+                "duplicate-name",
+                description="desc",
+                triggers="",
+                procedure_md="body",
+                provenance=self._make_provenance(),
+            )
+            == "auto/duplicate-name"
+        )
         # Second call with same slug is rejected
-        assert loader.create_auto_skill(
-            "duplicate-name",
-            description="different",
-            triggers="",
-            procedure_md="different body",
-            provenance=self._make_provenance(),
-        ) is None
+        assert (
+            loader.create_auto_skill(
+                "duplicate-name",
+                description="different",
+                triggers="",
+                procedure_md="different body",
+                provenance=self._make_provenance(),
+            )
+            is None
+        )
 
 
 class TestUpdateAutoSkill:
@@ -612,17 +631,20 @@ class TestUpdateAutoSkill:
         _create_skill(
             skills_dir,
             "manual-skill",
-            "---\nname: manual-skill\ndescription: hand-crafted\n---\n# Manual\nHand-authored content.\n",
+            "---\nname: manual-skill\ndescription: hand-crafted\n---\n# Manual\nHand-authored content.\n",  # noqa: E501
         )
         loader = SkillsLoader(skills_path=skills_dir, install_builtins=False)
         # Refuse to update a hand-authored skill even if the caller asks
-        assert loader.update_auto_skill(
-            "manual-skill",
-            description="trying to overwrite",
-            triggers="",
-            procedure_md="new body",
-            provenance=self._make_provenance(),
-        ) is False
+        assert (
+            loader.update_auto_skill(
+                "manual-skill",
+                description="trying to overwrite",
+                triggers="",
+                procedure_md="new body",
+                provenance=self._make_provenance(),
+            )
+            is False
+        )
         # Original content untouched
         content = (skills_dir / "manual-skill" / "SKILL.md").read_text()
         assert "Hand-authored content" in content
@@ -652,13 +674,16 @@ class TestUpdateAutoSkill:
 
     def test_returns_false_for_missing(self, tmp_path):
         loader = SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False)
-        assert loader.update_auto_skill(
-            "auto/does-not-exist",
-            description="x",
-            triggers="",
-            procedure_md="body",
-            provenance=self._make_provenance(),
-        ) is False
+        assert (
+            loader.update_auto_skill(
+                "auto/does-not-exist",
+                description="x",
+                triggers="",
+                procedure_md="body",
+                provenance=self._make_provenance(),
+            )
+            is False
+        )
 
 
 class TestListAutoSkills:
@@ -678,8 +703,9 @@ class TestListAutoSkills:
             triggers="",
             procedure_md="body",
             provenance=(
-                __import__("personalclaw.skills", fromlist=["AutoSkillProvenance"])
-                .AutoSkillProvenance(
+                __import__(
+                    "personalclaw.skills", fromlist=["AutoSkillProvenance"]
+                ).AutoSkillProvenance(
                     session_key="x",
                     created_at="2026-05-05T11:30:00+00:00",
                 )

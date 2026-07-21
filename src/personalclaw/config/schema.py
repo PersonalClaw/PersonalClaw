@@ -111,7 +111,8 @@ def _optional_inner(tp: type) -> tuple[type, bool]:
     origin = typing.get_origin(tp)
     if origin is typing.Union or (
         # ``X | None`` (PEP 604) has origin ``types.UnionType`` on 3.10+
-        origin is not None and getattr(origin, "__name__", "") == "UnionType"
+        origin is not None
+        and getattr(origin, "__name__", "") == "UnionType"
     ):
         args = [a for a in typing.get_args(tp) if a is not type(None)]
         if len(args) == 1 and len(typing.get_args(tp)) == 2:

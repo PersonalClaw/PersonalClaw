@@ -51,4 +51,6 @@ def test_all_route_handlers_resolve():
         mod = importlib.import_module(_ALIAS_TO_MODULE[alias])
         if not hasattr(mod, attr):
             missing.append(f"server.py:{lineno} → {alias}.{attr} does not exist")
-    assert not missing, "Route handlers referenced in server.py but not defined:\n" + "\n".join(missing)
+    assert not missing, "Route handlers referenced in server.py but not defined:\n" + "\n".join(
+        missing
+    )

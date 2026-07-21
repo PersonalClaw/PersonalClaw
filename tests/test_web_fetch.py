@@ -12,14 +12,7 @@ import pytest
 from personalclaw.net.client import EgressBlocked, FetchResponse
 from personalclaw.net.guard import GuardDecision
 from personalclaw.web import fetch as wf
-from personalclaw.web.fetch import (
-    FetchOutcome,
-    record_seen_urls,
-    url_has_provenance,
-    web_fetch,
-)
-
-
+from personalclaw.web.fetch import record_seen_urls, url_has_provenance, web_fetch
 
 
 def _web_tool_provider_cls():
@@ -28,6 +21,7 @@ def _web_tool_provider_cls():
     import importlib.util
     import sys
     from pathlib import Path
+
     app_dir = Path(__file__).resolve().parents[2] / "apps" / "web-tools"
     if not app_dir.is_dir():  # standalone core clone — the web-tools app isn't present
         pytest.skip("web-tools app dir not present (standalone clone)")
@@ -47,6 +41,7 @@ def _web_tool_provider_cls():
             sys.path.remove(str(app_dir))
     return mod.WebToolProvider
 
+
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch):
     # Fresh per-session provenance each test.
@@ -63,16 +58,18 @@ def _patch_net(monkeypatch, resp=None, exc=None):
         if exc:
             raise exc
         return resp if resp is not None else _resp("<html><body><p>x</p></body></html>")
+
     monkeypatch.setattr(wf, "net_fetch", _fake)
 
 
 # ── provenance gate ─────────────────────────────────────────────────────────
 
+
 def test_record_and_check_provenance():
     record_seen_urls("s1", ["https://a.com/x", "https://b.com/y#frag"])
     assert url_has_provenance("s1", "https://a.com/x")
-    assert url_has_provenance("s1", "https://b.com/y")     # fragment canonicalized
-    assert url_has_provenance("s1", "https://a.com/x/")    # trailing slash canonicalized
+    assert url_has_provenance("s1", "https://b.com/y")  # fragment canonicalized
+    assert url_has_provenance("s1", "https://a.com/x/")  # trailing slash canonicalized
     assert not url_has_provenance("s1", "https://c.com/z")
 
 
@@ -87,7 +84,12 @@ async def test_fetch_blocked_without_provenance(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_fetch_allowed_with_provenance(monkeypatch):
-    _patch_net(monkeypatch, _resp("<html><body><article><p>Real body content here that is long enough.</p></article></body></html>"))
+    _patch_net(
+        monkeypatch,
+        _resp(
+            "<html><body><article><p>Real body content here that is long enough.</p></article></body></html>"  # noqa: E501
+        ),
+    )
     record_seen_urls("s1", ["https://example.com/post"])
     out = await web_fetch("https://example.com/post", session_key="s1")
     assert out.ok is True
@@ -111,10 +113,16 @@ async def test_explicit_opt_out_of_provenance(monkeypatch):
 
 # ── egress wiring ─────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_egress_block_maps_to_recovery(monkeypatch):
-    blocked = GuardDecision(allow=False, url="https://x.com", reason="resolves to private",
-                            risk_level="destructive", recovery_hints=["fetch a public URL"])
+    blocked = GuardDecision(
+        allow=False,
+        url="https://x.com",
+        reason="resolves to private",
+        risk_level="destructive",
+        recovery_hints=["fetch a public URL"],
+    )
     _patch_net(monkeypatch, exc=EgressBlocked(blocked))
     out = await web_fetch("https://x.com", session_key="", require_provenance=False)
     assert out.ok is False
@@ -144,7 +152,8 @@ async def test_operator_egress_config_layered_onto_policy(monkeypatch):
 
     monkeypatch.setattr(wf, "net_fetch", _fake)
     monkeypatch.setattr(
-        wf, "egress_policy_for",
+        wf,
+        "egress_policy_for",
         lambda base: base.with_overrides(deny_hosts=("denied.example",)),
     )
     out = await web_fetch("https://example.com/x", require_provenance=False)
@@ -153,6 +162,7 @@ async def test_operator_egress_config_layered_onto_policy(monkeypatch):
 
 
 # ── extraction + non-HTML ──────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_non_html_kept_as_text(monkeypatch):
@@ -164,6 +174,7 @@ async def test_non_html_kept_as_text(monkeypatch):
 
 
 # ── pagination ──────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_pagination_truncates_and_returns_next_index(monkeypatch):
@@ -179,20 +190,26 @@ async def test_pagination_truncates_and_returns_next_index(monkeypatch):
 @pytest.mark.asyncio
 async def test_pagination_resume_from_start_index(monkeypatch):
     _patch_net(monkeypatch, _resp("0123456789" * 20, ctype="text/plain"))  # 200 chars
-    out = await web_fetch("https://x.com/big", require_provenance=False, max_tokens=10, start_index=40)
+    out = await web_fetch(
+        "https://x.com/big", require_provenance=False, max_tokens=10, start_index=40
+    )
     assert out.char_count == 40
     assert out.next_index == 80
 
 
 @pytest.mark.asyncio
 async def test_fetched_url_becomes_provenanced(monkeypatch):
-    _patch_net(monkeypatch, _resp("<html><body><p>body text here</p></body></html>", url="https://example.com/page"))
+    _patch_net(
+        monkeypatch,
+        _resp("<html><body><p>body text here</p></body></html>", url="https://example.com/page"),
+    )
     await web_fetch("https://example.com/page", session_key="s2", require_provenance=False)
     # the fetched page is now provenanced for the session (a link in it can be fetched)
     assert url_has_provenance("s2", "https://example.com/page")
 
 
 # ── tool wiring ────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_tool_lists_web_fetch():
@@ -207,13 +224,17 @@ async def test_tool_web_fetch_truncation_hint(monkeypatch):
     # body must exceed 2000 chars to truncate. citation URL is the fetched resp.url.
     _patch_net(monkeypatch, _resp("Z" * 5000, ctype="text/plain", url="https://x.com/big"))
     WebToolProvider = _web_tool_provider_cls()
-    res = await WebToolProvider().invoke("web_fetch", {"url": "https://x.com/big", "max_tokens": 10})
+    res = await WebToolProvider().invoke(
+        "web_fetch", {"url": "https://x.com/big", "max_tokens": 10}
+    )
     assert res.success is True
     assert res.truncated is True
     assert res.metadata["next_index"] == 2000
     assert any("start_index=2000" in h for h in res.recovery_hints)
     # §5 fetch-derived citation: url + the [start, end) char span of this window.
-    assert res.metadata["citations"] == [{"url": "https://x.com/big", "start_char": 0, "end_char": 2000}]
+    assert res.metadata["citations"] == [
+        {"url": "https://x.com/big", "start_char": 0, "end_char": 2000}
+    ]
 
 
 @pytest.mark.asyncio
@@ -221,6 +242,8 @@ async def test_outcome_carries_char_range(monkeypatch):
     # The pipeline records the [start_char, end_char) span of the returned window so a
     # quote can be attributed to a precise offset (and the range tracks pagination).
     _patch_net(monkeypatch, _resp("A" * 200, ctype="text/plain"))
-    out = await web_fetch("https://x.com/big", require_provenance=False, max_tokens=10, start_index=40)
+    out = await web_fetch(
+        "https://x.com/big", require_provenance=False, max_tokens=10, start_index=40
+    )
     assert out.start_char == 40
     assert out.end_char == 80  # 40 + 10*4-char budget

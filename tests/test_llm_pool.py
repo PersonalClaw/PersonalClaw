@@ -1,6 +1,7 @@
 """Unit tests for the unified LLM pool."""
+
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -61,9 +62,7 @@ class DeadOnSecondCallWorker(Worker):
         return self._alive
 
 
-def _make_pool_with_fake_workers(
-    pool_size: int = 3, responses: list[str] | None = None
-) -> LLMPool:
+def _make_pool_with_fake_workers(pool_size: int = 3, responses: list[str] | None = None) -> LLMPool:
     """Create a pool pre-loaded with FakeWorkers (skips real process spawn)."""
     pool = LLMPool(pool_size=pool_size)
     pool._started = True

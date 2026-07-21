@@ -71,8 +71,17 @@ def test_save_load_roundtrip_skills(cfg_file):
 # dict-typed top-level fields with their own migration/seeding semantics in
 # load() — covered by dedicated tests elsewhere, not leaf-walkable.
 _SECTIONS = [
-    "agent", "session", "loops", "memory", "dashboard", "inbox",
-    "tools", "skills", "workflows", "learning", "security",
+    "agent",
+    "session",
+    "loops",
+    "memory",
+    "dashboard",
+    "inbox",
+    "tools",
+    "skills",
+    "workflows",
+    "learning",
+    "security",
 ]
 
 # Values for fields the generic flip/append rules can't produce: enum members,
@@ -167,8 +176,10 @@ def test_every_leaf_field_survives_save_load(cfg_file):
             if got != want:
                 diffs.append(f"{section}.{dotted}: saved {want!r} but loaded {got!r}")
     for name, want in [
-        ("auto_update", False), ("timezone", "Europe/Berlin"),
-        ("snapshot_dir", "test-value"), ("observe_max_messages", 207),
+        ("auto_update", False),
+        ("timezone", "Europe/Berlin"),
+        ("snapshot_dir", "test-value"),
+        ("observe_max_messages", 207),
         ("observe_ttl_hours", 169.5),
     ]:
         got = getattr(loaded, name)
@@ -192,6 +203,8 @@ def test_load_fallbacks_match_dataclass_defaults(cfg_file):
             got = getattr(getattr(loaded, section), f.name)
             want = getattr(getattr(pristine, section), f.name)
             if got != want:
-                diffs.append(f"{section}.{f.name}: dataclass default {want!r} "
-                             f"but empty-config load gives {got!r}")
+                diffs.append(
+                    f"{section}.{f.name}: dataclass default {want!r} "
+                    f"but empty-config load gives {got!r}"
+                )
     assert not diffs, "load() fallback drift vs dataclass defaults:\n" + "\n".join(diffs)

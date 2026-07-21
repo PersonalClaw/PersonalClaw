@@ -37,7 +37,8 @@ class TestVoiceSynthesize:
         state = _make_state(tmp_path)
         async with TestClient(TestServer(_make_voice_app(state))) as client:
             resp = await client.post(
-                "/api/voice/synthesize", json={"text": "Hello", "session": "s1"},
+                "/api/voice/synthesize",
+                json={"text": "Hello", "session": "s1"},
             )
             assert resp.status == 503
 
@@ -49,8 +50,12 @@ class TestVoiceSynthesize:
         monkeypatch.setattr(
             "personalclaw.dashboard.chat_voice.active_voice_params",
             lambda: {
-                "provider": _MM(), "voice": "en_US-lessac-medium", "speed": 1.0,
-                "speech_voice": "", "enabled": True, "auto_speak": False,
+                "provider": _MM(),
+                "voice": "en_US-lessac-medium",
+                "speed": 1.0,
+                "speech_voice": "",
+                "enabled": True,
+                "auto_speak": False,
             },
         )
 
@@ -58,7 +63,9 @@ class TestVoiceSynthesize:
             yield 0, "Hello", b"\x00\x01\x02"
 
         monkeypatch.setattr("personalclaw.dashboard.chat_voice.streaming_voice_reply", mock_stream)
-        monkeypatch.setattr("personalclaw.dashboard.chat_voice.stitch_wavs", AsyncMock(return_value=None))
+        monkeypatch.setattr(
+            "personalclaw.dashboard.chat_voice.stitch_wavs", AsyncMock(return_value=None)
+        )
 
         state = _make_state(tmp_path)
         state.broadcast_ws = MagicMock()

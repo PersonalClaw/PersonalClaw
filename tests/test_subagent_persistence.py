@@ -27,9 +27,7 @@ def agent_root(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def _mock_memory_ok(monkeypatch):
     """Prevent memory guard from refusing spawns on low-RAM build machines."""
-    monkeypatch.setattr(
-        "personalclaw.subagent.check_memory_available", lambda **_kw: (True, 8.0)
-    )
+    monkeypatch.setattr("personalclaw.subagent.check_memory_available", lambda **_kw: (True, 8.0))
 
 
 # ── create_agent_folder ──────────────────────────────────────────────
@@ -37,7 +35,13 @@ def _mock_memory_ok(monkeypatch):
 
 class TestCreateAgentFolder:
     def test_creates_state_json(self, agent_root):
-        path = create_agent_folder("abc123", task="do stuff", agent="personalclaw", parent_session="dashboard:default", max_turns=100)
+        path = create_agent_folder(
+            "abc123",
+            task="do stuff",
+            agent="personalclaw",
+            parent_session="dashboard:default",
+            max_turns=100,
+        )
         state = json.loads((path / "state.json").read_text())
         assert state["id"] == "abc123"
         assert state["task"] == "do stuff"
@@ -433,7 +437,9 @@ class TestPerTurnStateUpdates:
         provider.approve_tool = AsyncMock()
 
         async def _stream(*_a, **_kw):
-            yield LLMEvent(kind=EVENT_PERMISSION_REQUEST, title="shell", request_id=1, tool_kind="mcp")
+            yield LLMEvent(
+                kind=EVENT_PERMISSION_REQUEST, title="shell", request_id=1, tool_kind="mcp"
+            )
             yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="result")
             yield LLMEvent(kind=EVENT_COMPLETE)
 
@@ -517,12 +523,14 @@ class TestTombstoneOnAbnormalExit:
         async def _hang(*a, **kw):
             await asyncio.sleep(999)
 
-        with patch.object(manager, "_run_inner", _hang), \
-             patch.object(manager, "_default_timeout", 0.01), \
-             patch("personalclaw.subagent.Stats"), \
-             patch("personalclaw.subagent.sel"), \
-             patch.object(manager, "_fire_event", new_callable=AsyncMock), \
-             patch.object(manager, "_on_done", new_callable=AsyncMock):
+        with (
+            patch.object(manager, "_run_inner", _hang),
+            patch.object(manager, "_default_timeout", 0.01),
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch.object(manager, "_fire_event", new_callable=AsyncMock),
+            patch.object(manager, "_on_done", new_callable=AsyncMock),
+        ):
             await manager._run(info)
 
         # Tombstone should still say "reaped", not "timeout"
@@ -549,7 +557,9 @@ class TestTombstoneOnAbnormalExit:
 
         async def _many_tools(*_a, **_kw):
             for i in range(5):
-                yield LLMEvent(kind=EVENT_PERMISSION_REQUEST, title=f"tool{i}", request_id=i, tool_kind="mcp")
+                yield LLMEvent(
+                    kind=EVENT_PERMISSION_REQUEST, title=f"tool{i}", request_id=i, tool_kind="mcp"
+                )
 
         provider.stream = MagicMock(side_effect=lambda *a, **kw: _many_tools())
         sessions.get_or_create = AsyncMock(return_value=(provider, True, False))
@@ -722,9 +732,11 @@ class TestFolderCleanupOnSuccess:
 
         manager = SubagentManager(sessions=sessions, ctx_builder=ctx, on_done=_slow_on_done)
 
-        with patch("personalclaw.subagent._ON_DONE_TIMEOUT", 0.01), \
-             patch("personalclaw.subagent.Stats"), \
-             patch("personalclaw.subagent.sel"):
+        with (
+            patch("personalclaw.subagent._ON_DONE_TIMEOUT", 0.01),
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+        ):
             info = manager.spawn("delivery failure test", parent_session_key="dashboard:default")
             await manager._tasks[info.id]
 
@@ -752,6 +764,7 @@ class TestOrphanReconciliation:
         create_agent_folder("orphan1", task="old task", parent_session="dashboard:default")
         write_result_chunk("orphan1", "some result")
         from personalclaw.subagent_persistence import update_state
+
         update_state("orphan1", pid=99999)  # dead PID
 
         with patch.object(manager, "_is_pid_alive", return_value=False):
@@ -794,9 +807,11 @@ class TestOrphanReconciliation:
         create_agent_folder("orphan3", task="stuck task")
         update_state("orphan3", pid=99999)
 
-        with patch.object(manager, "_is_pid_alive", return_value=True), \
-             patch.object(manager, "_is_orphan_process", return_value=True), \
-             patch.object(manager, "_kill_orphan_pid") as mock_kill:
+        with (
+            patch.object(manager, "_is_pid_alive", return_value=True),
+            patch.object(manager, "_is_orphan_process", return_value=True),
+            patch.object(manager, "_kill_orphan_pid") as mock_kill,
+        ):
             await manager._reconcile_orphans()
 
         mock_kill.assert_called_once_with(99999)
@@ -817,9 +832,11 @@ class TestOrphanReconciliation:
         create_agent_folder("recycled1", task="old task")
         update_state("recycled1", pid=99999)
 
-        with patch.object(manager, "_is_pid_alive", return_value=True), \
-             patch.object(manager, "_is_orphan_process", return_value=False), \
-             patch.object(manager, "_kill_orphan_pid") as mock_kill:
+        with (
+            patch.object(manager, "_is_pid_alive", return_value=True),
+            patch.object(manager, "_is_orphan_process", return_value=False),
+            patch.object(manager, "_kill_orphan_pid") as mock_kill,
+        ):
             await manager._reconcile_orphans()
 
         mock_kill.assert_not_called()
@@ -840,9 +857,11 @@ class TestOrphanReconciliation:
         create_agent_folder("orphan_ts", task="ts task")
         update_state("orphan_ts", pid=88888, pid_recorded_at=1234567890.5)
 
-        with patch.object(manager, "_is_pid_alive", return_value=True), \
-             patch.object(manager, "_is_orphan_process", return_value=True) as mock_check, \
-             patch.object(manager, "_kill_orphan_pid"):
+        with (
+            patch.object(manager, "_is_pid_alive", return_value=True),
+            patch.object(manager, "_is_orphan_process", return_value=True) as mock_check,
+            patch.object(manager, "_kill_orphan_pid"),
+        ):
             await manager._reconcile_orphans()
 
         mock_check.assert_called_once_with(88888, 1234567890.5)
@@ -905,8 +924,10 @@ class TestOrphanNotification:
         write_result_chunk("notif1", "the answer is 42")
         update_state("notif1", pid=99999)
 
-        with patch.object(manager, "_is_pid_alive", return_value=False), \
-             patch.object(manager, "_notify_orphan", new_callable=AsyncMock) as mock_notify:
+        with (
+            patch.object(manager, "_is_pid_alive", return_value=False),
+            patch.object(manager, "_notify_orphan", new_callable=AsyncMock) as mock_notify,
+        ):
             await manager._reconcile_orphans()
 
         mock_notify.assert_awaited_once()
@@ -927,8 +948,10 @@ class TestOrphanNotification:
         create_agent_folder("notif2", task="lost task")
         update_state("notif2", pid=99999)
 
-        with patch.object(manager, "_is_pid_alive", return_value=False), \
-             patch.object(manager, "_notify_orphan", new_callable=AsyncMock) as mock_notify:
+        with (
+            patch.object(manager, "_is_pid_alive", return_value=False),
+            patch.object(manager, "_notify_orphan", new_callable=AsyncMock) as mock_notify,
+        ):
             await manager._reconcile_orphans()
 
         mock_notify.assert_awaited_once()
@@ -951,8 +974,15 @@ class TestOrphanNotification:
 
         state = {"id": "notif3", "task": "fallback task", "parent_session": "dashboard:default"}
 
-        with patch.object(manager, "_try_inject_orphan_notification", new_callable=AsyncMock, return_value=False), \
-             patch.object(manager, "_send_orphan_channel_dm", new_callable=AsyncMock) as mock_dm:
+        with (
+            patch.object(
+                manager,
+                "_try_inject_orphan_notification",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch.object(manager, "_send_orphan_channel_dm", new_callable=AsyncMock) as mock_dm,
+        ):
             await manager._notify_orphan("notif3", state, "delivered", True)
 
         mock_dm.assert_awaited_once()
@@ -981,8 +1011,12 @@ class TestOrphanNotification:
             injected_msg = msg
             return True
 
-        with patch.object(manager, "_try_inject_orphan_notification", side_effect=_capture_inject), \
-             patch("personalclaw.subagent._redact", side_effect=lambda m: f"[REDACTED]{m}") as mock_redact:
+        with (
+            patch.object(manager, "_try_inject_orphan_notification", side_effect=_capture_inject),
+            patch(
+                "personalclaw.subagent._redact", side_effect=lambda m: f"[REDACTED]{m}"
+            ) as mock_redact,
+        ):
             await manager._notify_orphan("notif_redact", state, "delivered", True)
 
         # _redact must have been called before injection
@@ -1011,8 +1045,10 @@ class TestOrphanNotification:
             if call_count == 1:
                 raise RuntimeError("notification failed")
 
-        with patch.object(manager, "_is_pid_alive", return_value=False), \
-             patch.object(manager, "_notify_orphan", side_effect=_failing_notify):
+        with (
+            patch.object(manager, "_is_pid_alive", return_value=False),
+            patch.object(manager, "_notify_orphan", side_effect=_failing_notify),
+        ):
             await manager._reconcile_orphans()
 
         # Both orphans should be tombstoned despite notification failure
@@ -1077,9 +1113,15 @@ class TestSpawnStatusReadsFromAgentFolder:
 
     def test_read_state_for_orphaned_agent(self, agent_root):
         """read_state returns data for orphaned agents (not in memory)."""
-        from personalclaw.subagent_persistence import create_agent_folder, read_state, write_tombstone
+        from personalclaw.subagent_persistence import (
+            create_agent_folder,
+            read_state,
+            write_tombstone,
+        )
 
-        create_agent_folder("orphan_status", task="orphaned task", parent_session="dashboard:default")
+        create_agent_folder(
+            "orphan_status", task="orphaned task", parent_session="dashboard:default"
+        )
         write_tombstone("orphan_status", cause="gateway_restart", recovery_action="delivered")
 
         state = read_state("orphan_status")

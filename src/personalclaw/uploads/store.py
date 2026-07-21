@@ -86,7 +86,9 @@ class UploadStore:
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
-    def init(self, *, filename: str, size: int, mime: str, target: str, target_dir: str = "") -> UploadSession:
+    def init(
+        self, *, filename: str, size: int, mime: str, target: str, target_dir: str = ""
+    ) -> UploadSession:
         """Validate the declared file against the size policy + free disk, then open
         a session. Rejects a too-big file before a single byte is uploaded."""
         if size <= 0:
@@ -102,16 +104,24 @@ class UploadStore:
         margin = 256 * 1024 * 1024  # keep some headroom; never fill the device
         if free < size + margin:
             raise UploadError(
-                f"not enough free disk to receive {_human(size)} "
-                f"({_human(free)} free)", 507,
+                f"not enough free disk to receive {_human(size)} " f"({_human(free)} free)",
+                507,
             )
         append_mode = free < (2 * size + margin)
 
         sid = uuid.uuid4().hex
         sess = UploadSession(
-            id=sid, filename=filename, size=size, mime=mime, target=target,
-            target_dir=target_dir, category=check.category, part_size=PART_SIZE,
-            append_mode=append_mode, created_at=time.time(), updated_at=time.time(),
+            id=sid,
+            filename=filename,
+            size=size,
+            mime=mime,
+            target=target,
+            target_dir=target_dir,
+            category=check.category,
+            part_size=PART_SIZE,
+            append_mode=append_mode,
+            created_at=time.time(),
+            updated_at=time.time(),
         )
         self._dir(sid).mkdir(parents=True, exist_ok=True)
         if append_mode:
@@ -191,7 +201,8 @@ class UploadStore:
         actual = final.stat().st_size if final.exists() else 0
         if actual != sess.size:
             raise UploadError(
-                f"assembled size {actual} != declared {sess.size}", 400,
+                f"assembled size {actual} != declared {sess.size}",
+                400,
             )
         return final, sess
 
@@ -243,7 +254,11 @@ async def _stream_to(part_reader, fh, *, cap: int) -> int:
     written = 0
     slack = cap + _COPY_CHUNK  # allow one chunk of overrun to detect a lying client
     while True:
-        chunk = await part_reader.read_chunk(_COPY_CHUNK) if hasattr(part_reader, "read_chunk") else await part_reader.read(_COPY_CHUNK)
+        chunk = (
+            await part_reader.read_chunk(_COPY_CHUNK)
+            if hasattr(part_reader, "read_chunk")
+            else await part_reader.read(_COPY_CHUNK)
+        )
         if not chunk:
             break
         fh.write(chunk)
@@ -261,8 +276,8 @@ def _free_bytes(path: Path) -> int:
 
 
 def _human(n: int) -> str:
-    gb = 1024 ** 3
-    mb = 1024 ** 2
+    gb = 1024**3
+    mb = 1024**2
     if n >= gb:
         v = n / gb
         return f"{v:.0f} GB" if v == int(v) else f"{v:.1f} GB"

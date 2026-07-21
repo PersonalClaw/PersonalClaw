@@ -5,6 +5,8 @@ API responses omit the match_embedding vector (large, internal) via
 embedding on write.
 """
 
+from typing import Any
+
 from aiohttp import web
 
 from personalclaw.workflows import registry
@@ -25,7 +27,7 @@ def _err_payload(e: Exception) -> dict:
     present so the UI can point at the offending edge."""
     from personalclaw.workflows.composition import WorkflowCycleError
 
-    payload = {"error": str(e)}
+    payload: dict[str, Any] = {"error": str(e)}
     if isinstance(e, WorkflowCycleError):
         payload["cycle"] = e.cycle
     return payload
@@ -48,12 +50,14 @@ async def api_workflows_list(request: web.Request) -> web.Response:
         limit=limit,
         offset=offset,
     )
-    return web.json_response({
-        "workflows": [w.to_dict(include_embedding=False) for w in workflows],
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-    })
+    return web.json_response(
+        {
+            "workflows": [w.to_dict(include_embedding=False) for w in workflows],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+    )
 
 
 async def api_workflows_get(request: web.Request) -> web.Response:
@@ -112,7 +116,9 @@ async def api_workflows_promote(request: web.Request) -> web.Response:
         return web.json_response({"error": "scope required"}, status=400)
     try:
         wf = await registry.promote_workflow(
-            workflow_id, target, scope_ref=body.get("scope_ref"),
+            workflow_id,
+            target,
+            scope_ref=body.get("scope_ref"),
             provider_name=body.get("provider"),
         )
     except ValueError as e:
@@ -183,23 +189,25 @@ async def api_workflows_preview_match(request: web.Request) -> web.Response:
     )
     candidates = await eligible_workflows(turn)
     match = best_match(query, candidates)
-    return web.json_response({
-        "eligible": [
-            {"id": w.id, "name": w.name, "scope": w.scope.value, "scope_ref": w.scope_ref}
-            for w in candidates
-        ],
-        "match": (
-            {
-                "id": match.workflow.id,
-                "name": match.workflow.name,
-                "scope": match.scope.value,
-                "score": round(match.score, 4),
-                "method": match.method,
-            }
-            if match
-            else None
-        ),
-    })
+    return web.json_response(
+        {
+            "eligible": [
+                {"id": w.id, "name": w.name, "scope": w.scope.value, "scope_ref": w.scope_ref}
+                for w in candidates
+            ],
+            "match": (
+                {
+                    "id": match.workflow.id,
+                    "name": match.workflow.name,
+                    "scope": match.scope.value,
+                    "score": round(match.score, 4),
+                    "method": match.method,
+                }
+                if match
+                else None
+            ),
+        }
+    )
 
 
 async def api_workflows_used_by(request: web.Request) -> web.Response:
@@ -210,10 +218,12 @@ async def api_workflows_used_by(request: web.Request) -> web.Response:
     workflows, _ = await registry.list_all_workflows(
         scope=WorkflowScope.AGENT, scope_ref=agent_name, limit=1000, offset=0
     )
-    return web.json_response({
-        "agent": agent_name,
-        "workflows": [w.to_dict(include_embedding=False) for w in workflows],
-    })
+    return web.json_response(
+        {
+            "agent": agent_name,
+            "workflows": [w.to_dict(include_embedding=False) for w in workflows],
+        }
+    )
 
 
 def register_workflow_routes(app: web.Application) -> None:

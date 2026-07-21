@@ -100,7 +100,7 @@ dev = [
     "personalclaw[models]",
     "personalclaw[mcp]",
     "personalclaw[bedrock]",
-    "black>=24",
+    "black>=26,<27",
     "isort>=5",
     "flake8>=7",
     "mypy>=1.5",
@@ -154,6 +154,10 @@ personalclaw = [
 # ── Tool configs ──────────────────────────────────────────────────────────────
 [tool.black]
 line-length = 100
+# Pin the target so formatting is deterministic across runner/local Python versions
+# (an unpinned target is inferred from the interpreter and warns when it is newer
+# than the code's floor). The project floor is 3.12.
+target-version = ["py312"]
 
 [tool.isort]
 known_first_party = ["personalclaw"]
@@ -174,6 +178,14 @@ addopts = [
     "--verbose",
     "--ignore=build",
     "-n", "auto",
+    # worksteal (greedy per-test work distribution — the fastest balancer). The
+    # cross-worker flakiness that once forced loadscope here (#8/#10) is fixed at the
+    # root by two autouse fixtures in tests/conftest.py: _reset_sel_singleton clears
+    # the SecurityEventLog process singleton around every test (no test inherits
+    # another's audit dir), and _isolate_single_flight_locks gives each test its own
+    # single-flight lock dir (sibling tests reusing a consolidation key can no longer
+    # contend for one lock file across workers). Both shared-state hazards are gone,
+    # so the suite is deterministic under worksteal with no reruns.
     "--dist", "worksteal",
     "--timeout=120",
     "--cov", "personalclaw",

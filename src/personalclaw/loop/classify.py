@@ -33,17 +33,17 @@ _EXECUTIONS = frozenset({"solo", "multi_agent"})
 class Classification:
     """The planner's read of a goal (all fields recommendations, user-overridable)."""
 
-    title: str = ""                          # short human label generated from the goal
-    goal_type: str = "open_ended"            # verifiable | open_ended | monitor
-    classified: bool = True                  # False = LLM failed/garbled → bare defaults (UI should warn)
-    intake_rigor: str = "grill"              # minimal | grill | thorough
+    title: str = ""  # short human label generated from the goal
+    goal_type: str = "open_ended"  # verifiable | open_ended | monitor
+    classified: bool = True  # False = LLM failed/garbled → bare defaults (UI should warn)
+    intake_rigor: str = "grill"  # minimal | grill | thorough
     rigor_reason: str = ""
-    execution: str = "solo"                  # solo | multi_agent
-    roster: list[dict] = field(default_factory=list)        # [{role, persona, role_hint}]
+    execution: str = "solo"  # solo | multi_agent
+    roster: list[dict] = field(default_factory=list)  # [{role, persona, role_hint}]
     strategy_id: str = "orchestrator"
     strategy_reason: str = ""
     clarifying_questions: list[str] = field(default_factory=list)
-    verify_command: str = ""                 # verifiable goals
+    verify_command: str = ""  # verifiable goals
     success_criteria: str = ""
     sub_goals: list[str] = field(default_factory=list)
     # Distinct deliverables the goal asks for (each → its own artifact). Empty
@@ -142,16 +142,21 @@ async def classify(
     of installed agent names the planner may bind to a phase/role — a phase's
     ``agent_name`` is cleared if it isn't one of them (no inventing agents).
     """
-    skill_ids = {str(c.get("id", "")).strip() for c in (skills_catalog or []) if isinstance(c, dict)}
-    workflow_ids = {str(c.get("id", "")).strip() for c in (workflows_catalog or []) if isinstance(c, dict)}
+    skill_ids = {
+        str(c.get("id", "")).strip() for c in (skills_catalog or []) if isinstance(c, dict)
+    }
+    workflow_ids = {
+        str(c.get("id", "")).strip() for c in (workflows_catalog or []) if isinstance(c, dict)
+    }
     agent_names = {str(a).strip() for a in (agents_catalog or []) if str(a).strip()}
     catalog = _capability_catalog(skills_catalog, workflows_catalog)
     if agent_names:
-        catalog += "Installed AGENTS (bind a phase/role to one of these names, or leave empty for the default worker):\n"
+        catalog += "Installed AGENTS (bind a phase/role to one of these names, or leave empty for the default worker):\n"  # noqa: E501
         catalog += "".join(f"- {a}\n" for a in sorted(agent_names)) + "\n"
     # The classifier prompt lives in the prompt system (bundled ``task-goal-classify``,
     # bindable in Settings → Prompts); it folds in the catalog + goal.
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
+
     prompt = render_use_case_prompt("goal_classify", {"catalog": catalog, "goal": goal})
     if not prompt:
         return Classification(classified=False)
@@ -188,17 +193,20 @@ async def classify(
     c.strategy_id = str(data.get("strategy_id", "")).strip() or "orchestrator"
     c.strategy_reason = str(data.get("strategy_reason", "")).strip()[:300]
     c.clarifying_questions = [
-        str(q).strip() for q in (data.get("clarifying_questions") or [])
+        str(q).strip()
+        for q in (data.get("clarifying_questions") or [])
         if isinstance(q, str) and str(q).strip()
     ][:8]
     c.verify_command = str(data.get("verify_command", "")).strip()
     c.success_criteria = str(data.get("success_criteria", "")).strip()
     c.sub_goals = [
-        str(s).strip() for s in (data.get("sub_goals") or [])
+        str(s).strip()
+        for s in (data.get("sub_goals") or [])
         if isinstance(s, str) and str(s).strip()
     ][:20]
     c.deliverables = [
-        str(s).strip() for s in (data.get("deliverables") or [])
+        str(s).strip()
+        for s in (data.get("deliverables") or [])
         if isinstance(s, str) and str(s).strip()
     ][:10]
     # A single explicitly-named output file (basename only — never a path) the
@@ -230,7 +238,9 @@ async def classify(
     return c
 
 
-def _normalize_plan(raw, skill_ids: set[str], workflow_ids: set[str], agent_names: set[str] | None = None) -> list[dict]:
+def _normalize_plan(
+    raw, skill_ids: set[str], workflow_ids: set[str], agent_names: set[str] | None = None
+) -> list[dict]:
     """Coerce the planner's execution_plan into clean phase dicts.
 
     Each phase keeps {role, agent_name, target, min_cycles, phase_exit,
@@ -258,15 +268,17 @@ def _normalize_plan(raw, skill_ids: set[str], workflow_ids: set[str], agent_name
         # the default worker. Only enforced when a catalog was provided.
         if agent_names is not None and agent_name and agent_name not in agent_names:
             agent_name = ""
-        out.append({
-            "role": role,
-            "agent_name": agent_name,
-            "target": target,
-            "min_cycles": min_cycles,
-            "phase_exit": str(p.get("phase_exit", "")).strip()[:300],
-            "skill_ids": _filter_ids(p.get("skill_ids"), skill_ids),
-            "workflow_ids": _filter_ids(p.get("workflow_ids"), workflow_ids),
-        })
+        out.append(
+            {
+                "role": role,
+                "agent_name": agent_name,
+                "target": target,
+                "min_cycles": min_cycles,
+                "phase_exit": str(p.get("phase_exit", "")).strip()[:300],
+                "skill_ids": _filter_ids(p.get("skill_ids"), skill_ids),
+                "workflow_ids": _filter_ids(p.get("workflow_ids"), workflow_ids),
+            }
+        )
     return out[:12]
 
 
@@ -293,11 +305,13 @@ def _normalize_roster(roster) -> list[dict]:
         persona = str(m.get("persona", "")).strip()
         if not (role or persona):
             continue
-        out.append({
-            "role": role,
-            "persona": persona,
-            "role_hint": str(m.get("role_hint", "")).strip(),
-        })
+        out.append(
+            {
+                "role": role,
+                "persona": persona,
+                "role_hint": str(m.get("role_hint", "")).strip(),
+            }
+        )
     return out[:5]
 
 

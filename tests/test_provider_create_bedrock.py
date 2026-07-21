@@ -36,14 +36,17 @@ def _ensure_bedrock_type():
     """Simulate the installed bedrock-models app having registered its type."""
     from personalclaw.llm.capabilities import Capability, ProviderCapability
     from personalclaw.llm.registry import get_default_registry
+
     reg = get_default_registry()
     if "bedrock" not in reg._capabilities:  # noqa: SLF001
         reg.register_type(
             ProviderCapability(
                 type="bedrock",
                 capabilities=frozenset({Capability.CHAT, Capability.STREAMING}),
-                supports_streaming=True, supports_tools=True,
-                supports_embeddings=False, supports_vision=True,
+                supports_streaming=True,
+                supports_tools=True,
+                supports_embeddings=False,
+                supports_vision=True,
                 max_context_tokens=0,
             ),
             lambda **kw: None,

@@ -247,7 +247,10 @@ def resolve_node_ge(min_major: int = _MIN_NODE_MAJOR) -> str | None:
     for node in candidates:
         try:
             out = subprocess.run(
-                [node, "--version"], capture_output=True, text=True, timeout=5,
+                [node, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
         except Exception:
             continue
@@ -299,7 +302,9 @@ def provision_acp_adapter(npm_pkg: str, bin_names: list[str]) -> str | None:
             return str(cand)
 
     if os.environ.get("PERSONALCLAW_ACP_NO_PROVISION") == "1":
-        logger.debug("acp adapter %s: provisioning disabled (PERSONALCLAW_ACP_NO_PROVISION)", npm_pkg)
+        logger.debug(
+            "acp adapter %s: provisioning disabled (PERSONALCLAW_ACP_NO_PROVISION)", npm_pkg
+        )
         return None
 
     node = resolve_node_ge()
@@ -307,11 +312,13 @@ def provision_acp_adapter(npm_pkg: str, bin_names: list[str]) -> str | None:
         logger.warning(
             "acp adapter %s: cannot auto-provision — no Node >= %d found "
             "(install a newer Node or set the adapter's *_ACP_BIN override)",
-            npm_pkg, _MIN_NODE_MAJOR,
+            npm_pkg,
+            _MIN_NODE_MAJOR,
         )
         return None
-    npm = shutil.which("npm", path=os.pathsep.join(
-        [str(Path(node).parent), os.environ.get("PATH", "")]))
+    npm = shutil.which(
+        "npm", path=os.pathsep.join([str(Path(node).parent), os.environ.get("PATH", "")])
+    )
     if not npm:
         logger.warning("acp adapter %s: npm not found alongside %s", npm_pkg, node)
         return None
@@ -320,17 +327,24 @@ def provision_acp_adapter(npm_pkg: str, bin_names: list[str]) -> str | None:
         prefix.mkdir(parents=True, exist_ok=True)
         # Put the chosen Node first on PATH so npm's engine check + any lifecycle
         # scripts run under it, not the (possibly too-old) default node.
-        env = {**os.environ, "PATH": os.pathsep.join(
-            [str(Path(node).parent), os.environ.get("PATH", "")])}
+        env = {
+            **os.environ,
+            "PATH": os.pathsep.join([str(Path(node).parent), os.environ.get("PATH", "")]),
+        }
         logger.info("acp adapter %s: provisioning under %s into %s", npm_pkg, node, prefix)
         proc = subprocess.run(
             [npm, "install", "--prefix", str(prefix), "--no-fund", "--no-audit", npm_pkg],
-            capture_output=True, text=True, timeout=180, env=env,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            env=env,
         )
         if proc.returncode != 0:
             logger.warning(
                 "acp adapter %s: provisioning failed (rc=%d): %s",
-                npm_pkg, proc.returncode, (proc.stderr or "")[-400:],
+                npm_pkg,
+                proc.returncode,
+                (proc.stderr or "")[-400:],
             )
             return None
     except Exception:

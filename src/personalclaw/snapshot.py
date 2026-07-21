@@ -1,4 +1,5 @@
 """PersonalClaw snapshot and restore — portable state management."""
+
 import argparse
 import hashlib
 import json
@@ -45,6 +46,7 @@ def _default_snapshot_dir() -> str:
     """Return snapshot directory from config, falling back to ~/.personalclaw/snapshots."""
     try:
         from personalclaw.config.loader import AppConfig
+
         d = AppConfig.load().snapshot_dir
         if d:
             return str(Path(d).expanduser())
@@ -57,19 +59,23 @@ def _audit(event_type: str, resources: str) -> None:
     """Emit a SEL audit event for snapshot/restore operations."""
     try:
         from personalclaw.sel import SecurityEvent, sel
-        sel().log(SecurityEvent(
-            event_id=os.urandom(8).hex(),
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            event_type=event_type,
-            caller_identity=os.environ.get("USER", "unknown"),
-            agent="personalclaw",
-            source="cli",
-            operation=event_type,
-            outcome="completed",
-            resources=resources,
-        ))
+
+        sel().log(
+            SecurityEvent(
+                event_id=os.urandom(8).hex(),
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                event_type=event_type,
+                caller_identity=os.environ.get("USER", "unknown"),
+                agent="personalclaw",
+                source="cli",
+                operation=event_type,
+                outcome="completed",
+                resources=resources,
+            )
+        )
     except Exception as e:
         import logging
+
         logging.getLogger(__name__).warning("SEL audit event '%s' failed: %s", event_type, e)
 
 
@@ -121,10 +127,7 @@ def _copytree_safe(src: Path, dst: Path, **kwargs) -> None:
     outer_ignore = kwargs.pop("ignore", None)
 
     def _ignore_symlinks(directory, contents):
-        skipped = {
-            name for name in contents
-            if os.path.islink(os.path.join(directory, name))
-        }
+        skipped = {name for name in contents if os.path.islink(os.path.join(directory, name))}
         for name in skipped:
             print(f"⚠️  Skipping symlink in source tree: {os.path.join(directory, name)}")
         if outer_ignore:
@@ -148,12 +151,16 @@ def _copy_tree_no_overwrite(src: Path, dst: Path) -> None:
 
 # ── Snapshot ──────────────────────────────────────────────────────────────────
 
-def snapshot_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | None = None) -> int:
+
+def snapshot_main(
+    argv: list[str] | None = None, *, parsed: argparse.Namespace | None = None
+) -> int:
     if parsed is None:
-        p = argparse.ArgumentParser(prog="personalclaw-snapshot",
-                                    description="Create a portable .tar.gz snapshot of PersonalClaw state.")
-        p.add_argument("output_dir", nargs="?",
-                       default=_default_snapshot_dir())
+        p = argparse.ArgumentParser(
+            prog="personalclaw-snapshot",
+            description="Create a portable .tar.gz snapshot of PersonalClaw state.",
+        )
+        p.add_argument("output_dir", nargs="?", default=_default_snapshot_dir())
         p.add_argument("--keep", type=int, default=7)
         p.add_argument("--list", action="store_true", dest="list_snapshots")
         parsed = p.parse_args(argv)
@@ -169,8 +176,11 @@ def snapshot_main(argv: list[str] | None = None, *, parsed: argparse.Namespace |
         if not out.is_dir():
             print(f"No snapshots found in {out}")
             return 0
-        snaps = sorted(out.glob("personalclaw-snapshot-*.tar.gz"),
-                       key=lambda x: x.stat().st_mtime, reverse=True)
+        snaps = sorted(
+            out.glob("personalclaw-snapshot-*.tar.gz"),
+            key=lambda x: x.stat().st_mtime,
+            reverse=True,
+        )
         for s in snaps:
             print(s)
         if not snaps:
@@ -183,7 +193,9 @@ def snapshot_main(argv: list[str] | None = None, *, parsed: argparse.Namespace |
 
     # Pre-flight size estimate
     if pc.is_dir():
-        total_bytes = sum(f.stat().st_size for f in pc.rglob("*") if f.is_file() and not f.is_symlink())
+        total_bytes = sum(
+            f.stat().st_size for f in pc.rglob("*") if f.is_file() and not f.is_symlink()
+        )
         total_mb = total_bytes / (1024 * 1024)
         if total_mb > 500:
             print(f"⚠️  ~/.personalclaw is {total_mb:.0f} MB — snapshot may be large and slow")
@@ -192,11 +204,14 @@ def snapshot_main(argv: list[str] | None = None, *, parsed: argparse.Namespace |
     if (pc / "memory.db").is_file():
         try:
             from contextlib import closing
+
             with closing(sqlite3.connect(str(pc / "memory.db"))) as c:
                 c.execute("PRAGMA wal_checkpoint(TRUNCATE);")
         except Exception:
-            print("⚠️  WAL checkpoint failed (DB may be locked by gateway). "
-                  "The backup API still produces a consistent copy.")
+            print(
+                "⚠️  WAL checkpoint failed (DB may be locked by gateway). "
+                "The backup API still produces a consistent copy."
+            )
 
     with tempfile.TemporaryDirectory() as work:
         stage = Path(work) / name
@@ -213,27 +228,31 @@ def snapshot_main(argv: list[str] | None = None, *, parsed: argparse.Namespace |
                         continue
                     if f.endswith(".db"):
                         from contextlib import closing
-                        with closing(sqlite3.connect(str(src))) as src_conn, \
-                             closing(sqlite3.connect(str(stage / f))) as dst_conn:
+
+                        with (
+                            closing(sqlite3.connect(str(src))) as src_conn,
+                            closing(sqlite3.connect(str(stage / f))) as dst_conn,
+                        ):
                             src_conn.backup(dst_conn)
                     else:
                         shutil.copy2(str(src), str(stage / f))
 
         # Workspace (exclude hygiene_data, insert_facts*.py)
         if (pc / "workspace").is_dir():
-            _copytree_safe(pc / "workspace", stage / "workspace",
-                           dirs_exist_ok=True,
-                           ignore=shutil.ignore_patterns("hygiene_data", "insert_facts*.py"))
+            _copytree_safe(
+                pc / "workspace",
+                stage / "workspace",
+                dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns("hygiene_data", "insert_facts*.py"),
+            )
 
         # Plan memory
         if (pc / "plan_memory").is_dir():
-            _copytree_safe(pc / "plan_memory", stage / "plan_memory",
-                           dirs_exist_ok=True)
+            _copytree_safe(pc / "plan_memory", stage / "plan_memory", dirs_exist_ok=True)
 
         # Skills
         if (pc / "skills").is_dir():
-            _copytree_safe(pc / "skills", stage / "skills",
-                           dirs_exist_ok=True)
+            _copytree_safe(pc / "skills", stage / "skills", dirs_exist_ok=True)
 
         # Manifest
         ws_files = sum(1 for _ in (stage / "workspace").rglob("*") if _.is_file())
@@ -277,15 +296,18 @@ def snapshot_main(argv: list[str] | None = None, *, parsed: argparse.Namespace |
     human = f"{sz // 1024}K" if sz < 1024 * 1024 else f"{sz / 1024 / 1024:.1f}M"
     print(f"✅ Snapshot created: {outfile} ({human})")
     if has_hmac_key:
-        print("⚠️  Snapshot contains sel_hmac.key — treat this file as sensitive. "
-              "An attacker with access to it could forge SEL audit entries.")
+        print(
+            "⚠️  Snapshot contains sel_hmac.key — treat this file as sensitive. "
+            "An attacker with access to it could forge SEL audit entries."
+        )
 
     _audit("snapshot_created", f"{outfile} ({human})")
 
     # Prune
-    snaps = sorted(out.glob("personalclaw-snapshot-*.tar.gz"),
-                   key=lambda x: x.stat().st_mtime, reverse=True)
-    for old in snaps[args.keep:]:
+    snaps = sorted(
+        out.glob("personalclaw-snapshot-*.tar.gz"), key=lambda x: x.stat().st_mtime, reverse=True
+    )
+    for old in snaps[args.keep :]:
         old.unlink()
         print(f"🗑  Pruned: {old.name}")
 
@@ -295,6 +317,7 @@ def snapshot_main(argv: list[str] | None = None, *, parsed: argparse.Namespace |
 
 
 # ── Restore ───────────────────────────────────────────────────────────────────
+
 
 def _print_manifest(snap: Path) -> None:
     mf = snap / "MANIFEST.json"
@@ -316,9 +339,14 @@ def _print_manifest(snap: Path) -> None:
         print(f"  (Could not read manifest: {e})")
 
 
-_MERGE_ALLOWED_TABLES = frozenset({
-    "semantic_memory", "episodic_memories", "knowledge_facts", "knowledge_edges",
-})
+_MERGE_ALLOWED_TABLES = frozenset(
+    {
+        "semantic_memory",
+        "episodic_memories",
+        "knowledge_facts",
+        "knowledge_edges",
+    }
+)
 _SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
@@ -348,15 +376,22 @@ def _merge_memory(src_db: Path, dst_db: Path) -> None:
         conn.execute("ATTACH DATABASE ? AS src", (str(src_db),))
         attached = True
         for table, cols, where in [
-            ("semantic_memory",
-             "key, value_json, confidence, source, created_at, updated_at, embedding",
-             "WHERE is_deleted=0"),
-            ("episodic_memories",
-             "id, conversation_id, text, embedding, tags, importance, created_at, last_accessed_at",
-             "WHERE is_deleted=0"),
+            (
+                "semantic_memory",
+                "key, value_json, confidence, source, created_at, updated_at, embedding",
+                "WHERE is_deleted=0",
+            ),
+            (
+                "episodic_memories",
+                "id, conversation_id, text, embedding, tags, importance, created_at, last_accessed_at",  # noqa: E501
+                "WHERE is_deleted=0",
+            ),
             ("knowledge_facts", "subject, predicate, object, episode_id, created_at", ""),
-            ("knowledge_edges",
-             "source_key, target_key, relation, weight, metadata, created_at", ""),
+            (
+                "knowledge_edges",
+                "source_key, target_key, relation, weight, metadata, created_at",
+                "",
+            ),
         ]:
             if table not in _MERGE_ALLOWED_TABLES:
                 raise ValueError(f"Table {table!r} not in merge allowlist")
@@ -366,12 +401,14 @@ def _merge_memory(src_db: Path, dst_db: Path) -> None:
                 before = conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
                 conn.execute(
                     f"INSERT OR IGNORE INTO {table} ({cols}) "
-                    f"SELECT {cols} FROM src.{table} {where}")
+                    f"SELECT {cols} FROM src.{table} {where}"
+                )
                 after = conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
                 label = table.replace("_", " ").title()
                 print(f"  {label} imported: {after - before}")
             except sqlite3.OperationalError as e:
                 import logging
+
                 logging.getLogger(__name__).warning("Skipping table %s: %s", table, e)
         conn.commit()
     except Exception:
@@ -395,8 +432,7 @@ def _merge_crons(src_path: Path, dst_path: Path) -> None:
         name = job.get("name")
         if not name or name in existing:
             continue
-        job["id"] = hashlib.md5(
-            f"{name}-imported".encode(), usedforsecurity=False).hexdigest()[:8]
+        job["id"] = hashlib.md5(f"{name}-imported".encode(), usedforsecurity=False).hexdigest()[:8]
         dst.setdefault("jobs", []).append(job)
         imported += 1
     atomic_write(dst_path, json.dumps(dst, indent=2))
@@ -556,6 +592,7 @@ def _is_gateway_running() -> bool:
     # DASHBOARD_PORT already resolves PERSONALCLAW_PORT → _DEFAULT_PORT, so this
     # is the single source of truth for the gateway port.
     from personalclaw.config.loader import DASHBOARD_PORT
+
     port = DASHBOARD_PORT
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=1):
@@ -566,13 +603,15 @@ def _is_gateway_running() -> bool:
 
 def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | None = None) -> int:
     if parsed is None:
-        p = argparse.ArgumentParser(prog="personalclaw-restore",
-                                    description="Restore PersonalClaw state from a snapshot.")
+        p = argparse.ArgumentParser(
+            prog="personalclaw-restore", description="Restore PersonalClaw state from a snapshot."
+        )
         p.add_argument("snapshot", nargs="?")
         p.add_argument("--mode", choices=("replace", "merge"))
         p.add_argument("--dry-run", action="store_true")
-        p.add_argument("--force", action="store_true",
-                       help="Allow restore even if gateway is running")
+        p.add_argument(
+            "--force", action="store_true", help="Allow restore even if gateway is running"
+        )
         p.add_argument("--components")
         p.add_argument("--list-components", action="store_true")
         parsed = p.parse_args(argv)
@@ -622,8 +661,9 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
                 members = [m for m in tar.getmembers() if _data_filter(m) is not None]
                 tar.extractall(work, members=members)
 
-        snap_dirs = [d for d in work.iterdir()
-                     if d.is_dir() and d.name.startswith("personalclaw-snapshot-")]
+        snap_dirs = [
+            d for d in work.iterdir() if d.is_dir() and d.name.startswith("personalclaw-snapshot-")
+        ]
         if not snap_dirs:
             print("❌ Invalid snapshot format")
             return 1
@@ -661,8 +701,10 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
             _audit("state_restore_rejected", f"reason=integrity_check_failed from={snap_path.name}")
             return 1
         if not (pc / "memory_index.db").is_file():
-            print("⚠️  memory_index.db is missing — full-text search may not "
-                  "work until the FTS index is rebuilt.")
+            print(
+                "⚠️  memory_index.db is missing — full-text search may not "
+                "work until the FTS index is rebuilt."
+            )
 
     comp_str = ",".join(components) if components else "all"
     _audit("state_restored", f"mode={mode} components={comp_str} from={snap_path.name}")

@@ -37,7 +37,9 @@ def test_default_dialect_shape():
 
 def test_default_permission_options_id_label():
     d = DefaultDialect()
-    parsed = d.parse_permission_options([{"id": "allow_once", "label": "Allow once", "kind": "allow_once"}])
+    parsed = d.parse_permission_options(
+        [{"id": "allow_once", "label": "Allow once", "kind": "allow_once"}]
+    )
     assert parsed == [{"id": "allow_once", "label": "Allow once", "kind": "allow_once"}]
     assert d.approve_outcome("allow_once") == {
         "outcome": {"outcome": "selected", "optionId": "allow_once"}
@@ -102,15 +104,19 @@ def test_default_dialect_normalize_discovery_modes_are_agents():
     availableModels are model overrides, no separate permission-mode axis."""
     d = DefaultDialect()
     snew = {
-        "modes": {"availableModes": [
-            {"id": "gpu-dev", "name": "gpu-dev", "description": "Dev agent"},
-            {"id": "planner", "name": "Planner", "description": "Plans"},
-            {"name": "no-id-skipped"},  # dropped — no id
-        ]},
-        "models": {"availableModels": [
-            {"modelId": "auto", "name": "auto"},
-            {"modelId": "glm-5", "name": "glm-5"},
-        ]},
+        "modes": {
+            "availableModes": [
+                {"id": "gpu-dev", "name": "gpu-dev", "description": "Dev agent"},
+                {"id": "planner", "name": "Planner", "description": "Plans"},
+                {"name": "no-id-skipped"},  # dropped — no id
+            ]
+        },
+        "models": {
+            "availableModels": [
+                {"modelId": "auto", "name": "auto"},
+                {"modelId": "glm-5", "name": "glm-5"},
+            ]
+        },
     }
     r = d.normalize_discovery(snew)
     assert isinstance(r, DiscoveryResult)
@@ -129,19 +135,33 @@ def test_zed_dialect_normalize_discovery_effort_as_setting():
     snew = {
         "modes": {"availableModes": [{"id": "default"}, {"id": "plan"}]},  # ignored as agents
         "configOptions": [
-            {"id": "mode", "options": [
-                {"value": "default"}, {"value": "acceptEdits"}, {"value": "plan"},
-                {"value": "dontAsk"}, {"value": "bypassPermissions"},
-            ]},
-            {"id": "model", "options": [
-                {"value": "default"}, {"value": "opus"}, {"value": "sonnet"},
-            ]},
-            {"id": "effort", "options": [
-                {"value": "default", "name": "Default"},
-                {"value": "low", "name": "Low"},
-                {"value": "high", "name": "High"},
-                {"value": "max", "name": "Max"},
-            ]},
+            {
+                "id": "mode",
+                "options": [
+                    {"value": "default"},
+                    {"value": "acceptEdits"},
+                    {"value": "plan"},
+                    {"value": "dontAsk"},
+                    {"value": "bypassPermissions"},
+                ],
+            },
+            {
+                "id": "model",
+                "options": [
+                    {"value": "default"},
+                    {"value": "opus"},
+                    {"value": "sonnet"},
+                ],
+            },
+            {
+                "id": "effort",
+                "options": [
+                    {"value": "default", "name": "Default"},
+                    {"value": "low", "name": "Low"},
+                    {"value": "high", "name": "High"},
+                    {"value": "max", "name": "Max"},
+                ],
+            },
         ],
     }
     r = d.normalize_discovery(snew)
@@ -170,7 +190,9 @@ def test_zed_dialect_normalize_discovery_no_effort_still_has_base_agent():
 def test_zed_dialect_permission_optionId_name():
     d = ZedAdapterDialect()
     # Public ACP spec keys.
-    parsed = d.parse_permission_options([{"optionId": "allow", "name": "Allow", "kind": "allow_once"}])
+    parsed = d.parse_permission_options(
+        [{"optionId": "allow", "name": "Allow", "kind": "allow_once"}]
+    )
     assert parsed == [{"id": "allow", "label": "Allow", "kind": "allow_once"}]
     # Tolerates the id/label shape too (forward-compat).
     parsed2 = d.parse_permission_options([{"id": "x", "label": "Y"}])
@@ -202,5 +224,13 @@ def test_get_dialect_registry():
 def test_set_model_explicit_switch_always_sends():
     """The live set_model path passes a sentinel default so an explicit switch
     is never suppressed — verify each dialect still produces its model verb."""
-    assert DefaultDialect().set_model_request(session_id="s", model="m", default_model="\x00").method == "session/set_model"
-    assert ZedAdapterDialect().set_model_request(session_id="s", model="m", default_model="\x00").method == "session/set_config_option"
+    assert (
+        DefaultDialect().set_model_request(session_id="s", model="m", default_model="\x00").method
+        == "session/set_model"
+    )
+    assert (
+        ZedAdapterDialect()
+        .set_model_request(session_id="s", model="m", default_model="\x00")
+        .method
+        == "session/set_config_option"
+    )

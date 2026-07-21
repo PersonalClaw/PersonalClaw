@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 from personalclaw import grill
 
 
@@ -19,6 +17,7 @@ def _ask_returning(*responses):
 
     async def _ask(prompt: str) -> str:
         return seq.pop(0) if len(seq) > 1 else seq[0]
+
     return _ask
 
 
@@ -59,12 +58,14 @@ def test_check_memory_none_recall():
 def test_check_memory_returns_recall():
     async def _recall(q):
         return "prior decision: use Postgres"
+
     assert "Postgres" in _run(grill.check_memory("db choice", _recall))
 
 
 def test_check_memory_swallows_errors():
     async def _recall(q):
         raise RuntimeError("boom")
+
     assert _run(grill.check_memory("x", _recall)) == ""
 
 
@@ -73,8 +74,8 @@ def test_check_memory_swallows_errors():
 
 def test_grill_flat_decomposes():
     ask = _ask_returning(
-        '{"ambiguous": false, "questions": []}',           # assess
-        '["feasibility", "risks", "alternatives"]',         # decompose
+        '{"ambiguous": false, "questions": []}',  # assess
+        '["feasibility", "risks", "alternatives"]',  # decompose
     )
     r = _run(grill.grill("a real goal here", shape="flat", ask=ask, assess=True))
     assert r.shape == "flat"
@@ -99,7 +100,7 @@ def test_grill_flat_caps_at_20():
 
 
 def test_grill_tree_builds_phases():
-    tree = '{"phases": [{"title": "Scope", "description": "d", "steps": [{"title": "platform", "prompt": "Which platform?"}]}]}'
+    tree = '{"phases": [{"title": "Scope", "description": "d", "steps": [{"title": "platform", "prompt": "Which platform?"}]}]}'  # noqa: E501
     r = _run(grill.grill("goal", shape="tree", ask=_ask_returning(tree), assess=False))
     assert r.shape == "tree"
     assert len(r.phases) == 1
@@ -108,7 +109,9 @@ def test_grill_tree_builds_phases():
 
 
 def test_grill_tree_drops_stepless_and_promptless():
-    tree = '{"phases": [{"title": "P", "steps": [{"title": "x"}, {"title": "y", "prompt": "real?"}]}]}'
+    tree = (
+        '{"phases": [{"title": "P", "steps": [{"title": "x"}, {"title": "y", "prompt": "real?"}]}]}'
+    )
     r = _run(grill.grill("goal", shape="tree", ask=_ask_returning(tree), assess=False))
     # only the step with a prompt survives
     assert [s["prompt"] for s in r.phases[0]["steps"]] == ["real?"]
@@ -120,6 +123,7 @@ def test_grill_tree_drops_stepless_and_promptless():
 def test_grill_records_memory_hit():
     async def _recall(q):
         return "prior: already chose X"
+
     ask = _ask_returning('["a", "b"]')
     r = _run(grill.grill("goal", shape="flat", ask=ask, recall=_recall, assess=False))
     assert r.memory_hits == 1
@@ -135,6 +139,7 @@ def test_grill_saves_decisions():
 def test_grill_save_failure_does_not_break():
     def _boom(d):
         raise RuntimeError("save failed")
+
     ask = _ask_returning('["x"]')
     r = _run(grill.grill("goal", shape="flat", ask=ask, save=_boom, assess=False))
     assert r.sub_goals == ["x"]  # decomposition still returned

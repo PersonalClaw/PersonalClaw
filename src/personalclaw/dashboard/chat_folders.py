@@ -55,11 +55,13 @@ async def _generate_folder_icon(state: DashboardState, folder: dict) -> None:
     icon, _ = redact_exfiltration_urls(icon)
     icon, _ = redact_credentials(icon)
     # Validate: must be a single emoji (1-2 code points, symbol category or high-plane emoji)
-    if icon and len(icon) <= 3 and all(
-        unicodedata.category(c).startswith("So")
-        or ord(c) > 0x1F000
-        or c in "\uFE0F\u200D"
-        for c in icon
+    if (
+        icon
+        and len(icon) <= 3
+        and all(
+            unicodedata.category(c).startswith("So") or ord(c) > 0x1F000 or c in "\ufe0f\u200d"
+            for c in icon
+        )
     ):
         if any(f["id"] == folder["id"] for f in state._folders):
             folder["icon"] = icon
@@ -101,8 +103,11 @@ async def api_chat_folder_create(request: web.Request) -> web.Response:
     state._background_tasks.add(task)
     task.add_done_callback(state._background_tasks.discard)
     sel().log_api_access(
-        caller="dashboard", operation="chat.folder_create",
-        outcome="allowed", source="dashboard", resources=str(folder["id"]),
+        caller="dashboard",
+        operation="chat.folder_create",
+        outcome="allowed",
+        source="dashboard",
+        resources=str(folder["id"]),
     )
     return web.json_response(folder, status=201)
 
@@ -130,8 +135,11 @@ async def api_chat_folder_update(request: web.Request) -> web.Response:
     state.save_folders()
     state.push_sessions_update()
     sel().log_api_access(
-        caller="dashboard", operation="chat.folder_update",
-        outcome="allowed", source="dashboard", resources=fid,
+        caller="dashboard",
+        operation="chat.folder_update",
+        outcome="allowed",
+        source="dashboard",
+        resources=fid,
     )
     return web.json_response(folder)
 
@@ -154,8 +162,11 @@ async def api_chat_folder_delete(request: web.Request) -> web.Response:
     state.save_folders()
     state.push_sessions_update()
     sel().log_api_access(
-        caller="dashboard", operation="chat.folder_delete",
-        outcome="allowed", source="dashboard", resources=fid,
+        caller="dashboard",
+        operation="chat.folder_delete",
+        outcome="allowed",
+        source="dashboard",
+        resources=fid,
     )
     return web.json_response({"ok": True})
 
@@ -179,8 +190,11 @@ async def api_chat_session_folder(request: web.Request) -> web.Response:
     _save_session_to_history(state, session, force=True)
     state.push_sessions_update()
     sel().log_api_access(
-        caller="dashboard", operation="chat.session_folder",
-        outcome="allowed", source="dashboard", resources=name,
+        caller="dashboard",
+        operation="chat.session_folder",
+        outcome="allowed",
+        source="dashboard",
+        resources=name,
     )
     return web.json_response({"ok": True, "folder_id": session.folder_id})
 
@@ -201,7 +215,10 @@ async def api_chat_session_pin(request: web.Request) -> web.Response:
     _save_session_to_history(state, session, force=True)
     state.push_sessions_update()
     sel().log_api_access(
-        caller="dashboard", operation="chat.session_pin",
-        outcome="allowed", source="dashboard", resources=name,
+        caller="dashboard",
+        operation="chat.session_pin",
+        outcome="allowed",
+        source="dashboard",
+        resources=name,
     )
     return web.json_response({"ok": True, "pinned": session.pinned})

@@ -15,25 +15,30 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from aiohttp import web
 
+from personalclaw import trust_mode
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import DASHBOARD_PORT, config_dir
 from personalclaw.dashboard.sse import SseRegistry
 from personalclaw.knowledge.store import KnowledgeStore
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
-from personalclaw import trust_mode
-from personalclaw.task_modes import is_read_only_bash, resolve_effective_risk  # noqa: F401 — re-exported for dashboard callers (chat_runner, tests)
+from personalclaw.task_modes import (  # noqa: F401,E501 — re-exported for dashboard callers (chat_runner, tests)
+    is_read_only_bash,
+    resolve_effective_risk,
+)
 
 if TYPE_CHECKING:
     from personalclaw.dashboard._types import (  # noqa: F401
         ContextBuilder,
         ConversationLog,
-        ScheduleService,
         HistoryConsolidator,
         LessonStore,
+        ScheduleService,
         SessionManager,
         SubagentManager,
     )
+    from personalclaw.dashboard.side_state import SideState
+    from personalclaw.engagement_signals import EngagementStore
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +152,7 @@ _MAX_SESSION_MESSAGES = 10000  # Keep all messages — virtual scrolling handles
 # Gates the prefix lookup to prevent broad matches (e.g. bare "chat" binding to any session).
 _CHAT_N_RE = re.compile(r"chat-\d+")
 
-# Cron notification wrapper format — used by handlers.py (create), chat.py (detect), ChatPage.tsx (render)
+# Cron notification wrapper format — used by handlers.py (create), chat.py (detect), ChatPage.tsx (render)  # noqa: E501
 CRON_NOTIFY_PREFIX = "[Cron notification from "
 CRON_NOTIFY_END = "[End of cron notification]"
 CRON_NOTIFY_RE = re.compile(rf'^{re.escape(CRON_NOTIFY_PREFIX)}"(.*)"\]')
@@ -369,7 +374,9 @@ class _ChatSession:
         self.color_index: int | None = None
         self.color_theme: str = ""
         if memory_mode not in VALID_MEMORY_MODES:
-            raise ValueError(f"invalid memory_mode {memory_mode!r}, must be one of {VALID_MEMORY_MODES}")
+            raise ValueError(
+                f"invalid memory_mode {memory_mode!r}, must be one of {VALID_MEMORY_MODES}"
+            )
         self.memory_mode: str = memory_mode
         self._ephemeral: bool = ephemeral  # Incognito mode: no memory writes
         self._pending_context: list[dict[str, Any]] = []
@@ -379,15 +386,19 @@ class _ChatSession:
         self._pending_variants: list[dict] = []
         self._lock = asyncio.Lock()
         self.forked_from: str | None = None  # parent session key if this is a fork
-        self._fork_lock: asyncio.Lock = asyncio.Lock()  # serialises concurrent forks on this session
+        self._fork_lock: asyncio.Lock = (
+            asyncio.Lock()
+        )  # serialises concurrent forks on this session
         self._tab_id: str = ""  # permanent tab identity for cross-restart session chaining
-        self._disk_older_count: int = 0  # count of disk messages OLDER than in-memory window (stable, set at restore/resume)
+        self._disk_older_count: int = (
+            0  # count of disk messages OLDER than in-memory window (stable, set at restore/resume)
+        )
         # Per-turn file-change accumulator [{path, before, after}], reset at the
         # top of each _run_chat and flushed onto the assistant message's meta at turn end.
         self._file_changes: list[dict[str, str]] = []
         # Ephemeral side-chat buffer (None = closed). Side Q&A lives ONLY here,
         # never in self.messages — see dashboard/side_state.py.
-        self._side: object | None = None
+        self._side: "SideState | None" = None
 
     @property
     def _plan_stage_count(self) -> int:
@@ -401,7 +412,16 @@ class _ChatSession:
     def _stopping(self, value: bool) -> None:
         self._stop_state = "soft_pending" if value else "idle"
 
-    def append(self, role: str, content: str, cls: str = "", ts: str = "", *, broadcast: bool = True, meta: dict | None = None) -> None:
+    def append(
+        self,
+        role: str,
+        content: str,
+        cls: str = "",
+        ts: str = "",
+        *,
+        broadcast: bool = True,
+        meta: dict | None = None,
+    ) -> None:
         msg: dict[str, Any] = {
             "role": role,
             "content": content,
@@ -417,7 +437,12 @@ class _ChatSession:
         self.event.set()
         # Broadcast via global SSE when no HTTP stream reader is active
         # Skip: chunk (too noisy), done (internal), user (frontend adds optimistically)
-        if broadcast and self._on_message and role not in ("chunk", "done", "user") and not self._has_reader:
+        if (
+            broadcast
+            and self._on_message
+            and role not in ("chunk", "done", "user")
+            and not self._has_reader
+        ):
             self._on_message(self.key, msg)  # type: ignore[operator]
         # Trim old messages to bound memory usage
         if len(self.messages) > _MAX_SESSION_MESSAGES:
@@ -726,6 +751,7 @@ class DashboardState:
         # delegates to it and registers a callback to clear per-session approval
         # policies when YOLO turns off. See enable_yolo / is_yolo_active below.
         from personalclaw import trust_mode as _trust
+
         _trust.register_on_disable(self._on_yolo_disabled)
         self.no_crons: bool = False  # --no-crons flag: cron execution disabled
         self._hook_store: Any = None  # Lazy-init ScriptHookStore
@@ -763,6 +789,8 @@ class DashboardState:
         self._pending_approvals: dict[str, dict] = {}
         self._approval_futures: dict[str, asyncio.Future] = {}  # type: ignore[type-arg]
         self._flush_task: asyncio.Task | None = None  # type: ignore[type-arg]
+        self._upload_sweep_task: asyncio.Task | None = None  # type: ignore[type-arg]
+        self._engagement_store: "EngagementStore | None" = None  # lazily built (inbox ranking)
         # Update progress tracking (shared across all connected clients)
         self._update_progress: dict[str, str] | None = None  # {step, detail}
         # Restricted (incognito/temporary): session keys with memory writes disabled
@@ -771,6 +799,7 @@ class DashboardState:
         self._ephemeral_keys: set[str] = set()
         # Per-project file index registry (shared across sessions)
         from personalclaw.dashboard.file_index import FileIndexRegistry
+
         self.file_indexes = FileIndexRegistry()
 
     def wire_session_compact_callback(self) -> None:
@@ -779,7 +808,7 @@ class DashboardState:
         async def _on_compacted(session_key: str, pct: float) -> None:
             if not session_key.startswith("dashboard:"):
                 return
-            session_name = session_key[len("dashboard:"):]
+            session_name = session_key[len("dashboard:") :]
             session = self.get_session(session_name)
             if session is None:
                 return
@@ -832,6 +861,7 @@ class DashboardState:
             os.makedirs(db_dir, exist_ok=True)
             self._knowledge_store = KnowledgeStore(os.path.join(db_dir, "knowledge.db"))
         return self._knowledge_store
+
     _YOLO_TTL = trust_mode.YOLO_DASHBOARD_TTL_SECS  # 6h dashboard ceiling
 
     def enable_yolo(self, *, from_config: bool = False) -> None:
@@ -856,6 +886,7 @@ class DashboardState:
         if reason == "expired":
             try:
                 from personalclaw.sel import sel
+
                 sel().log_api_access(
                     caller="dashboard:yolo_ttl",
                     operation="mode_change:yolo_expired",
@@ -939,6 +970,7 @@ class DashboardState:
             # so a silently-denied autonomous action is traceable.
             try:
                 from personalclaw.sel import sel
+
                 sel().log_api_access(
                     caller=f"approval_timeout:{source}",
                     operation="approval_timeout:denied",
@@ -952,7 +984,9 @@ class DashboardState:
             self._pending_approvals.pop(approval_id, None)
             self._approval_futures.pop(approval_id, None)
 
-    def _audit_and_broadcast_approval(self, session_key: str, approval_id: str, approved: bool) -> None:
+    def _audit_and_broadcast_approval(
+        self, session_key: str, approval_id: str, approved: bool
+    ) -> None:
         """Emit SEL audit event and broadcast WS notification for an approval decision."""
         try:
             sel().log_tool_invocation(
@@ -1076,7 +1110,8 @@ class DashboardState:
             from personalclaw.fs_watch import ConfigFsWatcher, default_config_roots
 
             self._config_fs_watcher = ConfigFsWatcher(
-                default_config_roots(), publish=self._config_fs_sse.publish,
+                default_config_roots(),
+                publish=self._config_fs_sse.publish,
             )
             try:
                 self._config_fs_watcher.start()
@@ -1114,7 +1149,8 @@ class DashboardState:
 
             queue = self.knowledge_ingest_queue()
             self._knowledge_provider = create_native_provider(
-                self.knowledge_store, enqueue=queue.enqueue,
+                self.knowledge_store,
+                enqueue=queue.enqueue,
             )
             register_provider(self._knowledge_provider)
         return self._knowledge_provider
@@ -1123,6 +1159,7 @@ class DashboardState:
         """The bundled-model download job registry (lazy, per-process singleton)."""
         if self._model_downloads is None:
             from personalclaw.dashboard.model_downloads import ModelDownloadRegistry
+
             self._model_downloads = ModelDownloadRegistry()
         return self._model_downloads
 
@@ -1130,6 +1167,7 @@ class DashboardState:
         """The embedding re-index job registry (lazy, per-process singleton)."""
         if self._embedding_reindex is None:
             from personalclaw.dashboard.embedding_reindex import ReindexRegistry
+
             self._embedding_reindex = ReindexRegistry()
         return self._embedding_reindex
 
@@ -1151,7 +1189,9 @@ class DashboardState:
         if not loop_id:
             return 0
         before = len(self._notification_log)
-        removed_ts = [n.get("ts", "") for n in self._notification_log if n.get("loop_id") == loop_id]
+        removed_ts = [
+            n.get("ts", "") for n in self._notification_log if n.get("loop_id") == loop_id
+        ]
         self._notification_log = [n for n in self._notification_log if n.get("loop_id") != loop_id]
         removed = before - len(self._notification_log)
         if removed:
@@ -1294,7 +1334,15 @@ class DashboardState:
             self._session_counter += 1
             ts = int(time.time())
             name = f"chat-{self._session_counter}-{ts}"
-        session = _ChatSession(name, agent=agent, workspace_dir=workspace_dir, model=model, mode=mode, memory_mode=memory_mode or "persistent", project_id=project_id)
+        session = _ChatSession(
+            name,
+            agent=agent,
+            workspace_dir=workspace_dir,
+            model=model,
+            mode=mode,
+            memory_mode=memory_mode or "persistent",
+            project_id=project_id,
+        )
         session._tab_id = uuid.uuid4().hex[:12]
         session._on_message = self._broadcast_chat_message
         session._app = app
@@ -1354,7 +1402,13 @@ class DashboardState:
     _DEFAULT_TAGS: list[dict[str, Any]] = [
         {"id": "planned", "name": "Planned", "color": "#6b7280", "order": 0, "status": True},
         {"id": "todo", "name": "ToDo", "color": "#3b82f6", "order": 1, "status": True},
-        {"id": "implementation", "name": "Implementation", "color": "#8b5cf6", "order": 2, "status": True},
+        {
+            "id": "implementation",
+            "name": "Implementation",
+            "color": "#8b5cf6",
+            "order": 2,
+            "status": True,
+        },
         {"id": "review", "name": "Review", "color": "#f59e0b", "order": 3, "status": True},
         {"id": "done", "name": "Done", "color": "#10b981", "order": 4, "status": True},
     ]
@@ -1364,7 +1418,7 @@ class DashboardState:
         path = config_dir() / self._FOLDERS_FILE
         try:
             if path.exists():
-                self._folders = json.loads(path.read_text(encoding='utf-8'))
+                self._folders = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             logger.warning("Failed to load folders", exc_info=True)
 
@@ -1385,7 +1439,7 @@ class DashboardState:
         file_existed = tags_path.exists()
         try:
             if file_existed:
-                raw = json.loads(tags_path.read_text(encoding='utf-8'))
+                raw = json.loads(tags_path.read_text(encoding="utf-8"))
                 if isinstance(raw, list):
                     self._tags = [t for t in raw if isinstance(t, dict) and t.get("id")]
         except Exception:
@@ -1402,7 +1456,7 @@ class DashboardState:
         columns_path = config_dir() / self._TAG_BOARDS_FILE
         try:
             if columns_path.exists():
-                raw = json.loads(columns_path.read_text(encoding='utf-8'))
+                raw = json.loads(columns_path.read_text(encoding="utf-8"))
                 if isinstance(raw, list):
                     self._tag_boards = [c for c in raw if isinstance(c, dict) and c.get("id")]
         except Exception:
@@ -1615,6 +1669,7 @@ class DashboardState:
         """Whether an app-scoped WS may receive ``event_type`` per its manifest."""
         try:
             from personalclaw.apps.permissions import checker_for
+
             checker = checker_for(app)
             return checker is not None and checker.can_use_event(event_type)
         except Exception:

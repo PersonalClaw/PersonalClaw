@@ -49,33 +49,37 @@ async def handle_list_extensions(request: web.Request) -> web.Response:
                 available, unavailable_reason = probe()
             except Exception:
                 logger.debug("availability() raised for %s", ext.name, exc_info=True)
-        result.append({
-            "name": ext.name,
-            "displayName": ext.manifest.displayName,
-            "description": ext.manifest.description,
-            "version": ext.manifest.version,
-            "author": ext.manifest.author,
-            "enabled": ext.enabled,
-            "error": ext.error,
-            "available": available,
-            "unavailableReason": unavailable_reason,
-            # A "managed" provider is a user-lifecycle app (first/third-party: install/
-            # uninstall is its on/off); a native app is locked-on (no
-            # toggle — mandatory). Lets Settings>Providers show the right control:
-            # install/uninstall state vs an always-on native badge.
-            "managed": not bool(ext.manifest.native),
-            "provider": {
-                "type": ext.provider_config.type,
-                "entity": ext.provider_config.entity,
-                "capabilities": ext.provider_config.capabilities,
-                "multiInstance": ext.provider_config.multiInstance,
-                # True only when the provider declares configurable fields, so the UI
-                # can hide the "Configure" expander for schema-less providers (which
-                # would otherwise open to an empty form and look broken).
-                "hasConfigSchema": bool((ext.provider_config.settingsSchema or {}).get("properties")),
-            },
-            "tags": ext.manifest.tags,
-        })
+        result.append(
+            {
+                "name": ext.name,
+                "displayName": ext.manifest.displayName,
+                "description": ext.manifest.description,
+                "version": ext.manifest.version,
+                "author": ext.manifest.author,
+                "enabled": ext.enabled,
+                "error": ext.error,
+                "available": available,
+                "unavailableReason": unavailable_reason,
+                # A "managed" provider is a user-lifecycle app (first/third-party: install/
+                # uninstall is its on/off); a native app is locked-on (no
+                # toggle — mandatory). Lets Settings>Providers show the right control:
+                # install/uninstall state vs an always-on native badge.
+                "managed": not bool(ext.manifest.native),
+                "provider": {
+                    "type": ext.provider_config.type,
+                    "entity": ext.provider_config.entity,
+                    "capabilities": ext.provider_config.capabilities,
+                    "multiInstance": ext.provider_config.multiInstance,
+                    # True only when the provider declares configurable fields, so the UI
+                    # can hide the "Configure" expander for schema-less providers (which
+                    # would otherwise open to an empty form and look broken).
+                    "hasConfigSchema": bool(
+                        (ext.provider_config.settingsSchema or {}).get("properties")
+                    ),
+                },
+                "tags": ext.manifest.tags,
+            }
+        )
 
     # UT6: surface the always-on PLATFORM tool provider (filesystem + shell) so
     # Settings>Providers shows the WHOLE tool universe — it's not a registered
@@ -84,28 +88,30 @@ async def handle_list_extensions(request: web.Request) -> web.Response:
     # appearing on the Tools page. Synthesized here as an always-on, non-managed,
     # non-removable card (mirrors how the Tools page marks it 'platform/required').
     if not type_filter or type_filter == "tool":
-        result.append({
-            "name": "personalclaw-filesystem",
-            "displayName": "Filesystem & Shell Tools",
-            "description": "The always-on platform tools — read/write/edit/list/glob/grep/repo_map, "
-                           "bash, and full-result retrieval. Required by the agent; can't be disabled.",
-            "version": "1.0.0",
-            "author": "PersonalClaw",
-            "enabled": True,
-            "error": "",
-            "available": True,
-            "unavailableReason": "",
-            "managed": False,
-            "platform": True,  # non-removable, non-disableable platform provider
-            "provider": {
-                "type": "tool",
-                "entity": "tool",
-                "capabilities": ["filesystem", "shell"],
-                "multiInstance": False,
-                "hasConfigSchema": False,
-            },
-            "tags": ["tool", "bundled", "platform"],
-        })
+        result.append(
+            {
+                "name": "personalclaw-filesystem",
+                "displayName": "Filesystem & Shell Tools",
+                "description": "The always-on platform tools — read/write/edit/list/glob/grep/repo_map, "  # noqa: E501
+                "bash, and full-result retrieval. Required by the agent; can't be disabled.",
+                "version": "1.0.0",
+                "author": "PersonalClaw",
+                "enabled": True,
+                "error": "",
+                "available": True,
+                "unavailableReason": "",
+                "managed": False,
+                "platform": True,  # non-removable, non-disableable platform provider
+                "provider": {
+                    "type": "tool",
+                    "entity": "tool",
+                    "capabilities": ["filesystem", "shell"],
+                    "multiInstance": False,
+                    "hasConfigSchema": False,
+                },
+                "tags": ["tool", "bundled", "platform"],
+            }
+        )
 
     return web.json_response({"providers": result})
 
@@ -117,17 +123,19 @@ async def handle_get_extension(request: web.Request) -> web.Response:
     if not ext:
         return web.json_response({"error": f"Extension {name!r} not found"}, status=404)
 
-    return web.json_response({
-        "name": ext.name,
-        "displayName": ext.manifest.displayName,
-        "description": ext.manifest.description,
-        "version": ext.manifest.version,
-        "author": ext.manifest.author,
-        "enabled": ext.enabled,
-        "error": ext.error,
-        "provider": ext.provider_config.to_dict(),
-        "manifest": ext.manifest.to_dict(),
-    })
+    return web.json_response(
+        {
+            "name": ext.name,
+            "displayName": ext.manifest.displayName,
+            "description": ext.manifest.description,
+            "version": ext.manifest.version,
+            "author": ext.manifest.author,
+            "enabled": ext.enabled,
+            "error": ext.error,
+            "provider": ext.provider_config.to_dict(),
+            "manifest": ext.manifest.to_dict(),
+        }
+    )
 
 
 async def handle_get_schema(request: web.Request) -> web.Response:
@@ -137,10 +145,12 @@ async def handle_get_schema(request: web.Request) -> web.Response:
     if not ext:
         return web.json_response({"error": f"Extension {name!r} not found"}, status=404)
 
-    return web.json_response({
-        "name": name,
-        "schema": ext.provider_config.settingsSchema,
-    })
+    return web.json_response(
+        {
+            "name": name,
+            "schema": ext.provider_config.settingsSchema,
+        }
+    )
 
 
 async def handle_get_config(request: web.Request) -> web.Response:
@@ -186,6 +196,7 @@ async def handle_patch_config(request: web.Request) -> web.Response:
         registry.enable(name)
     try:
         from personalclaw.dashboard.handlers.providers import _refresh_media_registries
+
         _refresh_media_registries()
     except Exception:  # noqa: BLE001 — refresh is best-effort, never block a save
         pass
@@ -201,9 +212,7 @@ async def handle_enable(request: web.Request) -> web.Response:
 
     success = registry.enable(name)
     if not success:
-        return web.json_response(
-            {"error": f"Failed to enable: {ext.error}"}, status=500
-        )
+        return web.json_response({"error": f"Failed to enable: {ext.error}"}, status=500)
 
     return web.json_response({"name": name, "enabled": True})
 

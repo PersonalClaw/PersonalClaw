@@ -86,9 +86,7 @@ class OidcVerifier:
             logger.debug("OidcVerifier: refreshed JWKS from %s", self._jwks_uri)
         except Exception as exc:
             if self._jwks_cache:
-                logger.warning(
-                    "OidcVerifier: JWKS refresh failed (%s); using cached keys", exc
-                )
+                logger.warning("OidcVerifier: JWKS refresh failed (%s); using cached keys", exc)
             else:
                 raise OidcVerificationError(
                     f"Failed to fetch JWKS from {self._jwks_uri}: {exc}"
@@ -96,7 +94,6 @@ class OidcVerifier:
         return self._jwks_cache
 
     def _find_key(self, kid: str | None, alg: str) -> Any:
-        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
         from cryptography.x509 import load_der_x509_certificate
 
         jwks = self._fetch_jwks()
@@ -120,21 +117,13 @@ class OidcVerifier:
                 der = _b64_decode_url_safe(x5c[0])
                 cert = load_der_x509_certificate(der)
                 return cert.public_key()
-        raise OidcVerificationError(
-            f"No matching key found in JWKS for kid={kid!r}, alg={alg!r}"
-        )
+        raise OidcVerificationError(f"No matching key found in JWKS for kid={kid!r}, alg={alg!r}")
 
     @staticmethod
     def _rsa_public_key(jwk: dict[str, Any]) -> Any:
         import base64
-        import struct
 
-        from cryptography.hazmat.primitives.asymmetric.rsa import (
-            RSAPublicNumbers,
-            rsa_crt_iqmp,
-            rsa_crt_dmp1,
-            rsa_crt_dmq1,
-        )
+        from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicNumbers
 
         def _b64_int(s: str) -> int:
             padding = 4 - len(s) % 4
@@ -150,10 +139,10 @@ class OidcVerifier:
         import base64
 
         from cryptography.hazmat.primitives.asymmetric.ec import (
-            EllipticCurvePublicNumbers,
             SECP256R1,
             SECP384R1,
             SECP521R1,
+            EllipticCurvePublicNumbers,
         )
 
         _CURVES = {"P-256": SECP256R1(), "P-384": SECP384R1(), "P-521": SECP521R1()}
@@ -215,9 +204,7 @@ class OidcVerifier:
         if isinstance(aud, str):
             aud = [aud]
         if self._audience not in aud:
-            raise OidcVerificationError(
-                f"JWT audience mismatch: {self._audience!r} not in {aud!r}"
-            )
+            raise OidcVerificationError(f"JWT audience mismatch: {self._audience!r} not in {aud!r}")
         return payload
 
     @staticmethod

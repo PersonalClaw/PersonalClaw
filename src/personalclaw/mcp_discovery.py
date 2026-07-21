@@ -33,6 +33,7 @@ _PROBE_TIMEOUT_SECS = 15  # fallback if config not loaded yet
 def _get_probe_timeout() -> int:
     try:
         from personalclaw.config.loader import AppConfig
+
         return AppConfig.load().dashboard.mcp_probe_timeout_secs
     except Exception:
         return _PROBE_TIMEOUT_SECS
@@ -71,9 +72,7 @@ _MCP_SOURCES: tuple[tuple[Path, str], ...] = (
 # silently loads). Each entry maps a config file to the backend label shown in
 # the import-suggestions UI. Extensible: add further backend config paths here
 # once their formats are confirmed — the discovery + import path is backend-agnostic.
-_IMPORT_SOURCES: tuple[tuple[Path, str], ...] = (
-    (Path.home() / ".claude.json", "Claude Code"),
-)
+_IMPORT_SOURCES: tuple[tuple[Path, str], ...] = ((Path.home() / ".claude.json", "Claude Code"),)
 
 # Test override seam: tests monkeypatch this to inject fixture paths.
 # Derived from :data:`_MCP_SOURCES` so the two can never drift.
@@ -291,9 +290,13 @@ def _load_mcp_json() -> dict[str, Any]:
 
 def _server_from_spec(name: str, spec: dict, source: str) -> McpServerInfo:
     return McpServerInfo(
-        name=name, command=spec.get("command", ""), args=spec.get("args", []),
-        env=spec.get("env", {}), cwd=spec.get("cwd", ""),
-        url=spec.get("url", ""), headers=spec.get("headers", {}),
+        name=name,
+        command=spec.get("command", ""),
+        args=spec.get("args", []),
+        env=spec.get("env", {}),
+        cwd=spec.get("cwd", ""),
+        url=spec.get("url", ""),
+        headers=spec.get("headers", {}),
         source=source,
     )
 
@@ -375,22 +378,14 @@ def list_servers() -> list[McpServerInfo]:
             # dropped for new servers because `name in servers` is False
             # before insertion, letting a lower-priority scope's value
             # overwrite the (empty) default on a later iteration.
-            if (
-                not spec.get("disabled")
-                and name not in servers
-                and name not in disabled_in_agent
-            ):
+            if not spec.get("disabled") and name not in servers and name not in disabled_in_agent:
                 servers[name] = _server_from_spec(name, spec, "mcp.json")
 
             # Per-tool disables: first-scope-wins.  Use "disabledTools" in
             # spec (key presence) rather than truthiness so an explicit
             # "disabledTools": [] (user intent: "all tools enabled") is
             # respected and prevents lower-priority scopes from overwriting.
-            if (
-                name in servers
-                and "disabledTools" in spec
-                and name not in disabled_tools_claimed
-            ):
+            if name in servers and "disabledTools" in spec and name not in disabled_tools_claimed:
                 servers[name].disabled_tools = spec.get("disabledTools", [])
                 disabled_tools_claimed.add(name)
 
@@ -677,7 +672,9 @@ async def probe_server(server: McpServerInfo) -> McpServerInfo:
     except asyncio.TimeoutError:
         server.status = "error"
         server.error = "timeout"
-        logger.warning("MCP probe failed [%s]: timeout after %ds", server.name, _get_probe_timeout())
+        logger.warning(
+            "MCP probe failed [%s]: timeout after %ds", server.name, _get_probe_timeout()
+        )
     except FileNotFoundError:
         server.status = "error"
         server.error = f"command not found: {server.command}"
@@ -827,15 +824,17 @@ def discover_importable_servers() -> list[dict[str, Any]]:
             if not (spec.get("command") or spec.get("url")):
                 continue
             seen.add(name)
-            out.append({
-                "name": name,
-                "backend": backend,
-                "command": spec.get("command", ""),
-                "args": spec.get("args", []),
-                "env": spec.get("env", {}),
-                "url": spec.get("url", ""),
-                "headers": spec.get("headers", {}),
-            })
+            out.append(
+                {
+                    "name": name,
+                    "backend": backend,
+                    "command": spec.get("command", ""),
+                    "args": spec.get("args", []),
+                    "env": spec.get("env", {}),
+                    "url": spec.get("url", ""),
+                    "headers": spec.get("headers", {}),
+                }
+            )
     return out
 
 
@@ -850,7 +849,11 @@ def sync_to_agent_config(servers: list[McpServerInfo]) -> bool:
 
     Returns True if any servers were added or the config was refreshed.
     """
-    from personalclaw.agent import AGENT_FILENAME, AGENTS_DIR, rebuild_agent_config  # circular import
+    from personalclaw.agent import (  # circular import
+        AGENT_FILENAME,
+        AGENTS_DIR,
+        rebuild_agent_config,
+    )
 
     config_path = AGENTS_DIR / AGENT_FILENAME
 
@@ -932,6 +935,7 @@ def register_servers_for_cc(
         from personalclaw.agent import (
             _atomic_json_write,  # circular import: agent imports mcp_discovery
         )
+
         _atomic_json_write(mcp_json_path, existing)
 
     return changed

@@ -39,12 +39,20 @@ FACET_CLASSES = ("style", "identity", "tooling", "goal", "channel", "veto")
 
 # Class decay half-lives (days) — how fast stability halves without reinforcement.
 _HALF_LIFE_DAYS: dict[str, float] = {
-    "identity": 90.0, "style": 30.0, "tooling": 30.0, "goal": 30.0, "channel": 7.0,
+    "identity": 90.0,
+    "style": 30.0,
+    "tooling": 30.0,
+    "goal": 30.0,
+    "channel": 7.0,
 }
 
 # Cue families → base evidence weight.
 _CUE_WEIGHT: dict[str, float] = {
-    "explicit": 1.0, "edit": 0.8, "correction": 0.9, "recurrence": 0.6, "inferred": 0.5,
+    "explicit": 1.0,
+    "edit": 0.8,
+    "correction": 0.9,
+    "recurrence": 0.6,
+    "inferred": 0.5,
 }
 
 # State thresholds over the (decayed) stability.
@@ -70,18 +78,25 @@ class Facet:
 
     def to_payload(self) -> dict:
         return {
-            "cls": self.cls, "text": self.text, "stability": self.stability,
-            "updated_at": self.updated_at, "cue": self.cue,
-            "pinned": self.pinned, "forgotten": self.forgotten,
+            "cls": self.cls,
+            "text": self.text,
+            "stability": self.stability,
+            "updated_at": self.updated_at,
+            "cue": self.cue,
+            "pinned": self.pinned,
+            "forgotten": self.forgotten,
         }
 
     @classmethod
     def from_payload(cls, d: dict) -> "Facet":
         return cls(
-            cls=d.get("cls", "style"), text=d.get("text", ""),
-            stability=float(d.get("stability", 0.5)), updated_at=d.get("updated_at", ""),
+            cls=d.get("cls", "style"),
+            text=d.get("text", ""),
+            stability=float(d.get("stability", 0.5)),
+            updated_at=d.get("updated_at", ""),
             cue=d.get("cue", "inferred"),
-            pinned=bool(d.get("pinned")), forgotten=bool(d.get("forgotten")),
+            pinned=bool(d.get("pinned")),
+            forgotten=bool(d.get("forgotten")),
         )
 
 
@@ -168,7 +183,8 @@ _STYLE_HINT_RE = re.compile(
     r"(?:short|shorter|concise|brief|terse|to the point|detailed|formal|casual)|"
     r"(?:no|less|more|without) (?:preamble|explanation|explanations|comments|filler|fluff)|"
     r"just (?:the )?(?:code|answer|facts)|get to the point|to the point|"
-    r"shorter|more concise|be brief|stop explaining)\b", re.IGNORECASE,
+    r"shorter|more concise|be brief|stop explaining)\b",
+    re.IGNORECASE,
 )
 
 
@@ -188,7 +204,9 @@ def detect_facet_candidate(user_message: str) -> tuple[str, str, str] | None:
     if not msg:
         return None
     veto = re.search(
-        r"\b((?:never|do ?n'?t ever|do not ever|always avoid)\b[^.!?\n]*)", msg, re.IGNORECASE,
+        r"\b((?:never|do ?n'?t ever|do not ever|always avoid)\b[^.!?\n]*)",
+        msg,
+        re.IGNORECASE,
     )
     if veto:
         return ("veto", veto.group(1).strip()[:120], "explicit")
@@ -200,13 +218,17 @@ def detect_facet_candidate(user_message: str) -> tuple[str, str, str] | None:
 
 # ── Persistence over semantic memory (pref.facet.<class>.<slug>) ──
 
+
 def _facet_key(cls: str, text: str) -> str:
     import hashlib
+
     slug = hashlib.md5(text.lower().encode()).hexdigest()[:10]
     return f"pref.facet.{cls}.{slug}"
 
 
-def upsert_facet(vs, cls: str, text: str, cue: str = "inferred", *, now: datetime | None = None) -> str | None:
+def upsert_facet(
+    vs, cls: str, text: str, cue: str = "inferred", *, now: datetime | None = None
+) -> str | None:
     """Create or reinforce a facet in semantic memory. Returns its key (or None).
 
     A ``veto`` is NOT stored as a facet — it's a lesson; the caller should route
@@ -220,10 +242,22 @@ def upsert_facet(vs, cls: str, text: str, cue: str = "inferred", *, now: datetim
         try:
             facet = Facet.from_payload(json.loads(existing_row["value_json"]))
         except (json.JSONDecodeError, TypeError, KeyError):
-            facet = Facet(cls=cls, text=text, stability=base_stability(cue), updated_at=(now or _now()).isoformat(), cue=cue)
+            facet = Facet(
+                cls=cls,
+                text=text,
+                stability=base_stability(cue),
+                updated_at=(now or _now()).isoformat(),
+                cue=cue,
+            )
         reinforce(facet, cue, now=now)
     else:
-        facet = Facet(cls=cls, text=text, stability=base_stability(cue), updated_at=(now or _now()).isoformat(), cue=cue)
+        facet = Facet(
+            cls=cls,
+            text=text,
+            stability=base_stability(cue),
+            updated_at=(now or _now()).isoformat(),
+            cue=cue,
+        )
     # set_semantic json.dumps()-es the value itself — pass the dict, not a string.
     vs.set_semantic(key, facet.to_payload(), 0.9, "facet")
     return key
@@ -232,7 +266,7 @@ def upsert_facet(vs, cls: str, text: str, cue: str = "inferred", *, now: datetim
 def load_facets(vs) -> list[tuple[str, Facet]]:
     """All stored facets as ``(key, Facet)`` (active + not)."""
     rows = vs.db.execute(
-        "SELECT key, value_json FROM semantic_memory WHERE is_deleted = 0 AND key LIKE 'pref.facet.%'"
+        "SELECT key, value_json FROM semantic_memory WHERE is_deleted = 0 AND key LIKE 'pref.facet.%'"  # noqa: E501
     ).fetchall()
     out: list[tuple[str, Facet]] = []
     for r in rows:

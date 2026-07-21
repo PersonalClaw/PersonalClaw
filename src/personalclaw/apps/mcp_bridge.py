@@ -125,6 +125,7 @@ def _deregister_from_agent_config(prefix: str) -> None:
     app-contributed (source="agent") MCP server is fully removed on uninstall."""
     try:
         from personalclaw.agent import AGENT_FILENAME, _atomic_json_write
+
         path = config_dir() / "agents" / AGENT_FILENAME
         if not path.is_file():
             return
@@ -138,7 +139,9 @@ def _deregister_from_agent_config(prefix: str) -> None:
         for list_key in ("tools", "allowedTools"):
             lst = cfg.get(list_key)
             if isinstance(lst, list):
-                kept = [t for t in lst if not (isinstance(t, str) and t.lstrip("@").startswith(prefix))]
+                kept = [
+                    t for t in lst if not (isinstance(t, str) and t.lstrip("@").startswith(prefix))
+                ]
                 if len(kept) != len(lst):
                     cfg[list_key] = kept
                     changed = True

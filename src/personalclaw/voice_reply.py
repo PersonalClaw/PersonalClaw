@@ -110,7 +110,10 @@ async def _synthesize_chunk(
     one; Piper ignores the extra kwarg.
     """
     return await provider.synthesize(
-        text, voice=voice, speed=speed, speech_voice=speech_voice,
+        text,
+        voice=voice,
+        speed=speed,
+        speech_voice=speech_voice,
     )
 
 
@@ -143,7 +146,11 @@ async def synthesize_speech(
     if not plain:
         return None
     return await _synthesize_chunk(
-        provider, plain, voice=voice, speed=speed, speech_voice=speech_voice,
+        provider,
+        plain,
+        voice=voice,
+        speed=speed,
+        speech_voice=speech_voice,
     )
 
 
@@ -237,14 +244,22 @@ async def streaming_voice_reply(
     response_text, cred_warns = redact_credentials(response_text)
     response_text, url_warns = redact_exfiltration_urls(response_text)
     if cred_warns:
-        logger.warning("stream_voice_chunks: redacted %d credential pattern(s) before TTS", len(cred_warns))
+        logger.warning(
+            "stream_voice_chunks: redacted %d credential pattern(s) before TTS", len(cred_warns)
+        )
     if url_warns:
-        logger.warning("stream_voice_chunks: redacted %d suspicious URL(s) before TTS", len(url_warns))
+        logger.warning(
+            "stream_voice_chunks: redacted %d suspicious URL(s) before TTS", len(url_warns)
+        )
 
     sentences = split_sentences(response_text)
     for i, sentence in enumerate(sentences):
         audio_path = await _synthesize_chunk(
-            provider, sentence, voice=voice, speed=speed, speech_voice=speech_voice,
+            provider,
+            sentence,
+            voice=voice,
+            speed=speed,
+            speech_voice=speech_voice,
         )
         if not audio_path:
             continue

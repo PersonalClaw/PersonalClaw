@@ -56,9 +56,9 @@ class NodeContext:
     item_id: str
     item_type: str
     file_path: str = ""  # the source file (for file-backed types)
-    content: str = ""     # the raw text (for text-backed types)
-    url: str = ""         # the source URL (for bookmark types — scraped at ingest)
-    work_dir: str = ""    # scratch dir for artifacts (frames, split audio)
+    content: str = ""  # the raw text (for text-backed types)
+    url: str = ""  # the source URL (for bookmark types — scraped at ingest)
+    work_dir: str = ""  # scratch dir for artifacts (frames, split audio)
     params: dict[str, Any] = field(default_factory=dict)  # per-node execution params
 
 
@@ -75,7 +75,13 @@ class ProcessingNode(Protocol):
 
     node_type: str
     backend: str
-    uses_use_case: str | None
+
+    @property
+    def uses_use_case(self) -> str | None:
+        """When set, names a Settings>Models use-case this node resolves its model
+        through at run-time; pure-python nodes leave it None. Declared as a read-only
+        property so a concrete node can supply it as a plain ``= None`` class attr."""
+        ...
 
     async def run(self, inputs: dict[str, NodeOutput], ctx: NodeContext) -> NodeOutput: ...
 

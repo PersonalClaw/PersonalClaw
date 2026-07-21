@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -39,7 +37,11 @@ def test_ingestion_nodes_use_default_capability_bindings():
     to the relevant default capability (image-understanding → image_modality, reasoning
     → chat, transcription → stt). There is no per-role ingestion override."""
     from personalclaw.knowledge.pipeline.nodes.media_nodes import (
-        OcrNode, VisionNode, VideoClassifyNode, VideoConsolidateNode, TranscriptionNode,
+        OcrNode,
+        TranscriptionNode,
+        VideoClassifyNode,
+        VideoConsolidateNode,
+        VisionNode,
     )
     from personalclaw.providers.use_cases import VALID_USE_CASES
 
@@ -52,7 +54,13 @@ def test_ingestion_nodes_use_default_capability_bindings():
     for uc in ("image_modality", "chat", "stt"):
         assert uc in VALID_USE_CASES
     # the old ingestion use-cases are GONE (removed dead override rows)
-    for uc in ("pdf_extraction", "ocr", "vision_understanding", "video_classification", "consolidation_reasoning"):
+    for uc in (
+        "pdf_extraction",
+        "ocr",
+        "vision_understanding",
+        "video_classification",
+        "consolidation_reasoning",
+    ):
         assert uc not in VALID_USE_CASES
 
 
@@ -89,7 +97,11 @@ def test_image_and_audio_graphs():
     # diarization + fusion + correction nodes all skip gracefully when their model/lexicon
     # is absent, so they're always in the graph.
     assert set(graph_for("audio").nodes) == {
-        "transcription", "diarization", "speaker_fusion", "lexicon_correction"}
+        "transcription",
+        "diarization",
+        "speaker_fusion",
+        "lexicon_correction",
+    }
 
 
 def test_speaker_fusion_assigns_by_max_overlap():
@@ -97,12 +109,25 @@ def test_speaker_fusion_assigns_by_max_overlap():
     # splitting a segment when the speaker changes mid-segment.
     from personalclaw.knowledge.pipeline.nodes import media_nodes as mn
 
-    transcript = {"text": "hello there", "segments": [
-        {"start": 0.0, "end": 2.0, "text": "hello there", "speaker": None, "words": [
-            {"start": 0.0, "end": 0.5, "word": "hello", "prob": 0.9},
-            {"start": 1.2, "end": 2.0, "word": "there", "prob": 0.9}]}]}
-    turns = [{"start": 0.0, "end": 0.8, "speaker": "SPEAKER_00"},
-             {"start": 1.0, "end": 2.0, "speaker": "SPEAKER_01"}]
+    transcript = {
+        "text": "hello there",
+        "segments": [
+            {
+                "start": 0.0,
+                "end": 2.0,
+                "text": "hello there",
+                "speaker": None,
+                "words": [
+                    {"start": 0.0, "end": 0.5, "word": "hello", "prob": 0.9},
+                    {"start": 1.2, "end": 2.0, "word": "there", "prob": 0.9},
+                ],
+            }
+        ],
+    }
+    turns = [
+        {"start": 0.0, "end": 0.8, "speaker": "SPEAKER_00"},
+        {"start": 1.0, "end": 2.0, "speaker": "SPEAKER_01"},
+    ]
     fused = mn._fuse_speakers(transcript, turns)
     speakers = [(s["speaker"], s["text"]) for s in fused["segments"]]
     assert speakers == [("SPEAKER_00", "hello"), ("SPEAKER_01", "there")]
@@ -130,19 +155,33 @@ def test_video_dag_routes_conditional_branch(monkeypatch, tmp_path):
 
     # Stub ffmpeg-backed structural nodes to emit fake audio + frames.
     async def _split(inputs, ctx):
-        return NodeOutput(node_type="av_split", backend="ffmpeg", pooled=False,
-                          metadata={"audio": str(tmp_path / "a.wav"), "video": ctx.file_path},
-                          artifacts=[str(tmp_path / "a.wav")])
+        return NodeOutput(
+            node_type="av_split",
+            backend="ffmpeg",
+            pooled=False,
+            metadata={"audio": str(tmp_path / "a.wav"), "video": ctx.file_path},
+            artifacts=[str(tmp_path / "a.wav")],
+        )
 
     async def _frames(inputs, ctx):
-        f = tmp_path / "f1.jpg"; f.write_text("x")
-        return NodeOutput(node_type="frame_extract", backend="ffmpeg", pooled=False, artifacts=[str(f)])
+        f = tmp_path / "f1.jpg"
+        f.write_text("x")
+        return NodeOutput(
+            node_type="frame_extract", backend="ffmpeg", pooled=False, artifacts=[str(f)]
+        )
 
     async def _classify(inputs, ctx):
-        return NodeOutput(node_type="video_classify", backend="vision-llm", classification="text-heavy", pooled=False)
+        return NodeOutput(
+            node_type="video_classify",
+            backend="vision-llm",
+            classification="text-heavy",
+            pooled=False,
+        )
 
     async def _ocr(inputs, ctx):
-        return NodeOutput(node_type="ocr", backend="vision-llm", text="OCR TEXT", classification="text-heavy")
+        return NodeOutput(
+            node_type="ocr", backend="vision-llm", text="OCR TEXT", classification="text-heavy"
+        )
 
     async def _vision(inputs, ctx):
         return NodeOutput(node_type="vision", backend="vision-llm", text="VISION TEXT")
@@ -152,11 +191,22 @@ def test_video_dag_routes_conditional_branch(monkeypatch, tmp_path):
 
     async def _consolidate(inputs, ctx):
         got = sorted(inputs.keys())
-        return NodeOutput(node_type="video_consolidate", backend="reasoning-llm", text="MERGED", metadata={"got": got})
+        return NodeOutput(
+            node_type="video_consolidate",
+            backend="reasoning-llm",
+            text="MERGED",
+            metadata={"got": got},
+        )
 
-    for nt, fn in [("av_split", _split), ("frame_extract", _frames), ("video_classify", _classify),
-                   ("ocr", _ocr), ("vision", _vision), ("transcription", _transcribe),
-                   ("video_consolidate", _consolidate)]:
+    for nt, fn in [
+        ("av_split", _split),
+        ("frame_extract", _frames),
+        ("video_classify", _classify),
+        ("ocr", _ocr),
+        ("vision", _vision),
+        ("transcription", _transcribe),
+        ("video_consolidate", _consolidate),
+    ]:
         node = reg.get_node(nt, graph_for("video").nodes[nt].backend)
         monkeypatch.setattr(node, "run", fn)
 
@@ -177,7 +227,9 @@ def test_audio_partial_when_no_stt(monkeypatch):
     # transcript to act on and skips too → nothing ran → failed (item survives).
     _set_resolvable(monkeypatch, lambda uc: uc is None)
     g = graph_for("audio")
-    res = _run(PipelineExecutor(g).run(NodeContext(item_id="a1", item_type="audio", file_path="/x.wav")))
+    res = _run(
+        PipelineExecutor(g).run(NodeContext(item_id="a1", item_type="audio", file_path="/x.wav"))
+    )
     assert "transcription" in res.skipped
     assert not res.ran  # neither transcription nor its dependent correction ran
     assert res.status == "failed"  # nothing ran, but no exception raised
@@ -190,11 +242,14 @@ def test_image_partial_with_thumbnail_only(monkeypatch, tmp_path):
     img = tmp_path / "p.png"
     try:
         from PIL import Image
+
         Image.new("RGB", (8, 8)).save(img)
     except Exception:
         pytest.skip("Pillow not available")
     g = graph_for("image")
-    res = _run(PipelineExecutor(g).run(NodeContext(item_id="i1", item_type="image", file_path=str(img))))
+    res = _run(
+        PipelineExecutor(g).run(NodeContext(item_id="i1", item_type="image", file_path=str(img)))
+    )
     assert "exif" in res.ran
     assert "ocr" in res.skipped and "vision" in res.skipped
     assert res.status == "partial"
@@ -224,6 +279,7 @@ def test_transcription_empty_is_success_not_failure(monkeypatch):
 
     async def _empty(_audio):
         return ""
+
     monkeypatch.setattr("personalclaw.transcribe.transcribe_audio", _empty)
     node = TranscriptionNode()
     ctx = NodeContext(item_id="x", item_type="audio", file_path="/tmp/silent.wav")

@@ -272,17 +272,13 @@ class TestAutoTagConfig:
             resp = await client.get("/api/dashboard/config")
             data = await resp.json()
             assert data["auto_tag_sessions"] is True  # default on
-            resp = await client.put(
-                "/api/dashboard/config", json={"auto_tag_sessions": False}
-            )
+            resp = await client.put("/api/dashboard/config", json={"auto_tag_sessions": False})
             assert resp.status == 200
             resp = await client.get("/api/dashboard/config")
             data = await resp.json()
             assert data["auto_tag_sessions"] is False
             # non-bool rejected
-            resp = await client.put(
-                "/api/dashboard/config", json={"auto_tag_sessions": "yes"}
-            )
+            resp = await client.put("/api/dashboard/config", json={"auto_tag_sessions": "yes"})
             assert resp.status == 400
 
 

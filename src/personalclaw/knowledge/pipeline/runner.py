@@ -20,6 +20,7 @@ from personalclaw.knowledge.pipeline.types import NodeContext
 
 logger = logging.getLogger(__name__)
 
+
 # SSE feed key for an item's ingestion progress (per-resource; transport doctrine).
 def progress_feed(item_id: str) -> str:
     return f"knowledge:ingest:{item_id}"
@@ -63,18 +64,23 @@ async def ingest_item(
         graph = graph_for(item_type)
     except Exception as exc:
         logger.exception("graph build failed for %s", item_type)
-        store.update_item(item_id, processing_status="failed", processing_error=str(exc), touch=False)
+        store.update_item(
+            item_id, processing_status="failed", processing_error=str(exc), touch=False
+        )
         store.db.commit()
         _emit("ingest_failed", error=str(exc))
         return "failed"
 
     ctx = NodeContext(
-        item_id=item_id, item_type=item_type,
-        file_path=item.get("file_path") or "", content=item.get("content") or "",
+        item_id=item_id,
+        item_type=item_type,
+        file_path=item.get("file_path") or "",
+        content=item.get("content") or "",
         url=item.get("url") or "",
     )
     executor = PipelineExecutor(
-        graph, params_for=params_for,
+        graph,
+        params_for=params_for,
         on_node=lambda nt, phase: _emit("node", node=nt, phase=phase),
     )
 
@@ -97,7 +103,11 @@ async def ingest_item(
         store.clear_extracted_contents(item_id)
         for out in result.pooled_outputs():
             store.add_extracted_content(
-                item_id, out.node_type, backend=out.backend, text=out.text, metadata=out.metadata,
+                item_id,
+                out.node_type,
+                backend=out.backend,
+                text=out.text,
+                metadata=out.metadata,
             )
 
         # Persist structural metadata from non-pooled media nodes onto the item:
@@ -121,7 +131,9 @@ async def ingest_item(
         # minimal human-readable line from the structural metadata we DID extract so
         # the item is still identifiable and findable, honoring graceful degradation.
         if not consolidated.strip() and (item.get("file_path") or ""):
-            fresh = store.get_item(item_id) or item  # _persist_structural_metadata just merged file_metadata
+            fresh = (
+                store.get_item(item_id) or item
+            )  # _persist_structural_metadata just merged file_metadata
             consolidated = _structural_descriptor(fresh) or consolidated
 
         # Backfill the item's content with extracted text when it had none (file types).
@@ -174,7 +186,9 @@ async def ingest_item(
             _emit("dedup", **dedup_result)
     except Exception as exc:
         logger.exception("knowledge ingest failed mid-pipeline for %s", item_id)
-        store.update_item(item_id, processing_status="failed", processing_error=str(exc)[:500], touch=False)
+        store.update_item(
+            item_id, processing_status="failed", processing_error=str(exc)[:500], touch=False
+        )
         store.db.commit()
         _emit("ingest_failed", error=str(exc))
         return "failed"
@@ -188,8 +202,8 @@ async def ingest_item(
     if status in ("failed", "partial") and result.failed:
         msgs = []
         for nt in result.failed:
-            out = result.outputs.get(nt)
-            err = (getattr(out, "error", "") or "").strip() if out else ""
+            fout = result.outputs.get(nt)
+            err = (getattr(fout, "error", "") or "").strip() if fout else ""
             msgs.append(f"{nt}: {err}" if err else nt)
         proc_error = "; ".join(msgs)[:500]
         # A bookmark whose ONLY failure is reaching the URL (network/DNS/timeout/HTTP
@@ -239,7 +253,13 @@ async def ingest_item(
 
     store.update_item(item_id, processing_status=status, processing_error=proc_error, touch=False)
     store.db.commit()
-    _emit("ingest_complete", status=status, ran=result.ran, skipped=result.skipped, failed=result.failed)
+    _emit(
+        "ingest_complete",
+        status=status,
+        ran=result.ran,
+        skipped=result.skipped,
+        failed=result.failed,
+    )
     return status
 
 
@@ -278,6 +298,7 @@ def _cleanup_orphaned_artifacts(item_id: str) -> None:
     from pathlib import Path
 
     from personalclaw.knowledge import knowledge_files_dir
+
     try:
         files_root = Path(knowledge_files_dir()).resolve()
         for p in files_root.glob(f"{item_id}.*"):
@@ -317,17 +338,33 @@ def _persist_structural_metadata(store, item_id: str, item, result) -> None:
     # else every document shows no page count despite the reader having extracted it.
     doc = result.outputs.get("document_read")
     if doc is not None and getattr(doc, "success", False) and getattr(doc, "metadata", None):
-        shape = {k: v for k, v in doc.metadata.items()
-                 if k in ("page_count", "format", "sheet_count", "slide_count",
-                          "row_count", "paragraph_count") and v is not None}
+        shape = {
+            k: v
+            for k, v in doc.metadata.items()
+            if k
+            in (
+                "page_count",
+                "format",
+                "sheet_count",
+                "slide_count",
+                "row_count",
+                "paragraph_count",
+            )
+            and v is not None
+        }
         if shape:
-            merged = dict(fields.get("file_metadata") or (item or {}).get("file_metadata") or {})
+            _fm = fields.get("file_metadata") or (item or {}).get("file_metadata") or {}
+            merged = dict(_fm) if isinstance(_fm, dict) else {}
             merged.update(shape)
             fields["file_metadata"] = merged
 
     # Bookmark scrape → derived link-card title/description onto the item.
     scrape = result.outputs.get("bookmark_scrape")
-    if scrape is not None and getattr(scrape, "success", False) and getattr(scrape, "metadata", None):
+    if (
+        scrape is not None
+        and getattr(scrape, "success", False)
+        and getattr(scrape, "metadata", None)
+    ):
         meta = scrape.metadata
         scraped_title = (meta.get("url_title") or "").strip()
         if scraped_title and not ((item or {}).get("url_title") or "").strip():
@@ -340,9 +377,12 @@ def _persist_structural_metadata(store, item_id: str, item, result) -> None:
         # Compare normalized URLs so a title seeded with any URL form (raw, trailing
         # slash, tracking params) is still recognized as a placeholder to replace.
         from personalclaw.knowledge.store import normalize_url
+
         cur_title = ((item or {}).get("title") or "").strip()
         cur_url = ((item or {}).get("url") or "").strip()
-        title_is_url_placeholder = not cur_title or normalize_url(cur_title) == normalize_url(cur_url)
+        title_is_url_placeholder = not cur_title or normalize_url(cur_title) == normalize_url(
+            cur_url
+        )
         if scraped_title and title_is_url_placeholder:
             fields["title"] = scraped_title
 
@@ -383,7 +423,8 @@ async def _run_entities_stage(store, item_id: str, content: str, pool) -> None:
                 store.backfill_entity_description(eid, ent.get("description"))
             else:
                 eid = store.add_entity(
-                    name=name, entity_type=ent.get("type", "concept"),
+                    name=name,
+                    entity_type=ent.get("type", "concept"),
                     description=ent.get("description"),
                 )
             entity_map[name] = eid
@@ -393,9 +434,11 @@ async def _run_entities_stage(store, item_id: str, content: str, pool) -> None:
             tgt = entity_map.get((rel.get("target") or "").strip())
             if src and tgt:
                 store.add_entity_relation(
-                    source_id=src, target_id=tgt,
+                    source_id=src,
+                    target_id=tgt,
                     relation_type=rel.get("type", "uses") or "uses",
-                    description=rel.get("description"), source_item_id=item_id,
+                    description=rel.get("description"),
+                    source_item_id=item_id,
                 )
         store.db.commit()
         # Rebuild the in-memory graph so cleared edges drop and the new ones show.
@@ -448,7 +491,15 @@ async def _run_insights(store, item_id: str, content: str, pool) -> bool:
     if ai_title and item_type != "journal":
         fields["ai_title"] = ai_title
         cur_title = ((item or {}).get("title") or "").strip()
-        is_file_type = item_type in ("image", "audio", "video", "pdf", "document", "sheet", "slides")
+        is_file_type = item_type in (
+            "image",
+            "audio",
+            "video",
+            "pdf",
+            "document",
+            "sheet",
+            "slides",
+        )
         content = (item or {}).get("content") or ""
         # When a text item is created with a blank title, the handler seeds the title
         # with the content's first 60 chars. Treat that truncated-content placeholder
@@ -459,7 +510,9 @@ async def _run_insights(store, item_id: str, content: str, pool) -> bool:
         # user type a real title for an upload, and that must survive enrichment. The
         # seeded filename is recorded as file_metadata.original_filename at store time;
         # legacy items without it keep the old always-promote behavior.
-        orig_fn = str(((item or {}).get("file_metadata") or {}).get("original_filename") or "").strip()
+        orig_fn = str(
+            ((item or {}).get("file_metadata") or {}).get("original_filename") or ""
+        ).strip()
         titled_by_filename = cur_title == orig_fn if orig_fn else True
         if (is_file_type and titled_by_filename) or not cur_title or titled_by_content:
             fields["title"] = ai_title
@@ -513,9 +566,12 @@ async def _run_intents_stage(store, item_id: str, item_type: str, content: str, 
     for m in matches:
         try:
             store.record_intent_outcome(
-                m.intent_id, intent_name=(by_id.get(m.intent_id).goal if by_id.get(m.intent_id) else ""),
-                item_id=item_id, item_title=item_title,
-                takeaway=m.takeaway, fields=m.fields,
+                m.intent_id,
+                intent_name=(_bi.goal if (_bi := by_id.get(m.intent_id)) else ""),
+                item_id=item_id,
+                item_title=item_title,
+                takeaway=m.takeaway,
+                fields=m.fields,
             )
         except Exception:
             logger.debug("recording outcome for intent %s failed", m.intent_id, exc_info=True)
@@ -533,10 +589,14 @@ def _embed(store, item_id: str, embedder) -> None:
         # Embed title + summary, anchored by a body slice when the summary is thin —
         # a title-only vector gives poor semantic recall (see compose_item_text).
         vec = embedder.embed_for_item(
-            item.get("title") or "", item.get("summary"), item.get("content"),
+            item.get("title") or "",
+            item.get("summary"),
+            item.get("content"),
         )
         if vec:
-            store.db.execute("UPDATE items SET embedding = ? WHERE id = ?", (floats_to_bytes(vec), item_id))
+            store.db.execute(
+                "UPDATE items SET embedding = ? WHERE id = ?", (floats_to_bytes(vec), item_id)
+            )
             store.db.commit()
     except Exception:
         logger.debug("knowledge embed failed for %s", item_id, exc_info=True)
@@ -563,8 +623,13 @@ def _dedup(store, item_id: str, embedder) -> dict | None:
             return None
         # get_item strips the raw vector (→ has_embedding); read it back for the resolver.
         from personalclaw.knowledge.embedder import bytes_to_floats
+
         row = store.db.execute("SELECT embedding FROM items WHERE id = ?", (item_id,)).fetchone()
-        raw = (row["embedding"] if row is not None and not isinstance(row, tuple) else (row[0] if row else None))
+        raw = (
+            row["embedding"]
+            if row is not None and not isinstance(row, tuple)
+            else (row[0] if row else None)
+        )
         vec = bytes_to_floats(raw or b"")
         if not vec:
             return None  # this item has no vector → nothing to compare (behaves as today)
@@ -574,11 +639,16 @@ def _dedup(store, item_id: str, embedder) -> dict | None:
         # apples-to-apples + current on both sides (find_fuzzy_dup_candidates returns the
         # existing rows' LENGTH(content) the same way).
         candidate = {
-            "id": item_id, "title": item.get("title") or "", "file_path": item.get("file_path") or "",
-            "summary": item.get("summary") or "", "item_type": item.get("item_type") or "",
-            "word_count": item.get("word_count", 0), "content_len": len(item.get("content") or ""),
+            "id": item_id,
+            "title": item.get("title") or "",
+            "file_path": item.get("file_path") or "",
+            "summary": item.get("summary") or "",
+            "item_type": item.get("item_type") or "",
+            "word_count": item.get("word_count", 0),
+            "content_len": len(item.get("content") or ""),
             "processing_status": item.get("processing_status", ""),
-            "created_at": item.get("created_at", ""), "embedding": vec,
+            "created_at": item.get("created_at", ""),
+            "embedding": vec,
         }
         for existing in store.find_fuzzy_dup_candidates(item_id):
             verdict = dedup_mod.resolve_duplicate(candidate, existing)
@@ -590,10 +660,20 @@ def _dedup(store, item_id: str, embedder) -> dict | None:
                 continue
             store.update_item(loser_id, is_archived=True)
             store.db.commit()
-            logger.info("knowledge dedup: item %s duplicates %s (cos=%.3f, fsim=%.3f) — archived loser %s",
-                        item_id, existing.get("id"), verdict.cosine, verdict.filename_sim, loser_id)
-            return {"winner_id": winner_id, "loser_id": loser_id,
-                    "cosine": round(verdict.cosine, 3), "filename_sim": round(verdict.filename_sim, 3)}
+            logger.info(
+                "knowledge dedup: item %s duplicates %s (cos=%.3f, fsim=%.3f) — archived loser %s",
+                item_id,
+                existing.get("id"),
+                verdict.cosine,
+                verdict.filename_sim,
+                loser_id,
+            )
+            return {
+                "winner_id": winner_id,
+                "loser_id": loser_id,
+                "cosine": round(verdict.cosine, 3),
+                "filename_sim": round(verdict.filename_sim, 3),
+            }
         return None
     except Exception:
         logger.debug("knowledge dedup failed for %s (non-fatal)", item_id, exc_info=True)

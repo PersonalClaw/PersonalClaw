@@ -76,7 +76,6 @@ class TestProviderRegistry:
         assert reg.list_entries() == [entry]
         assert reg.get_entry("fake-default") is entry
 
-
     def test_register_entry_unknown_type_is_stored(self) -> None:
         # An entry whose type isn't registered YET must still be stored, not
         # rejected: the app that owns the type can load AFTER
@@ -89,7 +88,6 @@ class TestProviderRegistry:
         reg.register_entry(entry)  # must not raise
 
         assert [e.name for e in reg.list_entries()] == ["a"]
-
 
     def test_register_entry_with_unsupported_capability_raises(self) -> None:
         reg = ProviderRegistry()
@@ -112,7 +110,6 @@ class TestProviderRegistry:
         assert "embedding" in str(exc_info.value)
         assert reg.list_entries() == []
 
-
     def test_get_entry_unknown_name_raises(self) -> None:
         reg = ProviderRegistry()
         with pytest.raises(ProviderResolutionError, match="does-not-exist"):
@@ -122,7 +119,6 @@ class TestProviderRegistry:
         reg = ProviderRegistry()
         with pytest.raises(ProviderResolutionError, match="unknown-type"):
             reg.capability_of("unknown-type")
-
 
     def test_build_invokes_factory_with_entry_and_session_key(self) -> None:
         reg = ProviderRegistry()

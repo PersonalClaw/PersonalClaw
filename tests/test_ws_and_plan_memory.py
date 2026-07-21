@@ -393,9 +393,7 @@ class TestWsNormalUserExperience:
         assert tab3.send_str.call_count == 2
         assert len(state._ws_clients) == 2
 
-    def test_send_str_raises_but_other_clients_still_served(
-        self, state: DashboardState
-    ) -> None:
+    def test_send_str_raises_but_other_clients_still_served(self, state: DashboardState) -> None:
         """One client raises ConnectionResetError — others still get the message."""
         good1 = MagicMock(closed=False, send_str=AsyncMock())
         bad = MagicMock(closed=False, send_str=MagicMock(side_effect=OSError("broken pipe")))
@@ -412,9 +410,7 @@ class TestWsNormalUserExperience:
         assert good1 in state._ws_clients
         assert good2 in state._ws_clients
 
-    def test_subagent_subscriber_alive_receives_chunks(
-        self, state: DashboardState
-    ) -> None:
+    def test_subagent_subscriber_alive_receives_chunks(self, state: DashboardState) -> None:
         """Normal subagent streaming: subscriber gets all chunks."""
         ws = MagicMock(closed=False, send_str=AsyncMock())
         state.subscribe_subagents(ws)
@@ -427,9 +423,7 @@ class TestWsNormalUserExperience:
         assert ws.send_str.call_count == 10
         assert ws in state._ws_subagent_subscribers
 
-    def test_log_subscriber_not_removed_by_broadcast_ws(
-        self, state: DashboardState
-    ) -> None:
+    def test_log_subscriber_not_removed_by_broadcast_ws(self, state: DashboardState) -> None:
         """Log subscriber that's alive should survive broadcast_ws calls."""
         ws = MagicMock(closed=False, send_str=AsyncMock())
         state.register_ws(ws)
@@ -442,9 +436,7 @@ class TestWsNormalUserExperience:
         assert ws in state._ws_clients
         assert ws in state._ws_log_subscribers
 
-    def test_dead_removal_is_immediate_not_deferred(
-        self, state: DashboardState
-    ) -> None:
+    def test_dead_removal_is_immediate_not_deferred(self, state: DashboardState) -> None:
         """Dead client is removed in the same broadcast call, not deferred."""
         dead = MagicMock(closed=True, send_str=AsyncMock())
         state.register_ws(dead)

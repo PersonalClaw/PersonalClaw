@@ -8,7 +8,7 @@ so a templated action can interpolate them.
 """
 
 import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from personalclaw.action_providers.base import ActionResult
 from personalclaw.schedule import (
@@ -29,7 +29,8 @@ def _make_gateway():
 
 def _job(action, **overrides):
     job = ScheduleJob(
-        id="j1", name="Backup",
+        id="j1",
+        name="Backup",
         action=action,
         schedule=ScheduleDefinition(kind="every", every_secs=3600),
     )
@@ -55,8 +56,10 @@ def _dispatch(job, result, *, supports_dry_run=False):
             captured["timeout"] = timeout
             return result
 
-    with patch("personalclaw.action_providers.get_action_provider", return_value=_StubProvider()), \
-         patch("personalclaw.action_providers.registry._ensure_default_providers_registered"):
+    with (
+        patch("personalclaw.action_providers.get_action_provider", return_value=_StubProvider()),
+        patch("personalclaw.action_providers.registry._ensure_default_providers_registered"),
+    ):
         rv = asyncio.run(gw._run_action_job(job))
     return rv, captured
 
@@ -105,8 +108,10 @@ def test_zt_timeout_override_passed_through():
 def test_unknown_provider_fails_without_dispatch():
     gw = _make_gateway()
     job = _job({"provider": "nope", "config": {}})
-    with patch("personalclaw.action_providers.get_action_provider", return_value=None), \
-         patch("personalclaw.action_providers.registry._ensure_default_providers_registered"):
+    with (
+        patch("personalclaw.action_providers.get_action_provider", return_value=None),
+        patch("personalclaw.action_providers.registry._ensure_default_providers_registered"),
+    ):
         rv = asyncio.run(gw._run_action_job(job))
     assert rv is None
     assert job.last_status == "error"

@@ -22,8 +22,15 @@ class KnowledgeIngestQueue:
     ``enqueue(item_id)`` adds work; items run one at a time (the store's sqlite
     connection is single-threaded, and ingestion is I/O-light in Task A)."""
 
-    def __init__(self, store, *, embedder_factory=None, insights_pool=None,
-                 sse_registry=None, params_for=None):
+    def __init__(
+        self,
+        store,
+        *,
+        embedder_factory=None,
+        insights_pool=None,
+        sse_registry=None,
+        params_for=None,
+    ):
         self._store = store
         self._embedder_factory = embedder_factory  # () -> embedder | None (lazy/per-run)
         self._insights_pool = insights_pool
@@ -108,6 +115,10 @@ class KnowledgeIngestQueue:
             except Exception:
                 embedder = None
         await ingest_item(
-            self._store, item_id, embedder=embedder, insights_pool=self._insights_pool,
-            params_for=self._params_for, publish=_publish,
+            self._store,
+            item_id,
+            embedder=embedder,
+            insights_pool=self._insights_pool,
+            params_for=self._params_for,
+            publish=_publish,
         )

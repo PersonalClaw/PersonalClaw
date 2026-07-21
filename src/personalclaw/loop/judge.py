@@ -33,8 +33,8 @@ class CycleVerdict:
 
     done: bool = False
     done_reason: str = ""
-    marginal_value: float = 0.0   # 0-5: how much THIS cycle advanced beyond prior cycles
-    quality_score: float = 0.0    # 0-5: absolute quality of the work (ratchet guardrail)
+    marginal_value: float = 0.0  # 0-5: how much THIS cycle advanced beyond prior cycles
+    quality_score: float = 0.0  # 0-5: absolute quality of the work (ratchet guardrail)
     regressed: bool = False
     # P4 observability: whether an adversarial skeptic cross-checked this (high-stakes)
     # verdict, and the calibrated returns-band the exhaustion check used this cycle.
@@ -69,7 +69,9 @@ def _digest(prior_findings: list[dict], limit: int = 8) -> str:
 
 
 async def _observe_ground_truth(
-    verify_command: str, workspace: str | None, deliverables: list[str],
+    verify_command: str,
+    workspace: str | None,
+    deliverables: list[str],
     fallback_dirs: list[str] | None = None,
 ) -> str:
     """Independently observe ground truth for the judge (Slice C / O-E2): run the goal's
@@ -89,15 +91,21 @@ async def _observe_ground_truth(
     cmd = (verify_command or "").strip()
     if cmd:
         from personalclaw.loop.gates import run_verify_command
+
         try:
             ok = await run_verify_command(cmd, workspace or None, label="judge-verify")
         except Exception:
             ok = None
-        state = {True: "PASSED (exit 0)", False: "FAILED (non-zero exit)"}.get(
-            ok, "could not run (tool missing / blocked / timed out)")
+        if ok is True:
+            state = "PASSED (exit 0)"
+        elif ok is False:
+            state = "FAILED (non-zero exit)"
+        else:
+            state = "could not run (tool missing / blocked / timed out)"
         parts.append(f"Ran `{cmd}` → {state}.")
-    search_dirs = [d for d in [(workspace or "").strip(), *(fallback_dirs or [])]
-                   if d and os.path.isdir(d)]
+    search_dirs = [
+        d for d in [(workspace or "").strip(), *(fallback_dirs or [])] if d and os.path.isdir(d)
+    ]
     if search_dirs:
         for label in deliverables:
             names = re.findall(r"[\w./-]+\.[A-Za-z0-9]+", label or "")
@@ -108,10 +116,12 @@ async def _observe_ground_truth(
                 for d in search_dirs:
                     cand = os.path.join(d, n.lstrip("./"))
                     if os.path.isfile(cand):
-                        p = cand; break
+                        p = cand
+                        break
                     base = os.path.join(d, os.path.basename(n))
                     if os.path.isfile(base):
-                        p = base; break
+                        p = base
+                        break
                 if not p:
                     continue
                 try:
@@ -134,10 +144,12 @@ async def _observe_ground_truth(
     )
 
 
-def _build_prompt(goal: str, success_criteria: str, finding: dict,
-                  prior_findings: list[dict], observed: str = "") -> str:
+def _build_prompt(
+    goal: str, success_criteria: str, finding: dict, prior_findings: list[dict], observed: str = ""
+) -> str:
     from personalclaw.loop.loop import finding_content
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
+
     cycle = finding.get("cycle", "?")
     # Same canonical extraction the ratchet uses, so both score identical text.
     evidence = finding_content(finding)
@@ -151,17 +163,20 @@ def _build_prompt(goal: str, success_criteria: str, finding: dict,
     # The judge prompt lives in the prompt system (bundled ``task-cycle-judge``,
     # bindable in Settings → Prompts). The conditionally-empty ``dod``/``metric_line``
     # are pre-assembled (with their leading newline) and passed through as variables.
-    return render_use_case_prompt(
-        "cycle_judge",
-        {
-            "goal": goal,
-            "dod": dod,
-            "digest": _digest(prior_findings),
-            "cycle": cycle,
-            "evidence": evidence,
-            "metric_line": metric_line,
-        },
-    ) or ""
+    return (
+        render_use_case_prompt(
+            "cycle_judge",
+            {
+                "goal": goal,
+                "dod": dod,
+                "digest": _digest(prior_findings),
+                "cycle": cycle,
+                "evidence": evidence,
+                "metric_line": metric_line,
+            },
+        )
+        or ""
+    )
 
 
 async def assess_cycle(
@@ -189,15 +204,19 @@ async def assess_cycle(
     readable anchor).
     """
     if provider_factory is None:
+
         def provider_factory(_session_key):
             from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
+
             return resolve_provider_for_use_case("reasoning")
 
     from personalclaw.eval.judge import LLMJudge
 
     observed = ""
     if verify_command or deliverables:
-        observed = await _observe_ground_truth(verify_command, workspace, deliverables or [], fallback_dirs)
+        observed = await _observe_ground_truth(
+            verify_command, workspace, deliverables or [], fallback_dirs
+        )
 
     judge = LLMJudge(provider_factory)
     try:
@@ -208,8 +227,11 @@ async def assess_cycle(
         # 'reasoning' provider is unresolvable / unavailable) the caller returns None
         # (defer, never a false complete) — but we log WARNING so the degradation is
         # diagnosable rather than an invisible forever-defer.
-        logger.warning("loop judge: provider failed to start — cycle assessed as degraded "
-                       "(no verdict); check the 'reasoning'/'chat' model binding", exc_info=True)
+        logger.warning(
+            "loop judge: provider failed to start — cycle assessed as degraded "
+            "(no verdict); check the 'reasoning'/'chat' model binding",
+            exc_info=True,
+        )
         return None
     try:
         prompt = _build_prompt(goal, success_criteria, finding, prior_findings, observed)
@@ -218,8 +240,9 @@ async def assess_cycle(
         # send via judge_turn's provider directly.
         raw = await _stream(judge, prompt)
     except Exception:
-        logger.warning("loop judge: stream failed — cycle assessed as degraded (no verdict)",
-                       exc_info=True)
+        logger.warning(
+            "loop judge: stream failed — cycle assessed as degraded (no verdict)", exc_info=True
+        )
         return None
     finally:
         try:
@@ -249,28 +272,36 @@ async def assess_cycle_skeptic(
     same facts, not a weaker view. Returns None on failure (adjudicate treats that as
     'no refutation available')."""
     if provider_factory is None:
+
         def provider_factory(_session_key):
             from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
+
             return resolve_provider_for_use_case("reasoning")
 
     from personalclaw.eval.judge import LLMJudge
 
     observed = ""
     if verify_command or deliverables:
-        observed = await _observe_ground_truth(verify_command, workspace, deliverables or [], fallback_dirs)
+        observed = await _observe_ground_truth(
+            verify_command, workspace, deliverables or [], fallback_dirs
+        )
 
     judge = LLMJudge(provider_factory)
     try:
         await judge.start()
     except Exception:
-        logger.warning("loop judge (skeptic): provider failed to start — no refutation available",
-                       exc_info=True)
+        logger.warning(
+            "loop judge (skeptic): provider failed to start — no refutation available",
+            exc_info=True,
+        )
         return None
     try:
         prompt = _build_skeptic_prompt(goal, success_criteria, finding, prior_findings, observed)
         raw = await _stream(judge, prompt)
     except Exception:
-        logger.warning("loop judge (skeptic): stream failed — no refutation available", exc_info=True)
+        logger.warning(
+            "loop judge (skeptic): stream failed — no refutation available", exc_info=True
+        )
         return None
     finally:
         try:
@@ -280,14 +311,16 @@ async def assess_cycle_skeptic(
     return _parse_verdict(raw)
 
 
-def _build_skeptic_prompt(goal: str, success_criteria: str, finding: dict,
-                          prior_findings: list[dict], observed: str = "") -> str:
+def _build_skeptic_prompt(
+    goal: str, success_criteria: str, finding: dict, prior_findings: list[dict], observed: str = ""
+) -> str:
     """The refute-prompt for the skeptic judge. Bundled ``cycle_judge_skeptic`` (bindable in
     Settings → Prompts); falls back to wrapping the primary judge prompt with an explicit
     refutation directive if the skeptic prompt isn't registered, so the feature never silently
     no-ops on a fresh prompt store."""
     from personalclaw.loop.loop import finding_content
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
+
     cycle = finding.get("cycle", "?")
     evidence = finding_content(finding)
     if observed:
@@ -296,8 +329,12 @@ def _build_skeptic_prompt(goal: str, success_criteria: str, finding: dict,
     metric_line = f"\nReported metric this cycle: {json.dumps(metric)}" if metric else ""
     dod = f"\nDefinition of done: {success_criteria}" if success_criteria else ""
     vars_ = {
-        "goal": goal, "dod": dod, "digest": _digest(prior_findings),
-        "cycle": cycle, "evidence": evidence, "metric_line": metric_line,
+        "goal": goal,
+        "dod": dod,
+        "digest": _digest(prior_findings),
+        "cycle": cycle,
+        "evidence": evidence,
+        "metric_line": metric_line,
     }
     rendered = render_use_case_prompt("cycle_judge_skeptic", vars_)
     if rendered:

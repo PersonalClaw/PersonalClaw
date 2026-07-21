@@ -306,9 +306,7 @@ async def test_openai_complete_emits_tool_call_from_streamed_deltas(
                 _FakeChoice(
                     delta=_FakeDelta(
                         tool_calls=[
-                            _FakeToolCallDelta(
-                                index=0, function=_FakeFunction(arguments='"sf"}')
-                            )
+                            _FakeToolCallDelta(index=0, function=_FakeFunction(arguments='"sf"}'))
                         ]
                     )
                 )
@@ -492,9 +490,7 @@ async def test_anthropic_complete_translates_messages_and_tools(
     assert tool_use["input"] == {"city": "sf"}
     # tool result became a tool_result block in a user turn.
     tr_blocks = sent[2]["content"]
-    assert tr_blocks == [
-        {"type": "tool_result", "tool_use_id": "toolu_prev", "content": "sunny"}
-    ]
+    assert tr_blocks == [{"type": "tool_result", "tool_use_id": "toolu_prev", "content": "sunny"}]
     # tools mapped to Anthropic input_schema shape.
     assert call["tools"] == [
         {

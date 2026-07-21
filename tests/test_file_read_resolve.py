@@ -34,11 +34,14 @@ def home_patch(tmp_path):
     from personalclaw.config.loader import workspace_root
 
     roots = [("Test", str(tmp_path)), ("Workspace", os.path.realpath(str(workspace_root())))]
-    with patch("os.path.expanduser", side_effect=fake_expanduser), patch(
-        "os.path.realpath", side_effect=real_realpath
-    ), patch("pathlib.Path.home", return_value=tmp_path), patch(
-        "personalclaw.dashboard.handlers.files._dashboard_roots",
-        return_value=roots,
+    with (
+        patch("os.path.expanduser", side_effect=fake_expanduser),
+        patch("os.path.realpath", side_effect=real_realpath),
+        patch("pathlib.Path.home", return_value=tmp_path),
+        patch(
+            "personalclaw.dashboard.handlers.files._dashboard_roots",
+            return_value=roots,
+        ),
     ):
         yield tmp_path
 

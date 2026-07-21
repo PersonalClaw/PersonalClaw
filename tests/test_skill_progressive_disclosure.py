@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from personalclaw.mcp_core import _call_tool_inner, _list_tools
 from personalclaw.skills.loader import SkillsLoader
 from personalclaw.validation import MCP_CORE_SCHEMAS
@@ -30,7 +28,8 @@ def test_skill_invoke_registered():
 def test_skill_invoke_returns_full_body(tmp_path, monkeypatch):
     skills = tmp_path / "skills"
     _create_skill(
-        skills, "tiny-url",
+        skills,
+        "tiny-url",
         "---\nname: tiny-url\ndescription: shorten urls\n---\n# Tiny URL\nStep 1. do it.",
     )
     monkeypatch.setattr("personalclaw.skills.loader.skills_dir", lambda: skills)
@@ -83,7 +82,9 @@ def test_index_uses_skill_invoke_not_cat(tmp_path, monkeypatch):
 
 def test_index_excludes_archived(tmp_path, monkeypatch):
     skills = tmp_path / "skills"
-    _create_skill(skills, "auto/old", "---\nname: auto/old\ndescription: stale\nstatus: archived\n---\n# x\ny")
+    _create_skill(
+        skills, "auto/old", "---\nname: auto/old\ndescription: stale\nstatus: archived\n---\n# x\ny"
+    )
     _create_skill(skills, "live", "---\nname: live\ndescription: fresh\n---\n# x\ny")
     monkeypatch.setattr("personalclaw.skills.loader.skills_dir", lambda: skills)
     loader = SkillsLoader(skills_path=skills, install_builtins=False)
@@ -103,8 +104,9 @@ def _builder_with_skills(tmp_path, n_matching: int):
     for i in range(n_matching):
         # all trigger on "deploy widget" so the surfacer returns them all
         _create_skill(
-            skills, f"s{i}",
-            f"---\nname: s{i}\ndescription: deploy widget {i}\ntriggers: deploy widget\n---\n# S{i}\nBODY-{i}",
+            skills,
+            f"s{i}",
+            f"---\nname: s{i}\ndescription: deploy widget {i}\ntriggers: deploy widget\n---\n# S{i}\nBODY-{i}",  # noqa: E501
         )
     return ContextBuilder(
         memory=MemoryStore(workspace=tmp_path / "ws"),

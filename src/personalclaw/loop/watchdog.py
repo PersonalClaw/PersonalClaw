@@ -100,8 +100,11 @@ class LoopWatchdog:
             return
         detail = self._last_worker_error(loop_id)
         try:
-            store.update_status(loop_id, LoopStatus.FAILED,
-                                error_message=detail or f"Worker failed {n} cycles in a row.")
+            store.update_status(
+                loop_id,
+                LoopStatus.FAILED,
+                error_message=detail or f"Worker failed {n} cycles in a row.",
+            )
         except (KeyError, store.TransitionError):
             return
         self._consec_errors.pop(loop_id, None)
@@ -137,7 +140,9 @@ class LoopWatchdog:
 
     def _publish(self, loop_id: str, event: str, data: Any = None) -> None:
         try:
-            self._state.loop_sse().publish(registry_key(loop_id), event, data or {"loop_id": loop_id})
+            self._state.loop_sse().publish(
+                registry_key(loop_id), event, data or {"loop_id": loop_id}
+            )
         except Exception:
             logger.debug("loop_sse publish failed", exc_info=True)
         try:
@@ -151,8 +156,12 @@ class LoopWatchdog:
                 # Carry the loop KIND so the notification deep-links to the right cockpit
                 # (a code loop lives at /#/code/<id>, not /#/loops/<id>). Best-effort.
                 loop = store.get(loop_id)
-                self._state.notify(kind, title, self._loop_name(loop_id),
-                                   meta={"loop_id": loop_id, "loop_kind": loop.kind if loop else ""})
+                self._state.notify(
+                    kind,
+                    title,
+                    self._loop_name(loop_id),
+                    meta={"loop_id": loop_id, "loop_kind": loop.kind if loop else ""},
+                )
             except Exception:
                 logger.debug("loop notify failed", exc_info=True)
 
@@ -162,21 +171,30 @@ class LoopWatchdog:
         verdict panel / judge-degraded indicator update live. No-op for a kind that
         writes no verdicts (verifiable/monitor/code) — the FE listens for these and
         the legacy goal watchdog published them at the same point."""
-        verdict = next((v for v in reversed(store.get_verdicts(loop_id))
-                        if int(v.get("cycle", -1)) == cycle), None)
+        verdict = next(
+            (v for v in reversed(store.get_verdicts(loop_id)) if int(v.get("cycle", -1)) == cycle),
+            None,
+        )
         if verdict is None:
             return
-        self._publish(loop_id, "cycle_verdict", {
-            "loop_id": loop_id, "cycle": cycle,
-            "done": bool(verdict.get("done")),
-            "marginal_value": verdict.get("marginal_value"),
-            "quality_score": verdict.get("quality_score"),
-            "regressed": bool(verdict.get("regressed")),
-        })
+        self._publish(
+            loop_id,
+            "cycle_verdict",
+            {
+                "loop_id": loop_id,
+                "cycle": cycle,
+                "done": bool(verdict.get("done")),
+                "marginal_value": verdict.get("marginal_value"),
+                "quality_score": verdict.get("quality_score"),
+                "regressed": bool(verdict.get("regressed")),
+            },
+        )
         if verdict.get("regressed"):
-            self._publish(loop_id, "ratchet_regression",
-                          {"loop_id": loop_id, "cycle": cycle,
-                           "reason": verdict.get("done_reason", "")})
+            self._publish(
+                loop_id,
+                "ratchet_regression",
+                {"loop_id": loop_id, "cycle": cycle, "reason": verdict.get("done_reason", "")},
+            )
 
     def _loop_name(self, loop_id: str) -> str:
         loop = store.get(loop_id)
@@ -186,21 +204,27 @@ class LoopWatchdog:
         """The capabilities handed to a kind's per-cycle orchestration hook so it
         can advance stages, provision/queue tasks, publish, and complete — without
         importing the watchdog."""
+
         async def _complete(loop_id: str, reason: str = "") -> None:
             await self._complete(loop_id, reason=reason)
+
         return kinds.CycleContext(
-            svc=self._svc, state=self._state,
-            publish=self._publish, complete=_complete,
+            svc=self._svc,
+            state=self._state,
+            publish=self._publish,
+            complete=_complete,
         )
 
     def _notify_progress(self, loop_id: str, count: int, max_cycles: int) -> None:
         budget = f"/{max_cycles}" if max_cycles else ""
         try:
             loop = store.get(loop_id)
-            self._state.notify("info", "Loop progress",
-                               f"Cycle {count}{budget} complete — {self._loop_name(loop_id)}",
-                               meta={"loop_id": loop_id, "cycle": count,
-                                     "loop_kind": loop.kind if loop else ""})
+            self._state.notify(
+                "info",
+                "Loop progress",
+                f"Cycle {count}{budget} complete — {self._loop_name(loop_id)}",
+                meta={"loop_id": loop_id, "cycle": count, "loop_kind": loop.kind if loop else ""},
+            )
         except Exception:
             logger.debug("loop progress notify failed", exc_info=True)
 
@@ -225,7 +249,11 @@ class LoopWatchdog:
         possibly unmet — persists ``reason`` via error_message so the cockpit can tell
         "finished the work" from "stopped on budget" even after a reload, instead of an
         identical green check. Ported from the legacy code watchdog's genuine flag."""
-        fields = {"error_message": None} if genuine else {"error_message": reason or "Stopped before the goal was met."}
+        fields = (
+            {"error_message": None}
+            if genuine
+            else {"error_message": reason or "Stopped before the goal was met."}
+        )
         store.update_status(loop_id, LoopStatus.COMPLETE, **fields)
         store.write_status(loop_id, LoopStatus.COMPLETE, reason=reason)
         await manager.teardown_worker(self._svc, loop_id)
@@ -245,10 +273,15 @@ class LoopWatchdog:
                     if confirmed is False:
                         ship_ok = False
                         self._publish(loop_id, "ship_blocked", {"loop_id": loop_id})
-                        logger.warning("loop %s: reproduce disagreed with completion — "
-                                       "deliverable NOT graduated (ship_blocked)", loop_id)
+                        logger.warning(
+                            "loop %s: reproduce disagreed with completion — "
+                            "deliverable NOT graduated (ship_blocked)",
+                            loop_id,
+                        )
             except Exception:
-                logger.debug("reproduce_confirm failed for %s — shipping anyway", loop_id, exc_info=True)
+                logger.debug(
+                    "reproduce_confirm failed for %s — shipping anyway", loop_id, exc_info=True
+                )
         # Graduate the deliverable to a permanent artifact FIRST, so a scratch loop's
         # report survives even if its raw dir is then reclaimed. Skipped when reproduce
         # blocked the ship.
@@ -265,7 +298,9 @@ class LoopWatchdog:
                 lifecycle.teardown_scratch(loop_id)
         except Exception:
             logger.debug("scratch auto-teardown check failed for %s", loop_id, exc_info=True)
-        self._publish(loop_id, "complete", {"loop_id": loop_id, "reason": reason, "genuine": genuine})
+        self._publish(
+            loop_id, "complete", {"loop_id": loop_id, "reason": reason, "genuine": genuine}
+        )
 
     def _register_deliverable_artifact(self, loop_id: str) -> None:
         """On completion, surface the loop's document deliverable (REPORT.md /
@@ -291,7 +326,7 @@ class LoopWatchdog:
             # an unbound loop. Resolve workspace-first, else the file-backed artifact is
             # never registered (the file isn't in the loop dir) and the only Outputs
             # entries are the worker's ad-hoc artifact_save calls.
-            deliverable = None
+            deliverable: Path | None = None
             ws = (loop.workspace_dir or "").strip()
             if ws:
                 cand = Path(ws) / name_on_disk
@@ -299,15 +334,16 @@ class LoopWatchdog:
                     deliverable = cand
             if deliverable is None:
                 d = store.safe_loop_dir(loop_id)
-                cand = (d / name_on_disk) if d is not None else None
-                if cand is not None and cand.is_file():
-                    deliverable = cand
+                dcand = (d / name_on_disk) if d is not None else None
+                if dcand is not None and dcand.is_file():
+                    deliverable = dcand
             if deliverable is None:
                 return
             content = deliverable.read_text(encoding="utf-8", errors="replace")
             if not content.strip():
                 return
             from personalclaw.artifacts import registry as artifact_registry
+
             prov = artifact_registry.get_provider()
             if prov is None:
                 return
@@ -315,12 +351,21 @@ class LoopWatchdog:
             name = f"{loop.name} — deliverable" if loop.name else f"Loop {loop_id} deliverable"
             existing = prov.find_by_source_path(source_path)
             if existing is not None:
-                prov.update(existing.slug, content=content, snapshot=True,
-                            event_type="iterated", actor="agent")
+                prov.update(
+                    existing.slug,
+                    content=content,
+                    snapshot=True,
+                    event_type="iterated",
+                    actor="agent",
+                )
                 return
             prov.create(
-                name=name, content=content, kind="markdown", source="cron",
-                source_path=source_path, actor="agent",
+                name=name,
+                content=content,
+                kind="markdown",
+                source="cron",
+                source_path=source_path,
+                actor="agent",
                 description=(loop.task[:280] if loop.task else ""),
                 tags=["loop", f"loop:{loop_id}", loop.kind],
             )
@@ -339,6 +384,7 @@ class LoopWatchdog:
             if loop is None or not loop.linked_task_ids:
                 return
             from personalclaw.tasks import registry
+
             reconciled = 0
             for tid in loop.linked_task_ids:
                 try:
@@ -352,7 +398,9 @@ class LoopWatchdog:
                     # an unmet checklist stays visible rather than being papered over.
                     logger.debug("loop %s: linked task %s not auto-completed (gated)", loop_id, tid)
                 except Exception:
-                    logger.debug("loop %s: linked task %s reconcile failed", loop_id, tid, exc_info=True)
+                    logger.debug(
+                        "loop %s: linked task %s reconcile failed", loop_id, tid, exc_info=True
+                    )
             if reconciled:
                 logger.info("loop %s complete: marked %d linked task(s) done", loop_id, reconciled)
         except Exception:
@@ -404,8 +452,10 @@ class LoopWatchdog:
                 if session is not None:
                     session._trust = False
                 store.write_question(
-                    cid, "Auto-approval expired after the trust window. "
-                    "Resume to re-authorize and continue.")
+                    cid,
+                    "Auto-approval expired after the trust window. "
+                    "Resume to re-authorize and continue.",
+                )
                 store.update_status(cid, LoopStatus.NEEDS_INPUT)
                 self._publish(cid, "needs_input")
                 continue
@@ -420,7 +470,9 @@ class LoopWatchdog:
             count = len(findings)
 
             # Seed/refresh liveness on first observation or after a (re)start.
-            if cid not in self._last_count or self._last_activity.get(cid, 0.0) < (loop.started_at or 0.0):
+            if cid not in self._last_count or self._last_activity.get(cid, 0.0) < (
+                loop.started_at or 0.0
+            ):
                 self._last_count[cid] = count
                 self._last_activity[cid] = time.time()
                 continue
@@ -472,12 +524,20 @@ class LoopWatchdog:
                                 # A blind judge won't recover by retrying, so halt the loop to
                                 # NEEDS_INPUT with judge_blind rather than spinning on judge_error.
                                 fresh = store.get(cid)
-                                blind = bool((fresh.kind_config or {}).get("judge_calibrated") is False) if fresh else False
+                                blind = (
+                                    bool((fresh.kind_config or {}).get("judge_calibrated") is False)
+                                    if fresh
+                                    else False
+                                )
                                 if blind:
                                     store.update_status(cid, LoopStatus.NEEDS_INPUT)
-                                    self._publish(cid, "judge_blind", {"loop_id": cid, "cycle": count})
+                                    self._publish(
+                                        cid, "judge_blind", {"loop_id": cid, "cycle": count}
+                                    )
                                 else:
-                                    self._publish(cid, "judge_error", {"loop_id": cid, "cycle": count})
+                                    self._publish(
+                                        cid, "judge_error", {"loop_id": cid, "cycle": count}
+                                    )
                         else:
                             # A non-None signal means the kind ran a third-party assessment
                             # and persisted whatever it produced. Publish the verdict it just
@@ -502,8 +562,11 @@ class LoopWatchdog:
                 # so the cockpit shows a clean completion rather than an error-flavored
                 # "stopped before done" for an inherently-ongoing loop that ran its course.
                 if loop.max_cycles > 0 and count >= loop.max_cycles:
-                    genuine = bool(getattr(strat, "budget_stop_genuine", lambda _l: False)(loop)) \
-                        if strat is not None else False
+                    genuine = (
+                        bool(getattr(strat, "budget_stop_genuine", lambda _l: False)(loop))
+                        if strat is not None
+                        else False
+                    )
                     await self._complete(cid, reason="cycle budget reached", genuine=genuine)
                     continue
 
@@ -520,11 +583,16 @@ class LoopWatchdog:
                     if self._loop_exhausted(cid, loop.max_cycles):
                         if count > 0:
                             store.set_total_cycles(cid, count)
-                            await self._complete(cid, reason="cycle budget exhausted", genuine=False)
+                            await self._complete(
+                                cid, reason="cycle budget exhausted", genuine=False
+                            )
                         else:
-                            store.update_status(cid, LoopStatus.FAILED,
-                                                error_message="The worker produced no findings "
-                                                "before the cycle budget was exhausted.")
+                            store.update_status(
+                                cid,
+                                LoopStatus.FAILED,
+                                error_message="The worker produced no findings "
+                                "before the cycle budget was exhausted.",
+                            )
                             await manager.teardown_worker(self._svc, cid)
                             self._publish(cid, "failed")
                         self._clear_liveness(cid)
@@ -540,15 +608,21 @@ class LoopWatchdog:
                 else:
                     self._running_since.pop(cid, None)
                 if now - self._last_activity.get(cid, 0.0) > _unresponsive_deadline(
-                        loop.idle_secs or cfg.default_idle_secs):
+                    loop.idle_secs or cfg.default_idle_secs
+                ):
                     if len(store.get_findings(cid)) > count:
                         continue  # progress landed during a long turn
                     wedged = session is not None and getattr(session, "running", False)
-                    store.update_status(cid, LoopStatus.FAILED,
-                                        error_message=("Worker turn ran too long without producing "
-                                                       "a finding (wedged). Resume to continue."
-                                                       if wedged else
-                                                       "No activity — the worker stalled. Resume to continue."))
+                    store.update_status(
+                        cid,
+                        LoopStatus.FAILED,
+                        error_message=(
+                            "Worker turn ran too long without producing "
+                            "a finding (wedged). Resume to continue."
+                            if wedged
+                            else "No activity — the worker stalled. Resume to continue."
+                        ),
+                    )
                     await manager.teardown_worker(self._svc, cid)
                     self._clear_liveness(cid)
                     self._publish(cid, "failed")

@@ -41,8 +41,10 @@ def _req(name=None, body=None, query=None):
         r.match_info = {"name": name}
     r.query = query or {}
     if body is not None:
+
         async def _json():
             return body
+
         r.json = _json
     return r
 
@@ -52,8 +54,9 @@ def _body(resp):
 
 
 def _provider():
-    from personalclaw.prompt_providers.registry import _ensure_default_providers_registered
     from personalclaw.prompt_providers import get_default_provider
+    from personalclaw.prompt_providers.registry import _ensure_default_providers_registered
+
     _ensure_default_providers_registered()
     return get_default_provider()
 
@@ -64,11 +67,20 @@ def _run(coro):
 
 # ── snippet CRUD over the API ────────────────────────────────────────────────
 
+
 def test_snippet_create_list_get():
-    resp = _run(api_snippet_create(_req(body={
-        "name": "sig", "title": "Signature", "content": "— {{author}}",
-        "variables": [{"name": "author", "type": "text"}],
-    })))
+    resp = _run(
+        api_snippet_create(
+            _req(
+                body={
+                    "name": "sig",
+                    "title": "Signature",
+                    "content": "— {{author}}",
+                    "variables": [{"name": "author", "type": "text"}],
+                }
+            )
+        )
+    )
     assert resp.status == 200
     assert _body(resp)["name"] == "sig"
 
@@ -89,6 +101,7 @@ def test_snippet_create_duplicate_409():
 def test_snippet_delete_blocked_while_in_use():
     prov = _provider()
     from personalclaw.prompt_providers.base import PromptSnippet, PromptTemplate
+
     prov.create_snippet(PromptSnippet(name="sig", content="— sig"))
     prov.create_prompt(PromptTemplate(name="letter", kind="user", content="Hi.\n{{> sig}}"))
     # In-use → 409, snippet NOT deleted, used_by names the includer.
@@ -109,6 +122,7 @@ def test_snippet_delete_blocked_while_in_use():
 def test_snippet_delete_unused_ok():
     prov = _provider()
     from personalclaw.prompt_providers.base import PromptSnippet
+
     prov.create_snippet(PromptSnippet(name="orphan", content="nobody includes me"))
     resp = _run(api_snippet_delete(_req("orphan")))
     assert resp.status == 200
@@ -121,47 +135,68 @@ def test_snippet_detail_missing_404():
 
 
 def test_snippet_render_standalone():
-    _run(api_snippet_create(_req(body={"name": "sig", "content": "— {{author}}",
-                                       "variables": [{"name": "author"}]})))
+    _run(
+        api_snippet_create(
+            _req(body={"name": "sig", "content": "— {{author}}", "variables": [{"name": "author"}]})
+        )
+    )
     resp = _run(api_snippet_render(_req("sig", body={"variables": {"author": "Ada"}})))
     assert _body(resp)["rendered"] == "— Ada"
 
 
 # ── compose-aware prompt render (includes a snippet) ─────────────────────────
 
+
 def test_prompt_render_resolves_snippet_include():
     prov = _provider()
     from personalclaw.prompt_providers.base import PromptSnippet, PromptTemplate, PromptVariable
-    prov.create_snippet(PromptSnippet(name="sig", content="— {{author}}",
-                                      variables=[PromptVariable(name="author")]))
-    prov.create_prompt(PromptTemplate(name="letter", kind="user",
-                                      content="Dear {{who}},\n{{> sig}}",
-                                      variables=[PromptVariable(name="who")]))
-    resp = _run(api_prompt_render(_req("letter",
-                body={"variables": {"who": "Sam", "author": "Ada"}})))
+
+    prov.create_snippet(
+        PromptSnippet(name="sig", content="— {{author}}", variables=[PromptVariable(name="author")])
+    )
+    prov.create_prompt(
+        PromptTemplate(
+            name="letter",
+            kind="user",
+            content="Dear {{who}},\n{{> sig}}",
+            variables=[PromptVariable(name="who")],
+        )
+    )
+    resp = _run(
+        api_prompt_render(_req("letter", body={"variables": {"who": "Sam", "author": "Ada"}}))
+    )
     assert _body(resp)["rendered"] == "Dear Sam,\n— Ada"
 
 
 # ── detail surfaces kind, merged variables + includes ────────────────────────
 
+
 def test_prompt_detail_merged_variables_and_includes():
     prov = _provider()
     from personalclaw.prompt_providers.base import PromptSnippet, PromptTemplate, PromptVariable
-    prov.create_snippet(PromptSnippet(name="sig", content="— {{author}}",
-                                      variables=[PromptVariable(name="author")]))
-    prov.create_prompt(PromptTemplate(name="letter", kind="user",
-                                      content="{{who}} {{> sig}}",
-                                      variables=[PromptVariable(name="who")]))
+
+    prov.create_snippet(
+        PromptSnippet(name="sig", content="— {{author}}", variables=[PromptVariable(name="author")])
+    )
+    prov.create_prompt(
+        PromptTemplate(
+            name="letter",
+            kind="user",
+            content="{{who}} {{> sig}}",
+            variables=[PromptVariable(name="who")],
+        )
+    )
     detail = _body(_run(api_prompt_detail(_req("letter"))))
     assert detail["kind"] == "user"
     names = [v["name"] for v in detail["merged_variables"]]
-    assert names == ["who", "author"]   # host var first, snippet var merged in
+    assert names == ["who", "author"]  # host var first, snippet var merged in
     assert detail["includes"] == ["sig"]
 
 
 def test_prompt_list_kind_filter():
     prov = _provider()
     from personalclaw.prompt_providers.base import PromptTemplate
+
     prov.create_prompt(PromptTemplate(name="sysp", kind="system", content="x"))
     prov.create_prompt(PromptTemplate(name="usrp", kind="user", content="y"))
     sys_only = _body(_run(api_prompts(_req(query={"kind": "system"}))))
@@ -172,11 +207,13 @@ def test_prompt_list_kind_filter():
 
 # ── context integration: a system prompt composes a snippet include ──────────
 
+
 def test_apply_runtime_vars_resolves_snippet_include():
     """ContextBuilder._apply_runtime_vars renders {{bot_name}} AND {{> snippet}}
     through the one engine path, so a system prompt can compose shared fragments."""
     prov = _provider()
     from personalclaw.prompt_providers.base import PromptSnippet
+
     prov.create_snippet(PromptSnippet(name="safety", content="Be careful, {{bot_name}}."))
 
     from personalclaw.context import ContextBuilder
@@ -212,10 +249,12 @@ def test_apply_runtime_vars_missing_snippet_marker():
 def test_prompt_preview_renders_unsaved_content():
     _provider()
     body = {
-        "content": "Hi {{ name }}!\n{% if vip %}VIP{% elif n > 5 %}many{% else %}hi{% endif %} {{ upper(s) }}",
+        "content": "Hi {{ name }}!\n{% if vip %}VIP{% elif n > 5 %}many{% else %}hi{% endif %} {{ upper(s) }}",  # noqa: E501
         "variables": [
-            {"name": "vip", "type": "boolean"}, {"name": "n", "type": "number"},
-            {"name": "s", "type": "text"}, {"name": "name", "type": "text"},
+            {"name": "vip", "type": "boolean"},
+            {"name": "n", "type": "number"},
+            {"name": "s", "type": "text"},
+            {"name": "name", "type": "text"},
         ],
         "values": {"name": "Ada", "vip": False, "n": 9, "s": "go"},
     }
@@ -252,6 +291,7 @@ def test_prompt_syntax_lists_functions_and_constructs():
 
 # ── runnable "campaign template" launch (#17) ────────────────────────────────
 
+
 class TestCampaignTemplateLaunch:
     """POST /api/prompts/{name}/launch — render a runnable template + create+start a
     loop from its launch_spec. Composes the render engine + the loop create/start seam;
@@ -263,36 +303,53 @@ class TestCampaignTemplateLaunch:
         created: list = []
 
         class _V:
-            def __init__(self, ok): self.can_start = ok
-            def to_dict(self): return {"errors": ["blocked"] if not self.can_start else []}
-        monkeypatch.setattr("personalclaw.loop.validation.validate", lambda body, **kw: _V(can_start))
+            def __init__(self, ok):
+                self.can_start = ok
+
+            def to_dict(self):
+                return {"errors": ["blocked"] if not self.can_start else []}
+
+        monkeypatch.setattr(
+            "personalclaw.loop.validation.validate", lambda body, **kw: _V(can_start)
+        )
 
         def _create(loop):
-            loop.id = "cafe1234"; created.append(loop); return loop
+            loop.id = "cafe1234"
+            created.append(loop)
+            return loop
+
         monkeypatch.setattr("personalclaw.loop.store.create", _create)
 
         async def _start(state, svc, lid):
             created.append(("started", lid))
+
         monkeypatch.setattr("personalclaw.loop.manager.start", _start)
         monkeypatch.setattr("personalclaw.autonudge.get_instance", lambda: object())
         # Only override the launch_blocker on the resolved strategy (leave the real
         # kind machinery — default_kind_config etc. — intact so _build_loop_from_body
         # works). Wrap the real get_or_none so the returned strategy reports `blocker`.
         import personalclaw.loop.kinds as K
+
         real_get = K.get_or_none
 
         def _wrapped(kind):
             strat = real_get(kind)
             if strat is not None:
-                monkeypatch.setattr(strat, "launch_blocker", staticmethod(lambda l: blocker), raising=False)
+                monkeypatch.setattr(
+                    strat, "launch_blocker", staticmethod(lambda _lb: blocker), raising=False
+                )
             return strat
+
         monkeypatch.setattr("personalclaw.loop.kinds.get_or_none", _wrapped)
         return created
 
     def test_launch_plain_prompt_rejected(self):
         prov = _provider()
         from personalclaw.prompt_providers.base import PromptTemplate
-        prov.create_prompt(PromptTemplate(name="plain", kind="user", content="just text, not runnable"))
+
+        prov.create_prompt(
+            PromptTemplate(name="plain", kind="user", content="just text, not runnable")
+        )
         r = _run(api_campaign_template_launch(_req("plain", body={"variables": {}})))
         assert r.status == 400 and "runnable" in _body(r)["error"].lower()
 
@@ -304,15 +361,25 @@ class TestCampaignTemplateLaunch:
     def test_launch_renders_and_starts_loop(self, monkeypatch):
         prov = _provider()
         from personalclaw.prompt_providers.base import PromptTemplate, PromptVariable
-        prov.create_prompt(PromptTemplate(
-            name="teardown", kind="user",
-            content="Competitive teardown of {{company}} — focus on {{angle}}.",
-            variables=[PromptVariable(name="company", type="text", required=True),
-                       PromptVariable(name="angle", type="text", default="pricing")],
-            launch_spec={"kind": "goal", "intake_rigor": "minimal", "agent": ""}))
+
+        prov.create_prompt(
+            PromptTemplate(
+                name="teardown",
+                kind="user",
+                content="Competitive teardown of {{company}} — focus on {{angle}}.",
+                variables=[
+                    PromptVariable(name="company", type="text", required=True),
+                    PromptVariable(name="angle", type="text", default="pricing"),
+                ],
+                launch_spec={"kind": "goal", "intake_rigor": "minimal", "agent": ""},
+            )
+        )
         created = self._stub_loop_seam(monkeypatch)
-        r = _run(api_campaign_template_launch(_req(
-            "teardown", body={"variables": {"company": "Acme", "angle": "positioning"}})))
+        r = _run(
+            api_campaign_template_launch(
+                _req("teardown", body={"variables": {"company": "Acme", "angle": "positioning"}})
+            )
+        )
         assert r.status == 201
         d = _body(r)
         assert d["ok"] is True and d["started"] is True and d["loop_id"] == "cafe1234"
@@ -328,11 +395,21 @@ class TestCampaignTemplateLaunch:
     def test_launch_blocked_kind_leaves_draft_unstarted(self, monkeypatch):
         prov = _provider()
         from personalclaw.prompt_providers.base import PromptTemplate
-        prov.create_prompt(PromptTemplate(
-            name="blocked", kind="user", content="Do the work on {{repo}} thoroughly please.",
-            launch_spec={"kind": "code"}))
+
+        prov.create_prompt(
+            PromptTemplate(
+                name="blocked",
+                kind="user",
+                content="Do the work on {{repo}} thoroughly please.",
+                launch_spec={"kind": "code"},
+            )
+        )
         self._stub_loop_seam(monkeypatch, blocker="Pick a workspace first.")
         r = _run(api_campaign_template_launch(_req("blocked", body={"variables": {"repo": "x"}})))
         assert r.status == 422
         d = _body(r)
-        assert d["started"] is False and d["loop_id"] == "cafe1234" and "workspace" in d["error"].lower()
+        assert (
+            d["started"] is False
+            and d["loop_id"] == "cafe1234"
+            and "workspace" in d["error"].lower()
+        )

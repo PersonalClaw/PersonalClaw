@@ -10,14 +10,18 @@ import logging
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import config_dir
 
+
 def _path_home_pclaw():
     """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
     try:
         from personalclaw.config.loader import config_dir as _cd
+
         return _cd()
     except Exception:
         from pathlib import Path as _P
+
         return _P.home() / ".personalclaw"
+
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +93,7 @@ class SessionMap:
         # Fallback: dashboard history round-trip (dashboard:dashboard_X → dashboard:X)
         matched_key = key
         if not entry and key.startswith("dashboard:dashboard_"):
-            canonical = "dashboard:" + key[len("dashboard:dashboard_"):]
+            canonical = "dashboard:" + key[len("dashboard:dashboard_") :]
             entry = self._data.get(canonical)
             if entry:
                 matched_key = canonical
@@ -176,10 +180,7 @@ class SessionMap:
         """Link a session to a channel thread. Creates entry if needed."""
         entry = self._data.get(key)
         if entry:
-            if (
-                entry.get("thread_ts") == thread_ts
-                and entry.get("channel_id") == channel_id
-            ):
+            if entry.get("thread_ts") == thread_ts and entry.get("channel_id") == channel_id:
                 self._thread_to_session.setdefault(thread_ts, key)
                 return
             old_ts = entry.get("thread_ts")

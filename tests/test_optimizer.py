@@ -78,7 +78,9 @@ class TestOptimizerEndpoint:
         mock_state.sessions = mock_sessions
 
         request = MagicMock()
-        request.json = AsyncMock(return_value={"prompt": "refactor the auth module to be cleaner", "context": ""})
+        request.json = AsyncMock(
+            return_value={"prompt": "refactor the auth module to be cleaner", "context": ""}
+        )
         request.app = {"state": mock_state}
 
         resp = await handle_optimize(request)
@@ -91,7 +93,9 @@ class TestOptimizerEndpoint:
         from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK
 
         mock_client = AsyncMock()
-        optimized_text = "Refactor the auth module: extract token validation into a separate service."
+        optimized_text = (
+            "Refactor the auth module: extract token validation into a separate service."
+        )
 
         async def fake_stream(prompt):
             yield MagicMock(kind=EVENT_TEXT_CHUNK, text=optimized_text)
@@ -107,7 +111,9 @@ class TestOptimizerEndpoint:
         mock_state.sessions = mock_sessions
 
         request = MagicMock()
-        request.json = AsyncMock(return_value={"prompt": "refactor the auth module to be cleaner", "context": ""})
+        request.json = AsyncMock(
+            return_value={"prompt": "refactor the auth module to be cleaner", "context": ""}
+        )
         request.app = {"state": mock_state}
 
         resp = await handle_optimize(request)
@@ -123,7 +129,9 @@ class TestOptimizerEndpoint:
         mock_client = AsyncMock()
 
         async def fake_stream(prompt):
-            yield MagicMock(kind=EVENT_TEXT_CHUNK, text="Confirm and proceed with the previous action.")
+            yield MagicMock(
+                kind=EVENT_TEXT_CHUNK, text="Confirm and proceed with the previous action."
+            )
             yield MagicMock(kind=EVENT_COMPLETE)
 
         mock_client.stream = fake_stream
@@ -211,7 +219,12 @@ class TestOptimizerEndpoint:
 
         long_context = "A" * 3000 + "B" * 2000
         request = MagicMock()
-        request.json = AsyncMock(return_value={"prompt": "refactor the auth module to be better", "context": long_context})
+        request.json = AsyncMock(
+            return_value={
+                "prompt": "refactor the auth module to be better",
+                "context": long_context,
+            }
+        )
         request.app = {"state": mock_state}
 
         await handle_optimize(request)

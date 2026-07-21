@@ -24,8 +24,10 @@ def _resolve_embed(app) -> tuple[object | None, object | None, str]:
     caller treats that as "not ready" and refuses to wipe the vectors.
     """
     from personalclaw.embedding_providers.registry import (
-        _active_embedding_spec, get_active_embed_fn,
+        _active_embedding_spec,
+        get_active_embed_fn,
     )
+
     spec = _active_embedding_spec()
     model = f"{spec[0]}:{spec[1]}" if spec else ""
 
@@ -41,8 +43,10 @@ def _resolve_embed(app) -> tuple[object | None, object | None, str]:
     embedder = None
     if ready:
         import json
+
         from personalclaw.config.loader import config_path
         from personalclaw.knowledge.embedder import create_embedder_from_config
+
         try:
             cfg_path = config_path()
             cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
@@ -58,10 +62,12 @@ def _resolve_embed(app) -> tuple[object | None, object | None, str]:
 async def api_reindex_list(request: web.Request) -> web.Response:
     """GET /api/models/embedding/reindex — live + recently-finished jobs."""
     reg = _registry(request)
-    return web.json_response({
-        "jobs": [j.to_dict() for j in reg.list()],
-        "active": (reg.active().to_dict() if reg.active() else None),
-    })
+    return web.json_response(
+        {
+            "jobs": [j.to_dict() for j in reg.list()],
+            "active": (reg.active().to_dict() if reg.active() else None),
+        }
+    )
 
 
 async def api_reindex_start(request: web.Request) -> web.Response:
@@ -76,19 +82,25 @@ async def api_reindex_start(request: web.Request) -> web.Response:
     embedder, embed_fn, model = _resolve_embed(request.app)
     if embed_fn is None:
         return web.json_response(
-            {"error": "The selected embedding model is not available (download it "
-                      "or check the provider connection before re-indexing).",
-             "code": "model_not_ready"},
+            {
+                "error": "The selected embedding model is not available (download it "
+                "or check the provider connection before re-indexing).",
+                "code": "model_not_ready",
+            },
             status=409,
         )
 
     from personalclaw.dashboard.handlers.memory import _get_provider
+
     vector_store = _get_provider(state)
     knowledge_store = getattr(state, "knowledge_store", None)
 
     job, error = _registry(request).start(
-        model=model, knowledge_store=knowledge_store, vector_store=vector_store,
-        embedder=embedder, embed_fn=embed_fn,
+        model=model,
+        knowledge_store=knowledge_store,
+        vector_store=vector_store,
+        embedder=embedder,
+        embed_fn=embed_fn,
     )
     if error is not None:
         return web.json_response({"error": error}, status=400)
@@ -109,7 +121,8 @@ async def api_reindex_stream(request: web.Request) -> web.StreamResponse:
     key = registry_key(job_id)
     hub = reg.sse.hub(key)
     return await stream_response(
-        request, hub,
+        request,
+        hub,
         on_connect=[("snapshot", job.to_dict())],
         registry_evict=(reg.sse, key),
     )

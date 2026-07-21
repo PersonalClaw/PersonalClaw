@@ -1,4 +1,5 @@
 """Tests for knowledge search upgrade: embedding endpoints + search-for-context."""
+
 import pytest
 
 from personalclaw.knowledge.embedder import UnifiedEmbedder, create_embedder_from_config
@@ -66,14 +67,17 @@ class TestUnifiedEmbedderDegradation:
     def test_embed_swallows_provider_error(self):
         def _boom(text):
             raise RuntimeError("provider down")
+
         emb = UnifiedEmbedder(_boom)
         assert emb.embed("hello") is None  # degrades, never raises
 
     def test_embed_for_item_combines_title_and_summary(self):
         seen = {}
+
         def _capture(text):
             seen["text"] = text
             return [0.0]
+
         emb = UnifiedEmbedder(_capture)
         emb.embed_for_item("My Title", "A summary of the content")
         assert "My Title" in seen["text"] and "A summary" in seen["text"]
@@ -87,10 +91,18 @@ def mock_knowledge_app(tmp_path):
     db_path = str(tmp_path / "knowledge.db")
     store = KnowledgeStore(db_path)
     # Add some test items (one logical doc each)
-    store.create_typed_item(item_type="document", title="Auth Token Refresh",
-                            content="JWT refresh flow using rotating keys", summary="How auth tokens are refreshed")
-    store.create_typed_item(item_type="document", title="Database Schema",
-                            content="PostgreSQL schema for user tables", summary="DB schema overview")
+    store.create_typed_item(
+        item_type="document",
+        title="Auth Token Refresh",
+        content="JWT refresh flow using rotating keys",
+        summary="How auth tokens are refreshed",
+    )
+    store.create_typed_item(
+        item_type="document",
+        title="Database Schema",
+        content="PostgreSQL schema for user tables",
+        summary="DB schema overview",
+    )
     return store
 
 
@@ -100,6 +112,7 @@ class TestSearchForContext:
     def test_estimate_tokens(self):
         # Import the real function from the handler module
         from personalclaw.dashboard.handlers.knowledge import _estimate_tokens
+
         assert _estimate_tokens("hello world") == 2  # 11 chars // 4
         assert _estimate_tokens("") == 0
 
@@ -120,9 +133,12 @@ class TestSearchForContext:
 
         app = web.Application()
         app["state"] = SimpleNamespace(knowledge_store=store)
-        req = make_mocked_request("GET", "/api/knowledge/search-for-context?" + query_string, app=app)
+        req = make_mocked_request(
+            "GET", "/api/knowledge/search-for-context?" + query_string, app=app
+        )
         resp = asyncio.get_event_loop().run_until_complete(H.search_for_context(req))
         import json
+
         return json.loads(resp.body)
 
     def test_max_tokens_query_param_overrides_default(self, mock_knowledge_app):
@@ -146,10 +162,18 @@ class TestSearchForContext:
 
         store = KnowledgeStore(str(tmp_path / "k.db"))
         # Two items both matching 'kafka'; the first is enormous.
-        store.create_typed_item(item_type="document", title="Kafka Deep Dive",
-                                content=("kafka " * 4000), summary="huge kafka doc")
-        store.create_typed_item(item_type="note", title="Kafka Quick Tip",
-                                content="kafka consumer group rebalance gotcha", summary="kafka tip")
+        store.create_typed_item(
+            item_type="document",
+            title="Kafka Deep Dive",
+            content=("kafka " * 4000),
+            summary="huge kafka doc",
+        )
+        store.create_typed_item(
+            item_type="note",
+            title="Kafka Quick Tip",
+            content="kafka consumer group rebalance gotcha",
+            summary="kafka tip",
+        )
         # Small budget the big doc alone would otherwise exhaust.
         body = self._ctx(store, "q=kafka&max_tokens=200")
         titles = [c["title"] for c in body["results"]]

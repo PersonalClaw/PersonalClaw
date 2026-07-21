@@ -42,7 +42,7 @@ def double_metaphone(word: str) -> tuple[str, str]:
         return s[i] if 0 <= i < length else ""
 
     def sub(i: int, j: int) -> str:
-        return s[max(i, 0):j]
+        return s[max(i, 0) : j]
 
     # Skip silent leading pairs.
     if sub(0, 2) in ("GN", "KN", "PN", "WR", "PS"):
@@ -61,11 +61,16 @@ def double_metaphone(word: str) -> tuple[str, str]:
             pos += 1
             continue
         if ch == "B":
-            add("P"); pos += 2 if at(pos + 1) == "B" else 1
+            add("P")
+            pos += 2 if at(pos + 1) == "B" else 1
         elif ch == "Ç" or ch == "C":
             if at(pos + 1) == "H":
                 if sub(pos, pos + 4) == "CHAE" or sub(pos, pos + 2) == "CH":
-                    add("K", "X") if pos == 0 and sub(pos + 1, pos + 4) in ("HAR", "HOR") else add("X", "K")
+                    (
+                        add("K", "X")
+                        if pos == 0 and sub(pos + 1, pos + 4) in ("HAR", "HOR")
+                        else add("X", "K")
+                    )
                 else:
                     add("X", "K")
                 pos += 2
@@ -74,83 +79,115 @@ def double_metaphone(word: str) -> tuple[str, str]:
                     add("KS") if sub(pos + 1, pos + 3) in ("CI", "CE") else add("X")
                     pos += 3
                 else:
-                    add("K"); pos += 2
+                    add("K")
+                    pos += 2
             elif at(pos + 1) in ("I", "E", "Y"):
-                add("S"); pos += 2
+                add("S")
+                pos += 2
             else:
-                add("K"); pos += 1
+                add("K")
+                pos += 1
         elif ch == "D":
             if at(pos + 1) == "G" and at(pos + 2) in "IEY":
-                add("J"); pos += 3
+                add("J")
+                pos += 3
             else:
-                add("T"); pos += 2 if at(pos + 1) == "D" else 1
+                add("T")
+                pos += 2 if at(pos + 1) == "D" else 1
         elif ch == "F":
-            add("F"); pos += 2 if at(pos + 1) == "F" else 1
+            add("F")
+            pos += 2 if at(pos + 1) == "F" else 1
         elif ch == "G":
             if at(pos + 1) == "H":
                 if pos > 0 and not _is_vowel(s, pos - 1):
-                    add("K"); pos += 2
+                    add("K")
+                    pos += 2
                 elif pos == 0:
-                    add("K" if at(pos + 2) != "I" else "J"); pos += 2
+                    add("K" if at(pos + 2) != "I" else "J")
+                    pos += 2
                 else:
                     pos += 2  # silent gh
             elif at(pos + 1) == "N":
-                add("KN", "N"); pos += 2
+                add("KN", "N")
+                pos += 2
             elif at(pos + 1) in ("I", "E", "Y"):
-                add("J"); pos += 2
+                add("J")
+                pos += 2
             else:
-                add("K"); pos += 2 if at(pos + 1) == "G" else 1
+                add("K")
+                pos += 2 if at(pos + 1) == "G" else 1
         elif ch == "H":
             if (pos == 0 or _is_vowel(s, pos - 1)) and _is_vowel(s, pos + 1):
-                add("H"); pos += 1
+                add("H")
+                pos += 1
             else:
                 pos += 1  # silent
         elif ch == "J":
-            add("J", "H" if pos == 0 else "J"); pos += 2 if at(pos + 1) == "J" else 1
+            add("J", "H" if pos == 0 else "J")
+            pos += 2 if at(pos + 1) == "J" else 1
         elif ch == "K":
-            add("K"); pos += 2 if at(pos + 1) == "K" else 1
+            add("K")
+            pos += 2 if at(pos + 1) == "K" else 1
         elif ch == "L":
-            add("L"); pos += 2 if at(pos + 1) == "L" else 1
+            add("L")
+            pos += 2 if at(pos + 1) == "L" else 1
         elif ch == "M":
-            add("M"); pos += 2 if at(pos + 1) == "M" else 1
+            add("M")
+            pos += 2 if at(pos + 1) == "M" else 1
         elif ch == "N":
-            add("N"); pos += 2 if at(pos + 1) == "N" else 1
+            add("N")
+            pos += 2 if at(pos + 1) == "N" else 1
         elif ch == "P":
             if at(pos + 1) == "H":
-                add("F"); pos += 2
+                add("F")
+                pos += 2
             else:
-                add("P"); pos += 2 if at(pos + 1) == "P" else 1
+                add("P")
+                pos += 2 if at(pos + 1) == "P" else 1
         elif ch == "Q":
-            add("K"); pos += 2 if at(pos + 1) == "Q" else 1
+            add("K")
+            pos += 2 if at(pos + 1) == "Q" else 1
         elif ch == "R":
-            add("R"); pos += 2 if at(pos + 1) == "R" else 1
+            add("R")
+            pos += 2 if at(pos + 1) == "R" else 1
         elif ch == "S":
             if at(pos + 1) == "H":
-                add("X"); pos += 2
+                add("X")
+                pos += 2
             elif at(pos + 1) in ("I", "Y") and at(pos + 2) == "O":
-                add("S", "X"); pos += 1
+                add("S", "X")
+                pos += 1
             else:
-                add("S"); pos += 2 if at(pos + 1) == "S" else 1
+                add("S")
+                pos += 2 if at(pos + 1) == "S" else 1
         elif ch == "T":
             if sub(pos, pos + 2) == "TH":
-                add("0", "T"); pos += 2
+                add("0", "T")
+                pos += 2
             elif at(pos + 1) in ("I", "Y") and at(pos + 2) == "O":
-                add("X"); pos += 1
+                add("X")
+                pos += 1
             else:
-                add("T"); pos += 2 if at(pos + 1) == "T" else 1
+                add("T")
+                pos += 2 if at(pos + 1) == "T" else 1
         elif ch == "V":
-            add("F"); pos += 2 if at(pos + 1) == "V" else 1
+            add("F")
+            pos += 2 if at(pos + 1) == "V" else 1
         elif ch == "W":
             if at(pos + 1) == "H":
-                add("A"); pos += 2
+                add("A")
+                pos += 2
             elif _is_vowel(s, pos + 1):
-                add("A", "F"); pos += 1
+                add("A", "F")
+                pos += 1
             else:
                 pos += 1
         elif ch == "X":
-            add("KS"); pos += 2 if at(pos + 1) in ("C", "X") else 1
+            add("KS")
+            pos += 2 if at(pos + 1) in ("C", "X") else 1
         elif ch == "Z":
-            add("S"); pos += 2 if at(pos + 1) == "Z" else 1
+            add("S")
+            pos += 2 if at(pos + 1) == "Z" else 1
         else:
             pos += 1
 

@@ -38,10 +38,7 @@ class DependencyCycleError(ValueError):
 
 def _prereq_map(tasks: dict[str, Task]) -> dict[str, list[str]]:
     """task_id → list of prerequisite ids (BLOCKS edges, filtered to known tasks)."""
-    return {
-        tid: [p for p in t.prerequisite_ids() if p in tasks]
-        for tid, t in tasks.items()
-    }
+    return {tid: [p for p in t.prerequisite_ids() if p in tasks] for tid, t in tasks.items()}
 
 
 def detect_cycle(tasks: dict[str, Task]) -> list[str]:
@@ -76,7 +73,9 @@ def detect_cycle(tasks: dict[str, Task]) -> list[str]:
     return []
 
 
-def would_create_cycle(tasks: dict[str, Task], task_id: str, new_prereq_ids: list[str]) -> list[str]:
+def would_create_cycle(
+    tasks: dict[str, Task], task_id: str, new_prereq_ids: list[str]
+) -> list[str]:
     """Return the cycle path if giving ``task_id`` ``new_prereq_ids`` as BLOCKS
     prerequisites would create a cycle, else ``[]``. Pure check (does not mutate)."""
     prereqs = _prereq_map(tasks)
@@ -118,11 +117,17 @@ def block_reason(task: Task, tasks: dict[str, Task]) -> dict:
     """Derive ``{is_blocked, blocking_task_ids, blocking_task_titles, message}``
     from the task's unfinished prerequisites."""
     unfinished = [
-        p for p in task.prerequisite_ids()
+        p
+        for p in task.prerequisite_ids()
         if p in tasks and tasks[p].status not in TERMINAL_STATUSES
     ]
     if not unfinished:
-        return {"is_blocked": False, "blocking_task_ids": [], "blocking_task_titles": [], "message": ""}
+        return {
+            "is_blocked": False,
+            "blocking_task_ids": [],
+            "blocking_task_titles": [],
+            "message": "",
+        }
     titles = [tasks[p].title for p in unfinished]
     return {
         "is_blocked": True,
@@ -166,7 +171,8 @@ def reconcile_blocked_status(tasks: dict[str, Task], changed_id: str) -> list[Ta
         if t.blocked_reason_kind == "manual":
             continue  # never auto-touch a manual block
         unfinished = [
-            p for p in t.prerequisite_ids()
+            p
+            for p in t.prerequisite_ids()
             if p in tasks and tasks[p].status not in TERMINAL_STATUSES
         ]
         if unfinished and t.status in (TaskStatus.OPEN, TaskStatus.IN_PROGRESS):
@@ -190,7 +196,8 @@ def classify_manual_block(task: Task, tasks: dict[str, Task]) -> None:
             task.blocked_reason_kind = ""
         return
     unfinished = [
-        p for p in task.prerequisite_ids()
+        p
+        for p in task.prerequisite_ids()
         if p in tasks and tasks[p].status not in TERMINAL_STATUSES
     ]
     task.blocked_reason_kind = "auto" if unfinished else "manual"
@@ -212,12 +219,13 @@ def ready_task_ids(tasks: dict[str, Task]) -> list[str]:
 
 # ── Dependency analysis (graph view) ──
 
+
 @dataclass
 class DependencyAnalysis:
     completion_pct: float = 0.0
-    leaf_task_ids: list[str] = field(default_factory=list)       # no dependents
-    root_task_ids: list[str] = field(default_factory=list)       # no prerequisites
-    critical_path: list[str] = field(default_factory=list)       # longest prereq chain
+    leaf_task_ids: list[str] = field(default_factory=list)  # no dependents
+    root_task_ids: list[str] = field(default_factory=list)  # no prerequisites
+    critical_path: list[str] = field(default_factory=list)  # longest prereq chain
     cycles: list[list[str]] = field(default_factory=list)
     # tasks with ≥2 dependents, sorted by dependent count desc: [{id, dependents}]
     bottleneck_tasks: list[dict] = field(default_factory=list)
@@ -280,11 +288,11 @@ def analyze(tasks: dict[str, Task]) -> DependencyAnalysis:
         critical = list(reversed(critical))  # root → … → leaf order
 
     # Bottlenecks: tasks ≥2 dependents block, sorted by how many depend on them.
-    bottlenecks = sorted(
-        ({"id": tid, "dependents": len(deps)} for tid, deps in dependents.items() if len(deps) >= 2),
-        key=lambda x: x["dependents"],
-        reverse=True,
-    )
+    bottlenecks = [
+        {"id": tid, "dependents": len(deps)}
+        for tid, deps in sorted(dependents.items(), key=lambda kv: len(kv[1]), reverse=True)
+        if len(deps) >= 2
+    ]
 
     return DependencyAnalysis(
         completion_pct=completion,

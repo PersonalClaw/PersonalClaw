@@ -1,0 +1,32 @@
+# Dependabot — native dependency update PRs (no hosted service). Weekly, grouped
+# to keep PR volume low for a solo maintainer (CI-RELEASE-ENGINEERING S4).
+version: 2
+updates:
+  # Python — the packaging metadata + uv.lock (pip ecosystem covers pyproject/uv).
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      python-deps:
+        patterns: ["*"]
+
+  # Frontend — the single root npm workspace (web + desktop share one lockfile).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      js-deps:
+        patterns: ["*"]
+
+  # The GitHub Actions the workflows pin (setup-uv, setup-node, publish, buildx, …).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

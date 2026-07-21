@@ -29,6 +29,7 @@ class RiskLevel(str, Enum):
 @dataclass
 class ToolDefinition:
     """Schema for a tool exposed by a provider."""
+
     name: str
     description: str
     provider: str = ""
@@ -90,6 +91,7 @@ class ToolResult:
     - ``truncated`` + ``original_length``: set when ``output`` was capped, so the
       model knows content was cut and how much (can paginate / narrow / refetch).
     """
+
     success: bool
     output: str = ""
     error: str = ""
@@ -130,13 +132,11 @@ class ToolProvider(ABC):
 
     @property
     @abstractmethod
-    def name(self) -> str:
-        ...
+    def name(self) -> str: ...
 
     @property
     @abstractmethod
-    def display_name(self) -> str:
-        ...
+    def display_name(self) -> str: ...
 
     @abstractmethod
     async def list_tools(self) -> list[ToolDefinition]:

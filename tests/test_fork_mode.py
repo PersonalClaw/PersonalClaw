@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-
 from chat_test_helpers import _make_app, _make_state
 
 

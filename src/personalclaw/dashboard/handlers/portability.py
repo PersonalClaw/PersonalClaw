@@ -16,11 +16,12 @@ logger = logging.getLogger(__name__)
 def _sel():
     """Late-binding sel() — allows monkeypatching at parent package level."""
     import personalclaw.dashboard.handlers as _pkg
+
     return _pkg.sel()
 
 
 async def _read_upload_file(request: web.Request) -> tuple[Path | None, web.Response | None]:
-    """Read a multipart file upload into a temp file. Returns (path, None) or (None, error_response)."""
+    """Read a multipart file upload into a temp file. Returns (path, None) or (None, error_response)."""  # noqa: E501
     ctype = request.headers.get("Content-Type", "")
     if not ctype.lower().startswith("multipart/"):
         return None, web.json_response(
@@ -31,7 +32,8 @@ async def _read_upload_file(request: web.Request) -> tuple[Path | None, web.Resp
         reader = await request.multipart()
     except (ValueError, AssertionError, RuntimeError) as exc:
         return None, web.json_response(
-            {"error": f"failed to parse multipart body: {exc}"}, status=400,
+            {"error": f"failed to parse multipart body: {exc}"},
+            status=400,
         )
     part = await reader.next()
     if part is None or not isinstance(part, BodyPartReader) or part.name != "file":

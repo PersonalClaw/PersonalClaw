@@ -21,9 +21,7 @@ class TestExtractOptions:
 
 class TestStripThinkingTags:
     def test_strips_and_extracts(self):
-        cleaned, thinking = strip_thinking_tags(
-            "<thinking>reasoning here</thinking>Answer."
-        )
+        cleaned, thinking = strip_thinking_tags("<thinking>reasoning here</thinking>Answer.")
         assert cleaned == "Answer."
         assert thinking == "reasoning here"
 
@@ -33,7 +31,5 @@ class TestStripThinkingTags:
         assert thinking == ""
 
     def test_keep_whitespace_when_requested(self):
-        cleaned, _ = strip_thinking_tags(
-            "  leading", strip_whitespace=False
-        )
+        cleaned, _ = strip_thinking_tags("  leading", strip_whitespace=False)
         assert cleaned == "  leading"

@@ -28,9 +28,9 @@ if TYPE_CHECKING:
     from personalclaw.dashboard._types import (  # noqa: F401
         ContextBuilder,
         ConversationLog,
-        ScheduleService,
         HistoryConsolidator,
         LessonStore,
+        ScheduleService,
         SessionManager,
         SubagentManager,
     )
@@ -120,6 +120,7 @@ async def _sel_prune_loop() -> None:
 def _precompute_telemetry(state: "DashboardState") -> None:
     """Pre-compute telemetry data (blocking I/O — call before server starts)."""
     from personalclaw.dashboard.handlers_system import _get_owner_hash, _get_static_system_info
+
     _log = logging.getLogger(__name__)
     try:
         _get_owner_hash(state)
@@ -155,6 +156,7 @@ def _register_mcp_routes(app: web.Application) -> None:
     # Unified Triggers (schedule + lifecycle) — facade over the schedule service
     # + the script-hook store (see dashboard/handlers/triggers.py).
     from personalclaw.dashboard.handlers.triggers import register_trigger_routes
+
     register_trigger_routes(app)
     app.router.add_post("/api/send-message", handlers.api_send_message)
     app.router.add_post("/api/session-keepalive", handlers.api_session_keepalive)
@@ -233,9 +235,7 @@ def _apply_startup_yolo(state: DashboardState, cfg: Any) -> None:
             resources="config:agent.yolo",
         )
     except Exception:
-        logger.error(
-            "SEL audit failed; refusing to enable YOLO mode from config", exc_info=True
-        )
+        logger.error("SEL audit failed; refusing to enable YOLO mode from config", exc_info=True)
         return
     state.enable_yolo(from_config=True)
     logger.info("YOLO mode enabled at startup (agent.yolo=true)")
@@ -307,6 +307,7 @@ async def start_dashboard(
     # Wire the always-on native inbox sink so agent post_to_inbox writes + pushes
     # through this state (works even with no polling inbox service).
     from personalclaw.inbox_providers.native_source import set_dashboard_state as _set_inbox_state
+
     _set_inbox_state(state)
 
     # Wire the native hook providers' service accessor (notify/send-message/
@@ -344,6 +345,7 @@ async def start_dashboard(
     state.load_tags()
     app["port"] = port
     from personalclaw.auth.modes import AuthConfig as _AuthConfig
+
     app["auth_cfg"] = _AuthConfig.from_env()
 
     _precompute_telemetry(state)
@@ -387,6 +389,7 @@ async def start_dashboard(
         api_skills_marketplaces,
         api_skills_search,
     )
+
     app.router.add_get("/api/skills", api_skills_list)
     app.router.add_get("/api/skills/marketplaces", api_skills_marketplaces)
     app.router.add_get("/api/skills/search", api_skills_search)
@@ -409,8 +412,11 @@ async def start_dashboard(
 
     # App Platform (A4) — lifecycle REST + backend reverse-proxy.
     from personalclaw.dashboard.handlers.apps import register_app_routes
+
     register_app_routes(app)
     from personalclaw.dashboard.handlers.providers import (
+        api_agent_provider_agents,
+        api_agent_providers_list,
         api_provider_create,
         api_provider_delete,
         api_provider_model_delete,
@@ -423,10 +429,7 @@ async def start_dashboard(
         api_provider_update,
         api_providers_list,
     )
-    from personalclaw.dashboard.handlers.providers import (
-        api_agent_provider_agents,
-        api_agent_providers_list,
-    )
+
     app.router.add_get("/api/model-providers", api_providers_list)
     app.router.add_get("/api/model-provider-types", api_provider_types)
     app.router.add_get("/api/agent-providers", api_agent_providers_list)
@@ -443,18 +446,22 @@ async def start_dashboard(
 
     # Model registry (unified model discovery + active model assignments)
     from personalclaw.dashboard.handlers.model_registry import register_model_registry_routes
+
     register_model_registry_routes(app)
 
     # Search registry (the Search entity — providers + per-use-case bindings)
     from personalclaw.dashboard.handlers.search_registry import register_search_registry_routes
+
     register_search_registry_routes(app)
 
     # Async bundled-model downloads (embedding/STT/TTS) — one job/SSE path for all
     from personalclaw.dashboard.handlers.model_downloads import register_model_download_routes
+
     register_model_download_routes(app)
 
     # Embedding re-index jobs (triggered when the active embedding model changes)
     from personalclaw.dashboard.handlers.embedding_reindex import register_embedding_reindex_routes
+
     register_embedding_reindex_routes(app)
 
     # Suggestions (pre-computed contextual prompts)
@@ -477,10 +484,12 @@ async def start_dashboard(
 
     # STT provider management (list/delete/activate models)
     from personalclaw.stt.handlers import register_stt_routes
+
     register_stt_routes(app)
 
     # Lexicon / Vocabulary (LEX.6): terms + learned corrections
     from personalclaw.lexicon.handlers import register_lexicon_routes
+
     register_lexicon_routes(app)
 
     # Vector Memory (Semantic)
@@ -602,7 +611,9 @@ async def start_dashboard(
     app.router.add_get("/api/chat/sessions/{session}/tool-result/{rid}", chat.api_chat_tool_result)
     app.router.add_post("/api/chat/sessions/{session}/stop", chat.api_chat_session_stop)
     app.router.add_post("/api/chat/sessions/{session}/interrupt", chat.api_chat_session_interrupt)
-    app.router.add_delete("/api/chat/sessions/{session}/queue/{queue_id}", chat.api_chat_session_queue_cancel)
+    app.router.add_delete(
+        "/api/chat/sessions/{session}/queue/{queue_id}", chat.api_chat_session_queue_cancel
+    )
     app.router.add_delete("/api/chat/sessions/{session}", chat.api_chat_session_delete)
     app.router.add_post("/api/chat/sessions/{session}/agent", chat.api_chat_session_agent)
     app.router.add_post("/api/chat/sessions/{session}/acp-agent", chat.api_chat_session_acp_agent)
@@ -610,8 +621,12 @@ async def start_dashboard(
     # Optimizer
     app.router.add_post("/api/optimizer/optimize", handlers.handle_optimize)
     app.router.add_post("/api/chat/sessions/{session}/model", chat.api_chat_session_model)
-    app.router.add_post("/api/chat/sessions/{session}/reasoning-effort", chat.api_chat_session_reasoning_effort)
-    app.router.add_post("/api/chat/sessions/{session}/workspace-dir", chat.api_chat_session_workspace_dir)
+    app.router.add_post(
+        "/api/chat/sessions/{session}/reasoning-effort", chat.api_chat_session_reasoning_effort
+    )
+    app.router.add_post(
+        "/api/chat/sessions/{session}/workspace-dir", chat.api_chat_session_workspace_dir
+    )
     app.router.add_get("/api/recent-projects", chat.api_recent_projects)
     app.router.add_patch("/api/chat/sessions/{session}/color", chat.api_chat_session_color)
     # Context injection (App Kit — silent background context)
@@ -645,13 +660,18 @@ async def start_dashboard(
         api_agent_marketplace_test,
         api_agent_marketplace_update,
     )
-    app.router.add_get("/api/agent-marketplace/marketplaces", api_agent_marketplace_list_marketplaces)
+
+    app.router.add_get(
+        "/api/agent-marketplace/marketplaces", api_agent_marketplace_list_marketplaces
+    )
     app.router.add_get("/api/agent-marketplace/agents", api_agent_marketplace_list)
     app.router.add_post("/api/agent-marketplace/agents", api_agent_marketplace_create)
     app.router.add_get("/api/agent-marketplace/agents/{name}", api_agent_marketplace_get)
     app.router.add_put("/api/agent-marketplace/agents/{name}", api_agent_marketplace_update)
     app.router.add_delete("/api/agent-marketplace/agents/{name}", api_agent_marketplace_delete)
-    app.router.add_post("/api/agent-marketplace/agents/{name}/activate", api_agent_marketplace_activate)
+    app.router.add_post(
+        "/api/agent-marketplace/agents/{name}/activate", api_agent_marketplace_activate
+    )
     app.router.add_post("/api/agent-marketplace/agents/{name}/test", api_agent_marketplace_test)
     # Agent metadata
     app.router.add_get("/api/agent-metadata/{name}", handlers.api_agent_metadata_get)
@@ -668,11 +688,17 @@ async def start_dashboard(
     app.router.add_post("/api/chat/mode", chat.api_chat_mode)
     app.router.add_post("/api/chat/task-mode", chat.api_chat_task_mode)
     app.router.add_post("/api/chat/nav/resolve-links", chat.api_nav_resolve_links)
-    app.router.add_post("/api/chat/sessions/{session}/generate-title", chat.api_chat_session_generate_title)
+    app.router.add_post(
+        "/api/chat/sessions/{session}/generate-title", chat.api_chat_session_generate_title
+    )
     app.router.add_patch("/api/chat/sessions/{session}/title", chat.api_chat_session_rename)
     app.router.add_post("/api/chat/sessions/{session}/regenerate", chat.api_chat_session_regenerate)
-    app.router.add_post("/api/chat/sessions/{session}/switch-variant", chat.api_chat_session_switch_variant)
-    app.router.add_post("/api/chat/sessions/{session}/edit-resend", chat.api_chat_session_edit_resend)
+    app.router.add_post(
+        "/api/chat/sessions/{session}/switch-variant", chat.api_chat_session_switch_variant
+    )
+    app.router.add_post(
+        "/api/chat/sessions/{session}/edit-resend", chat.api_chat_session_edit_resend
+    )
     # Folders
     app.router.add_get("/api/chat/folders", chat.api_chat_folders)
     app.router.add_post("/api/chat/folders", chat.api_chat_folder_create)
@@ -690,6 +716,7 @@ async def start_dashboard(
     # Magic re-tag — batch AI re-evaluation of every session's tags (board's
     # sparkle button). Progress streams over /api/ws (retag_progress/retag_done).
     from personalclaw.dashboard import chat_retag
+
     app.router.add_post("/api/sessions/retag-all", chat_retag.api_retag_all)
     app.router.add_get("/api/sessions/retag-all", chat_retag.api_retag_status)
     app.router.add_post("/api/sessions/retag-all/cancel", chat_retag.api_retag_cancel)
@@ -700,7 +727,9 @@ async def start_dashboard(
     app.router.add_delete("/api/chat/tag-columns/{id}", chat.api_chat_tag_column_delete)
     app.router.add_post("/api/voice/synthesize", chat.api_voice_synthesize)
     app.router.add_post("/api/chat/sessions/{session}/handoff", chat.api_chat_session_handoff)
-    app.router.add_post("/api/chat/sessions/{session}/channel-link", chat.api_chat_session_channel_link)
+    app.router.add_post(
+        "/api/chat/sessions/{session}/channel-link", chat.api_chat_session_channel_link
+    )
     app.router.add_get("/api/channels/reply-targets", chat.api_channel_reply_targets)
 
     app.router.add_post("/api/reveal", handlers.api_reveal_path)
@@ -759,6 +788,7 @@ async def start_dashboard(
         api_channel_test,
         api_channels_list,
     )
+
     app.router.add_get("/api/channels", api_channels_list)
     app.router.add_get("/api/channels/{name}", api_channel_get)
     app.router.add_post("/api/channels/{name}/connect", api_channel_connect)
@@ -772,6 +802,7 @@ async def start_dashboard(
         api_tools_list,
         api_tools_toggle,
     )
+
     app.router.add_get("/api/tools", api_tools_list)
     app.router.add_post("/api/tools/invoke", api_tool_invoke)
     app.router.add_post("/api/tools/toggle", api_tools_toggle)
@@ -779,20 +810,24 @@ async def start_dashboard(
 
     # Tasks — first-class entity with provider-based aggregation
     from personalclaw.tasks.handlers import register_task_routes
+
     register_task_routes(app)
 
     # Workflows — stateless scoped SOP definitions
     from personalclaw.workflows.handlers import register_workflow_routes
+
     register_workflow_routes(app)
 
     # The unified Loop engine — ONE /api/loops route family for every kind
     # (general/goal/code/design). Replaces the legacy /api/loops + /api/code routes
     # at the cutover (Slice 2e): the legacy loops/ + code/ packages are deleted.
     from personalclaw.dashboard.handlers.loop_routes import register_unified_loop_routes
+
     register_unified_loop_routes(app)
 
     # Artifacts — first-class entity (named/versioned LLM content) over a provider
     from personalclaw.artifacts.handlers import register_artifact_routes
+
     register_artifact_routes(app)
 
     # Inbox
@@ -860,16 +895,18 @@ async def start_dashboard(
     app.router.add_post("/api/hooks/agent", handlers.api_hooks_agent)
 
     # Extension system — discover and register provider extensions
+    from personalclaw.providers.entity_routes import register_entity_routes
+    from personalclaw.providers.instance_routes import register_instance_routes
     from personalclaw.providers.loader import load_all_extensions
     from personalclaw.providers.routes import register_routes as register_extension_routes
-    from personalclaw.providers.instance_routes import register_instance_routes
-    from personalclaw.providers.entity_routes import register_entity_routes
+
     load_all_extensions()
     # Sync config.json provider entries into the LLM registry IMMEDIATELY after
     # extensions load (types are now registered). Must happen BEFORE any handler
     # resolves a provider (e.g. embedding/knowledge auto-embed at boot).
     from personalclaw.llm.registry import sync_entries_from_config
     from personalclaw.providers.use_cases import migrate_legacy_bindings
+
     try:
         migrate_legacy_bindings()
     except Exception:
@@ -890,6 +927,7 @@ async def start_dashboard(
         extension is enabled — one source of truth, no parallel startup path.
         """
         from personalclaw.channel_transports import register_default_transports
+
         try:
             register_default_transports()
         except Exception:
@@ -901,6 +939,7 @@ async def start_dashboard(
         """UT3: fold any legacy ``settings/mcp.json`` content into the canonical
         ``~/.personalclaw/mcp.json`` once, so the dual store can't re-diverge."""
         from personalclaw.dashboard.handlers.mcp import _migrate_legacy_mcp_json
+
         try:
             _migrate_legacy_mcp_json()
         except Exception:
@@ -911,6 +950,7 @@ async def start_dashboard(
     async def _action_providers_startup(app_: web.Application) -> None:
         """Register the bundled action providers (bash, webhook, run-script, …)."""
         from personalclaw.action_providers.registry import _ensure_default_providers_registered
+
         try:
             _ensure_default_providers_registered()
         except Exception:
@@ -921,6 +961,7 @@ async def start_dashboard(
     async def _prompt_providers_startup(app_: web.Application) -> None:
         """Register the bundled native filesystem prompt provider."""
         from personalclaw.prompt_providers.registry import _ensure_default_providers_registered
+
         try:
             _ensure_default_providers_registered()
         except Exception:
@@ -935,10 +976,15 @@ async def start_dashboard(
         try:
             from personalclaw.config.loader import AppConfig
             from personalclaw.tool_providers import projection
-            projection.set_user_rules([
-                projection.ProjectionRule(name=r.name, match_regex=r.match_regex, strategy=r.strategy)
-                for r in AppConfig.load().tools.projection_rules
-            ])
+
+            projection.set_user_rules(
+                [
+                    projection.ProjectionRule(
+                        name=r.name, match_regex=r.match_regex, strategy=r.strategy
+                    )
+                    for r in AppConfig.load().tools.projection_rules
+                ]
+            )
         except Exception:
             logger.exception("Failed to install tool-output projection rules")
 
@@ -953,6 +999,7 @@ async def start_dashboard(
         """
         from personalclaw.llm.registry import sync_entries_from_config
         from personalclaw.providers.use_cases import migrate_legacy_bindings
+
         try:
             migrate_legacy_bindings()
         except Exception:
@@ -963,6 +1010,7 @@ async def start_dashboard(
             logger.exception("Failed to sync model providers from config")
         try:
             from personalclaw.local_models.registry import register_config_model_managers
+
             register_config_model_managers()
         except Exception:
             logger.exception("Failed to register config model-managers as local providers")
@@ -989,8 +1037,10 @@ async def start_dashboard(
             # Need the active model's dim to detect STALE (wrong-dim) vectors, not just
             # missing ones — so resolve the embedder first, then count.
             from personalclaw.dashboard.handlers.embedding_reindex import _resolve_embed
+
             embedder, embed_fn, model = _resolve_embed(app_)
-            active_dim = embedder.dim() if embedder is not None else None
+            _dim = getattr(embedder, "dim", None) if embedder is not None else None
+            active_dim = _dim() if callable(_dim) else None
             needing = ks.count_items_needing_reembed(active_dim)
             if needing <= 0:
                 return  # store is whole (or empty) — nothing to resume
@@ -999,21 +1049,30 @@ async def start_dashboard(
                     "Embedding re-index needed: %d knowledge item(s) missing/stale "
                     "vectors, but the active embedding model (%s) isn't ready — the "
                     "store stays keyword-searchable; re-run once the model is available.",
-                    needing, model or "none",
+                    needing,
+                    model or "none",
                 )
                 return
             from personalclaw.dashboard.handlers.memory import _get_provider
+
             vector_store = _get_provider(state)
             job, error = state.embedding_reindex().start(
-                model=model, knowledge_store=ks, vector_store=vector_store,
-                embedder=embedder, embed_fn=embed_fn,
+                model=model,
+                knowledge_store=ks,
+                vector_store=vector_store,
+                embedder=embedder,
+                embed_fn=embed_fn,
             )
             if error:
                 logger.warning("Auto-resume re-index refused: %s", error)
             else:
                 logger.info(
                     "Auto-resuming embedding re-index (%d item(s) missing/stale "
-                    "vectors) with model %s [job %s]", needing, model, getattr(job, "id", "?"))
+                    "vectors) with model %s [job %s]",
+                    needing,
+                    model,
+                    getattr(job, "id", "?"),
+                )
         except Exception:
             logger.exception("Failed to check/resume interrupted embedding re-index")
 
@@ -1152,8 +1211,8 @@ async def start_dashboard(
                 # that re-export the host's singletons. Blobs are origin-scoped; apps are
                 # still gated by the permission system + SkillScanner at install.
                 "script-src 'self' 'unsafe-inline' blob: "
-                "https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
-                "style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; "
+                "https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "  # noqa: E501
+                "style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; "  # noqa: E501
                 "img-src 'self' data: blob: https:; "
                 # Monaco (locally bundled) inlines its codicon icon font as a data: URI;
                 # without font-src the default-src 'self' fallback blocks it.
@@ -1248,10 +1307,14 @@ async def start_dashboard(
 
             def _deny(reason: str) -> web.StreamResponse:
                 from personalclaw.sel import sel
+
                 try:
                     sel().log_api_access(
-                        caller=f"app:{app_name}", operation=f"{request.method} {request.path}",
-                        outcome="denied", source="app_permissions", resources=request.path,
+                        caller=f"app:{app_name}",
+                        operation=f"{request.method} {request.path}",
+                        outcome="denied",
+                        source="app_permissions",
+                        resources=request.path,
                         error=reason,
                     )
                 except Exception:
@@ -1266,7 +1329,11 @@ async def start_dashboard(
             # A memory API path additionally requires the ``memory`` capability
             # (sandbox P3) — declaring the /api/memory path in permissions.api is
             # necessary but not sufficient; the app must also hold memory access.
-            if checker is not None and request.path.startswith("/api/memory") and not checker.can_use_memory("shared"):
+            if (
+                checker is not None
+                and request.path.startswith("/api/memory")
+                and not checker.can_use_memory("shared")
+            ):
                 return _deny("memory access not declared (permissions.memory)")
         return await handler(request)  # type: ignore[operator]
 
@@ -1317,38 +1384,42 @@ async def start_dashboard(
     # Explicit middleware ordering — self-documenting and immune to future insertions
     app.middlewares[:] = [
         no_cache_middleware,
-        *([_dev_user_middleware] if _no_auth else [
-            csrf_middleware,
-            token_auth_middleware(
-                internal_paths=frozenset(
-                    {
-                        "/api/send-message",
-                        "/api/session-keepalive",
-                        "/api/session-tool-policy",
-                        "/api/hooks/agent",
-                        "/api/outbox/notify",
-                        "/api/channel/upload-file",
-                        "/api/mcp/servers",
-                        "/api/tools/invoke",
-                    }
+        *(
+            [_dev_user_middleware]
+            if _no_auth
+            else [
+                csrf_middleware,
+                token_auth_middleware(
+                    internal_paths=frozenset(
+                        {
+                            "/api/send-message",
+                            "/api/session-keepalive",
+                            "/api/session-tool-policy",
+                            "/api/hooks/agent",
+                            "/api/outbox/notify",
+                            "/api/channel/upload-file",
+                            "/api/mcp/servers",
+                            "/api/tools/invoke",
+                        }
+                    ),
+                    mixed_internal_paths=frozenset(
+                        {
+                            # Called by MCP (loopback + secret) AND browser polling
+                            # (DCV/SSH-forwarded cookie auth).  See token_auth.py.
+                            "/api/spawn",
+                            "/api/lessons",
+                            # Trigger routes: browser (cookie) for the UI, plus the
+                            # internal on-demand fire (cron trigger / schedule_trigger
+                            # MCP tool) POSTs /api/triggers/{id}/run with the secret.
+                            "/api/triggers",
+                        }
+                    ),
+                    internal_secret=_internal_secret,
+                    port=port,
+                    local_only=local_only,
                 ),
-                mixed_internal_paths=frozenset(
-                    {
-                        # Called by MCP (loopback + secret) AND browser polling
-                        # (DCV/SSH-forwarded cookie auth).  See token_auth.py.
-                        "/api/spawn",
-                        "/api/lessons",
-                        # Trigger routes: browser (cookie) for the UI, plus the
-                        # internal on-demand fire (cron trigger / schedule_trigger
-                        # MCP tool) POSTs /api/triggers/{id}/run with the secret.
-                        "/api/triggers",
-                    }
-                ),
-                internal_secret=_internal_secret,
-                port=port,
-                local_only=local_only,
-            ),
-        ]),
+            ]
+        ),
         app_permission_middleware,
         sel_audit_middleware,
         spa_fallback,
@@ -1357,9 +1428,7 @@ async def start_dashboard(
     # Verify security invariant: if dashboard_url expands the CSRF origin
     # set for a remote URL, token auth middleware MUST be active.
     if dashboard_url:
-        _has_token_auth = any(
-            getattr(mw, "_is_token_auth", False) for mw in app.middlewares
-        )
+        _has_token_auth = any(getattr(mw, "_is_token_auth", False) for mw in app.middlewares)
         if _has_token_auth:
             app["allowed_origins"] = build_allowed_origins(
                 port, local_only, configured_host, dashboard_url
@@ -1467,6 +1536,7 @@ async def start_api_server(
     set_global_hook_store(state._hook_store)
 
     from personalclaw.inbox_providers.native_source import set_dashboard_state as _set_inbox_state
+
     _set_inbox_state(state)
 
     # Wire script hooks into subagent tool execution path
@@ -1484,6 +1554,7 @@ async def start_api_server(
     state.load_tags()
     app["port"] = port
     from personalclaw.auth.modes import AuthConfig as _AuthConfig
+
     app["auth_cfg"] = _AuthConfig.from_env()
 
     _precompute_telemetry(state)

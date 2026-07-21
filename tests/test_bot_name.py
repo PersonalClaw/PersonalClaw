@@ -34,7 +34,10 @@ class TestBotNameSubstitution:
         from personalclaw.context import ContextBuilder
 
         ctx = ContextBuilder(bot_name="Alita")
-        assert ctx._apply_runtime_vars("You are {{bot_name}}, an agent.", "cli_chat") == "You are Alita, an agent."
+        assert (
+            ctx._apply_runtime_vars("You are {{bot_name}}, an agent.", "cli_chat")
+            == "You are Alita, an agent."
+        )
 
     def test_empty_defaults_from_config(self):
         from unittest.mock import patch
@@ -45,7 +48,10 @@ class TestBotNameSubstitution:
         with patch("personalclaw.context.AppConfig.load") as mock_cfg:
             mock_cfg.return_value.agent.bot_name = ""
             ctx = ContextBuilder(bot_name="")
-            assert ctx._apply_runtime_vars("You are {{bot_name}}.", "cli_chat") == "You are PersonalClaw."
+            assert (
+                ctx._apply_runtime_vars("You are {{bot_name}}.", "cli_chat")
+                == "You are PersonalClaw."
+            )
 
         # Empty bot_name + a configured value → uses the config value.
         with patch("personalclaw.context.AppConfig.load") as mock_cfg:

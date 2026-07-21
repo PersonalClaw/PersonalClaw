@@ -64,6 +64,7 @@ class AttachmentExtractor:
         if task is None:
             # couldn't schedule a task (no loop) → extract inline
             from personalclaw.knowledge.extract import extract_file_content
+
             try:
                 return (await extract_file_content(path, mime))[:_MAX_TEXT_CHARS]
             except Exception:

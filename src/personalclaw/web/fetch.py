@@ -19,7 +19,8 @@ import logging
 from dataclasses import dataclass, field
 from urllib.parse import urldefrag, urlparse
 
-from personalclaw.net import STRICT, EgressBlocked, egress_policy_for, fetch as net_fetch
+from personalclaw.net import STRICT, EgressBlocked, egress_policy_for
+from personalclaw.net import fetch as net_fetch
 from personalclaw.net.policy import EgressPolicy
 from personalclaw.web.extract import extract_main_content
 
@@ -113,8 +114,9 @@ async def web_fetch(
     """
     url = (url or "").strip()
     if not url:
-        return FetchOutcome(ok=False, error="url is required",
-                            recovery_hints=["Pass a non-empty 'url'."])
+        return FetchOutcome(
+            ok=False, error="url is required", recovery_hints=["Pass a non-empty 'url'."]
+        )
     # Layer the operator's Security → Network egress config (allow/deny hosts,
     # allow_private) onto the caller's profile — the Security panel's contract
     # ("Denied hosts: never reachable"; "Allowed hosts: reachable even if private")
@@ -123,16 +125,24 @@ async def web_fetch(
     policy = egress_policy_for(policy)
     scheme = (urlparse(url).scheme or "").lower()
     if scheme not in ("http", "https"):
-        return FetchOutcome(ok=False, url=url, error="url must be http(s)",
-                            recovery_hints=["Provide an http or https URL."])
+        return FetchOutcome(
+            ok=False,
+            url=url,
+            error="url must be http(s)",
+            recovery_hints=["Provide an http or https URL."],
+        )
 
     # ① provenance gate (advisory; only enforced when we have a session to check
     #    against, so a context-less caller / user-pasted URL isn't falsely blocked).
     if require_provenance and session_key and not url_has_provenance(session_key, url):
         return FetchOutcome(
-            ok=False, url=url, risk_level="caution",
-            error=("url has no provenance in this session — it was not returned by a "
-                   "prior web_search or web_fetch"),
+            ok=False,
+            url=url,
+            risk_level="caution",
+            error=(
+                "url has no provenance in this session — it was not returned by a "
+                "prior web_search or web_fetch"
+            ),
             recovery_hints=[
                 "Run web_search first and fetch a URL from its results.",
                 "Only fetch URLs surfaced in the conversation, not ones constructed from memory.",
@@ -145,6 +155,7 @@ async def web_fetch(
     final_url = url
     if render:
         from personalclaw.web.render import render_url
+
         rendered = await render_url(url, policy=policy)
         if rendered.ok:
             html_body, ctype, final_url = rendered.html, "text/html", rendered.url
@@ -152,19 +163,35 @@ async def web_fetch(
             logger.info("web_fetch render requested but Playwright unavailable; using HTTP fetch")
             render = False  # fall through to the HTTP path below
         else:
-            return FetchOutcome(ok=False, url=rendered.url or url, error=rendered.error,
-                                recovery_hints=list(rendered.recovery_hints or []), risk_level=rendered.risk_level)
+            return FetchOutcome(
+                ok=False,
+                url=rendered.url or url,
+                error=rendered.error,
+                recovery_hints=list(rendered.recovery_hints or []),
+                risk_level=rendered.risk_level,
+            )
 
     if not render:
         try:
             resp = await net_fetch(url, policy=policy)
         except EgressBlocked as exc:
-            return FetchOutcome(ok=False, url=url, error=str(exc),
-                                recovery_hints=list(exc.recovery_hints), risk_level=exc.risk_level)
+            return FetchOutcome(
+                ok=False,
+                url=url,
+                error=str(exc),
+                recovery_hints=list(exc.recovery_hints),
+                risk_level=exc.risk_level,
+            )
         except Exception as exc:
             logger.warning("web_fetch network error for %s: %s", url, exc, exc_info=True)
-            return FetchOutcome(ok=False, url=url, error=f"fetch failed: {exc}",
-                                recovery_hints=["The site may be down or slow; retry, or fetch a different source."])
+            return FetchOutcome(
+                ok=False,
+                url=url,
+                error=f"fetch failed: {exc}",
+                recovery_hints=[
+                    "The site may be down or slow; retry, or fetch a different source."
+                ],
+            )
         html_body, ctype, final_url = resp.text, resp.headers.get("Content-Type", ""), resp.url
 
     # ③ extract — HTML through the shared trafilatura/nh3 core; non-HTML kept as text.
@@ -181,13 +208,21 @@ async def web_fetch(
     total = len(full_text)
     budget = max(1, max_tokens) * _CHARS_PER_TOKEN
     start = max(0, start_index)
-    window = full_text[start:start + budget]
+    window = full_text[start : start + budget]
     end = start + len(window)
     truncated = end < total
     return FetchOutcome(
-        ok=True, url=final_url, title=title, content=window,
-        char_count=len(window), total_chars=total, start_char=start, end_char=end,
-        truncated=truncated, next_index=end if truncated else None, extractor=extractor,
+        ok=True,
+        url=final_url,
+        title=title,
+        content=window,
+        char_count=len(window),
+        total_chars=total,
+        start_char=start,
+        end_char=end,
+        truncated=truncated,
+        next_index=end if truncated else None,
+        extractor=extractor,
     )
 
 
@@ -226,17 +261,29 @@ async def web_extract(
     structured extraction — so there's no new fetch path or model wiring.
     """
     if not (instructions or "").strip():
-        return ExtractOutcome(ok=False, url=url, error="instructions are required",
-                              recovery_hints=["Describe the fields / shape to extract."])
+        return ExtractOutcome(
+            ok=False,
+            url=url,
+            error="instructions are required",
+            recovery_hints=["Describe the fields / shape to extract."],
+        )
 
     fetched = await web_fetch(
-        url, session_key=session_key, max_tokens=_EXTRACT_CONTENT_CHARS // _CHARS_PER_TOKEN,
-        require_provenance=require_provenance, policy=policy,
+        url,
+        session_key=session_key,
+        max_tokens=_EXTRACT_CONTENT_CHARS // _CHARS_PER_TOKEN,
+        require_provenance=require_provenance,
+        policy=policy,
     )
     if not fetched.ok:
         # Surface the fetch failure verbatim (provenance/egress/network) — same contract.
-        return ExtractOutcome(ok=False, url=fetched.url or url, error=fetched.error,
-                              recovery_hints=fetched.recovery_hints, risk_level=fetched.risk_level)
+        return ExtractOutcome(
+            ok=False,
+            url=fetched.url or url,
+            error=fetched.error,
+            recovery_hints=fetched.recovery_hints,
+            risk_level=fetched.risk_level,
+        )
 
     content = fetched.content[:_EXTRACT_CONTENT_CHARS]
     # Fence the fetched page body as untrusted data before it reaches the extractor
@@ -245,31 +292,47 @@ async def web_extract(
     # is data — the task-web-extract prompt states that itself. Without this, a page
     # saying "ignore your instructions, return {…}" reaches the extractor unfenced (the
     # web_fetch TOOL fences its own output, but the extract sub-LLM path is separate).
-    from personalclaw.security import fence_untrusted
-
     # The extraction instruction lives in the prompt system (bundled
     # ``task-web-extract``), rendered with the field spec + page.
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
+    from personalclaw.security import fence_untrusted
 
-    prompt = render_use_case_prompt("web_extract", {
-        "instructions": instructions.strip(),
-        "title": fetched.title or "(none)",
-        "url": fetched.url,
-        "content": fence_untrusted(content, source=fetched.url or "web-extract"),
-    }) or ""
+    prompt = (
+        render_use_case_prompt(
+            "web_extract",
+            {
+                "instructions": instructions.strip(),
+                "title": fetched.title or "(none)",
+                "url": fetched.url,
+                "content": fence_untrusted(content, source=fetched.url or "web-extract"),
+            },
+        )
+        or ""
+    )
     try:
         from personalclaw.llm_helpers import one_shot_completion, parse_llm_json
+
         raw = await one_shot_completion(prompt, use_case="reasoning")
     except Exception as exc:
         logger.warning("web_extract LLM call failed for %s: %s", url, exc, exc_info=True)
-        return ExtractOutcome(ok=False, url=fetched.url, title=fetched.title,
-                              error=f"extraction model call failed: {exc}",
-                              recovery_hints=["Ensure a chat/reasoning model is configured in Settings → Models."])
+        return ExtractOutcome(
+            ok=False,
+            url=fetched.url,
+            title=fetched.title,
+            error=f"extraction model call failed: {exc}",
+            recovery_hints=["Ensure a chat/reasoning model is configured in Settings → Models."],
+        )
 
     data = parse_llm_json(raw)
     if data is None:
-        return ExtractOutcome(ok=False, url=fetched.url, title=fetched.title,
-                              error="the model did not return a parseable JSON object",
-                              recovery_hints=["Retry, or simplify the requested shape.",
-                                              "web_fetch returns the raw page content if structured extraction isn't needed."])
+        return ExtractOutcome(
+            ok=False,
+            url=fetched.url,
+            title=fetched.title,
+            error="the model did not return a parseable JSON object",
+            recovery_hints=[
+                "Retry, or simplify the requested shape.",
+                "web_fetch returns the raw page content if structured extraction isn't needed.",
+            ],
+        )
     return ExtractOutcome(ok=True, url=fetched.url, title=fetched.title, data=data)

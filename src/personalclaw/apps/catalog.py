@@ -41,8 +41,12 @@ _SOURCES_FILENAME = "app-sources.json"
 # stray large asset can't bloat the catalog payload.
 _HERO_MAX_BYTES = 1_500_000  # ~1.5 MB — generous for a banner, bounds the payload
 _HERO_MIME = {
-    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-    ".webp": "image/webp", ".gif": "image/gif", ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".svg": "image/svg+xml",
 }
 
 
@@ -77,6 +81,7 @@ def resolve_hero_url(app_dir: Path, hero_rel: str) -> str:
         logger.debug("could not read hero image %r under %s", hero_rel, app_dir, exc_info=True)
         return ""
 
+
 # Git source URLs PersonalClaw ships as Store defaults. Empty for now (the OSS
 # package ships no first-party remote registry yet); user-added URLs accumulate
 # alongside these. Kept as a constant so a future release can seed defaults here
@@ -103,7 +108,7 @@ def _first_party_source() -> Path | None:
 
 # Env override so a packaged/relocated install can point at the first-party dir
 # (or, later, this becomes the published git URL in _DEFAULT_GIT_SOURCES).
-import os as _os
+import os as _os  # noqa: E402
 
 _FIRST_PARTY_ENV = "PERSONALCLAW_FIRST_PARTY_APPS_DIR"
 
@@ -119,10 +124,10 @@ class CatalogEntry:
     icon: str = ""
     heroUrl: str = ""  # noqa: N815 — resolved data: URI (from manifest heroImage), "" if none
     author: str = ""
-    source: str = ""          # install source: a local path (bundled) or git URL
+    source: str = ""  # install source: a local path (bundled) or git URL
     sourceKind: str = "bundled"  # noqa: N815 — "bundled" | "git"
     isProvider: bool = False  # noqa: N815
-    providerType: str = ""    # noqa: N815
+    providerType: str = ""  # noqa: N815
     tags: list[str] = field(default_factory=list)
     # P20 federation: when this entry came from a source's registry index (not a
     # direct dir-scan), the install POINTER — the exact source string to hand
@@ -173,10 +178,10 @@ class RegistryPointer:
     authoritative manifest is only read at install time)."""
 
     name: str
-    repo: str = ""            # git URL (or path) to clone/read at install; "" → same source
-    branch: str = ""          # optional ref
-    subdirectory: str = ""    # optional path within the repo where app.json lives
-    displayName: str = ""     # noqa: N815 — index hint
+    repo: str = ""  # git URL (or path) to clone/read at install; "" → same source
+    branch: str = ""  # optional ref
+    subdirectory: str = ""  # optional path within the repo where app.json lives
+    displayName: str = ""  # noqa: N815 — index hint
     description: str = ""
     version: str = ""
     icon: str = ""
@@ -234,21 +239,26 @@ def _read_git_registry(url: str) -> str | None:
     git/timeout error (caller falls back to clone-then-scan). Never raises."""
     import subprocess
     import tempfile
+
     tmp = tempfile.mkdtemp(prefix="pclaw-registry-")
     try:
         proc = subprocess.run(
-            ["git", "clone", "--depth", "1", "--filter=blob:none", "--no-checkout",
-             "--", url, tmp],
-            capture_output=True, text=True, timeout=60,
+            ["git", "clone", "--depth", "1", "--filter=blob:none", "--no-checkout", "--", url, tmp],
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         if proc.returncode != 0:
-            logger.debug("app registry: git fetch failed for %s: %s", url,
-                         (proc.stderr or "")[-200:])
+            logger.debug(
+                "app registry: git fetch failed for %s: %s", url, (proc.stderr or "")[-200:]
+            )
             return None
         # Pull just the index file out of the tree without checking out the rest.
         show = subprocess.run(
             ["git", "-C", tmp, "show", f"HEAD:{_REGISTRY_FILENAME}"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         # A source with no registry index → git exits non-zero on the missing path.
         return show.stdout if show.returncode == 0 else ""
@@ -257,6 +267,7 @@ def _read_git_registry(url: str) -> str | None:
         return None
     finally:
         import shutil
+
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -291,10 +302,16 @@ def _pointer_to_entry(source: str, p: RegistryPointer, *, is_git: bool) -> Catal
     repo = p.repo or source
     pointer = repo + (f"#{p.subdirectory}" if p.subdirectory else "")
     return CatalogEntry(
-        name=p.name, displayName=p.displayName or p.name, description=p.description,
-        version=p.version, icon=p.icon, author=p.author,
-        source=source, sourceKind="git" if is_git else "local",
-        tags=list(p.tags), pointer=pointer,
+        name=p.name,
+        displayName=p.displayName or p.name,
+        description=p.description,
+        version=p.version,
+        icon=p.icon,
+        author=p.author,
+        source=source,
+        sourceKind="git" if is_git else "local",
+        tags=list(p.tags),
+        pointer=pointer,
     )
 
 
@@ -356,12 +373,15 @@ def _scan_git_source(url: str, *, now: float) -> list[CatalogEntry]:
     try:
         proc = subprocess.run(
             ["git", "clone", "--depth", "1", "--", url, tmp],
-            capture_output=True, text=True, timeout=90,
+            capture_output=True,
+            text=True,
+            timeout=90,
         )
         if proc.returncode != 0:
             logger.debug(
                 "git scan: clone failed for %s: %s",
-                url, (proc.stderr or "")[-200:],
+                url,
+                (proc.stderr or "")[-200:],
             )
             _git_scan_cache[url] = (now, [])
             return []
@@ -394,35 +414,39 @@ def _scan_git_source(url: str, *, now: float) -> list[CatalogEntry]:
             except Exception:
                 logger.debug(
                     "git scan: bad manifest %s in %s",
-                    entry.name, url, exc_info=True,
+                    entry.name,
+                    url,
+                    exc_info=True,
                 )
                 continue
             if m.name in installed or m.name in seen:
                 continue
             seen.add(m.name)
             _perms, _crons = _manifest_consent(m)
-            entries.append(CatalogEntry(
-                name=m.name,
-                displayName=m.displayName or m.name,
-                description=m.description,
-                version=m.version,
-                icon=m.icon,
-                heroUrl=resolve_hero_url(entry, m.heroImage),
-                author=m.author,
-                source=url,
-                sourceKind="git",
-                isProvider=bool(m.provider),
-                providerType=(
-                    m.provider.type if m.provider else ""
-                ),
-                tags=list(m.tags),
-                pointer=f"{url}#{entry.name}",
-                permissions=_perms,
-                crons=_crons,
-            ))
+            entries.append(
+                CatalogEntry(
+                    name=m.name,
+                    displayName=m.displayName or m.name,
+                    description=m.description,
+                    version=m.version,
+                    icon=m.icon,
+                    heroUrl=resolve_hero_url(entry, m.heroImage),
+                    author=m.author,
+                    source=url,
+                    sourceKind="git",
+                    isProvider=bool(m.provider),
+                    providerType=(m.provider.type if m.provider else ""),
+                    tags=list(m.tags),
+                    pointer=f"{url}#{entry.name}",
+                    permissions=_perms,
+                    crons=_crons,
+                )
+            )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         logger.debug(
-            "git scan: error scanning %s", url, exc_info=True,
+            "git scan: error scanning %s",
+            url,
+            exc_info=True,
         )
         entries = []
     finally:
@@ -451,6 +475,7 @@ def _scan_git_sources(*, now: float) -> list[CatalogEntry]:
 # ---------------------------------------------------------------------------
 # Git source list (user-managed, persisted)
 # ---------------------------------------------------------------------------
+
 
 def _sources_path() -> Path:
     return config_dir() / "apps" / _SOURCES_FILENAME
@@ -489,8 +514,11 @@ def _read_sources() -> dict[str, list[str]]:
 def _write_sources(sources: dict[str, list[str]]) -> None:
     p = _sources_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(p, json.dumps({"git": sources.get("git", []),
-                                "local": sources.get("local", [])}, indent=2) + "\n")
+    atomic_write(
+        p,
+        json.dumps({"git": sources.get("git", []), "local": sources.get("local", [])}, indent=2)
+        + "\n",
+    )
 
 
 def _read_user_sources() -> list[str]:
@@ -524,6 +552,7 @@ def remove_git_source(url: str) -> list[str]:
 # the dev-loop equivalent of a git source (e.g. the post-split ``apps/`` tree). The
 # install pipeline already handles a local path (source.resolve → origin="local");
 # this adds the persisted source list + dir-scan so local apps surface in the Store.
+
 
 def _default_local_sources() -> list[str]:
     """Always-present, read-only local sources: the FIRST-PARTY apps dir.
@@ -562,6 +591,7 @@ def add_local_source(path: str) -> list[str]:
     """Add a local app-source directory; returns the updated local list. Rejects a
     non-directory (a source must be a dir of app subdirs, not a single app or a file)."""
     from pathlib import Path
+
     p = path.strip()
     if not p:
         raise ValueError("empty source path")
@@ -596,19 +626,21 @@ def _manifest_consent(m: AppManifest) -> tuple[dict[str, Any], list[dict[str, An
         perms = {}
     crons: list[dict[str, Any]] = []
     try:
-        for c in (m.crons or []):
+        for c in m.crons or []:
             cd = c.to_dict() if hasattr(c, "to_dict") else {}
             # a compact, human-review summary: name + cadence + what it runs. A
             # manifest cron runs an AGENT with a MESSAGE (see app_crons: it becomes
             # make_agent_action(message=, agent=)) — there is no action/command field —
             # so "what it runs" is the agent + its prompt, straight from CronEntry.
-            crons.append({
-                "name": cd.get("name", ""),
-                "every": cd.get("every", 0),
-                "cron_expr": cd.get("cron_expr", ""),
-                "agent": cd.get("agent", ""),
-                "message": cd.get("message", ""),
-            })
+            crons.append(
+                {
+                    "name": cd.get("name", ""),
+                    "every": cd.get("every", 0),
+                    "cron_expr": cd.get("cron_expr", ""),
+                    "agent": cd.get("agent", ""),
+                    "message": cd.get("message", ""),
+                }
+            )
     except Exception:
         crons = []
     return perms, crons
@@ -619,6 +651,7 @@ def _scan_local_sources() -> list[CatalogEntry]:
     ``app.json``, surfacing them as one-click-installable catalog entries (mirrors
     ``available_bundled``'s manifest read). Skips apps already in the Library."""
     from pathlib import Path
+
     installed = _installed_names()
     out: list[CatalogEntry] = []
     seen: set[str] = set()
@@ -641,20 +674,31 @@ def _scan_local_sources() -> list[CatalogEntry]:
             # First-party default source → badge as "first-party"; user dirs → "local".
             kind = "first-party" if root in first_party_sources() else "local"
             _perms, _crons = _manifest_consent(m)
-            out.append(CatalogEntry(
-                name=m.name, displayName=m.displayName or m.name, description=m.description,
-                version=m.version, icon=m.icon,
-                heroUrl=resolve_hero_url(entry, m.heroImage),
-                author=m.author, source=str(entry), sourceKind=kind,
-                isProvider=bool(m.provider), providerType=(m.provider.type if m.provider else ""),
-                tags=list(m.tags), permissions=_perms, crons=_crons,
-            ))
+            out.append(
+                CatalogEntry(
+                    name=m.name,
+                    displayName=m.displayName or m.name,
+                    description=m.description,
+                    version=m.version,
+                    icon=m.icon,
+                    heroUrl=resolve_hero_url(entry, m.heroImage),
+                    author=m.author,
+                    source=str(entry),
+                    sourceKind=kind,
+                    isProvider=bool(m.provider),
+                    providerType=(m.provider.type if m.provider else ""),
+                    tags=list(m.tags),
+                    permissions=_perms,
+                    crons=_crons,
+                )
+            )
     return out
 
 
 # ---------------------------------------------------------------------------
 # Available-app enumeration
 # ---------------------------------------------------------------------------
+
 
 def _bundled_dir() -> Path:
     from personalclaw.providers.loader import BUNDLED_DIR
@@ -726,14 +770,24 @@ def available_bundled() -> list[CatalogEntry]:
         if m.name in installed:
             continue  # already in the Library (the normal case)
         _perms, _crons = _manifest_consent(m)
-        out.append(CatalogEntry(
-            name=m.name, displayName=m.displayName or m.name, description=m.description,
-            version=m.version, icon=m.icon,
-            heroUrl=resolve_hero_url(entry, m.heroImage),
-            author=m.author, source=str(entry), sourceKind="native",
-            isProvider=bool(m.provider), providerType=(m.provider.type if m.provider else ""),
-            tags=list(m.tags), permissions=_perms, crons=_crons,
-        ))
+        out.append(
+            CatalogEntry(
+                name=m.name,
+                displayName=m.displayName or m.name,
+                description=m.description,
+                version=m.version,
+                icon=m.icon,
+                heroUrl=resolve_hero_url(entry, m.heroImage),
+                author=m.author,
+                source=str(entry),
+                sourceKind="native",
+                isProvider=bool(m.provider),
+                providerType=(m.provider.type if m.provider else ""),
+                tags=list(m.tags),
+                permissions=_perms,
+                crons=_crons,
+            )
+        )
     return out
 
 
@@ -748,6 +802,7 @@ def available_catalog() -> dict[str, Any]:
     install (by URL for git, by discovered card for local).
     """
     import time
+
     now = time.time()
     return {
         "bundled": [e.to_dict() for e in available_bundled()],

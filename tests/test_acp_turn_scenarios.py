@@ -59,7 +59,9 @@ class _ScriptedStdout:
         return line
 
 
-def _client_with_frames(frames: list[dict], *, req_id: int = 1, session_key: str = "s") -> AcpClient:
+def _client_with_frames(
+    frames: list[dict], *, req_id: int = 1, session_key: str = "s"
+) -> AcpClient:
     """A ready AcpClient wired to a scripted stdout that emits *frames*, driven through
     the REAL turn path (FrameRouter → AcpSession) — the P9#7 wrapper architecture.
 
@@ -78,6 +80,7 @@ def _client_with_frames(frames: list[dict], *, req_id: int = 1, session_key: str
 
     class _FakeTransport:
         """Minimal transport: a readline() over the scripted frames + a no-op stdin."""
+
         def __init__(self):
             self._alive = True
 
@@ -121,20 +124,47 @@ _SID = "sess-abc"
 
 
 def _text(t: str, kind: str = "text") -> dict:
-    return {"method": "session/update", "params": {"sessionId": _SID, "update": {
-        "sessionUpdate": "agent_message_chunk", "content": {"type": kind, "text": t}}}}
+    return {
+        "method": "session/update",
+        "params": {
+            "sessionId": _SID,
+            "update": {
+                "sessionUpdate": "agent_message_chunk",
+                "content": {"type": kind, "text": t},
+            },
+        },
+    }
 
 
 def _tool_call(tid: str, title: str, kind: str = "read", raw: dict | None = None) -> dict:
-    return {"method": "session/update", "params": {"sessionId": _SID, "update": {
-        "sessionUpdate": "tool_call", "toolCallId": tid, "title": title, "kind": kind,
-        "rawInput": raw or {"path": "/x"}}}}
+    return {
+        "method": "session/update",
+        "params": {
+            "sessionId": _SID,
+            "update": {
+                "sessionUpdate": "tool_call",
+                "toolCallId": tid,
+                "title": title,
+                "kind": kind,
+                "rawInput": raw or {"path": "/x"},
+            },
+        },
+    }
 
 
 def _tool_update(tid: str, *, status: str = "completed", output: str = "done") -> dict:
-    return {"method": "session/update", "params": {"sessionId": _SID, "update": {
-        "sessionUpdate": "tool_call_update", "toolCallId": tid, "status": status,
-        "content": [{"type": "content", "content": {"type": "text", "text": output}}]}}}
+    return {
+        "method": "session/update",
+        "params": {
+            "sessionId": _SID,
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": tid,
+                "status": status,
+                "content": [{"type": "content", "content": {"type": "text", "text": output}}],
+            },
+        },
+    }
 
 
 def _complete(req_id: int = 1, reason: str = "end_turn") -> dict:
@@ -163,11 +193,13 @@ async def test_scenario_thinking_then_text():
 
 @pytest.mark.asyncio
 async def test_scenario_tool_call_then_update_result():
-    c = _client_with_frames([
-        _tool_call("t1", "Read file"),
-        _tool_update("t1", output="file contents"),
-        _complete(),
-    ])
+    c = _client_with_frames(
+        [
+            _tool_call("t1", "Read file"),
+            _tool_update("t1", output="file contents"),
+            _complete(),
+        ]
+    )
     events = await _collect(c)
     kinds = [e.kind for e in events]
     assert EVENT_TOOL_CALL in kinds
@@ -182,11 +214,20 @@ async def test_scenario_tool_call_then_update_result():
 
 @pytest.mark.asyncio
 async def test_scenario_permission_request():
-    c = _client_with_frames([
-        {"id": 55, "method": "session/request_permission",
-         "params": {"sessionId": _SID, "toolCall": {"title": "Write", "toolCallId": "t9"}, "options": []}},
-        _complete(),
-    ])
+    c = _client_with_frames(
+        [
+            {
+                "id": 55,
+                "method": "session/request_permission",
+                "params": {
+                    "sessionId": _SID,
+                    "toolCall": {"title": "Write", "toolCallId": "t9"},
+                    "options": [],
+                },
+            },
+            _complete(),
+        ]
+    )
     events = await _collect(c)
     perms = [e for e in events if e.kind == EVENT_PERMISSION_REQUEST]
     assert len(perms) == 1 and perms[0].title == "Write" and perms[0].request_id == 55
@@ -195,10 +236,16 @@ async def test_scenario_permission_request():
 
 @pytest.mark.asyncio
 async def test_scenario_agent_switch():
-    c = _client_with_frames([
-        {"method": METHOD_AGENT_SWITCHED, "params": {"sessionId": _SID, "agentName": "planner"}},
-        _text("switched"), _complete(),
-    ])
+    c = _client_with_frames(
+        [
+            {
+                "method": METHOD_AGENT_SWITCHED,
+                "params": {"sessionId": _SID, "agentName": "planner"},
+            },
+            _text("switched"),
+            _complete(),
+        ]
+    )
     events = await _collect(c)
     sw = [e for e in events if e.kind == EVENT_AGENT_SWITCHED]
     assert sw and sw[0].text == "planner"
@@ -210,7 +257,7 @@ async def test_scenario_tool_interrupted_marker_synthesizes_complete():
     c = _client_with_frames([_text("Tool uses were interrupted, waiting for the next user prompt")])
     c._emit_tool_interrupted_sel = MagicMock()  # skip SEL wiring, focus on the event contract
     events = await _collect(c)
-    assert events[-1].kind == EVENT_COMPLETE   # synthesized despite no `result` frame
+    assert events[-1].kind == EVENT_COMPLETE  # synthesized despite no `result` frame
     assert any(e.kind == EVENT_TEXT_CHUNK for e in events)
 
 
@@ -228,7 +275,9 @@ async def test_scenario_error_terminal_raises():
     # A terminal frame carrying `error` (not `result`) → the turn raises AcpError.
     from personalclaw.acp.errors import AcpError
 
-    c = _client_with_frames([_text("partial"), {"id": 1, "error": {"code": -32000, "message": "boom"}}])
+    c = _client_with_frames(
+        [_text("partial"), {"id": 1, "error": {"code": -32000, "message": "boom"}}]
+    )
     with pytest.raises(AcpError):
         await _collect(c)
 
@@ -237,10 +286,12 @@ async def test_scenario_error_terminal_raises():
 async def test_scenario_command_result_formatted_as_text():
     # stream_command uses commands/execute → the terminal result's message+data is
     # formatted into a text chunk (extract_agent_from_result path).
-    c = _client_with_frames([{"id": 1, "result": {"message": "usage report", "data": {"tokens": 42}}}])
+    c = _client_with_frames(
+        [{"id": 1, "result": {"message": "usage report", "data": {"tokens": 42}}}]
+    )
     events = [ev async for ev in c.stream_command("/usage")]
     texts = [e.text for e in events if e.kind == EVENT_TEXT_CHUNK]
-    assert any("usage report" in t and "\"tokens\": 42" in t for t in texts)
+    assert any("usage report" in t and '"tokens": 42' in t for t in texts)
     assert events[-1].kind == EVENT_COMPLETE
 
 
@@ -253,11 +304,25 @@ async def test_scenario_jsonl_tool_results_surface(tmp_path):
     # The per-session JSONL tail is owned by the AcpSession now (opt-in via its
     # session_files_dir); point it at the tmp file so the real reader surfaces results.
     c._session._session_files_dir = tmp_path
-    (tmp_path / "sess-abc.jsonl").write_text(json.dumps({
-        "kind": "ToolResults",
-        "data": {"content": [{"kind": "toolResult", "data": {
-            "toolUseId": "j1", "content": [{"kind": "text", "data": "jsonl output"}]}}]},
-    }) + "\n")
+    (tmp_path / "sess-abc.jsonl").write_text(
+        json.dumps(
+            {
+                "kind": "ToolResults",
+                "data": {
+                    "content": [
+                        {
+                            "kind": "toolResult",
+                            "data": {
+                                "toolUseId": "j1",
+                                "content": [{"kind": "text", "data": "jsonl output"}],
+                            },
+                        }
+                    ]
+                },
+            }
+        )
+        + "\n"
+    )
     events = await _collect(c)
     results = [e for e in events if e.kind == EVENT_TOOL_RESULT]
     assert len(results) == 1 and results[0].tool_call_id == "j1"
@@ -274,9 +339,9 @@ async def test_scenario_jsonl_tool_results_surface(tmp_path):
 async def test_scenario_send_message_concatenates_text():
     c = _client_with_frames([_text("Hello, "), _text("world!"), _complete()])
     result = await c.send_message("hi")
-    assert result == "Hello, world!"           # non-thinking chunks joined in order
+    assert result == "Hello, world!"  # non-thinking chunks joined in order
     assert c.last_prompt_stats.text_chunks == 2
-    assert c._last_stop_reason == "end_turn"   # terminal stopReason recorded for wait_turn_done
+    assert c._last_stop_reason == "end_turn"  # terminal stopReason recorded for wait_turn_done
 
 
 @pytest.mark.asyncio
@@ -284,7 +349,7 @@ async def test_scenario_send_message_excludes_thinking():
     # Thinking chunks stream to the UI but must NOT leak into the returned answer string.
     c = _client_with_frames([_text("deliberating", "thinking"), _text("final answer"), _complete()])
     result = await c.send_message("hi")
-    assert result == "final answer"            # thinking excluded from the concatenation
+    assert result == "final answer"  # thinking excluded from the concatenation
     assert c.last_prompt_stats.text_chunks == 1
 
 
@@ -292,7 +357,9 @@ async def test_scenario_send_message_excludes_thinking():
 async def test_scenario_send_message_error_frame_raises():
     from personalclaw.acp.errors import AcpError
 
-    c = _client_with_frames([_text("partial"), {"id": 1, "error": {"code": -32000, "message": "kaboom"}}])
+    c = _client_with_frames(
+        [_text("partial"), {"id": 1, "error": {"code": -32000, "message": "kaboom"}}]
+    )
     with pytest.raises(AcpError):
         await c.send_message("hi")
 
@@ -303,16 +370,18 @@ async def test_scenario_failed_tool_surfaces_result():
     # A tool_call_update with status="failed" carries the error text in the SAME
     # content shape as "completed" and MUST surface as EVENT_TOOL_RESULT (the user
     # needs to see the failure) — translate.extract_tool_update_events, the failed branch.
-    c = _client_with_frames([
-        _tool_call("t1", "Run ls"),
-        _tool_update("t1", status="failed", output="ls: /nope: No such file or directory"),
-        _complete(),
-    ])
+    c = _client_with_frames(
+        [
+            _tool_call("t1", "Run ls"),
+            _tool_update("t1", status="failed", output="ls: /nope: No such file or directory"),
+            _complete(),
+        ]
+    )
     events = await _collect(c)
     tr = [e for e in events if e.kind == EVENT_TOOL_RESULT]
     assert len(tr) == 1 and tr[0].tool_call_id == "t1"
-    assert "No such file or directory" in tr[0].tool_output   # failure text surfaced, not dropped
-    assert events[-1].kind == EVENT_COMPLETE                   # turn still completes normally
+    assert "No such file or directory" in tr[0].tool_output  # failure text surfaced, not dropped
+    assert events[-1].kind == EVENT_COMPLETE  # turn still completes normally
 
 
 # ── stale-synthetic complete (agent streamed text but never sent `result`) ─────

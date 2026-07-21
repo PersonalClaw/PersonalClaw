@@ -14,12 +14,13 @@ to any installed model app). Ollama is the one model provider that stays core-na
 (it owns model download/management), so it is not built on this surface.
 """
 
+from personalclaw.llm.anthropic import AnthropicProvider  # noqa: F401
 from personalclaw.llm.base import (  # noqa: F401
-    CancelOutcome,
     EVENT_COMPLETE,
     EVENT_TEXT_CHUNK,
     EVENT_THINKING_CHUNK,
     EVENT_TOOL_CALL,
+    CancelOutcome,
     LLMEvent,
     ModelProvider,
 )
@@ -34,14 +35,6 @@ from personalclaw.llm.catalog import (  # noqa: F401
     openai_compatible_list_models,
 )
 from personalclaw.llm.credentials import Credential  # noqa: F401
-from personalclaw.llm.registry import (  # noqa: F401
-    CredentialMissing,
-    ProviderEntry,
-    ProviderResolutionError,
-    get_default_registry,
-)
-from personalclaw.llm.stream_tags import KIND_OUTSIDE, make_think_splitter  # noqa: F401
-from personalclaw.model_windows import model_context_window  # noqa: F401
 
 # The two supported inference-PROTOCOL clients — the standards PersonalClaw speaks,
 # not provider-specific. A model-provider app declares which protocol it speaks +
@@ -50,7 +43,13 @@ from personalclaw.model_windows import model_context_window  # noqa: F401
 # on AnthropicProvider. (A provider with a distinct wire, e.g. Bedrock's Converse API,
 # owns its own client in its app.)
 from personalclaw.llm.openai import OpenAIProvider  # noqa: F401
-from personalclaw.llm.anthropic import AnthropicProvider  # noqa: F401
+from personalclaw.llm.registry import (  # noqa: F401
+    CredentialMissing,
+    ProviderEntry,
+    ProviderResolutionError,
+    get_default_registry,
+)
+from personalclaw.llm.stream_tags import KIND_OUTSIDE, make_think_splitter  # noqa: F401
 
 # Media-model catalog contribution: the OpenAI-compatible audio/image PROTOCOL
 # clients are core, but WHICH concrete models a vendor serves (OpenAI's whisper-1/
@@ -61,23 +60,50 @@ from personalclaw.media_catalogs import (  # noqa: F401
     MediaModel,
     register_media_catalog,
 )
+from personalclaw.model_windows import model_context_window  # noqa: F401
+
+# Media-capability config scanners — the app-owned extension point a model app
+# calls at import to contribute per-capability adapters (image/video/stt/embedding)
+# for its provider WITHOUT core knowing the vendor. See personalclaw.providers.media_scanners.
+from personalclaw.providers.media_scanners import register_scanner  # noqa: F401
 
 __all__ = [
-    "ModelProvider", "LLMEvent", "CancelOutcome",
-    "EVENT_COMPLETE", "EVENT_TEXT_CHUNK", "EVENT_THINKING_CHUNK", "EVENT_TOOL_CALL",
-    "Capability", "ProviderCapability",
+    "ModelProvider",
+    "LLMEvent",
+    "CancelOutcome",
+    "EVENT_COMPLETE",
+    "EVENT_TEXT_CHUNK",
+    "EVENT_THINKING_CHUNK",
+    "EVENT_TOOL_CALL",
+    "Capability",
+    "ProviderCapability",
     "Credential",
-    "get_default_registry", "ProviderEntry", "ProviderResolutionError", "CredentialMissing",
-    "KIND_OUTSIDE", "make_think_splitter",
+    "get_default_registry",
+    "ProviderEntry",
+    "ProviderResolutionError",
+    "CredentialMissing",
+    "KIND_OUTSIDE",
+    "make_think_splitter",
     "model_context_window",
-    "OpenAIProvider", "AnthropicProvider",
+    "OpenAIProvider",
+    "AnthropicProvider",
     # Catalog / management / connectivity axis (Settings → Models discovery).
-    "ModelCatalog", "ModelManager", "ModelInfo", "ConnectionResult", "PullProgress",
-    "infer_capabilities", "openai_compatible_list_models",
+    "ModelCatalog",
+    "ModelManager",
+    "ModelInfo",
+    "ConnectionResult",
+    "PullProgress",
+    "infer_capabilities",
+    "openai_compatible_list_models",
     # Branded/generic protocol-provider app helpers (see sdk.provider_helpers).
-    "BrandedProviderSpec", "register_branded_app",
+    "BrandedProviderSpec",
+    "register_branded_app",
     # Media-model catalog contribution (stt/tts/image vendor catalogs).
-    "MediaCatalog", "MediaModel", "register_media_catalog",
+    "MediaCatalog",
+    "MediaModel",
+    "register_media_catalog",
+    # Media-capability config scanner registration (app-owned extension point).
+    "register_scanner",
 ]
 
 # Imported LAST (after the names above are defined) — provider_helpers imports from

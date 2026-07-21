@@ -157,7 +157,9 @@ class TestWarmPool:
         await mgr.start_pool()
 
         key = "channel:abc123:agent1"
-        mgr._sessions[key] = mgr._sessions[BACKGROUND_KEY].__class__.__new__(mgr._sessions[BACKGROUND_KEY].__class__)
+        mgr._sessions[key] = mgr._sessions[BACKGROUND_KEY].__class__.__new__(
+            mgr._sessions[BACKGROUND_KEY].__class__
+        )
         mgr._sessions[key].__dict__.update(mgr._sessions[BACKGROUND_KEY].__dict__)
         mgr._sessions[key].last_used = time.monotonic() - 9999
 
@@ -362,6 +364,7 @@ class TestDeadProviderCleanup:
     def _make_provider(*, alive: bool = True):
         """Create a mock provider with sync is_alive."""
         from unittest.mock import MagicMock
+
         m = AsyncMock()
         m.start = AsyncMock()
         m.shutdown = AsyncMock()
@@ -855,9 +858,7 @@ class TestCompactCallback:
         with caplog.at_level(logging.WARNING, logger="personalclaw.session"):
             mgr.set_compact_callback(AsyncMock())
 
-        assert any(
-            "Compact callback already registered" in r.message for r in caplog.records
-        )
+        assert any("Compact callback already registered" in r.message for r in caplog.records)
         await mgr.close_all()
 
     @pytest.mark.asyncio
@@ -896,9 +897,7 @@ class TestCompactCallback:
             await mgr._compact_session("dashboard:chat-1", 95.0)
 
         cb.assert_awaited_once()
-        assert any(
-            "Compact callback failed" in r.message for r in caplog.records
-        )
+        assert any("Compact callback failed" in r.message for r in caplog.records)
         # Session still recycled, compacting flag cleared
         assert "dashboard:chat-1" not in mgr._sessions
         assert "dashboard:chat-1" not in mgr._compacting
@@ -1229,11 +1228,13 @@ class TestResetWithPid:
         mock_client._child_pids = {}
         provider._client = mock_client
 
-        with patch("os.kill", side_effect=[None, None]), \
-             patch("os.killpg") as mock_killpg, \
-             patch("os.getpgid", return_value=12345), \
-             patch("personalclaw.acp.client._get_child_pids", return_value=[]), \
-             patch("personalclaw.acp.client._get_start_time", return_value=None):
+        with (
+            patch("os.kill", side_effect=[None, None]),
+            patch("os.killpg") as mock_killpg,
+            patch("os.getpgid", return_value=12345),
+            patch("personalclaw.acp.client._get_child_pids", return_value=[]),
+            patch("personalclaw.acp.client._get_start_time", return_value=None),
+        ):
             await mgr.reset("k1")
             mock_killpg.assert_called_once()
 
@@ -1250,9 +1251,11 @@ class TestResetWithPid:
         mock_proc.returncode = None
         provider._proc = mock_proc
 
-        with patch("os.kill", side_effect=ProcessLookupError), \
-             patch("personalclaw.acp.client._get_child_pids", return_value=[]), \
-             patch("personalclaw.acp.client._get_start_time", return_value=None):
+        with (
+            patch("os.kill", side_effect=ProcessLookupError),
+            patch("personalclaw.acp.client._get_child_pids", return_value=[]),
+            patch("personalclaw.acp.client._get_start_time", return_value=None),
+        ):
             await mgr.reset("k1")
 
         provider.shutdown.assert_awaited_once()
@@ -1268,10 +1271,12 @@ class TestResetWithPid:
         mock_client._child_pids = {111: 1000, 222: 2000}
         provider._client = mock_client
 
-        with patch("os.kill", side_effect=ProcessLookupError), \
-             patch("personalclaw.acp.client._get_child_pids", return_value=[333]), \
-             patch("personalclaw.acp.client._get_start_time", return_value=3000), \
-             patch("personalclaw.acp.client._kill_escaped_children") as mock_sweep:
+        with (
+            patch("os.kill", side_effect=ProcessLookupError),
+            patch("personalclaw.acp.client._get_child_pids", return_value=[333]),
+            patch("personalclaw.acp.client._get_start_time", return_value=3000),
+            patch("personalclaw.acp.client._kill_escaped_children") as mock_sweep,
+        ):
             await mgr.reset("k1")
             mock_sweep.assert_called_once()
             # Should include both original children and discovered ones
@@ -1299,8 +1304,10 @@ class TestReloadProviderFactory:
         mock_pool_p = AsyncMock()
         mgr._warm_pool.put_nowait((mock_pool_p, "agent"))
 
-        with patch.object(AppConfig, "load", return_value=cfg), \
-             patch.object(cfg, "create_provider_factory", return_value=_mock_provider_factory()):
+        with (
+            patch.object(AppConfig, "load", return_value=cfg),
+            patch.object(cfg, "create_provider_factory", return_value=_mock_provider_factory()),
+        ):
             await mgr.reload_provider_factory()
 
         # Old sessions cleared
@@ -1315,8 +1322,10 @@ class TestReloadProviderFactory:
         provider, _, _ = await mgr.get_or_create("k1")
         mgr.release("k1")
 
-        with patch.object(AppConfig, "load", return_value=cfg), \
-             patch.object(cfg, "create_provider_factory", return_value=_mock_provider_factory()):
+        with (
+            patch.object(AppConfig, "load", return_value=cfg),
+            patch.object(cfg, "create_provider_factory", return_value=_mock_provider_factory()),
+        ):
             await mgr.reload_provider_factory()
 
         provider.shutdown.assert_awaited_once()
@@ -1330,8 +1339,10 @@ class TestReloadProviderFactory:
         mgr.release("k1")
         provider.shutdown = AsyncMock(side_effect=OSError("dead"))
 
-        with patch.object(AppConfig, "load", return_value=cfg), \
-             patch.object(cfg, "create_provider_factory", return_value=_mock_provider_factory()):
+        with (
+            patch.object(AppConfig, "load", return_value=cfg),
+            patch.object(cfg, "create_provider_factory", return_value=_mock_provider_factory()),
+        ):
             await mgr.reload_provider_factory()  # should not raise
 
         await mgr.close_all()
@@ -1514,6 +1525,7 @@ class TestContextInfo:
     def test_resolve_agent_model_from_file(self, cfg, tmp_path):
         """Reads model from agent JSON file."""
         import json
+
         if hasattr(SessionManager, "_agent_model_cache"):
             SessionManager._agent_model_cache.clear()
         agent_file = tmp_path / "test-agent.json"
@@ -1760,12 +1772,14 @@ class TestCleanupLoop:
         cfg.session.timeout_secs = 120
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
 
-        with patch.object(mgr, "_expire_idle", new_callable=AsyncMock) as mock_expire, \
-             patch("personalclaw.session._cleanup_orphaned_mcp_servers", return_value=0), \
-             patch("personalclaw.session._collect_active_pids", return_value=({}, True)), \
-             patch("personalclaw.session._periodic_pid_sweep", return_value=([], [])), \
-             patch("personalclaw.session._kill_confirmed_and_writeback", return_value=0), \
-             patch("personalclaw.session.shutdown_event") as mock_event:
+        with (
+            patch.object(mgr, "_expire_idle", new_callable=AsyncMock) as mock_expire,
+            patch("personalclaw.session._cleanup_orphaned_mcp_servers", return_value=0),
+            patch("personalclaw.session._collect_active_pids", return_value=({}, True)),
+            patch("personalclaw.session._periodic_pid_sweep", return_value=([], [])),
+            patch("personalclaw.session._kill_confirmed_and_writeback", return_value=0),
+            patch("personalclaw.session.shutdown_event") as mock_event,
+        ):
             # First wait_for returns TimeoutError (normal wakeup), second signals shutdown
             mock_event.is_set = lambda: mock_expire.await_count >= 1
             mock_event.wait = AsyncMock(side_effect=asyncio.TimeoutError)
@@ -1779,12 +1793,14 @@ class TestCleanupLoop:
         cfg.session.timeout_secs = 0
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
 
-        with patch.object(mgr, "_expire_idle", new_callable=AsyncMock) as mock_expire, \
-             patch("personalclaw.session._cleanup_orphaned_mcp_servers", return_value=0), \
-             patch("personalclaw.session._collect_active_pids", return_value=({}, True)), \
-             patch("personalclaw.session._periodic_pid_sweep", return_value=([], [])), \
-             patch("personalclaw.session._kill_confirmed_and_writeback", return_value=0), \
-             patch("personalclaw.session.shutdown_event") as mock_event:
+        with (
+            patch.object(mgr, "_expire_idle", new_callable=AsyncMock) as mock_expire,
+            patch("personalclaw.session._cleanup_orphaned_mcp_servers", return_value=0),
+            patch("personalclaw.session._collect_active_pids", return_value=({}, True)),
+            patch("personalclaw.session._periodic_pid_sweep", return_value=([], [])),
+            patch("personalclaw.session._kill_confirmed_and_writeback", return_value=0),
+            patch("personalclaw.session.shutdown_event") as mock_event,
+        ):
             call_count = [0]
 
             async def one_pass(*a, **kw):
@@ -1804,12 +1820,14 @@ class TestCleanupLoop:
         cfg.session.timeout_secs = 30  # below 60 minimum
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
 
-        with patch.object(mgr, "_expire_idle", new_callable=AsyncMock) as mock_expire, \
-             patch("personalclaw.session._cleanup_orphaned_mcp_servers", return_value=0), \
-             patch("personalclaw.session._collect_active_pids", return_value=({}, True)), \
-             patch("personalclaw.session._periodic_pid_sweep", return_value=([], [])), \
-             patch("personalclaw.session._kill_confirmed_and_writeback", return_value=0), \
-             patch("personalclaw.session.shutdown_event") as mock_event:
+        with (
+            patch.object(mgr, "_expire_idle", new_callable=AsyncMock) as mock_expire,
+            patch("personalclaw.session._cleanup_orphaned_mcp_servers", return_value=0),
+            patch("personalclaw.session._collect_active_pids", return_value=({}, True)),
+            patch("personalclaw.session._periodic_pid_sweep", return_value=([], [])),
+            patch("personalclaw.session._kill_confirmed_and_writeback", return_value=0),
+            patch("personalclaw.session.shutdown_event") as mock_event,
+        ):
             mock_event.is_set = lambda: mock_expire.await_count >= 1
             mock_event.wait = AsyncMock(side_effect=asyncio.TimeoutError)
             with caplog.at_level(logging.WARNING, logger="personalclaw.session"):
@@ -1945,6 +1963,7 @@ class TestIsProviderAliveFallback:
     @pytest.mark.asyncio
     async def test_fallback_to_is_alive(self, cfg):
         from unittest.mock import MagicMock
+
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         provider, _, _ = await mgr.get_or_create("k1")
         mgr.release("k1")
@@ -2090,9 +2109,7 @@ class TestCloseAllPersistence:
         mgr._sessions["dashboard:session0"] = _Session(provider=mock_provider)
         with patch.object(mgr._session_map, "set") as mock_set:
             await mgr.close_all()
-        mock_set.assert_called_once_with(
-            "dashboard:session0", "sid-persist-test", cwd="/tmp/test"
-        )
+        mock_set.assert_called_once_with("dashboard:session0", "sid-persist-test", cwd="/tmp/test")
 
 
 class TestRemove:
@@ -2226,9 +2243,11 @@ class TestGetOrCreatePoolClaim:
         """get_or_create with a stored session_map entry attempts resume."""
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         # Mock session_map to return a resume SID
-        with patch.object(mgr._session_map, "get", return_value="sid-resume-test"), \
-             patch.object(mgr._session_map, "get_cwd", return_value=None), \
-             patch.object(mgr._session_map, "get_provider", return_value="acp"):
+        with (
+            patch.object(mgr._session_map, "get", return_value="sid-resume-test"),
+            patch.object(mgr._session_map, "get_cwd", return_value=None),
+            patch.object(mgr._session_map, "get_provider", return_value="acp"),
+        ):
             provider, is_new, _ = await mgr.get_or_create("dashboard:session2")
             mgr.release("dashboard:session2")
         assert is_new is True

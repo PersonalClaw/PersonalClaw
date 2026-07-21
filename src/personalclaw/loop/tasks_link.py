@@ -27,7 +27,7 @@ def _phase_key(loop: Loop, phase: dict) -> str:
     strat = kinds.get_or_none(loop.kind)
     if strat is not None:
         return strat.phase_key(phase)
-    return (str(phase.get("stage", "")).strip() or str(phase.get("title", "")).strip())
+    return str(phase.get("stage", "")).strip() or str(phase.get("title", "")).strip()
 
 
 def _str_list(raw) -> list[str]:
@@ -42,6 +42,7 @@ def _str_list(raw) -> list[str]:
 
 def _hierarchy():
     from personalclaw.tasks.hierarchy import HierarchyStore
+
     return HierarchyStore()
 
 
@@ -68,6 +69,7 @@ def ensure_project(loop: Loop) -> str:
     new auto-project instead of nesting its per-stage TaskLists under the chosen one.
     Idempotent."""
     from personalclaw import projects as projects_svc
+
     chosen = loop.tasks_project_id or loop.project_id
     return projects_svc.resolve_project_id(chosen, auto_name=_loop_project_name(loop))
 
@@ -91,14 +93,17 @@ def ensure_phase_lists(loop: Loop, tasks_project_id: str) -> dict:
     # Short, stable per-loop tag so two loops' same-named phases don't collide. Loop ids
     # are uuid4().hex[:8] — already short; a leading '#' reads as a label, not a path.
     loop_tag = f" #{loop.id}"
-    for phase in (loop.plan or []):
+    for phase in loop.plan or []:
         if not isinstance(phase, dict):
             continue
         key = _phase_key(loop, phase)
         if not key or key in links:
             continue
-        base_name = (str(phase.get("task_list_name", "")).strip()
-                     or str(phase.get("title", "")).strip() or key.title())
+        base_name = (
+            str(phase.get("task_list_name", "")).strip()
+            or str(phase.get("title", "")).strip()
+            or key.title()
+        )
         list_name = f"{base_name}{loop_tag}"
         if list_name in existing_by_name:
             links[key] = existing_by_name[list_name]
@@ -120,12 +125,15 @@ async def decompose_sub_goals(loop_id: str) -> list[str]:
     loop = store.get(loop_id)
     if loop is None or loop.linked_task_ids:
         return []
-    sub_goals = [str(s).strip() for s in (loop.kind_config or {}).get("sub_goals", []) if str(s).strip()]
+    sub_goals = [
+        str(s).strip() for s in (loop.kind_config or {}).get("sub_goals", []) if str(s).strip()
+    ]
     if not sub_goals:
         return []
     try:
         from personalclaw import projects as projects_svc
         from personalclaw.tasks import registry
+
         tasks_project_id = ensure_project(loop)
         # Only auto-name a project WE created — never rename the user's explicitly
         # chosen Project (project_id from the composer's ProjectPicker), which is
@@ -134,13 +142,21 @@ async def decompose_sub_goals(loop_id: str) -> list[str]:
             projects_svc.maybe_rename_from(tasks_project_id, _loop_project_name(loop))
         h = _hierarchy()
         existing = {tl.name: tl.id for tl in h.list_task_lists(project_id=tasks_project_id)}
-        list_id = existing.get("Sub-goals") or h.create_task_list(name="Sub-goals", project_id=tasks_project_id).id
+        list_id = (
+            existing.get("Sub-goals")
+            or h.create_task_list(name="Sub-goals", project_id=tasks_project_id).id
+        )
         created: list[str] = []
         for sg in sub_goals:
-            task = await registry.create_task(provider_name="native", title=sg, task_list_id=list_id)
+            task = await registry.create_task(
+                provider_name="native", title=sg, task_list_id=list_id
+            )
             created.append(task.id)
-        store.set_tasks_links(loop_id, tasks_project_id=tasks_project_id,
-                              task_list_ids={**(loop.task_list_ids or {}), "sub_goals": list_id})
+        store.set_tasks_links(
+            loop_id,
+            tasks_project_id=tasks_project_id,
+            task_list_ids={**(loop.task_list_ids or {}), "sub_goals": list_id},
+        )
         store.link_tasks(loop_id, created)
         return created
     except Exception:
@@ -157,12 +173,15 @@ def provision(loop_id: str) -> Loop | None:
         return None
     try:
         from personalclaw import projects as projects_svc
+
         tasks_project_id = ensure_project(loop)
         # Only auto-name a project WE created — never rename the user's chosen Project.
         if not (loop.tasks_project_id or loop.project_id):
             projects_svc.maybe_rename_from(tasks_project_id, _loop_project_name(loop))
         links = ensure_phase_lists(loop, tasks_project_id)
-        return store.set_tasks_links(loop_id, tasks_project_id=tasks_project_id, task_list_ids=links)
+        return store.set_tasks_links(
+            loop_id, tasks_project_id=tasks_project_id, task_list_ids=links
+        )
     except Exception:
         logger.warning("Tasks provisioning failed for loop %s", loop_id, exc_info=True)
         return loop
@@ -183,10 +202,13 @@ async def resolved_stage_task_count(loop: Loop, phase_key: str) -> int:
         if not list_id:
             return 0
         from personalclaw.tasks import registry
+
         tasks, _ = await registry.list_all_tasks(task_list_id=list_id, limit=500)
         return sum(1 for t in tasks if _is_resolved(t.status))
     except Exception:
-        logger.debug("resolved_stage_task_count failed for %s phase %s", loop.id, phase_key, exc_info=True)
+        logger.debug(
+            "resolved_stage_task_count failed for %s phase %s", loop.id, phase_key, exc_info=True
+        )
         return 0
 
 
@@ -198,6 +220,7 @@ async def ready_queued_tasks(loop: Loop, phase_key: str) -> list:
         if not list_id:
             return []
         from personalclaw.tasks import registry
+
         tasks, _ = await registry.list_all_tasks(task_list_id=list_id, limit=500)
         by_id = {t.id: t for t in tasks}
         resolved_ids = {t.id for t in tasks if _is_resolved(t.status)}
@@ -212,7 +235,10 @@ async def ready_queued_tasks(loop: Loop, phase_key: str) -> list:
             return all(d in resolved_ids or d not in by_id for d in deps)
 
         ready = [t for t in tasks if is_ready(t)]
-        order = {tid: i for i, tid in enumerate((loop.kind_config or {}).get("queued_task_ids", []) or [])}
+        order = {
+            tid: i
+            for i, tid in enumerate((loop.kind_config or {}).get("queued_task_ids", []) or [])
+        }
         ready.sort(key=lambda t: order.get(t.id, 1_000_000))
         return ready
     except Exception:
@@ -222,6 +248,7 @@ async def ready_queued_tasks(loop: Loop, phase_key: str) -> list:
 
 async def mark_task_done(task_id: str) -> bool:
     from personalclaw.tasks import registry
+
     try:
         await registry.update_task(task_id, provider_name="native", status="done")
         return True
@@ -234,15 +261,20 @@ async def seed_phase_tasks(loop_id: str) -> int:
     loop's upfront 'final set of tasks'. Idempotent: only seeds an EMPTY list, so a
     re-launch never duplicates. Returns the count created. Never raises."""
     from personalclaw.tasks import registry
+
     loop = store.get(loop_id)
     if loop is None:
         return 0
     created = 0
-    for phase in (loop.plan or []):
+    for phase in loop.plan or []:
         if not isinstance(phase, dict):
             continue
         key = _phase_key(loop, phase)
-        specs = [t for t in (phase.get("tasks") or []) if isinstance(t, dict) and str(t.get("title", "")).strip()]
+        specs = [
+            t
+            for t in (phase.get("tasks") or [])
+            if isinstance(t, dict) and str(t.get("title", "")).strip()
+        ]
         if not key or not specs:
             continue
         list_id = phase_list_id(loop, key)
@@ -271,6 +303,7 @@ async def decompose_phase(loop_id: str, phase_key: str, tasks: list[dict]) -> li
     if not list_id:
         return []
     from personalclaw.tasks import registry
+
     created: list[str] = []
     by_orig: dict[int, str] = {}
     spec_by_orig: dict[int, dict] = {}
@@ -281,7 +314,8 @@ async def decompose_phase(loop_id: str, phase_key: str, tasks: list[dict]) -> li
         if not title:
             continue
         task = await registry.create_task(
-            provider_name="native", title=title,
+            provider_name="native",
+            title=title,
             description=str(spec.get("description", "")),
             priority=str(spec.get("priority", "medium")),
             task_list_id=list_id,
@@ -298,14 +332,23 @@ async def decompose_phase(loop_id: str, phase_key: str, tasks: list[dict]) -> li
         elif not isinstance(raw_deps, list):
             raw_deps = []
         dep_ids = [
-            by_orig[j] for j in raw_deps
-            if isinstance(j, int) and not isinstance(j, bool) and j != orig_idx and j < orig_idx and j in by_orig
+            by_orig[j]
+            for j in raw_deps
+            if isinstance(j, int)
+            and not isinstance(j, bool)
+            and j != orig_idx
+            and j < orig_idx
+            and j in by_orig
         ]
         if dep_ids:
             try:
-                await registry.update_task(by_orig[orig_idx], provider_name="native", depends_on=dep_ids)
+                await registry.update_task(
+                    by_orig[orig_idx], provider_name="native", depends_on=dep_ids
+                )
             except Exception:
-                logger.debug("decompose_phase: failed to set deps for %s", by_orig[orig_idx], exc_info=True)
+                logger.debug(
+                    "decompose_phase: failed to set deps for %s", by_orig[orig_idx], exc_info=True
+                )
     return created
 
 
@@ -322,6 +365,7 @@ async def reconcile_phase_done(loop_id: str, phase_key: str) -> int:
         if not list_id:
             return 0
         from personalclaw.tasks import registry
+
         tasks, _ = await registry.list_all_tasks(task_list_id=list_id, limit=500)
         closed = 0
         for t in tasks:
@@ -332,17 +376,23 @@ async def reconcile_phase_done(loop_id: str, phase_key: str) -> int:
                 closed += 1
             except ValueError:
                 try:
-                    met = [{**c, "status": "complete", "met": True}
-                           for c in (getattr(t, "exit_criteria", None) or [])]
+                    met = [
+                        {**c, "status": "complete", "met": True}
+                        for c in (getattr(t, "exit_criteria", None) or [])
+                    ]
                     await registry.update_task(t.id, exit_criteria=met, status="done")
                     closed += 1
                 except Exception:
-                    logger.debug("reconcile_phase_done: couldn't force-close %s", t.id, exc_info=True)
+                    logger.debug(
+                        "reconcile_phase_done: couldn't force-close %s", t.id, exc_info=True
+                    )
             except Exception:
                 logger.debug("reconcile_phase_done: update failed for %s", t.id, exc_info=True)
         return closed
     except Exception:
-        logger.warning("reconcile_phase_done failed for %s phase %s", loop_id, phase_key, exc_info=True)
+        logger.warning(
+            "reconcile_phase_done failed for %s phase %s", loop_id, phase_key, exc_info=True
+        )
         return 0
 
 
@@ -355,6 +405,7 @@ async def teardown_tasks(loop_id: str) -> int:
         if loop is None:
             return 0
         from personalclaw.tasks import registry
+
         removed = 0
         for list_id in (loop.task_list_ids or {}).values():
             if not list_id:

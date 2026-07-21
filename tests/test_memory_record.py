@@ -6,8 +6,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from personalclaw.memory_record import (
     MemoryCapabilities,
     MemoryKind,
@@ -17,7 +15,6 @@ from personalclaw.memory_record import (
     blob_to_embedding,
     embedding_to_blob,
 )
-
 
 # ── embedding blob encoding (must match vector_memory's on-disk format) ──
 
@@ -60,10 +57,16 @@ def test_embedding_blob_matches_store_encoding(tmp_path):
 
 def test_from_semantic_row_fact():
     row = {
-        "key": "pref.editor", "value_json": json.dumps("vim"), "confidence": 0.9,
-        "source": "user_explicit", "recall_count": 3, "superseded_by": None,
-        "invalidated_at": None, "is_deleted": 0,
-        "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-02T00:00:00+00:00",
+        "key": "pref.editor",
+        "value_json": json.dumps("vim"),
+        "confidence": 0.9,
+        "source": "user_explicit",
+        "recall_count": 3,
+        "superseded_by": None,
+        "invalidated_at": None,
+        "is_deleted": 0,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-02T00:00:00+00:00",
         "embedding": None,
     }
     rec = MemoryRecord.from_semantic_row(row)
@@ -80,9 +83,13 @@ def test_from_semantic_row_fact():
 
 def test_from_semantic_row_lesson_kind_by_key():
     row = {
-        "key": "lesson.abc123", "value_json": json.dumps("always run tests before pushing"),
-        "confidence": 0.8, "source": "consolidation", "is_deleted": 0,
-        "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00",
+        "key": "lesson.abc123",
+        "value_json": json.dumps("always run tests before pushing"),
+        "confidence": 0.8,
+        "source": "consolidation",
+        "is_deleted": 0,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:00+00:00",
     }
     rec = MemoryRecord.from_semantic_row(row)
     assert rec.kind == MemoryKind.LESSON
@@ -91,9 +98,13 @@ def test_from_semantic_row_lesson_kind_by_key():
 
 def test_from_semantic_row_non_string_value():
     row = {
-        "key": "pref.config", "value_json": json.dumps({"a": 1, "b": [2, 3]}),
-        "confidence": 0.7, "source": "x", "is_deleted": 0,
-        "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00",
+        "key": "pref.config",
+        "value_json": json.dumps({"a": 1, "b": [2, 3]}),
+        "confidence": 0.7,
+        "source": "x",
+        "is_deleted": 0,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:00+00:00",
     }
     rec = MemoryRecord.from_semantic_row(row)
     assert rec.value == {"a": 1, "b": [2, 3]}
@@ -106,9 +117,14 @@ def test_from_semantic_row_non_string_value():
 
 def test_from_episodic_row():
     row = {
-        "id": "uuid-1", "conversation_id": "conv-9", "text": "discussed the migration plan",
-        "embedding": None, "tags": json.dumps(["migration", "plan"]), "importance": 0.7,
-        "created_at": "2026-01-01T00:00:00+00:00", "last_accessed_at": "2026-01-03T00:00:00+00:00",
+        "id": "uuid-1",
+        "conversation_id": "conv-9",
+        "text": "discussed the migration plan",
+        "embedding": None,
+        "tags": json.dumps(["migration", "plan"]),
+        "importance": 0.7,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "last_accessed_at": "2026-01-03T00:00:00+00:00",
         "is_deleted": 0,
     }
     rec = MemoryRecord.from_episodic_row(row)
@@ -142,7 +158,12 @@ def test_to_public_dict_omits_embedding_bytes():
 def test_capabilities_defaults_and_dict():
     caps = MemoryCapabilities(vector=True, event_log=True)
     d = caps.to_dict()
-    assert d == {"vector": True, "transactional_batch": False, "event_log": True, "full_text_search": True}
+    assert d == {
+        "vector": True,
+        "transactional_batch": False,
+        "event_log": True,
+        "full_text_search": True,
+    }
 
 
 # ── store-level typed-record view (M0, read-only over both tables) ──

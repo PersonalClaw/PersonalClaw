@@ -35,7 +35,9 @@ async def test_cache_deduplicates_calls_within_ttl():
         call_count += 1
         return {"sess-1": {"reason": "subagent_timeout"}}
 
-    with patch("personalclaw.dashboard.session_health.compute_session_health", side_effect=fake_compute):
+    with patch(
+        "personalclaw.dashboard.session_health.compute_session_health", side_effect=fake_compute
+    ):
         resp1 = await sessions.api_sessions_health(_make_request())
         resp2 = await sessions.api_sessions_health(_make_request())
 

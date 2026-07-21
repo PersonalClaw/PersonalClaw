@@ -65,8 +65,7 @@ class LexiconStore:
         self._init_schema()
 
     def _init_schema(self) -> None:
-        self.db.executescript(
-            """
+        self.db.executescript("""
             CREATE TABLE IF NOT EXISTS terms (
                 id TEXT PRIMARY KEY,
                 canonical TEXT NOT NULL,
@@ -101,14 +100,20 @@ class LexiconStore:
                 PRIMARY KEY (phonetic_key, term_id)
             );
             CREATE INDEX IF NOT EXISTS idx_phon_key ON phonetic_index(phonetic_key);
-            """
-        )
+            """)
 
     # ── terms ────────────────────────────────────────────────────────────────
     def upsert_term(
-        self, term_id: str, canonical: str, *, aliases: list[str] | None = None,
-        phonetic_keys: list[str] | None = None, entity_type: str = "",
-        weight: float = 1.0, source: str = "graph", enabled: bool = True,
+        self,
+        term_id: str,
+        canonical: str,
+        *,
+        aliases: list[str] | None = None,
+        phonetic_keys: list[str] | None = None,
+        entity_type: str = "",
+        weight: float = 1.0,
+        source: str = "graph",
+        enabled: bool = True,
     ) -> None:
         now = _now()
         aliases_j = json.dumps(aliases or [])
@@ -135,8 +140,18 @@ class LexiconStore:
                  phonetic_keys_json=excluded.phonetic_keys_json, entity_type=excluded.entity_type,
                  weight=excluded.weight, source=excluded.source, enabled=excluded.enabled,
                  updated_at=excluded.updated_at""",
-            (term_id, canonical, aliases_j, keys_j, entity_type, weight, eff_source,
-             1 if eff_enabled else 0, created, now),
+            (
+                term_id,
+                canonical,
+                aliases_j,
+                keys_j,
+                entity_type,
+                weight,
+                eff_source,
+                1 if eff_enabled else 0,
+                created,
+                now,
+            ),
         )
         # Rebuild this term's phonetic index rows.
         self.db.execute("DELETE FROM phonetic_index WHERE term_id = ?", (term_id,))
@@ -152,14 +167,19 @@ class LexiconStore:
             (delta, _now(), canonical),
         )
 
-    def list_terms(self, *, source: str = "", search: str = "", limit: int = 500) -> list[LexiconTerm]:
+    def list_terms(
+        self, *, source: str = "", search: str = "", limit: int = 500
+    ) -> list[LexiconTerm]:
         q = "SELECT * FROM terms WHERE 1=1"
         args: list = []
         if source:
-            q += " AND source = ?"; args.append(source)
+            q += " AND source = ?"
+            args.append(source)
         if search:
-            q += " AND canonical LIKE ?"; args.append(f"%{search}%")
-        q += " ORDER BY weight DESC, canonical LIMIT ?"; args.append(limit)
+            q += " AND canonical LIKE ?"
+            args.append(f"%{search}%")
+        q += " ORDER BY weight DESC, canonical LIMIT ?"
+        args.append(limit)
         return [_row_to_term(r) for r in self.db.execute(q, args)]
 
     def top_terms(self, limit: int) -> list[LexiconTerm]:
@@ -229,7 +249,12 @@ class LexiconStore:
 
     # ── corrections ────────────────────────────────────────────────────────────
     def upsert_correction(
-        self, heard: str, meant: str, *, phonetic_key: str = "", auto_apply: bool | None = None,
+        self,
+        heard: str,
+        meant: str,
+        *,
+        phonetic_key: str = "",
+        auto_apply: bool | None = None,
         threshold: int = 2,
     ) -> Correction:
         now = _now()
@@ -252,7 +277,9 @@ class LexiconStore:
             "UPDATE corrections SET count = ?, auto_apply = ?, last_seen = ? WHERE id = ?",
             (new_count, new_aa, now, row["id"]),
         )
-        return Correction(row["id"], heard, meant, row["phonetic_key"], new_count, bool(new_aa), now)
+        return Correction(
+            row["id"], heard, meant, row["phonetic_key"], new_count, bool(new_aa), now
+        )
 
     def auto_corrections(self) -> dict[str, str]:
         """heard → meant map for corrections flagged auto_apply (case-insensitive heard)."""
@@ -266,8 +293,15 @@ class LexiconStore:
             "SELECT * FROM corrections ORDER BY count DESC, last_seen DESC LIMIT ?", (limit,)
         )
         return [
-            Correction(r["id"], r["heard"], r["meant"], r["phonetic_key"],
-                       int(r["count"]), bool(r["auto_apply"]), r["last_seen"])
+            Correction(
+                r["id"],
+                r["heard"],
+                r["meant"],
+                r["phonetic_key"],
+                int(r["count"]),
+                bool(r["auto_apply"]),
+                r["last_seen"],
+            )
             for r in rows
         ]
 
@@ -292,9 +326,12 @@ def _now() -> str:
 
 def _row_to_term(r: sqlite3.Row) -> LexiconTerm:
     return LexiconTerm(
-        id=r["id"], canonical=r["canonical"],
+        id=r["id"],
+        canonical=r["canonical"],
         aliases=json.loads(r["aliases_json"] or "[]"),
         phonetic_keys=json.loads(r["phonetic_keys_json"] or "[]"),
-        entity_type=r["entity_type"] or "", weight=float(r["weight"] or 0.0),
-        source=r["source"] or "graph", enabled=bool(r["enabled"]),
+        entity_type=r["entity_type"] or "",
+        weight=float(r["weight"] or 0.0),
+        source=r["source"] or "graph",
+        enabled=bool(r["enabled"]),
     )

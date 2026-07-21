@@ -38,29 +38,31 @@ class ResearchKind(GoalKind):
         # exactly the "how deep / how many sources" control). Carries the research-
         # specific shape the brief + nudge read.
         cfg = super().default_kind_config()
-        cfg.update({
-            "goal_type": "open_ended",
-            # The living research plan — seeded at classify, expanded/pruned each cycle.
-            "subtopics": [],
-            # How the user wants the output shaped (a template name, an outline, or a
-            # free description) and the MANNER (tone/format/audience). Empty → the worker
-            # infers a sensible report structure but still honors any stated manner.
-            "output_template": "",
-            "output_manner": "",
-            # Soft ceiling on sources/articles the loop will pull before it must start
-            # converging (0 = no cap → bounded only by the granularity dial + max_cycles).
-            "source_budget": 0,
-            # Breadth×depth shape of each cycle (GPT-Researcher's 3×2 default): how many
-            # subtopics to advance in parallel per cycle (breadth) and how many sources
-            # to fetch+read per subtopic (depth). The budget axis that turns "search the
-            # web" into a bounded, predictable sweep.
-            "breadth": 3,
-            "depth": 2,
-            # Per-tool call ceiling PER CYCLE (a budget axis separate from cycle count +
-            # token budget) — keeps one cycle from runaway-calling search/fetch.
-            "max_uses_per_cycle": 12,
-            "primary_deliverable": "RESEARCH.md",
-        })
+        cfg.update(
+            {
+                "goal_type": "open_ended",
+                # The living research plan — seeded at classify, expanded/pruned each cycle.
+                "subtopics": [],
+                # How the user wants the output shaped (a template name, an outline, or a
+                # free description) and the MANNER (tone/format/audience). Empty → the worker
+                # infers a sensible report structure but still honors any stated manner.
+                "output_template": "",
+                "output_manner": "",
+                # Soft ceiling on sources/articles the loop will pull before it must start
+                # converging (0 = no cap → bounded only by the granularity dial + max_cycles).
+                "source_budget": 0,
+                # Breadth×depth shape of each cycle (GPT-Researcher's 3×2 default): how many
+                # subtopics to advance in parallel per cycle (breadth) and how many sources
+                # to fetch+read per subtopic (depth). The budget axis that turns "search the
+                # web" into a bounded, predictable sweep.
+                "breadth": 3,
+                "depth": 2,
+                # Per-tool call ceiling PER CYCLE (a budget axis separate from cycle count +
+                # token budget) — keeps one cycle from runaway-calling search/fetch.
+                "max_uses_per_cycle": 12,
+                "primary_deliverable": "RESEARCH.md",
+            }
+        )
         return cfg
 
     async def classify(self, task: str, ask, *, skills=None, workflows=None, agents=None) -> dict:
@@ -90,12 +92,16 @@ class ResearchKind(GoalKind):
         base = super().turn_directive(loop)
         cfg = loop.kind_config or {}
         manner = str(cfg.get("output_manner", "")).strip()
-        bits = ["[Deep research — expand/prune your subtopic list as findings warrant, "
-                "`web_search` broadly then `web_fetch` and read the highest-signal sources' "
-                "actual content (not just snippets), and track which URLs you've covered so "
-                "you don't repeat them.]"]
+        bits = [
+            "[Deep research — expand/prune your subtopic list as findings warrant, "
+            "`web_search` broadly then `web_fetch` and read the highest-signal sources' "
+            "actual content (not just snippets), and track which URLs you've covered so "
+            "you don't repeat them.]"
+        ]
         if manner:
-            bits.append(f"[Output manner — the report MUST follow the user's requested manner: {manner}.]")
+            bits.append(
+                f"[Output manner — the report MUST follow the user's requested manner: {manner}.]"
+            )
         return (base + " " + " ".join(bits)).strip() if base else " ".join(bits)
 
     def build_brief(self, loop: Loop, context_dir: str = "") -> str:
@@ -118,42 +124,71 @@ class ResearchKind(GoalKind):
         breadth = _int("breadth", 3)
         depth = _int("depth", 2)
         max_uses = _int("max_uses_per_cycle", 12)
-        extra = ["", "---", "", "## Research Plan", "",
-                 "This is a **deep-research loop**. Each cycle advances a living research "
-                 "plan toward a synthesized report — you are expected to read MANY sources "
-                 "(tens to hundreds, as the signal demands), not stop at the first few."]
+        extra = [
+            "",
+            "---",
+            "",
+            "## Research Plan",
+            "",
+            "This is a **deep-research loop**. Each cycle advances a living research "
+            "plan toward a synthesized report — you are expected to read MANY sources "
+            "(tens to hundreds, as the signal demands), not stop at the first few.",
+        ]
         extra += ["", "**Subtopics (living — expand and prune as you learn):**"]
-        extra += [f"- {s}" for s in subtopics] or ["- (none yet — derive the initial subtopics from the request on cycle 1)"]
+        extra += [f"- {s}" for s in subtopics] or [
+            "- (none yet — derive the initial subtopics from the request on cycle 1)"
+        ]
         if template:
-            extra += ["", f"**Output template / structure (REQUIRED):** {template}",
-                      "Shape the report to this structure exactly."]
+            extra += [
+                "",
+                f"**Output template / structure (REQUIRED):** {template}",
+                "Shape the report to this structure exactly.",
+            ]
         if manner:
-            extra += ["", f"**Output manner (REQUIRED):** {manner}",
-                      "This governs tone, format, depth, and audience — honor it precisely; "
-                      "the report is judged on following the requested manner, not just on facts."]
-        extra += ["", "**Tools:** use `web_search` to find sources (pass `use_case:\"search-news\"` "
-                  "for recency-sensitive subtopics) and `web_fetch` to read the actual content of a "
-                  "result URL (only fetch URLs that web_search surfaced; large pages paginate — "
-                  "follow the returned next_index). Cite the URLs you fetched, not snippets alone."]
-        extra += ["", "**Method each cycle (breadth×depth):** "
-                  f"(1) advance the top **{breadth}** open subtopics this cycle (breadth); "
-                  f"(2) for each, `web_search` then `web_fetch` the most promising **{depth}** sources "
-                  "(depth) and read their real content; (3) extract evidence with citations; "
-                  "(4) update each subtopic's report section; (5) revise the subtopic list — add gaps "
-                  "you discovered, mark covered ones, prune dead ends; (6) record sources_checked + "
-                  "new_findings_count in the finding so the judge can see whether returns are still "
-                  f"accruing. Keep web tool calls to ~**{max_uses}** per cycle — if you need more, that "
-                  "is a sign to converge or split into another cycle."]
-        extra += ["", "**Persist sources:** for each high-value source you fetch, save it to the "
-                  "knowledge base with `knowledge_create` (type `bookmark`, the source URL, a one-line "
-                  "summary) so the evidence is browsable + survives the loop and the report can cite "
-                  "back into it. Skip near-duplicates of what you've already saved."]
+            extra += [
+                "",
+                f"**Output manner (REQUIRED):** {manner}",
+                "This governs tone, format, depth, and audience — honor it precisely; "
+                "the report is judged on following the requested manner, not just on facts.",
+            ]
+        extra += [
+            "",
+            '**Tools:** use `web_search` to find sources (pass `use_case:"search-news"` '
+            "for recency-sensitive subtopics) and `web_fetch` to read the actual content of a "
+            "result URL (only fetch URLs that web_search surfaced; large pages paginate — "
+            "follow the returned next_index). Cite the URLs you fetched, not snippets alone.",
+        ]
+        extra += [
+            "",
+            "**Method each cycle (breadth×depth):** "
+            f"(1) advance the top **{breadth}** open subtopics this cycle (breadth); "
+            f"(2) for each, `web_search` then `web_fetch` the most promising **{depth}** sources "
+            "(depth) and read their real content; (3) extract evidence with citations; "
+            "(4) update each subtopic's report section; (5) revise the subtopic list — add gaps "
+            "you discovered, mark covered ones, prune dead ends; (6) record sources_checked + "
+            "new_findings_count in the finding so the judge can see whether returns are still "
+            f"accruing. Keep web tool calls to ~**{max_uses}** per cycle — if you need more, that "
+            "is a sign to converge or split into another cycle.",
+        ]
+        extra += [
+            "",
+            "**Persist sources:** for each high-value source you fetch, save it to the "
+            "knowledge base with `knowledge_create` (type `bookmark`, the source URL, a one-line "
+            "summary) so the evidence is browsable + survives the loop and the report can cite "
+            "back into it. Skip near-duplicates of what you've already saved.",
+        ]
         if budget > 0:
-            extra += ["", f"**Source budget:** aim to consult up to ~{budget} sources before "
-                      "converging; if returns flatten earlier, start synthesizing."]
-        extra += ["", "**Convergence:** a separate judge scores marginal value each cycle; when "
-                  "new sources stop changing the conclusions (returns exhausted on your "
-                  "granularity dial), the loop completes with the report as the deliverable."]
+            extra += [
+                "",
+                f"**Source budget:** aim to consult up to ~{budget} sources before "
+                "converging; if returns flatten earlier, start synthesizing.",
+            ]
+        extra += [
+            "",
+            "**Convergence:** a separate judge scores marginal value each cycle; when "
+            "new sources stop changing the conclusions (returns exhausted on your "
+            "granularity dial), the loop completes with the report as the deliverable.",
+        ]
         return brief + "\n" + "\n".join(extra)
 
     def cycle_nudge(self, loop: Loop, loop_dir: str) -> str:
@@ -170,7 +205,6 @@ class ResearchKind(GoalKind):
             "discovered gaps, mark covered, prune dead ends)."
         )
         return base + "\n" + addendum
-
 
     def walkthrough(self):
         """Research-specific planning walkthrough (intent → subtopics → output
@@ -191,10 +225,12 @@ class _ResearchWalkthrough(_GoalWalkthrough):
 
     def default_steps(self) -> list[dict]:
         from personalclaw.loop import research_plan_briefs as pw
+
         return pw.default_steps()
 
     def build_step_brief(self, task, step, *, approved, workspace_dir):
         from personalclaw.loop import research_plan_briefs as pw
+
         return pw.build_step_brief(task, step, approved=approved)
 
     def project_to_spec(self, session) -> dict:
@@ -230,13 +266,17 @@ class _ResearchWalkthrough(_GoalWalkthrough):
                 if manner:
                     kc_patch["output_manner"] = manner
             elif step.kind == "execution_plan":
-                phases = [p for p in (art.get("execution_plan") or [])
-                          if isinstance(p, dict) and (str(p.get("role", "")).strip()
-                                                      or str(p.get("target", "")).strip())]
+                phases = [
+                    p
+                    for p in (art.get("execution_plan") or [])
+                    if isinstance(p, dict)
+                    and (str(p.get("role", "")).strip() or str(p.get("target", "")).strip())
+                ]
                 if phases:
                     kc_patch["execution_plan"] = phases
         if kc_patch:
             from personalclaw.loop import store as _store
+
             loop = _store.get(session.project_id)
             base = dict(loop.kind_config) if loop and loop.kind_config else {}
             base.update(kc_patch)

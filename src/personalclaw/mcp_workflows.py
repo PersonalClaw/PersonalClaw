@@ -108,7 +108,7 @@ def _list_tools() -> list[dict[str, Any]]:
                     },
                     "vars": {
                         "type": "object",
-                        "description": "Values for the prompt's {{variable}} placeholders (name → value).",
+                        "description": "Values for the prompt's {{variable}} placeholders (name → value).",  # noqa: E501
                     },
                 },
                 "required": ["prompt_id"],
@@ -130,7 +130,7 @@ def _list_tools() -> list[dict[str, Any]]:
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "Lowercase handle, e.g. 'release-checklist' (^[a-z0-9][a-z0-9-]{0,62}$).",
+                        "description": "Lowercase handle, e.g. 'release-checklist' (^[a-z0-9][a-z0-9-]{0,62}$).",  # noqa: E501
                     },
                     "description": {
                         "type": "string",
@@ -142,8 +142,14 @@ def _list_tools() -> list[dict[str, Any]]:
                         "items": {
                             "type": "object",
                             "properties": {
-                                "title": {"type": "string", "description": "Imperative step line (e.g. 'Run the tests')"},
-                                "instruction": {"type": "string", "description": "Optional how-to detail for the step"},
+                                "title": {
+                                    "type": "string",
+                                    "description": "Imperative step line (e.g. 'Run the tests')",
+                                },
+                                "instruction": {
+                                    "type": "string",
+                                    "description": "Optional how-to detail for the step",
+                                },
                             },
                             "required": ["title"],
                         },
@@ -155,7 +161,7 @@ def _list_tools() -> list[dict[str, Any]]:
                     },
                     "match_text": {
                         "type": "string",
-                        "description": "Natural-language intent this SOP answers (used for auto-surfacing).",
+                        "description": "Natural-language intent this SOP answers (used for auto-surfacing).",  # noqa: E501
                     },
                     "tags": {
                         "type": "array",
@@ -189,7 +195,7 @@ def _list_tools() -> list[dict[str, Any]]:
                     },
                     "scope_ref": {
                         "type": "string",
-                        "description": "Required for 'workspace' (the project dir). Omit for 'global'; reused for 'agent'.",
+                        "description": "Required for 'workspace' (the project dir). Omit for 'global'; reused for 'agent'.",  # noqa: E501
                     },
                 },
                 "required": ["workflow_id", "scope"],
@@ -289,9 +295,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         rendered = (d.get("rendered") or "").strip()
         if not rendered:
             return f"Error: prompt {pid!r} rendered empty."
-        return (
-            f"Rendered prompt '{pid}' — carry out the following:\n\n{rendered}"
-        )
+        return f"Rendered prompt '{pid}' — carry out the following:\n\n{rendered}"
 
     if name == "workflow_create":
         wf_name = (args.get("name") or "").strip()
@@ -301,7 +305,10 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         if not isinstance(raw_steps, list) or not raw_steps:
             return "Error: at least one step is required."
         steps = [
-            {"title": (s.get("title") or "").strip(), "instruction": (s.get("instruction") or "").strip()}
+            {
+                "title": (s.get("title") or "").strip(),
+                "instruction": (s.get("instruction") or "").strip(),
+            }
             for s in raw_steps
             if isinstance(s, dict) and (s.get("title") or "").strip()
         ]
@@ -321,7 +328,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             elif scope == "workspace":
                 scope_ref = os.environ.get("PERSONALCLAW_WORKSPACE_DIR", "") or os.getcwd()
         if scope == "agent" and not scope_ref:
-            return "Error: cannot create an agent-scoped workflow — no current agent id is bound. Use scope 'session' or 'global'."
+            return "Error: cannot create an agent-scoped workflow — no current agent id is bound. Use scope 'session' or 'global'."  # noqa: E501
         body: dict[str, Any] = {
             "name": wf_name,
             "description": (args.get("description") or "").strip(),
@@ -334,7 +341,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         d = _post("/api/workflows", body)
         if d.get("error"):
             return f"Error: {d['error']}"
-        return f"Created workflow '{d.get('name', wf_name)}' (scope={d.get('scope', 'session')}, {len(steps)} steps)."
+        return f"Created workflow '{d.get('name', wf_name)}' (scope={d.get('scope', 'session')}, {len(steps)} steps)."  # noqa: E501
 
     if name == "workflow_promote":
         wid = (args.get("workflow_id") or "").strip()
@@ -372,6 +379,10 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
     from personalclaw.mcp_shared import call_tool_with_logging
 
     return call_tool_with_logging(
-        name, raw_args, _validate_args, _call_tool_inner,
-        session_key="mcp_core", downstream_service="personalclaw-workflows",
+        name,
+        raw_args,
+        _validate_args,
+        _call_tool_inner,
+        session_key="mcp_core",
+        downstream_service="personalclaw-workflows",
     )

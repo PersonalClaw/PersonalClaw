@@ -60,7 +60,9 @@ class FilesystemSourceProvider(MessageSourceProvider):
     async def add_reaction(self, channel_id: str, ts: str, emoji: str) -> bool:
         return True
 
-    async def get_channel_history(self, channel_id: str, oldest: str, limit: int = 200) -> list[dict[str, Any]]:
+    async def get_channel_history(
+        self, channel_id: str, oldest: str, limit: int = 200
+    ) -> list[dict[str, Any]]:
         return []
 
     async def resolve_user_name(self, user_id: str) -> str:
@@ -73,4 +75,3 @@ Provider = FilesystemSourceProvider
 def create_provider(config=None):
     """Extension factory for filesystem inbox source."""
     return FilesystemSourceProvider()
-

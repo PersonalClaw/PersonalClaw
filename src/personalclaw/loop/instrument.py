@@ -63,8 +63,9 @@ async def probe_judge(assess_fn) -> bool | None:
         strong = await assess_fn(_CANARY_GOAL, _CANARY_DOD, _CANARY_STRONG, [])
         null = await assess_fn(_CANARY_GOAL, _CANARY_DOD, _CANARY_NULL, [])
     except Exception:
-        logger.warning("loop canary: probe could not run — deferring (not declared blind)",
-                       exc_info=True)
+        logger.warning(
+            "loop canary: probe could not run — deferring (not declared blind)", exc_info=True
+        )
         return None
     if strong is None or null is None:
         # The judge couldn't produce a verdict for the probe → can't assess the instrument.
@@ -76,7 +77,11 @@ async def probe_judge(assess_fn) -> bool | None:
         logger.warning(
             "loop canary: judge did NOT separate strong (q=%.1f) from null (q=%.1f) "
             "— separation %.1f < %.1f; treating judge as BLIND",
-            strong.quality_score, null.quality_score, separation, _CANARY_MIN_SEPARATION)
+            strong.quality_score,
+            null.quality_score,
+            separation,
+            _CANARY_MIN_SEPARATION,
+        )
     return trustworthy
 
 
@@ -116,7 +121,9 @@ async def reproduce_confirm(loop: Loop) -> bool | None:
             if kind_deliverable:
                 deliverables = [kind_deliverable]
         except Exception:
-            logger.debug("reproduce: kind deliverable_name lookup failed for %s", loop.id, exc_info=True)
+            logger.debug(
+                "reproduce: kind deliverable_name lookup failed for %s", loop.id, exc_info=True
+            )
     if not verify_command and not deliverables:
         return None  # no independent anchor to reproduce against
 
@@ -130,10 +137,15 @@ async def reproduce_confirm(loop: Loop) -> bool | None:
     fallback_dirs = [str(loop_dir)] if loop_dir is not None else []
     try:
         verdict = await judge_mod.assess_cycle(
-            loop.task, loop.success_criteria or "", finding, findings[:-1],
+            loop.task,
+            loop.success_criteria or "",
+            finding,
+            findings[:-1],
             verify_command=verify_command,
             workspace=effective_dir(loop) or None,
-            deliverables=deliverables, fallback_dirs=fallback_dirs)
+            deliverables=deliverables,
+            fallback_dirs=fallback_dirs,
+        )
     except Exception:
         logger.warning("loop reproduce: fresh judge pass failed — not blocking ship", exc_info=True)
         return None

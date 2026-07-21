@@ -361,7 +361,9 @@ class TestResolveApprovalSessionFallback:
         state.resolve_approval("req-44", True)
 
         assert state_fut.done()
-        assert not session_fut.done(), "Session future should not be touched when state future exists"
+        assert (
+            not session_fut.done()
+        ), "Session future should not be touched when state future exists"
 
     @pytest.mark.asyncio
     async def test_returns_false_when_not_found(self, tmp_path):
@@ -392,9 +394,13 @@ class TestToolCallIdRedaction:
         state.broadcast_ws.assert_any_call(
             "tool_call",
             {
-                "session": session.key, "tool": evt.title, "kind": evt.tool_kind,
-                "auto": True, "tool_call_id": "tcid-clean",
-                "purpose": "test purpose", "input_preview": "",
+                "session": session.key,
+                "tool": evt.title,
+                "kind": evt.tool_kind,
+                "auto": True,
+                "tool_call_id": "tcid-clean",
+                "purpose": "test purpose",
+                "input_preview": "",
             },
         )
 
@@ -478,11 +484,14 @@ class TestStateMetaAndPermissions:
 
     def test_append_with_meta(self):
         session = _make_session()
-        session.append("tool", "test", meta={"tool_call_id": "tc-1", "purpose": "testing"}, broadcast=False)
+        session.append(
+            "tool", "test", meta={"tool_call_id": "tc-1", "purpose": "testing"}, broadcast=False
+        )
         assert session.messages[-1]["meta"]["tool_call_id"] == "tc-1"
 
     def test_mark_permission_resolved(self):
         import json
+
         session = _make_session()
         cls_data = json.dumps({"request_id": "req-42"})
         session.append("permission", "tool_x", cls_data, broadcast=False)

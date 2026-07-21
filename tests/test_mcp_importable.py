@@ -32,11 +32,14 @@ def test_claude_json_not_a_silent_discovery_source(tmp_path, monkeypatch):
 
 def test_discover_importable_returns_cc_servers_not_in_pclaw(tmp_path, monkeypatch):
     cc = tmp_path / ".claude.json"
-    _write(cc, {
-        "cc-only": {"command": "npx", "args": ["cc-mcp"]},
-        "remote": {"url": "https://example.com/sse"},
-        "bogus": {"description": "no command or url"},
-    })
+    _write(
+        cc,
+        {
+            "cc-only": {"command": "npx", "args": ["cc-mcp"]},
+            "remote": {"url": "https://example.com/sse"},
+            "bogus": {"description": "no command or url"},
+        },
+    )
     monkeypatch.setattr(disc, "_IMPORT_JSON_PATHS", ((cc, "Claude Code"),))
     # No PClaw-scope servers configured.
     monkeypatch.setattr(disc, "_MCP_JSON_PATHS", (tmp_path / "nope.json",))

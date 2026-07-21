@@ -52,6 +52,7 @@ async def handle_optimize(request: web.Request) -> web.Response:
     full_prompt = f"[System: {optimizer_system}]\n\n{user_msg}"
 
     try:
+
         async def _optimize() -> str:
             """Acquire session, stream, release — all under one timeout."""
             logger.debug("Optimizer: acquiring dedicated session")
@@ -75,7 +76,9 @@ async def handle_optimize(request: web.Request) -> web.Response:
 
         text = await asyncio.wait_for(_optimize(), timeout=30.0)
     except asyncio.TimeoutError:
-        logger.warning("Optimizer timed out (30s) — personalclaw-lite may be unresponsive or overloaded")
+        logger.warning(
+            "Optimizer timed out (30s) — personalclaw-lite may be unresponsive or overloaded"
+        )
         return web.json_response({"optimized": prompt, "changed": False})
     except Exception:
         logger.warning("Optimizer failed, returning original", exc_info=True)

@@ -17,9 +17,7 @@ from personalclaw.doc_parser import (
 
 def _make_docx(paragraphs: list[str]) -> str:
     """Create a minimal .docx file and return its path."""
-    body = "\n".join(
-        f"<w:p><w:r><w:t>{p}</w:t></w:r></w:p>" for p in paragraphs
-    )
+    body = "\n".join(f"<w:p><w:r><w:t>{p}</w:t></w:r></w:p>" for p in paragraphs)
     xml = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
@@ -54,6 +52,7 @@ def _make_pptx(slides: list[list[str]]) -> str:
 
 # ── is_parseable_document ──
 
+
 class TestIsParseableDocument:
     def test_docx_mimetype(self):
         mt = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -87,6 +86,7 @@ class TestIsParseableDocument:
 
 # ── DOCX extraction ──
 
+
 class TestExtractDocx:
     def test_basic_paragraphs(self):
         path = _make_docx(["Hello World", "Second paragraph"])
@@ -104,7 +104,7 @@ class TestExtractDocx:
             zf.writestr(
                 "word/document.xml",
                 '<?xml version="1.0"?>'
-                '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'  # noqa: E501
                 "<w:body></w:body></w:document>",
             )
         try:
@@ -135,6 +135,7 @@ class TestExtractDocx:
 
 
 # ── PPTX extraction ──
+
 
 class TestExtractPptx:
     def test_single_slide(self):
@@ -172,6 +173,7 @@ class TestExtractPptx:
 
 # ── PDF extraction ──
 
+
 class TestExtractPdf:
     def test_simple_pdf_text(self):
         """A minimal PDF with uncompressed text."""
@@ -206,6 +208,7 @@ class TestExtractPdf:
 
 
 # ── Error handling ──
+
 
 class TestErrorHandling:
     def test_nonexistent_file(self):
@@ -242,6 +245,7 @@ class TestErrorHandling:
 
 
 # ── Decompression bomb guards ──
+
 
 class TestDecompressionGuards:
     def test_oversized_zip_entry_skipped(self, caplog):

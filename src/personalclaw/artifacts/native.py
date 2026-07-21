@@ -423,7 +423,7 @@ class NativeArtifactProvider(ArtifactProvider):
         source: str = "chat",
         slug: str | None = None,
         description: str = "",
-        tags: list[str] | None = None,
+        tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
         actor: str | None = None,
         session_id: str | None = None,
         project_id: str = "",
@@ -575,7 +575,7 @@ class NativeArtifactProvider(ArtifactProvider):
         slug: str | None = None,
         source_path: str = "",
         description: str = "",
-        tags: list[str] | None = None,
+        tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
         actor: str | None = None,
         session_id: str | None = None,
         project_id: str = "",
@@ -587,7 +587,11 @@ class NativeArtifactProvider(ArtifactProvider):
             raise ValueError(f"kind {kind!r} is binary — use create_binary()")
         with self._lock:
             base = slug.strip() if slug and is_valid_slug(slug.strip()) else slugify(name)
-            final_slug = base if (slug and is_valid_slug(base) and not (self._ensure_root() / base).exists()) else self._unique_slug(base)
+            final_slug = (
+                base
+                if (slug and is_valid_slug(base) and not (self._ensure_root() / base).exists())
+                else self._unique_slug(base)
+            )
             ts = _now()
             event = ArtifactEvent(
                 ts=ts, type="created", by=actor or "", session_id=session_id or "", version=1
@@ -627,7 +631,7 @@ class NativeArtifactProvider(ArtifactProvider):
         session_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        tags: list[str] | None = None,
+        tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
     ) -> Artifact | None:
         # Validate event type BEFORE any side effect so an invalid type can't
         # orphan a versions/vN.html. 'reverted' is NOT an update event — it has its
@@ -707,7 +711,7 @@ class NativeArtifactProvider(ArtifactProvider):
                 logger.warning("artifact delete failed: %s", d, exc_info=True)
                 return False
 
-    def list_versions(self, slug: str) -> list[int]:
+    def list_versions(self, slug: str) -> list[int]:  # type: ignore[valid-type]  # CI-1
         with self._lock:
             if self._read_meta(slug) is None:
                 return []

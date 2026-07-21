@@ -19,6 +19,7 @@ def _current_project_id() -> str:
     outside the native runtime), so an unscoped save simply carries no project."""
     try:
         from personalclaw.agents.native.builtin_tools import current_project_id
+
         return current_project_id() or ""
     except Exception:
         return ""
@@ -51,14 +52,27 @@ def _list_tools() -> list[dict[str, Any]]:
                     "content": {"type": "string", "description": "Artifact body (inline)"},
                     "content_file": {
                         "type": "string",
-                        "description": "Absolute path to read content from instead of inline content",
+                        "description": "Absolute path to read content from instead of inline content",  # noqa: E501
                     },
                     "kind": {
                         "type": "string",
-                        "enum": ["widget", "html", "react", "markdown", "svg", "json", "text", "infographic", "document"],
-                        "description": "Content kind (default widget). Use 'markdown' for prose/markdown bodies (# headings, **bold**, tables, lists); 'document' ONLY for semantic HTML editorial docs, never for markdown.",
+                        "enum": [
+                            "widget",
+                            "html",
+                            "react",
+                            "markdown",
+                            "svg",
+                            "json",
+                            "text",
+                            "infographic",
+                            "document",
+                        ],
+                        "description": "Content kind (default widget). Use 'markdown' for prose/markdown bodies (# headings, **bold**, tables, lists); 'document' ONLY for semantic HTML editorial docs, never for markdown.",  # noqa: E501
                     },
-                    "slug": {"type": "string", "description": "Explicit slug (else derived from name)"},
+                    "slug": {
+                        "type": "string",
+                        "description": "Explicit slug (else derived from name)",
+                    },
                     "description": {"type": "string"},
                     "tags": {"type": "array", "items": {"type": "string"}},
                 },
@@ -75,7 +89,10 @@ def _list_tools() -> list[dict[str, Any]]:
                 "type": "object",
                 "properties": {
                     "slug": {"type": "string"},
-                    "version": {"type": "integer", "description": "Snapshot number (omit for live)"},
+                    "version": {
+                        "type": "integer",
+                        "description": "Snapshot number (omit for live)",
+                    },
                 },
                 "required": ["slug"],
             },
@@ -104,12 +121,25 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "artifact_list",
-            "description": "List saved artifacts (name/slug/kind/version/tags). Filter by tag, kind, or a text query q.",
+            "description": "List saved artifacts (name/slug/kind/version/tags). Filter by tag, kind, or a text query q.",  # noqa: E501
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "tag": {"type": "string"},
-                    "kind": {"type": "string", "enum": ["widget", "html", "react", "markdown", "svg", "json", "text", "infographic", "document"]},
+                    "kind": {
+                        "type": "string",
+                        "enum": [
+                            "widget",
+                            "html",
+                            "react",
+                            "markdown",
+                            "svg",
+                            "json",
+                            "text",
+                            "infographic",
+                            "document",
+                        ],
+                    },
                     "q": {"type": "string"},
                 },
             },
@@ -125,7 +155,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "artifact_delete",
-            "description": "Delete a saved artifact (and its version history) by slug. The source file/widget is not touched.",
+            "description": "Delete a saved artifact (and its version history) by slug. The source file/widget is not touched.",  # noqa: E501
             "inputSchema": {
                 "type": "object",
                 "properties": {"slug": {"type": "string"}},
@@ -147,9 +177,18 @@ def _list_tools() -> list[dict[str, Any]]:
                 "type": "object",
                 "properties": {
                     "prompt": {"type": "string", "description": "What to generate / how to edit"},
-                    "size": {"type": "string", "description": "e.g. '1024x1024' (provider-specific; omit for default)"},
-                    "name": {"type": "string", "description": "Artifact display name (else derived from the prompt)"},
-                    "edit_artifact": {"type": "string", "description": "Slug of a prior kind:image artifact to edit in place"},
+                    "size": {
+                        "type": "string",
+                        "description": "e.g. '1024x1024' (provider-specific; omit for default)",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Artifact display name (else derived from the prompt)",
+                    },
+                    "edit_artifact": {
+                        "type": "string",
+                        "description": "Slug of a prior kind:image artifact to edit in place",
+                    },
                 },
                 "required": ["prompt"],
             },
@@ -167,16 +206,22 @@ def _list_tools() -> list[dict[str, Any]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "prompt": {"type": "string", "description": "What to generate (scene description)"},
+                    "prompt": {
+                        "type": "string",
+                        "description": "What to generate (scene description)",
+                    },
                     "duration_seconds": {
                         "type": "number",
-                        "description": "Target video duration in seconds (default 5; provider may cap)",
+                        "description": "Target video duration in seconds (default 5; provider may cap)",  # noqa: E501
                     },
                     "aspect_ratio": {
                         "type": "string",
-                        "description": "e.g. '16:9', '9:16', '1:1' (provider-specific; omit for default)",
+                        "description": "e.g. '16:9', '9:16', '1:1' (provider-specific; omit for default)",  # noqa: E501
                     },
-                    "name": {"type": "string", "description": "Artifact display name (else derived from the prompt)"},
+                    "name": {
+                        "type": "string",
+                        "description": "Artifact display name (else derived from the prompt)",
+                    },
                 },
                 "required": ["prompt"],
             },
@@ -289,8 +334,12 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 
     def _audit(outcome: str, slug: str = "", error: str = "") -> None:
         sel().log_tool_invocation(
-            session_key=sk, source="mcp", tool_name=name, outcome=outcome,
-            metadata={"slug": slug} if slug else None, error=error,
+            session_key=sk,
+            source="mcp",
+            tool_name=name,
+            outcome=outcome,
+            metadata={"slug": slug} if slug else None,
+            error=error,
         )
 
     try:
@@ -321,19 +370,19 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             return f"Saved artifact '{art.name}' (slug: {art.slug}, version {art.version})."
 
         if name == "artifact_get":
-            art = prov.get(args["slug"], version=args.get("version"))
-            if art is None:
+            got = prov.get(args["slug"], version=args.get("version"))
+            if got is None:
                 _audit("not_found", args["slug"])
                 return f"Artifact not found: {args['slug']}"
-            _audit("success", art.slug)
-            return redact(art.content or "")
+            _audit("success", got.slug)
+            return redact(got.content or "")
 
         if name == "artifact_update":
             content, err = _read_artifact_content(args)
             if err:
                 _audit("denied", args.get("slug", ""), err)
                 return f"Error: {err}"
-            art = prov.update(
+            upd = prov.update(
                 args["slug"],
                 content=content,
                 snapshot=True,  # every agent update is a checkpoint
@@ -342,11 +391,11 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 actor="agent",
                 session_id=sk,
             )
-            if art is None:
+            if upd is None:
                 _audit("not_found", args["slug"])
                 return f"Artifact not found: {args['slug']}"
-            _audit("success", art.slug)
-            return f"Updated artifact '{art.name}' → version {art.version}."
+            _audit("success", upd.slug)
+            return f"Updated artifact '{upd.name}' → version {upd.version}."
 
         if name == "artifact_list":
             arts = prov.list(tag=args.get("tag"), kind=args.get("kind"), q=args.get("q"))
@@ -354,7 +403,13 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             if not arts:
                 return "No artifacts found."
             rows = [
-                {"slug": a.slug, "name": redact(a.name), "kind": a.kind, "version": a.version, "tags": a.tags}
+                {
+                    "slug": a.slug,
+                    "name": redact(a.name),
+                    "kind": a.kind,
+                    "version": a.version,
+                    "tags": a.tags,
+                }
                 for a in arts
             ]
             return _json.dumps(rows, indent=2)
@@ -367,7 +422,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         if name == "artifact_delete":
             ok = prov.delete(args["slug"])
             _audit("success" if ok else "not_found", args["slug"])
-            return f"Deleted artifact: {args['slug']}" if ok else f"Artifact not found: {args['slug']}"
+            return (
+                f"Deleted artifact: {args['slug']}" if ok else f"Artifact not found: {args['slug']}"
+            )
 
         if name == "image_generate":
             return _image_generate(prov, args, sk, _audit)
@@ -436,9 +493,7 @@ def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
                 with __import__("contextlib").suppress(OSError):
                     Path(src_path).unlink()
         else:
-            results = _run_async(
-                provider.generate(prompt, model=model_id, size=size)
-            )
+            results = _run_async(provider.generate(prompt, model=model_id, size=size))
     except ImageGenError as e:
         _audit("error", edit_slug, str(e))
         return f"Error: {e}"
@@ -468,8 +523,13 @@ def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
             f"![{art.name}]({raw_url})"
         )
     art = prov.create_binary(
-        name=display_name, data=data, mime=mime, kind="image", source="chat",
-        actor="agent", session_id=sk,
+        name=display_name,
+        data=data,
+        mime=mime,
+        kind="image",
+        source="chat",
+        actor="agent",
+        session_id=sk,
     )
     _audit("success", art.slug)
     revised = getattr(results[0], "revised_prompt", "") or ""
@@ -568,8 +628,13 @@ def _video_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
 
     display_name = str(args.get("name", "")).strip() or prompt[:60]
     art = prov.create_binary(
-        name=display_name, data=data, mime=mime, kind="video", source="chat",
-        actor="agent", session_id=sk,
+        name=display_name,
+        data=data,
+        mime=mime,
+        kind="video",
+        source="chat",
+        actor="agent",
+        session_id=sk,
     )
     _audit("success", art.slug)
     duration_info = getattr(results[0], "duration_s", 0) or ""
@@ -628,8 +693,14 @@ def regenerate_image_at_slug(
         # Deleted (the common case for a broken transcript image): recreate at the
         # SAME slug → version 1, so a transcript ref pinned to ?version=1 resolves.
         art = prov.create_binary(
-            name=prompt[:60], data=data, mime=mime, kind="image", source="chat",
-            slug=slug, actor="user", session_id=session_id,
+            name=prompt[:60],
+            data=data,
+            mime=mime,
+            kind="image",
+            source="chat",
+            slug=slug,
+            actor="user",
+            session_id=session_id,
         )
         if art is not None and art.slug != slug:
             # Slug collided unexpectedly (shouldn't happen for a deleted artifact);
@@ -657,6 +728,10 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
     from personalclaw.mcp_shared import call_tool_with_logging
 
     return call_tool_with_logging(
-        name, raw_args, _validate_args, _call_tool_inner,
-        session_key="mcp_core", downstream_service="personalclaw-artifacts",
+        name,
+        raw_args,
+        _validate_args,
+        _call_tool_inner,
+        session_key="mcp_core",
+        downstream_service="personalclaw-artifacts",
     )

@@ -28,20 +28,20 @@ def _make_app(state: DashboardState) -> web.Application:
     from personalclaw.dashboard.chat import (
         api_chat,
         api_chat_mode,
-        api_chat_task_mode,
         api_chat_session_approve,
         api_chat_session_color,
         api_chat_session_delete,
         api_chat_session_detail,
         api_chat_session_fork,
-        api_chat_session_undo,
         api_chat_session_regenerate,
         api_chat_session_rename,
         api_chat_session_resume,
         api_chat_session_stop,
         api_chat_session_switch_variant,
+        api_chat_session_undo,
         api_chat_sessions,
         api_chat_sessions_cleanup,
+        api_chat_task_mode,
     )
 
     app = web.Application()
@@ -59,7 +59,9 @@ def _make_app(state: DashboardState) -> web.Application:
     app.router.add_post("/api/chat/sessions/{session}/regenerate", api_chat_session_regenerate)
     app.router.add_post("/api/chat/sessions/{session}/fork", api_chat_session_fork)
     app.router.add_post("/api/chat/sessions/{session}/undo", api_chat_session_undo)
-    app.router.add_post("/api/chat/sessions/{session}/switch-variant", api_chat_session_switch_variant)
+    app.router.add_post(
+        "/api/chat/sessions/{session}/switch-variant", api_chat_session_switch_variant
+    )
     app.router.add_post("/api/chat/mode", api_chat_mode)
     app.router.add_post("/api/chat/task-mode", api_chat_task_mode)
     return app

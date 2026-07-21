@@ -53,8 +53,9 @@ class Walkthrough(Protocol):
         """FIXED mode only — the stable ordered step list ({kind,title,objective})."""
         ...
 
-    def build_design_brief(self, task: str, workspace_dir: str,
-                           design_inputs: list[dict] | None = None) -> str:
+    def build_design_brief(
+        self, task: str, workspace_dir: str, design_inputs: list[dict] | None = None
+    ) -> str:
         """DYNAMIC mode only — the pass-1 brief: investigate + design the step list.
         ``design_inputs`` (design kind only) are the user's multi-modal reference
         inputs to work through; other kinds ignore it."""
@@ -64,8 +65,9 @@ class Walkthrough(Protocol):
         """DYNAMIC mode only — parse pass-1 output → ``(summary, [step dicts])``."""
         ...
 
-    def build_step_brief(self, task: str, step: PlanStep, *,
-                         approved: list[PlanStep], workspace_dir: str) -> str:
+    def build_step_brief(
+        self, task: str, step: PlanStep, *, approved: list[PlanStep], workspace_dir: str
+    ) -> str:
         """The pass-2 brief: produce ONE step's artifact, given the approved prior
         artifacts + the kind's artifact contract."""
         ...
@@ -86,6 +88,7 @@ def _walkthrough_for(loop_id: str):
     """The walkthrough delegate for a loop's kind, or None if the kind has no
     stepwise planning walkthrough. Resolves the strategy (kinds are loaded lazily)."""
     from personalclaw.loop import kinds
+
     kinds.ensure_loaded()
     loop = store.get(loop_id)
     if loop is None:
@@ -109,9 +112,12 @@ def planner_session_key(loop_id: str) -> str:
 def seed_steps(session: PlanSession, steps: list[dict]) -> PlanSession:
     """Populate a session's ordered steps with stable ids (``step-0``, …)."""
     session.steps = [
-        PlanStep(id=f"step-{i}", kind=str(s.get("kind", "step")),
-                 title=str(s.get("title", "")) or f"Step {i + 1}",
-                 objective=str(s.get("objective", "")))
+        PlanStep(
+            id=f"step-{i}",
+            kind=str(s.get("kind", "step")),
+            title=str(s.get("title", "")) or f"Step {i + 1}",
+            objective=str(s.get("objective", "")),
+        )
         for i, s in enumerate(steps)
     ]
     return session
@@ -119,14 +125,17 @@ def seed_steps(session: PlanSession, steps: list[dict]) -> PlanSession:
 
 # ── orchestration: spawn the planner per pass, gate, persist ──
 
-async def _run_pass(state, svc, loop, wt: Walkthrough, *, brief: str, sentinel: str,
-                    timeout_secs: int | None = None) -> str | None:
+
+async def _run_pass(
+    state, svc, loop, wt: Walkthrough, *, brief: str, sentinel: str, timeout_secs: int | None = None
+) -> str | None:
     """One planner pass via the shared runner, resolving the loop's primitives."""
     from personalclaw.planning import runner
 
     files_dir = str(store.loop_dir(loop.id) or "")
     return await runner.run_planner_pass(
-        state, svc,
+        state,
+        svc,
         session_key=planner_session_key(loop.id),
         agent_name=wt.planner_agent,
         workspace_dir=loop.workspace_dir or "",
@@ -164,21 +173,36 @@ async def run_design_pass(state, svc, loop_id: str) -> PlanSession | None:
     # Pass the loop's multi-modal design inputs (kind_config.design_inputs) so the
     # design delegate can instruct the planner to work through each (URL/image/…).
     # Goal/code delegates ignore the kwarg (fixed "" / task+workspace only).
-    design_inputs = (loop.kind_config or {}).get("design_inputs") if isinstance(loop.kind_config, dict) else None
-    raw = await _run_pass(state, svc, loop, wt,
-                          brief=wt.build_design_brief(loop.task, loop.workspace_dir or "",
-                                                      design_inputs=design_inputs),
-                          sentinel=STEPS_SENTINEL)
+    design_inputs = (
+        (loop.kind_config or {}).get("design_inputs")
+        if isinstance(loop.kind_config, dict)
+        else None
+    )
+    raw = await _run_pass(
+        state,
+        svc,
+        loop,
+        wt,
+        brief=wt.build_design_brief(
+            loop.task, loop.workspace_dir or "", design_inputs=design_inputs
+        ),
+        sentinel=STEPS_SENTINEL,
+    )
     parsed = wt.parse_steps_sentinel(raw or "")
     if parsed is None:
-        session = store.read_plan_session(loop_id) or PlanSession(project_id=loop_id, created_at=_time.time())
+        session = store.read_plan_session(loop_id) or PlanSession(
+            project_id=loop_id, created_at=_time.time()
+        )
         session.design_error = (
             "The planner couldn't produce a plan (it timed out or returned no usable "
-            "step list). Retry planning, or edit the task to be more concrete.")
+            "step list). Retry planning, or edit the task to be more concrete."
+        )
         store.write_plan_session(session)
         return None
     _summary, steps = parsed
-    session = store.read_plan_session(loop_id) or PlanSession(project_id=loop_id, created_at=_time.time())
+    session = store.read_plan_session(loop_id) or PlanSession(
+        project_id=loop_id, created_at=_time.time()
+    )
     seed_steps(session, steps)
     session.design_error = ""
     store.write_plan_session(session)
@@ -201,8 +225,9 @@ async def run_step_pass(state, svc, loop_id: str, step_id: str) -> PlanStep | No
         store.write_plan_session(session)
 
     approved = [s for s in session.steps if s.status == PS.StepStatus.APPROVED.value]
-    base_brief = wt.build_step_brief(loop.task, step, approved=approved,
-                                     workspace_dir=loop.workspace_dir or "")
+    base_brief = wt.build_step_brief(
+        loop.task, step, approved=approved, workspace_dir=loop.workspace_dir or ""
+    )
     raw = await _run_pass(state, svc, loop, wt, sentinel=ARTIFACT_SENTINEL, brief=base_brief)
     artifact = wt.parse_artifact_sentinel(raw or "")
     if artifact is None:
@@ -218,9 +243,11 @@ async def run_step_pass(state, svc, loop_id: str, step_id: str) -> PlanStep | No
             f"You must persist the artifact by CALLING the write_file tool to "
             f"`{ARTIFACT_SENTINEL}` in your current directory. Do NOT paste the JSON, a "
             f"diff, or a code block into your reply — only an actual write_file call "
-            f"creates the file we read. Re-emit the artifact now via write_file.")
-        raw = await _run_pass(state, svc, loop, wt, sentinel=ARTIFACT_SENTINEL,
-                              brief=base_brief + correction)
+            f"creates the file we read. Re-emit the artifact now via write_file."
+        )
+        raw = await _run_pass(
+            state, svc, loop, wt, sentinel=ARTIFACT_SENTINEL, brief=base_brief + correction
+        )
         artifact = wt.parse_artifact_sentinel(raw or "")
     if artifact is None:
         # Still nothing after the retry — revert RUNNING → PENDING so its state stays
@@ -271,11 +298,15 @@ def mark_design_error(loop_id: str, message: str = "") -> None:
     """Record a recoverable design failure (a backstop if the fire-and-forget advance
     task throws). Idempotent + never raises — creates a session if none exists yet."""
     import time as _time
+
     try:
-        session = store.read_plan_session(loop_id) or PlanSession(project_id=loop_id, created_at=_time.time())
+        session = store.read_plan_session(loop_id) or PlanSession(
+            project_id=loop_id, created_at=_time.time()
+        )
         session.design_error = message or (
             "Planning hit an unexpected error. Retry planning, or edit the task to be "
-            "more concrete.")
+            "more concrete."
+        )
         store.write_plan_session(session)
     except Exception:
         logger.debug("mark_design_error failed for %s", loop_id, exc_info=True)

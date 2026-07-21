@@ -1,4 +1,4 @@
-"""Security and config hardening tests — bash patterns, YOLO timeout, env perms, SEL forward, observe-mode auth."""
+"""Security and config hardening tests — bash patterns, YOLO timeout, env perms, SEL forward, observe-mode auth."""  # noqa: E501
 
 from unittest.mock import patch
 
@@ -225,9 +225,7 @@ class TestLoadCredentialsEnvPropagation:
         assert os.environ.get("SLACK_APP_TOKEN") == "xapp-test"
         assert os.environ.get("PERSONALCLAW_OWNER_ID") == "U123"
 
-    def test_existing_env_value_preserved(
-        self, tmp_path: object, monkeypatch
-    ) -> None:
+    def test_existing_env_value_preserved(self, tmp_path: object, monkeypatch) -> None:
         """setdefault() must not clobber a value the caller set explicitly
         (e.g. systemd Environment= block, wrapper script export)."""
         import os
@@ -251,9 +249,7 @@ class TestLoadCredentialsEnvPropagation:
         # …and the env var is unchanged (setdefault is a no-op when set).
         assert os.environ["SLACK_BOT_TOKEN"] == "xoxb-from-systemd"
 
-    def test_empty_env_file_does_not_clobber_environ(
-        self, tmp_path: object, monkeypatch
-    ) -> None:
+    def test_empty_env_file_does_not_clobber_environ(self, tmp_path: object, monkeypatch) -> None:
         """When ~/.personalclaw/.env is bind-mounted empty inside a sandbox child,
         load_credentials() must not overwrite an env var the caller already
         propagated via os.environ.setdefault() in the parent."""

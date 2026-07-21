@@ -22,21 +22,32 @@ def _tmp_config(monkeypatch, tmp_path):
     monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
     monkeypatch.setattr("personalclaw.tasks.hierarchy.config_dir", lambda: tmp_path)
     import personalclaw.tasks.native as nat
+
     monkeypatch.setattr(nat, "config_dir", lambda: tmp_path, raising=False)
     return tmp_path
 
 
 def _code(**over):
-    base = dict(id="", name="OAuth login", kind="code", task="add oauth login",
-                plan=[_stage("design"), _stage("implementation"), _stage("verification")],
-                kind_config={"entry_stage": "design"})
+    base = dict(
+        id="",
+        name="OAuth login",
+        kind="code",
+        task="add oauth login",
+        plan=[_stage("design"), _stage("implementation"), _stage("verification")],
+        kind_config={"entry_stage": "design"},
+    )
     base.update(over)
     return store.create(Loop(**base))
 
 
 def _stage(stage, **over):
-    base = {"stage": stage, "title": stage.title(), "objective": f"do {stage}",
-            "exit_criteria": [], "task_list_name": stage.title()}
+    base = {
+        "stage": stage,
+        "title": stage.title(),
+        "objective": f"do {stage}",
+        "exit_criteria": [],
+        "task_list_name": stage.title(),
+    }
     base.update(over)
     return base
 
@@ -62,11 +73,12 @@ class TestProvision:
         # not spawn a fresh auto-named one (the dropped-scoping bug). And it must NOT
         # rename the user's project to the loop's name.
         from personalclaw.tasks.hierarchy import HierarchyStore
+
         h = HierarchyStore()
         proj = h.create_project(name="Website Redesign")
         c = _code(project_id=proj.id)
         out = tasks_link.provision(c.id)
-        assert out.tasks_project_id == proj.id      # nested under the chosen project
+        assert out.tasks_project_id == proj.id  # nested under the chosen project
         assert h.get_project(proj.id).name == "Website Redesign"  # not renamed to the loop
 
     def test_two_loops_in_one_project_get_isolated_phase_lists(self):
@@ -76,6 +88,7 @@ class TestProvision:
         # (a 'write a README' loop picked up a sibling app-build loop's Scaffold/AI/UI
         # tasks, blocking its gate). Per-loop list naming must keep them isolated.
         from personalclaw.tasks.hierarchy import HierarchyStore
+
         h = HierarchyStore()
         proj = h.create_project(name="Shared Project")
         a = _code(project_id=proj.id, plan=[_stage("implementation")])
@@ -88,21 +101,37 @@ class TestProvision:
         # Seeding A's tasks must not appear in B's list.
         _run(tasks_link.decompose_phase(a.id, "implementation", [{"title": "A-only task"}]))
         from personalclaw.tasks import registry
-        b_tasks, _ = _run(registry.list_all_tasks(task_list_id=out_b.task_list_ids["implementation"], limit=50))
+
+        b_tasks, _ = _run(
+            registry.list_all_tasks(task_list_id=out_b.task_list_ids["implementation"], limit=50)
+        )
         assert b_tasks == [] or all(t.title != "A-only task" for t in b_tasks)
 
     def test_goal_kind_keys_phases_by_title(self):
-        g = store.create(Loop(id="", name="G", kind="goal", task="research X",
-                              plan=[{"title": "Investigate"}, {"title": "Report"}],
-                              kind_config={"goal_type": "open_ended"}))
+        g = store.create(
+            Loop(
+                id="",
+                name="G",
+                kind="goal",
+                task="research X",
+                plan=[{"title": "Investigate"}, {"title": "Report"}],
+                kind_config={"goal_type": "open_ended"},
+            )
+        )
         out = tasks_link.provision(g.id)
         assert set(out.task_list_ids) == {"Investigate", "Report"}
 
 
 class TestSeedAndDecompose:
     def test_seed_materializes_planner_tasks(self):
-        c = _code(plan=[_stage("implementation", tasks=[{"title": "Build the handler"},
-                                                        {"title": "Wire the route"}])])
+        c = _code(
+            plan=[
+                _stage(
+                    "implementation",
+                    tasks=[{"title": "Build the handler"}, {"title": "Wire the route"}],
+                )
+            ]
+        )
         tasks_link.provision(c.id)
         n = _run(tasks_link.seed_phase_tasks(c.id))
         assert n == 2
@@ -112,9 +141,13 @@ class TestSeedAndDecompose:
     def test_decompose_resolves_backward_depends_on(self):
         c = _code(plan=[_stage("implementation")])
         tasks_link.provision(c.id)
-        ids = _run(tasks_link.decompose_phase(c.id, "implementation",
-                                              [{"title": "First"}, {"title": "Second", "depends_on": [0]}]))
+        ids = _run(
+            tasks_link.decompose_phase(
+                c.id, "implementation", [{"title": "First"}, {"title": "Second", "depends_on": [0]}]
+            )
+        )
         from personalclaw.tasks import registry
+
         second = _run(registry.get_task(ids[1]))
         assert [d.depends_on_task_id for d in second.dependencies] == [ids[0]]
 
@@ -142,6 +175,7 @@ class TestReconcileAndTeardown:
         # No user project_id → the loop OWNS its auto-created backing project → teardown
         # deletes it.
         from personalclaw.tasks.hierarchy import HierarchyStore
+
         c = _code(plan=[_stage("implementation", tasks=[{"title": "A"}])])
         out = tasks_link.provision(c.id)
         auto_pid = out.tasks_project_id
@@ -155,6 +189,7 @@ class TestReconcileAndTeardown:
         # loop must drop ONLY its TaskLists, NOT the shared Project (which may hold other
         # loops/chats/tasks) — the data-loss bug the project_id-scoping change exposed.
         from personalclaw.tasks.hierarchy import HierarchyStore
+
         h = HierarchyStore()
         proj = h.create_project(name="Shared Effort")
         c = _code(project_id=proj.id, plan=[_stage("implementation", tasks=[{"title": "A"}])])

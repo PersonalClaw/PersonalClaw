@@ -29,15 +29,22 @@ from personalclaw.providers.use_cases import (
 logger = logging.getLogger(__name__)
 
 
-def _sel_log(op: str, outcome: str, resources: str, request: "web.Request", error: str = "") -> None:
+def _sel_log(
+    op: str, outcome: str, resources: str, request: "web.Request", error: str = ""
+) -> None:
     """Record a model-binding mutation in the security event log (#45 — every
     state-changing provider op is auditable, mirroring the app-lifecycle handlers).
     Best-effort: never let an audit failure break the request."""
     try:
         from personalclaw.sel import sel as _s
+
         _s().log_api_access(
-            caller=request.get("user", "dashboard"), operation=op, outcome=outcome,
-            source="models", resources=resources, error=error,
+            caller=request.get("user", "dashboard"),
+            operation=op,
+            outcome=outcome,
+            source="models",
+            resources=resources,
+            error=error,
         )
     except Exception:
         pass
@@ -54,6 +61,7 @@ def _sel_log(op: str, outcome: str, resources: str, request: "web.Request", erro
 
 def _get_providers_from_config() -> list[dict[str, Any]]:
     from personalclaw.config.loader import config_path
+
     try:
         data = json.loads(config_path().read_text(encoding="utf-8"))
         return data.get("providers", [])
@@ -108,16 +116,18 @@ async def _discover_image_gen_models() -> list[dict[str, Any]]:
                 for m in await prov.list_models():
                     # Bare model id — the FE prepends ``provider:`` to build the
                     # binding ref (matching stt/tts/chat), so DON'T namespace here.
-                    out.append({
-                        "id": m.name,
-                        "name": m.name,
-                        "capabilities": ["image_gen"],
-                        "description": m.description,
-                        "downloaded": m.downloaded,
-                        "provider": prov.name,
-                        "provider_type": "image_gen",
-                        "supports_edit": m.supports_edit,
-                    })
+                    out.append(
+                        {
+                            "id": m.name,
+                            "name": m.name,
+                            "capabilities": ["image_gen"],
+                            "description": m.description,
+                            "downloaded": m.downloaded,
+                            "provider": prov.name,
+                            "provider_type": "image_gen",
+                            "supports_edit": m.supports_edit,
+                        }
+                    )
             except Exception:  # noqa: BLE001 — one bad provider shouldn't drop the rest
                 logger.debug("image_gen provider %r list_models failed", prov.name, exc_info=True)
         return out
@@ -137,14 +147,16 @@ async def _discover_video_gen_models() -> list[dict[str, Any]]:
                 if not await prov.is_available():
                     continue
                 for m in await prov.list_models():
-                    out.append({
-                        "id": m.name,
-                        "name": m.name,
-                        "capabilities": ["video_gen"],
-                        "description": m.description,
-                        "provider": prov.name,
-                        "provider_type": "video_gen",
-                    })
+                    out.append(
+                        {
+                            "id": m.name,
+                            "name": m.name,
+                            "capabilities": ["video_gen"],
+                            "description": m.description,
+                            "provider": prov.name,
+                            "provider_type": "video_gen",
+                        }
+                    )
             except Exception:  # noqa: BLE001
                 logger.debug("video_gen provider %r list_models failed", prov.name, exc_info=True)
         return out
@@ -186,8 +198,10 @@ async def api_models_available(request: web.Request) -> web.Response:
     if tasks:
         results = await asyncio.gather(*(t[2] for t in tasks), return_exceptions=True)
         for (pname, ptype, _), models_or_exc in zip(tasks, results):
-            if isinstance(models_or_exc, Exception):
-                result.append({"name": pname, "type": ptype, "models": [], "error": str(models_or_exc)[:200]})
+            if isinstance(models_or_exc, BaseException):
+                result.append(
+                    {"name": pname, "type": ptype, "models": [], "error": str(models_or_exc)[:200]}
+                )
             else:
                 models = []
                 for mi in models_or_exc:
@@ -214,14 +228,16 @@ async def api_models_available(request: web.Request) -> web.Response:
             d["provider"] = pkey
             d["provider_type"] = pkey
             models.append(d)
-        result.append({
-            "name": pkey,
-            "displayName": getattr(prov, "display_name", pkey),
-            "type": pkey,
-            "local": True,  # a locally-downloadable provider → gets a download-management card
-            "searchable": bool(getattr(prov, "searchable", False)),
-            "models": models,
-        })
+        result.append(
+            {
+                "name": pkey,
+                "displayName": getattr(prov, "display_name", pkey),
+                "type": pkey,
+                "local": True,  # a locally-downloadable provider → gets a download-management card
+                "searchable": bool(getattr(prov, "searchable", False)),
+                "models": models,
+            }
+        )
 
     # Image-generation models from the image_gen registry (OpenAI-Images adapter +
     # bespoke bundles like FAL). Grouped per provider so each shows under its own
@@ -300,16 +316,25 @@ async def api_models_active_set(request: web.Request) -> web.Response:
         from personalclaw.providers.use_cases import _known_provider_names, split_ref
 
         known = _known_provider_names()
-        if known is not None:  # None = config unreadable → skip validation (don't block on I/O error)
+        if (
+            known is not None
+        ):  # None = config unreadable → skip validation (don't block on I/O error)
             for m in models:
                 parsed = split_ref(str(m))
                 if parsed and parsed[0] not in known:
-                    _sel_log("models.active_set", "error", f"{use_case}:{m}", request,
-                             error=f"unknown provider {parsed[0]!r}")
+                    _sel_log(
+                        "models.active_set",
+                        "error",
+                        f"{use_case}:{m}",
+                        request,
+                        error=f"unknown provider {parsed[0]!r}",
+                    )
                     return web.json_response(
-                        {"error": f"Unknown provider {parsed[0]!r} in model ref {m!r}. "
-                         f"Install/configure it first (Providers), or pick a known provider. "
-                         f"Known: {sorted(known)}"},
+                        {
+                            "error": f"Unknown provider {parsed[0]!r} in model ref {m!r}. "
+                            f"Install/configure it first (Providers), or pick a known provider. "
+                            f"Known: {sorted(known)}"
+                        },
                         status=400,
                     )
     except Exception:
@@ -321,7 +346,12 @@ async def api_models_active_set(request: web.Request) -> web.Response:
 
     # Audit the binding change (#45): repointing a use-case to a different model is
     # a security-relevant state change — record who set what.
-    _sel_log("models.active_set", "ok", f"{use_case}={','.join(active[use_case]) or '(cleared)'}", request)
+    _sel_log(
+        "models.active_set",
+        "ok",
+        f"{use_case}={','.join(active[use_case]) or '(cleared)'}",
+        request,
+    )
     return web.json_response({"ok": True, "use_case": use_case, "models": active[use_case]})
 
 
@@ -346,13 +376,15 @@ async def api_models_chat(request: web.Request) -> web.Response:
                 provider_name, model_id = model_ref.split(":", 1)
             else:
                 provider_name, model_id = "", model_ref
-            result.append({
-                "name": model_id if not provider_name else model_ref,
-                "model_name": model_id,
-                "model_id": model_id,
-                "provider": provider_name,
-                "description": model_id,
-            })
+            result.append(
+                {
+                    "name": model_id if not provider_name else model_ref,
+                    "model_name": model_id,
+                    "model_id": model_id,
+                    "provider": provider_name,
+                    "description": model_id,
+                }
+            )
         return web.json_response(result)
 
     # Fallback: no active selection — discover chat-capable models from every
@@ -363,13 +395,15 @@ async def api_models_chat(request: web.Request) -> web.Response:
     all_models: list[dict[str, Any]] = []
 
     def _add(pname: str, mid: str) -> None:
-        all_models.append({
-            "name": f"{pname}/{mid}" if pname else mid,
-            "model_name": mid,
-            "model_id": mid,
-            "provider": pname,
-            "description": mid,
-        })
+        all_models.append(
+            {
+                "name": f"{pname}/{mid}" if pname else mid,
+                "model_name": mid,
+                "model_id": mid,
+                "provider": pname,
+                "description": mid,
+            }
+        )
 
     tasks = []  # (pname, has_pinned_model, pinned_model, coro)
     for p in providers_cfg:
@@ -385,7 +419,7 @@ async def api_models_chat(request: web.Request) -> web.Response:
     if tasks:
         results = await asyncio.gather(*(t[2] for t in tasks), return_exceptions=True)
         for (pname, pinned, _), models_or_exc in zip(tasks, results):
-            if isinstance(models_or_exc, Exception) or not models_or_exc:
+            if isinstance(models_or_exc, BaseException) or not models_or_exc:
                 # Discovery failed / empty — fall back to the pinned model id.
                 if pinned:
                     _add(pname, pinned)

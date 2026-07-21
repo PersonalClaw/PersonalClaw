@@ -14,17 +14,17 @@ from __future__ import annotations
 
 import logging
 
-from personalclaw.loop.kinds import register
+from personalclaw.loop.kinds import LoopKindStrategy, register
 from personalclaw.loop.loop import Loop
 
 logger = logging.getLogger(__name__)
 
 
-class DesignKind:
+class DesignKind(LoopKindStrategy):
     kind = "design"
     label = "Design"
     description = "Build a design system — tokens, components, live canvas, exports."
-    wants_workspace = False   # the project context dir holds the design artifacts
+    wants_workspace = False  # the project context dir holds the design artifacts
     default_agent = "personalclaw-loop"
     # NOT task-driven yet: until the Design slice adds the step walkthrough that emits a
     # real plan, classify returns plan=[] — so provisioning would create a Tasks Project
@@ -44,17 +44,18 @@ class DesignKind:
         }
 
     def phase_key(self, phase: dict) -> str:
-        return (str(phase.get("step", "")).strip() or str(phase.get("title", "")).strip())
+        return str(phase.get("step", "")).strip() or str(phase.get("title", "")).strip()
 
     def _token_axes(self) -> list[str]:
         """Human-readable list of the default token system's top-level axes (drives the
         brief). Derived from the bundled default set so the brief never drifts from it."""
         try:
             from personalclaw.loop.design_tokens import default_tokens
+
             tree = default_tokens()
             labels = {
-                "color": "color — primitive scales (50→950) + semantic roles per scheme (light/dark)",
-                "typography": "typography — families, weights, sizes, line-heights, tracking, composed text styles",
+                "color": "color — primitive scales (50→950) + semantic roles per scheme (light/dark)",  # noqa: E501
+                "typography": "typography — families, weights, sizes, line-heights, tracking, composed text styles",  # noqa: E501
                 "spacing": "spacing — 4px-grid scale",
                 "sizing": "sizing — icon/control/container dimensions",
                 "radius": "radius — corner rounding scale",
@@ -67,7 +68,7 @@ class DesignKind:
                 "zIndex": "zIndex — named stacking layers",
                 "breakpoint": "breakpoint — responsive cut points",
                 "gradient": "gradient — brand/accent/subtle presets",
-                "component": "component — per-component token blocks (button/input/card/badge/tooltip/modal …)",
+                "component": "component — per-component token blocks (button/input/card/badge/tooltip/modal …)",  # noqa: E501
             }
             return [labels.get(k, k) for k in tree if k not in ("$schema", "meta")]
         except Exception:
@@ -94,6 +95,7 @@ class DesignKind:
         Returns True iff completed. Owns done-ness (watchdog skips its generic signal)."""
         from personalclaw.loop import store
         from personalclaw.loop.manager import write_brief
+
         cid = loop.id
         # Persist the worker's chosen token overrides: it writes token_overrides.json in
         # its loop dir (it has file tools, not the loop HTTP API), and we merge it into
@@ -130,7 +132,8 @@ class DesignKind:
                 title = self._strip_step_ordinal(str(p.get("title", "")).strip().lower())
                 cand = f"{p.get('step', '')} {title}".strip().lower()
                 if reported == keys[i].lower() or reported in cand or cand and cand in reported:
-                    idx = i; break
+                    idx = i
+                    break
         # Still no label match? Extract a LEADING 1-based index from the raw step
         # ("step 4 — …", "4 — …", "P4: …"). The worker's step TITLE routinely drifts from
         # the plan's phase title (e.g. "Per-state component specs & keyboard/ARIA model" vs
@@ -140,6 +143,7 @@ class DesignKind:
         # phase back to active (observed: cycle-4 "Step 4 — …" reset foundations→active).
         if idx < 0:
             import re
+
             m = re.match(r"^\s*(?:step|phase|p)?\s*(\d+)\b", raw_reported, re.I)
             if m:
                 n = int(m.group(1))
@@ -152,8 +156,9 @@ class DesignKind:
             per = max(1, (loop.max_cycles or 30) // max(1, len(plan)))
             idx = min(len(plan) - 1, max(0, (loop.total_cycles - 1) // per))
         status0 = loop.phase_status or {}
-        reached = max((i for i, k in enumerate(keys) if status0.get(k) in ("active", "done")),
-                      default=-1)
+        reached = max(
+            (i for i, k in enumerate(keys) if status0.get(k) in ("active", "done")), default=-1
+        )
         if idx < reached:
             idx = reached  # monotonic: never walk the trail backwards
         status = dict(loop.phase_status or {})
@@ -193,8 +198,12 @@ class DesignKind:
         "1. Emit Primitive Token Layer" / "2 — Palette" / "step 3: …" → the bare label.
         Mirrors sdlc._strip_stage_ordinal so phase matching survives the prefix."""
         import re
-        return re.sub(r"^\s*(?:step\s*)?\d+\s*[.–—:)\-]\s*", "", (s or "").strip(),
-                      flags=re.I).strip().lower()
+
+        return (
+            re.sub(r"^\s*(?:step\s*)?\d+\s*[.–—:)\-]\s*", "", (s or "").strip(), flags=re.I)
+            .strip()
+            .lower()
+        )
 
     def _has_design_artifact(self, loop_id: str) -> bool:
         """True if a non-empty DESIGN.md artifact tagged ``loop:<id>`` exists. The design
@@ -202,6 +211,7 @@ class DesignKind:
         gate must accept the artifact form, not only the loop-dir file. Best-effort."""
         try:
             from personalclaw.artifacts import registry as artifact_registry
+
             prov = artifact_registry.get_provider()
             if prov is None:
                 return False
@@ -220,6 +230,7 @@ class DesignKind:
         into kind_config.token_overrides. The worker writes the file with its file tools;
         this is its persist path (it can't call the loop HTTP API the FE uses)."""
         import json
+
         try:
             d = store.safe_loop_dir(loop.id)
             if d is None:
@@ -241,16 +252,31 @@ class DesignKind:
     # Design loop ALWAYS has a real phased plan (the vision's "break into phased
     # executions"), never free-runs.
     _DEFAULT_PHASES = [
-        {"step": "foundations", "title": "Foundations & audit",
-         "objective": "Understand the brand/product, audit references, and decide which default token axes to override."},
-        {"step": "palette", "title": "Color palette",
-         "objective": "Set the brand/accent/neutral + semantic color scales; verify light/dark and WCAG contrast."},
-        {"step": "typography", "title": "Typography & spacing",
-         "objective": "Choose type families, the modular size scale, weights, and the spacing/radius rhythm."},
-        {"step": "components", "title": "Core components",
-         "objective": "Generate the core React components (button, input, card, …) styled from the tokens; render them on the canvas."},
-        {"step": "export", "title": "Document & export",
-         "objective": "Write DESIGN.md and produce the export artifacts (token set, CSS variables, React components)."},
+        {
+            "step": "foundations",
+            "title": "Foundations & audit",
+            "objective": "Understand the brand/product, audit references, and decide which default token axes to override.",  # noqa: E501
+        },
+        {
+            "step": "palette",
+            "title": "Color palette",
+            "objective": "Set the brand/accent/neutral + semantic color scales; verify light/dark and WCAG contrast.",  # noqa: E501
+        },
+        {
+            "step": "typography",
+            "title": "Typography & spacing",
+            "objective": "Choose type families, the modular size scale, weights, and the spacing/radius rhythm.",  # noqa: E501
+        },
+        {
+            "step": "components",
+            "title": "Core components",
+            "objective": "Generate the core React components (button, input, card, …) styled from the tokens; render them on the canvas.",  # noqa: E501
+        },
+        {
+            "step": "export",
+            "title": "Document & export",
+            "objective": "Write DESIGN.md and produce the export artifacts (token set, CSS variables, React components).",  # noqa: E501
+        },
     ]
 
     def default_phases(self) -> list[dict]:
@@ -274,14 +300,27 @@ class DesignKind:
         deterministic _DEFAULT_PHASES carry it, so a Design loop always has a real plan."""
         plan = await self._plan_phases(task, ask)
         return {
-            "title": "", "summary": "", "classified": True, "intake_rigor": "auto",
-            "execution": "solo", "roster": [], "strategy_id": "orchestrator",
-            "clarifying_questions": [], "suggested_skill_ids": [], "suggested_workflow_ids": [],
-            "marketplace_suggestions": [], "success_criteria": "", "plan": plan,
-            "kind_config": {"token_overrides": {}, "targets": "", "exports": [],
-                            # mirror the plan into kind_config so build_brief + the cockpit
-                            # render the steps even before any task-provisioning.
-                            "design_steps": [p["title"] for p in plan]},
+            "title": "",
+            "summary": "",
+            "classified": True,
+            "intake_rigor": "auto",
+            "execution": "solo",
+            "roster": [],
+            "strategy_id": "orchestrator",
+            "clarifying_questions": [],
+            "suggested_skill_ids": [],
+            "suggested_workflow_ids": [],
+            "marketplace_suggestions": [],
+            "success_criteria": "",
+            "plan": plan,
+            "kind_config": {
+                "token_overrides": {},
+                "targets": "",
+                "exports": [],
+                # mirror the plan into kind_config so build_brief + the cockpit
+                # render the steps even before any task-provisioning.
+                "design_steps": [p["title"] for p in plan],
+            },
         }
 
     async def _plan_phases(self, task: str, ask) -> list[dict]:
@@ -301,12 +340,15 @@ class DesignKind:
             raw = await ask(prompt)
             start, end = raw.find("["), raw.rfind("]")
             if start != -1 and end > start:
-                rows = _json.loads(raw[start:end + 1])
+                rows = _json.loads(raw[start : end + 1])
                 out = [
-                    {"step": str(r.get("step", "")).strip() or str(r.get("title", "")).strip(),
-                     "title": str(r.get("title", "")).strip(),
-                     "objective": str(r.get("objective", "")).strip()}
-                    for r in rows if isinstance(r, dict) and (r.get("title") or r.get("step"))
+                    {
+                        "step": str(r.get("step", "")).strip() or str(r.get("title", "")).strip(),
+                        "title": str(r.get("title", "")).strip(),
+                        "objective": str(r.get("objective", "")).strip(),
+                    }
+                    for r in rows
+                    if isinstance(r, dict) and (r.get("title") or r.get("step"))
                 ]
                 if out:
                     return out
@@ -338,16 +380,24 @@ class DesignKind:
             "To CHOOSE overrides, write `token_overrides.json` in your loop dir — a partial "
             "document of the same shape as the defaults (deep-merged over them; the loop "
             "ingests it each cycle so the Tokens/Palette/Exports surfaces + this brief update). "
-            "Override **semantic roles** (e.g. `{\"color\":{\"semantic\":{\"light\":{\"brand.default\":"
-            "\"#6d28d9\"}}}}`) and **primitives** (e.g. `{\"color\":{\"primitive\":{\"brand\":{\"500\":"
-            "\"#6d28d9\"}}}}`), never component values directly, so light/dark and every "
+            'Override **semantic roles** (e.g. `{"color":{"semantic":{"light":{"brand.default":'
+            '"#6d28d9"}}}}`) and **primitives** (e.g. `{"color":{"primitive":{"brand":{"500":'
+            '"#6d28d9"}}}}`), never component values directly, so light/dark and every '
             "component stay in lockstep.",
         ]
-        overrides = cfg.get("token_overrides") if isinstance(cfg.get("token_overrides"), dict) else {}
+        overrides = (
+            cfg.get("token_overrides") if isinstance(cfg.get("token_overrides"), dict) else {}
+        )
         if overrides:
             import json as _json
-            lines += ["", "**Overrides chosen so far:**", "```json",
-                      _json.dumps(overrides, indent=2)[:2000], "```"]
+
+            lines += [
+                "",
+                "**Overrides chosen so far:**",
+                "```json",
+                _json.dumps(overrides, indent=2)[:2000],
+                "```",
+            ]
         if loop.plan:
             # Reflect phase_status (on_new_cycle advances it) so the RE-ARMED brief actually
             # steers: done steps are marked, the active one is flagged "← FOCUS NOW", and a
@@ -367,14 +417,25 @@ class DesignKind:
                 tail = "  ← FOCUS NOW" if state == "active" else ""
                 if state == "active":
                     active_title = t
-                lines.append((f"{i+1}. {mark}**{t}** — {obj}{tail}" if obj else f"{i+1}. {mark}**{t}**{tail}"))
+                lines.append(
+                    (
+                        f"{i+1}. {mark}**{t}** — {obj}{tail}"
+                        if obj
+                        else f"{i+1}. {mark}**{t}**{tail}"
+                    )
+                )
             if active_title:
-                lines += ["", f"**This cycle: advance \"{active_title}\".** When it's substantially "
-                          "done, say so in your finding's `step` (use the NEXT step's name) so the loop moves on."]
+                lines += [
+                    "",
+                    f'**This cycle: advance "{active_title}".** When it\'s substantially '
+                    "done, say so in your finding's `step` (use the NEXT step's name) so the loop moves on.",  # noqa: E501
+                ]
         if context_dir:
-            lines += ["",
-                      f"**Project context dir:** `{context_dir}` — the design artifacts "
-                      "(token sets, components, DESIGN.md) and shared project context live here."]
+            lines += [
+                "",
+                f"**Project context dir:** `{context_dir}` — the design artifacts "
+                "(token sets, components, DESIGN.md) and shared project context live here.",
+            ]
         return "\n".join(lines)
 
     def cycle_nudge(self, loop: Loop, loop_dir: str) -> str:
@@ -382,28 +443,30 @@ class DesignKind:
         screenshot extraction, exports) layer on in the Design slice; the loop spine
         — read status/brief/guidance, advance the current design step, MUST write a
         finding — holds now so the kind runs on the unified engine."""
-        return "\n".join([
-            f"Run the next autonomous cycle for design loop {loop.id} "
-            f"(working dir for loop files: {loop_dir}). Steps: (1) check status.json — "
-            "if not 'running', stop; (2) read brief.md; (3) apply + delete guidance.txt "
-            "if present; (4) advance the CURRENT design step (tokens, a component, a "
-            "palette decision) toward the design system.",
-            "",
-            f"Before you end this turn you MUST write findings/cycle_NNN.json to {loop_dir} "
-            "(next sequential N) — {cycle, step, summary, key_insight, artifacts}. Save "
-            f"design outputs as artifacts tagged `loop:{loop.id}` via artifact_save:",
-            f"  • Each React COMPONENT → `artifact_save(kind='react', tags=['loop:{loop.id}'])` "
-            "where content is JSX defining a top-level `App` component authored against the "
-            "window React/ReactDOM globals (no imports/exports) — it renders live on the "
-            "loop's design Canvas. Style it with the design system's token VALUES (read them "
-            "from the brief / token set), so the component reflects the chosen overrides.",
-            f"  • The design-system doc → `artifact_save(name='DESIGN.md', kind='markdown', "
-            f"tags=['loop:{loop.id}'])`.",
-            f"  • Token decisions → write/update `{loop_dir}/token_overrides.json` (partial "
-            "token document; the loop ingests + merges it each cycle so the design surfaces "
-            "reflect your choices). Reference its values from the components you generate.",
-            "Then end the turn.",
-        ])
+        return "\n".join(
+            [
+                f"Run the next autonomous cycle for design loop {loop.id} "
+                f"(working dir for loop files: {loop_dir}). Steps: (1) check status.json — "
+                "if not 'running', stop; (2) read brief.md; (3) apply + delete guidance.txt "
+                "if present; (4) advance the CURRENT design step (tokens, a component, a "
+                "palette decision) toward the design system.",
+                "",
+                f"Before you end this turn you MUST write findings/cycle_NNN.json to {loop_dir} "
+                "(next sequential N) — {cycle, step, summary, key_insight, artifacts}. Save "
+                f"design outputs as artifacts tagged `loop:{loop.id}` via artifact_save:",
+                f"  • Each React COMPONENT → `artifact_save(kind='react', tags=['loop:{loop.id}'])` "  # noqa: E501
+                "where content is JSX defining a top-level `App` component authored against the "
+                "window React/ReactDOM globals (no imports/exports) — it renders live on the "
+                "loop's design Canvas. Style it with the design system's token VALUES (read them "
+                "from the brief / token set), so the component reflects the chosen overrides.",
+                f"  • The design-system doc → `artifact_save(name='DESIGN.md', kind='markdown', "
+                f"tags=['loop:{loop.id}'])`.",
+                f"  • Token decisions → write/update `{loop_dir}/token_overrides.json` (partial "
+                "token document; the loop ingests + merges it each cycle so the design surfaces "
+                "reflect your choices). Reference its values from the components you generate.",
+                "Then end the turn.",
+            ]
+        )
 
 
 class _DesignWalkthrough:
@@ -416,6 +479,7 @@ class _DesignWalkthrough:
 
     def __init__(self) -> None:
         from personalclaw.agents.defaults import LOOP_PLANNER_AGENT_NAME
+
         # No design-specific planner agent yet; the generic loop planner drives the
         # design pass (its briefs carry all the design-space framing).
         self.planner_agent = LOOP_PLANNER_AGENT_NAME
@@ -425,18 +489,22 @@ class _DesignWalkthrough:
 
     def build_design_brief(self, task: str, workspace_dir: str, design_inputs=None) -> str:
         from personalclaw.loop import design_plan_briefs as pw
+
         return pw.build_design_brief(task, workspace_dir, design_inputs=design_inputs)
 
     def parse_steps_sentinel(self, raw: str):
         from personalclaw.loop import design_plan_briefs as pw
+
         return pw.parse_steps_sentinel(raw)
 
     def build_step_brief(self, task, step, *, approved, workspace_dir):
         from personalclaw.loop import design_plan_briefs as pw
+
         return pw.build_step_brief(task, step, approved=approved, workspace_dir=workspace_dir)
 
     def parse_artifact_sentinel(self, raw: str):
         from personalclaw.loop import design_plan_briefs as pw
+
         return pw.parse_artifact_sentinel(raw)
 
     def project_to_spec(self, session) -> dict:
@@ -445,12 +513,15 @@ class _DesignWalkthrough:
         (the cockpit/brief render them). Falls back to the canonical default phases if
         the walkthrough produced no build_plan, so the user always lands launchable."""
         from personalclaw.loop import design_plan_briefs as pw
+
         bp = next((s for s in reversed(session.steps) if s.kind == "build_plan"), None)
         plan = pw.build_plan_to_phases(bp.artifact) if bp else []
         if not plan:
             plan = DesignKind().default_phases()
-            logger.info("design walkthrough: no build_plan for %s — using default phases",
-                        session.project_id)
+            logger.info(
+                "design walkthrough: no build_plan for %s — using default phases",
+                session.project_id,
+            )
         spec: dict = {"plan": plan}
         # Carry a summary from the brief step (the design intent) if present.
         for s in session.steps:
@@ -463,13 +534,15 @@ class _DesignWalkthrough:
         # opens populated with the approved palette/type — the D4 approve→populate
         # guarantee, authoritative server-side (not reliant on the FE previewing each
         # step). Layer the approved overrides over any already on the loop.
-        from personalclaw.loop import design_tokens as dt, store as _store
+        from personalclaw.loop import design_tokens as dt
+        from personalclaw.loop import store as _store
+
         loop = _store.get(session.project_id)
         base = dict(loop.kind_config) if loop and loop.kind_config else {}
         base["design_steps"] = [p["title"] for p in plan]
         approved_ov = pw.collect_token_overrides(session.steps)
         if approved_ov:
-            existing = base.get("token_overrides") if isinstance(base.get("token_overrides"), dict) else {}
+            existing = _to if isinstance((_to := base.get("token_overrides")), dict) else {}
             base["token_overrides"] = dt.deep_merge(existing, approved_ov)
         spec["kind_config"] = base
         return spec

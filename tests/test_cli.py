@@ -3,7 +3,6 @@
 import argparse
 import json
 import subprocess
-import sys
 import urllib.error
 from unittest.mock import MagicMock, patch
 
@@ -19,7 +18,9 @@ class TestDoctor:
         agent_file.write_text("{}")
         mock_run = MagicMock(returncode=0, stdout="personalclaw-cli 1.0.0", stderr="")
         with (
-            patch("personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/local/bin/{b}"),
+            patch(
+                "personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/local/bin/{b}"
+            ),
             patch("personalclaw.cli_doctor.AGENTS_DIR", tmp_path),
             patch("subprocess.run", return_value=mock_run),
             patch("urllib.request.urlopen", side_effect=urllib.error.URLError("no gateway")),
@@ -46,9 +47,7 @@ class TestSetupWorkspaceDir:
         ws_file = tmp_path / "workspace_dir"
         ws_file.write_text("/custom/workspace\n")
         custom_dir = tmp_path / "custom"
-        monkeypatch.setattr(
-            "personalclaw.cli_setup._workspace_dir_file", lambda: ws_file
-        )
+        monkeypatch.setattr("personalclaw.cli_setup._workspace_dir_file", lambda: ws_file)
         with patch("builtins.input", return_value=str(custom_dir)) as mock_input:
             from personalclaw.cli_setup import _setup_workspace_dir
 
@@ -60,9 +59,7 @@ class TestSetupWorkspaceDir:
         ws_file = tmp_path / "workspace_dir"
         ws_file.write_text("/custom/workspace\n")
         custom_dir = tmp_path / "custom"
-        monkeypatch.setattr(
-            "personalclaw.cli_setup._workspace_dir_file", lambda: ws_file
-        )
+        monkeypatch.setattr("personalclaw.cli_setup._workspace_dir_file", lambda: ws_file)
         with patch("builtins.input", return_value=str(custom_dir)):
             from personalclaw.cli_setup import _setup_workspace_dir
 
@@ -73,9 +70,7 @@ class TestSetupWorkspaceDir:
     def test_shows_default_label_when_no_saved(self, tmp_path, monkeypatch, capsys):
         ws_file = tmp_path / "no_such_file"
         custom_dir = tmp_path / "ws"
-        monkeypatch.setattr(
-            "personalclaw.cli_setup._workspace_dir_file", lambda: ws_file
-        )
+        monkeypatch.setattr("personalclaw.cli_setup._workspace_dir_file", lambda: ws_file)
         with patch("builtins.input", return_value=str(custom_dir)):
             from personalclaw.cli_setup import _setup_workspace_dir
 
@@ -86,8 +81,10 @@ class TestSetupWorkspaceDir:
 
 class TestCronCli:
     def test_cron_add_with_channel(self, tmp_path):
-        with patch("personalclaw.cli_commands.ScheduleService") as mock_svc_cls, \
-             patch("personalclaw.cli_commands.sel"):
+        with (
+            patch("personalclaw.cli_commands.ScheduleService") as mock_svc_cls,
+            patch("personalclaw.cli_commands.sel"),
+        ):
             mock_svc = mock_svc_cls.return_value
             mock_job = MagicMock()
             mock_job.id = "abc"
@@ -108,14 +105,19 @@ class TestCronCli:
             )
             _cron(args)
             from personalclaw.schedule import make_agent_action
+
             mock_svc.add_job.assert_called_once_with(
-                name="ops", action=make_agent_action(message="check", approval_mode=""),
-                every_secs=300, channel="C0AP77JJSN6",
+                name="ops",
+                action=make_agent_action(message="check", approval_mode=""),
+                every_secs=300,
+                channel="C0AP77JJSN6",
             )
 
     def test_cron_add_with_cron_expr_and_channel(self, tmp_path):
-        with patch("personalclaw.cli_commands.ScheduleService") as mock_svc_cls, \
-             patch("personalclaw.cli_commands.sel"):
+        with (
+            patch("personalclaw.cli_commands.ScheduleService") as mock_svc_cls,
+            patch("personalclaw.cli_commands.sel"),
+        ):
             mock_svc = mock_svc_cls.return_value
             mock_job = MagicMock()
             mock_job.id = "def"
@@ -136,14 +138,19 @@ class TestCronCli:
             )
             _cron(args)
             from personalclaw.schedule import make_agent_action
+
             mock_svc.add_job.assert_called_once_with(
-                name="daily", action=make_agent_action(message="brief", approval_mode=""),
-                cron_expr="0 9 * * 1-5", channel="C0APAPQ5GSY",
+                name="daily",
+                action=make_agent_action(message="brief", approval_mode=""),
+                cron_expr="0 9 * * 1-5",
+                channel="C0APAPQ5GSY",
             )
 
     def test_cron_add_with_approval_mode(self, tmp_path):
-        with patch("personalclaw.cli_commands.ScheduleService") as mock_svc_cls, \
-             patch("personalclaw.cli_commands.sel") as mock_sel:
+        with (
+            patch("personalclaw.cli_commands.ScheduleService") as mock_svc_cls,
+            patch("personalclaw.cli_commands.sel") as mock_sel,
+        ):
             mock_svc = mock_svc_cls.return_value
             mock_job = MagicMock()
             mock_job.id = "ghi"
@@ -164,19 +171,26 @@ class TestCronCli:
             )
             _cron(args)
             from personalclaw.schedule import make_agent_action
+
             mock_svc.add_job.assert_called_once_with(
-                name="auto-job", action=make_agent_action(message="run unattended", approval_mode="auto"),
-                every_secs=600, channel=None,
+                name="auto-job",
+                action=make_agent_action(message="run unattended", approval_mode="auto"),
+                every_secs=600,
+                channel=None,
             )
             mock_sel.return_value.log_api_access.assert_called_once_with(
-                caller="cli", operation="cron.add",
-                outcome="allowed", source="cli",
+                caller="cli",
+                operation="cron.add",
+                outcome="allowed",
+                source="cli",
                 resources="job_id=ghi approval_mode=auto",
             )
 
     def test_cron_update_approval_mode(self, tmp_path):
-        with patch("personalclaw.cli_commands.ScheduleService") as mock_svc_cls, \
-             patch("personalclaw.cli_commands.sel") as mock_sel:
+        with (
+            patch("personalclaw.cli_commands.ScheduleService") as mock_svc_cls,
+            patch("personalclaw.cli_commands.sel") as mock_sel,
+        ):
             mock_svc = mock_svc_cls.return_value
             mock_job = MagicMock()
             mock_job.id = "abc123"
@@ -195,8 +209,10 @@ class TestCronCli:
             _cron(args)
             mock_svc.update_job.assert_called_once_with("abc123", approval_mode="auto")
             mock_sel.return_value.log_api_access.assert_called_once_with(
-                caller="cli", operation="cron.update",
-                outcome="allowed", source="cli",
+                caller="cli",
+                operation="cron.update",
+                outcome="allowed",
+                source="cli",
                 resources="job_id=abc123 fields=approval_mode",
             )
 
@@ -235,8 +251,10 @@ class TestCronCli:
             assert "not both" in out
 
     def test_cron_update_not_found(self, tmp_path, capsys):
-        with patch("personalclaw.cli_commands.ScheduleService") as mock_svc_cls, \
-             patch("personalclaw.cli_commands.sel") as mock_sel:
+        with (
+            patch("personalclaw.cli_commands.ScheduleService") as mock_svc_cls,
+            patch("personalclaw.cli_commands.sel") as mock_sel,
+        ):
             mock_svc = mock_svc_cls.return_value
             mock_svc.update_job.return_value = None
             args = argparse.Namespace(
@@ -252,8 +270,10 @@ class TestCronCli:
             _cron(args)
             assert "nonexist" in capsys.readouterr().out
             mock_sel.return_value.log_api_access.assert_called_once_with(
-                caller="cli", operation="cron.update",
-                outcome="not_found", source="cli",
+                caller="cli",
+                operation="cron.update",
+                outcome="not_found",
+                source="cli",
                 resources="job_id=nonexist reason=not_found",
             )
 
@@ -514,8 +534,15 @@ class TestStatus:
 
         mock_resp = MagicMock()
         mock_resp.read.return_value = json.dumps(
-            {"uptime": "1h 0m", "sessions": 2, "messages": 10,
-             "tool_calls": 5, "subagents": 0, "crons": 1, "lessons": 3}
+            {
+                "uptime": "1h 0m",
+                "sessions": 2,
+                "messages": 10,
+                "tool_calls": 5,
+                "subagents": 0,
+                "crons": 1,
+                "lessons": 3,
+            }
         ).encode()
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
@@ -592,17 +619,13 @@ class TestStop:
         # when a systemd/launchd service is active on the host. Force the
         # SIGTERM-by-port path so tests don't flake based on whether the
         # test host happens to have ``personalclaw.service`` installed.
-        with patch(
-            "personalclaw.cli_server.service_controller.stop_service", return_value=False
-        ):
+        with patch("personalclaw.cli_server.service_controller.stop_service", return_value=False):
             yield
 
     def test_lsof_not_found(self, capsys):
         from personalclaw.cli_server import _stop
 
-        with self._mock_sel(), patch(
-            "subprocess.check_output", side_effect=FileNotFoundError
-        ):
+        with self._mock_sel(), patch("subprocess.check_output", side_effect=FileNotFoundError):
             with pytest.raises(SystemExit) as exc:
                 _stop(7777)
             assert exc.value.code == 1
@@ -611,8 +634,9 @@ class TestStop:
     def test_no_process_on_port(self, capsys):
         from personalclaw.cli_server import _stop
 
-        with self._mock_sel(), patch(
-            "subprocess.check_output", side_effect=subprocess.CalledProcessError(1, "lsof")
+        with (
+            self._mock_sel(),
+            patch("subprocess.check_output", side_effect=subprocess.CalledProcessError(1, "lsof")),
         ):
             with pytest.raises(SystemExit) as exc:
                 _stop(7777)
@@ -622,11 +646,15 @@ class TestStop:
     def test_no_personalclaw_process(self, capsys):
         from personalclaw.cli_server import _stop
 
-        with self._mock_sel(), patch(
-            "subprocess.check_output", side_effect=[
-                "1234\n",  # lsof returns a PID
-                "nginx: worker\n",  # ps shows non-personalclaw
-            ]
+        with (
+            self._mock_sel(),
+            patch(
+                "subprocess.check_output",
+                side_effect=[
+                    "1234\n",  # lsof returns a PID
+                    "nginx: worker\n",  # ps shows non-personalclaw
+                ],
+            ),
         ):
             with pytest.raises(SystemExit) as exc:
                 _stop(7777)
@@ -636,11 +664,15 @@ class TestStop:
     def test_ps_not_found(self, capsys):
         from personalclaw.cli_server import _stop
 
-        with self._mock_sel(), patch(
-            "subprocess.check_output", side_effect=[
-                "1234\n",  # lsof returns a PID
-                FileNotFoundError,  # ps not found
-            ]
+        with (
+            self._mock_sel(),
+            patch(
+                "subprocess.check_output",
+                side_effect=[
+                    "1234\n",  # lsof returns a PID
+                    FileNotFoundError,  # ps not found
+                ],
+            ),
         ):
             with pytest.raises(SystemExit) as exc:
                 _stop(7777)
@@ -650,24 +682,35 @@ class TestStop:
     def test_successful_stop(self, capsys):
         from personalclaw.cli_server import _stop
 
-        with self._mock_sel(), patch(
-            "subprocess.check_output", side_effect=[
-                "1234\n",  # lsof
-                "python3 -m personalclaw.dashboard\n",  # ps
-            ]
-        ), patch("os.kill"), patch("time.sleep"):
+        with (
+            self._mock_sel(),
+            patch(
+                "subprocess.check_output",
+                side_effect=[
+                    "1234\n",  # lsof
+                    "python3 -m personalclaw.dashboard\n",  # ps
+                ],
+            ),
+            patch("os.kill"),
+            patch("time.sleep"),
+        ):
             _stop(7777)
         assert "SIGTERM" in capsys.readouterr().out
 
     def test_permission_denied(self, capsys):
         from personalclaw.cli_server import _stop
 
-        with self._mock_sel(), patch(
-            "subprocess.check_output", side_effect=[
-                "1234\n",
-                "python3 -m personalclaw.dashboard\n",
-            ]
-        ), patch("os.kill", side_effect=PermissionError):
+        with (
+            self._mock_sel(),
+            patch(
+                "subprocess.check_output",
+                side_effect=[
+                    "1234\n",
+                    "python3 -m personalclaw.dashboard\n",
+                ],
+            ),
+            patch("os.kill", side_effect=PermissionError),
+        ):
             with pytest.raises(SystemExit) as exc:
                 _stop(7777)
             assert exc.value.code == 1
@@ -676,12 +719,17 @@ class TestStop:
     def test_process_already_exited(self, capsys):
         from personalclaw.cli_server import _stop
 
-        with self._mock_sel(), patch(
-            "subprocess.check_output", side_effect=[
-                "1234\n",
-                "python3 -m personalclaw.dashboard\n",
-            ]
-        ), patch("os.kill", side_effect=ProcessLookupError):
+        with (
+            self._mock_sel(),
+            patch(
+                "subprocess.check_output",
+                side_effect=[
+                    "1234\n",
+                    "python3 -m personalclaw.dashboard\n",
+                ],
+            ),
+            patch("os.kill", side_effect=ProcessLookupError),
+        ):
             with pytest.raises(SystemExit) as exc:
                 _stop(7777)
             assert exc.value.code == 1
@@ -695,13 +743,19 @@ class TestStop:
             if pid == 5678:
                 raise PermissionError
 
-        with self._mock_sel(), patch(
-            "subprocess.check_output", side_effect=[
-                "1234\n5678\n",
-                "python3 -m personalclaw.dashboard\n",  # ps for 1234
-                "python3 -m personalclaw.dashboard\n",  # ps for 5678
-            ]
-        ), patch("os.kill", side_effect=kill_side_effect), patch("time.sleep"):
+        with (
+            self._mock_sel(),
+            patch(
+                "subprocess.check_output",
+                side_effect=[
+                    "1234\n5678\n",
+                    "python3 -m personalclaw.dashboard\n",  # ps for 1234
+                    "python3 -m personalclaw.dashboard\n",  # ps for 5678
+                ],
+            ),
+            patch("os.kill", side_effect=kill_side_effect),
+            patch("time.sleep"),
+        ):
             with pytest.raises(SystemExit) as exc:
                 _stop(7777)
             assert exc.value.code == 1
@@ -713,12 +767,18 @@ class TestStop:
         """lsof sometimes emits warnings mixed with PIDs — non-digit lines are filtered."""
         from personalclaw.cli_server import _stop
 
-        with self._mock_sel(), patch(
-            "subprocess.check_output", side_effect=[
-                "1234\nlsof: WARNING: can't stat() ...\n",
-                "python3 -m personalclaw.dashboard\n",
-            ]
-        ), patch("os.kill"), patch("time.sleep"):
+        with (
+            self._mock_sel(),
+            patch(
+                "subprocess.check_output",
+                side_effect=[
+                    "1234\nlsof: WARNING: can't stat() ...\n",
+                    "python3 -m personalclaw.dashboard\n",
+                ],
+            ),
+            patch("os.kill"),
+            patch("time.sleep"),
+        ):
             _stop(7777)
         assert "SIGTERM" in capsys.readouterr().out
 
@@ -824,14 +884,22 @@ class TestDoctorStaleProjectDir:
             "tools": ["@personalclaw-core", "@personalclaw-schedule"],
             "allowedTools": ["@personalclaw-core", "@personalclaw-schedule"],
             "mcpServers": {
-                "personalclaw-core": {"command": "/usr/local/bin/personalclaw", "args": ["mcp-core"]},
-                "personalclaw-schedule": {"command": "/usr/local/bin/personalclaw", "args": ["mcp-schedule"]},
+                "personalclaw-core": {
+                    "command": "/usr/local/bin/personalclaw",
+                    "args": ["mcp-core"],
+                },
+                "personalclaw-schedule": {
+                    "command": "/usr/local/bin/personalclaw",
+                    "args": ["mcp-schedule"],
+                },
             },
         }
         agent_file.write_text(json.dumps(agent_data))
         mock_run = MagicMock(returncode=0, stdout="personalclaw-cli 1.0.0", stderr="")
         with (
-            patch("personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/local/bin/{b}"),
+            patch(
+                "personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/local/bin/{b}"
+            ),
             patch("personalclaw.cli_doctor.AGENTS_DIR", tmp_path),
             patch("subprocess.run", return_value=mock_run),
             patch("urllib.request.urlopen"),
@@ -909,8 +977,14 @@ class TestDoctorStt:
             "tools": ["@personalclaw-core", "@personalclaw-schedule"],
             "allowedTools": ["@personalclaw-core", "@personalclaw-schedule"],
             "mcpServers": {
-                "personalclaw-core": {"command": "/usr/local/bin/personalclaw", "args": ["mcp-core"]},
-                "personalclaw-schedule": {"command": "/usr/local/bin/personalclaw", "args": ["mcp-schedule"]},
+                "personalclaw-core": {
+                    "command": "/usr/local/bin/personalclaw",
+                    "args": ["mcp-core"],
+                },
+                "personalclaw-schedule": {
+                    "command": "/usr/local/bin/personalclaw",
+                    "args": ["mcp-schedule"],
+                },
             },
         }
         agent_file.write_text(json.dumps(agent_data))
@@ -921,7 +995,9 @@ class TestDoctorStt:
         provider = MagicMock()
         provider.name = "faster_whisper"
         with (
-            patch("personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/local/bin/{b}"),
+            patch(
+                "personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/local/bin/{b}"
+            ),
             patch("personalclaw.cli_doctor.AGENTS_DIR", tmp_path),
             patch("subprocess.run", return_value=mock_run),
             patch("urllib.request.urlopen", side_effect=urllib.error.URLError("no gateway")),
@@ -947,7 +1023,9 @@ class TestDoctorStt:
         self._agent_file(tmp_path)
         mock_run = MagicMock(returncode=0, stdout="personalclaw-cli 1.0.0", stderr="")
         with (
-            patch("personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/local/bin/{b}"),
+            patch(
+                "personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/local/bin/{b}"
+            ),
             patch("personalclaw.cli_doctor.AGENTS_DIR", tmp_path),
             patch("subprocess.run", return_value=mock_run),
             patch("urllib.request.urlopen", side_effect=urllib.error.URLError("no gateway")),
@@ -974,7 +1052,9 @@ class TestDoctorStt:
         self._agent_file(tmp_path)
         mock_run = MagicMock(returncode=0, stdout="personalclaw-cli 1.0.0", stderr="")
         with (
-            patch("personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/local/bin/{b}"),
+            patch(
+                "personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/local/bin/{b}"
+            ),
             patch("personalclaw.cli_doctor.AGENTS_DIR", tmp_path),
             patch("subprocess.run", return_value=mock_run),
             patch("urllib.request.urlopen", side_effect=urllib.error.URLError("no gateway")),
@@ -1040,17 +1120,7 @@ class TestConfigDirOverride:
         with patch("urllib.request.urlopen", return_value=mock_resp):
             _logout(7777)
 
-    def test_setup_slack_tokens_writes_to_config_dir(self, tmp_path, monkeypatch):
-        """_setup_slack_tokens writes .env to config_dir(), not ~/.personalclaw."""
-        monkeypatch.setattr("personalclaw.cli_setup.env_path", lambda: tmp_path / ".env")
-
-        from personalclaw.cli_setup import _setup_slack_tokens
-
-        # Simulate user providing all tokens
-        inputs = iter(["y", "xapp-test", "xoxb-test", "U12345"])
-        monkeypatch.setattr("builtins.input", lambda _: next(inputs))
-
-        _setup_slack_tokens()
-        assert (tmp_path / ".env").exists()
-        content = (tmp_path / ".env").read_text()
-        assert "xapp-test" in content
+    # (removed) test_setup_slack_tokens_writes_to_config_dir — plan 32 moved
+    # _setup_slack_tokens out of core into the slack-channel app's cli_setup.py
+    # (behind the cli.setup manifest seam). The config-dir/.env write path is now
+    # exercised app-side and by tests/test_app_cli.py's setup-runner tests.

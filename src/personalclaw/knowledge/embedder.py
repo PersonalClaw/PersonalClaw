@@ -7,6 +7,7 @@ so the bound model — native sentence-transformers OR any configured model prov
 per-provider hardcoding. Returns None (embedding gracefully off) when nothing is bound.
 Also holds the shared vector-text composition + BLOB (de)serialization helpers.
 """
+
 import logging
 import struct
 
@@ -77,11 +78,15 @@ class UnifiedEmbedder:
             return None
         try:
             return self._embed_fn(text)
-        except Exception as e:  # noqa: BLE001 — a provider hiccup disables embedding, never crashes ingest
+        except (
+            Exception
+        ) as e:  # noqa: BLE001 — a provider hiccup disables embedding, never crashes ingest
             logger.debug("embedding failed: %s", e)
             return None
 
-    def embed_for_item(self, title: str, summary: str | None, content: str | None = None) -> list[float] | None:
+    def embed_for_item(
+        self, title: str, summary: str | None, content: str | None = None
+    ) -> list[float] | None:
         return self.embed(compose_item_text(title, summary, content))
 
     def dim(self) -> int | None:
@@ -108,6 +113,7 @@ def create_embedder_from_config(config: dict) -> "UnifiedEmbedder | None":
             get_active_embed_fn,
             get_active_embedding_dim,
         )
+
         embed_fn = get_active_embed_fn()
     except Exception:
         return None

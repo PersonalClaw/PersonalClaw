@@ -53,17 +53,18 @@ class ChannelCapabilities:
     """What an adapter can do (#40) — machine-readable so the platform can route /
     feature-gate. Defaults are conservative (text-out only, no inbound)."""
 
-    inbound: bool = False            # can receive() messages
-    threads: bool = False            # supports thread_id reply chains
-    attachments: bool = False        # can send/receive files
-    reactions: bool = False          # emoji reactions
-    edits: bool = False              # can edit a sent message
-    rich_text: bool = False          # markdown / blocks
+    inbound: bool = False  # can receive() messages
+    threads: bool = False  # supports thread_id reply chains
+    attachments: bool = False  # can send/receive files
+    reactions: bool = False  # emoji reactions
+    edits: bool = False  # can edit a sent message
+    rich_text: bool = False  # markdown / blocks
     typing_indicator: bool = False
-    max_text_len: int = 0            # 0 = unbounded
+    max_text_len: int = 0  # 0 = unbounded
 
     def to_dict(self) -> dict[str, Any]:
         from dataclasses import asdict
+
         return asdict(self)
 
 
@@ -78,13 +79,11 @@ class ChannelTransportProvider(ABC):
 
     @property
     @abstractmethod
-    def name(self) -> str:
-        ...
+    def name(self) -> str: ...
 
     @property
     @abstractmethod
-    def display_name(self) -> str:
-        ...
+    def display_name(self) -> str: ...
 
     @abstractmethod
     async def connect(self) -> bool:

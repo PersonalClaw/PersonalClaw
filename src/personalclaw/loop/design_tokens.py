@@ -13,6 +13,7 @@ import functools
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -83,11 +84,11 @@ def _resolve_str(value: str, tree: dict, _depth: int = 0) -> str:
         end = out.find(_REF_CLOSE, start)
         if end == -1:
             break
-        path = out[start + 1:end]
+        path = out[start + 1 : end]
         resolved = _lookup(tree, path)
         if isinstance(resolved, str):
             resolved = _resolve_str(resolved, tree, _depth + 1)
-            out = out[:start] + resolved + out[end + 1:]
+            out = out[:start] + resolved + out[end + 1 :]
             start = out.find(_REF_OPEN, start + len(resolved))
         else:
             # Unresolvable / non-string target: leave the ref literal, move past it.
@@ -123,7 +124,7 @@ def _replace_ordered_scales(merged: dict, override: dict) -> dict:
     (those whose value is a dimension) and use the override's scale, keeping only the
     default's non-value meta keys (e.g. ``comment``). Pure."""
     for path in _REPLACE_SCALE_PATHS:
-        ov = override
+        ov: Any = override
         for seg in path:
             ov = ov.get(seg) if isinstance(ov, dict) else None
         if not isinstance(ov, dict) or not ov:
@@ -133,7 +134,7 @@ def _replace_ordered_scales(merged: dict, override: dict) -> dict:
         for seg in path[:-1]:
             node = node.setdefault(seg, {})
         leaf = path[-1]
-        default_scale = node.get(leaf) if isinstance(node.get(leaf), dict) else {}
+        default_scale = _ds if isinstance((_ds := node.get(leaf)), dict) else {}
         # Keep the default's non-value meta keys (comment, etc.), then lay the override's
         # full scale on top — no default step survives to collide with it. Step detection
         # is VALUE-based (is the value a dimension?), so it works for numeric-key scales

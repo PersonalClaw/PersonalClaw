@@ -66,6 +66,7 @@ def _ensure_scanned() -> None:
     deleted the provider or uninstalled the app) so they don't ghost the UI.
     """
     from personalclaw.providers.media_scanners import scan
+
     fresh = scan("image_gen")
     fresh_names = {getattr(p, "name", "") for p in fresh} - {""}
     for prov in fresh:
@@ -93,10 +94,14 @@ def _register_remote_providers() -> None:
     for p in openai_family_providers():
         if p["name"] in _providers:
             continue
-        register_provider(OpenAIImageProvider(
-            provider_name=p["name"], provider_type=p.get("type", ""),
-            endpoint=p["endpoint"], api_key=p["api_key"],
-        ))
+        register_provider(
+            OpenAIImageProvider(
+                provider_name=p["name"],
+                provider_type=p.get("type", ""),
+                endpoint=p["endpoint"],
+                api_key=p["api_key"],
+            )
+        )
 
 
 def _register_stub_provider() -> None:

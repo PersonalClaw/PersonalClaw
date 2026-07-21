@@ -35,22 +35,26 @@ from personalclaw.snapshot import (
 
 logger = logging.getLogger(__name__)
 
-EXPORT_EXCLUDE = frozenset({
-    ".env",
-    ".local_secret",
-    "sel_hmac.key",
-    "telemetry_salt",
-    "session_map.json",
-    "session_pids.txt",
-    "agent_pids.txt",
-})
+EXPORT_EXCLUDE = frozenset(
+    {
+        ".env",
+        ".local_secret",
+        "sel_hmac.key",
+        "telemetry_salt",
+        "session_map.json",
+        "session_pids.txt",
+        "agent_pids.txt",
+    }
+)
 
-EXCLUDE_DIRS = frozenset({
-    "snapshots",
-    "outbox",
-    "uploads",
-    "__pycache__",
-})
+EXCLUDE_DIRS = frozenset(
+    {
+        "snapshots",
+        "outbox",
+        "uploads",
+        "__pycache__",
+    }
+)
 
 
 def _pc_dir() -> Path:
@@ -114,16 +118,22 @@ def create_export_zip() -> tuple[bytes, dict]:
 
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         # Core JSON/text files
-        for fname in ("config.json", "hooks.json", "crons.json", "notifications.jsonl",
-                      "project_dir", "workspace_dir"):
-            src =pc / fname
+        for fname in (
+            "config.json",
+            "hooks.json",
+            "crons.json",
+            "notifications.jsonl",
+            "project_dir",
+            "workspace_dir",
+        ):
+            src = pc / fname
             if src.is_file() and not src.is_symlink():
                 zf.write(str(src), f"{prefix}/{fname}")
                 contents_summary[fname] = src.stat().st_size
 
         # SQLite databases via backup API
         for db_name in ("memory.db", "memory_index.db"):
-            src =pc / db_name
+            src = pc / db_name
             if src.is_file() and not src.is_symlink():
                 db_buf = io.BytesIO()
                 _backup_sqlite(src, db_buf)
@@ -224,9 +234,7 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
 
         snap_dirs = [d for d in work.iterdir() if d.is_dir()]
         if len(snap_dirs) != 1:
-            raise ValueError(
-                f"Expected 1 top-level directory in zip, found {len(snap_dirs)}"
-            )
+            raise ValueError(f"Expected 1 top-level directory in zip, found {len(snap_dirs)}")
         snap = snap_dirs[0]
 
         if mode == "replace":
@@ -257,7 +265,7 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
 
             if (snap / "crons.json").is_file():
                 if (pc / "crons.json").is_file():
-                    _merge_crons(snap / "crons.json",pc / "crons.json")
+                    _merge_crons(snap / "crons.json", pc / "crons.json")
                     summary["items"].append("crons (merged)")
                 else:
                     shutil.copy2(str(snap / "crons.json"), str(pc / "crons.json"))
@@ -276,20 +284,16 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
 
             if (snap / "notifications.jsonl").is_file():
                 if (pc / "notifications.jsonl").is_file():
-                    _merge_notifications(
-                        snap / "notifications.jsonl",pc / "notifications.jsonl"
-                    )
+                    _merge_notifications(snap / "notifications.jsonl", pc / "notifications.jsonl")
                     summary["items"].append("notifications (merged)")
                 else:
-                    shutil.copy2(
-                        str(snap / "notifications.jsonl"), str(pc / "notifications.jsonl")
-                    )
+                    shutil.copy2(str(snap / "notifications.jsonl"), str(pc / "notifications.jsonl"))
                     summary["items"].append("notifications (copied)")
 
             for dirname in ("workspace", "plan_memory"):
                 sd = snap / dirname
                 if sd.is_dir():
-                    dd =pc / dirname
+                    dd = pc / dirname
                     dd.mkdir(parents=True, exist_ok=True)
                     _copy_tree_no_overwrite(sd, dd)
                     summary["items"].append(f"{dirname} (merged)")
@@ -300,7 +304,7 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                 for item in (snap / "skills").iterdir():
                     if item.name == "auto":
                         continue
-                    target =pc / "skills" / item.name
+                    target = pc / "skills" / item.name
                     if item.is_dir() and not target.exists():
                         shutil.copytree(str(item), str(target))
                     elif item.is_file() and not target.exists():

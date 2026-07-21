@@ -41,7 +41,9 @@ def test_env_override_single_path(monkeypatch, tmp_path):
     target = tmp_path / "my-acp"
     _make_exec(target)
     monkeypatch.setenv("MY_ACP_BIN", str(target))
-    assert resolve_acp_cli(env_var="MY_ACP_BIN", bin_names=["unused"], npm_pkg="pkg") == [str(target)]
+    assert resolve_acp_cli(env_var="MY_ACP_BIN", bin_names=["unused"], npm_pkg="pkg") == [
+        str(target)
+    ]
 
 
 def test_env_override_js_path_gets_node(monkeypatch, tmp_path):
@@ -116,6 +118,7 @@ def test_node_manager_glob(monkeypatch, tmp_path):
 
 # ── adapter provisioning helpers (durable codex-acp fix) ─────────────────────
 
+
 def test_is_npx_fallback_detects_npx_argv():
     assert is_npx_fallback(["npx", "-y", "@scope/pkg"]) is True
     assert is_npx_fallback(["/opt/homebrew/bin/npx", "-y", "@scope/pkg"]) is True
@@ -142,6 +145,7 @@ def test_resolve_node_ge_picks_new_enough(monkeypatch, tmp_path):
     # so on a machine with homebrew node the resolver would return that instead of
     # our fake. Pin the glob set to ONLY the fake nvm bin dir.
     import personalclaw.acp.cli_resolve as cli_resolve
+
     monkeypatch.setattr(cli_resolve, "_node_manager_bin_globs", lambda: [str(new_bin)])
     assert resolve_node_ge(min_major=20) == str(node)
     # A higher bar than the installed version → None.

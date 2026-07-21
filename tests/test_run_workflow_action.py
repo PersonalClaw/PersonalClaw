@@ -32,7 +32,9 @@ def _services(spawn_sink, scheduled):
 
 def _wf(steps=("step one",)):
     return SimpleNamespace(
-        id="wf1", name="release", description="ship it",
+        id="wf1",
+        name="release",
+        description="ship it",
         steps=[SimpleNamespace(title=s) for s in steps],
     )
 
@@ -131,7 +133,9 @@ def test_render_workflow_instruction_expands_steps(monkeypatch):
 
     child = Workflow(id="c", name="child", steps=[WorkflowStep(id="s1", title="sub task")])
     parent = Workflow(
-        id="p", name="release", description="ship it",
+        id="p",
+        name="release",
+        description="ship it",
         steps=[WorkflowStep(id="s1", title="build"), WorkflowStep(id="s2", ref="c")],
     )
 
@@ -139,6 +143,7 @@ def test_render_workflow_instruction_expands_steps(monkeypatch):
         return ([parent, child], 2)
 
     import personalclaw.workflows.registry as reg
+
     monkeypatch.setattr(reg, "list_all_workflows", _list)
 
     out = asyncio.run(mod.render_workflow_instruction(parent))
@@ -161,9 +166,13 @@ def test_invalid_cwd_is_honest_error(monkeypatch):
     scheduled: list = []
     monkeypatch.setattr(mod, "resolve_workflow", _resolve)
     monkeypatch.setattr(mod, "render_workflow_instruction", _render)
-    monkeypatch.setattr(mod, "validate_spawn_cwd", lambda cwd: "cwd is not under any allowed root: ['~/ok']")
+    monkeypatch.setattr(
+        mod, "validate_spawn_cwd", lambda cwd: "cwd is not under any allowed root: ['~/ok']"
+    )
     monkeypatch.setattr(mod, "get_action_services", lambda: _services(spawn_sink, scheduled))
-    res = asyncio.run(RunWorkflowActionProvider().execute({"workflow_id": "release", "cwd": "/bad"}, _ctx()))
+    res = asyncio.run(
+        RunWorkflowActionProvider().execute({"workflow_id": "release", "cwd": "/bad"}, _ctx())
+    )
     assert res.success is False and "allowed root" in res.error
     assert not scheduled
 
@@ -180,7 +189,8 @@ def test_services_unavailable_is_error(monkeypatch):
     monkeypatch.setattr(mod, "resolve_workflow", _resolve)
     monkeypatch.setattr(mod, "render_workflow_instruction", _render)
     monkeypatch.setattr(
-        mod, "get_action_services",
+        mod,
+        "get_action_services",
         lambda: SimpleNamespace(subagents=None, spawn_background=lambda c: None),
     )
     res = asyncio.run(RunWorkflowActionProvider().execute({"workflow_id": "release"}, _ctx()))

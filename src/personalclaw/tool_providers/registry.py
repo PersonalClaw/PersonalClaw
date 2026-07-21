@@ -3,7 +3,7 @@
 import logging
 from typing import Any
 
-from personalclaw.tool_providers.base import ToolDefinition, ToolProvider, ToolResult
+from personalclaw.tool_providers.base import ToolDefinition, ToolProvider
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +101,7 @@ def create_subagents_provider(config: dict[str, Any] | None = None) -> ToolProvi
         display="PersonalClaw Subagents",
     )
 
+
 _providers: dict[str, ToolProvider] = {}
 
 
@@ -135,6 +136,8 @@ async def list_all_tools() -> list[ToolDefinition]:
                 t.provider = prov.name
             all_tools.extend(tools)
         except Exception as exc:
-            logger.warning("Tool provider %r failed to list tools: %s", prov.name, exc, exc_info=True)
+            logger.warning(
+                "Tool provider %r failed to list tools: %s", prov.name, exc, exc_info=True
+            )
             record_failure(prov.name, str(exc))
     return all_tools

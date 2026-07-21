@@ -38,8 +38,8 @@ from personalclaw.acp.types import (
     EVENT_THINKING_CHUNK,
     METHOD_AGENT_SWITCHED,
     METHOD_CLEAR_STATUS,
-    METHOD_COMPACTION_STATUS,
     METHOD_COMMANDS_EXECUTE,
+    METHOD_COMPACTION_STATUS,
     METHOD_METADATA,
     METHOD_PROMPT,
     METHOD_REQUEST_PERMISSION,
@@ -80,9 +80,10 @@ def classify_frame(msg: JsonRpcMessage, req_id: int) -> str:
         return "agent_switched"
     return "skip"
 
+
 # Mirror the client's turn tuning (kept local so this module is self-contained).
-_STALE_TURN_TIMEOUT = 90.0   # after text streamed, silence this long ⇒ treat turn complete
-_QUEUE_POLL = 1.0            # how long to await the queue before re-checking liveness/deadline
+_STALE_TURN_TIMEOUT = 90.0  # after text streamed, silence this long ⇒ treat turn complete
+_QUEUE_POLL = 1.0  # how long to await the queue before re-checking liveness/deadline
 _DEFAULT_PROMPT_TIMEOUT = 7200.0  # 2 hours — allow very long tool execution (matches client)
 
 
@@ -100,11 +101,11 @@ class AcpSession:
         session_id: str,
         queue: "asyncio.Queue[JsonRpcMessage]",
         *,
-        send_request,         # async (method, params) -> (req_id, Future) : alloc id + expect + write
-        send_response,        # async (req_id, result) -> None : reply to a server→client request
-        cancel_session,       # async () -> None : session/cancel for THIS sid
-        is_process_alive,     # () -> bool
-        dialect=None,         # ACPDialect : permission-option parsing / approve outcome shape
+        send_request,  # async (method, params) -> (req_id, Future) : alloc id + expect + write
+        send_response,  # async (req_id, result) -> None : reply to a server→client request
+        cancel_session,  # async () -> None : session/cancel for THIS sid
+        is_process_alive,  # () -> bool
+        dialect=None,  # ACPDialect : permission-option parsing / approve outcome shape
         session_files_dir: "Path | None" = None,  # opt-in JSONL tool-result tailing
     ) -> None:
         self.session_id = session_id
@@ -114,8 +115,9 @@ class AcpSession:
         self._cancel_session = cancel_session
         self._is_process_alive = is_process_alive
         from personalclaw.acp.dialect import DefaultDialect
+
         self._dialect = dialect or DefaultDialect()
-        self._turn_lock = asyncio.Lock()   # one prompt in flight PER SESSION (not process-wide)
+        self._turn_lock = asyncio.Lock()  # one prompt in flight PER SESSION (not process-wide)
         self._cancelled = False
         self._closed = False
         # Per-turn caches (owned here, threaded into the shared translate.* decoders)
@@ -138,7 +140,9 @@ class AcpSession:
         try:
             await self._cancel_session()
         except Exception:
-            logger.debug("session %s: cancel_session failed (non-fatal)", self.session_id, exc_info=True)
+            logger.debug(
+                "session %s: cancel_session failed (non-fatal)", self.session_id, exc_info=True
+            )
 
     async def approve_tool(self, request_id: str | int, option_id: str | None = None) -> None:
         """Approve a pending tool permission for THIS session. Resolves the option id
@@ -198,10 +202,15 @@ class AcpSession:
                             try:
                                 yield response_future.result()
                             except Exception:
-                                logger.warning("session %s: turn ended on connection error",
-                                               self.session_id, exc_info=True)
+                                logger.warning(
+                                    "session %s: turn ended on connection error",
+                                    self.session_id,
+                                    exc_info=True,
+                                )
                         else:
-                            logger.warning("session %s: connection closed mid-turn", self.session_id)
+                            logger.warning(
+                                "session %s: connection closed mid-turn", self.session_id
+                            )
                         return
                     last_data = time.monotonic()
                     streamed = True
@@ -220,16 +229,22 @@ class AcpSession:
                     try:
                         yield response_future.result()
                     except Exception:
-                        logger.warning("session %s: turn ended on connection error",
-                                       self.session_id, exc_info=True)
+                        logger.warning(
+                            "session %s: turn ended on connection error",
+                            self.session_id,
+                            exc_info=True,
+                        )
                     return
                 # 3. Idle tick — no frame, no response. Check liveness + staleness.
                 if not self._is_process_alive():
                     logger.warning("session %s: process died mid-turn", self.session_id)
                     return
                 if streamed and (time.monotonic() - last_data) > _STALE_TURN_TIMEOUT:
-                    logger.warning("session %s: stale turn (silent %.0fs after streaming) — completing",
-                                   self.session_id, time.monotonic() - last_data)
+                    logger.warning(
+                        "session %s: stale turn (silent %.0fs after streaming) — completing",
+                        self.session_id,
+                        time.monotonic() - last_data,
+                    )
                     return
         finally:
             if get_task is not None and not get_task.done():
@@ -363,8 +378,9 @@ class AcpSession:
                 params = msg.params or {}
                 status = params.get("status", {})
                 status_type = status.get("type", "") if isinstance(status, dict) else str(status)
-                yield AcpEvent(kind=EVENT_COMPACTION_STATUS, text=status_type,
-                               title=params.get("summary", ""))
+                yield AcpEvent(
+                    kind=EVENT_COMPACTION_STATUS, text=status_type, title=params.get("summary", "")
+                )
             elif action == "clear":
                 yield AcpEvent(kind=EVENT_CLEAR_STATUS)
             elif action == "agent_switched":
@@ -379,12 +395,16 @@ class AcpSession:
             if stale_eligible:
                 # Text streamed but no `result` — a stale turn; synthesize a complete
                 # so callers finalize normally instead of surfacing a timeout.
-                logger.info("session %s: stale-synthetic complete (streamed text, no result)",
-                            self.session_id)
+                logger.info(
+                    "session %s: stale-synthetic complete (streamed text, no result)",
+                    self.session_id,
+                )
                 yield AcpEvent(kind=EVENT_COMPLETE, stop_reason=STOP_REASON_END_TURN)
                 return
-            logger.warning("session %s: turn ended with no result and no streamed text — timeout",
-                           self.session_id)
+            logger.warning(
+                "session %s: turn ended with no result and no streamed text — timeout",
+                self.session_id,
+            )
             raise AcpTimeoutError()
 
     async def wait_turn_done(self, timeout: float) -> str:
@@ -439,8 +459,8 @@ class AcpConnection:
         # (unit tests inject a fake with .stdin/.stdout/.returncode). The transport is
         # preferred; the raw proc is a test-compat shim writing straight to stdin.
         self._transport = transport
-        self._proc = proc                 # None on the transport path
-        self._router = router             # a started FrameRouter over the line source
+        self._proc = proc  # None on the transport path
+        self._router = router  # a started FrameRouter over the line source
         self._dialect = dialect
         self._next_id = 0
         self._sessions: dict[str, AcpSession] = {}
@@ -469,8 +489,12 @@ class AcpConnection:
         from personalclaw.acp.transport import AcpProcess
 
         transport = AcpProcess(
-            command=command, work_dir=work_dir, sandbox_mode=sandbox_mode,
-            extra_env=extra_env, session_key=session_key, channel_id=channel_id,
+            command=command,
+            work_dir=work_dir,
+            sandbox_mode=sandbox_mode,
+            extra_env=extra_env,
+            session_key=session_key,
+            channel_id=channel_id,
         )
         await transport.spawn()
         router = FrameRouter(transport.readline)
@@ -515,7 +539,9 @@ class AcpConnection:
     async def initialize(self, params: dict, *, timeout: float = 240.0) -> dict:
         """Do the one-per-process ``initialize`` handshake; capture agentCapabilities."""
         resp = await self.request("initialize", params, timeout=timeout)
-        self._agent_capabilities = (resp.result or {}).get("agentCapabilities") or {} if resp.result else {}
+        self._agent_capabilities = (
+            (resp.result or {}).get("agentCapabilities") or {} if resp.result else {}
+        )
         return self._agent_capabilities
 
     def _bind_session(self, sid: str, session_files_dir=None) -> AcpSession:
@@ -531,10 +557,13 @@ class AcpConnection:
             await self.send_response(req_id, result)
 
         async def _cancel():
-            await self._write({"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": sid}})
+            await self._write(
+                {"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": sid}}
+            )
 
         sess = AcpSession(
-            sid, queue,
+            sid,
+            queue,
             send_request=_send_request,
             send_response=_send_response,
             cancel_session=_cancel,

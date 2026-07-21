@@ -13,15 +13,20 @@ import pytest
 
 pytest.importorskip("hypothesis")
 
-from hypothesis import given, settings
-from hypothesis import strategies as st
+from hypothesis import given, settings  # noqa: E402
+from hypothesis import strategies as st  # noqa: E402
 
-from personalclaw.auth.modes import AuthConfig, AuthMode, effective_bind
+from personalclaw.auth.modes import (  # noqa: E402
+    AuthConfig,
+    AuthMode,
+    effective_bind,
+)
 
 REPO_SRC = Path(__file__).resolve().parent.parent / "src"
 
 
 # ── P6: Loopback invariant ────────────────────────────────────────────────────
+
 
 @given(
     bind_host=st.text(min_size=1, max_size=64),
@@ -31,9 +36,9 @@ def test_P6_loopback_invariant_none_mode(bind_host):
     """P6: AuthMode.NONE always forces effective_bind to 127.0.0.1."""
     cfg = AuthConfig(mode=AuthMode.NONE, bind_host=bind_host)
     result = effective_bind(cfg)
-    assert result == "127.0.0.1", (
-        f"P6 violated: AuthMode.NONE with bind_host={bind_host!r} → {result!r}"
-    )
+    assert (
+        result == "127.0.0.1"
+    ), f"P6 violated: AuthMode.NONE with bind_host={bind_host!r} → {result!r}"
 
 
 @given(
@@ -45,9 +50,9 @@ def test_P6_non_none_mode_respects_bind_host(mode, bind_host):
     """P6: non-NONE modes return the configured bind_host unchanged."""
     cfg = AuthConfig(mode=mode, bind_host=bind_host)
     result = effective_bind(cfg)
-    assert result == bind_host, (
-        f"P6 unexpected rewrite: mode={mode} bind_host={bind_host!r} → {result!r}"
-    )
+    assert (
+        result == bind_host
+    ), f"P6 unexpected rewrite: mode={mode} bind_host={bind_host!r} → {result!r}"
 
 
 # ── from_env: PERSONALCLAW_AUTH_MODE dev override ─────────────────────────────
@@ -74,12 +79,13 @@ def test_from_env_unknown_value_falls_back_to_local_token(monkeypatch):
 # ── P12: No internal-tool residue ─────────────────────────────────────────────
 
 _RESIDUE_TERMS = [
-    r"\bAcpProvider\b",            # old class name, replaced by AcpAgentProvider
-    r"SlackMcpClient",             # deleted class
-    r"_find_slack_mcp",            # deleted function
-    r"from backend\.aim_agents", # deleted module
-    r"from backend\.mcp_cleanup", # deleted module
+    r"\bAcpProvider\b",  # old class name, replaced by AcpAgentProvider
+    r"SlackMcpClient",  # deleted class
+    r"_find_slack_mcp",  # deleted function
+    r"from backend\.aim_agents",  # deleted module
+    r"from backend\.mcp_cleanup",  # deleted module
 ]
+
 
 @pytest.mark.parametrize("term", _RESIDUE_TERMS)
 def test_P12_no_residue_in_python_src(term):
@@ -107,6 +113,6 @@ def test_P12_no_residue_in_python_src(term):
                 rel = py_file.relative_to(REPO_SRC.parent)
                 violations.append(f"  {rel}:{lineno}: {line.strip()[:120]}")
 
-    assert not violations, (
-        f"P12 violated — banned term {term!r} found in source:\n" + "\n".join(violations[:10])
+    assert not violations, f"P12 violated — banned term {term!r} found in source:\n" + "\n".join(
+        violations[:10]
     )

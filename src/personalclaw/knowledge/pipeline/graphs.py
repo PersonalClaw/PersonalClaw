@@ -79,7 +79,9 @@ class AudioGraph(PipelineGraph):
 
     def build(self) -> None:
         self.add(NodeSpec(node_type="transcription", backend="stt", uses_use_case="stt"))
-        self.add(NodeSpec(node_type="diarization", backend="diarization", uses_use_case="diarization"))
+        self.add(
+            NodeSpec(node_type="diarization", backend="diarization", uses_use_case="diarization")
+        )
         self.add(NodeSpec(node_type="speaker_fusion", backend="native"))
         self.add(NodeSpec(node_type="lexicon_correction", backend="lexicon"))
         self.edge("transcription", "speaker_fusion")
@@ -109,14 +111,22 @@ class VideoGraph(PipelineGraph):
     def build(self) -> None:
         self.add(NodeSpec(node_type="av_split", backend="ffmpeg"))
         self.add(NodeSpec(node_type="transcription", backend="stt", uses_use_case="stt"))
-        self.add(NodeSpec(node_type="diarization", backend="diarization", uses_use_case="diarization"))
+        self.add(
+            NodeSpec(node_type="diarization", backend="diarization", uses_use_case="diarization")
+        )
         self.add(NodeSpec(node_type="speaker_fusion", backend="native"))
         self.add(NodeSpec(node_type="lexicon_correction", backend="lexicon"))
         self.add(NodeSpec(node_type="frame_extract", backend="ffmpeg"))
-        self.add(NodeSpec(node_type="video_classify", backend="vision-llm", uses_use_case="image_modality"))
+        self.add(
+            NodeSpec(
+                node_type="video_classify", backend="vision-llm", uses_use_case="image_modality"
+            )
+        )
         self.add(NodeSpec(node_type="ocr", backend="vision-llm", uses_use_case="image_modality"))
         self.add(NodeSpec(node_type="vision", backend="vision-llm", uses_use_case="image_modality"))
-        self.add(NodeSpec(node_type="video_consolidate", backend="reasoning-llm", uses_use_case="chat"))
+        self.add(
+            NodeSpec(node_type="video_consolidate", backend="reasoning-llm", uses_use_case="chat")
+        )
         # fan-out from the split: transcription ‖ diarization (audio arm) + frame_extract.
         self.edge("av_split", "transcription")
         self.edge("av_split", "diarization")

@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 def _sel():
     """Late-binding _sel() for test monkeypatch compatibility."""
     import personalclaw.dashboard.handlers as _pkg  # noqa: F811
+
     return _pkg.sel()
 
 
@@ -46,8 +47,11 @@ async def api_lessons_create(request: web.Request) -> web.Response:
     sk = request.headers.get("X-Session-Key", "")
     if not sk:
         _sel().log_api_access(
-            caller="anonymous", operation="memory_remember", outcome="denied",
-            source="dashboard", resources="missing_session_key",
+            caller="anonymous",
+            operation="memory_remember",
+            outcome="denied",
+            source="dashboard",
+            resources="missing_session_key",
         )
         return web.json_response({"error": "missing X-Session-Key"}, status=400)
     if sk != "dashboard:ui":
@@ -71,34 +75,49 @@ async def api_lessons_create(request: web.Request) -> web.Response:
                 # the absence of a session JSONL here means the key
                 # genuinely does not belong to any established session.
                 _sel().log_api_access(
-                    caller=sk, operation="memory_remember", outcome="denied",
-                    source="dashboard", resources="unknown_session",
+                    caller=sk,
+                    operation="memory_remember",
+                    outcome="denied",
+                    source="dashboard",
+                    resources="unknown_session",
                 )
                 return web.json_response({"error": "unknown session"}, status=400)
             # JSONL-fallback is the sole reason the call is permitted.
             # Audit it as an allow decision so session-recovery
             # authorization is traceable alongside the deny path above.
             _sel().log_api_access(
-                caller=sk, operation="memory_remember", outcome="allowed",
-                source="dashboard", resources="jsonl_fallback_recovery",
+                caller=sk,
+                operation="memory_remember",
+                outcome="allowed",
+                source="dashboard",
+                resources="jsonl_fallback_recovery",
             )
         elif in_sessions:
             # Live in-memory session — the common happy path. Audit so that
             # every ``memory_remember`` permission decision on this branch is
             # traceable (security-controls rule).
             _sel().log_api_access(
-                caller=sk, operation="memory_remember", outcome="allowed",
-                source="dashboard", resources="live_session",
+                caller=sk,
+                operation="memory_remember",
+                outcome="allowed",
+                source="dashboard",
+                resources="live_session",
             )
         elif in_restricted:
             _sel().log_api_access(
-                caller=sk, operation="memory_remember", outcome="allowed",
-                source="dashboard", resources="restricted_key",
+                caller=sk,
+                operation="memory_remember",
+                outcome="allowed",
+                source="dashboard",
+                resources="restricted_key",
             )
         else:  # is_channel_ns
             _sel().log_api_access(
-                caller=sk, operation="memory_remember", outcome="allowed",
-                source="dashboard", resources="channel_namespace",
+                caller=sk,
+                operation="memory_remember",
+                outcome="allowed",
+                source="dashboard",
+                resources="channel_namespace",
             )
     else:
         # Browser UI's static key — implicitly trusted, but the allow
@@ -106,8 +125,11 @@ async def api_lessons_create(request: web.Request) -> web.Response:
         # audited (security-controls rule: every permission decision
         # emits a SEL event).
         _sel().log_api_access(
-            caller=sk, operation="memory_remember", outcome="allowed",
-            source="dashboard", resources="dashboard_ui",
+            caller=sk,
+            operation="memory_remember",
+            outcome="allowed",
+            source="dashboard",
+            resources="dashboard_ui",
         )
     if _is_restricted_session(state, request):
         sk = request.headers.get("X-Session-Key", "")
@@ -133,13 +155,16 @@ async def api_lessons_create(request: web.Request) -> web.Response:
     # override) is refused before it ever lands in the store.
     try:
         from personalclaw.supply_chain import Verdict, default_scanner
+
         report = default_scanner.scan_text(rule, surface="memory")
         if report.verdict is Verdict.DANGEROUS:
             cats = ", ".join(sorted({f.rule for f in report.findings})) or "dangerous content"
             _sel().log_api_access(
                 caller=request.headers.get("X-Session-Key", ""),
-                operation="memory_remember", outcome="denied",
-                source="dashboard", resources="injection_scan",
+                operation="memory_remember",
+                outcome="denied",
+                source="dashboard",
+                resources="injection_scan",
                 error=f"scanner flagged memory write: {cats}",
             )
             return web.json_response(
@@ -175,10 +200,15 @@ async def api_lessons_delete(request: web.Request) -> web.Response:
     if _blocks_reads_session(state, request):
         sk = request.headers.get("X-Session-Key", "")
         _sel().log_api_access(
-            caller=sk, operation="lessons.delete", outcome="denied",
-            source="dashboard", resources=sk,
+            caller=sk,
+            operation="lessons.delete",
+            outcome="denied",
+            source="dashboard",
+            resources=sk,
         )
-        return web.json_response({"error": "Memory writes are not allowed in this session mode."}, status=403)
+        return web.json_response(
+            {"error": "Memory writes are not allowed in this session mode."}, status=403
+        )
     try:
         body = await request.json()
     except Exception:
@@ -214,8 +244,11 @@ async def api_lessons(request: web.Request) -> web.Response:
     if _blocks_reads_session(state, request):
         sk = request.headers.get("X-Session-Key", "")
         _sel().log_api_access(
-            caller=sk, operation="lessons.list", outcome="denied",
-            source="dashboard", resources=sk,
+            caller=sk,
+            operation="lessons.list",
+            outcome="denied",
+            source="dashboard",
+            resources=sk,
         )
         return web.json_response({"lessons": []})
     workspace = request.query.get("workspace")

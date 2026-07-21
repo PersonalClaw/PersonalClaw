@@ -119,8 +119,11 @@ async def api_local_model_search(request: web.Request) -> web.Response:
     except Exception as exc:  # noqa: BLE001 — search is fail-soft
         return web.json_response({"models": [], "error": str(exc)[:200]})
     from personalclaw.local_models.registry import capabilities_for
+
     caps = capabilities_for(provider_name)
-    return web.json_response({"models": [to_local_model(m, capabilities=caps).to_dict() for m in raw]})
+    return web.json_response(
+        {"models": [to_local_model(m, capabilities=caps).to_dict() for m in raw]}
+    )
 
 
 def register_model_download_routes(app: web.Application) -> None:

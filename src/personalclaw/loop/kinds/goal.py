@@ -9,12 +9,13 @@ behavior ports from the legacy ``loops/`` engine in Slice 2.
 
 from __future__ import annotations
 
-from personalclaw.loop.goal_meta import GOAL_TYPES as _GOAL_TYPES, GRANULARITIES as _GRANULARITIES
-from personalclaw.loop.kinds import register
+from personalclaw.loop.goal_meta import GOAL_TYPES as _GOAL_TYPES
+from personalclaw.loop.goal_meta import GRANULARITIES as _GRANULARITIES
+from personalclaw.loop.kinds import LoopKindStrategy, register
 from personalclaw.loop.loop import Loop
 
 
-class GoalKind:
+class GoalKind(LoopKindStrategy):
     kind = "goal"
     label = "Goal"
     description = "Research + action toward a goal — verifiable, open-ended, or monitoring."
@@ -63,10 +64,10 @@ class GoalKind:
         idx = self._active_phase_index(loop)
         if idx >= 0:
             phase = (loop.kind_config or {}).get("execution_plan", [])[idx]
-            for sid in (phase.get("skill_ids") or []):
+            for sid in phase.get("skill_ids") or []:
                 if sid not in skills:
                     skills.append(str(sid))
-            for wid in (phase.get("workflow_ids") or []):
+            for wid in phase.get("workflow_ids") or []:
                 if wid not in workflows:
                     workflows.append(str(wid))
         return skills, workflows
@@ -76,6 +77,7 @@ class GoalKind:
         prepended to the cycle nudge so the worker focuses on this phase. Empty with no
         plan (the flat goal drives the cycle)."""
         from personalclaw.prompt_providers.runtime import render_snippet_block
+
         plan = list((loop.kind_config or {}).get("execution_plan", []) or [])
         idx = self._active_phase_index(loop)
         if idx < 0:
@@ -108,8 +110,10 @@ class GoalKind:
         goal_type = str(cfg.get("goal_type", "open_ended"))
         if goal_type == "verifiable":
             from personalclaw.loop.gates import run_verify_command
-            ok = await run_verify_command(str(cfg.get("verify_command", "")),
-                                          loop.workspace_dir or None, label="verify")
+
+            ok = await run_verify_command(
+                str(cfg.get("verify_command", "")), loop.workspace_dir or None, label="verify"
+            )
             if ok is not True:
                 return ok  # False (check failed) / None (couldn't run) → not done yet
             # The check passed — but a worker can point verify_command at a SUBSET of a
@@ -128,8 +132,9 @@ class GoalKind:
             return False
         return await self._assess_open_ended(loop, findings)
 
-    async def _all_sub_goals_met(self, loop: Loop, sub_goals: list[str],
-                                 findings: list[dict]) -> bool | None:
+    async def _all_sub_goals_met(
+        self, loop: Loop, sub_goals: list[str], findings: list[dict]
+    ) -> bool | None:
         """A strict judge over a verifiable goal's sub-goals: PASS only if the evidence
         from completed cycles shows EVERY sub-goal is met. Guards against a green
         verify_command on a partial build (the command may exercise only one sub-goal).
@@ -140,10 +145,12 @@ class GoalKind:
             return None
         from personalclaw.loop.gates import judge_verdict, verdict_is_pass, verdict_rendered
         from personalclaw.prompt_providers.runtime import render_use_case_prompt
+
         recent = findings[-6:]
         evidence = "\n".join(
-            f"- cycle {f.get('cycle')}: {str(f.get('summary', '') or f.get('key_insight', ''))[:300]}"
-            for f in recent)
+            f"- cycle {f.get('cycle')}: {str(f.get('summary', '') or f.get('key_insight', ''))[:300]}"  # noqa: E501
+            for f in recent
+        )
         criteria = "\n".join(f"- {s}" for s in sub_goals)
         # The sub-goal completion gate lives in the prompt system (bundled
         # ``task-subgoal-judge``, bindable in Settings → Prompts).
@@ -178,10 +185,11 @@ class GoalKind:
         is observable-but-not-a-clean-False so the watchdog can surface degradation)."""
         if not findings:
             return None
-        from personalclaw.loop import store
-        from personalclaw.loop import judge as judge_mod
         from personalclaw.loop import instrument
+        from personalclaw.loop import judge as judge_mod
+        from personalclaw.loop import store
         from personalclaw.loop.granularity import returns_exhausted_calibrated
+
         finding = findings[-1]
         # P4 canary: once per loop-run, prove the done-ness judge can tell a strong cycle
         # from an empty one before trusting ANY of its verdicts. A blind judge (mis-bound
@@ -194,8 +202,10 @@ class GoalKind:
         if cfg0.get("judge_calibrated") is False:
             return None  # previously confirmed blind → defer; watchdog owns the halt
         if "judge_calibrated" not in cfg0:
+
             async def _probe_assess(goal, dod, fnd, prior):
                 return await judge_mod.assess_cycle(goal, dod, fnd, prior)
+
             trustworthy = await instrument.probe_judge(_probe_assess)
             if trustworthy is not None:  # None = probe couldn't run → don't cache, retry next cycle
                 store.set_kind_config_key(loop.id, "judge_calibrated", bool(trustworthy))
@@ -207,13 +217,16 @@ class GoalKind:
         # so an open-ended goal that names concrete artifacts is scored on observed ground
         # truth, not the worker's narration. A goal with neither stays transcript-only.
         cfg = loop.kind_config or {}
-        deliverables = [str(d).strip() for d in (cfg.get("deliverables", []) or []) if str(d).strip()]
+        deliverables = [
+            str(d).strip() for d in (cfg.get("deliverables", []) or []) if str(d).strip()
+        ]
         # The judge must read the SAME dir the worker wrote to — workspace_dir when the
         # loop bound a codebase, else the project context dir (an open-ended goal usually
         # has no explicit workspace_dir). Using loop.workspace_dir directly would miss the
         # deliverable for the common context-dir case and silently defeat the ground-truth
         # read (observed live: goal 0fef190e had workspace_dir='' + a deliverable).
         from personalclaw.loop.loop import effective_dir
+
         # The worker may write the deliverable to the loop's OWN dir when no workspace is
         # bound (observed live V6: an unbound open-ended loop wrote REPORT.md to the loop dir,
         # so a workspace-only ground-truth read wrongly reported "no proof it exists"). Give
@@ -222,13 +235,20 @@ class GoalKind:
         # the same file the watchdog graduates.
         _loop_dir = store.safe_loop_dir(loop.id)
         fallback_dirs = [str(_loop_dir)] if _loop_dir is not None else []
-        gt_deliverables = deliverables or ([self.deliverable_name(loop)] if self.deliverable_name(loop) else [])
+        gt_deliverables = deliverables or (
+            [self.deliverable_name(loop)] if self.deliverable_name(loop) else []
+        )
         try:
             verdict = await judge_mod.assess_cycle(
-                loop.task, loop.success_criteria or "", finding, findings[:-1],
+                loop.task,
+                loop.success_criteria or "",
+                finding,
+                findings[:-1],
                 verify_command=str(cfg.get("verify_command", "")),
                 workspace=effective_dir(loop) or None,
-                deliverables=gt_deliverables, fallback_dirs=fallback_dirs)
+                deliverables=gt_deliverables,
+                fallback_dirs=fallback_dirs,
+            )
         except Exception:
             verdict = None
         if verdict is None:
@@ -244,10 +264,15 @@ class GoalKind:
         if verdict.done or verdict.regressed:
             try:
                 skeptic = await judge_mod.assess_cycle_skeptic(
-                    loop.task, loop.success_criteria or "", finding, findings[:-1],
+                    loop.task,
+                    loop.success_criteria or "",
+                    finding,
+                    findings[:-1],
                     verify_command=str(cfg.get("verify_command", "")),
                     workspace=effective_dir(loop) or None,
-                    deliverables=gt_deliverables, fallback_dirs=fallback_dirs)
+                    deliverables=gt_deliverables,
+                    fallback_dirs=fallback_dirs,
+                )
             except Exception:
                 skeptic = None
             verdict = judge_mod.adjudicate(verdict, skeptic)
@@ -259,6 +284,7 @@ class GoalKind:
         # Record the calibrated band on the verdict for observability (what bar this
         # cycle's marginal value was actually judged against), then persist the verdict.
         from personalclaw.loop.granularity import calibrated_band, dial_for
+
         _setting = dial_for(granularity)
         if _setting is not None:
             verdict.band_used = calibrated_band(trail, _setting.threshold)
@@ -279,16 +305,23 @@ class GoalKind:
         plan rows; goal_type/granularity/sub_goals/deliverables/verify_command →
         kind_config."""
         from personalclaw.loop import classify as goal_classify
-        c = await goal_classify.classify(task, ask, skills_catalog=skills,
-                                         workflows_catalog=workflows, agents_catalog=agents)
+
+        c = await goal_classify.classify(
+            task, ask, skills_catalog=skills, workflows_catalog=workflows, agents_catalog=agents
+        )
         d = c.to_dict()
         return {
-            "title": d.get("title", ""), "summary": "", "classified": d.get("classified", True),
-            "intake_rigor": d.get("intake_rigor", "auto"), "execution": d.get("execution", "solo"),
-            "roster": d.get("roster", []), "strategy_id": d.get("strategy_id", "orchestrator"),
+            "title": d.get("title", ""),
+            "summary": "",
+            "classified": d.get("classified", True),
+            "intake_rigor": d.get("intake_rigor", "auto"),
+            "execution": d.get("execution", "solo"),
+            "roster": d.get("roster", []),
+            "strategy_id": d.get("strategy_id", "orchestrator"),
             # The planner's rationale for its rigor / solo-vs-multi picks — the Plan
             # Review surfaces them so the user sees WHY before approving.
-            "rigor_reason": d.get("rigor_reason", ""), "strategy_reason": d.get("strategy_reason", ""),
+            "rigor_reason": d.get("rigor_reason", ""),
+            "strategy_reason": d.get("strategy_reason", ""),
             "clarifying_questions": d.get("clarifying_questions", []),
             "suggested_skill_ids": d.get("suggested_skill_ids", []),
             "suggested_workflow_ids": d.get("suggested_workflow_ids", []),
@@ -312,9 +345,10 @@ class GoalKind:
         done-ness signal, and screening the unattended verify_command. Returns
         (errors, warnings) folded into the shared validator's result."""
         from personalclaw.security import audit_bash_command
+
         errors: list[str] = []
         warnings: list[str] = []
-        cfg = config.get("kind_config") if isinstance(config.get("kind_config"), dict) else config
+        cfg = _kc if isinstance((_kc := config.get("kind_config")), dict) else config
         goal_type = str(cfg.get("goal_type", "open_ended")).strip() or "open_ended"
         if goal_type not in _GOAL_TYPES:
             errors.append(f"Unknown goal type {goal_type!r}.")
@@ -322,10 +356,15 @@ class GoalKind:
         if granularity not in _GRANULARITIES:
             errors.append(f"Unknown granularity {granularity!r}.")
         verify_command = str(cfg.get("verify_command") or "").strip()
-        if goal_type == "verifiable" and not verify_command \
-                and not str(config.get("success_criteria") or "").strip():
-            warnings.append("Verifiable goal has no verify command or success criteria — "
-                            "it can't self-complete until one is set.")
+        if (
+            goal_type == "verifiable"
+            and not verify_command
+            and not str(config.get("success_criteria") or "").strip()
+        ):
+            warnings.append(
+                "Verifiable goal has no verify command or success criteria — "
+                "it can't self-complete until one is set."
+            )
         if verify_command:
             danger = audit_bash_command(verify_command)
             if danger:
@@ -334,7 +373,8 @@ class GoalKind:
         # metric_pass / metric_hold) on the execution_plan phases, so a malformed dwell
         # or an inverted metric band is caught at intake rather than ignored at runtime.
         from personalclaw.loop.tick import validate_step_phase
-        for phase in (cfg.get("execution_plan", []) or []):
+
+        for phase in cfg.get("execution_plan", []) or []:
             errors.extend(validate_step_phase(phase))
         return errors, warnings
 
@@ -370,52 +410,74 @@ class GoalKind:
         scope = list(cfg.get("scope", []) or [])
         deliverables = list(cfg.get("deliverables", []) or [])
         verify_command = str(cfg.get("verify_command", "")).strip()
-        lines = ["# Goal Loop Brief", "", f"**Goal:** {loop.task}", "",
-                 f"**Goal type:** {goal_type}", "", "**Sub-goals:**"]
+        lines = [
+            "# Goal Loop Brief",
+            "",
+            f"**Goal:** {loop.task}",
+            "",
+            f"**Goal type:** {goal_type}",
+            "",
+            "**Sub-goals:**",
+        ]
         lines += [f"- {s}" for s in sub_goals] or ["- (none — derive your own from the goal)"]
         if loop.linked_task_ids:
             # Give the worker the CONCRETE list id to scope `task_list` by — without it
             # `task_list` returns the 25 most-recent tasks across the WHOLE system and
             # the worker can't reliably find (or update) its own sub-goal tasks.
             list_id = (loop.task_list_ids or {}).get("sub_goals", "")
-            scope_hint = (f"`task_list {{task_list_id: \"{list_id}\"}}`" if list_id else "`task_list`")
-            lines += ["",
-                      "**Tracked tasks (keep these up to date).** The sub-goals above are "
-                      f"tracked as Tasks in this loop's task list. Call {scope_hint} to see "
-                      "them, then `task_update {id, status}` to mark each in_progress when you "
-                      "start it and done when complete — do not leave finished work marked open."]
-        lines += ["",
-                  f"**Scope / sources allowed:** {', '.join(scope) or 'any'}",
-                  f"**Max cycles:** {loop.max_cycles}"]
+            scope_hint = f'`task_list {{task_list_id: "{list_id}"}}`' if list_id else "`task_list`"
+            lines += [
+                "",
+                "**Tracked tasks (keep these up to date).** The sub-goals above are "
+                f"tracked as Tasks in this loop's task list. Call {scope_hint} to see "
+                "them, then `task_update {id, status}` to mark each in_progress when you "
+                "start it and done when complete — do not leave finished work marked open.",
+            ]
+        lines += [
+            "",
+            f"**Scope / sources allowed:** {', '.join(scope) or 'any'}",
+            f"**Max cycles:** {loop.max_cycles}",
+        ]
         if context_dir:
-            lines += ["",
-                      f"**Project context dir:** `{context_dir}`",
-                      "Shared, durable context for the PROJECT this goal belongs to (other "
-                      "loops on the same project share it). READ it at the start for prior "
-                      "context; WRITE concise durable notes there (`context/notes.md`, "
-                      "`context/decisions.md`) — the project's long-term memory, not this "
-                      "run's scratch (that goes in your cycle finding)."]
+            lines += [
+                "",
+                f"**Project context dir:** `{context_dir}`",
+                "Shared, durable context for the PROJECT this goal belongs to (other "
+                "loops on the same project share it). READ it at the start for prior "
+                "context; WRITE concise durable notes there (`context/notes.md`, "
+                "`context/decisions.md`) — the project's long-term memory, not this "
+                "run's scratch (that goes in your cycle finding).",
+            ]
         if loop.attended:
-            lines += ["",
-                      "**Clarification allowed (attended):** if the goal is genuinely "
-                      "ambiguous in a way that would change your direction, you MAY ask ONE "
-                      "high-leverage question — write {\"question\", \"why\"} to "
-                      "questions.json and end the turn. Keep the bar high; otherwise proceed "
-                      "on a best-reasoned assumption and record it."]
+            lines += [
+                "",
+                "**Clarification allowed (attended):** if the goal is genuinely "
+                "ambiguous in a way that would change your direction, you MAY ask ONE "
+                'high-leverage question — write {"question", "why"} to '
+                "questions.json and end the turn. Keep the bar high; otherwise proceed "
+                "on a best-reasoned assumption and record it.",
+            ]
         else:
-            lines += ["",
-                      "**Unattended:** do NOT pause to ask the user. Investigate ambiguities "
-                      "yourself, record the assumption in your cycle finding, and proceed. "
-                      "Never write questions.json in this mode."]
+            lines += [
+                "",
+                "**Unattended:** do NOT pause to ask the user. Investigate ambiguities "
+                "yourself, record the assumption in your cycle finding, and proceed. "
+                "Never write questions.json in this mode.",
+            ]
         if goal_type == "verifiable" and verify_command:
-            lines += ["",
-                      f"**Verification check:** the supervisor runs `{verify_command}` each "
-                      "cycle and reads its result. Drive your work toward making it pass; do "
-                      "not self-certify — the supervisor's run is the source of truth."]
+            lines += [
+                "",
+                f"**Verification check:** the supervisor runs `{verify_command}` each "
+                "cycle and reads its result. Drive your work toward making it pass; do "
+                "not self-certify — the supervisor's run is the source of truth.",
+            ]
         if loop.success_criteria:
-            lines += ["", f"**Definition of Done:** {loop.success_criteria}",
-                      "Make real progress toward this each cycle and report evidence; a "
-                      "separate check or judge — never you — decides when it is met."]
+            lines += [
+                "",
+                f"**Definition of Done:** {loop.success_criteria}",
+                "Make real progress toward this each cycle and report evidence; a "
+                "separate check or judge — never you — decides when it is met.",
+            ]
         # When a workspace is bound, the FILE deliverable belongs in the workspace (the
         # project's real working tree that downstream Design/Code loops read), NOT the
         # loop dir (findings/scratch). The cycle nudge names the loop dir as the working
@@ -428,25 +490,32 @@ class GoalKind:
             # Name the ACTUAL deliverable file in the example, not a hardcoded one —
             # else the worker sees "e.g. SPEC.md" while told below to maintain REPORT.md.
             eg = deliverable or "REPORT.md"
-            lines += ["",
-                      f"**Workspace (where file deliverables go):** `{ws}`",
-                      f"Write the document deliverable (`{eg}`) at the ROOT of this "
-                      "workspace — use its absolute path. The loop dir is only for your "
-                      "brief, findings, and scratch; downstream loops read the WORKSPACE, so "
-                      "a deliverable left in the loop dir will not be found."]
+            lines += [
+                "",
+                f"**Workspace (where file deliverables go):** `{ws}`",
+                f"Write the document deliverable (`{eg}`) at the ROOT of this "
+                "workspace — use its absolute path. The loop dir is only for your "
+                "brief, findings, and scratch; downstream loops read the WORKSPACE, so "
+                "a deliverable left in the loop dir will not be found.",
+            ]
         if deliverables:
             listed = "\n".join(f"  {i+1}. {d}" for i, d in enumerate(deliverables))
-            lines += ["",
-                      f"**Deliverables — {len(deliverables)} SEPARATE outputs.** Produce EACH "
-                      "as its own artifact (`artifact_save`, tagged "
-                      f"`loop:{loop.id}`) — never combine them. Update each in place across "
-                      "cycles:", listed]
+            lines += [
+                "",
+                f"**Deliverables — {len(deliverables)} SEPARATE outputs.** Produce EACH "
+                "as its own artifact (`artifact_save`, tagged "
+                f"`loop:{loop.id}`) — never combine them. Update each in place across "
+                "cycles:",
+                listed,
+            ]
         elif deliverable:
             loc = f"`{ws}/{deliverable}`" if ws else f"`{deliverable}`"
-            lines += ["",
-                      f"**Deliverable:** maintain {loc} as the ongoing output — full "
-                      "structure on cycle 1, updated every cycle from new findings; save "
-                      f"discrete presentable results via `artifact_save` tagged `loop:{loop.id}`."]
+            lines += [
+                "",
+                f"**Deliverable:** maintain {loc} as the ongoing output — full "
+                "structure on cycle 1, updated every cycle from new findings; save "
+                f"discrete presentable results via `artifact_save` tagged `loop:{loop.id}`.",
+            ]
         return "\n".join(lines)
 
     def cycle_nudge(self, loop: Loop, loop_dir: str) -> str:
@@ -506,6 +575,7 @@ class GoalKind:
         # as ``show_single_deliverable``. Falls back to the inline assembly above if the
         # snippet can't be resolved.
         from personalclaw.prompt_providers.runtime import render_snippet_block
+
         rendered = render_snippet_block(
             "loop-goal-cycle-nudge",
             {
@@ -541,10 +611,12 @@ class _GoalWalkthrough:
 
     def __init__(self) -> None:
         from personalclaw.agents.defaults import LOOP_PLANNER_AGENT_NAME
+
         self.planner_agent = LOOP_PLANNER_AGENT_NAME
 
     def default_steps(self) -> list[dict]:
         from personalclaw.loop import goal_plan_briefs as pw
+
         return pw.default_steps()
 
     def build_design_brief(self, task: str, workspace_dir: str, design_inputs=None) -> str:
@@ -555,10 +627,12 @@ class _GoalWalkthrough:
 
     def build_step_brief(self, task, step, *, approved, workspace_dir):
         from personalclaw.loop import goal_plan_briefs as pw
+
         return pw.build_step_brief(task, step, approved=approved)
 
     def parse_artifact_sentinel(self, raw: str):
         from personalclaw.loop import goal_plan_briefs as pw
+
         return pw.parse_artifact_sentinel(raw)
 
     def project_to_spec(self, session) -> dict:
@@ -582,20 +656,27 @@ class _GoalWalkthrough:
                     spec["plan"] = [{"title": s} for s in sg]
                     kc_patch["sub_goals"] = sg
             elif step.kind == "quorum":
-                roster = [r for r in (art.get("roster") or [])
-                          if isinstance(r, dict) and str(r.get("role", "")).strip()]
+                roster = [
+                    r
+                    for r in (art.get("roster") or [])
+                    if isinstance(r, dict) and str(r.get("role", "")).strip()
+                ]
                 if roster:
                     spec["roster"] = roster
                     spec["execution"] = "multi_agent" if len(roster) > 1 else "solo"
             elif step.kind == "execution_plan":
-                phases = [p for p in (art.get("execution_plan") or [])
-                          if isinstance(p, dict) and (str(p.get("role", "")).strip()
-                                                      or str(p.get("target", "")).strip())]
+                phases = [
+                    p
+                    for p in (art.get("execution_plan") or [])
+                    if isinstance(p, dict)
+                    and (str(p.get("role", "")).strip() or str(p.get("target", "")).strip())
+                ]
                 if phases:
                     kc_patch["execution_plan"] = phases
         if kc_patch:
             # Merge into the loop's existing kind_config (preserve goal_type/granularity).
             from personalclaw.loop import store as _store
+
             loop = _store.get(session.project_id)
             base = dict(loop.kind_config) if loop and loop.kind_config else {}
             base.update(kc_patch)
@@ -607,6 +688,7 @@ class _GoalWalkthrough:
         linked Tasks (the modern replacement for the dropped /decompose) so the worker
         tracks them via task_list/task_update + the completion reconcile closes them."""
         from personalclaw.loop import tasks_link
+
         await tasks_link.decompose_sub_goals(loop_id)
 
 

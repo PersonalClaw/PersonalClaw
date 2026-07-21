@@ -30,8 +30,8 @@ class CycleContext:
     kinds (goal/general) don't need it; their ``is_done_signal`` suffices.
     """
 
-    svc: Any                                  # the AutoNudgeService (worker loops)
-    state: Any                                # the dashboard state (sessions, notify)
+    svc: Any  # the AutoNudgeService (worker loops)
+    state: Any  # the dashboard state (sessions, notify)
     publish: Callable[[str, str, Any], None]  # publish(loop_id, event, data) → per-loop SSE
     complete: Callable[[str, str], Awaitable[None]]  # complete(loop_id, reason) — terminal
 
@@ -67,7 +67,9 @@ class LoopKindStrategy(Protocol):
     #: goal/general: no (sub-goals become Tasks only via an explicit user decompose —
     #: auto-provisioning would spawn an unwanted Project + empty lists). Absent ⇒ False
     #: (the manager reads it via getattr, so a kind need not declare it).
-    provisions_tasks: bool
+    @property
+    def provisions_tasks(self) -> bool:
+        return False
 
     def default_kind_config(self) -> dict:
         """The initial ``kind_config`` for a freshly-created loop of this kind
@@ -90,8 +92,15 @@ class LoopKindStrategy(Protocol):
         subagent pass) are I/O. The watchdog awaits it each cycle."""
         ...
 
-    async def classify(self, task: str, ask, *, skills: list | None = None,
-                       workflows: list | None = None, agents: list | None = None) -> dict:
+    async def classify(
+        self,
+        task: str,
+        ask,
+        *,
+        skills: list | None = None,
+        workflows: list | None = None,
+        agents: list | None = None,
+    ) -> dict:
         """The intake brain — analyze ``task`` and return a NORMALIZED classification
         the composer/Plan-Review consumes + the create body can fold into a Loop:
         ``{title, summary, classified, intake_rigor, execution, roster, strategy_id,
@@ -116,14 +125,14 @@ class LoopKindStrategy(Protocol):
         or "" if the kind has no document output (verifiable/code: the code/check IS
         the output). On completion the watchdog surfaces it as a file-backed artifact
         in the cockpit Outputs panel."""
-        ...
+        return ""
 
     def launch_blocker(self, loop: Loop) -> str | None:
         """OPTIONAL — a launch-time re-validation: a user-facing reason this loop
         cannot ``start`` yet (e.g. a brownfield code loop with no bound workspace),
         or None to allow. The engine enforces it generically on a fresh start (not
         resume), so the kind-specific precondition stays in the strategy."""
-        ...
+        return None
 
     def walkthrough(self):
         """OPTIONAL — the kind's stepwise planning walkthrough delegate (a
@@ -131,7 +140,7 @@ class LoopKindStrategy(Protocol):
         gated planning walkthrough (general/design today). Goal returns a fixed-step
         delegate; code returns a dynamic-design-pass one. The plan-* routes 404 when
         a kind has no walkthrough."""
-        ...
+        return None
 
     def cycle_nudge(self, loop: Loop, loop_dir: str) -> str:
         """The per-cycle trigger message the manager fires at the worker. The
@@ -162,8 +171,10 @@ async def run_cycle_hook(strategy, loop: Loop, findings: list, ctx: CycleContext
         return bool(await hook(loop, findings, ctx))
     except Exception:  # pragma: no cover - defensive; a kind bug must not wedge the poll
         import logging
+
         logging.getLogger(__name__).warning(
-            "loop kind %s on_new_cycle errored", getattr(strategy, "kind", "?"), exc_info=True)
+            "loop kind %s on_new_cycle errored", getattr(strategy, "kind", "?"), exc_info=True
+        )
         return False
 
 
@@ -195,13 +206,11 @@ def ensure_loaded() -> None:
     """Import the bundled kind strategies so they self-register. Idempotent; called
     by the engine before it dispatches. Kept lazy to avoid import cycles (a kind
     module may import engine helpers)."""
-    from personalclaw.loop.kinds import (  # noqa: F401
-        design as _design,
-        general as _general,
-        goal as _goal,
-        research as _research,
-        sdlc as _code,
-    )
+    from personalclaw.loop.kinds import design as _design  # noqa: F401
+    from personalclaw.loop.kinds import general as _general
+    from personalclaw.loop.kinds import goal as _goal
+    from personalclaw.loop.kinds import research as _research
+    from personalclaw.loop.kinds import sdlc as _code
 
 
 # A late-binding hook so a bundled/extension kind can register without the engine

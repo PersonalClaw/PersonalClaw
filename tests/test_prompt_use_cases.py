@@ -15,6 +15,7 @@ def _home(tmp_path, monkeypatch):
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     # Reset the in-process prompt-provider registry between tests.
     import personalclaw.prompt_providers.registry as reg
+
     reg._providers.clear()
     yield
     reg._providers.clear()
@@ -27,6 +28,7 @@ def test_use_case_vocabulary():
     for agent_uc in ("chat", "background", "code", "goal_loop"):
         assert agent_uc in puc.PROMPT_USE_CASES
     from personalclaw.prompt_providers.catalog import BUNDLED_PROMPTS
+
     assert puc.PROMPT_USE_CASES == tuple(p.use_case for p in BUNDLED_PROMPTS)
 
 

@@ -60,8 +60,7 @@ _THINKING_BUDGETS: dict[str, int] = {
 
 # Model → context window: the shared reader (personalclaw.model_windows) is the ONE
 # loader of model_tokens.json; this provider passes its own absent-model default.
-from personalclaw.model_windows import model_context_window as _model_window
-
+from personalclaw.model_windows import model_context_window as _model_window  # noqa: E402
 
 # ── OpenAI-shape → Anthropic-shape translation ────────────────────────────
 #
@@ -96,8 +95,7 @@ def _translate_tools(tools: list[dict]) -> list[dict]:
                 {
                     "name": fn.get("name", ""),
                     "description": fn.get("description", "") or "",
-                    "input_schema": fn.get("parameters")
-                    or {"type": "object", "properties": {}},
+                    "input_schema": fn.get("parameters") or {"type": "object", "properties": {}},
                 }
             )
         elif isinstance(tool, dict) and "name" in tool:

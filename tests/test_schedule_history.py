@@ -10,18 +10,16 @@ exposes is_running/running_since.
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 import pytest
 
-from personalclaw.schedule import ScheduleService, make_agent_action
+from personalclaw.schedule import ScheduleJob, ScheduleService, make_agent_action
 from personalclaw.schedule_history import (
     _MAX_RECORDS_PER_JOB,
     ScheduleRun,
     ScheduleRunStore,
 )
-
 
 # ── ScheduleRunStore ──────────────────────────────────────────────────
 
@@ -29,8 +27,14 @@ from personalclaw.schedule_history import (
 @pytest.mark.asyncio
 async def test_append_and_roundtrip(tmp_path: Path) -> None:
     store = ScheduleRunStore(base_dir=tmp_path)
-    run = ScheduleRun(job_id="abc123", trigger="manual", status="success",
-                      summary="hello", trace="full output here", duration_ms=42)
+    run = ScheduleRun(
+        job_id="abc123",
+        trigger="manual",
+        status="success",
+        summary="hello",
+        trace="full output here",
+        duration_ms=42,
+    )
     await store.append(run)
 
     # Per-job list (no trace in rows) + total.
@@ -210,6 +214,7 @@ async def test_last_run_status_reads_newest_record(tmp_path: Path) -> None:
     """last_run_status() returns the newest run record's status (persistent,
     honest) — the source for the UI badge, surviving restart unlike last_outcome.
     A launched run must report 'launched', not the job's 'ok' last_status."""
+
     async def _launch(job: ScheduleJob) -> str:
         job.last_status = "ok"
         job.last_outcome = "launched"  # fire-and-forget
@@ -232,6 +237,7 @@ async def test_failed_action_status_not_clobbered_to_ok(tmp_path: Path) -> None:
     """A callback that self-reports last_status='error' (the action path on a
     failed action) must NOT be overwritten with 'ok' by _execute — else a failed
     run records as success (the honest-status bug T7 fixes)."""
+
     async def _failing_action(job: ScheduleJob) -> str | None:
         job.last_status = "error"
         job.last_error = "rendered empty"
@@ -249,6 +255,7 @@ async def test_failed_action_status_not_clobbered_to_ok(tmp_path: Path) -> None:
 async def test_agent_path_defaults_to_ok(tmp_path: Path) -> None:
     """A callback that does NOT self-report status (the agent path) still defaults
     to 'ok' on a clean return."""
+
     async def _agent(job: ScheduleJob) -> str:
         return "did the thing"  # never touches last_status
 
@@ -276,10 +283,10 @@ async def test_replay_run_tags_replay_and_does_not_merge(tmp_path: Path) -> None
     job = svc.add_job(name="r", action=make_agent_action(message="hi"), every_secs=300)
     ok = await svc.replay_run(job.id)
     assert ok is True
-    assert saw_dry_run == [True]            # the callback ran in dry-run mode
-    assert job.dry_run is False             # cleared after the run
+    assert saw_dry_run == [True]  # the callback ran in dry-run mode
+    assert job.dry_run is False  # cleared after the run
     rows, _ = await svc.list_runs(job.id)
-    assert rows[0]["trigger"] == "replay"   # tagged distinctly from manual/scheduled
+    assert rows[0]["trigger"] == "replay"  # tagged distinctly from manual/scheduled
     # Dry run changed no real state: the on-disk job has no last_result merged.
     svc2 = ScheduleService(base_dir=tmp_path)
     svc2._load()

@@ -24,7 +24,9 @@ def _ctx(depth: int = 0, context: str = "diff") -> ActionContext:
 
 
 def test_depth_cap_does_not_spawn():
-    res = asyncio.run(InvokeAgentActionProvider().execute({"task_template": "x"}, _ctx(_HOOK_INVOKE_MAX_DEPTH)))
+    res = asyncio.run(
+        InvokeAgentActionProvider().execute({"task_template": "x"}, _ctx(_HOOK_INVOKE_MAX_DEPTH))
+    )
     assert res.success is False and "depth cap" in res.error
 
 
@@ -36,7 +38,11 @@ def test_missing_task_is_error():
 def test_services_unavailable_is_error(monkeypatch):
     import personalclaw.action_providers.invoke_agent_provider as mod
 
-    monkeypatch.setattr(mod, "get_action_services", lambda: SimpleNamespace(subagents=None, spawn_background=lambda c: None))
+    monkeypatch.setattr(
+        mod,
+        "get_action_services",
+        lambda: SimpleNamespace(subagents=None, spawn_background=lambda c: None),
+    )
     res = asyncio.run(InvokeAgentActionProvider().execute({"task_template": "x"}, _ctx(0)))
     assert res.success is False and "subagent manager unavailable" in res.error
 
@@ -52,7 +58,11 @@ def test_success_spawns_fire_and_forget(monkeypatch):
         scheduled.append(coro)
         return asyncio.ensure_future(coro)
 
-    monkeypatch.setattr(mod, "get_action_services", lambda: SimpleNamespace(subagents=fake_sub, spawn_background=_bg))
+    monkeypatch.setattr(
+        mod,
+        "get_action_services",
+        lambda: SimpleNamespace(subagents=fake_sub, spawn_background=_bg),
+    )
 
     async def go():
         res = await InvokeAgentActionProvider().execute(
@@ -75,7 +85,8 @@ def test_capacity_reached_is_error(monkeypatch):
 
     fake_sub = SimpleNamespace(spawn=lambda **kw: None)
     monkeypatch.setattr(
-        mod, "get_action_services",
+        mod,
+        "get_action_services",
         lambda: SimpleNamespace(subagents=fake_sub, spawn_background=lambda c: None),
     )
     # A zero-permit semaphore is always locked → capacity guard trips before spawn.
@@ -103,16 +114,27 @@ def test_fire_for_ids_injects_hook_depth(monkeypatch, tmp_path):
     async def _fake_run(hook, context, hook_event):
         seen["depth"] = hook_event.get("__hook_depth")
         return SimpleNamespace(
-            hook_id=hook.id, hook_name=hook.name, event=hook.event, stdout="",
-            stderr="", exit_code=0, error="", duration_ms=0,
+            hook_id=hook.id,
+            hook_name=hook.name,
+            event=hook.event,
+            stdout="",
+            stderr="",
+            exit_code=0,
+            error="",
+            duration_ms=0,
         )
 
     import personalclaw.hooks as hooks_mod
 
     monkeypatch.setattr(hooks_mod, "run_script_hook", _fake_run)
     store._hooks["h"] = ScriptHook(
-        id="h", name="n", event=HOOK_EVENT_STOP, matcher="",
-        provider="notify", provider_config={}, enabled=True,
+        id="h",
+        name="n",
+        event=HOOK_EVENT_STOP,
+        matcher="",
+        provider="notify",
+        provider_config={},
+        enabled=True,
     )
     _asyncio.run(store.fire_for_ids(HOOK_EVENT_STOP, ["h"], depth=2))
     assert seen.get("depth") == 2

@@ -47,6 +47,7 @@ def _get_telemetry_salt() -> bytes:
         salt_file.parent.mkdir(parents=True, exist_ok=True)
         import contextlib
         import tempfile
+
         salt = secrets.token_bytes(32)
         tmp_fd, tmp_path = tempfile.mkstemp(dir=str(salt_file.parent))
         try:
@@ -103,23 +104,25 @@ async def api_status(request: web.Request) -> web.Response:
             owner_hash = await loop.run_in_executor(None, _get_owner_hash, state)
         except Exception:
             owner_hash = "unknown"
-    data.update({
-        "uptime_secs": int(uptime),
-        "messages_received": state.messages_received,
-        "cron": state.crons.status(),
-        "stats": Stats().snapshot(),
-        "stats_summary": Stats().summary(),
-        "update_progress": state._update_progress,
-        "version": personalclaw.__version__,
-        "platform": sys.platform,
-        "yolo": state.is_yolo_active(),
-        "yolo_expires_in": state.yolo_remaining_secs(),
-        "owner_id_hash": owner_hash,
-        "os_type": static_info.get("os", ""),
-        "arch": static_info.get("arch", ""),
-        "cpu_count": static_info.get("cpu_count", 0),
-        "mem_total_gb": static_info.get("mem_total_gb", 0),
-    })
+    data.update(
+        {
+            "uptime_secs": int(uptime),
+            "messages_received": state.messages_received,
+            "cron": state.crons.status(),
+            "stats": Stats().snapshot(),
+            "stats_summary": Stats().summary(),
+            "update_progress": state._update_progress,
+            "version": personalclaw.__version__,
+            "platform": sys.platform,
+            "yolo": state.is_yolo_active(),
+            "yolo_expires_in": state.yolo_remaining_secs(),
+            "owner_id_hash": owner_hash,
+            "os_type": static_info.get("os", ""),
+            "arch": static_info.get("arch", ""),
+            "cpu_count": static_info.get("cpu_count", 0),
+            "mem_total_gb": static_info.get("mem_total_gb", 0),
+        }
+    )
     return web.json_response(data)
 
 
@@ -180,8 +183,8 @@ def _get_static_system_info() -> dict[str, object]:
 
 
 def _get_owner_hash(state: DashboardState) -> str:
-    """Return a cached HMAC-SHA256 hash of the owner identity. Stored on state to avoid stale globals."""
-    cached = getattr(state, '_owner_hash', None)
+    """Return a cached HMAC-SHA256 hash of the owner identity. Stored on state to avoid stale globals."""  # noqa: E501
+    cached = getattr(state, "_owner_hash", None)
     if cached is not None:
         return cached
     import getpass
@@ -192,9 +195,7 @@ def _get_owner_hash(state: DashboardState) -> str:
         raw_owner = state.owner_id or f"{platform.node()}:{getpass.getuser()}"
     except (OSError, KeyError):
         raw_owner = f"{platform.node()}:unknown"
-    h = hmac.new(
-        _get_telemetry_salt(), raw_owner.encode(), hashlib.sha256
-    ).hexdigest()
+    h = hmac.new(_get_telemetry_salt(), raw_owner.encode(), hashlib.sha256).hexdigest()
     state._owner_hash = h
     return h
 
@@ -203,9 +204,11 @@ def _path_home_pclaw():
     """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
     try:
         from personalclaw.config.loader import config_dir as _cd
+
         return _cd()
     except Exception:
         from pathlib import Path as _P
+
         return _P.home() / ".personalclaw"
 
 
@@ -234,15 +237,19 @@ def _collect_gpu_metrics() -> dict[str, object]:
 
     if _GPU_HAS_NVIDIA_SMI:
         try:
-            out = subprocess.check_output(
-                [
-                    "nvidia-smi",
-                    "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
-                    "--format=csv,noheader,nounits",
-                ],
-                timeout=2,
-                stderr=subprocess.DEVNULL,
-            ).decode().strip()
+            out = (
+                subprocess.check_output(
+                    [
+                        "nvidia-smi",
+                        "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
+                        "--format=csv,noheader,nounits",
+                    ],
+                    timeout=2,
+                    stderr=subprocess.DEVNULL,
+                )
+                .decode()
+                .strip()
+            )
         except Exception:
             return {}
         # Take the first GPU only — most installs have one, and the inline pill
@@ -281,6 +288,7 @@ def _collect_gpu_metrics() -> dict[str, object]:
                 stderr=subprocess.DEVNULL,
             ).decode()
             import json as _json
+
             blob = _json.loads(out)
             cards = blob.get("SPDisplaysDataType", [])
             if cards:

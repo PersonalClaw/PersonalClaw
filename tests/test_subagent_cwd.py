@@ -99,7 +99,9 @@ class TestValidateCwd:
         assert err == ""
         assert resolved == os.path.realpath(str(real))
 
-    def test_tilde_expanded_in_allowed_roots(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_tilde_expanded_in_allowed_roots(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """``~`` in allowed_roots expands via ``expanduser``."""
         monkeypatch.setenv("HOME", str(tmp_path))
         project = tmp_path / "ws" / "proj"
@@ -124,7 +126,8 @@ class TestValidateCwd:
         assert resolved == os.path.realpath(str(tmp_path))
 
     def test_prefix_without_separator_not_treated_as_under_root(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """``/tmp/allow-extra`` must not match root ``/tmp/allow`` (prefix gotcha)."""
         allow = tmp_path / "allow"
@@ -169,7 +172,8 @@ class TestSpawnCwd:
     async def test_spawn_without_cwd_leaves_field_empty(self) -> None:
         """Omitting cwd stores an empty string (subagent runs in the default sandbox)."""
         manager = SubagentManager(
-            sessions=_mock_sessions(), ctx_builder=_mock_ctx_builder_auto_spawn(),
+            sessions=_mock_sessions(),
+            ctx_builder=_mock_ctx_builder_auto_spawn(),
         )
         with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
             info = manager.spawn("t")
@@ -178,20 +182,25 @@ class TestSpawnCwd:
 
     @pytest.mark.asyncio
     async def test_spawn_with_valid_cwd_stores_resolved_path(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Happy path: valid cwd is resolved and stored on SubagentInfo."""
         project = tmp_path / "project"
         project.mkdir()
 
         manager = SubagentManager(
-            sessions=_mock_sessions(), ctx_builder=_mock_ctx_builder_auto_spawn(),
+            sessions=_mock_sessions(),
+            ctx_builder=_mock_ctx_builder_auto_spawn(),
         )
         mock_cfg = MagicMock()
         mock_cfg.agent.spawn_min_memory_gb = 0
         mock_cfg.agent.subagent_cwd_allowed_roots = [str(tmp_path)]
-        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"), \
-             patch("personalclaw.subagent.AppConfig.load", return_value=mock_cfg):
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch("personalclaw.subagent.AppConfig.load", return_value=mock_cfg),
+        ):
             info = manager.spawn("t", cwd=str(project))
 
         assert info is not None
@@ -200,7 +209,8 @@ class TestSpawnCwd:
 
     @pytest.mark.asyncio
     async def test_spawn_with_invalid_cwd_rejects_and_emits_sel(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Invalid cwd returns a done SubagentInfo with error and emits rejected_invalid_cwd SEL.
 
@@ -208,7 +218,8 @@ class TestSpawnCwd:
         running_count is unchanged.
         """
         manager = SubagentManager(
-            sessions=_mock_sessions(), ctx_builder=_mock_ctx_builder_auto_spawn(),
+            sessions=_mock_sessions(),
+            ctx_builder=_mock_ctx_builder_auto_spawn(),
         )
         running_before = manager._running_count
         mock_cfg = MagicMock()
@@ -217,9 +228,11 @@ class TestSpawnCwd:
         (tmp_path / "allowed").mkdir()
 
         sel_mock = MagicMock()
-        with patch("personalclaw.subagent.Stats"), \
-             patch("personalclaw.subagent.sel", return_value=sel_mock), \
-             patch("personalclaw.subagent.AppConfig.load", return_value=mock_cfg):
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel", return_value=sel_mock),
+            patch("personalclaw.subagent.AppConfig.load", return_value=mock_cfg),
+        ):
             info = manager.spawn("t", cwd="/etc")
 
         assert info is not None
@@ -227,26 +240,34 @@ class TestSpawnCwd:
         assert "spawn refused" in info.error
         assert manager._running_count == running_before
         # SEL audit trail fired with the right outcome
-        calls = [c for c in sel_mock.log_tool_invocation.call_args_list
-                 if c.kwargs.get("outcome") == "rejected_invalid_cwd"]
+        calls = [
+            c
+            for c in sel_mock.log_tool_invocation.call_args_list
+            if c.kwargs.get("outcome") == "rejected_invalid_cwd"
+        ]
         assert len(calls) == 1
         assert "cwd" in calls[0].kwargs.get("metadata", {})
 
     @pytest.mark.asyncio
     async def test_spawn_cwd_disabled_when_allowlist_empty(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Config with empty allowed_roots rejects any cwd (fails-closed)."""
         project = tmp_path / "project"
         project.mkdir()
         manager = SubagentManager(
-            sessions=_mock_sessions(), ctx_builder=_mock_ctx_builder_auto_spawn(),
+            sessions=_mock_sessions(),
+            ctx_builder=_mock_ctx_builder_auto_spawn(),
         )
         mock_cfg = MagicMock()
         mock_cfg.agent.spawn_min_memory_gb = 0
         mock_cfg.agent.subagent_cwd_allowed_roots = []
-        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"), \
-             patch("personalclaw.subagent.AppConfig.load", return_value=mock_cfg):
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch("personalclaw.subagent.AppConfig.load", return_value=mock_cfg),
+        ):
             info = manager.spawn("t", cwd=str(project))
         assert info is not None
         assert info.done is True
@@ -254,7 +275,8 @@ class TestSpawnCwd:
 
     @pytest.mark.asyncio
     async def test_spawn_at_capacity_queues_cwd_for_dequeue(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """When the pool is at capacity, the resolved cwd must survive the queue.
 
@@ -265,15 +287,19 @@ class TestSpawnCwd:
         project = tmp_path / "project"
         project.mkdir()
         manager = SubagentManager(
-            sessions=_mock_sessions(), ctx_builder=_mock_ctx_builder_auto_spawn(),
+            sessions=_mock_sessions(),
+            ctx_builder=_mock_ctx_builder_auto_spawn(),
         )
         # Force capacity: running_count already at max
         manager._running_count = manager._max_concurrent
         mock_cfg = MagicMock()
         mock_cfg.agent.spawn_min_memory_gb = 0
         mock_cfg.agent.subagent_cwd_allowed_roots = [str(tmp_path)]
-        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"), \
-             patch("personalclaw.subagent.AppConfig.load", return_value=mock_cfg):
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch("personalclaw.subagent.AppConfig.load", return_value=mock_cfg),
+        ):
             info = manager.spawn("t", cwd=str(project))
 
         assert info is not None
@@ -286,7 +312,8 @@ class TestSpawnCwd:
 
     @pytest.mark.asyncio
     async def test_spawn_fails_closed_when_config_load_raises(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """If AppConfig.load raises, reject cwd (fail-closed).
 
@@ -297,7 +324,8 @@ class TestSpawnCwd:
         project = tmp_path / "project"
         project.mkdir()
         manager = SubagentManager(
-            sessions=_mock_sessions(), ctx_builder=_mock_ctx_builder_auto_spawn(),
+            sessions=_mock_sessions(),
+            ctx_builder=_mock_ctx_builder_auto_spawn(),
         )
         load_mock = patch(
             "personalclaw.subagent.AppConfig.load",

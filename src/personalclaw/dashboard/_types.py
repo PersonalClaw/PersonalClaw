@@ -4,9 +4,9 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from personalclaw.context import ContextBuilder
-    from personalclaw.schedule import ScheduleService
     from personalclaw.history import ConversationLog, HistoryConsolidator
     from personalclaw.learn import LessonStore
+    from personalclaw.schedule import ScheduleService
     from personalclaw.session import SessionManager
     from personalclaw.subagent import SubagentManager
 

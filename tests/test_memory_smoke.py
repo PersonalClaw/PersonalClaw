@@ -518,7 +518,7 @@ class TestLessonEmbeddingStorage:
         s.write_lesson("something completely different", "knowledge")
         # 1 call for the new rule's embedding, 0 for existing lessons
         assert call_count == 1
-        # Both lessons survive (different text, sim=1.0 but second is longer → first deleted, second saved)
+        # Both lessons survive (different text, sim=1.0 but second is longer → first deleted, second saved)  # noqa: E501
         assert len(s.get_lessons()) == 1
 
     def test_lazy_backfill_legacy_lesson(self, tmp_path: Path) -> None:
@@ -541,7 +541,7 @@ class TestLessonEmbeddingStorage:
 
         # Legacy lesson should now have an embedding (backfilled)
         rows = s.db.execute(
-            "SELECT key, embedding FROM semantic_memory WHERE key LIKE 'lesson.%' AND is_deleted = 0"
+            "SELECT key, embedding FROM semantic_memory WHERE key LIKE 'lesson.%' AND is_deleted = 0"  # noqa: E501
         ).fetchall()
         for row in rows:
             assert row["embedding"] is not None, f"{row['key']} missing embedding after backfill"
@@ -564,7 +564,7 @@ class TestLessonEmbeddingStorage:
         lessons = [
             dict(r)
             for r in s.db.execute(
-                "SELECT value_json FROM semantic_memory WHERE key LIKE 'lesson.%' AND is_deleted = 0"
+                "SELECT value_json FROM semantic_memory WHERE key LIKE 'lesson.%' AND is_deleted = 0"  # noqa: E501
             ).fetchall()
         ]
         assert len(lessons) == 1

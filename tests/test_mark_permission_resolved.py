@@ -9,7 +9,12 @@ class TestMarkPermissionResolved:
     def test_marks_matching_permission(self) -> None:
         msgs = [
             {"role": "user", "content": "hi", "cls": "", "ts": "1"},
-            {"role": "permission", "content": "shell", "cls": json.dumps({"request_id": "abc123"}), "ts": "2"},
+            {
+                "role": "permission",
+                "content": "shell",
+                "cls": json.dumps({"request_id": "abc123"}),
+                "ts": "2",
+            },
             {"role": "tool", "content": "ok", "cls": "", "ts": "3"},
         ]
         _mark_permission_resolved(msgs, "abc123", "approved")
@@ -19,8 +24,18 @@ class TestMarkPermissionResolved:
 
     def test_does_not_touch_other_permissions(self) -> None:
         msgs = [
-            {"role": "permission", "content": "shell", "cls": json.dumps({"request_id": "aaa"}), "ts": "1"},
-            {"role": "permission", "content": "read", "cls": json.dumps({"request_id": "bbb"}), "ts": "2"},
+            {
+                "role": "permission",
+                "content": "shell",
+                "cls": json.dumps({"request_id": "aaa"}),
+                "ts": "1",
+            },
+            {
+                "role": "permission",
+                "content": "read",
+                "cls": json.dumps({"request_id": "bbb"}),
+                "ts": "2",
+            },
         ]
         _mark_permission_resolved(msgs, "bbb", "rejected")
         assert "resolved" not in json.loads(msgs[0]["cls"])
@@ -28,7 +43,12 @@ class TestMarkPermissionResolved:
 
     def test_no_match_is_noop(self) -> None:
         msgs = [
-            {"role": "permission", "content": "shell", "cls": json.dumps({"request_id": "aaa"}), "ts": "1"},
+            {
+                "role": "permission",
+                "content": "shell",
+                "cls": json.dumps({"request_id": "aaa"}),
+                "ts": "1",
+            },
         ]
         _mark_permission_resolved(msgs, "nonexistent", "approved")
         assert "resolved" not in json.loads(msgs[0]["cls"])
@@ -36,7 +56,12 @@ class TestMarkPermissionResolved:
     def test_malformed_cls_skipped(self) -> None:
         msgs = [
             {"role": "permission", "content": "shell", "cls": "not-json", "ts": "1"},
-            {"role": "permission", "content": "read", "cls": json.dumps({"request_id": "abc"}), "ts": "2"},
+            {
+                "role": "permission",
+                "content": "read",
+                "cls": json.dumps({"request_id": "abc"}),
+                "ts": "2",
+            },
         ]
         _mark_permission_resolved(msgs, "abc", "trust")
         assert json.loads(msgs[1]["cls"])["resolved"] == "trust"
@@ -68,9 +93,19 @@ class TestMarkPermissionResolved:
     def test_finds_most_recent_match(self) -> None:
         """With duplicate request_ids (shouldn't happen but defensive), marks the last one."""
         msgs = [
-            {"role": "permission", "content": "shell", "cls": json.dumps({"request_id": "abc"}), "ts": "1"},
+            {
+                "role": "permission",
+                "content": "shell",
+                "cls": json.dumps({"request_id": "abc"}),
+                "ts": "1",
+            },
             {"role": "tool", "content": "ok", "cls": "", "ts": "2"},
-            {"role": "permission", "content": "shell", "cls": json.dumps({"request_id": "abc"}), "ts": "3"},
+            {
+                "role": "permission",
+                "content": "shell",
+                "cls": json.dumps({"request_id": "abc"}),
+                "ts": "3",
+            },
         ]
         _mark_permission_resolved(msgs, "abc", "approved")
         assert "resolved" not in json.loads(msgs[0]["cls"])

@@ -12,8 +12,8 @@ import pytest
 from personalclaw.knowledge.store import KnowledgeStore
 from personalclaw.vector_memory import VectorMemoryStore
 
-
 # ── Knowledge store ──
+
 
 def _kstore(tmp_path) -> KnowledgeStore:
     return KnowledgeStore(str(tmp_path / "k.db"))
@@ -45,6 +45,7 @@ def test_knowledge_clear_and_reembed(tmp_path):
     class _Emb:
         def embed_for_item(self, title, summary, content=None):
             return [0.1, 0.2, 0.3]
+
     res = store.reembed_all(_Emb())
     assert res == {"reembedded": 2, "failed": 2 - 2, "total": 2}
     rows = store.db.execute("SELECT embedding FROM items").fetchall()
@@ -98,11 +99,13 @@ def test_knowledge_reembed_tolerates_failure(tmp_path):
     class _NullEmb:
         def embed_for_item(self, title, summary, content=None):
             return None  # model unavailable for this item
+
     res = store.reembed_all(_NullEmb())
     assert res["reembedded"] == 0 and res["failed"] == 1 and res["total"] == 1
 
 
 # ── Vector (episodic) memory ──
+
 
 def test_memory_reembed_episodic(tmp_path, monkeypatch):
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
@@ -111,7 +114,9 @@ def test_memory_reembed_episodic(tmp_path, monkeypatch):
     # Seed episodic rows WITHOUT embeddings (text preserved).
     store.embed_fn = None
     assert store.write_episodic("the user prefers dark mode in the editor", conversation_id="c1")
-    assert store.write_episodic("the project deadline is the end of the quarter", conversation_id="c1")
+    assert store.write_episodic(
+        "the project deadline is the end of the quarter", conversation_id="c1"
+    )
     assert store.count_episodic_to_reembed() == 2
 
     # Now wire an embed_fn and re-embed.
@@ -120,7 +125,8 @@ def test_memory_reembed_episodic(tmp_path, monkeypatch):
     res = store.reembed_all()
     assert res["reembedded"] == 2 and res["total"] == 2
     rows = store.db.execute(
-        "SELECT embedding FROM episodic_memories WHERE is_deleted = 0").fetchall()
+        "SELECT embedding FROM episodic_memories WHERE is_deleted = 0"
+    ).fetchall()
     assert all(r["embedding"] is not None for r in rows)
 
 
@@ -129,25 +135,32 @@ def test_memory_reembed_noop_without_embed_fn(tmp_path, monkeypatch):
     store = VectorMemoryStore(db_path=tmp_path / "v.db")
     store.init()
     store.embed_fn = None
-    store.write_episodic("a sufficiently long episodic memory to pass length checks", conversation_id="c1")
+    store.write_episodic(
+        "a sufficiently long episodic memory to pass length checks", conversation_id="c1"
+    )
     res = store.reembed_all()
     assert res == {"reembedded": 0, "failed": 0, "total": 0}
 
 
 # ── Readiness gate (handler refuses to wipe when model not ready) ──
 
+
 @pytest.mark.asyncio
 async def test_reindex_start_blocks_when_model_not_ready(monkeypatch):
     import json
     from types import SimpleNamespace
+
     from aiohttp.test_utils import make_mocked_request
+
     from personalclaw.dashboard.handlers import embedding_reindex as H
 
     # No active embedding model / not downloaded → get_active_embed_fn returns None.
     monkeypatch.setattr(
-        "personalclaw.embedding_providers.registry.get_active_embed_fn", lambda: None)
+        "personalclaw.embedding_providers.registry.get_active_embed_fn", lambda: None
+    )
     monkeypatch.setattr(
-        "personalclaw.embedding_providers.registry._active_embedding_spec", lambda: None)
+        "personalclaw.embedding_providers.registry._active_embedding_spec", lambda: None
+    )
 
     state = SimpleNamespace(embedding_reindex=lambda: SimpleNamespace())
     req = make_mocked_request("POST", "/api/models/embedding/reindex")

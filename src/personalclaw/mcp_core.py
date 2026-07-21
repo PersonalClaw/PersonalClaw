@@ -126,7 +126,7 @@ def _list_tools() -> list[dict[str, Any]]:
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "The skill name from the index (e.g. 'tiny-url' or 'auto/release').",
+                        "description": "The skill name from the index (e.g. 'tiny-url' or 'auto/release').",  # noqa: E501
                     },
                 },
                 "required": ["name"],
@@ -144,7 +144,10 @@ def _list_tools() -> list[dict[str, Any]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "What you're trying to do (capability/intent)."},
+                    "query": {
+                        "type": "string",
+                        "description": "What you're trying to do (capability/intent).",
+                    },
                     "limit": {"type": "integer", "description": "Max results (default 20)."},
                 },
                 "required": ["query"],
@@ -153,8 +156,8 @@ def _list_tools() -> list[dict[str, Any]]:
         {
             "name": "skill_remember",
             "description": (
-                "Capture a skill the USER just taught you (\"from now on…\", \"always do X\", "
-                "\"remember this workflow\"). Writes a SESSION-LIVE draft: it's active for the "
+                'Capture a skill the USER just taught you ("from now on…", "always do X", '
+                '"remember this workflow"). Writes a SESSION-LIVE draft: it\'s active for the '
                 "rest of THIS chat immediately, and at the chat's end the user is asked whether "
                 "to save it permanently (to this agent or all agents) or forget it. Use ONLY for "
                 "durable how-to the user explicitly wants kept — not for one-off facts (that's "
@@ -163,8 +166,14 @@ def _list_tools() -> list[dict[str, Any]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string", "description": "Short skill name, e.g. 'deploy checklist'."},
-                    "body": {"type": "string", "description": "The procedure/rule to remember (markdown)."},
+                    "title": {
+                        "type": "string",
+                        "description": "Short skill name, e.g. 'deploy checklist'.",
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "The procedure/rule to remember (markdown).",
+                    },
                 },
                 "required": ["title", "body"],
             },
@@ -224,23 +233,23 @@ def _list_tools() -> list[dict[str, Any]]:
                 "decide someone should be told something — most commonly in silent "
                 "cron jobs, but any time proactive notification is needed."
                 "\n\nDelivery contract for cron jobs:"
-                "\n  1. Try the originating dashboard session first (session=\"origin\"),"
+                '\n  1. Try the originating dashboard session first (session="origin"),'
                 " so the session agent can react to the message, not just display it."
                 " When injection succeeds, the message appears in the chat UI — no"
                 " extra notification is fired."
                 "\n  2. Fall through to the owner's messaging channel if origin is"
                 " unreachable (tab closed, history deleted, or cron has no origin —"
                 " e.g. created from the dashboard UI)."
-                "\n  3. On the fallback path (including session=\"channel\" and non-cron"
+                '\n  3. On the fallback path (including session="channel" and non-cron'
                 " callers), a dashboard notification also fires so messages that"
                 " couldn't reach their origin still surface. Invariant: messages are"
                 " never silently dropped."
                 "\n\nsession param:"
-                "\n  \"origin\"  — inject into the session that spawned this cron."
-                "\n  \"channel\" — explicitly route to the owner's messaging channel,"
+                '\n  "origin"  — inject into the session that spawned this cron.'
+                '\n  "channel" — explicitly route to the owner\'s messaging channel,'
                 " bypassing origin."
-                "\n  omitted + cron caller → auto-applies \"origin\" (you usually"
-                " want this — pick \"channel\" only if the message should specifically"
+                '\n  omitted + cron caller → auto-applies "origin" (you usually'
+                ' want this — pick "channel" only if the message should specifically'
                 " reach the messaging channel and not the spawning chat)."
                 "\n  omitted + non-cron caller → owner channel (default behavior)."
                 "\n\nExplicit channel=... or user=... always wins and suppresses"
@@ -251,7 +260,7 @@ def _list_tools() -> list[dict[str, Any]]:
                 "properties": {
                     "text": {
                         "type": "string",
-                        "description": "Message text. Also used as fallback when blocks are provided.",
+                        "description": "Message text. Also used as fallback when blocks are provided.",  # noqa: E501
                     },
                     "title": {
                         "type": "string",
@@ -259,17 +268,17 @@ def _list_tools() -> list[dict[str, Any]]:
                     },
                     "blocks": {
                         "type": "array",
-                        "description": "Optional rich-message blocks array (Block Kit format). When provided, the message is sent as a rich message with text as fallback.",
+                        "description": "Optional rich-message blocks array (Block Kit format). When provided, the message is sent as a rich message with text as fallback.",  # noqa: E501
                         "items": {"type": "object"},
                         "maxItems": 50,
                     },
                     "channel": {
                         "type": "string",
-                        "description": "Target channel ID (e.g. C0123ABC456). Must be a tracked channel. Omit to send to owner DM.",
+                        "description": "Target channel ID (e.g. C0123ABC456). Must be a tracked channel. Omit to send to owner DM.",  # noqa: E501
                     },
                     "user": {
                         "type": "string",
-                        "description": "Target user ID (e.g. U0123ABC456) to DM. Must be an allowed user. Omit to send to owner DM.",
+                        "description": "Target user ID (e.g. U0123ABC456) to DM. Must be an allowed user. Omit to send to owner DM.",  # noqa: E501
                     },
                     "unfurl_links": {
                         "type": "boolean",
@@ -277,7 +286,7 @@ def _list_tools() -> list[dict[str, Any]]:
                     },
                     "unfurl_media": {
                         "type": "boolean",
-                        "description": "Whether to unfurl media (images/video) previews. Defaults to true.",
+                        "description": "Whether to unfurl media (images/video) previews. Defaults to true.",  # noqa: E501
                     },
                     "thread_ts": {
                         "type": "string",
@@ -301,11 +310,11 @@ def _list_tools() -> list[dict[str, Any]]:
                         "enum": ["origin", "channel"],
                         "description": (
                             "Routing opt-in/opt-out for cron messages. "
-                            "\"origin\" injects into the dashboard session that created "
+                            '"origin" injects into the dashboard session that created '
                             "this cron (auto-applied for cron callers that set neither "
-                            "channel nor user). \"channel\" explicitly routes to the "
+                            'channel nor user). "channel" explicitly routes to the '
                             "owner's messaging channel, bypassing origin. Fallback paths "
-                            "(origin unreachable, explicit \"channel\", non-cron caller) "
+                            '(origin unreachable, explicit "channel", non-cron caller) '
                             "also fire a dashboard notification so the message isn't "
                             "silently dropped."
                         ),
@@ -510,8 +519,12 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
     from personalclaw.mcp_shared import call_tool_with_logging
 
     return call_tool_with_logging(
-        name, raw_args, _validate_args, _call_tool_inner,
-        session_key="mcp_core", downstream_service="personalclaw-core",
+        name,
+        raw_args,
+        _validate_args,
+        _call_tool_inner,
+        session_key="mcp_core",
+        downstream_service="personalclaw-core",
     )
 
 
@@ -547,8 +560,10 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         session_key = get_current_session_key() or "default"
         draft = ephemeral.remember(session_key, title, body)
         if draft is None:
-            return ("Error: could not save the draft (empty after redaction, or this "
-                    "session's draft limit was reached).")
+            return (
+                "Error: could not save the draft (empty after redaction, or this "
+                "session's draft limit was reached)."
+            )
         return (
             f"Saved a session skill draft: '{draft.title}'. It's active for the rest of "
             "this chat now; when the chat ends you'll be asked whether to keep it "
@@ -571,8 +586,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         if not hits:
             return "No skills matched. Try broader terms; or proceed without a skill."
         lines = [f"- {h['key']}: {h['description']}" for h in hits]
-        return ("Matching skills (call skill_invoke(name) to load full steps):\n"
-                + "\n".join(lines))
+        return "Matching skills (call skill_invoke(name) to load full steps):\n" + "\n".join(lines)
 
     if name == "wait":
         import time as _time
@@ -723,7 +737,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             args = {**args, "session": "origin"}
         if args.get("session"):
             if args["session"] not in ("origin", "channel"):
-                return "Error: session must be \"origin\" or \"channel\"."
+                return 'Error: session must be "origin" or "channel".'
             payload["session"] = args["session"]
             caller_session = _resolve_session_key()
             if caller_session.startswith("cron:"):
@@ -742,7 +756,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 return f"Message sent to channel. ts={ts}" if ts else "Message sent to channel."
             return "Message delivered as dashboard notification (channel unavailable)."
         if args.get("session"):
-            return "Session injection unavailable — target session not found or caller is not a cron. Message delivered normally."
+            return "Session injection unavailable — target session not found or caller is not a cron. Message delivered normally."  # noqa: E501
         ts = resp.get("ts", "")
         return f"Message sent. ts={ts}" if ts else "Message sent."
 

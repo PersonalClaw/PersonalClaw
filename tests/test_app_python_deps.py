@@ -13,12 +13,14 @@ from personalclaw.apps.manifest import AppManifest
 
 
 def _manifest(deps: list[str]) -> AppManifest:
-    return AppManifest.from_dict({
-        "name": "dep-app",
-        "version": "1.0.0",
-        "dependencies": {"pythonDependencies": deps},
-        "provider": {"type": "tool", "implementation": "provider:make"},
-    })
+    return AppManifest.from_dict(
+        {
+            "name": "dep-app",
+            "version": "1.0.0",
+            "dependencies": {"pythonDependencies": deps},
+            "provider": {"type": "tool", "implementation": "provider:make"},
+        }
+    )
 
 
 def test_manifest_parses_and_roundtrips_python_deps():
@@ -66,5 +68,6 @@ def test_pip_failure_raises_lifecycle_error(monkeypatch):
 
     monkeypatch.setattr(app_manager.subprocess, "run", lambda cmd, **kw: _Fail())
     import pytest
+
     with pytest.raises(app_manager.AppLifecycleError):
         app_manager._install_python_deps(_manifest(["totally-not-a-real-pkg-xyz==9.9.9"]))

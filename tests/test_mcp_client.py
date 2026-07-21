@@ -25,8 +25,7 @@ pytestmark = pytest.mark.skipif(
 
 
 # A minimal stdio MCP server: one tool that echoes its argument.
-_FIXTURE_SERVER = textwrap.dedent(
-    """
+_FIXTURE_SERVER = textwrap.dedent("""
     from mcp.server.fastmcp import FastMCP
 
     mcp = FastMCP("fixture")
@@ -38,8 +37,7 @@ _FIXTURE_SERVER = textwrap.dedent(
 
     if __name__ == "__main__":
         mcp.run()
-    """
-)
+    """)
 
 
 @pytest.fixture()

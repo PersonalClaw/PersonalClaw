@@ -7,7 +7,7 @@ a no-op until the catalog exceeds K. Mirrors skills surfacing.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from personalclaw.agents.native.tool_retrieval import ToolRetriever
 
@@ -89,6 +89,7 @@ def test_mark_used_ignores_unknown():
 
 # ── search escape hatch (the agent can find a hidden tool) ──
 
+
 def test_reduced_and_hidden_count():
     small = ToolRetriever(_catalog(10), k=48)
     assert small.reduced() is False
@@ -119,6 +120,7 @@ def test_tool_search_is_core():
     # a tool literally named tool_search would be core; the synthetic def added by
     # the runtime is named tool_search → _is_core matches it via the frag.
     from personalclaw.agents.native.tool_retrieval import _is_core
+
     assert _is_core("tool_search", _Def(name="tool_search")) is True
 
 
@@ -131,6 +133,7 @@ _PRIMITIVES = ("bash", "read_file", "write_file", "edit_file", "grep", "glob", "
 
 def test_primitives_are_core():
     from personalclaw.agents.native.tool_retrieval import _is_core
+
     for name in _PRIMITIVES:
         assert _is_core(name, _Def(name=name)) is True, f"{name} must be core"
 
@@ -139,7 +142,9 @@ def test_primitives_surface_even_on_unrelated_turn():
     # The bug the user hit: a large MCP catalog hid `bash`, so the model said
     # "no shell tool exists". Primitives must survive a totally unrelated query.
     defs = [_Def(name=n) for n in _PRIMITIVES]
-    defs += [_Def(name=f"mcp__toolbox__Tool{i}", description=f"catalog tool {i}") for i in range(80)]
+    defs += [
+        _Def(name=f"mcp__toolbox__Tool{i}", description=f"catalog tool {i}") for i in range(80)
+    ]
     r = ToolRetriever(defs, k=20)
     names = {d.name for d in r.select("write a haiku about the ocean")}
     for p in _PRIMITIVES:
@@ -150,9 +155,12 @@ def test_core_exact_match_no_substring_false_positives():
     # Regression: the old frag list had "ask", which matched "task_*" (so every
     # task tool was silently core) — and a bare "read" would match MCP *Read* tools.
     from personalclaw.agents.native.tool_retrieval import _is_core
+
     assert _is_core("task_create", _Def(name="task_create")) is False
     assert _is_core("task_list", _Def(name="task_list")) is False
-    assert _is_core("mcp__toolbox__ReadDocuments", _Def(name="mcp__toolbox__ReadDocuments")) is False
+    assert (
+        _is_core("mcp__toolbox__ReadDocuments", _Def(name="mcp__toolbox__ReadDocuments")) is False
+    )
 
 
 def test_shell_structural_hint_surfaces_bash():
@@ -166,6 +174,7 @@ def test_shell_structural_hint_surfaces_bash():
 
 # ── progressive disclosure: the catalog of non-surfaced tools (PT1) ──
 
+
 @dataclass
 class _ProvDef:
     name: str
@@ -174,23 +183,30 @@ class _ProvDef:
 
 
 def test_catalog_lists_excluded_tools_grouped_by_provider():
-    defs = [_ProvDef(name=f"a_tool_{i}", description=f"does {i}", provider="alpha") for i in range(30)]
-    defs += [_ProvDef(name=f"b_tool_{i}", description=f"does {i}", provider="beta") for i in range(30)]
+    defs = [
+        _ProvDef(name=f"a_tool_{i}", description=f"does {i}", provider="alpha") for i in range(30)
+    ]
+    defs += [
+        _ProvDef(name=f"b_tool_{i}", description=f"does {i}", provider="beta") for i in range(30)
+    ]
     r = ToolRetriever(defs, k=20)
     cat = r.catalog(exclude={"a_tool_0", "b_tool_0"})
-    assert "[alpha]" in cat and "[beta]" in cat       # grouped by provider
-    assert "a_tool_5: does 5" in cat                   # name + description line
+    assert "[alpha]" in cat and "[beta]" in cat  # grouped by provider
+    assert "a_tool_5: does 5" in cat  # name + description line
     assert "a_tool_0" not in cat and "b_tool_0" not in cat  # excluded (surfaced) tools omitted
 
 
 def test_catalog_bounded_and_points_at_search_when_huge():
     # a giant fleet → the catalog caps and summarizes the overflow.
-    defs = [_ProvDef(name=f"p{p}_t{i}", description="x" * 80, provider=f"prov{p}")
-            for p in range(20) for i in range(30)]  # 600 tools
+    defs = [
+        _ProvDef(name=f"p{p}_t{i}", description="x" * 80, provider=f"prov{p}")
+        for p in range(20)
+        for i in range(30)
+    ]  # 600 tools
     r = ToolRetriever(defs, k=20)
     cat = r.catalog(exclude=set(), max_chars=1500)
     assert len(cat) <= 1500 + 200  # bounded (+ the overflow summary line)
-    assert "tool_search" in cat     # overflow points the model at discovery
+    assert "tool_search" in cat  # overflow points the model at discovery
 
 
 def test_catalog_empty_when_nothing_excluded_fits():
@@ -199,6 +215,7 @@ def test_catalog_empty_when_nothing_excluded_fits():
 
 
 # ── PT2: tool_search uses the semantic path (capability match w/o keywords) ──
+
 
 def test_search_is_generous_no_gate():
     # search returns matches without the selection score-gate; a weak keyword hit

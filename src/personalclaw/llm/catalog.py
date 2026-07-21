@@ -61,8 +61,8 @@ class ModelInfo:
     name: str
     capabilities: list[str] = field(default_factory=list)
     description: str = ""
-    size: int | None = None          # bytes — for downloadable managers (ollama)
-    downloaded: bool | None = None   # None = not a downloadable/managed model
+    size: int | None = None  # bytes — for downloadable managers (ollama)
+    downloaded: bool | None = None  # None = not a downloadable/managed model
     extra: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -147,28 +147,81 @@ class PullProgress:
 # nomic, mxbai, snowflake-arctic-embed, paraphrase-*), so a pulled embedding model is
 # classified under the Embedding use-case — not miscategorized as Chat.
 _EMBEDDING_MARKERS = (
-    "embed", "embedding", "bge-", "e5-", "gte-",
-    "minilm", "nomic", "mxbai", "arctic-embed", "paraphrase-", "sentence-",
+    "embed",
+    "embedding",
+    "bge-",
+    "e5-",
+    "gte-",
+    "minilm",
+    "nomic",
+    "mxbai",
+    "arctic-embed",
+    "paraphrase-",
+    "sentence-",
 )
 # Image *understanding* (vision/VLM) — reads images, stacks with chat.
 _IMAGE_MODALITY_MARKERS = (
-    "vision", "vl-", "-vl", "vlm",
-    "gpt-4o", "gpt-4-turbo", "gpt-5", "gpt-4.1",
-    "claude-3", "claude-4", "claude-opus", "claude-sonnet", "claude-haiku",
-    "gemini", "qwen-vl", "llava", "pixtral", "internvl", "minicpm-v",
+    "vision",
+    "vl-",
+    "-vl",
+    "vlm",
+    "gpt-4o",
+    "gpt-4-turbo",
+    "gpt-5",
+    "gpt-4.1",
+    "claude-3",
+    "claude-4",
+    "claude-opus",
+    "claude-sonnet",
+    "claude-haiku",
+    "gemini",
+    "qwen-vl",
+    "llava",
+    "pixtral",
+    "internvl",
+    "minicpm-v",
 )
 # Image *generation* — produces images, mutually exclusive with chat.
 _IMAGE_GEN_MARKERS = (
-    "dall-e", "dalle", "stable-diffusion", "sdxl", "sd3", "flux",
-    "qwen-image", "wan-image", "imagen", "midjourney", "image-gen",
-    "-image", "ideogram", "playground-v",
+    "dall-e",
+    "dalle",
+    "stable-diffusion",
+    "sdxl",
+    "sd3",
+    "flux",
+    "qwen-image",
+    "wan-image",
+    "imagen",
+    "midjourney",
+    "image-gen",
+    "-image",
+    "ideogram",
+    "playground-v",
 )
 # Audio *generation* — produces audio/music/sfx (speech is stt/tts).
-_AUDIO_GEN_MARKERS = ("musicgen", "audiogen", "audio-gen", "bark", "suno", "audiocraft", "stable-audio")
+_AUDIO_GEN_MARKERS = (
+    "musicgen",
+    "audiogen",
+    "audio-gen",
+    "bark",
+    "suno",
+    "audiocraft",
+    "stable-audio",
+)
 # Audio *understanding* — reads/analyzes audio (not transcription).
 _AUDIO_MODALITY_MARKERS = ("audio", "voice")
 # Video *generation* — produces video.
-_VIDEO_GEN_MARKERS = ("video-gen", "sora", "runway", "veo", "wan2.", "kling", "pika", "ltx-video", "mochi")
+_VIDEO_GEN_MARKERS = (
+    "video-gen",
+    "sora",
+    "runway",
+    "veo",
+    "wan2.",
+    "kling",
+    "pika",
+    "ltx-video",
+    "mochi",
+)
 # Video *understanding* — reads/analyzes video.
 _VIDEO_MODALITY_MARKERS = ("video-understanding", "video-vl", "videollava", "video-llava")
 _STT_MARKERS = ("whisper", "stt-", "transcribe")
@@ -182,9 +235,14 @@ _TTS_MARKERS = ("tts-", "-tts", "piper", "elevenlabs", "polly", "kokoro")
 # (Groq/Together/…) speaks the openai_compatible protocol, so families served over
 # that protocol include ``openai_compatible``. Absent family → no restriction.
 _MODEL_FAMILY_PROVIDER_TYPES: tuple[tuple[tuple[str, ...], frozenset[str]], ...] = (
-    (("claude", "opus", "sonnet", "haiku"), frozenset({"anthropic", "anthropic_compatible", "bedrock"})),
-    (("gpt-", "o1", "o3", "o4", "dall-e", "text-embedding-", "whisper", "tts-"),
-     frozenset({"openai", "openai_compatible", "azure_openai"})),
+    (
+        ("claude", "opus", "sonnet", "haiku"),
+        frozenset({"anthropic", "anthropic_compatible", "bedrock"}),
+    ),
+    (
+        ("gpt-", "o1", "o3", "o4", "dall-e", "text-embedding-", "whisper", "tts-"),
+        frozenset({"openai", "openai_compatible", "azure_openai"}),
+    ),
     (("gemini",), frozenset({"google", "gemini"})),
 )
 
@@ -247,6 +305,7 @@ def infer_capabilities(model_id: str, families: list[str] | None = None) -> list
 # generic PROTOCOL infra (not one app importing another), so it lives on the SDK
 # seam and each app reuses it.
 
+
 async def openai_compatible_list_models(
     endpoint: str | None, api_key: str | None, *, default_base: str = "https://api.openai.com/v1"
 ) -> list[ModelInfo]:
@@ -296,12 +355,14 @@ async def openai_compatible_list_models(
         model_id = m.get("id", "")
         if not model_id:
             continue
-        out.append(ModelInfo(
-            id=model_id,
-            name=model_id,
-            capabilities=infer_capabilities(model_id),
-            extra={"owned_by": m.get("owned_by", "")} if m.get("owned_by") else {},
-        ))
+        out.append(
+            ModelInfo(
+                id=model_id,
+                name=model_id,
+                capabilities=infer_capabilities(model_id),
+                extra={"owned_by": m.get("owned_by", "")} if m.get("owned_by") else {},
+            )
+        )
     return out
 
 

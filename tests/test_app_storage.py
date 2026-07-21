@@ -25,13 +25,21 @@ from personalclaw.apps import app_manager, manager
 @pytest.fixture(autouse=True)
 def _isolate_apps(tmp_path, monkeypatch):
     import personalclaw.config.loader as loader
+
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
     return tmp_path
 
 
-def _app(tmp_path: Path, name: str, *, version="1.0.0", subdir="src", backend=False,
-         permissions: dict | None = None) -> Path:
+def _app(
+    tmp_path: Path,
+    name: str,
+    *,
+    version="1.0.0",
+    subdir="src",
+    backend=False,
+    permissions: dict | None = None,
+) -> Path:
     d = tmp_path / subdir / name
     d.mkdir(parents=True)
     mani = {"name": name, "version": version, "displayName": name, "description": "x"}
@@ -39,8 +47,11 @@ def _app(tmp_path: Path, name: str, *, version="1.0.0", subdir="src", backend=Fa
         mani["permissions"] = permissions
     if backend:
         mani["backend"] = {"entryPoint": "backend/server.py", "type": "python"}
-        bd = d / "backend"; bd.mkdir()
-        (bd / "server.py").write_text("import os\nprint(os.environ.get('PERSONALCLAW_APP_DATA_DIR'))\n", encoding="utf-8")
+        bd = d / "backend"
+        bd.mkdir()
+        (bd / "server.py").write_text(
+            "import os\nprint(os.environ.get('PERSONALCLAW_APP_DATA_DIR'))\n", encoding="utf-8"
+        )
     (d / "app.json").write_text(json.dumps(mani), encoding="utf-8")
     return d
 
@@ -76,11 +87,15 @@ def test_data_dir_survives_disable_enable(tmp_path):
 def test_backend_gets_data_dir_env(tmp_path, monkeypatch):
     # The supervisor must pass PERSONALCLAW_APP_DATA_DIR to the backend env.
     from personalclaw.apps import backend_runtime
+
     captured = {}
 
     class _FakeProc:
-        def __init__(self): self.pid = 4321
-        def poll(self): return None
+        def __init__(self):
+            self.pid = 4321
+
+        def poll(self):
+            return None
 
     def _fake_popen(cmd, cwd=None, env=None, **kw):
         captured["env"] = env
@@ -90,6 +105,7 @@ def test_backend_gets_data_dir_env(tmp_path, monkeypatch):
     monkeypatch.setattr(backend_runtime.subprocess, "Popen", _fake_popen)
     sup = backend_runtime.BackendSupervisor()
     from personalclaw.apps.manifest import AppManifest
+
     # storage is a declared capability (sandbox P3) — grant it so the backend
     # receives its DATA_DIR.
     app_manager.install(_app(tmp_path, "svc", backend=True, permissions={"storage": True}))
@@ -103,11 +119,15 @@ def test_backend_without_storage_permission_gets_no_data_dir(tmp_path, monkeypat
     """Sandbox P3: a backend whose app does NOT declare the storage capability is
     NOT handed PERSONALCLAW_APP_DATA_DIR (no sanctioned persistence path)."""
     from personalclaw.apps import backend_runtime
+
     captured: dict = {}
 
     class _FakeProc:
-        def __init__(self): self.pid = 4322
-        def poll(self): return None
+        def __init__(self):
+            self.pid = 4322
+
+        def poll(self):
+            return None
 
     def _fake_popen(cmd, cwd=None, env=None, **kw):
         captured["env"] = env
@@ -116,6 +136,7 @@ def test_backend_without_storage_permission_gets_no_data_dir(tmp_path, monkeypat
     monkeypatch.setattr(backend_runtime.subprocess, "Popen", _fake_popen)
     sup = backend_runtime.BackendSupervisor()
     from personalclaw.apps.manifest import AppManifest
+
     app_manager.install(_app(tmp_path, "nostore", backend=True))  # no permissions
     manifest = AppManifest.from_json_file(manager.app_dir("nostore") / "app.json")
     sup.start(manifest)
@@ -138,9 +159,13 @@ def test_app_data_dir_accepts_valid_names(tmp_path, good):
 
 @pytest.mark.parametrize("bad", ["a--q0", "Not_Kebab", "../evil", "", ".", "UPPER", "a b"])
 def test_app_data_dir_rejects_invalid_names_without_creating_dirs(tmp_path, bad):
-    before = {p.name for p in (tmp_path / "apps").iterdir()} if (tmp_path / "apps").is_dir() else set()
+    before = (
+        {p.name for p in (tmp_path / "apps").iterdir()} if (tmp_path / "apps").is_dir() else set()
+    )
     with pytest.raises(ValueError):
         manager.app_data_dir(bad)
-    after = {p.name for p in (tmp_path / "apps").iterdir()} if (tmp_path / "apps").is_dir() else set()
+    after = (
+        {p.name for p in (tmp_path / "apps").iterdir()} if (tmp_path / "apps").is_dir() else set()
+    )
     # No junk directory was created by the rejected call.
     assert before == after

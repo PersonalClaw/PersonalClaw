@@ -62,7 +62,9 @@ async def test_first_idle_secs_shortens_only_the_first_fire(svc, monkeypatch):
     monkeypatch.setattr(_an.asyncio, "sleep", _record_sleep)
     svc._on_fire = on_fire
     await svc.start()
-    loop = await svc.add(session_name="code-abcd1234", message="go", idle_secs=120, first_idle_secs=15)
+    loop = await svc.add(
+        session_name="code-abcd1234", message="go", idle_secs=120, first_idle_secs=15
+    )
     # first_idle_secs is recorded on the loop and used for the FIRST sleep.
     assert loop.first_idle_secs == 15
     await svc._timers[loop.id]

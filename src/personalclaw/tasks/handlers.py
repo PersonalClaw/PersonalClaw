@@ -35,12 +35,14 @@ async def api_tasks_list(request: web.Request) -> web.Response:
         offset=offset,
     )
     task_map = {t.id: t for t in tasks}
-    return web.json_response({
-        "tasks": [_with_block_reason(t, task_map) for t in tasks],
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-    })
+    return web.json_response(
+        {
+            "tasks": [_with_block_reason(t, task_map) for t in tasks],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+    )
 
 
 async def api_tasks_graph(request: web.Request) -> web.Response:
@@ -110,8 +112,14 @@ async def api_tasks_bulk(request: web.Request) -> web.Response:
                 errors.append({"index": i, "error": "id required"})
     if errors:
         return web.json_response(
-            {"total": len(items), "succeeded": 0, "failed": len(items),
-             "results": [], "errors": errors}, status=400,
+            {
+                "total": len(items),
+                "succeeded": 0,
+                "failed": len(items),
+                "results": [],
+                "errors": errors,
+            },
+            status=400,
         )
 
     # Phase 2 — apply.
@@ -122,17 +130,32 @@ async def api_tasks_bulk(request: web.Request) -> web.Response:
                 t = await registry.create_task(**{k: v for k, v in item.items() if k != "provider"})
                 results.append({"index": i, "task_id": t.id, "status": "created"})
             elif op == "update":
-                t = await registry.update_task(item["id"], **{k: v for k, v in item.items() if k not in ("id", "provider")})
-                results.append({"index": i, "task_id": item["id"], "status": "updated" if t else "not_found"})
+                updated = await registry.update_task(
+                    item["id"], **{k: v for k, v in item.items() if k not in ("id", "provider")}
+                )
+                results.append(
+                    {
+                        "index": i,
+                        "task_id": item["id"],
+                        "status": "updated" if updated else "not_found",
+                    }
+                )
             else:  # delete
                 tid = item.get("id") if isinstance(item, dict) else item
-                ok = await registry.delete_task(tid)
-                results.append({"index": i, "task_id": tid, "status": "deleted" if ok else "not_found"})
+                ok = await registry.delete_task(str(tid)) if tid else False
+                results.append(
+                    {"index": i, "task_id": tid, "status": "deleted" if ok else "not_found"}
+                )
         except Exception as e:  # noqa: BLE001 — surface per-item failure
             errs.append({"index": i, "error": str(e)})
     return web.json_response(
-        {"total": len(items), "succeeded": len(results), "failed": len(errs),
-         "results": results, "errors": errs}
+        {
+            "total": len(items),
+            "succeeded": len(results),
+            "failed": len(errs),
+            "results": results,
+            "errors": errs,
+        }
     )
 
 
@@ -159,9 +182,7 @@ def _attach_project_general_list(body: dict) -> None:
     from personalclaw.tasks.hierarchy import HierarchyStore
 
     store = HierarchyStore()
-    general = next(
-        (tl for tl in store.list_task_lists(project_id) if tl.name == "General"), None
-    )
+    general = next((tl for tl in store.list_task_lists(project_id) if tl.name == "General"), None)
     if general is None:
         try:
             general = store.create_task_list(name="General", project_id=project_id)

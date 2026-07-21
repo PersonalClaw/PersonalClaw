@@ -60,8 +60,7 @@ def build_design_brief(task: str, workspace_dir: str = "") -> str:
         "of steps we'll walk the user through, one at a time, each producing an "
         "artifact the user approves before the next step runs.",
         "",
-        "FIRST, investigate the real context (so the steps fit reality, not a "
-        "template):",
+        "FIRST, investigate the real context (so the steps fit reality, not a " "template):",
     ]
     if workspace_dir.strip():
         lines += [
@@ -209,7 +208,7 @@ def _artifact_contract(kind: str) -> str:
             '"exit_criteria":["<checkable condition>", ...], '
             '"tasks":[{"title":"<task naming a REAL file/item>", '
             '"description":"<how>", "depends_on":[<indexes of tasks in THIS phase '
-            'this one needs>]}, ...]}\n'
+            "this one needs>]}, ...]}\n"
             "  ]\n"
             "}\n"
             "Phases run in order (a phase starts only when the prior is fully done); "
@@ -260,11 +259,13 @@ def parse_steps_sentinel(text: str) -> tuple[str, list[dict]] | None:
         title = str(s.get("title", "")).strip()[:120]
         if not (kind or title):
             continue
-        steps.append({
-            "kind": kind or "step",
-            "title": title or kind.replace("_", " ").title(),
-            "objective": str(s.get("objective", "")).strip()[:400],
-        })
+        steps.append(
+            {
+                "kind": kind or "step",
+                "title": title or kind.replace("_", " ").title(),
+                "objective": str(s.get("objective", "")).strip()[:400],
+            }
+        )
     if not steps:
         return None
     summary = str(data.get("summary", "")).strip()[:300]
@@ -349,13 +350,15 @@ def decomposition_to_stage_plan(artifact: dict) -> list[dict]:
             _stage_seen[stage] = n
             if n > 1:
                 stage = f"{stage}-{n}"  # keep distinct: implementation, implementation-2, …
-        out.append({
-            "stage": stage,
-            "title": str(p.get("title", "")).strip(),
-            "objective": str(p.get("objective", "")).strip(),
-            "exit_criteria": [str(c).strip() for c in ec if str(c).strip()],
-            "tasks": p.get("tasks") if isinstance(p.get("tasks"), list) else [],
-        })
+        out.append(
+            {
+                "stage": stage,
+                "title": str(p.get("title", "")).strip(),
+                "objective": str(p.get("objective", "")).strip(),
+                "exit_criteria": [str(c).strip() for c in ec if str(c).strip()],
+                "tasks": p.get("tasks") if isinstance(p.get("tasks"), list) else [],
+            }
+        )
     return out
 
 
@@ -404,10 +407,12 @@ def gate_commands_from_test_strategy(artifact: dict) -> tuple[str, str]:
     if not steps:
         return "", ""
     steps.sort(key=lambda t: t[0])
+
     # A step is a "test" run if its label or command names the test/coverage runner.
     def _is_test(step: str, cmd: str) -> bool:
         hay = f"{step} {cmd}".lower()
         return any(k in hay for k in ("coverage", "vitest", "test", "jest", "pytest"))
+
     test_cmds = [c for _, s, c in steps if _is_test(s, c)]
     verify_cmds = [c for _, s, c in steps if not _is_test(s, c)]
     test_command = test_cmds[0] if test_cmds else ""
@@ -430,4 +435,3 @@ def _slug(raw) -> str:
     while "__" in slug:
         slug = slug.replace("__", "_")
     return slug[:40]
-

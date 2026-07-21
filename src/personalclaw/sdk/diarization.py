@@ -15,6 +15,9 @@ from personalclaw.local_models.provider import LocalModelProvider  # noqa: F401
 from personalclaw.transcribe import ensure_ffmpeg_in_path  # noqa: F401
 
 __all__ = [
-    "DiarizationProvider", "DiarizationModel", "SpeakerTurn",
-    "LocalModelProvider", "ensure_ffmpeg_in_path",
+    "DiarizationProvider",
+    "DiarizationModel",
+    "SpeakerTurn",
+    "LocalModelProvider",
+    "ensure_ffmpeg_in_path",
 ]

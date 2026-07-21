@@ -61,10 +61,14 @@ def _register_remote_providers() -> None:
     for p in openai_family_providers():
         if p["name"] in _providers:
             continue
-        register_provider(OpenAITtsProvider(
-            provider_name=p["name"], provider_type=p.get("type", ""),
-            endpoint=p["endpoint"], api_key=p["api_key"],
-        ))
+        register_provider(
+            OpenAITtsProvider(
+                provider_name=p["name"],
+                provider_type=p.get("type", ""),
+                endpoint=p["endpoint"],
+                api_key=p["api_key"],
+            )
+        )
         _remote_names.add(p["name"])
 
     # App-contributed TTS adapters (e.g. Gemini) for config entries the app owns.
@@ -74,6 +78,7 @@ def _register_remote_providers() -> None:
     # through generateContent). So it OVERWRITES any same-named family adapter
     # registered above, rather than being skipped when the name already exists.
     from personalclaw.providers.media_scanners import scan
+
     for prov in scan("tts"):
         nm = getattr(prov, "name", "")
         if nm:

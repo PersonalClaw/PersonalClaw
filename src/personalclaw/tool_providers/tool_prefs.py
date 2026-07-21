@@ -35,16 +35,32 @@ _PREFS_NAME = "tool_prefs.json"
 # Tools the platform's own features depend on — never user-disableable. Bare tool
 # names (matched against the tool name regardless of provider). Primitives +
 # discovery + the orientation tools + the SDLC/loop entry tools chat & loops drive.
-CORE_LOCKED: frozenset[str] = frozenset({
-    # universal coding primitives (git/tests/lint run via bash, not own tools)
-    "bash", "read_file", "write_file", "edit_file", "grep", "glob", "list_dir",
-    # progressive-disclosure discovery — tools AND skills (can't recover without these)
-    "tool_search", "tool_schema", "skill_search", "skill_invoke",
-    # orientation / control
-    "ask_user", "finish", "tool_result_get",
-    # project-run (loop) entry points the chat/loop features invoke by name
-    "project_run_create", "project_run_start", "project_run_status", "project_run_list",
-})
+CORE_LOCKED: frozenset[str] = frozenset(
+    {
+        # universal coding primitives (git/tests/lint run via bash, not own tools)
+        "bash",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "grep",
+        "glob",
+        "list_dir",
+        # progressive-disclosure discovery — tools AND skills (can't recover without these)
+        "tool_search",
+        "tool_schema",
+        "skill_search",
+        "skill_invoke",
+        # orientation / control
+        "ask_user",
+        "finish",
+        "tool_result_get",
+        # project-run (loop) entry points the chat/loop features invoke by name
+        "project_run_create",
+        "project_run_start",
+        "project_run_status",
+        "project_run_list",
+    }
+)
 
 
 def _prefs_path():
@@ -110,8 +126,11 @@ def set_enabled(provider: str, name: str, enabled: bool) -> dict:
     if not name:
         return {"ok": False, "error": "tool name is required"}
     if not enabled and is_locked(name):
-        return {"ok": False, "error": f"{name!r} is required by platform features and can't be disabled",
-                "locked": True}
+        return {
+            "ok": False,
+            "error": f"{name!r} is required by platform features and can't be disabled",
+            "locked": True,
+        }
     doc = _load()
     disabled = {str(k) for k in doc.get("disabled", [])}
     k = key_for(provider, name)
@@ -127,8 +146,11 @@ def set_provider_enabled(provider: str, enabled: bool) -> dict:
     if not provider:
         return {"ok": False, "error": "provider is required"}
     if not enabled and is_provider_locked(provider):
-        return {"ok": False, "error": f"{provider!r} is a platform provider and can't be disabled",
-                "locked": True}
+        return {
+            "ok": False,
+            "error": f"{provider!r} is a platform provider and can't be disabled",
+            "locked": True,
+        }
     doc = _load()
     dp = {str(k) for k in doc.get("disabledProviders", [])}
     dp.discard(provider) if enabled else dp.add(provider)
@@ -137,8 +159,12 @@ def set_provider_enabled(provider: str, enabled: bool) -> dict:
     return {"ok": True, "provider": provider, "enabled": enabled}
 
 
-def is_disabled(provider: str, name: str, disabled: set[str] | None = None,
-                disabled_providers: set[str] | None = None) -> bool:
+def is_disabled(
+    provider: str,
+    name: str,
+    disabled: set[str] | None = None,
+    disabled_providers: set[str] | None = None,
+) -> bool:
     """Whether a tool is user-disabled — either individually OR because its whole
     provider is disabled. A locked tool is NEVER disabled (defensive)."""
     if is_locked(name):

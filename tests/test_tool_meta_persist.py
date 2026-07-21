@@ -26,7 +26,11 @@ def test_tool_result_loop_sets_output_on_matching_message():
     tool_call_id, mark it done, and persist its output."""
     messages = [
         {"role": "assistant", "content": "hi"},
-        {"role": "tool", "content": "🔧 read", "meta": {"tool_call_id": "tc_1", "purpose": "read a file", "input": "/etc/hosts"}},
+        {
+            "role": "tool",
+            "content": "🔧 read",
+            "meta": {"tool_call_id": "tc_1", "purpose": "read a file", "input": "/etc/hosts"},
+        },
     ]
     tool_call_id = "tc_1"
     _out = "file contents here"
@@ -66,7 +70,10 @@ def test_meta_input_output_survive_redaction_roundtrip():
 def test_secret_in_tool_output_is_redacted_on_persist():
     """A credential captured in tool output must be redacted by the meta
     round-trip — the persisted inline detail must not leak secrets."""
-    meta = {"tool_call_id": "t", "output": "export AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE0000000000000000000X"}
+    meta = {
+        "tool_call_id": "t",
+        "output": "export AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE0000000000000000000X",
+    }
     red = _redact_meta(meta)
     # The raw secret value must not survive verbatim.
     assert "AKIAIOSFODNN7EXAMPLE0000000000000000000X" not in red["output"]

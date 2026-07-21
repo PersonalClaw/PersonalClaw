@@ -35,36 +35,47 @@ async def api_chat_session_fork(request: web.Request) -> web.Response:
     # Rate/resource guard: reject if we're already at the cap.
     if len(state._sessions) >= _MAX_SESSIONS_FOR_FORK:
         sel().log_api_access(
-            caller=request_app or "dashboard", operation="chat.session_fork",
-            outcome="denied", source="rate_limit",
+            caller=request_app or "dashboard",
+            operation="chat.session_fork",
+            outcome="denied",
+            source="rate_limit",
             resources=f"session={name},session_count={len(state._sessions)}",
             error="session cap reached",
         )
         return web.json_response(
-            {"error": f"session cap reached ({_MAX_SESSIONS_FOR_FORK})"}, status=429,
+            {"error": f"session cap reached ({_MAX_SESSIONS_FOR_FORK})"},
+            status=429,
         )
 
     # App ownership check: an app may only fork sessions it owns.
     if request_app:
         if not session._app:
             sel().log_api_access(
-                caller=request_app, operation="chat.session_fork", outcome="denied",
-                source="app_isolation", resources=f"session={name}",
+                caller=request_app,
+                operation="chat.session_fork",
+                outcome="denied",
+                source="app_isolation",
+                resources=f"session={name}",
                 error="app cannot fork unscoped sessions",
             )
             return web.json_response({"error": "app cannot fork unscoped sessions"}, status=403)
         if session._app != request_app:
             sel().log_api_access(
-                caller=request_app, operation="chat.session_fork", outcome="denied",
-                source="app_isolation", resources=f"session={name}",
+                caller=request_app,
+                operation="chat.session_fork",
+                outcome="denied",
+                source="app_isolation",
+                resources=f"session={name}",
                 error="app does not own this session",
             )
             return web.json_response({"error": "app does not own this session"}, status=403)
 
     if session.memory_mode != "persistent":
         sel().log_api_access(
-            caller=request_app or "dashboard", operation="chat.session_fork",
-            outcome="denied", source="dashboard",
+            caller=request_app or "dashboard",
+            operation="chat.session_fork",
+            outcome="denied",
+            source="dashboard",
             resources=f"session={name},memory_mode={session.memory_mode}",
             error="non-persistent session",
         )
@@ -86,7 +97,8 @@ async def api_chat_session_fork(request: web.Request) -> web.Response:
     prompt = (prompt or "").strip()
     if len(prompt) > 32_768:
         return web.json_response(
-            {"error": "prompt too long (max 32768 chars)"}, status=400,
+            {"error": "prompt too long (max 32768 chars)"},
+            status=400,
         )
 
     # Read disk FIRST (full history)
@@ -95,7 +107,7 @@ async def api_chat_session_fork(request: web.Request) -> web.Response:
         if state.conversation_log:
             all_messages = state.conversation_log.read_messages(_history_key_for(session.key))
         if all_messages and session._dirty:
-            new_msgs = session.messages[session._resumed_count:]
+            new_msgs = session.messages[session._resumed_count :]
             if new_msgs:
                 all_messages.extend(new_msgs)
         if session._dirty:
@@ -115,13 +127,19 @@ async def api_chat_session_fork(request: web.Request) -> web.Response:
             )
         if at_index >= len(visible):
             return web.json_response(
-                {"error": f"at_message_index {at_index} out of range (have {len(visible)} visible messages)"},
+                {
+                    "error": f"at_message_index {at_index} out of range (have {len(visible)} visible messages)"  # noqa: E501
+                },
                 status=400,
             )
         visible = visible[: at_index + 1]
 
     new_session = state.get_or_create_session(
-        name=None, agent=session.agent, workspace_dir=session.workspace_dir, model=session.model, mode=fork_mode,
+        name=None,
+        agent=session.agent,
+        workspace_dir=session.workspace_dir,
+        model=session.model,
+        mode=fork_mode,
         app=request_app,
     )
     new_session.forked_from = _history_key_for(session.key)
@@ -171,6 +189,11 @@ async def api_chat_session_fork(request: web.Request) -> web.Response:
     _sync_dashboard_sessions(state)
     state.push_sessions_update()
     return web.json_response(
-        {"ok": True, "key": new_session.key, "title": new_session.title,
-         "messages": len(visible), "prompt": prompt}
+        {
+            "ok": True,
+            "key": new_session.key,
+            "title": new_session.title,
+            "messages": len(visible),
+            "prompt": prompt,
+        }
     )

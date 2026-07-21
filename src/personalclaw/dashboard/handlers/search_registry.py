@@ -33,9 +33,14 @@ def _sel_log(op: str, outcome: str, resources: str, request: web.Request, error:
     """Audit a search-binding mutation (#45). Best-effort."""
     try:
         from personalclaw.sel import sel as _s
+
         _s().log_api_access(
-            caller=request.get("user", "dashboard"), operation=op, outcome=outcome,
-            source="search", resources=resources, error=error,
+            caller=request.get("user", "dashboard"),
+            operation=op,
+            outcome=outcome,
+            source="search",
+            resources=resources,
+            error=error,
         )
     except Exception:
         pass
@@ -119,11 +124,18 @@ async def api_search_active_set(request: web.Request) -> web.Response:
         name = str(providers[0])
         known = {p.name for p in list_providers()}
         if name not in known:
-            _sel_log("search.active_set", "error", f"{use_case}:{name}", request,
-                     error=f"unknown search provider {name!r}")
+            _sel_log(
+                "search.active_set",
+                "error",
+                f"{use_case}:{name}",
+                request,
+                error=f"unknown search provider {name!r}",
+            )
             return web.json_response(
-                {"error": f"Unknown search provider {name!r}. Install/enable it first, or pick a "
-                 f"registered one. Known: {sorted(known)}"},
+                {
+                    "error": f"Unknown search provider {name!r}. Install/enable it first, or pick a "  # noqa: E501
+                    f"registered one. Known: {sorted(known)}"
+                },
                 status=400,
             )
 
@@ -131,10 +143,13 @@ async def api_search_active_set(request: web.Request) -> web.Response:
     bound = load_active_search_providers().get(use_case, [])
     # Audit the search-binding change (#45).
     _sel_log("search.active_set", "ok", f"{use_case}={','.join(bound) or '(cleared)'}", request)
-    return web.json_response({
-        "ok": True, "use_case": use_case,
-        "providers": bound,
-    })
+    return web.json_response(
+        {
+            "ok": True,
+            "use_case": use_case,
+            "providers": bound,
+        }
+    )
 
 
 def register_search_registry_routes(app: web.Application) -> None:

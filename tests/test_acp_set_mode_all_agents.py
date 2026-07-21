@@ -51,10 +51,8 @@ async def test_set_mode_called_for_all_agents(agent, tmp_path):
 
     await client._initialize_session()
 
-    set_mode_calls = [
-        c for c in conn.send_request.call_args_list if c.args[0] == METHOD_SET_MODE
-    ]
-    assert len(set_mode_calls) == 1, (
-        f"set_mode not sent for agent={agent!r}; calls: {conn.send_request.call_args_list}"
-    )
+    set_mode_calls = [c for c in conn.send_request.call_args_list if c.args[0] == METHOD_SET_MODE]
+    assert (
+        len(set_mode_calls) == 1
+    ), f"set_mode not sent for agent={agent!r}; calls: {conn.send_request.call_args_list}"
     assert set_mode_calls[0].args[1]["modeId"] == agent

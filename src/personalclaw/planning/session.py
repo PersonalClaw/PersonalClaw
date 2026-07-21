@@ -139,6 +139,7 @@ class PlanSession:
 
 # ── pure state-machine helpers (no persistence) ──
 
+
 def current_step(session: PlanSession) -> PlanStep | None:
     """The step the walkthrough is currently ON — the first step not yet approved.
 
@@ -154,9 +155,7 @@ def current_step(session: PlanSession) -> PlanStep | None:
 
 def is_complete(session: PlanSession) -> bool:
     """True iff there is at least one step and ALL steps are approved."""
-    return bool(session.steps) and all(
-        s.status == StepStatus.APPROVED.value for s in session.steps
-    )
+    return bool(session.steps) and all(s.status == StepStatus.APPROVED.value for s in session.steps)
 
 
 def approve_step(session: PlanSession, step_id: str) -> bool:

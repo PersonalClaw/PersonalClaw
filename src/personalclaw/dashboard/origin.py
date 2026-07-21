@@ -74,6 +74,7 @@ def is_private_network(host: str) -> bool:
     except ValueError:
         return False
     from personalclaw.net.guard import classify_host
+
     return not classify_host(host).public
 
 

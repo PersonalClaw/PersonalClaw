@@ -74,7 +74,9 @@ def test_pricing_keys_subset_of_token_table():
     know about is almost certainly a typo.
     """
     tokens_file = _PRICING_FILE.parent / "model_tokens.json"
-    tokens = {k for k in json.loads(tokens_file.read_text(encoding="utf-8")) if not k.startswith("_")}
+    tokens = {
+        k for k in json.loads(tokens_file.read_text(encoding="utf-8")) if not k.startswith("_")
+    }
     priced = {k for k in pricing._PRICES}
     orphans = priced - tokens
     assert not orphans, f"priced models absent from model_tokens.json: {orphans}"

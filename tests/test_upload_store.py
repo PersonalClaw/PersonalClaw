@@ -1,15 +1,14 @@
 """Tests for the resumable upload store (personalclaw.uploads.store)."""
 
 import os
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from personalclaw.uploads.store import PART_SIZE, UploadError, UploadStore
+from personalclaw.uploads.store import UploadError, UploadStore
 
 _MB = 1024 * 1024
-_GB = 1024 ** 3
+_GB = 1024**3
 
 
 class _FakeReader:

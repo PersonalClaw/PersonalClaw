@@ -9,15 +9,12 @@ inside one class.
 
 from __future__ import annotations
 
-import pytest
-
 from personalclaw.memory import MemoryStore
 from personalclaw.memory_providers.base import MemoryProvider
 from personalclaw.memory_providers.filesystem import FilesystemMemoryProvider
-from personalclaw.memory_record import MemoryCapabilities, MemoryKind, MemoryRecord
+from personalclaw.memory_record import MemoryKind
 from personalclaw.memory_service import MemoryService, service_for
 from personalclaw.vector_memory import VectorMemoryStore
-
 
 # ── the filesystem fallback provider implements the contract ──
 
@@ -75,7 +72,7 @@ def test_service_can_vector_search_reflects_embedder(tmp_path):
     store.vector_store = vs
 
     svc = service_for(store)
-    assert svc.has_vector is True       # store IS wired
+    assert svc.has_vector is True  # store IS wired
     assert svc.can_vector_search is False  # but no embedder → can't vector-search
     vs.embed_fn = lambda t: [1.0, 0.0, 0.0]
     # rebuild the service (capabilities changed)
@@ -89,7 +86,9 @@ def test_active_recall_degrades_to_fts_without_record_store(tmp_path):
     # self-degrades internally, so we defer to it; this tests the no-store case.)
     store = MemoryStore(workspace=tmp_path)
     store.init()
-    store.write_preferences("# User Preferences\n\n- the deployment runbook lives in docs/deploy.md\n")
+    store.write_preferences(
+        "# User Preferences\n\n- the deployment runbook lives in docs/deploy.md\n"
+    )
     store.rebuild_index()
     # no vector_store attached → primary is absent
 

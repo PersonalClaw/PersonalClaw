@@ -16,14 +16,18 @@ from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import config_dir
 from personalclaw.llm.cleanup import _is_safe_path
 
+
 def _path_home_pclaw():
     """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
     try:
         from personalclaw.config.loader import config_dir as _cd
+
         return _cd()
     except Exception:
         from pathlib import Path as _P
+
         return _P.home() / ".personalclaw"
+
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +217,9 @@ def prune_stale_tombstones(max_age_days: int = 7) -> int:
             if ts.get("died", 0) < cutoff:
                 try:
                     state = read_state(d.name)
-                    session_id = ts.get("session_id") or (state.get("session_id", "") if state else "")
+                    session_id = ts.get("session_id") or (
+                        state.get("session_id", "") if state else ""
+                    )
                     if session_id:
                         _cleanup_session_files_sync(session_id)
                 except Exception:

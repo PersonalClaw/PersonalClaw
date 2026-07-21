@@ -162,7 +162,7 @@ class CredentialStore:
             # Unknown kind — surface no secret, leave kind as configured
             # so callers can still introspect via list().
             logger.warning("credential %r has unknown kind %r; treating as no secret", name, kind)
-            return Credential(name=name, kind=kind, secret=None, source="none")  # type: ignore[arg-type]
+            return Credential(name=name, kind=kind, secret=None, source="none")  # type: ignore[arg-type]  # noqa: E501
 
         # Secret-bearing kind — walk the resolution chain.
         # Step 1: env var named in value_env (R4.3 — env beats inline).
@@ -198,7 +198,7 @@ class CredentialStore:
             )
 
         # Step 4: nothing configured.
-        return Credential(name=name, kind=kind, secret=None, source="none")  # type: ignore[arg-type]
+        return Credential(name=name, kind=kind, secret=None, source="none")  # type: ignore[arg-type]  # noqa: E501
 
     def save(self, descriptors: dict[str, dict[str, object]]) -> None:
         """Atomically write ``descriptors`` to ``credentials.json``.

@@ -34,7 +34,7 @@ _DEFAULT_MANAGED_MCPS = {
 }
 
 
-def _run_install(tmp_path: Path, cfg_dir: Path, managed_mcps: dict | None = None, **kwargs) -> Path:  # type: ignore[return]
+def _run_install(tmp_path: Path, cfg_dir: Path, managed_mcps: dict | None = None, **kwargs) -> Path:  # type: ignore[return]  # noqa: E501
     """Run rebuild_agent_config with all module globals patched to tmp_path."""
     agents_dir = tmp_path / "agents"
     agents_dir.mkdir(exist_ok=True)
@@ -54,7 +54,9 @@ def _run_install(tmp_path: Path, cfg_dir: Path, managed_mcps: dict | None = None
             _BUNDLED_CFG_DIR=cfg_dir,
             _PERSONALCLAW_BIN="/usr/bin/personalclaw",
             _USER_DIR=tmp_path / "personalclaw_home",
-            _MANAGED_MCP_SERVERS=managed_mcps if managed_mcps is not None else _DEFAULT_MANAGED_MCPS,
+            _MANAGED_MCP_SERVERS=(
+                managed_mcps if managed_mcps is not None else _DEFAULT_MANAGED_MCPS
+            ),
         ),
         patch("personalclaw.agent._prompt_path", return_value=prompt),
         patch("personalclaw.agent._shipped_defaults", return_value=cfg_dir / "defaults.json"),
@@ -133,7 +135,10 @@ class TestInstallAgent:
             "tools": [],
             "allowedTools": [],
             "mcpServers": {
-                "personalclaw-schedule": {"command": "/old/path/personalclaw", "args": ["mcp-schedule"]},
+                "personalclaw-schedule": {
+                    "command": "/old/path/personalclaw",
+                    "args": ["mcp-schedule"],
+                },
             },
         }
         (agents_dir / "personalclaw.json").write_text(json.dumps(existing))
@@ -177,7 +182,10 @@ class TestInstallAgent:
         config = json.loads(path.read_text())
         # personalclaw-schedule/core: command refreshed, autoApprove preserved
         assert config["mcpServers"]["personalclaw-schedule"]["command"] == "/usr/bin/personalclaw"
-        assert config["mcpServers"]["personalclaw-schedule"]["autoApprove"] == ["schedule_list", "schedule_add"]
+        assert config["mcpServers"]["personalclaw-schedule"]["autoApprove"] == [
+            "schedule_list",
+            "schedule_add",
+        ]
         assert config["mcpServers"]["personalclaw-core"]["autoApprove"] == ["memory_list"]
         # other MCP servers: untouched
         assert config["mcpServers"]["my-mcp-server"]["autoApprove"] == ["ReadFile"]
@@ -206,12 +214,16 @@ class TestInstallAgent:
         # personalclaw mcp.json overrides args (removes --include-tools)
         pc_home = tmp_path / "personalclaw_home"
         pc_home.mkdir(exist_ok=True)
-        (pc_home / "mcp.json").write_text(json.dumps({
-            "mcpServers": {
-                "my-mcp-server": {"command": "my-mcp-server", "args": []},
-                "new-server": {"command": "new-cmd", "args": ["start"]},
-            }
-        }))
+        (pc_home / "mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "my-mcp-server": {"command": "my-mcp-server", "args": []},
+                        "new-server": {"command": "new-cmd", "args": ["start"]},
+                    }
+                }
+            )
+        )
         path = _run_install(tmp_path, cfg_dir)
         config = json.loads(path.read_text())
         # my-mcp-server args overridden by personalclaw mcp.json
@@ -462,8 +474,10 @@ class TestResolvePersonalclawBin:
             with patch.dict("sys.modules", {"personalclaw": mock_pc}):
                 # sys.executable points at the venv's python (a symlink in reality);
                 # sys.prefix is the venv root. Either must find venv_bin/personalclaw.
-                with patch.object(agent_mod.sys, "executable", str(venv_bin / "python")), \
-                     patch.object(agent_mod.sys, "prefix", str(tmp_path / "repo" / ".venv")):
+                with (
+                    patch.object(agent_mod.sys, "executable", str(venv_bin / "python")),
+                    patch.object(agent_mod.sys, "prefix", str(tmp_path / "repo" / ".venv")),
+                ):
                     result = _resolve_personalclaw_bin()
             assert result == str(pc)
         finally:
@@ -591,18 +605,20 @@ class TestResolvePersonalclawBin:
         # bin/personalclaw sibling several directories up.
         runtime = tmp_path / "env" / "runtime"
         (runtime / "lib" / "python3.12" / "site-packages" / "personalclaw").mkdir(parents=True)
-        (runtime / "lib" / "python3.12" / "site-packages" / "personalclaw" / "__init__.py").write_text("")
+        (
+            runtime / "lib" / "python3.12" / "site-packages" / "personalclaw" / "__init__.py"
+        ).write_text("")
 
         bin_dir = runtime / "bin"
         bin_dir.mkdir()
         personalclaw_bin = bin_dir / "personalclaw"
-        personalclaw_bin.write_bytes(
-            b"#!/usr/bin/env python3\nimport sys\n"
-        )
+        personalclaw_bin.write_bytes(b"#!/usr/bin/env python3\nimport sys\n")
         personalclaw_bin.chmod(0o755)
 
         mock_pc = unittest.mock.MagicMock()
-        mock_pc.__file__ = str(runtime / "lib" / "python3.12" / "site-packages" / "personalclaw" / "__init__.py")
+        mock_pc.__file__ = str(
+            runtime / "lib" / "python3.12" / "site-packages" / "personalclaw" / "__init__.py"
+        )
 
         old_val = agent_mod._PERSONALCLAW_BIN
         try:
@@ -623,9 +639,7 @@ class TestResolvePersonalclawBin:
         bin_dir = workspace / "bin"
         bin_dir.mkdir()
         wrapper = bin_dir / "personalclaw"
-        wrapper.write_text(
-            "#!/bin/sh\nexec python3 -m personalclaw \"$@\"\n"
-        )
+        wrapper.write_text('#!/bin/sh\nexec python3 -m personalclaw "$@"\n')
         wrapper.chmod(0o755)
 
         assert _bin_is_usable(wrapper) is True
@@ -663,7 +677,10 @@ class TestAgentHooksMerge:
         return str(hook)
 
     def _run_with_agent_hooks(
-        self, tmp_path: Path, agent_hooks: dict, existing: dict | None = None,
+        self,
+        tmp_path: Path,
+        agent_hooks: dict,
+        existing: dict | None = None,
     ) -> dict:
         """Install agent with agent_hooks in config.json and return the result."""
         cfg_dir = self._bundled_with_hooks(tmp_path)
@@ -712,9 +729,12 @@ class TestAgentHooksMerge:
     def test_user_hooks_appended_to_bundled(self, tmp_path: Path):
         """User agent_hooks are appended after bundled hooks per event."""
         hook = self._make_hook(tmp_path, "guardian.sh")
-        config = self._run_with_agent_hooks(tmp_path, {
-            "postToolUse": [{"matcher": "*", "command": hook}],
-        })
+        config = self._run_with_agent_hooks(
+            tmp_path,
+            {
+                "postToolUse": [{"matcher": "*", "command": hook}],
+            },
+        )
         post = config["hooks"]["postToolUse"]
         assert post[0] == {"matcher": "execute_bash", "command": "audit.sh"}  # bundled first
         assert post[1] == {"matcher": "*", "command": hook}  # user appended
@@ -722,9 +742,12 @@ class TestAgentHooksMerge:
     def test_user_hooks_new_event_type(self, tmp_path: Path):
         """User agent_hooks can add hooks for event types not in bundled."""
         hook = self._make_hook(tmp_path, "guardian.sh")
-        config = self._run_with_agent_hooks(tmp_path, {
-            "preToolUse": [{"matcher": "*", "command": hook}],
-        })
+        config = self._run_with_agent_hooks(
+            tmp_path,
+            {
+                "preToolUse": [{"matcher": "*", "command": hook}],
+            },
+        )
         assert config["hooks"]["postToolUse"] == [
             {"matcher": "execute_bash", "command": "audit.sh"},
         ]
@@ -735,12 +758,15 @@ class TestAgentHooksMerge:
     def test_user_hooks_dedup_by_command(self, tmp_path: Path):
         """Duplicate commands are not added twice."""
         hook = self._make_hook(tmp_path)
-        config = self._run_with_agent_hooks(tmp_path, {
-            "preToolUse": [
-                {"command": hook},
-                {"command": hook},
-            ],
-        })
+        config = self._run_with_agent_hooks(
+            tmp_path,
+            {
+                "preToolUse": [
+                    {"command": hook},
+                    {"command": hook},
+                ],
+            },
+        )
         assert len(config["hooks"]["preToolUse"]) == 1
 
     def test_user_hooks_dedup_against_bundled(self, tmp_path: Path):
@@ -757,23 +783,29 @@ class TestAgentHooksMerge:
     def test_user_hooks_same_command_different_matcher(self, tmp_path: Path):
         """Same command with different matchers are kept as separate entries."""
         hook = self._make_hook(tmp_path)
-        config = self._run_with_agent_hooks(tmp_path, {
-            "preToolUse": [
-                {"matcher": "execute_bash", "command": hook},
-                {"matcher": "ReadFile", "command": hook},
-            ],
-        })
+        config = self._run_with_agent_hooks(
+            tmp_path,
+            {
+                "preToolUse": [
+                    {"matcher": "execute_bash", "command": hook},
+                    {"matcher": "ReadFile", "command": hook},
+                ],
+            },
+        )
         assert len(config["hooks"]["preToolUse"]) == 2
 
     def test_user_hooks_malformed_skipped(self, tmp_path: Path):
         """Entries without command field are skipped."""
         hook = self._make_hook(tmp_path, "valid.sh")
-        config = self._run_with_agent_hooks(tmp_path, {
-            "preToolUse": [
-                {"matcher": "*"},  # no command
-                {"command": hook},
-            ],
-        })
+        config = self._run_with_agent_hooks(
+            tmp_path,
+            {
+                "preToolUse": [
+                    {"matcher": "*"},  # no command
+                    {"command": hook},
+                ],
+            },
+        )
         assert config["hooks"]["preToolUse"] == [{"command": hook}]
 
     def test_existing_config_merges_agent_hooks(self, tmp_path: Path):
@@ -873,11 +905,13 @@ class TestAgentHooksMerge:
         from personalclaw.agent import _merge_agent_hooks
 
         hook = self._make_hook(tmp_path)
-        user = {"preToolUse": [
-            {"command": hook, "matcher": {"$regex": ".*"}},
-            {"command": hook, "matcher": ["list"]},
-            {"command": hook, "matcher": "*"},
-        ]}
+        user = {
+            "preToolUse": [
+                {"command": hook, "matcher": {"$regex": ".*"}},
+                {"command": hook, "matcher": ["list"]},
+                {"command": hook, "matcher": "*"},
+            ]
+        }
         result = _merge_agent_hooks({}, user)
         assert len(result["preToolUse"]) == 1
         assert result["preToolUse"][0] == {"command": hook, "matcher": "*"}
@@ -905,13 +939,15 @@ class TestAgentHooksMerge:
         from personalclaw.agent import _merge_agent_hooks
 
         hook = self._make_hook(tmp_path)
-        user = {"preToolUse": [
-            {"command": hook, "matcher": "tool; rm -rf /"},
-            {"command": hook, "matcher": "tool | cat"},
-            {"command": hook, "matcher": "$(evil)"},
-            {"command": hook, "matcher": "tool name with spaces"},
-            {"command": hook, "matcher": "*"},  # valid
-        ]}
+        user = {
+            "preToolUse": [
+                {"command": hook, "matcher": "tool; rm -rf /"},
+                {"command": hook, "matcher": "tool | cat"},
+                {"command": hook, "matcher": "$(evil)"},
+                {"command": hook, "matcher": "tool name with spaces"},
+                {"command": hook, "matcher": "*"},  # valid
+            ]
+        }
         result = _merge_agent_hooks({}, user)
         assert len(result["preToolUse"]) == 1
         assert result["preToolUse"][0]["matcher"] == "*"
@@ -921,10 +957,12 @@ class TestAgentHooksMerge:
         from personalclaw.agent import _MAX_MATCHER_LEN, _merge_agent_hooks
 
         hook = self._make_hook(tmp_path)
-        user = {"preToolUse": [
-            {"command": hook, "matcher": "a" * (_MAX_MATCHER_LEN + 1)},
-            {"command": hook, "matcher": "valid"},
-        ]}
+        user = {
+            "preToolUse": [
+                {"command": hook, "matcher": "a" * (_MAX_MATCHER_LEN + 1)},
+                {"command": hook, "matcher": "valid"},
+            ]
+        }
         result = _merge_agent_hooks({}, user)
         assert len(result["preToolUse"]) == 1
         assert result["preToolUse"][0]["matcher"] == "valid"
@@ -1204,13 +1242,9 @@ class TestDefaultDialectHooksAutoimport:
         with caplog.at_level(logging.WARNING, logger="personalclaw.agent"):
             _apply_user_agent_hooks(config, pc_cfg)
 
-        merged_total = sum(
-            len(v) for v in config["hooks"].values() if isinstance(v, list)
-        )
+        merged_total = sum(len(v) for v in config["hooks"].values() if isinstance(v, list))
         assert merged_total == _MAX_TOTAL_USER_HOOKS
-        cap_warnings = [
-            r for r in caplog.records if "global limit" in r.message.lower()
-        ]
+        cap_warnings = [r for r in caplog.records if "global limit" in r.message.lower()]
         # Note: `_merge_agent_hooks` re-checks the cap at the
         # start of each event's inner loop, so the number of WARNINGs
         # depends on how scripts are distributed across events -- which
@@ -1259,9 +1293,7 @@ class TestDefaultDialectHooksAutoimport:
         explicit_dir = tmp_path / "explicit-scripts"
         explicit_dir.mkdir(parents=True, exist_ok=True)
         explicit_events = ["preToolUse", "postToolUse", "userPromptSubmit"]
-        explicit_hooks: dict[str, list[dict[str, str]]] = {
-            ev: [] for ev in explicit_events
-        }
+        explicit_hooks: dict[str, list[dict[str, str]]] = {ev: [] for ev in explicit_events}
         for i in range(_MAX_TOTAL_USER_HOOKS):
             script = explicit_dir / f"e{i:02d}.sh"
             script.write_text("#!/bin/sh\nexit 0\n")
@@ -1302,9 +1334,7 @@ class TestDefaultDialectHooksAutoimport:
         with caplog.at_level(logging.WARNING, logger="personalclaw.agent"):
             _apply_user_agent_hooks(config, pc_cfg)
 
-        merged_total = sum(
-            len(v) for v in config["hooks"].values() if isinstance(v, list)
-        )
+        merged_total = sum(len(v) for v in config["hooks"].values() if isinstance(v, list))
         assert merged_total == _MAX_TOTAL_USER_HOOKS, (
             f"regression: combined explicit + autoimport hooks exceeded "
             f"_MAX_TOTAL_USER_HOOKS ({_MAX_TOTAL_USER_HOOKS}); got "
@@ -1318,17 +1348,13 @@ class TestDefaultDialectHooksAutoimport:
         # ``_merge_agent_hooks`` iterates events and re-checks the cap per
         # event after it is reached; the count is not the invariant here,
         # the total-merged count above is.
-        cap_warnings = [
-            r for r in caplog.records if "global limit" in r.message.lower()
-        ]
+        cap_warnings = [r for r in caplog.records if "global limit" in r.message.lower()]
         assert cap_warnings, (
             "expected at least one global-limit WARNING from the single "
             "merge pass when combined input exceeds _MAX_TOTAL_USER_HOOKS"
         )
 
-    def test_agent_hooks_per_event_cap_emits_sel_audit(
-        self, tmp_path: Path, monkeypatch, caplog
-    ):
+    def test_agent_hooks_per_event_cap_emits_sel_audit(self, tmp_path: Path, monkeypatch, caplog):
         """Regression: per-event cap break must emit SEL audit.
 
         Hardening (agent.py:682): when ``_merge_agent_hooks`` hits the per-event
@@ -1384,9 +1410,7 @@ class TestDefaultDialectHooksAutoimport:
         # audit tagged with the event (preToolUse) and the
         # "per-event limit exceeded" reason.  Under the pre-fix code
         # this assertion failed with zero SEL calls tagged that reason.
-        cap_sel = [
-            c for c in sel_calls if "per-event limit exceeded" in c[2].lower()
-        ]
+        cap_sel = [c for c in sel_calls if "per-event limit exceeded" in c[2].lower()]
         assert cap_sel, (
             f"regression: per-event cap must emit _sel_hook_rejected; got "
             f"zero calls with reason 'per-event limit exceeded'.  All SEL "
@@ -1398,9 +1422,7 @@ class TestDefaultDialectHooksAutoimport:
         # function).
         assert cap_sel[0][0] == "preToolUse"
 
-    def test_agent_hooks_global_cap_emits_sel_audit(
-        self, tmp_path: Path, monkeypatch, caplog
-    ):
+    def test_agent_hooks_global_cap_emits_sel_audit(self, tmp_path: Path, monkeypatch, caplog):
         """Regression: global cap break must emit SEL audit.
 
         Hardening (agent.py:688): sibling to the per-event cap gap.  When the
@@ -1445,16 +1467,12 @@ class TestDefaultDialectHooksAutoimport:
         with caplog.at_level(logging.WARNING, logger="personalclaw.agent"):
             _apply_user_agent_hooks(config, pc_cfg)
 
-        merged_total = sum(
-            len(v) for v in config["hooks"].values() if isinstance(v, list)
-        )
+        merged_total = sum(len(v) for v in config["hooks"].values() if isinstance(v, list))
         assert merged_total == _MAX_TOTAL_USER_HOOKS
         # Global-cap SEL audit must fire at least once.  The reason
         # string is the contract; the exact count depends on how many
         # events the loop visits after the cap is reached.
-        cap_sel = [
-            c for c in sel_calls if "global limit exceeded" in c[2].lower()
-        ]
+        cap_sel = [c for c in sel_calls if "global limit exceeded" in c[2].lower()]
         assert cap_sel, (
             f"regression: global cap must emit _sel_hook_rejected; got "
             f"zero calls with reason 'global limit exceeded'.  All SEL "
@@ -1505,8 +1523,7 @@ class TestDefaultDialectHooksAutoimport:
         assert config["hooks"] == {}
         unknown_sel = [c for c in sel_calls if "unknown event" in c[2].lower()]
         assert unknown_sel, (
-            f"regression: unknown event type must emit _sel_hook_rejected; "
-            f"got {sel_calls!r}"
+            f"regression: unknown event type must emit _sel_hook_rejected; " f"got {sel_calls!r}"
         )
         event_tag, _command, reason = unknown_sel[0]
         assert event_tag == "bogusEvent"
@@ -1552,8 +1569,7 @@ class TestDefaultDialectHooksAutoimport:
 
         non_list_sel = [c for c in sel_calls if "not a list" in c[2].lower()]
         assert non_list_sel, (
-            f"regression: non-list entries must emit _sel_hook_rejected; "
-            f"got {sel_calls!r}"
+            f"regression: non-list entries must emit _sel_hook_rejected; " f"got {sel_calls!r}"
         )
         event_tag, _command, reason = non_list_sel[0]
         assert event_tag == "preToolUse"
@@ -1664,9 +1680,7 @@ class TestDefaultDialectHooksAutoimport:
         # ``NoSuchEvent`` is not in _HOOK_EVENT_CANONICAL, so _infer_hook_event
         # returns None and this rejection branch fires.  The filename has no
         # known suffix so fallback inference does not rescue it either.
-        script = self._make_script(
-            hooks_dir, "bogus.sh", body="# event: NoSuchEvent\nexit 0\n"
-        )
+        script = self._make_script(hooks_dir, "bogus.sh", body="# event: NoSuchEvent\nexit 0\n")
 
         sel_calls: list[tuple[str, str, str]] = []
 
@@ -1994,9 +2008,7 @@ class TestDefaultDialectHooksAutoimport:
             for rec in caplog.records
         )
 
-    def test_agent_hooks_autoimport_rejects_symlink_escaping_dir(
-        self, tmp_path: Path, caplog
-    ):
+    def test_agent_hooks_autoimport_rejects_symlink_escaping_dir(self, tmp_path: Path, caplog):
         """A symlink inside hooks_dir pointing at an outside script is rejected.
 
         Regression guard: entry.is_file() follows symlinks, and
@@ -2023,9 +2035,7 @@ class TestDefaultDialectHooksAutoimport:
             result = _autoimport_agent_hooks(hooks_dir)
 
         assert result == {}
-        assert any(
-            "resolves outside" in rec.message for rec in caplog.records
-        )
+        assert any("resolves outside" in rec.message for rec in caplog.records)
 
     def test_agent_hooks_autoimport_validates_before_parsing_headers(
         self, tmp_path: Path, monkeypatch, caplog
@@ -2063,9 +2073,7 @@ class TestDefaultDialectHooksAutoimport:
         # Force _validate_hook_command to reject everything.  This isolates
         # the reorder: if header parsing ran before validation, we'd still
         # see a call; with the reorder, validation rejects first.
-        monkeypatch.setattr(
-            _agent_mod, "_validate_hook_command", lambda *_a, **_kw: None
-        )
+        monkeypatch.setattr(_agent_mod, "_validate_hook_command", lambda *_a, **_kw: None)
 
         header_calls: list[str] = []
 
@@ -2073,9 +2081,7 @@ class TestDefaultDialectHooksAutoimport:
             header_calls.append(str(path))
             return None, None
 
-        monkeypatch.setattr(
-            _agent_mod, "_parse_hook_script_headers", _record_header_call
-        )
+        monkeypatch.setattr(_agent_mod, "_parse_hook_script_headers", _record_header_call)
 
         # Spy on the SEL audit sink so we can assert a rejection was
         # recorded with the ``"autoimport"`` source tag.  Without this,
@@ -2180,9 +2186,7 @@ class TestDefaultDialectHooksAutoimport:
         # Sanity: it really is NOT the symlink form (would be the bug).
         assert forwarded != link_hooks
 
-    def test_agent_hooks_dir_null_byte_does_not_crash(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_agent_hooks_dir_null_byte_does_not_crash(self, tmp_path: Path, monkeypatch):
         """Regression: ``agent_hooks_dir`` with a null byte must not crash.
 
         Adversarial hardening: ``Path("\\x00")``
@@ -2262,9 +2266,7 @@ class TestDefaultDialectHooksAutoimport:
         assert command == str(hooks_dir)
         assert "cannot read" in reason.lower()
 
-    def test_agent_hooks_dir_non_string_ignored_without_sel(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_agent_hooks_dir_non_string_ignored_without_sel(self, tmp_path: Path, monkeypatch):
         """Regression: non-string ``agent_hooks_dir`` reverts to default silently.
 
         Coverage hardening: an LLM-writable
@@ -2301,8 +2303,7 @@ class TestDefaultDialectHooksAutoimport:
             # Must not raise.
             _apply_user_agent_hooks(config, pc_cfg)
             assert config["hooks"] == {}, (
-                f"non-string agent_hooks_dir={bogus!r} produced hooks: "
-                f"{config['hooks']!r}"
+                f"non-string agent_hooks_dir={bogus!r} produced hooks: " f"{config['hooks']!r}"
             )
 
         assert sel_calls == [], (
@@ -2481,9 +2482,7 @@ class TestDefaultDialectHooksAutoimport:
         assert command == str(entry)
         assert "cannot resolve" in reason.lower()
 
-    def test_agent_hooks_dir_resolve_oserror_falls_back(
-        self, tmp_path: Path, monkeypatch, caplog
-    ):
+    def test_agent_hooks_dir_resolve_oserror_falls_back(self, tmp_path: Path, monkeypatch, caplog):
         """Regression: OSError from ``Path.resolve()`` falls back cleanly.
 
         Coverage hardening: if
@@ -2551,8 +2550,11 @@ class TestDefaultDialectHooksAutoimport:
         # broadly accurate (resolved=None does land in that branch),
         # but a future refinement may split OSError into its own
         # reason string -- either shape is acceptable here.
-        assert "agent_hooks_dir" in reason.lower() or "hooks_dir" in reason.lower() or "home" in reason.lower() or "sensitive" in reason.lower()
-        # A warning mentioning "rejected" must be logged.
-        assert any(
-            "rejected" in rec.message.lower() for rec in caplog.records
+        assert (
+            "agent_hooks_dir" in reason.lower()
+            or "hooks_dir" in reason.lower()
+            or "home" in reason.lower()
+            or "sensitive" in reason.lower()
         )
+        # A warning mentioning "rejected" must be logged.
+        assert any("rejected" in rec.message.lower() for rec in caplog.records)

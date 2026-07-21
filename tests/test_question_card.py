@@ -18,12 +18,11 @@ import pytest
 
 from personalclaw.dashboard.chat_runner import _emit_question_card
 from personalclaw.validation import (
-    ValidationError,
     _AUQ_MAX_OPTIONS,
     _AUQ_MAX_QUESTIONS,
+    ValidationError,
     validate_ask_user_question,
 )
-
 
 # ── validate_ask_user_question ──
 
@@ -85,7 +84,10 @@ class TestValidateAskUserQuestion:
         out = validate_ask_user_question(
             {
                 "questions": [
-                    {"question": f"q{i}", "options": [{"label": f"o{j}"} for j in range(_AUQ_MAX_OPTIONS + 5)]}
+                    {
+                        "question": f"q{i}",
+                        "options": [{"label": f"o{j}"} for j in range(_AUQ_MAX_OPTIONS + 5)],
+                    }
                     for i in range(_AUQ_MAX_QUESTIONS + 5)
                 ]
             }
@@ -130,7 +132,11 @@ class TestEmitQuestionCard:
         tool_input = json.dumps(
             {
                 "questions": [
-                    {"question": "Deploy now?", "header": "Action", "options": [{"label": "Yes"}, {"label": "No"}]}
+                    {
+                        "question": "Deploy now?",
+                        "header": "Action",
+                        "options": [{"label": "Yes"}, {"label": "No"}],
+                    }
                 ]
             }
         )
