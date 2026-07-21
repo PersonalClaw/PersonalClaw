@@ -31,6 +31,11 @@ to them.
 
 ## Development setup
 
+This is the **build-from-source / contributor** path (a git checkout with a
+local venv and a Vite build). End users install a release instead — see
+[docs/guides/getting-started.md](docs/guides/getting-started.md) (uv tool, pipx,
+pip, or Docker), which never requires Node or a manual SPA build.
+
 ```bash
 # from the repo root
 python3 -m venv .venv
