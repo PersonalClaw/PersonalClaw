@@ -36,6 +36,15 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
   the app-install pipeline installs). A residue-sweep test + a machine-checked keeps
   table (`docs/architecture/provider-boundary-keeps.txt`) prevent vendor residue from
   regrowing in core.
+- **LLM SDKs demoted out of core dependencies (`openai`, `anthropic`):** a bare
+  `pip install personalclaw` no longer pulls the OpenAI or Anthropic SDKs. They now
+  ship via (a) the `[openai]` / `[anthropic]` packaging extras for pip/uv users, and
+  (b) the branded provider apps' manifest `dependencies.pythonDependencies`, which the
+  app-install pipeline installs into the shared venv (plan 32 T2.1). The provider
+  adapters import their SDK lazily and now raise a clear `MissingSDKError` naming the
+  exact `pip install 'personalclaw[openai]'` remedy (and `personalclaw doctor`) when a
+  hosted provider is used without its SDK. This trims the default install; users who
+  install a provider app or the matching extra are unaffected (plan 34 T1.4).
 
 ### Removed
 

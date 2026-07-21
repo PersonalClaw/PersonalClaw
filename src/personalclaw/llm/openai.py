@@ -16,6 +16,7 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
+from personalclaw._sdk_deps import require_sdk
 from personalclaw.llm.base import (
     EVENT_COMPLETE,
     EVENT_TEXT_CHUNK,
@@ -67,7 +68,9 @@ class OpenAIProvider(ModelProvider):
         extra_options: dict[str, object] | None = None,
     ) -> None:
         # Lazy import per R6.2 / Property 11. Do NOT lift to module top.
-        import openai  # noqa: WPS433
+        # openai is an OPTIONAL SDK (plan 34 T1.4) — require_sdk raises a clear
+        # MissingSDKError naming `pip install personalclaw[openai]` when absent.
+        openai = require_sdk("openai", "openai", feature="the OpenAI chat/embedding provider")
 
         if credential is None or not credential.secret:
             raise CredentialMissing("OpenAIProvider requires a credential with a populated secret")
