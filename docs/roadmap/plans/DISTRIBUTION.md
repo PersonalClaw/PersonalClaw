@@ -168,3 +168,18 @@ Gate `update_kind_aware` (class **B**, plan 31 §4.1; default OFF, → ON for fr
 - **PEP 771-style default extras are not assumed** — the LLM-SDK demotion path explicitly rides the app pip-step verification instead; if both mechanisms disappoint, the SDKs stay hard deps and the boundary doc says why (honest > pure).
 - **GitHub API rate limits on update checks** — unauthenticated 60/hr/IP is ample for a personal gateway (check ≤ hourly, cached, ETag'd); no token required or requested.
 - **Open:** whether `uv tool install` users get told about `[models]` extras interactively during `setup` (recommended: doctor detects absent local-model deps and prints the exact upgrade command).
+
+---
+
+## Execution log
+
+Format: one line per task/event — `DONE` / `DEVIATION` / `DISCOVERY` / `BLOCKED` — under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md).
+
+### Session 1 — Packaging correctness
+
+- **DISCOVERY (S1, pyproject TOML nesting bug)** — the initial `[project.urls]` insertion was placed AFTER `classifiers` but BEFORE the bare `dependencies` key. Because a TOML sub-table header captures every following bare key until the next header, `dependencies` (and nothing else, since `[project.optional-dependencies]` is its own header) was silently absorbed into `[project.urls]`, leaving `[project].dependencies` empty. A wheel built from that state carried **0 `Requires-Dist`** entries — every runtime dependency would have vanished from `pip install personalclaw`. Fixed by moving `[project.urls]` to sit AFTER the `dependencies` array (immediately before `[project.optional-dependencies]`) and adding an inline guard comment. Verified: `tomllib.load` now reports 20 core deps + 15 extras, and `urls` holds exactly the 5 URL keys.
+- **DONE T1.1** — `[project.urls]` added (Homepage=personalclaw.dev, Documentation, Source, Changelog, Issues → org URLs). Evidence: built wheel METADATA carries all 5 `Project-URL:` lines.
+- **DONE T1.2** — Version single-sourcing: `personalclaw.__version__` = `importlib.metadata.version("personalclaw")` guarded by `PackageNotFoundError` → `_FALLBACK_VERSION = "0.1.0"` literal for source-tree runs. `tests/test_version_consistency.py` added: asserts pyproject `[project].version` == `__version__` == `_FALLBACK_VERSION` == latest dated `CHANGELOG.md` heading. Evidence: 3 tests pass; `__version__` resolves to `0.1.0` via importlib.metadata under the editable install.
+- **DONE T1.3** — `zip-safe = true` dropped from `[tool.setuptools]` (replaced with an explanatory comment); the runtime reads packaged files by path (`frontend.py` serves `static/dist/*`, `config/defaults.json`, bundled skills/apps). Evidence: wheel builds; SPA `personalclaw/static/dist/index.html` is present inside the wheel and packaged-data path reads are unaffected.
+- **VERIFY (S1 partial)** — Built the wheel locally (`python -m build --wheel`) and inspected METADATA: 52 `Requires-Dist` (20 core + extras), 5 `Project-URL`, SPA `index.html` present in the wheel. `make lint` fully green (black/isort/flake8/mypy — 451 source files, mypy clean). `tests/test_version_consistency.py` green. T1.4 (LLM-SDK demotion) and T1.5 (`scripts/verify_wheel.py`) and V1 (clean-VM walkthrough) remain.
+- **DEVIATION (branch mechanics)** — brief requests a new `feature-distribution` branch off main; the loop engine manages branching (each parallel task runs on its own engine-managed branch that merges back). Per the coder-runtime branch guidance, work is committed on the CURRENT branch rather than a self-created feature branch to avoid stranding the diff. Owner authorship (Keyur Golani / keyurrgolani@gmail.com) + DCO sign-off preserved; no agent co-author trailer.

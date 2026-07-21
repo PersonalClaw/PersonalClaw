@@ -62,6 +62,18 @@ dependencies = [
     "python-dotenv>=1.0",
 ]
 
+# Project URLs — surfaced by `pip show personalclaw` and the PyPI project page.
+# NOTE: this sub-table MUST come AFTER the bare `dependencies`/`version`/etc. keys
+# of [project] — a `[project.urls]` header placed earlier would capture every
+# subsequent bare key (e.g. `dependencies`) into the urls table (TOML tables run
+# until the next header), silently zeroing out the runtime dependency set.
+[project.urls]
+Homepage      = "https://personalclaw.dev"
+Documentation = "https://github.com/PersonalClaw/PersonalClaw/tree/main/docs"
+Source        = "https://github.com/PersonalClaw/PersonalClaw"
+Changelog     = "https://github.com/PersonalClaw/PersonalClaw/blob/main/CHANGELOG.md"
+Issues        = "https://github.com/PersonalClaw/PersonalClaw/issues"
+
 [project.optional-dependencies]
 # Provider SDK extras — install only what your provider requires
 anthropic = ["anthropic>=0.20"]
@@ -130,7 +142,10 @@ filesystem = "personalclaw.inbox_providers.filesystem_source"
 
 # ── Setuptools ────────────────────────────────────────────────────────────────
 [tool.setuptools]
-zip-safe = true
+# zip-safe intentionally NOT set (defaults to unzipped install): the runtime reads
+# packaged files by filesystem path — frontend.py serves personalclaw/static/dist/*,
+# config/defaults.json is read directly, and bundled skills/apps are globbed on disk.
+# A zipped egg would break those path reads; safe > clever (plan 34 T1.3).
 
 [tool.setuptools.packages.find]
 where = ["src"]
