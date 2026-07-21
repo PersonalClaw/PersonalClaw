@@ -199,3 +199,10 @@ Format: one line per task/event — `DONE` / `DEVIATION` / `DISCOVERY` / `BLOCKE
       "dependencies": { "pythonDependencies": ["anthropic>=0.20"] }
       ```
     (If the OpenAI STT/TTS providers ship as their own apps rather than under openai-models, add the same `openai>=1.0` line to those manifests.) After install/update the pipeline pip-installs these into the shared venv; a fresh dep requires a gateway restart (`restart_required` in the install result). No core-repo file carries this — it lands in the apps repo.
+
+### Session 1 (cont.) — Cycle 3
+
+- **DONE T1.5 (wheel contract, C4)** — Authored `scripts/verify_wheel.py` (stdlib-only): asserts `personalclaw/static/dist/index.html` is in the wheel, installs the wheel into a fresh scratch `venv` (from the wheel alone — no source tree, no npm), boots `personalclaw gateway --test-mode` (reading the deterministic `PERSONALCLAW_READY:{json}` line for the auto-selected port), and probes `GET /api/healthz` (200 JSON `{status: ok, version}`) + `GET /` (200 HTML SPA shell). Runs with `PERSONALCLAW_AUTH_MODE=none` (loopback-pinned by `effective_bind`) so `/` serves in the smoke. Exit 0 = contract met. `--build` / `--wheel GLOB` / `--keep` flags.
+  - Wired into `release.yml`: replaced the shallow `index.html`-in-namelist check with `python scripts/verify_wheel.py --wheel "dist/*.whl"` (release.yml still valid YAML).
+  - Evidence (local run, dev box): built `dist/personalclaw-0.1.0-py3-none-any.whl` (9.1 MB), ran the verifier → PASS: SPA present; wheel installed into scratch venv; gateway READY on 127.0.0.1:50494; `/api/healthz` → 200 `{status: ok, version: 0.1.0}`; `/` → 200 HTML. lint clean (black/isort/flake8, mypy on the script). NOTE: this dev box has Node on PATH so the script printed the can't-*prove*-Node-absence warning — the true no-Node proof runs on the CI runner's fresh verify venv / a clean VM (V1).
+  - S1 now has T1.1–T1.5 implemented + locally verified. V1 (clean-VM/empty-container wheel install → onboarding → first chat, Node absent throughout) remains an owner real-world step; the getting-started uv-first rewrite is deferred to T2.4 per the plan.
