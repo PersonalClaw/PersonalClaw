@@ -32,9 +32,9 @@ jobs:
     env:
       PERSONALCLAW_SKIP_APP_BACKENDS: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - name: Set up Python ${{ matrix.python }}
@@ -52,9 +52,9 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - name: Set up Python
@@ -68,7 +68,7 @@ jobs:
           uv venv --python 3.12 .venv-audit
           uv pip install --python .venv-audit/bin/python -e . pip-audit
           .venv-audit/bin/python -m pip_audit || true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: npm
@@ -81,9 +81,9 @@ jobs:
     env:
       PERSONALCLAW_SKIP_APP_BACKENDS: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - name: Set up Python
@@ -106,7 +106,7 @@ jobs:
           # Owner task (S4): publish coverage-badge.json to a gist/website repo and
           # point a README shields endpoint at it. Emitted as an artifact until then.
       - name: Upload coverage artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: |
