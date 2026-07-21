@@ -33,8 +33,7 @@ def test_no_overflowmenu_primitive():
         "plan removed)."
     )
     offenders = [
-        str(f) for f in _WEB.rglob("*.tsx")
-        if "OverflowMenu" in f.read_text(encoding="utf-8")
+        str(f) for f in _WEB.rglob("*.tsx") if "OverflowMenu" in f.read_text(encoding="utf-8")
     ]
     assert not offenders, (
         "`OverflowMenu` referenced again — use HeaderControl with priority='low' in a "
@@ -46,13 +45,11 @@ def test_no_overflowmenu_primitive():
 def test_no_headerbutton_alias():
     """`HeaderButton` (the old 2-tier control) is gone — use `HeaderControl`."""
     offenders = [
-        str(f) for f in _WEB.rglob("*.tsx")
-        if "HeaderButton" in f.read_text(encoding="utf-8")
+        str(f) for f in _WEB.rglob("*.tsx") if "HeaderButton" in f.read_text(encoding="utf-8")
     ]
     assert not offenders, (
         "`HeaderButton` found — it was replaced by `HeaderControl` (adds priority / "
-        "danger / `…`-menu participation). Import + use HeaderControl:\n  "
-        + "\n  ".join(offenders)
+        "danger / `…`-menu participation). Import + use HeaderControl:\n  " + "\n  ".join(offenders)
     )
 
 

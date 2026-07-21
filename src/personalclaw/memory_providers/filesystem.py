@@ -53,8 +53,10 @@ class FilesystemMemoryProvider(MemoryProvider):
 
         # No vectors, no event log — just FTS keyword search over markdown.
         return MemoryCapabilities(
-            vector=False, transactional_batch=False,
-            event_log=False, full_text_search=True,
+            vector=False,
+            transactional_batch=False,
+            event_log=False,
+            full_text_search=True,
         )
 
     # ── record CRUD over the markdown files ───────────────────────────────────
@@ -121,8 +123,12 @@ class FilesystemMemoryProvider(MemoryProvider):
         # Normalize FTS hits ({path, snippet, rank}) into the scored-hit shape the
         # service expects ({text, score, ...}).
         return [
-            {"id": h.get("path", ""), "text": h.get("snippet", ""),
-             "score": -float(h.get("rank", 0.0)), "source": "fts"}
+            {
+                "id": h.get("path", ""),
+                "text": h.get("snippet", ""),
+                "score": -float(h.get("rank", 0.0)),
+                "source": "fts",
+            }
             for h in hits
         ]
 

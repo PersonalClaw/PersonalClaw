@@ -28,7 +28,7 @@ _MIN_REPS = 4
 @dataclass(frozen=True)
 class DialSetting:
     threshold: float  # minimum marginal-value score a cycle must clear
-    window: int       # consecutive sub-threshold cycles before returns-exhausted
+    window: int  # consecutive sub-threshold cycles before returns-exhausted
 
 
 _DIAL: dict[str, DialSetting | None] = {
@@ -55,7 +55,7 @@ def returns_exhausted(marginal_scores: list[float], granularity: str) -> bool:
         return False
     if len(marginal_scores) < setting.window:
         return False
-    recent = marginal_scores[-setting.window:]
+    recent = marginal_scores[-setting.window :]
     return all(s < setting.threshold for s in recent)
 
 

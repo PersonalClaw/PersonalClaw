@@ -3,19 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
-import personalclaw.skills.curator as cur
-from personalclaw.skills.curator import (
-    STATE_ARCHIVED,
-    STATE_STALE,
-    CuratorReport,
-    is_archived,
-    restore,
-    run_aging,
-)
+from personalclaw.skills.curator import STATE_STALE, CuratorReport, is_archived, restore, run_aging
 from personalclaw.skills.loader import SkillsLoader
 
 NOW = datetime(2026, 6, 15, tzinfo=timezone.utc)
@@ -50,6 +41,7 @@ def _write_auto(loader: SkillsLoader, slug: str, *, created_at: str, pinned=Fals
 
 def _stub_usage(monkeypatch, mapping: dict[str, str]):
     """mapping: {name: last_used_at_iso}."""
+
     class _U:
         def __init__(self, ts):
             self.last_used_at = ts

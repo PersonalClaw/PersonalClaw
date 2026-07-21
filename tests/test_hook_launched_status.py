@@ -22,15 +22,22 @@ class _FakeProvider:
 
 def _hook() -> ScriptHook:
     return ScriptHook(
-        id="h1", name="n", event=HOOK_EVENT_STOP, matcher="",
-        provider="run-prompt", provider_config={"prompt_id": "x"}, enabled=True,
+        id="h1",
+        name="n",
+        event=HOOK_EVENT_STOP,
+        matcher="",
+        provider="run-prompt",
+        provider_config={"prompt_id": "x"},
+        enabled=True,
     )
 
 
 def _run(result: ActionResult, monkeypatch) -> ScriptHook:
     # run_script_hook does `from personalclaw.action_providers import get_action_provider`
     # at call time, so patch it on that source module.
-    monkeypatch.setattr(action_providers_mod, "get_action_provider", lambda name: _FakeProvider(result))
+    monkeypatch.setattr(
+        action_providers_mod, "get_action_provider", lambda name: _FakeProvider(result)
+    )
     hook = _hook()
     asyncio.run(run_script_hook(hook, "", {"hook_event_name": "Stop"}))
     return hook

@@ -35,7 +35,9 @@ def test_missing_script_is_error_result():
 def test_success_statuses_map_to_success(monkeypatch, status):
     import personalclaw.schedule_script as ss
 
-    monkeypatch.setattr(ss, "run_script_sandboxed", lambda *a, **k: {"status": status, "message": "out"})
+    monkeypatch.setattr(
+        ss, "run_script_sandboxed", lambda *a, **k: {"status": status, "message": "out"}
+    )
     res = asyncio.run(RunScriptActionProvider().execute({"script": "f.py:run"}, _ctx()))
     assert res.success is True
     assert res.stdout == "out"
@@ -44,7 +46,9 @@ def test_success_statuses_map_to_success(monkeypatch, status):
 def test_error_status_maps_to_failure(monkeypatch):
     import personalclaw.schedule_script as ss
 
-    monkeypatch.setattr(ss, "run_script_sandboxed", lambda *a, **k: {"status": "error", "error": "boom"})
+    monkeypatch.setattr(
+        ss, "run_script_sandboxed", lambda *a, **k: {"status": "error", "error": "boom"}
+    )
     res = asyncio.run(RunScriptActionProvider().execute({"script": "f.py:run"}, _ctx()))
     assert res.success is False
     assert res.error == "boom"

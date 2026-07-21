@@ -21,7 +21,6 @@ turn/lifecycle methods delegate to the held session/connection.
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -144,8 +143,10 @@ class TestInitializeSession:
         client.set_resume_session_id("old-sid")
         (tmp_path / "old-sid.json").write_text("{}")
         conn, _ = _fake_conn(caps={"loadSession": True})
-        resumed_sess = MagicMock(); resumed_sess.session_id = "old-sid"
-        resumed_sess.last_prompt_stats = AcpPromptStats(); resumed_sess._last_stop_reason = ""
+        resumed_sess = MagicMock()
+        resumed_sess.session_id = "old-sid"
+        resumed_sess.last_prompt_stats = AcpPromptStats()
+        resumed_sess._last_stop_reason = ""
         conn.load_session = AsyncMock(return_value=resumed_sess)
         client._connection = conn
         await client._initialize_session()
@@ -194,10 +195,12 @@ def _client_with_session(events):
 class TestTurnDelegation:
     @pytest.mark.asyncio
     async def test_stream_events_delegates_and_stamps_telemetry(self):
-        client, sess = _client_with_session([
-            AcpEvent(kind=EVENT_TEXT_CHUNK, text="hi"),
-            AcpEvent(kind=EVENT_COMPLETE, stop_reason="end_turn"),
-        ])
+        client, sess = _client_with_session(
+            [
+                AcpEvent(kind=EVENT_TEXT_CHUNK, text="hi"),
+                AcpEvent(kind=EVENT_COMPLETE, stop_reason="end_turn"),
+            ]
+        )
         events = [e async for e in client.stream_events("go")]
         assert [e.kind for e in events] == [EVENT_TEXT_CHUNK, EVENT_COMPLETE]
         # telemetry stamped from the session's stats onto the terminal event
@@ -208,12 +211,14 @@ class TestTurnDelegation:
     async def test_send_message_concatenates_text_excludes_thinking(self):
         from personalclaw.acp.types import EVENT_THINKING_CHUNK
 
-        client, _ = _client_with_session([
-            AcpEvent(kind=EVENT_THINKING_CHUNK, text="hmm"),
-            AcpEvent(kind=EVENT_TEXT_CHUNK, text="Hello, "),
-            AcpEvent(kind=EVENT_TEXT_CHUNK, text="world!"),
-            AcpEvent(kind=EVENT_COMPLETE, stop_reason="end_turn"),
-        ])
+        client, _ = _client_with_session(
+            [
+                AcpEvent(kind=EVENT_THINKING_CHUNK, text="hmm"),
+                AcpEvent(kind=EVENT_TEXT_CHUNK, text="Hello, "),
+                AcpEvent(kind=EVENT_TEXT_CHUNK, text="world!"),
+                AcpEvent(kind=EVENT_COMPLETE, stop_reason="end_turn"),
+            ]
+        )
         result = await client.send_message("hi")
         assert result == "Hello, world!"  # thinking excluded
 
@@ -246,7 +251,8 @@ class TestLiveReconfig:
     async def test_set_model_sends_and_records(self):
         client = AcpClient(model="auto")
         client._session_id = "s"
-        conn = MagicMock(); conn.send_request = AsyncMock(return_value=(1, MagicMock()))
+        conn = MagicMock()
+        conn.send_request = AsyncMock(return_value=(1, MagicMock()))
         conn._dialect = client._dialect
         client._connection = conn
         await client.set_model("new-model")

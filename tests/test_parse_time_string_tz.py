@@ -11,7 +11,9 @@ def test_at_time_uses_config_timezone_not_system():
     """'23:59' interpreted in config tz (Pacific) should show 23:59 Pacific."""
     pacific = ZoneInfo("America/Los_Angeles")
 
-    with patch.object(mcp_schedule_mod, "get_local_tz", return_value=("America/Los_Angeles", pacific)):
+    with patch.object(
+        mcp_schedule_mod, "get_local_tz", return_value=("America/Los_Angeles", pacific)
+    ):
         result = mcp_schedule_mod._parse_time_string("23:59")
 
     assert isinstance(result, float)
@@ -47,12 +49,18 @@ def test_at_time_respects_different_timezones():
         def now(cls, tz=None):
             return fixed_utc.astimezone(tz) if tz else fixed_utc.replace(tzinfo=None)
 
-    with patch.object(mcp_schedule_mod, "datetime", _FixedDatetime), \
-         patch.object(mcp_schedule_mod, "get_local_tz", return_value=("America/Los_Angeles", pacific)):
+    with (
+        patch.object(mcp_schedule_mod, "datetime", _FixedDatetime),
+        patch.object(
+            mcp_schedule_mod, "get_local_tz", return_value=("America/Los_Angeles", pacific)
+        ),
+    ):
         result_pacific = mcp_schedule_mod._parse_time_string("23:59")
 
-    with patch.object(mcp_schedule_mod, "datetime", _FixedDatetime), \
-         patch.object(mcp_schedule_mod, "get_local_tz", return_value=("America/New_York", eastern)):
+    with (
+        patch.object(mcp_schedule_mod, "datetime", _FixedDatetime),
+        patch.object(mcp_schedule_mod, "get_local_tz", return_value=("America/New_York", eastern)),
+    ):
         result_eastern = mcp_schedule_mod._parse_time_string("23:59")
 
     assert isinstance(result_pacific, float)

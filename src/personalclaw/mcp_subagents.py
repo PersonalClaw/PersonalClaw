@@ -41,7 +41,7 @@ def _list_tools() -> list[dict[str, Any]]:
                     },
                     "agent": {
                         "type": "string",
-                        "description": "Agent name for the subagent. Use subagent_list to see available agents.",
+                        "description": "Agent name for the subagent. Use subagent_list to see available agents.",  # noqa: E501
                     },
                     "agents": {
                         "type": "array",
@@ -50,16 +50,16 @@ def _list_tools() -> list[dict[str, Any]]:
                     },
                     "max_turns": {
                         "type": "integer",
-                        "description": "Override tool-call budget for this spawn (default: config or 100)",
+                        "description": "Override tool-call budget for this spawn (default: config or 100)",  # noqa: E501
                     },
                     "cwd": {
                         "type": "string",
                         "description": (
                             "Optional absolute path to launch the subagent subprocess in, "
                             "instead of the default sandbox. Enables cwd-relative resource globs "
-                            "(.personalclaw/steering, AGENTS.md) to resolve against this directory. "
+                            "(.personalclaw/steering, AGENTS.md) to resolve against this directory. "  # noqa: E501
                             "Must be under a configured subagent_cwd_allowed_roots entry "
-                            "(default: [~/workspace, ~/workplace]). Applies to all tasks in a batch spawn."
+                            "(default: [~/workspace, ~/workplace]). Applies to all tasks in a batch spawn."  # noqa: E501
                         ),
                     },
                 },
@@ -67,7 +67,7 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "subagent_list",
-            "description": "List all running and completed subagents (read-only, no commands executed)",
+            "description": "List all running and completed subagents (read-only, no commands executed)",  # noqa: E501
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
@@ -120,7 +120,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         max_turns = args.get("max_turns") or 0
         cwd = args.get("cwd") or ""
         if agents_list and len(agents_list) != len(task_list):
-            return f"Error: agents length ({len(agents_list)}) must match tasks length ({len(task_list)})"
+            return f"Error: agents length ({len(agents_list)}) must match tasks length ({len(task_list)})"  # noqa: E501
 
         agent_ids: list[str] = []
         agent_names: list[str] = []
@@ -193,9 +193,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         try:
             from personalclaw.config.loader import AppConfig
 
-            names = sorted(
-                n for n in AppConfig.load().agents if n.isascii() and len(n) < 100
-            )
+            names = sorted(n for n in AppConfig.load().agents if n.isascii() and len(n) < 100)
             if names:
                 lines.append(f"\nAvailable agents: {', '.join(names)}")
         except Exception:
@@ -233,6 +231,10 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
     from personalclaw.mcp_shared import call_tool_with_logging
 
     return call_tool_with_logging(
-        name, raw_args, _validate_args, _call_tool_inner,
-        session_key="mcp_core", downstream_service="personalclaw-subagents",
+        name,
+        raw_args,
+        _validate_args,
+        _call_tool_inner,
+        session_key="mcp_core",
+        downstream_service="personalclaw-subagents",
     )

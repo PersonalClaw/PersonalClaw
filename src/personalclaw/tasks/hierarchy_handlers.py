@@ -29,6 +29,7 @@ def _project_payload(store: HierarchyStore, project, *, list_counts: dict | None
 
 # ── Projects ──
 
+
 async def api_projects_list(request: web.Request) -> web.Response:
     """GET /api/projects"""
     store = _store()
@@ -87,13 +88,19 @@ async def api_projects_linked(request: web.Request) -> web.Response:
     code: list[dict] = []
     try:
         from personalclaw.loop import store as loop_store
+
         for lp in loop_store.list_all():
             if pid not in (lp.project_id, lp.tasks_project_id):
                 continue
             # error_message lets the FE distinguish a genuine 'complete' from a
             # budget-exhausted finish (→ "Ended early"), matching the list + cockpit.
-            row = {"id": lp.id, "name": lp.name or lp.task[:60], "status": lp.status,
-                   "kind": lp.kind, "error_message": lp.error_message or None}
+            row = {
+                "id": lp.id,
+                "name": lp.name or lp.task[:60],
+                "status": lp.status,
+                "kind": lp.kind,
+                "error_message": lp.error_message or None,
+            }
             (code if lp.kind == "code" else loops).append(row)
     except Exception:
         pass
@@ -101,11 +108,11 @@ async def api_projects_linked(request: web.Request) -> web.Response:
     artifacts: list[dict] = []
     try:
         from personalclaw.artifacts.registry import get_provider
+
         prov = get_provider()
         if prov is not None:
             artifacts = [
-                {"slug": a.slug, "name": a.name, "kind": a.kind}
-                for a in prov.list(project_id=pid)
+                {"slug": a.slug, "name": a.name, "kind": a.kind} for a in prov.list(project_id=pid)
             ]
     except Exception:
         pass
@@ -122,8 +129,13 @@ async def api_projects_linked(request: web.Request) -> web.Response:
                 continue
             if str(getattr(s, "_app", "") or ""):
                 continue  # worker session (loop/code/campaign) — listed as a loop, not a chat
-            chats.append({"key": s.key, "title": getattr(s, "title", "") or s.key,
-                          "running": bool(getattr(s, "running", False))})
+            chats.append(
+                {
+                    "key": s.key,
+                    "title": getattr(s, "title", "") or s.key,
+                    "running": bool(getattr(s, "running", False)),
+                }
+            )
     except Exception:
         pass
 
@@ -152,6 +164,7 @@ def _bound_work_counts(pid: str) -> tuple[int, int]:
     loops = code = 0
     try:
         from personalclaw.loop import store as loop_store
+
         for lp in loop_store.list_all():
             if pid not in (lp.project_id, lp.tasks_project_id):
                 continue
@@ -204,10 +217,14 @@ async def _teardown_bound_loops(pid: str) -> None:
     branches littering the user's repo (the exact harm the 409 guard warns about, done
     anyway on force). Best-effort per loop; never raises."""
     try:
-        from personalclaw.loop import store as loop_store, manager as loop_manager
         from personalclaw.autonudge import get_instance
+        from personalclaw.loop import manager as loop_manager
+        from personalclaw.loop import store as loop_store
+
         svc = get_instance()
-        bound = [lp.id for lp in loop_store.list_all() if pid in (lp.project_id, lp.tasks_project_id)]
+        bound = [
+            lp.id for lp in loop_store.list_all() if pid in (lp.project_id, lp.tasks_project_id)
+        ]
         for lid in bound:
             try:
                 if svc is not None:
@@ -235,10 +252,15 @@ async def api_projects_delete(request: web.Request) -> web.Response:
             # Chats are first-class project work (surfaced in /linked), so deleting a
             # project with active project-bound chats must warn too — else they silently
             # dangle (project_id → a gone project; preamble/context-dir grant break).
-            return web.json_response({
-                "error": "project has bound work",
-                "loops": loops, "code": code, "chats": chats,
-            }, status=409)
+            return web.json_response(
+                {
+                    "error": "project has bound work",
+                    "loops": loops,
+                    "code": code,
+                    "chats": chats,
+                },
+                status=409,
+            )
     else:
         # Force-delete: tear down the bound loops FIRST (stop workers + clean worktrees +
         # delete rows) so they aren't orphaned, then UNBIND the project-bound chats (clear
@@ -255,6 +277,7 @@ async def api_projects_delete(request: web.Request) -> web.Response:
 
 
 # ── Task lists ──
+
 
 async def api_task_lists_list(request: web.Request) -> web.Response:
     """GET /api/task-lists?project_id=…"""
@@ -338,9 +361,7 @@ async def api_task_lists_reset(request: web.Request) -> web.Response:
     reset_ids = []
     for t in tasks:
         criteria = [{**c, "status": "incomplete", "met": False} for c in t.exit_criteria]
-        await registry.update_task(
-            t.id, status="open", exit_criteria=criteria, execution_notes=[]
-        )
+        await registry.update_task(t.id, status="open", exit_criteria=criteria, execution_notes=[])
         reset_ids.append(t.id)
     return web.json_response({"ok": True, "reset_task_ids": reset_ids})
 

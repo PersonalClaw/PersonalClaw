@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import re
 
-import pytest
-
 from personalclaw.skills.marketplace import _parse_description
 from personalclaw.skills.native import NativeSkillsMarketplace, _bundled_root
 
@@ -33,6 +31,7 @@ class TestVisualOutputSkill:
 
     def test_triggered_on_widget_request(self, tmp_path, monkeypatch):
         from personalclaw.skills.loader import SkillsLoader
+
         monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
         loader = SkillsLoader(skills_path=tmp_path / "skills")
         names = {s["key"] for s in loader.list_skills()}
@@ -48,8 +47,14 @@ class TestVisualOutputSkill:
         import base64
 
         banned_b64 = (
-            "bWVzaGNsYXc=", "bXdpbml0", "bWlkd2F5", "a2lybw==",
-            "Y29kZS5hbWF6b24uY29t", "YXJjYw==", "dGFza2Vp", "cGhvbmV0b29s",
+            "bWVzaGNsYXc=",
+            "bXdpbml0",
+            "bWlkd2F5",
+            "a2lybw==",
+            "Y29kZS5hbWF6b24uY29t",
+            "YXJjYw==",
+            "dGFza2Vp",
+            "cGhvbmV0b29s",
         )
         md = (_bundled_root() / "visual-output" / "SKILL.md").read_text(encoding="utf-8").lower()
         for encoded in banned_b64:
@@ -65,6 +70,7 @@ class TestArtifactsSkill:
 
     def test_triggered_on_save_widget(self, tmp_path, monkeypatch):
         from personalclaw.skills.loader import SkillsLoader
+
         monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
         loader = SkillsLoader(skills_path=tmp_path / "skills")
         assert "artifacts" in {s["key"] for s in loader.list_skills()}

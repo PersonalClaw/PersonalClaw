@@ -8,11 +8,11 @@ an externally-bound workspace_dir.
 
 from __future__ import annotations
 
-import personalclaw.loop.store as store_mod
 import pytest
 
+import personalclaw.loop.store as store_mod
 from personalclaw.loop import lifecycle
-from personalclaw.loop.loop import Loop, LoopStatus
+from personalclaw.loop.loop import Loop
 
 
 @pytest.fixture
@@ -20,13 +20,19 @@ def loop_home(tmp_path, monkeypatch):
     # Point the loop store + dirs at a temp home.
     monkeypatch.setattr(store_mod, "_db_path", lambda: tmp_path / "loops.db")
     import personalclaw.config.loader as cfg
+
     monkeypatch.setattr(cfg, "config_dir", lambda: tmp_path)
     return tmp_path
 
 
 def _mk(auto_teardown: bool) -> Loop:
-    return Loop(id="", name="Scratch test", kind="goal", task="do a thing",
-                auto_teardown_on_complete=auto_teardown)
+    return Loop(
+        id="",
+        name="Scratch test",
+        kind="goal",
+        task="do a thing",
+        auto_teardown_on_complete=auto_teardown,
+    )
 
 
 def test_flag_persists_through_store(loop_home):
@@ -70,10 +76,13 @@ def test_default_loop_dir_persists(loop_home):
 def test_migration_adds_column_to_legacy_db(loop_home, tmp_path):
     # Simulate a pre-existing DB without the column, then confirm _connect migrates it.
     import sqlite3
+
     db = tmp_path / "loops.db"
     conn = sqlite3.connect(str(db))
-    conn.execute("CREATE TABLE loops (id TEXT PRIMARY KEY, name TEXT, kind TEXT, task TEXT, "
-                 "created_at REAL, status TEXT)")
+    conn.execute(
+        "CREATE TABLE loops (id TEXT PRIMARY KEY, name TEXT, kind TEXT, task TEXT, "
+        "created_at REAL, status TEXT)"
+    )
     conn.commit()
     conn.close()
     # _connect() runs the idempotent migration.

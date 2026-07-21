@@ -119,7 +119,7 @@ def _doctor() -> None:
                 print(f"  node:        ✅ {node} (v{major})")
             else:
                 print(
-                    f"  node:        ⚠️  v{major} < {_MIN_NODE_VERSION} (frontend needs Node {_MIN_NODE_VERSION}+)"
+                    f"  node:        ⚠️  v{major} < {_MIN_NODE_VERSION} (frontend needs Node {_MIN_NODE_VERSION}+)"  # noqa: E501
                 )
                 print("               Fix: install Node.js >= 16")
         except Exception:
@@ -341,20 +341,20 @@ def _doctor() -> None:
     from personalclaw.stt.registry import active_stt
 
     stt_active = bool(load_use_case_settings("stt").get("enabled", True))
-    resolved = active_stt()
+    stt_resolved = active_stt()
 
     if not stt_active:
         print("  status:      ⏹ disabled (enable in Settings → Voice)")
-    elif resolved is None:
+    elif stt_resolved is None:
         # Not a failure: STT backends are opt-in apps now (e.g. the faster-whisper
         # app) plus remote OpenAI-family providers. With none installed/bound, STT is
         # simply unconfigured — report it, but don't fail the doctor (a fresh core is
         # expected to boot without media backends).
         print(
-            "  status:      ⏹  no STT model configured (install an STT app or bind one in Settings → Models)"
+            "  status:      ⏹  no STT model configured (install an STT app or bind one in Settings → Models)"  # noqa: E501
         )
     else:
-        print(f"  model:       ✅ {resolved[0].name}:{resolved[1]}")
+        print(f"  model:       ✅ {stt_resolved[0].name}:{stt_resolved[1]}")
 
     ensure_ffmpeg_in_path()
     ffmpeg_bin = shutil.which("ffmpeg")
@@ -371,7 +371,7 @@ def _doctor() -> None:
     # environment created before the dep landed may not have it until
     # `pip install -e .[stt]` is re-run. Catching that here avoids a blank mic
     # click at runtime.
-    if stt_active and resolved is not None:
+    if stt_active and stt_resolved is not None:
         try:
             import faster_whisper  # noqa: F401
 

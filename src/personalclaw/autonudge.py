@@ -188,7 +188,9 @@ class AutoNudgeService:
         idle_secs = max(_MIN_IDLE_SECS, min(_MAX_IDLE_SECS, int(idle_secs)))
         # The first-fire delay is clamped to [_MIN_IDLE_SECS, idle_secs] when set —
         # it's only ever a shortcut, never longer than the steady-state interval.
-        first_idle_secs = min(idle_secs, max(_MIN_IDLE_SECS, int(first_idle_secs))) if first_idle_secs else 0
+        first_idle_secs = (
+            min(idle_secs, max(_MIN_IDLE_SECS, int(first_idle_secs))) if first_idle_secs else 0
+        )
         async with self._lock:
             # One loop per session — replace any existing loop on this session.
             existing = self._find_by_session(session_name)
@@ -208,7 +210,9 @@ class AutoNudgeService:
             self._save()
             self._arm_timer(loop)
         self._emit("added", loop)
-        logger.info("AutoNudge: added loop %s on session %s (idle=%ds)", loop.id, session_name, idle_secs)
+        logger.info(
+            "AutoNudge: added loop %s on session %s (idle=%ds)", loop.id, session_name, idle_secs
+        )
         return loop
 
     async def update(
@@ -283,7 +287,8 @@ class AutoNudgeService:
             if loop.error_count >= _MAX_CONSECUTIVE_ERRORS:
                 logger.warning(
                     "AutoNudge: loop %s hit %d consecutive errors — deactivating",
-                    loop.id, loop.error_count,
+                    loop.id,
+                    loop.error_count,
                 )
                 loop.active = False
                 self._cancel_timer(loop.id)
@@ -313,7 +318,11 @@ class AutoNudgeService:
     async def _timer(self, loop: NudgeLoop) -> None:
         # The first armed fire may use a shorter delay (first_idle_secs) so a brand-
         # new loop starts promptly; every later fire waits the full idle_secs.
-        delay = loop.first_idle_secs if (loop.first_idle_secs and loop.cycle_count == 0) else loop.idle_secs
+        delay = (
+            loop.first_idle_secs
+            if (loop.first_idle_secs and loop.cycle_count == 0)
+            else loop.idle_secs
+        )
         try:
             await asyncio.sleep(delay)
         except asyncio.CancelledError:

@@ -24,13 +24,19 @@ class TestDequeueNextMessage:
     def test_merge_two_plus_messages_when_enabled(self):
         """When enabled and 2+ messages queued, they are joined with \\n\\n."""
         session = _ChatSession("s1")
-        session._queue = [{"id": "a", "content": "fix the bug"}, {"id": "b", "content": "also add tests"}, {"id": "c", "content": "use junit5"}]
+        session._queue = [
+            {"id": "a", "content": "fix the bug"},
+            {"id": "b", "content": "also add tests"},
+            {"id": "c", "content": "use junit5"},
+        ]
         for item in list(session._queue):
             session.append("queued", item["content"], "msg msg-queued")
 
         next_msg, consumed = _dequeue_next_message(session, merge_enabled=True)
 
-        assert next_msg == "[3 queued messages merged]\n\nfix the bug\n\nalso add tests\n\nuse junit5"
+        assert (
+            next_msg == "[3 queued messages merged]\n\nfix the bug\n\nalso add tests\n\nuse junit5"
+        )
         assert [c["content"] for c in consumed] == ["fix the bug", "also add tests", "use junit5"]
         assert len(session._queue) == 0
 
@@ -49,7 +55,11 @@ class TestDequeueNextMessage:
     def test_multiple_messages_fifo_when_disabled(self):
         """When disabled, only first message is popped (original FIFO)."""
         session = _ChatSession("s1")
-        session._queue = [{"id": "a", "content": "first"}, {"id": "b", "content": "second"}, {"id": "c", "content": "third"}]
+        session._queue = [
+            {"id": "a", "content": "first"},
+            {"id": "b", "content": "second"},
+            {"id": "c", "content": "third"},
+        ]
         for item in session._queue:
             session.append("queued", item["content"], "msg msg-queued")
 
@@ -75,7 +85,11 @@ class TestDequeueNextMessage:
         """Cron-prefixed messages are never merged — popped individually."""
         cron_msg = f"{CRON_NOTIFY_PREFIX}daily-check]: run report"
         session = _ChatSession("s1")
-        session._queue = [{"id": "a", "content": "user msg"}, {"id": "b", "content": cron_msg}, {"id": "c", "content": "another user msg"}]
+        session._queue = [
+            {"id": "a", "content": "user msg"},
+            {"id": "b", "content": cron_msg},
+            {"id": "c", "content": "another user msg"},
+        ]
         for item in session._queue:
             session.append("queued", item["content"], "msg msg-queued")
 
@@ -90,7 +104,12 @@ class TestDequeueNextMessage:
         """Multiple user messages before a cron are merged; cron and later messages stay."""
         cron_msg = f"{CRON_NOTIFY_PREFIX}daily]: run report"
         session = _ChatSession("s1")
-        session._queue = [{"id": "a", "content": "msg1"}, {"id": "b", "content": "msg2"}, {"id": "c", "content": cron_msg}, {"id": "d", "content": "msg3"}]
+        session._queue = [
+            {"id": "a", "content": "msg1"},
+            {"id": "b", "content": "msg2"},
+            {"id": "c", "content": cron_msg},
+            {"id": "d", "content": "msg3"},
+        ]
         for item in session._queue:
             session.append("queued", item["content"], "msg msg-queued")
 
@@ -104,7 +123,10 @@ class TestDequeueNextMessage:
         """If cron message is first, it pops as single (no merge)."""
         cron_msg = f"{CRON_NOTIFY_PREFIX}hourly]: check status"
         session = _ChatSession("s1")
-        session._queue = [{"id": "a", "content": cron_msg}, {"id": "b", "content": "user follow-up"}]
+        session._queue = [
+            {"id": "a", "content": cron_msg},
+            {"id": "b", "content": "user follow-up"},
+        ]
         for item in session._queue:
             session.append("queued", item["content"], "msg msg-queued")
 
@@ -132,7 +154,10 @@ class TestDequeueNextMessage:
         """If subagent completion is first, it pops as single (no merge)."""
         subagent_msg = f"{SUBAGENT_COMPLETION_PREFIX}\nAgent `xyz` completed ✅\nDone"
         session = _ChatSession("s1")
-        session._queue = [{"id": "a", "content": subagent_msg}, {"id": "b", "content": "user follow-up"}]
+        session._queue = [
+            {"id": "a", "content": subagent_msg},
+            {"id": "b", "content": "user follow-up"},
+        ]
         for item in session._queue:
             session.append("queued", item["content"], "msg msg-queued")
 
@@ -210,9 +235,7 @@ class TestDashboardConfigMergeQueued:
     async def test_put_persists_merge_queued_messages(self, tmp_path, monkeypatch):
         """PUT merge_queued_messages=true persists to config.json."""
         cfg_file = tmp_path / "config.json"
-        monkeypatch.setattr(
-            "personalclaw.config.loader.config_path", lambda: cfg_file
-        )
+        monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: cfg_file)
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         with patch("personalclaw.sel.sel") as mock_sel:
             mock_sel.return_value = MagicMock()
@@ -261,9 +284,7 @@ class TestDashboardConfigMergeQueued:
             mock_sel.return_value = MagicMock()
             app = _make_config_app(tmp_path)
             async with TestClient(TestServer(app)) as client:
-                resp = await client.put(
-                    "/api/dashboard/config", json={"bogus_field": True}
-                )
+                resp = await client.put("/api/dashboard/config", json={"bogus_field": True})
                 assert resp.status == 400
                 data = await resp.json()
                 assert "Unknown fields" in data["error"]

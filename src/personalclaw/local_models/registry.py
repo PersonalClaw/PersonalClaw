@@ -152,7 +152,8 @@ class _ManagerBackedLocalProvider(LocalModelProvider):
         return LocalModel(
             name=getattr(mi, "name", "") or getattr(mi, "id", ""),
             size_mb=round((getattr(mi, "size", 0) or 0) / (1024 * 1024), 1),
-            description=(getattr(mi, "extra", {}) or {}).get("parameter_size", "") or getattr(mi, "description", ""),
+            description=(getattr(mi, "extra", {}) or {}).get("parameter_size", "")
+            or getattr(mi, "description", ""),
             downloaded=downloaded,
             capabilities=list(getattr(mi, "capabilities", []) or []),
             source="ollama.com",
@@ -162,7 +163,9 @@ class _ManagerBackedLocalProvider(LocalModelProvider):
         return [self._to_local(mi, downloaded=True) for mi in await self._mgr.list_models()]
 
     async def search_models(self, query: str) -> list[LocalModel]:
-        return [self._to_local(mi, downloaded=False) for mi in await self._mgr.search_catalog(query)]
+        return [
+            self._to_local(mi, downloaded=False) for mi in await self._mgr.search_catalog(query)
+        ]
 
     async def download_model(self, model_name: str) -> bool:
         try:
@@ -200,7 +203,10 @@ def register_config_model_managers() -> None:
         except Exception:
             catalog = None
         if isinstance(catalog, ModelManager):
-            caps = [getattr(c, "value", c) for c in (getattr(entry, "declared_capabilities", None) or [])]
+            caps = [
+                getattr(c, "value", c)
+                for c in (getattr(entry, "declared_capabilities", None) or [])
+            ]
             register_provider(
                 _ManagerBackedLocalProvider(entry.name, entry.name, catalog),
                 capabilities=caps,

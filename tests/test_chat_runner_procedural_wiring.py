@@ -54,7 +54,9 @@ def _state_for(svc):
 
 def _session():
     return SimpleNamespace(
-        key="dashboard:chat-x", workspace_dir=None, memory_store=None,
+        key="dashboard:chat-x",
+        workspace_dir=None,
+        memory_store=None,
         _ephemeral=False,
     )
 
@@ -62,14 +64,15 @@ def _session():
 def test_procedural_capture_fires_from_passed_provider(svc, monkeypatch):
     """A >=4-tool turn drains the provider and writes procedural records."""
     # service_for must wrap OUR vector store, not a fresh one
-    monkeypatch.setattr(
-        "personalclaw.memory_service.service_for", lambda _m: svc
-    )
+    monkeypatch.setattr("personalclaw.memory_service.service_for", lambda _m: svc)
     provider = _FakeProvider([("bash", False), ("fs_read", False), ("web_search", True)])
     _maybe_after_turn_review(
-        _state_for(svc), _session(),
-        user_message="do the thing", assistant_text="done",
-        tool_calls=4, provider=provider,
+        _state_for(svc),
+        _session(),
+        user_message="do the thing",
+        assistant_text="done",
+        tool_calls=4,
+        provider=provider,
     )
     assert provider.drained is True
     recs = svc.get_records(kinds={MemoryKind.PROCEDURAL.value})
@@ -82,13 +85,14 @@ def test_procedural_capture_fires_from_passed_provider(svc, monkeypatch):
 
 def test_no_provider_is_safe_noop(svc, monkeypatch):
     """When no provider is threaded (ACP / missing), capture is a clean no-op."""
-    monkeypatch.setattr(
-        "personalclaw.memory_service.service_for", lambda _m: svc
-    )
+    monkeypatch.setattr("personalclaw.memory_service.service_for", lambda _m: svc)
     _maybe_after_turn_review(
-        _state_for(svc), _session(),
-        user_message="do the thing", assistant_text="done",
-        tool_calls=4, provider=None,
+        _state_for(svc),
+        _session(),
+        user_message="do the thing",
+        assistant_text="done",
+        tool_calls=4,
+        provider=None,
     )
     assert svc.get_records(kinds={MemoryKind.PROCEDURAL.value}) == []
 
@@ -97,15 +101,16 @@ def test_session_provider_attr_is_not_consulted(svc, monkeypatch):
     """Regression: the OLD code read session.provider — prove that's no longer
     the source. A session carrying a .provider with outcomes must NOT capture
     when the explicit provider arg is None (the arg is the only source now)."""
-    monkeypatch.setattr(
-        "personalclaw.memory_service.service_for", lambda _m: svc
-    )
+    monkeypatch.setattr("personalclaw.memory_service.service_for", lambda _m: svc)
     sess = _session()
     sess.provider = _FakeProvider([("bash", False)])  # a red herring
     _maybe_after_turn_review(
-        _state_for(svc), sess,
-        user_message="do the thing", assistant_text="done",
-        tool_calls=4, provider=None,
+        _state_for(svc),
+        sess,
+        user_message="do the thing",
+        assistant_text="done",
+        tool_calls=4,
+        provider=None,
     )
     assert svc.get_records(kinds={MemoryKind.PROCEDURAL.value}) == []
     assert sess.provider.drained is False

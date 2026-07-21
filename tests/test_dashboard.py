@@ -127,7 +127,10 @@ class TestNotificationPersistence:
         """Deleting a loop purges its notifications (no dead 'Open goal' links)."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = DashboardState(
-            sessions=MagicMock(count=0), crons=MagicMock(), lessons=MagicMock(), start_time=0.0,
+            sessions=MagicMock(count=0),
+            crons=MagicMock(),
+            lessons=MagicMock(),
+            start_time=0.0,
         )
         state.notify("success", "Goal loop complete", "done", meta={"loop_id": "aaaa1111"})
         state.notify("error", "Goal loop failed", "boom", meta={"loop_id": "bbbb2222"})
@@ -168,7 +171,9 @@ class TestUnreadDerived:
     def _state(self, monkeypatch, tmp_path) -> DashboardState:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         return DashboardState(
-            sessions=MagicMock(count=0), crons=MagicMock(), lessons=MagicMock(),
+            sessions=MagicMock(count=0),
+            crons=MagicMock(),
+            lessons=MagicMock(),
             start_time=0.0,
         )
 
@@ -195,7 +200,9 @@ class TestUnreadDerived:
             {"kind": "cron", "title": "N2", "body": "x", "ts": "t2", "acked": True}
         )
         state = DashboardState(
-            sessions=MagicMock(count=0), crons=MagicMock(), lessons=MagicMock(),
+            sessions=MagicMock(count=0),
+            crons=MagicMock(),
+            lessons=MagicMock(),
             start_time=0.0,
         )
         assert state.unread_count() == 1
@@ -217,9 +224,12 @@ class TestNotificationRemovalBroadcast:
 
     def _state_with_ws(self, monkeypatch, tmp_path):
         from unittest.mock import AsyncMock
+
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = DashboardState(
-            sessions=MagicMock(count=0), crons=MagicMock(), lessons=MagicMock(),
+            sessions=MagicMock(count=0),
+            crons=MagicMock(),
+            lessons=MagicMock(),
             start_time=0.0,
         )
         ws = MagicMock(closed=False)

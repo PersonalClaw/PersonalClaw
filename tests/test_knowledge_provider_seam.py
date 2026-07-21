@@ -42,7 +42,9 @@ def test_create_typed_rejects_unknown_type(store):
 
 def test_create_typed_file_carries_path(store):
     prov = create_native_provider(store)
-    iid = prov.create_typed(item_type="pdf", title="doc", file_path="/tmp/x.pdf", mime_type="application/pdf")
+    iid = prov.create_typed(
+        item_type="pdf", title="doc", file_path="/tmp/x.pdf", mime_type="application/pdf"
+    )
     item = store.get_item(iid)
     assert item["file_path"] == "/tmp/x.pdf"
     assert item["mime_type"] == "application/pdf"
@@ -92,6 +94,7 @@ def test_queue_enqueue_dedups(store):
         q.enqueue("a")  # dup while pending → ignored
         q.enqueue("b")
         return q.qsize()
+
     assert _run(go()) == 2
 
 
@@ -100,14 +103,22 @@ def test_queue_recovers_pending_items_on_start(store):
     on startup — the in-memory queue would otherwise strand them forever."""
     from personalclaw.knowledge.ingest_queue import KnowledgeIngestQueue
 
-    stuck_q = store.create_typed_item(item_type="note", title="Q", content="x", extra={"processing_status": "queued"})
-    stuck_p = store.create_typed_item(item_type="note", title="P", content="y", extra={"processing_status": "processing"})
-    done = store.create_typed_item(item_type="note", title="D", content="z", extra={"processing_status": "done"})
+    stuck_q = store.create_typed_item(
+        item_type="note", title="Q", content="x", extra={"processing_status": "queued"}
+    )
+    stuck_p = store.create_typed_item(
+        item_type="note", title="P", content="y", extra={"processing_status": "processing"}
+    )
+    assert stuck_q and stuck_p  # seeded the stuck rows recover_pending() must re-enqueue
+    done = store.create_typed_item(
+        item_type="note", title="D", content="z", extra={"processing_status": "done"}
+    )
 
     async def go():
         q = KnowledgeIngestQueue(store)
         n = q.recover_pending()
         return n, q.qsize()
+
     n, size = _run(go())
     assert n == 2 and size == 2  # the queued + processing items, not the done one
     assert done  # (referenced)
@@ -120,7 +131,9 @@ def test_queue_processes_item_end_to_end(store):
     ensure_nodes_registered()
 
     async def go():
-        iid = store.create_typed_item(item_type="note", title="N", content="queue body", extra={"processing_status": "queued"})
+        iid = store.create_typed_item(
+            item_type="note", title="N", content="queue body", extra={"processing_status": "queued"}
+        )
         q = KnowledgeIngestQueue(store)
         q.start()
         q.enqueue(iid)
@@ -131,4 +144,5 @@ def test_queue_processes_item_end_to_end(store):
                 break
         q.stop()
         return store.get_item(iid)["processing_status"]
+
     assert _run(go()) == "done"

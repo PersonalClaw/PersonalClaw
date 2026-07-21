@@ -11,11 +11,11 @@ from uuid import uuid4
 
 from aiohttp import web
 
+from personalclaw.dashboard.sse import stream_response
 from personalclaw.knowledge.embedder import create_embedder_from_config, floats_to_bytes
 from personalclaw.knowledge.llm_pool import LLMPool
 from personalclaw.knowledge.media import classify, guess_mime, make_image_thumbnail
 from personalclaw.knowledge.retrieval import HybridRetriever
-from personalclaw.dashboard.sse import stream_response
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 
@@ -53,8 +53,10 @@ def _serialize_entity(row) -> dict:
 def _sel_log(tool: str, **kwargs: object) -> None:
     """Emit SEL audit event for knowledge API mutations."""
     sel().log_tool_invocation(
-        session_key="dashboard", agent="knowledge-api",
-        tool_name=f"knowledge.{tool}", outcome=str(kwargs.pop("outcome", "completed")),
+        session_key="dashboard",
+        agent="knowledge-api",
+        tool_name=f"knowledge.{tool}",
+        outcome=str(kwargs.pop("outcome", "completed")),
         resources=str(kwargs) if kwargs else "",
     )
 
@@ -93,7 +95,6 @@ def _get_embedder(request_or_app):
 
 
 # ---------- Namespaces ----------
-
 
 
 async def list_tags(request: web.Request) -> web.Response:
@@ -142,14 +143,15 @@ async def list_items(request: web.Request) -> web.Response:
         # Searching WITHIN the Archived view must find archived items (the no-query
         # Archived list shows them; a search there should too). Default hides them.
         include_archived = request.query.get("include_archived") in ("1", "true", "yes")
-        all_results = retriever.search(q, limit=limit * 3, include_archived=include_archived)  # over-fetch to allow filtering
+        all_results = retriever.search(
+            q, limit=limit * 3, include_archived=include_archived
+        )  # over-fetch to allow filtering
         # Batch fetch all candidate items (avoid N+1)
         result_ids = [r["id"] for r in all_results]
         if result_ids:
             placeholders = ",".join("?" * len(result_ids))
             rows = store.db.execute(
-                f"SELECT * FROM items WHERE id IN ({placeholders})",  # noqa: S608
-                result_ids
+                f"SELECT * FROM items WHERE id IN ({placeholders})", result_ids  # noqa: S608
             ).fetchall()
             items_by_id = {row["id"]: _list_item(store, row) for row in rows}
         else:
@@ -170,7 +172,7 @@ async def list_items(request: web.Request) -> web.Response:
             filtered.append(item)
         total = len(filtered)
         offset = (page - 1) * limit
-        items = filtered[offset:offset + limit]
+        items = filtered[offset : offset + limit]
         return web.json_response({"items": items, "total": total, "page": page, "limit": limit})
     else:
         where, params = ["1=1"], []  # type: list[str], list[object]
@@ -188,16 +190,17 @@ async def list_items(request: web.Request) -> web.Response:
         # include_archived=1 to see them.
         if request.query.get("include_archived") not in ("1", "true", "yes"):
             where.append("COALESCE(i.is_archived, 0) = 0")
-        where_clause = ' AND '.join(where)
+        where_clause = " AND ".join(where)
         total = store.db.execute(
-            f"SELECT COUNT(*) FROM items i WHERE {where_clause}",  # noqa: S608
-            params).fetchone()[0]
+            f"SELECT COUNT(*) FROM items i WHERE {where_clause}", params  # noqa: S608
+        ).fetchone()[0]
         offset = (page - 1) * limit
         # Pinned items float to top; then most-recently-updated. (Native items have
         # no source row, so order by the item's own timestamp, not the source's.)
         rows = store.db.execute(
             f"SELECT i.* FROM items i WHERE {where_clause} ORDER BY COALESCE(i.is_pinned, 0) DESC, i.updated_at DESC LIMIT ? OFFSET ?",  # noqa: S608, E501
-            [*params, limit, offset]).fetchall()
+            [*params, limit, offset],
+        ).fetchall()
         items = [_list_item(store, r) for r in rows]
         return web.json_response({"items": items, "total": total, "page": page, "limit": limit})
 
@@ -205,8 +208,18 @@ async def list_items(request: web.Request) -> web.Response:
 # The 12 typed item kinds (knowledge-entity-vision). text-ish types author content
 # directly; bookmark records a url; media types arrive via /ingest (file upload).
 _KNOWLEDGE_TYPES = {
-    "note", "fleeting", "journal", "gist", "bookmark",
-    "image", "audio", "video", "pdf", "document", "sheet", "slides",
+    "note",
+    "fleeting",
+    "journal",
+    "gist",
+    "bookmark",
+    "image",
+    "audio",
+    "video",
+    "pdf",
+    "document",
+    "sheet",
+    "slides",
 }
 # Types authorable via JSON create (text bodies + a bookmark URL). Media/document
 # types carry file bytes, so they can ONLY be created through /ingest — creating one
@@ -231,7 +244,9 @@ async def create_item(request: web.Request) -> web.Response:
         return web.json_response({"error": f"unknown type {item_type!r}"}, status=400)
     if item_type not in _AUTHORABLE_TYPES:
         return web.json_response(
-            {"error": f"'{item_type}' items are created by uploading a file to /ingest, not authored directly"},
+            {
+                "error": f"'{item_type}' items are created by uploading a file to /ingest, not authored directly"  # noqa: E501
+            },
             status=400,
         )
     title = str(body.get("title") or "").strip()
@@ -244,13 +259,15 @@ async def create_item(request: web.Request) -> web.Response:
         # because they can't be scraped and because a stored javascript:/data: URL is an
         # XSS vector if ever rendered as a clickable link.
         from urllib.parse import urlsplit
+
         try:
             scheme = urlsplit(url).scheme.lower()
         except ValueError:
             scheme = ""
         if scheme not in ("http", "https"):
             return web.json_response(
-                {"error": "bookmark url must be an http(s) web address"}, status=400)
+                {"error": "bookmark url must be an http(s) web address"}, status=400
+            )
     if not title and not content.strip() and not url:
         return web.json_response({"error": "title, content, or url required"}, status=400)
     if not title:
@@ -258,6 +275,7 @@ async def create_item(request: web.Request) -> web.Response:
             # Journals are date-driven records — enrichment never AI-titles them, so a
             # blank title becomes the entry's date rather than a truncated content slug.
             from datetime import datetime
+
             title = datetime.now().strftime("%B %-d, %Y")
         else:
             title = url or content[:60].strip() or "Untitled"
@@ -278,7 +296,11 @@ async def create_item(request: web.Request) -> web.Response:
     # stages now own insights + embed).
     provider = request.app["state"].knowledge_provider()
     item_id = provider.create_typed(
-        item_type=item_type, title=title, content=content, tags=tags, url=url,
+        item_type=item_type,
+        title=title,
+        content=content,
+        tags=tags,
+        url=url,
         summary=str(body.get("summary") or ""),
         gist_language=str(body.get("gist_language") or "") if item_type == "gist" else "",
     )
@@ -324,7 +346,10 @@ async def regenerate_intelligence(request: web.Request) -> web.Response:
 
     # Archived items are excluded — batch re-enrichment shouldn't spend model calls on
     # content the user has put away (consistent with retrieval hiding archived items).
-    where, params = ["status = 'active'", "COALESCE(is_archived, 0) = 0"], []  # type: list[str], list[object]
+    where, params = [
+        "status = 'active'",
+        "COALESCE(is_archived, 0) = 0",
+    ], []  # type: list[str], list[object]
     if scope == "missing":
         # Items whose intelligence never landed (empty/absent insights JSON).
         where.append("(insights IS NULL OR insights = '' OR insights = '{}')")
@@ -359,7 +384,9 @@ def _hash_file(path) -> str:
         return ""
 
 
-def _store_file_item(store, tmp_path: str, filename: str, mime: str | None = None) -> dict:
+def _store_file_item(
+    store, tmp_path: str, filename: str, mime: str | None = None
+) -> tuple[dict | None, bool]:
     """Persist an uploaded file under the knowledge files dir as ONE logical-doc
     typed item (image/audio/video/pdf/document/sheet/slides) pointing at it (+ a
     thumbnail for images), queued for node-graph ingestion. One item = one file —
@@ -388,7 +415,9 @@ def _store_file_item(store, tmp_path: str, filename: str, mime: str | None = Non
             if existing:
                 return existing, False
         new_id = store.create_typed_item(
-            item_type="gist", title=filename, content=code,
+            item_type="gist",
+            title=filename,
+            content=code,
             extra={
                 "gist_language": lang,
                 "file_metadata": {"content_hash": content_hash} if content_hash else {},
@@ -426,10 +455,14 @@ def _store_file_item(store, tmp_path: str, filename: str, mime: str | None = Non
             thumb_path = str(thumb)
 
     new_id = store.create_typed_item(
-        item_type=item_type, title=filename, content="",
+        item_type=item_type,
+        title=filename,
+        content="",
         extra={
-            "file_path": str(dest), "mime_type": mime_type,
-            "file_size": size, "thumbnail_path": thumb_path,
+            "file_path": str(dest),
+            "mime_type": mime_type,
+            "file_size": size,
+            "thumbnail_path": thumb_path,
             # original_filename lets enrichment tell a filename-seeded title (fair game
             # for AI-title promotion) from a user-authored one (never clobbered).
             "file_metadata": {
@@ -470,12 +503,16 @@ def _serve_item_path(store, item_id: str, *, thumbnail: bool) -> tuple[Path | No
         return resolved, "image/webp"
     mime = guess_mime(resolved.name)
     stored = (item.get("mime_type") or "").strip()
-    if stored and stored.split("/", 1)[0] in ("audio", "video") and stored.split("/", 1)[0] != mime.split("/", 1)[0]:
+    if (
+        stored
+        and stored.split("/", 1)[0] in ("audio", "video")
+        and stored.split("/", 1)[0] != mime.split("/", 1)[0]
+    ):
         mime = stored
     return resolved, mime
 
 
-async def get_item_file(request: web.Request) -> web.Response:
+async def get_item_file(request: web.Request) -> web.StreamResponse:
     """GET /api/knowledge/items/{id}/file -- serve a media item's original bytes."""
     path, mime = _serve_item_path(_store(request), request.match_info["id"], thumbnail=False)
     if path is None:
@@ -483,7 +520,7 @@ async def get_item_file(request: web.Request) -> web.Response:
     return web.FileResponse(path, headers={"Content-Type": mime})
 
 
-async def get_item_thumbnail(request: web.Request) -> web.Response:
+async def get_item_thumbnail(request: web.Request) -> web.StreamResponse:
     """GET /api/knowledge/items/{id}/thumbnail -- serve a generated thumbnail (image/webp)."""
     path, mime = _serve_item_path(_store(request), request.match_info["id"], thumbnail=True)
     if path is None:
@@ -507,7 +544,9 @@ async def get_item(request: web.Request) -> web.Response:
     if not item:
         return web.json_response({"error": "not found"}, status=404)
 
-    mentions = store.db.execute("SELECT entity_id, context FROM mentions WHERE item_id = ?", (item_id,)).fetchall()
+    mentions = store.db.execute(
+        "SELECT entity_id, context FROM mentions WHERE item_id = ?", (item_id,)
+    ).fetchall()
     entity_ids = [m["entity_id"] for m in mentions]
     entities = []
     for eid in entity_ids:
@@ -521,13 +560,18 @@ async def get_item(request: web.Request) -> web.Response:
     seen_ids = set()
     for eid in entity_ids:
         for row in store.db.execute(
-                "SELECT * FROM entity_relations WHERE source_id = ? OR target_id = ?", (eid, eid)):
+            "SELECT * FROM entity_relations WHERE source_id = ? OR target_id = ?", (eid, eid)
+        ):
             r = dict(row)
             if r["id"] not in seen_ids:
                 seen_ids.add(r["id"])
                 # Resolve entity names for display
-                src = store.db.execute("SELECT name FROM entities WHERE id = ?", (r["source_id"],)).fetchone()
-                tgt = store.db.execute("SELECT name FROM entities WHERE id = ?", (r["target_id"],)).fetchone()
+                src = store.db.execute(
+                    "SELECT name FROM entities WHERE id = ?", (r["source_id"],)
+                ).fetchone()
+                tgt = store.db.execute(
+                    "SELECT name FROM entities WHERE id = ?", (r["target_id"],)
+                ).fetchone()
                 r["source_name"] = src["name"] if src else r["source_id"]
                 r["target_name"] = tgt["name"] if tgt else r["target_id"]
                 # A relation's description is LLM-derived — scrub credentials/exfil URLs.
@@ -551,8 +595,18 @@ async def update_item(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
     allowed = {
-        "tags", "item_type", "status", "title", "summary", "content",
-        "url", "url_title", "url_description", "is_pinned", "is_archived", "gist_language",
+        "tags",
+        "item_type",
+        "status",
+        "title",
+        "summary",
+        "content",
+        "url",
+        "url_title",
+        "url_description",
+        "is_pinned",
+        "is_archived",
+        "gist_language",
     }
     fields = {k: v for k, v in body.items() if k in allowed}
     # A url edit must stay an http(s) web address — same guard as create, so an edit
@@ -560,20 +614,23 @@ async def update_item(request: web.Request) -> web.Response:
     # create rejects.
     if "url" in fields and str(fields["url"]).strip():
         from urllib.parse import urlsplit
+
         try:
             scheme = urlsplit(str(fields["url"]).strip()).scheme.lower()
         except ValueError:
             scheme = ""
         if scheme not in ("http", "https"):
-            return web.json_response(
-                {"error": "url must be an http(s) web address"}, status=400)
+            return web.json_response({"error": "url must be an http(s) web address"}, status=400)
     # Journal immutability (knowledge-entity vision): a journal is an append-only
     # record — its body can be edited on its creation day, but not after. Reject a
     # content/title edit to a journal whose creation day has passed. Pin/archive/tags
     # (curation metadata, not the record itself) stay editable.
-    if (existing.get("item_type") or existing.get("type")) == "journal" and ("content" in fields or "title" in fields):
+    if (existing.get("item_type") or existing.get("type")) == "journal" and (
+        "content" in fields or "title" in fields
+    ):
         created = str(existing.get("created_at") or "")[:10]
         from datetime import datetime
+
         today = datetime.now().isoformat()[:10]
         if created and created != today:
             return web.json_response(
@@ -641,6 +698,7 @@ async def delete_item(request: web.Request) -> web.Response:
     # into the files dir and are tracked in NO column — so a plain file_path unlink leaked
     # a video's frames + split audio on every delete. Sweep by the "<item_id>." prefix.
     from personalclaw.knowledge import knowledge_files_dir
+
     files_root = Path(knowledge_files_dir()).resolve()
     victims = [item.get("file_path"), item.get("thumbnail_path")]
     try:
@@ -691,7 +749,8 @@ async def list_entities(request: web.Request) -> web.Response:
         params.append(f"%{q}%")
     params.append(limit)
     rows = store.db.execute(
-        f"SELECT * FROM entities WHERE {' AND '.join(where)} ORDER BY name LIMIT ?", params).fetchall()  # noqa: S608
+        f"SELECT * FROM entities WHERE {' AND '.join(where)} ORDER BY name LIMIT ?", params
+    ).fetchall()  # noqa: S608
     return web.json_response([_serialize_entity(r) for r in rows])
 
 
@@ -726,17 +785,23 @@ async def get_entity_related(request: web.Request) -> web.Response:
         d = dict(row)
         other_id = d["target_id"] if d["source_id"] == eid else d["source_id"]
         outgoing = d["source_id"] == eid
-        other = store.db.execute("SELECT name, entity_type FROM entities WHERE id = ?", (other_id,)).fetchone()
+        other = store.db.execute(
+            "SELECT name, entity_type FROM entities WHERE id = ?", (other_id,)
+        ).fetchone()
         if not other:
             continue
         key = (other_id, d.get("relation_type"), outgoing)
         if key in seen:
             continue
         seen.add(key)
-        out.append({
-            "name": other["name"], "entity_type": other["entity_type"],
-            "relation_type": d.get("relation_type") or "related", "outgoing": outgoing,
-        })
+        out.append(
+            {
+                "name": other["name"],
+                "entity_type": other["entity_type"],
+                "relation_type": d.get("relation_type") or "related",
+                "outgoing": outgoing,
+            }
+        )
     return web.json_response({"related": out})
 
 
@@ -771,8 +836,12 @@ async def get_related_items(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid limit"}, status=400)
 
     # Find entities mentioned in this item
-    entity_ids = [r["entity_id"] for r in store.db.execute(
-        "SELECT entity_id FROM mentions WHERE item_id = ?", (item_id,)).fetchall()]
+    entity_ids = [
+        r["entity_id"]
+        for r in store.db.execute(
+            "SELECT entity_id FROM mentions WHERE item_id = ?", (item_id,)
+        ).fetchall()
+    ]
     if not entity_ids:
         return web.json_response([])
 
@@ -784,9 +853,11 @@ async def get_related_items(request: web.Request) -> web.Response:
         f"WHERE m.entity_id IN ({placeholders}) AND i.id != ? AND i.status = 'active' "
         f"AND COALESCE(i.is_archived, 0) = 0 "
         f"GROUP BY i.id ORDER BY shared_entities DESC LIMIT ?",
-        [*entity_ids, item_id, limit]
+        [*entity_ids, item_id, limit],
     ).fetchall()
-    return web.json_response([{**store._serialize_item(r), "shared_entities": r["shared_entities"]} for r in rows])
+    return web.json_response(
+        [{**store._serialize_item(r), "shared_entities": r["shared_entities"]} for r in rows]
+    )
 
 
 async def get_full_graph(request: web.Request) -> web.Response:
@@ -796,14 +867,25 @@ async def get_full_graph(request: web.Request) -> web.Response:
         limit = min(200, max(1, int(request.query.get("limit", 100) or 100)))
     except ValueError:
         return web.json_response({"error": "invalid limit"}, status=400)
-    nodes_by_degree = sorted(store.graph.nodes, key=lambda n: store.graph.degree(n), reverse=True)[:limit]
+    nodes_by_degree = sorted(store.graph.nodes, key=lambda n: store.graph.degree(n), reverse=True)[
+        :limit
+    ]
     if not nodes_by_degree:
         return web.json_response({"nodes": [], "edges": []})
     node_set = set(nodes_by_degree)
-    nodes = [{"id": n, "name": store.graph.nodes[n].get("name"), "type": store.graph.nodes[n].get("entity_type")}
-             for n in node_set]
-    edges = [{"source": u, "target": v, "type": d.get("relation_type"), "weight": d.get("weight")}
-             for u, v, d in store.graph.edges(data=True) if u in node_set and v in node_set]
+    nodes = [
+        {
+            "id": n,
+            "name": store.graph.nodes[n].get("name"),
+            "type": store.graph.nodes[n].get("entity_type"),
+        }
+        for n in node_set
+    ]
+    edges = [
+        {"source": u, "target": v, "type": d.get("relation_type"), "weight": d.get("weight")}
+        for u, v, d in store.graph.edges(data=True)
+        if u in node_set and v in node_set
+    ]
     return web.json_response({"nodes": nodes, "edges": edges})
 
 
@@ -834,7 +916,9 @@ async def get_stats(request: web.Request) -> web.Response:
     stats = store.get_stats()
     embedder = _get_embedder(request)
     if embedder:
-        embedded_count = store.db.execute("SELECT COUNT(*) FROM items WHERE embedding IS NOT NULL").fetchone()[0]
+        embedded_count = store.db.execute(
+            "SELECT COUNT(*) FROM items WHERE embedding IS NOT NULL"
+        ).fetchone()[0]
         stats["embeddings"] = {
             "enabled": True,
             "provider": type(embedder).__name__.lower().replace("embedder", ""),
@@ -866,7 +950,7 @@ async def ingest_file(request: web.Request) -> web.Response:
         field = await reader.next()
     except Exception:
         return web.json_response({"error": "expected a multipart 'file' upload"}, status=400)
-    if not field or not hasattr(field, "read_chunk") or field.name != "file":  # type: ignore[union-attr]
+    if not field or not hasattr(field, "read_chunk") or field.name != "file":  # type: ignore[union-attr]  # noqa: E501
         return web.json_response({"error": "missing 'file' field"}, status=400)
 
     filename = getattr(field, "filename", None) or "upload"
@@ -890,7 +974,9 @@ async def ingest_file(request: web.Request) -> web.Response:
                 tmp.close()
                 Path(tmp.name).unlink(missing_ok=True)
                 return web.json_response(
-                    {"error": check_upload(filename, upload_mime, size=total_size).reason}, status=413)
+                    {"error": check_upload(filename, upload_mime, size=total_size).reason},
+                    status=413,
+                )
             tmp.write(chunk)
         tmp.close()
 
@@ -912,6 +998,8 @@ async def ingest_file(request: web.Request) -> web.Response:
             return web.json_response({"error": f"unsupported file type: {filename}"}, status=415)
         item, is_new = _store_file_item(store, tmp.name, filename, mime=upload_mime)
         Path(tmp.name).unlink(missing_ok=True)
+        if item is None:
+            return web.json_response({"error": "failed to store item"}, status=500)
         if is_new:
             # Only a freshly-stored file needs ingestion; a dedup hit is already enriched.
             try:
@@ -919,11 +1007,14 @@ async def ingest_file(request: web.Request) -> web.Response:
             except Exception:
                 logger.debug("file enqueue failed for %s", item["id"], exc_info=True)
         _sel_log("ingest", filename=filename, item_id=item["id"], deduped=not is_new)
-        return web.json_response({
-            "item_id": item["id"], "type": item["type"],
-            "status": "processing" if is_new else (item.get("processing_status") or "done"),
-            "deduped": not is_new,
-        })
+        return web.json_response(
+            {
+                "item_id": item["id"],
+                "type": item["type"],
+                "status": "processing" if is_new else (item.get("processing_status") or "done"),
+                "deduped": not is_new,
+            }
+        )
     except Exception:
         logger.exception("Ingestion failed for %s", filename)
         Path(tmp.name).unlink(missing_ok=True)
@@ -937,25 +1028,27 @@ async def get_embedding_status(request: web.Request) -> web.Response:
     """GET /api/knowledge/embedding/status -- embedding config and progress."""
     store = _store(request)
     embedder = _get_embedder(request)
-    total = store.db.execute(
-        "SELECT COUNT(*) as c FROM items WHERE status = 'active'"
-    ).fetchone()["c"]
+    total = store.db.execute("SELECT COUNT(*) as c FROM items WHERE status = 'active'").fetchone()[
+        "c"
+    ]
     embedded = store.db.execute(
         "SELECT COUNT(*) as c FROM items WHERE status = 'active' AND embedding IS NOT NULL"
     ).fetchone()["c"]
     # Stale-model items count as 'embedded' but are vector-dead until re-embedded (their
     # vector dimension != the active model's; retrieval skips mismatches). Surface the
     # count so the UI can prompt a re-embed after a model switch.
-    return web.json_response({
-        "enabled": embedder is not None,
-        "available": embedder.is_available() if embedder else False,
-        # UnifiedEmbedder exposes model_name (the active embedding selection), not
-        # a `.model` attribute — same fix as get_stats (split-era embedder unify).
-        "model": embedder.model_name if embedder else None,
-        "total_items": total,
-        "embedded_items": embedded,
-        "stale_items": _stale_embedding_count(store, embedder),
-    })
+    return web.json_response(
+        {
+            "enabled": embedder is not None,
+            "available": embedder.is_available() if embedder else False,
+            # UnifiedEmbedder exposes model_name (the active embedding selection), not
+            # a `.model` attribute — same fix as get_stats (split-era embedder unify).
+            "model": embedder.model_name if embedder else None,
+            "total_items": total,
+            "embedded_items": embedded,
+            "stale_items": _stale_embedding_count(store, embedder),
+        }
+    )
 
 
 async def batch_embed_items(request: web.Request) -> web.Response:
@@ -978,7 +1071,7 @@ async def batch_embed_items(request: web.Request) -> web.Response:
         ).fetchall()
     else:
         rows = store.db.execute(
-            "SELECT id, title, summary, content FROM items WHERE status = 'active' AND embedding IS NULL"
+            "SELECT id, title, summary, content FROM items WHERE status = 'active' AND embedding IS NULL"  # noqa: E501
         ).fetchall()
 
     loop = asyncio.get_running_loop()
@@ -990,8 +1083,8 @@ async def batch_embed_items(request: web.Request) -> web.Response:
         )
         if vec:
             store.db.execute(
-                "UPDATE items SET embedding = ? WHERE id = ?",
-                (floats_to_bytes(vec), row["id"]))
+                "UPDATE items SET embedding = ? WHERE id = ?", (floats_to_bytes(vec), row["id"])
+            )
             embedded += 1
         else:
             # Surface which item failed to embed — a silent skip here left items
@@ -1000,7 +1093,8 @@ async def batch_embed_items(request: web.Request) -> web.Response:
             failed += 1
             logger.warning(
                 "batch_embed: no vector for item %s (title=%r) — skipped",
-                row["id"], (row["title"] or "")[:60],
+                row["id"],
+                (row["title"] or "")[:60],
             )
 
     store.db.commit()
@@ -1052,7 +1146,9 @@ async def search_for_context(request: web.Request) -> web.Response:
     # Optional per-request token budget override, clamped to a hard ceiling so a
     # caller can't request an unbounded context dump.
     try:
-        max_tokens = max(1, min(int(request.query.get("max_tokens", max_tokens)), _CONTEXT_MAX_TOKENS_CEILING))
+        max_tokens = max(
+            1, min(int(request.query.get("max_tokens", max_tokens)), _CONTEXT_MAX_TOKENS_CEILING)
+        )
     except ValueError:
         pass
 
@@ -1074,35 +1170,43 @@ async def search_for_context(request: web.Request) -> web.Response:
         # matches: cap each card at an even share of the budget remaining across the
         # still-unprocessed results. The last result may use all that's left.
         remaining_results = len(results) - idx
-        per_card_cap = max(1, remaining_budget // remaining_results) if remaining_results > 1 else remaining_budget
+        per_card_cap = (
+            max(1, remaining_budget // remaining_results)
+            if remaining_results > 1
+            else remaining_budget
+        )
         allowed = min(remaining_budget, per_card_cap)
         if tokens > allowed:
-            content = content[:allowed * 4]
+            content = content[: allowed * 4]
             tokens = allowed
-        cards.append({
-            "id": r["id"],
-            "title": _redact(r["title"]) or "(untitled)",
-            "provider": r.get("provider", "native"),
-            "match_type": r.get("match_type", "keyword"),
-            "tokens": tokens,
-            "summary": _redact(r.get("summary")) or content[:200],
-            "content": content,
-            # P12 per-item citation locator — so a chat-injection card can deep-link + cite
-            # where in the source the match sits, not just name the document.
-            "source_type": r.get("source_type"),
-            "section": r.get("section"),
-            "line_range": r.get("line_range"),
-            "deep_link": r.get("deep_link"),
-        })
+        cards.append(
+            {
+                "id": r["id"],
+                "title": _redact(r["title"]) or "(untitled)",
+                "provider": r.get("provider", "native"),
+                "match_type": r.get("match_type", "keyword"),
+                "tokens": tokens,
+                "summary": _redact(r.get("summary")) or content[:200],
+                "content": content,
+                # P12 per-item citation locator — so a chat-injection card can deep-link + cite
+                # where in the source the match sits, not just name the document.
+                "source_type": r.get("source_type"),
+                "section": r.get("section"),
+                "line_range": r.get("line_range"),
+                "deep_link": r.get("deep_link"),
+            }
+        )
         total_tokens += tokens
 
     _sel_log("search_for_context", query=q, results=len(cards))
-    return web.json_response({
-        "query": q,
-        "results": cards,
-        "total_tokens": total_tokens,
-        "max_tokens": max_tokens,
-    })
+    return web.json_response(
+        {
+            "query": q,
+            "results": cards,
+            "total_tokens": total_tokens,
+            "max_tokens": max_tokens,
+        }
+    )
 
 
 def _intent_store(request: web.Request):
@@ -1170,10 +1274,12 @@ async def list_intent_outcomes(request: web.Request) -> web.Response:
     intent = _intent_store(request).get(intent_id)
     if intent is None:
         return web.json_response({"error": "not found"}, status=404)
-    return web.json_response({
-        "intent": intent.to_dict(),
-        "outcomes": _store(request).outcomes_for_intent(intent_id),
-    })
+    return web.json_response(
+        {
+            "intent": intent.to_dict(),
+            "outcomes": _store(request).outcomes_for_intent(intent_id),
+        }
+    )
 
 
 async def list_item_intents(request: web.Request) -> web.Response:
@@ -1197,8 +1303,9 @@ async def _run_intent_retroactive(app: web.Application, intent_id: str) -> dict:
     """Run one intent against every existing active item; record relevant outcomes.
     Returns {matched, new}: total items that matched, and how many were NEW matches
     (didn't already have an outcome for this intent) — so a re-run reports honestly."""
-    from personalclaw.knowledge.intents import IntentStore, match_intent
     from pathlib import Path
+
+    from personalclaw.knowledge.intents import IntentStore, match_intent
 
     store = app["state"].knowledge_store
     db_path = getattr(store, "db_path", "") or ""
@@ -1213,7 +1320,9 @@ async def _run_intent_retroactive(app: web.Application, intent_id: str) -> dict:
         "SELECT * FROM items WHERE status = 'active' AND COALESCE(is_archived,0)=0"
     ).fetchall()
     candidates = [store._serialize_item(r) for r in rows]
-    candidates = [it for it in candidates if intent.applies_to(it.get("item_type") or it.get("type") or "")]
+    candidates = [
+        it for it in candidates if intent.applies_to(it.get("item_type") or it.get("type") or "")
+    ]
 
     # Match items concurrently (bounded) instead of one sequential LLM call per item —
     # a retroactive run over a large library would otherwise be O(N) round-trips.
@@ -1224,7 +1333,10 @@ async def _run_intent_retroactive(app: web.Application, intent_id: str) -> dict:
             # raise_on_error: a model failure (cold pool, timeout) must be counted as
             # an error, not silently folded into "not relevant" → a misleading 0-match.
             return it, await match_intent(
-                intent, _consolidated_text(store, it), pool=pool, raise_on_error=True,
+                intent,
+                _consolidated_text(store, it),
+                pool=pool,
+                raise_on_error=True,
             )
 
     results = await asyncio.gather(*(_match(it) for it in candidates), return_exceptions=True)
@@ -1241,9 +1353,12 @@ async def _run_intent_retroactive(app: web.Application, intent_id: str) -> dict:
         if match is None:
             continue
         store.record_intent_outcome(
-            intent.id, intent_name=intent.goal, item_id=it["id"],
+            intent.id,
+            intent_name=intent.goal,
+            item_id=it["id"],
             item_title=it.get("title") or it.get("ai_title") or "",
-            takeaway=match.takeaway, fields=match.fields,
+            takeaway=match.takeaway,
+            fields=match.fields,
         )
         matched += 1
         if it["id"] not in prior:
@@ -1259,14 +1374,19 @@ async def run_intent(request: web.Request) -> web.Response:
         return web.json_response({"error": "not found"}, status=404)
     counts = await _run_intent_retroactive(request.app, intent_id)
     _sel_log("intent.run", intent_id=intent_id, **counts)
-    return web.json_response({
-        # `recorded` kept as an alias of total matched (back-compat); `new`/`matched`
-        # let the UI report new-vs-re-matched honestly on a re-run. `errors`/`evaluated`
-        # distinguish "model couldn't evaluate" (e.g. cold pool) from "nothing matched".
-        "recorded": counts["matched"], "matched": counts["matched"], "new": counts["new"],
-        "errors": counts.get("errors", 0), "evaluated": counts.get("evaluated", 0),
-        "outcomes": _store(request).outcomes_for_intent(intent_id),
-    })
+    return web.json_response(
+        {
+            # `recorded` kept as an alias of total matched (back-compat); `new`/`matched`
+            # let the UI report new-vs-re-matched honestly on a re-run. `errors`/`evaluated`
+            # distinguish "model couldn't evaluate" (e.g. cold pool) from "nothing matched".
+            "recorded": counts["matched"],
+            "matched": counts["matched"],
+            "new": counts["new"],
+            "errors": counts.get("errors", 0),
+            "evaluated": counts.get("evaluated", 0),
+            "outcomes": _store(request).outcomes_for_intent(intent_id),
+        }
+    )
 
 
 def _slugify_intent(intent_id: str, goal: str) -> str:
@@ -1291,7 +1411,7 @@ def _parse_skill_sections(resp: str) -> dict:
         out["triggers"] = m.group(1).strip().strip("*").strip()
     procs = list(re.finditer(r"\**PROCEDURE\**:\s*\n?", resp, re.I))
     if procs:
-        out["procedure"] = resp[procs[-1].end():].strip()
+        out["procedure"] = resp[procs[-1].end() :].strip()
     elif not out.get("description") and resp.strip():
         # No headers at all → treat the whole response as the procedure body.
         out["procedure"] = resp.strip()
@@ -1314,7 +1434,9 @@ async def generate_skill_from_intent(request: web.Request) -> web.Response:
     outcomes = store.outcomes_for_intent(intent_id)
     if not outcomes:
         return web.json_response(
-            {"error": "Nothing gathered yet — run the intent over your items first, then generate a skill."},
+            {
+                "error": "Nothing gathered yet — run the intent over your items first, then generate a skill."  # noqa: E501
+            },
             status=400,
         )
 
@@ -1322,13 +1444,17 @@ async def generate_skill_from_intent(request: web.Request) -> web.Response:
     # call and give a precise, actionable message (the prior ambiguous 409 conflated
     # "already exists" with "invalid name").
     from personalclaw.skills.loader import AUTO_SKILL_NAMESPACE, SkillsLoader
+
     _loader = SkillsLoader()
     _slug = _slugify_intent(intent_id, intent.goal)
     _existing = f"{AUTO_SKILL_NAMESPACE}/{_slug}"
     if (_loader._dir / _existing).exists():
         return web.json_response(
-            {"error": f"A skill for this intent already exists — find \"{_existing}\" under Skills.",
-             "skill": _existing, "already_exists": True},
+            {
+                "error": f'A skill for this intent already exists — find "{_existing}" under Skills.',  # noqa: E501
+                "skill": _existing,
+                "already_exists": True,
+            },
             status=409,
         )
 
@@ -1336,7 +1462,7 @@ async def generate_skill_from_intent(request: web.Request) -> web.Response:
     lines = []
     for o in outcomes[:30]:
         flds = "; ".join(f"{f.get('name')}={f.get('value')}" for f in (o.get("fields") or [])[:6])
-        lines.append(f"- {o.get('takeaway','')}" + (f" ({flds})" if flds else ""))
+        lines.append(f"- {o.get('takeaway', '')}" + (f" ({flds})" if flds else ""))
     digest = "\n".join(lines)
     # A delimited-section contract (not JSON): the procedure is multi-line markdown,
     # which an LLM routinely emits with raw newlines that break strict JSON parsing.
@@ -1344,10 +1470,16 @@ async def generate_skill_from_intent(request: web.Request) -> web.Response:
     # prompt (bindable in Settings → Prompts), rendered with the goal + digest.
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
-    prompt = render_use_case_prompt("knowledge_skill_synthesis", {
-        "goal": intent.goal,
-        "digest": digest,
-    }) or ""
+    prompt = (
+        render_use_case_prompt(
+            "knowledge_skill_synthesis",
+            {
+                "goal": intent.goal,
+                "digest": digest,
+            },
+        )
+        or ""
+    )
     pool = request.app.get("knowledge_llm_pool")
     if not pool:
         return web.json_response({"error": "No model available to synthesize a skill."}, status=503)
@@ -1358,28 +1490,35 @@ async def generate_skill_from_intent(request: web.Request) -> web.Response:
         resp = ""
     parts = _parse_skill_sections(resp or "")
     if not parts.get("procedure"):
-        return web.json_response({"error": "Could not synthesize a skill from the gathered outcomes."}, status=502)
+        return web.json_response(
+            {"error": "Could not synthesize a skill from the gathered outcomes."}, status=502
+        )
 
     from datetime import datetime
 
     from personalclaw.skills.loader import AutoSkillProvenance
+
     now = datetime.now().isoformat()
     name = _loader.create_auto_skill(
         _slug,
-        description=_redact(parts.get("description") or intent.goal)[:200],
+        description=(_redact(parts.get("description") or intent.goal) or "")[:200],
         triggers=parts.get("triggers", ""),
-        procedure_md=_redact(parts["procedure"]),
+        procedure_md=_redact(parts["procedure"]) or "",
         provenance=AutoSkillProvenance(session_key=f"intent:{intent_id}", created_at=now),
     )
     if name is None:
         # Existence was pre-checked above, so this is an invalid slug or an oversized
         # procedure — a synthesis-quality problem, not a duplicate.
         return web.json_response(
-            {"error": "Couldn't save the skill — the synthesized procedure was invalid or too large."},
+            {
+                "error": "Couldn't save the skill — the synthesized procedure was invalid or too large."  # noqa: E501
+            },
             status=422,
         )
     _sel_log("intent.generate_skill", intent_id=intent_id, skill=name)
-    return web.json_response({"skill": name, "description": parts.get("description", "")}, status=201)
+    return web.json_response(
+        {"skill": name, "description": parts.get("description", "")}, status=201
+    )
 
 
 async def get_extracted_contents(request: web.Request) -> web.Response:
@@ -1410,14 +1549,21 @@ async def get_item_graph(request: web.Request) -> web.Response:
     try:
         from personalclaw.knowledge.pipeline import ensure_nodes_registered
         from personalclaw.knowledge.pipeline.graphs import graph_for
+
         ensure_nodes_registered()
         g = graph_for(item_type)
     except Exception:
         logger.debug("graph shape lookup failed for %s", item_type, exc_info=True)
         return web.json_response({"item_type": item_type, "nodes": [], "edges": []})
 
-    nodes = [{"node_type": ns.node_type, "backend": ns.backend, "model_backed": ns.uses_use_case is not None}
-             for ns in g.nodes.values()]
+    nodes = [
+        {
+            "node_type": ns.node_type,
+            "backend": ns.backend,
+            "model_backed": ns.uses_use_case is not None,
+        }
+        for ns in g.nodes.values()
+    ]
     # Dedup edges by (from, to): a node can be reached by multiple conditional routes
     # (e.g. video_classify→vision for both 'visual' and 'talking-head' verdicts), which
     # the shape view collapses to one line (the `when` condition isn't surfaced here).
@@ -1442,7 +1588,14 @@ async def get_item_graph(request: web.Request) -> web.Response:
     leaves = [nt for nt in g.nodes if not g.successors(nt)]
     prev_leaves = leaves or list(g.nodes)
     for stage in _TERMINAL_STAGES:
-        nodes.append({"node_type": stage, "backend": "", "model_backed": stage in ("insights", "entities", "intents"), "terminal": True})
+        nodes.append(
+            {
+                "node_type": stage,
+                "backend": "",
+                "model_backed": stage in ("insights", "entities", "intents"),
+                "terminal": True,
+            }
+        )
         for p in prev_leaves:
             edges.append({"from": p, "to": stage})
         prev_leaves = [stage]
@@ -1450,14 +1603,18 @@ async def get_item_graph(request: web.Request) -> web.Response:
     # UI uses these on reload instead of reconstructing from processing_error, so a
     # skipped node reads as skipped (not falsely 'done'). Absent until first ingest.
     node_phases = (item.get("file_metadata") or {}).get("node_phases") or {}
-    return web.json_response({
-        "item_type": item_type, "nodes": nodes, "edges": edges,
-        "processing_status": item.get("processing_status", ""),
-        "node_phases": node_phases,
-    })
+    return web.json_response(
+        {
+            "item_type": item_type,
+            "nodes": nodes,
+            "edges": edges,
+            "processing_status": item.get("processing_status", ""),
+            "node_phases": node_phases,
+        }
+    )
 
 
-async def stream_item_ingest(request: web.Request) -> web.Response:
+async def stream_item_ingest(request: web.Request) -> web.StreamResponse:
     """GET /api/knowledge/items/{id}/ingest/stream -- per-item node-graph ingestion
     progress over SSE (queued→running→done per node, + ingest_complete). Per-resource
     feed ``knowledge:ingest:<id>`` (transport doctrine)."""
@@ -1472,9 +1629,13 @@ async def stream_item_ingest(request: web.Request) -> web.Response:
     # Terminal-state items emit no further events — send the snapshot and close rather
     # than holding the connection open forever (a leak per already-done item opened).
     terminal = pstatus in ("done", "partial", "failed")
-    return await stream_response(request, registry.hub(feed), on_connect=snapshot,
-                                 registry_evict=(registry, feed),
-                                 close_after_connect=terminal)
+    return await stream_response(
+        request,
+        registry.hub(feed),
+        on_connect=snapshot,
+        registry_evict=(registry, feed),
+        close_after_connect=terminal,
+    )
 
 
 def setup_knowledge_routes(app: web.Application) -> None:

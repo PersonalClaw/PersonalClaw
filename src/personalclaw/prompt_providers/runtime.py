@@ -84,9 +84,7 @@ def render_use_case_prompt(use_case: str, values: dict[str, Any] | None = None) 
             template = fallback.get_prompt(DEFAULT_PROMPT_NAME) if fallback else None
             if template is None:
                 return None
-        return render_template(
-            template, values or {}, resolver=(lambda n: provider.get_snippet(n))
-        )
+        return render_template(template, values or {}, resolver=(lambda n: provider.get_snippet(n)))
     except Exception:
         logger.debug("render_use_case_prompt failed for %r", use_case, exc_info=True)
         return None

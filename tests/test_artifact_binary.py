@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from personalclaw.artifacts.models import is_binary_kind, ext_for_mime
+from personalclaw.artifacts.models import ext_for_mime, is_binary_kind
 from personalclaw.artifacts.native import NativeArtifactProvider
 
 _PNG = b"\x89PNG\r\n\x1a\n" + b"fakeimagedata" * 4

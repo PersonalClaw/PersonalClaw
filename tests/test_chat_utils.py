@@ -45,6 +45,7 @@ class TestToolInputToStr:
     def test_unserializable_dict_falls_back_to_str(self):
         class _NoJSON:
             pass
+
         out = tool_input_to_str({"obj": _NoJSON()})
         assert isinstance(out, str) and out  # default=str makes it serialize
 

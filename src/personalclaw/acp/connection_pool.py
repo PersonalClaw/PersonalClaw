@@ -32,6 +32,7 @@ import time
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 if TYPE_CHECKING:
+    from personalclaw.acp.session import AcpConnection
     from personalclaw.llm.base import ModelProvider
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,12 @@ class _Slot:
     """One runtime's pooled connection + its discovery snapshot."""
 
     __slots__ = (
-        "provider", "snapshot", "warmed_at", "warming", "fail_count", "next_retry_at",
+        "provider",
+        "snapshot",
+        "warmed_at",
+        "warming",
+        "fail_count",
+        "next_retry_at",
         "_shared_conn",
     )
 
@@ -71,7 +77,7 @@ class _Slot:
         self.next_retry_at: float = 0.0
         # The per-runtime SHARED AcpConnection for concurrent sessions (P9), spawned
         # lazily by open_session. Distinct from ``provider`` (the one-session warm slot).
-        self._shared_conn = None
+        self._shared_conn: "AcpConnection | None" = None
 
 
 class AcpConnectionPool:
@@ -145,8 +151,11 @@ class AcpConnectionPool:
                 slot.fail_count = 0  # recovered — clear backoff
                 slot.next_retry_at = 0.0
                 provider = None  # owned by the slot now
-                logger.info("acp pool: warmed %s (agents in snapshot: %s)", runtime_id,
-                            _snapshot_agent_count(slot.snapshot))
+                logger.info(
+                    "acp pool: warmed %s (agents in snapshot: %s)",
+                    runtime_id,
+                    _snapshot_agent_count(slot.snapshot),
+                )
                 return True
             except Exception:
                 # Exponential backoff so a permanently-broken runtime isn't
@@ -154,11 +163,17 @@ class AcpConnectionPool:
                 # leakage). next_retry_at gates the health loop; an explicit warm
                 # (claim/invalidate) still proceeds.
                 slot.fail_count += 1
-                delay = min(_WARM_BACKOFF_BASE_SECS * (2 ** (slot.fail_count - 1)),
-                            _WARM_BACKOFF_MAX_SECS)
+                delay = min(
+                    _WARM_BACKOFF_BASE_SECS * (2 ** (slot.fail_count - 1)), _WARM_BACKOFF_MAX_SECS
+                )
                 slot.next_retry_at = time.monotonic() + delay
-                logger.warning("acp pool: failed to warm %s (attempt %d) — backing off %.0fs",
-                               runtime_id, slot.fail_count, delay, exc_info=True)
+                logger.warning(
+                    "acp pool: failed to warm %s (attempt %d) — backing off %.0fs",
+                    runtime_id,
+                    slot.fail_count,
+                    delay,
+                    exc_info=True,
+                )
                 return False
             finally:
                 if provider is not None:
@@ -166,9 +181,7 @@ class AcpConnectionPool:
 
     async def warm_all(self, runtime_ids: list[str]) -> int:
         """Warm every given runtime in parallel. Returns the count now live."""
-        results = await asyncio.gather(
-            *(self.warm(r) for r in runtime_ids), return_exceptions=True
-        )
+        results = await asyncio.gather(*(self.warm(r) for r in runtime_ids), return_exceptions=True)
         return sum(1 for r in results if r is True)
 
     # ── discovery snapshot ─────────────────────────────────────────────────────
@@ -229,23 +242,41 @@ class AcpConnectionPool:
             from personalclaw.llm.acp_session_provider import open_acp_session_provider
 
             conn = await self._shared_connection(
-                runtime_id, cwd=cwd, command=command, dialect=dialect,
-                sandbox_mode=sandbox_mode, extra_env=extra_env,
-                session_key=session_key, channel_id=channel_id,
+                runtime_id,
+                cwd=cwd,
+                command=command,
+                dialect=dialect,
+                sandbox_mode=sandbox_mode,
+                extra_env=extra_env,
+                session_key=session_key,
+                channel_id=channel_id,
             )
             if conn is None:
                 return None
-            return await open_acp_session_provider(
-                conn, runtime_id=runtime_id, cwd=cwd, session_files_dir=session_files_dir,
-                model=model, agent_name=agent_name, mcp_servers=mcp_servers,
+            return await open_acp_session_provider(  # type: ignore[return-value]  # CI-2
+                conn,
+                runtime_id=runtime_id,
+                cwd=cwd,
+                session_files_dir=session_files_dir,
+                model=model,
+                agent_name=agent_name,
+                mcp_servers=mcp_servers,
             )
         except Exception:
             logger.warning("acp pool: open_session failed for %s", runtime_id, exc_info=True)
             return None
 
     async def _shared_connection(
-        self, runtime_id: str, *, cwd, command, dialect, sandbox_mode, extra_env,
-        session_key, channel_id,
+        self,
+        runtime_id: str,
+        *,
+        cwd,
+        command,
+        dialect,
+        sandbox_mode,
+        extra_env,
+        session_key,
+        channel_id,
     ):
         """Get-or-spawn the per-runtime shared AcpConnection (guarded by the slot lock so
         two racing sessions don't spawn two processes). Spawns + ``initialize`` once."""
@@ -259,17 +290,26 @@ class AcpConnectionPool:
                 return conn
             async with self._start_sem:
                 conn = await AcpConnection.spawn(
-                    command=command, work_dir=cwd, dialect=get_dialect(dialect),
-                    sandbox_mode=sandbox_mode, extra_env=extra_env,
-                    session_key=session_key, channel_id=channel_id,
+                    command=command,
+                    work_dir=cwd,
+                    dialect=get_dialect(dialect),
+                    sandbox_mode=sandbox_mode,
+                    extra_env=extra_env,
+                    session_key=session_key,
+                    channel_id=channel_id,
                 )
-                await conn.initialize({
-                    "protocolVersion": get_dialect(dialect).protocol_version(),
-                    "clientInfo": get_dialect(dialect).client_info(
-                        client_name="personalclaw", client_version="0.1.2"),
-                })
+                await conn.initialize(
+                    {
+                        "protocolVersion": get_dialect(dialect).protocol_version(),
+                        "clientInfo": get_dialect(dialect).client_info(
+                            client_name="personalclaw", client_version="0.1.2"
+                        ),
+                    }
+                )
             slot._shared_conn = conn  # type: ignore[attr-defined]
-            logger.info("acp pool: spawned shared connection for %s (concurrent sessions)", runtime_id)
+            logger.info(
+                "acp pool: spawned shared connection for %s (concurrent sessions)", runtime_id
+            )
             return conn
 
     # ── claim (first chat turn) ────────────────────────────────────────────────
@@ -368,7 +408,9 @@ class AcpConnectionPool:
             self._health_task = None
         async with self._lock:
             providers = [s.provider for s in self._slots.values() if s.provider is not None]
-            shared_conns = [s._shared_conn for s in self._slots.values() if s._shared_conn is not None]
+            shared_conns = [
+                s._shared_conn for s in self._slots.values() if s._shared_conn is not None
+            ]
             for s in self._slots.values():
                 s.provider = None
                 s.snapshot = {}
@@ -438,7 +480,7 @@ def _build_acp_provider(runtime_id: str) -> "ModelProvider":
     entry = registry.get_entry(runtime_id)
     config = dict(entry.options or {})
     config["model"] = "auto"  # bare warm — no curated default pushed at init
-    return registry.build(runtime_id, **config)
+    return registry.build(runtime_id, **config)  # type: ignore[arg-type]  # CI-2
 
 
 async def _acp_runtime_ready(runtime_id: str) -> bool:
@@ -502,5 +544,9 @@ async def _safe_shutdown(provider: "ModelProvider") -> None:
 
 
 def _snapshot_agent_count(snapshot: dict) -> int:
-    modes = (snapshot.get("modes") or {}).get("availableModes", []) if isinstance(snapshot, dict) else []
+    modes = (
+        (snapshot.get("modes") or {}).get("availableModes", [])
+        if isinstance(snapshot, dict)
+        else []
+    )
     return len(modes) if isinstance(modes, list) else 0

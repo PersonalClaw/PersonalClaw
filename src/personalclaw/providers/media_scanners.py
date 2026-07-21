@@ -29,9 +29,7 @@ logger = logging.getLogger(__name__)
 _scanners: dict[str, list[Callable[[list[dict[str, Any]]], list[Any]]]] = {}
 
 
-def register_scanner(
-    capability: str, scanner: Callable[[list[dict[str, Any]]], list[Any]]
-) -> None:
+def register_scanner(capability: str, scanner: Callable[[list[dict[str, Any]]], list[Any]]) -> None:
     """Register a config scanner for a media ``capability``.
 
     Idempotent per (capability, scanner identity): re-registering the same

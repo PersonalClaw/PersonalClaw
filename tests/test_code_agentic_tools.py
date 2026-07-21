@@ -24,7 +24,7 @@ def _run(coro):
 def ws(tmp_path):
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "app.py").write_text(
-        "import os\n\ndef hello():\n    return 1\n\nclass Greeter:\n    def greet(self):\n        pass\n"
+        "import os\n\ndef hello():\n    return 1\n\nclass Greeter:\n    def greet(self):\n        pass\n"  # noqa: E501
     )
     (tmp_path / "src" / "util.js").write_text(
         "export function add(a, b) { return a + b }\nexport const mul = (a, b) => a * b\n"

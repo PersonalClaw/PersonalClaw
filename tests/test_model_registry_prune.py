@@ -27,12 +27,17 @@ def _setup(monkeypatch, tmp_path, *, providers, active):
 def test_prunes_refs_from_removed_provider(monkeypatch, tmp_path):
     # Alibaba removed; only "openrouter" remains configured.
     _setup(
-        monkeypatch, tmp_path,
+        monkeypatch,
+        tmp_path,
         providers=[{"name": "openrouter", "type": "openai_compatible"}],
-        active={"chat": [
-            "alibaba:glm-5.1", "alibaba:qwen-max", "alibaba:qwen-plus",
-            "openrouter:gpt-5",
-        ]},
+        active={
+            "chat": [
+                "alibaba:glm-5.1",
+                "alibaba:qwen-max",
+                "alibaba:qwen-plus",
+                "openrouter:gpt-5",
+            ]
+        },
     )
     loaded = uc.load_active_models()
     assert loaded["chat"] == ["openrouter:gpt-5"], "Alibaba ghosts must be pruned"
@@ -41,7 +46,8 @@ def test_prunes_refs_from_removed_provider(monkeypatch, tmp_path):
 def test_keeps_bundled_provider_refs(monkeypatch, tmp_path):
     # Bundled in-process providers have no config.json entry but are valid.
     _setup(
-        monkeypatch, tmp_path,
+        monkeypatch,
+        tmp_path,
         providers=[],
         active={
             "embedding": ["sentence-transformers:bge-small"],
@@ -60,7 +66,8 @@ def test_keeps_image_gen_bundle_refs(monkeypatch, tmp_path):
     but its binding must NOT be pruned — the regression that silently dropped a
     just-bound fal:<model> from /api/models/active + routing (IG-GAP1)."""
     _setup(
-        monkeypatch, tmp_path,
+        monkeypatch,
+        tmp_path,
         providers=[],
         active={"image_gen": ["fal:fal-ai/flux/schnell"]},
     )
@@ -74,7 +81,8 @@ def test_prunes_image_gen_ref_when_bundle_absent(monkeypatch, tmp_path):
     """If the image-gen bundle is gone (no provider registered), its ref IS pruned
     — a removed bundle shouldn't leave a ghost binding."""
     _setup(
-        monkeypatch, tmp_path,
+        monkeypatch,
+        tmp_path,
         providers=[],
         active={"image_gen": ["fal:fal-ai/flux/schnell"]},
     )
@@ -85,7 +93,8 @@ def test_prunes_image_gen_ref_when_bundle_absent(monkeypatch, tmp_path):
 def test_keeps_provider_agnostic_refs(monkeypatch, tmp_path):
     # A ref with no "provider:" prefix is provider-agnostic — never pruned.
     _setup(
-        monkeypatch, tmp_path,
+        monkeypatch,
+        tmp_path,
         providers=[],
         active={"chat": ["bare-model-id"]},
     )
@@ -137,19 +146,25 @@ def _mr_app(monkeypatch, tmp_path, *, providers):
 
 @pytest.mark.asyncio
 async def test_set_rejects_unknown_provider_ref(monkeypatch, tmp_path):
-    app = _mr_app(monkeypatch, tmp_path, providers=[{"name": "OpenAI", "type": "openai_compatible"}])
+    app = _mr_app(
+        monkeypatch, tmp_path, providers=[{"name": "OpenAI", "type": "openai_compatible"}]
+    )
     async with TestClient(TestServer(app)) as c:
         resp = await c.put("/api/models/active/chat", json={"models": ["NoProvider:no-model"]})
         assert resp.status == 400
         assert "Unknown provider" in (await resp.json())["error"]
         # And nothing was persisted for the use-case.
-        assert not (tmp_path / "active_models.json").exists() or \
-            "NoProvider" not in (tmp_path / "active_models.json").read_text()
+        assert (
+            not (tmp_path / "active_models.json").exists()
+            or "NoProvider" not in (tmp_path / "active_models.json").read_text()
+        )
 
 
 @pytest.mark.asyncio
 async def test_set_accepts_known_provider_ref(monkeypatch, tmp_path):
-    app = _mr_app(monkeypatch, tmp_path, providers=[{"name": "OpenAI", "type": "openai_compatible"}])
+    app = _mr_app(
+        monkeypatch, tmp_path, providers=[{"name": "OpenAI", "type": "openai_compatible"}]
+    )
     async with TestClient(TestServer(app)) as c:
         # A known config provider + an arbitrary (not-yet-enumerated) model id → accepted
         # (we validate the PREFIX, not the model catalog).
@@ -163,7 +178,10 @@ async def test_set_allows_bare_id_and_bundled(monkeypatch, tmp_path):
     app = _mr_app(monkeypatch, tmp_path, providers=[])
     async with TestClient(TestServer(app)) as c:
         # A bundled provider (sentence-transformers) is always known.
-        r1 = await c.put("/api/models/active/embedding", json={"models": ["sentence-transformers:all-MiniLM-L6-v2"]})
+        r1 = await c.put(
+            "/api/models/active/embedding",
+            json={"models": ["sentence-transformers:all-MiniLM-L6-v2"]},
+        )
         assert r1.status == 200
         # A bare id (no provider prefix) is left alone (some use-cases store bare ids).
         r2 = await c.put("/api/models/active/chat", json={"models": ["just-a-bare-id"]})

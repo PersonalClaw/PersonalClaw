@@ -56,41 +56,62 @@ def test_key_for_uses_other_when_provider_blank(home):
 @pytest.mark.asyncio
 async def test_runtime_excludes_disabled_tool(home, monkeypatch):
     """A disabled native tool is absent from the runtime's defs AND index."""
-    from personalclaw.agents.provider import AgentRuntimeDefinition
     from personalclaw.agents.native.runtime import NativeAgentRuntime
+    from personalclaw.agents.provider import AgentRuntimeDefinition
     from personalclaw.tool_providers.base import ToolDefinition, ToolProvider, ToolResult
 
     class _P(ToolProvider):
         @property
-        def name(self): return "myprov"
+        def name(self):
+            return "myprov"
+
         @property
-        def display_name(self): return "My"
+        def display_name(self):
+            return "My"
+
         async def list_tools(self):
             return [
-                ToolDefinition(name="keep_me", description="d", parameters={"type": "object"}, provider="myprov"),
-                ToolDefinition(name="drop_me", description="d", parameters={"type": "object"}, provider="myprov"),
+                ToolDefinition(
+                    name="keep_me",
+                    description="d",
+                    parameters={"type": "object"},
+                    provider="myprov",
+                ),
+                ToolDefinition(
+                    name="drop_me",
+                    description="d",
+                    parameters={"type": "object"},
+                    provider="myprov",
+                ),
             ]
-        async def invoke(self, n, a): return ToolResult(success=True, output="x")
+
+        async def invoke(self, n, a):
+            return ToolResult(success=True, output="x")
 
     class _M:
         supports_tools = True
         _model = "scripted"
+
         async def complete(self, messages, *, tools=None, model=None):
             from personalclaw.llm.events import EVENT_COMPLETE, AgentEvent
+
             yield AgentEvent(kind=EVENT_COMPLETE)
 
     tool_prefs.set_enabled("myprov", "drop_me", False)
     rt = NativeAgentRuntime(
         definition=AgentRuntimeDefinition(name="T", provider="native", model="scripted"),
-        model_provider=_M(), tool_providers=[_P()])
+        model_provider=_M(),
+        tool_providers=[_P()],
+    )
     await rt.start()
     names = {d.name for d in rt._tool_defs}
     assert "keep_me" in names
-    assert "drop_me" not in names          # dropped from schema/catalog
+    assert "drop_me" not in names  # dropped from schema/catalog
     assert "drop_me" not in rt._tool_index  # AND uncallable
 
 
 # ── UT4: provider-level disable ──
+
 
 def test_disable_whole_provider_roundtrips(home):
     assert tool_prefs.set_provider_enabled("myprov", False)["ok"] is True
@@ -118,30 +139,45 @@ def test_provider_disable_independent_of_tool_disable(home):
 
 @pytest.mark.asyncio
 async def test_runtime_skips_disabled_provider_toolset(home):
-    from personalclaw.agents.provider import AgentRuntimeDefinition
     from personalclaw.agents.native.runtime import NativeAgentRuntime
+    from personalclaw.agents.provider import AgentRuntimeDefinition
     from personalclaw.tool_providers.base import ToolDefinition, ToolProvider, ToolResult
 
     class _P(ToolProvider):
         @property
-        def name(self): return "killme"
+        def name(self):
+            return "killme"
+
         @property
-        def display_name(self): return "Kill"
+        def display_name(self):
+            return "Kill"
+
         async def list_tools(self):
-            return [ToolDefinition(name=f"k_{i}", description="d", parameters={"type": "object"}, provider="killme") for i in range(3)]
-        async def invoke(self, n, a): return ToolResult(success=True, output="x")
+            return [
+                ToolDefinition(
+                    name=f"k_{i}", description="d", parameters={"type": "object"}, provider="killme"
+                )
+                for i in range(3)
+            ]
+
+        async def invoke(self, n, a):
+            return ToolResult(success=True, output="x")
 
     class _M:
         supports_tools = True
         _model = "scripted"
+
         async def complete(self, messages, *, tools=None, model=None):
             from personalclaw.llm.events import EVENT_COMPLETE, AgentEvent
+
             yield AgentEvent(kind=EVENT_COMPLETE)
 
     tool_prefs.set_provider_enabled("killme", False)
     rt = NativeAgentRuntime(
         definition=AgentRuntimeDefinition(name="T", provider="native", model="scripted"),
-        model_provider=_M(), tool_providers=[_P()])
+        model_provider=_M(),
+        tool_providers=[_P()],
+    )
     await rt.start()
     # the whole provider's toolset is gone from schema AND dispatch index
     assert not any(d.name.startswith("k_") for d in rt._tool_defs)

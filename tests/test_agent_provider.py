@@ -54,9 +54,7 @@ def test_probe_readiness_no_command_is_error():
 
 def test_probe_readiness_missing_binary_is_not_found():
     status = asyncio.run(
-        AcpAgentProvider.probe_readiness(
-            {"command": ["__no_such_acp_bin_zzz__", "--acp"]}
-        )
+        AcpAgentProvider.probe_readiness({"command": ["__no_such_acp_bin_zzz__", "--acp"]})
     )
     assert status.state == "not_found"
     assert status.ready is False

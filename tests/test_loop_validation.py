@@ -16,15 +16,18 @@ from __future__ import annotations
 
 import os
 
-import pytest
-
 from personalclaw.loop import validation as V
 
 
 def _ok(**over) -> dict:
-    base = {"kind": "code", "task": "Build a TODO CLI in Python",
-            "project_kind": "greenfield", "entry_stage": "design", "max_cycles": 30,
-            "plan": [{"stage": "implementation"}]}
+    base = {
+        "kind": "code",
+        "task": "Build a TODO CLI in Python",
+        "project_kind": "greenfield",
+        "entry_stage": "design",
+        "max_cycles": 30,
+        "plan": [{"stage": "implementation"}],
+    }
     base.update(over)
     return base
 
@@ -153,7 +156,7 @@ class TestSensitiveWorkspace:
         monkeypatch.setenv("HOME", str(tmp_path))
         aws = tmp_path / ".aws"
         aws.mkdir()
-        link = tmp_path / "my-project"   # looks harmless
+        link = tmp_path / "my-project"  # looks harmless
         os.symlink(aws, link)
         r = V.validate(_ok(project_kind="brownfield", workspace_dir=str(link)))
         assert r.can_start is False
@@ -173,16 +176,25 @@ class TestSystemPathWorkspace:
     /var, …). workspace_dir_errors realpaths then defers to is_sensitive_path."""
 
     def test_filesystem_root_blocks(self):
-        assert any("sensitive location" in e for e in V.workspace_dir_errors("/", require_exists=False))
+        assert any(
+            "sensitive location" in e for e in V.workspace_dir_errors("/", require_exists=False)
+        )
 
     def test_etc_blocks(self):
-        assert any("sensitive location" in e for e in V.workspace_dir_errors("/etc", require_exists=False))
+        assert any(
+            "sensitive location" in e for e in V.workspace_dir_errors("/etc", require_exists=False)
+        )
 
     def test_usr_subdir_blocks(self):
-        assert any("sensitive location" in e for e in V.workspace_dir_errors("/usr/local", require_exists=False))
+        assert any(
+            "sensitive location" in e
+            for e in V.workspace_dir_errors("/usr/local", require_exists=False)
+        )
 
     def test_var_blocks(self):
-        assert any("sensitive location" in e for e in V.workspace_dir_errors("/var", require_exists=False))
+        assert any(
+            "sensitive location" in e for e in V.workspace_dir_errors("/var", require_exists=False)
+        )
 
     def test_macos_temp_child_allowed(self):
         # pytest tmp dirs realpath under /private/var/folders/... — those MUST pass.

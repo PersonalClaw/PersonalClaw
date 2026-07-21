@@ -50,7 +50,10 @@ class ReferenceEchoTransport(ChannelTransportProvider):
     # ── capability declaration (#40) ──
     def capabilities(self) -> ChannelCapabilities:
         return ChannelCapabilities(
-            inbound=True, threads=True, rich_text=True, max_text_len=4000,
+            inbound=True,
+            threads=True,
+            rich_text=True,
+            max_text_len=4000,
         )
 
     # ── lifecycle ──
@@ -71,10 +74,15 @@ class ReferenceEchoTransport(ChannelTransportProvider):
             return False
         self.sent.append(message)
         # Echo: surface the outbound text back as an inbound message.
-        await self._inbound.put(ChannelMessage(
-            channel_id=message.channel_id, text=f"echo: {message.text}",
-            sender=self.name, thread_id=message.thread_id, ts=time.time(),
-        ))
+        await self._inbound.put(
+            ChannelMessage(
+                channel_id=message.channel_id,
+                text=f"echo: {message.text}",
+                sender=self.name,
+                thread_id=message.thread_id,
+                ts=time.time(),
+            )
+        )
         return True
 
     # ── inbound (normalized) ──
@@ -90,4 +98,6 @@ class ReferenceEchoTransport(ChannelTransportProvider):
 
     # Test/demo helper — inject an inbound message as if it arrived externally.
     async def _simulate_inbound(self, text: str, channel_id: str = "ref") -> None:
-        await self._inbound.put(ChannelMessage(channel_id=channel_id, text=text, sender="user", ts=time.time()))
+        await self._inbound.put(
+            ChannelMessage(channel_id=channel_id, text=text, sender="user", ts=time.time())
+        )

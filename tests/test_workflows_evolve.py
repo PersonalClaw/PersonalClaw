@@ -26,8 +26,11 @@ def _run(coro):
 
 async def _mk(scope, scope_ref="", name="wf"):
     return await registry.create_workflow(
-        name=name, description="d", steps=[{"title": "do it"}],
-        scope=scope, scope_ref=scope_ref,
+        name=name,
+        description="d",
+        steps=[{"title": "do it"}],
+        scope=scope,
+        scope_ref=scope_ref,
     )
 
 
@@ -39,6 +42,7 @@ def test_promote_session_to_agent(store):
         wf = await _mk("session", "sess-1")
         out = await registry.promote_workflow(wf.id, "agent", scope_ref="default")
         return out
+
     out = _run(go())
     assert out.scope == WorkflowScope.AGENT
     assert out.scope_ref == "default"
@@ -48,6 +52,7 @@ def test_promote_to_global_clears_ref(store):
     async def go():
         wf = await _mk("agent", "default")
         return await registry.promote_workflow(wf.id, "global")
+
     out = _run(go())
     assert out.scope == WorkflowScope.GLOBAL
     assert out.scope_ref == ""
@@ -57,6 +62,7 @@ def test_promote_skips_rungs(store):
     async def go():
         wf = await _mk("session", "sess-1")
         return await registry.promote_workflow(wf.id, "global")
+
     out = _run(go())
     assert out.scope == WorkflowScope.GLOBAL
 
@@ -65,6 +71,7 @@ def test_cannot_demote(store):
     async def go():
         wf = await _mk("workspace", "/proj")
         await registry.promote_workflow(wf.id, "session", scope_ref="s")
+
     with pytest.raises(ValueError, match="only widens"):
         _run(go())
 
@@ -73,6 +80,7 @@ def test_cannot_promote_to_same_scope(store):
     async def go():
         wf = await _mk("agent", "default")
         await registry.promote_workflow(wf.id, "agent")
+
     with pytest.raises(ValueError, match="only widens"):
         _run(go())
 
@@ -81,6 +89,7 @@ def test_promote_workspace_requires_ref(store):
     async def go():
         wf = await _mk("session", "sess-1")
         await registry.promote_workflow(wf.id, "workspace")  # no scope_ref
+
     with pytest.raises(ValueError, match="workspace requires"):
         _run(go())
 
@@ -89,6 +98,7 @@ def test_promote_unknown_scope(store):
     async def go():
         wf = await _mk("session", "sess-1")
         await registry.promote_workflow(wf.id, "everywhere")
+
     with pytest.raises(ValueError, match="unknown scope"):
         _run(go())
 
@@ -108,6 +118,7 @@ def test_session_cleanup_deletes_only_matching_session(store):
         deleted = await registry.delete_session_workflows("sess-A")
         remaining, _ = await registry.list_all_workflows(limit=100, offset=0)
         return deleted, {w.name for w in remaining}
+
     deleted, names = _run(go())
     assert len(deleted) == 1
     assert names == {"b", "g"}  # only sess-A's workflow swept
@@ -115,12 +126,14 @@ def test_session_cleanup_deletes_only_matching_session(store):
 
 def test_session_cleanup_promoted_workflow_survives(store):
     """A session workflow promoted to global is no longer session-scoped → kept."""
+
     async def go():
         wf = await _mk("session", "sess-A", name="keeper")
         await registry.promote_workflow(wf.id, "global")
         deleted = await registry.delete_session_workflows("sess-A")
         remaining, _ = await registry.list_all_workflows(limit=100, offset=0)
         return deleted, {w.name for w in remaining}
+
     deleted, names = _run(go())
     assert deleted == []  # nothing session-scoped left for sess-A
     assert names == {"keeper"}
@@ -130,6 +143,7 @@ def test_session_cleanup_no_matches_is_noop(store):
     async def go():
         await _mk("global", "", name="g")
         return await registry.delete_session_workflows("sess-X")
+
     assert _run(go()) == []
 
 
@@ -150,6 +164,7 @@ def test_with_session_workflow_cleanup_runs_both(store):
         await cb("sess-Z")
         remaining, _ = await registry.list_all_workflows(limit=100, offset=0)
         return [w.name for w in remaining]
+
     remaining = _run(go())
     assert calls == ["prior:sess-Z"]  # prior ran
     assert remaining == []  # and the session workflow was swept
@@ -167,6 +182,7 @@ def test_cleanup_survives_prior_failure(store):
         await cb("sess-Q")  # must not raise
         remaining, _ = await registry.list_all_workflows(limit=100, offset=0)
         return [w.name for w in remaining]
+
     # prior raised, but cleanup still swept the session workflow
     assert _run(go()) == []
 
@@ -180,8 +196,12 @@ class TestWorkflowCreateAutoBind:
 
         from personalclaw import mcp_workflows
 
-        with patch.object(mcp_workflows, "_resolve_session_key", return_value="sess-XYZ"), \
-             patch.object(mcp_workflows, "_post", return_value={"name": "wf", "scope": "session"}) as mp:
+        with (
+            patch.object(mcp_workflows, "_resolve_session_key", return_value="sess-XYZ"),
+            patch.object(
+                mcp_workflows, "_post", return_value={"name": "wf", "scope": "session"}
+            ) as mp,
+        ):
             mcp_workflows._call_tool_inner(
                 "workflow_create", {"name": "wf", "steps": [{"title": "do"}], "scope": "session"}
             )
@@ -195,7 +215,9 @@ class TestWorkflowCreateAutoBind:
         # The agent-id contextvar lives in mcp_core; mcp_workflows reads the same object.
         tok = mcp_core.set_current_agent_id("default")
         try:
-            with patch.object(mcp_workflows, "_post", return_value={"name": "wf", "scope": "agent"}) as mp:
+            with patch.object(
+                mcp_workflows, "_post", return_value={"name": "wf", "scope": "agent"}
+            ) as mp:
                 mcp_workflows._call_tool_inner(
                     "workflow_create", {"name": "wf", "steps": [{"title": "do"}], "scope": "agent"}
                 )
@@ -223,11 +245,20 @@ class TestWorkflowCreateAutoBind:
 
         from personalclaw import mcp_workflows
 
-        with patch.object(mcp_workflows, "_resolve_session_key", return_value="auto-sess"), \
-             patch.object(mcp_workflows, "_post", return_value={"name": "wf", "scope": "session"}) as mp:
+        with (
+            patch.object(mcp_workflows, "_resolve_session_key", return_value="auto-sess"),
+            patch.object(
+                mcp_workflows, "_post", return_value={"name": "wf", "scope": "session"}
+            ) as mp,
+        ):
             mcp_workflows._call_tool_inner(
                 "workflow_create",
-                {"name": "wf", "steps": [{"title": "do"}], "scope": "session", "scope_ref": "explicit"},
+                {
+                    "name": "wf",
+                    "steps": [{"title": "do"}],
+                    "scope": "session",
+                    "scope_ref": "explicit",
+                },
             )
             assert mp.call_args[0][1]["scope_ref"] == "explicit"
 
@@ -238,7 +269,9 @@ class TestWorkflowPromoteDispatch:
 
         from personalclaw import mcp_workflows
 
-        with patch.object(mcp_workflows, "_post", return_value={"name": "wf", "scope": "global"}) as mp:
+        with patch.object(
+            mcp_workflows, "_post", return_value={"name": "wf", "scope": "global"}
+        ) as mp:
             out = mcp_workflows._call_tool_inner(
                 "workflow_promote", {"workflow_id": "wf-1", "scope": "global"}
             )
@@ -248,8 +281,12 @@ class TestWorkflowPromoteDispatch:
     def test_promote_requires_args(self):
         from personalclaw import mcp_workflows
 
-        assert mcp_workflows._call_tool_inner("workflow_promote", {"scope": "global"}).startswith("Error")
-        assert mcp_workflows._call_tool_inner("workflow_promote", {"workflow_id": "w"}).startswith("Error")
+        assert mcp_workflows._call_tool_inner("workflow_promote", {"scope": "global"}).startswith(
+            "Error"
+        )
+        assert mcp_workflows._call_tool_inner("workflow_promote", {"workflow_id": "w"}).startswith(
+            "Error"
+        )
 
     def test_promote_in_schema_and_tool_list(self):
         from personalclaw.mcp_workflows import _list_tools

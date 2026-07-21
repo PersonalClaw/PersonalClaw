@@ -42,14 +42,20 @@ logger = logging.getLogger(__name__)
 #   video_modality  — understands video
 #   video_gen       — generates video
 CAPABILITIES: tuple[str, ...] = (
-    "chat", "embedding", "stt", "tts",
+    "chat",
+    "embedding",
+    "stt",
+    "tts",
     # Diarization ("who spoke when") is its OWN parent capability with NO fallback
     # (core L1): if no diarization model is bound, the feature is simply off — exactly
     # like STT with no model. Served by the separate diarization provider app.
     "diarization",
-    "image_modality", "image_gen",
-    "audio_modality", "audio_gen",
-    "video_modality", "video_gen",
+    "image_modality",
+    "image_gen",
+    "audio_modality",
+    "audio_gen",
+    "video_modality",
+    "video_gen",
 )
 # NOTE: the knowledge-ingestion pipeline (OCR / vision / video-classify / consolidation)
 # does NOT have its own use-cases. Each ingestion node resolves DIRECTLY to the relevant
@@ -67,7 +73,8 @@ CAPABILITIES: tuple[str, ...] = (
 # removed. The Capability.SUMMARIZATION / .PLANNING enum flags remain as provider
 # capability *advertisements* that installed apps declare; they are not use-cases.)
 CHAT_SUBCATEGORIES: tuple[str, ...] = (
-    "code_tools", "reasoning",
+    "code_tools",
+    "reasoning",
 )
 
 # Every selectable use case = capabilities + chat sub-categories.
@@ -97,6 +104,7 @@ def parent_capability(use_case: str) -> str:
 
 def _active_models_path() -> Path:
     from personalclaw.config.loader import config_dir
+
     return config_dir() / "active_models.json"
 
 
@@ -152,8 +160,9 @@ def _dynamic_media_provider_names() -> set[str]:
     # registry key — the single source, so a new local provider is known automatically
     # (no hardcoded name list). Its ``provider:model`` refs must survive pruning.
     try:
-        from personalclaw.local_models.registry import list_providers as _local_list
         from personalclaw.local_models.registry import _key_for as _local_key
+        from personalclaw.local_models.registry import list_providers as _local_list
+
         for p in _local_list():
             names.add(_local_key(p))
     except Exception:  # noqa: BLE001
@@ -206,10 +215,7 @@ def _prune_removed_providers(active: dict[str, list[str]]) -> dict[str, list[str
         if not isinstance(refs, list):
             pruned[use_case] = refs
             continue
-        kept = [
-            r for r in refs
-            if ":" not in str(r) or str(r).split(":", 1)[0] in known
-        ]
+        kept = [r for r in refs if ":" not in str(r) or str(r).split(":", 1)[0] in known]
         pruned[use_case] = kept
     return pruned
 
@@ -265,6 +271,7 @@ def split_ref(ref: str) -> tuple[str, str] | None:
 
 def _settings_dir() -> Path:
     from personalclaw.config.loader import config_dir
+
     return config_dir() / "extensions" / "use_case_settings"
 
 
@@ -294,6 +301,7 @@ def save_use_case_settings(use_case: str, settings: dict[str, Any]) -> None:
 
 def _legacy_bindings_path() -> Path:
     from personalclaw.config.loader import config_dir
+
     return config_dir() / "extensions" / "use_cases.json"
 
 
@@ -369,8 +377,14 @@ def _config_provider_models() -> dict[str, str]:
 # (transcriptions + speech). The remote STT/TTS adapters register one instance
 # per configured provider of these types, keyed by the provider's config name.
 OPENAI_FAMILY_TYPES: tuple[str, ...] = (
-    "openai", "openai_compatible", "together", "groq", "deepseek",
-    "mistral", "azure_openai", "google",
+    "openai",
+    "openai_compatible",
+    "together",
+    "groq",
+    "deepseek",
+    "mistral",
+    "azure_openai",
+    "google",
 )
 
 
@@ -404,10 +418,12 @@ def openai_family_providers() -> list[dict[str, str]]:
         if not name or ptype not in OPENAI_FAMILY_TYPES:
             continue
         opts = p.get("options") or {}
-        out.append({
-            "name": name,
-            "type": ptype,
-            "endpoint": str(opts.get("endpoint", "") or ""),
-            "api_key": str(opts.get("api_key", "") or ""),
-        })
+        out.append(
+            {
+                "name": name,
+                "type": ptype,
+                "endpoint": str(opts.get("endpoint", "") or ""),
+                "api_key": str(opts.get("api_key", "") or ""),
+            }
+        )
     return out

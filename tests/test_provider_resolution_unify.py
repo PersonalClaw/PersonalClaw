@@ -10,8 +10,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import personalclaw.providers.provider_bridge as pb
 from fakes import FAKE_MODEL_CAPABILITY, FAKE_MODEL_TYPE, ensure_fake_model_type
+
+import personalclaw.providers.provider_bridge as pb
 from personalclaw.llm.registry import ProviderEntry, get_default_registry
 
 # Model provider TYPES (openai/anthropic/ollama/bedrock) register from their
@@ -52,9 +53,14 @@ def test_active_selection_resolves_pinned_to_provider_and_model():
 
     # ``embedding`` so the native-agent branch (chat) doesn't short-circuit.
     reg = get_default_registry()
-    with patch("personalclaw.providers.use_cases.active_model_refs", return_value=["UnifyCloud:my-embed"]), \
-        patch.object(pb, "_resolve_from_config_registry", side_effect=spy), \
-        patch.object(reg, "build", return_value=MagicMock(name="ModelProvider")):
+    with (
+        patch(
+            "personalclaw.providers.use_cases.active_model_refs",
+            return_value=["UnifyCloud:my-embed"],
+        ),
+        patch.object(pb, "_resolve_from_config_registry", side_effect=spy),
+        patch.object(reg, "build", return_value=MagicMock(name="ModelProvider")),
+    ):
         prov = pb.resolve_provider_for_use_case("embedding", agent=None)
 
     assert prov is not None
@@ -72,9 +78,9 @@ def test_image_modality_maps_to_vision_capability():
 
     assert pb._capability_enum("image_modality") == Capability.VISION
     assert pb._capability_enum("video_modality") == Capability.VISION
-    assert pb._capability_enum("vision") == Capability.VISION      # already an enum value
-    assert pb._capability_enum("chat") == Capability.CHAT          # passthrough
-    assert pb._capability_enum("not_a_capability") is None         # clean None, no raise
+    assert pb._capability_enum("vision") == Capability.VISION  # already an enum value
+    assert pb._capability_enum("chat") == Capability.CHAT  # passthrough
+    assert pb._capability_enum("not_a_capability") is None  # clean None, no raise
 
 
 def test_vision_use_case_resolves_to_vision_capable_provider():
@@ -86,13 +92,21 @@ def test_vision_use_case_resolves_to_vision_capable_provider():
     reg = get_default_registry()
     if not any(e.name == "VisionCloud" for e in reg.list_entries()):
         # the entry declares VISION directly (resolver reads declared_capabilities)
-        reg.register_entry(ProviderEntry(
-            name="VisionCloud", type=_MODEL_TYPE, model="vlm-1",
-            options={"endpoint": "https://x/v1", "api_key": "k"},
-            declared_capabilities=_MODEL_CAPS,
-        ))
-    with patch("personalclaw.providers.use_cases.active_model_refs", return_value=["VisionCloud:vlm-1"]), \
-        patch.object(reg, "build", return_value=MagicMock(name="ModelProvider")):
+        reg.register_entry(
+            ProviderEntry(
+                name="VisionCloud",
+                type=_MODEL_TYPE,
+                model="vlm-1",
+                options={"endpoint": "https://x/v1", "api_key": "k"},
+                declared_capabilities=_MODEL_CAPS,
+            )
+        )
+    with (
+        patch(
+            "personalclaw.providers.use_cases.active_model_refs", return_value=["VisionCloud:vlm-1"]
+        ),
+        patch.object(reg, "build", return_value=MagicMock(name="ModelProvider")),
+    ):
         prov = pb.resolve_provider_for_use_case("image_modality", agent=None)
     assert prov is not None  # resolved, did not raise
 
@@ -102,8 +116,13 @@ def test_active_selection_naming_unknown_provider_raises_immediately():
     # installed) must raise a CLEAR error immediately — NOT silently fall through to
     # the implicit fallback (the stale-Bedrock-pin → Ollama-404 bug). The error
     # names the provider and points at the App Store / Settings → Models.
-    with patch("personalclaw.providers.use_cases.active_model_refs", return_value=["DoesNotExistAnywhere:m"]), \
-        patch("personalclaw.llm.registry.get_default_registry") as gdr:
+    with (
+        patch(
+            "personalclaw.providers.use_cases.active_model_refs",
+            return_value=["DoesNotExistAnywhere:m"],
+        ),
+        patch("personalclaw.llm.registry.get_default_registry") as gdr,
+    ):
         reg = MagicMock()
         reg.list_entries.return_value = []
         gdr.return_value = reg
@@ -121,15 +140,21 @@ def test_fallback_chat_model_skips_stale_default_agent_pin():
     uninstalled provider (a stale 'Bedrock:…' after removal) — that dead ref would
     be handed to whatever provider resolves (→ wrong-provider 404). It reconciles
     the pin to '' and falls through to the first active chat model instead."""
-    import personalclaw.providers.provider_bridge as pbmod
     from types import SimpleNamespace
+
+    import personalclaw.providers.provider_bridge as pbmod
 
     class _Cfg:
         agents = {"default": SimpleNamespace(model="Bedrock:global.anthropic.claude-opus-4-8")}
 
-    with patch("personalclaw.config.loader.AppConfig") as AppCfg, \
-        patch("personalclaw.agents.defaults.default_agent_name", return_value="default"), \
-        patch("personalclaw.providers.use_cases.active_model_refs", return_value=["OpenAI:gpt-4o-mini"]):
+    with (
+        patch("personalclaw.config.loader.AppConfig") as AppCfg,
+        patch("personalclaw.agents.defaults.default_agent_name", return_value="default"),
+        patch(
+            "personalclaw.providers.use_cases.active_model_refs",
+            return_value=["OpenAI:gpt-4o-mini"],
+        ),
+    ):
         AppCfg.load.return_value = _Cfg()
         got = pbmod._fallback_chat_model()
     # The stale Bedrock pin is dropped; the active OpenAI model's bare id wins.
@@ -143,8 +168,12 @@ def test_unknown_selection_does_not_fall_back_to_other_provider():
     # implicit fallback applies ONLY when there is no active selection at all.
     _ensure_registry_entry("SomeWorkingProvider")
     reg = get_default_registry()
-    with patch("personalclaw.providers.use_cases.active_model_refs", return_value=["UninstalledProv:m"]), \
-        patch.object(reg, "build", return_value=MagicMock(name="ModelProvider")):
+    with (
+        patch(
+            "personalclaw.providers.use_cases.active_model_refs", return_value=["UninstalledProv:m"]
+        ),
+        patch.object(reg, "build", return_value=MagicMock(name="ModelProvider")),
+    ):
         # build() would succeed for a real entry, but "UninstalledProv" isn't one →
         # the pinned attempt returns None → we must raise, not fall back.
         try:
@@ -168,7 +197,9 @@ def test_model_axis_only_skips_acp_agent_entry():
         acp_cap = reg.capability_of("acp_agent")
         reg.register_entry(
             ProviderEntry(
-                name="SomeAcpAgent", type="acp_agent", model="",
+                name="SomeAcpAgent",
+                type="acp_agent",
+                model="",
                 options={"command": ["some-cli"]},
                 declared_capabilities=acp_cap.capabilities,
             )
@@ -199,7 +230,9 @@ def test_model_axis_only_resolves_acp_agent_without_flag():
         acp_cap = reg.capability_of("acp_agent")
         reg.register_entry(
             ProviderEntry(
-                name="SomeAcpAgent", type="acp_agent", model="",
+                name="SomeAcpAgent",
+                type="acp_agent",
+                model="",
                 options={"command": ["some-cli"]},
                 declared_capabilities=acp_cap.capabilities,
             )
@@ -220,7 +253,9 @@ def test_config_resolver_honors_explicit_provider_hint():
     if not any(e.name == "OtherCloud" for e in reg.list_entries()):
         reg.register_entry(
             ProviderEntry(
-                name="OtherCloud", type=_MODEL_TYPE, model="other-model",
+                name="OtherCloud",
+                type=_MODEL_TYPE,
+                model="other-model",
                 options={"endpoint": "https://o/v1", "api_key": "k"},
                 declared_capabilities=_MODEL_CAPS,
             )
@@ -247,14 +282,18 @@ def test_model_override_threaded_as_build_kwarg():
     if not any(e.name == "UnifyPinless" for e in reg.list_entries()):
         reg.register_entry(
             ProviderEntry(
-                name="UnifyPinless", type=_MODEL_TYPE, model="",
+                name="UnifyPinless",
+                type=_MODEL_TYPE,
+                model="",
                 options={"endpoint": "https://p/v1", "api_key": "k"},
                 declared_capabilities=_MODEL_CAPS,
             )
         )
     with patch.object(reg, "build", return_value=MagicMock()) as build:
         pb._resolve_from_config_registry(
-            "chat", provider_hint="UnifyPinless", model_override="pinned-model-x",
+            "chat",
+            provider_hint="UnifyPinless",
+            model_override="pinned-model-x",
         )
     # The override is threaded as the `model` build kwarg (not via a doomed
     # entry re-registration).
@@ -273,8 +312,10 @@ def test_provider_kind_native_routes_to_native_runtime_despite_name_guess():
         called["native"] = True
         return MagicMock(name="NativeRuntime")
 
-    with patch.object(pb, "_build_native_runtime", side_effect=_fake_native), \
-        patch.object(pb, "_agent_provider_kind", return_value="acp"):  # name-guess wrong
+    with (
+        patch.object(pb, "_build_native_runtime", side_effect=_fake_native),
+        patch.object(pb, "_agent_provider_kind", return_value="acp"),
+    ):  # name-guess wrong
         prov = pb.resolve_provider_for_use_case(
             "chat", agent="personalclaw", provider_kind="native"
         )
@@ -294,7 +335,9 @@ def test_extra_tool_roots_forwarded_to_native_runtime():
 
     with patch.object(pb, "_build_native_runtime", side_effect=_fake_native):
         pb.resolve_provider_for_use_case(
-            "chat", agent="personalclaw-coder", provider_kind="native",
+            "chat",
+            agent="personalclaw-coder",
+            provider_kind="native",
             extra_tool_roots=["/tmp/code/abcd1234"],
         )
     assert seen.get("extra_tool_roots") == ["/tmp/code/abcd1234"]
@@ -309,9 +352,11 @@ def test_extra_tool_roots_not_leaked_to_acp_resolver():
         captured.update(kw)
         return MagicMock(name="AcpProvider")
 
-    with patch.object(pb, "_agent_provider_kind", return_value="native"), \
-        patch("personalclaw.providers.use_cases.active_model_refs", return_value=[]), \
-        patch.object(pb, "_resolve_from_config_registry", side_effect=_fake_cfg):
+    with (
+        patch.object(pb, "_agent_provider_kind", return_value="native"),
+        patch("personalclaw.providers.use_cases.active_model_refs", return_value=[]),
+        patch.object(pb, "_resolve_from_config_registry", side_effect=_fake_cfg),
+    ):
         pb.resolve_provider_for_use_case(
             "chat", agent="x", provider_kind="acp", extra_tool_roots=["/tmp/code/x"]
         )
@@ -327,10 +372,14 @@ def test_provider_kind_acp_does_not_build_native():
         called["native"] = True
         return MagicMock(name="NativeRuntime")
 
-    with patch.object(pb, "_build_native_runtime", side_effect=_fake_native), \
-        patch.object(pb, "_agent_provider_kind", return_value="native"), \
-        patch("personalclaw.providers.use_cases.active_model_refs", return_value=[]), \
-        patch.object(pb, "_resolve_from_config_registry", return_value=MagicMock(name="AcpProvider")):
+    with (
+        patch.object(pb, "_build_native_runtime", side_effect=_fake_native),
+        patch.object(pb, "_agent_provider_kind", return_value="native"),
+        patch("personalclaw.providers.use_cases.active_model_refs", return_value=[]),
+        patch.object(
+            pb, "_resolve_from_config_registry", return_value=MagicMock(name="AcpProvider")
+        ),
+    ):
         prov = pb.resolve_provider_for_use_case(
             "chat", agent="whatever", provider_kind="acp:claude-code"
         )
@@ -349,11 +398,18 @@ def test_colon_qualified_override_routes_to_named_provider():
     _ensure_registry_entry("PickA", model="model-a")
     _ensure_registry_entry("PickB", model="model-b")
     reg = get_default_registry()
-    with patch("personalclaw.providers.use_cases.active_model_refs",
-               return_value=["PickA:model-a", "PickB:model-b"]), \
-         patch.object(reg, "build", return_value=MagicMock()) as build:
+    with (
+        patch(
+            "personalclaw.providers.use_cases.active_model_refs",
+            return_value=["PickA:model-a", "PickB:model-b"],
+        ),
+        patch.object(reg, "build", return_value=MagicMock()) as build,
+    ):
         prov = pb.resolve_provider_for_use_case(
-            "chat", agent=None, model_override="PickB:model-b", _force_model_axis=True,
+            "chat",
+            agent=None,
+            model_override="PickB:model-b",
+            _force_model_axis=True,
         )
     assert prov is not None
     # Routed to PickB (the prefixed provider), NOT PickA (the first active ref),

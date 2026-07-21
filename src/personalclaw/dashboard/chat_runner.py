@@ -44,7 +44,6 @@ from personalclaw.dashboard.chat_utils import (
     tool_input_to_str,
 )
 from personalclaw.dashboard.handlers import MAX_PROMPT_BYTES, _list_provider_prompts
-from personalclaw.llm_helpers import humanize_provider_error
 from personalclaw.dashboard.state import (
     CRON_NOTIFY_PREFIX,
     CRON_NOTIFY_RE,
@@ -66,7 +65,6 @@ from personalclaw.hooks import (
     TOOL_DENY,
     fire_tool_hooks,
 )
-from personalclaw.llm_helpers import PromptBusyExhaustedError
 from personalclaw.llm.base import (
     EVENT_COMPLETE,
     EVENT_PERMISSION_REQUEST,
@@ -76,6 +74,7 @@ from personalclaw.llm.base import (
     EVENT_TOOL_CALL_UPDATE,
     EVENT_TOOL_RESULT,
 )
+from personalclaw.llm_helpers import PromptBusyExhaustedError, humanize_provider_error
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.stats import Stats
@@ -116,7 +115,9 @@ def is_empty_turn(
     return not benign
 
 
-def _maybe_after_turn_review(state, session, user_message: str, assistant_text: str, tool_calls: int, provider=None) -> None:
+def _maybe_after_turn_review(
+    state, session, user_message: str, assistant_text: str, tool_calls: int, provider=None
+) -> None:
     """Run the after-turn self-improvement review when the turn warrants it.
 
     Gated (config + non-ephemeral + correction-or-≥N-tools); the actual capture
@@ -173,8 +174,7 @@ def _maybe_after_turn_review(state, session, user_message: str, assistant_text: 
     drain = getattr(provider, "drain_tool_outcomes", None)
     if callable(drain):
         try:
-            atr.record_procedural_outcomes(svc, drain(),
-                                           scope_ref=session.workspace_dir or None)
+            atr.record_procedural_outcomes(svc, drain(), scope_ref=session.workspace_dir or None)
         except Exception:
             logger.debug("procedural outcome capture failed", exc_info=True)
     learned = atr.run_after_turn_review(
@@ -192,7 +192,9 @@ def _maybe_after_turn_review(state, session, user_message: str, assistant_text: 
         )
 
 
-def _maybe_skill_ladder_review(state, session, user_message: str, assistant_text: str, tool_calls: int) -> None:
+def _maybe_skill_ladder_review(
+    state, session, user_message: str, assistant_text: str, tool_calls: int
+) -> None:
     """Schedule the forked-LLM 4-tier skill-ladder review (learn-after-turn-review
     skill axis) as a background task — non-blocking, never delays the next turn.
 
@@ -310,6 +312,7 @@ def _redact_tool_input_obj(tool_input: object) -> dict | None:
     # Bound the shipped size: if the serialized object is huge, drop it (the
     # string preview is already capped + shipped alongside).
     import json as _json
+
     try:
         if len(_json.dumps(obj, default=str)) > _TOOL_INPUT_OBJ_MAX:
             return None
@@ -332,7 +335,7 @@ def _emit_question_card(
         return
     try:
         # tool_input is Any (ACP → JSON str; native loop → dict). Accept either.
-        raw = tool_input if isinstance(tool_input, dict) else json.loads(tool_input)
+        raw = tool_input if isinstance(tool_input, dict) else json.loads(str(tool_input))
         questions = validate_ask_user_question(raw)
     except (json.JSONDecodeError, TypeError, ValidationError) as exc:
         logger.warning("AskUserQuestion card skipped: %s", exc)
@@ -382,7 +385,11 @@ def _capture_file_change(session: _ChatSession, tool_name: str, tool_input: obje
     if tool_name not in _WRITE_FILE_TOOLS:
         return
     try:
-        args = tool_input if isinstance(tool_input, dict) else json.loads(tool_input_to_str(tool_input))
+        args = (
+            tool_input
+            if isinstance(tool_input, dict)
+            else json.loads(tool_input_to_str(tool_input))
+        )
         if not isinstance(args, dict):
             return
         rel = str(args.get("path") or "")
@@ -409,11 +416,13 @@ def _capture_file_change(session: _ChatSession, tool_name: str, tool_input: obje
             after = before.replace(old, new, n) if old and old in before else before
         if before == after:
             return  # no-op write → no chip
-        session._file_changes.append({
-            "path": rel,
-            "before": _truncate_snapshot(before),
-            "after": _truncate_snapshot(after),
-        })
+        session._file_changes.append(
+            {
+                "path": rel,
+                "before": _truncate_snapshot(before),
+                "after": _truncate_snapshot(after),
+            }
+        )
     except Exception:
         logger.debug("file-change snapshot skipped for %s", tool_name, exc_info=True)
 
@@ -455,6 +464,7 @@ def _flush_segment(
     broadcast: bool = True,
 ) -> None:
     """Finalize current text block as a segment and persist it."""
+
     # Remove trailing chunk messages (they belong to this segment).
     # Also pull aside any stop_event interleaved with this segment's chunks
     # so it lands AFTER the finalized assistant message. Historical
@@ -468,6 +478,7 @@ def _flush_segment(
             return isinstance(parsed, dict) and parsed.get("kind") == "stop_event"
         except (json.JSONDecodeError, ValueError):
             return False
+
     # Walk backwards to find the start of the trailing chunk/stop_event run.
     boundary = len(session.messages)
     for i in range(len(session.messages) - 1, -1, -1):
@@ -479,7 +490,9 @@ def _flush_segment(
     head = session.messages[:boundary]
     tail = session.messages[boundary:]
     trailing_stop_events = [m for m in tail if _is_stop_event(m)]
-    session.messages = head  # drops chunks AND trailing stop_events; tail.non-chunk-non-stop stays in head
+    session.messages = (
+        head  # drops chunks AND trailing stop_events; tail.non-chunk-non-stop stays in head
+    )
     # Redact the accumulated text
     redacted, exfil_warnings = redact_exfiltration_urls(assistant_text)
     for w in exfil_warnings:
@@ -497,8 +510,12 @@ def _flush_segment(
     attached_variants = False
     if session._pending_variants:
         pending_list = [
-            {**v, "content": redact_credentials(redact_exfiltration_urls(v.get("content", ""))[0])[0]}
-            for v in session._pending_variants if isinstance(v, dict)
+            {
+                **v,
+                "content": redact_credentials(redact_exfiltration_urls(v.get("content", ""))[0])[0],
+            }
+            for v in session._pending_variants
+            if isinstance(v, dict)
         ]
         pending_list.append({"content": redacted, "ts": last_msg.get("ts", "")})
         last_msg["variants"] = pending_list
@@ -620,7 +637,9 @@ def _expand_prompt_mention(
     if len(content.encode("utf-8")) > MAX_PROMPT_BYTES:
         logger.warning(
             "Prompt %s exceeds max size (%d > %d bytes)",
-            mention, len(content.encode("utf-8")), MAX_PROMPT_BYTES,
+            mention,
+            len(content.encode("utf-8")),
+            MAX_PROMPT_BYTES,
         )
         return message, "too_large"
     content, _ = redact_credentials(content)
@@ -629,7 +648,9 @@ def _expand_prompt_mention(
     # snippet); fall back to the inline form if it can't resolve.
     from personalclaw.prompt_providers.runtime import render_snippet_block
 
-    expanded = render_snippet_block("prompt-expansion", {"content": content, "user_text": user_text})
+    expanded = render_snippet_block(
+        "prompt-expansion", {"content": content, "user_text": user_text}
+    )
     if not expanded:
         expanded = f"Execute the following instructions:\n\n{content}"
         if user_text:
@@ -819,7 +840,7 @@ async def _run_chat(
                         {
                             "session": session.key,
                             "kind": "hook",
-                            "text": f"Hook {r.hook_name} BLOCKED: {r.stderr[:100] if r.stderr else 'denied'}",
+                            "text": f"Hook {r.hook_name} BLOCKED: {r.stderr[:100] if r.stderr else 'denied'}",  # noqa: E501
                         },
                     )
                 elif r.exit_code not in (0, 2) and r.stderr:
@@ -1066,11 +1087,14 @@ async def _run_chat(
             acp_mode = "plan"
 
         state.broadcast_ws(
-            "activity_event", {"session": session.key, "kind": "status", "text": "Creating session…"}
+            "activity_event",
+            {"session": session.key, "kind": "status", "text": "Creating session…"},
         )
         session.model = _normalize_model(session.model or "") or ""
         client, is_new, resumed = await state.sessions.get_or_create(
-            session_key, agent=provider_agent or session.agent or None, model=session.model or None,
+            session_key,
+            agent=provider_agent or session.agent or None,
+            model=session.model or None,
             cwd=session.workspace_dir or None,
             reasoning_effort_override=session.reasoning_effort or None,
             provider_kind=provider_kind or None,
@@ -1100,7 +1124,11 @@ async def _run_chat(
             model_label = session.model
         else:
             _prov_model = getattr(getattr(client, "client", None), "_model", "") or ""
-            model_label = _prov_model if (isinstance(_prov_model, str) and _prov_model and _prov_model != "auto") else "auto"
+            model_label = (
+                _prov_model
+                if (isinstance(_prov_model, str) and _prov_model and _prov_model != "auto")
+                else "auto"
+            )
         # Surface WHICH backend is actually serving the turn (transparency): the
         # in-process native loop vs an external ACP CLI (claude-code /
         # codex). The user otherwise had no way to know an external backend was
@@ -1113,7 +1141,7 @@ async def _run_chat(
                 {
                     "session": session.key,
                     "kind": "session",
-                    "text": f"Session resumed · {agent_label} · {model_label} · via {_runtime_label}",
+                    "text": f"Session resumed · {agent_label} · {model_label} · via {_runtime_label}",  # noqa: E501
                 },
             )
         else:
@@ -1122,7 +1150,7 @@ async def _run_chat(
                 {
                     "session": session.key,
                     "kind": "session",
-                    "text": f"Session created · {agent_label} · {model_label} · via {_runtime_label}",
+                    "text": f"Session created · {agent_label} · {model_label} · via {_runtime_label}",  # noqa: E501
                 },
             )
 
@@ -1147,7 +1175,9 @@ async def _run_chat(
                         resources=f"{session_key} agent={session.agent or 'default'}",
                     )
                 except Exception:
-                    logger.warning("SEL audit failed for agent approval-floor seeding", exc_info=True)
+                    logger.warning(
+                        "SEL audit failed for agent approval-floor seeding", exc_info=True
+                    )
             # trust_reads floor: per-agent explicit value wins, else the global
             # agent.approval_mode default. Seeds only the READ-ONLY auto-approve
             # latch — unlike the full-trust "auto" floor above, the global value
@@ -1250,7 +1280,9 @@ async def _run_chat(
             # The channel thread persists across processes, so we compress its
             # history to bootstrap the fresh session's context window.
             if is_new and not resumed and state.context_builder.conversation_log:
-                from personalclaw.context import compress_thread_history  # circular: context -> chat
+                from personalclaw.context import (  # circular: context -> chat
+                    compress_thread_history,
+                )
 
                 compressed = await compress_thread_history(
                     state.context_builder.conversation_log,
@@ -1266,13 +1298,11 @@ async def _run_chat(
             # SessionManager.stop_turn), consumed one-shot here. Use getattr
             # for prev_turn_cancelled so test doubles don't raise on access.
             _session = getattr(state.sessions, "_sessions", {}).get(session_key)
-            if _session is not None and getattr(
-                _session, "prev_turn_cancelled", False
-            ):
+            if _session is not None and getattr(_session, "prev_turn_cancelled", False):
                 _session.prev_turn_cancelled = False
                 if state.context_builder and state.context_builder.conversation_log:
-                    from personalclaw.context import (
-                        build_cancelled_turn_preamble,  # circular: context -> dashboard.chat -> chat_runner (can't top-level: context imports chat at module load); circular: context -> chat -> chat_runner; circular: context -> chat
+                    from personalclaw.context import (  # circular: context -> dashboard.chat -> chat_runner (can't top-level: context imports chat at module load); circular: context -> chat -> chat_runner; circular: context -> chat  # noqa: E501
+                        build_cancelled_turn_preamble,
                     )
 
                     preamble = build_cancelled_turn_preamble(
@@ -1317,7 +1347,7 @@ async def _run_chat(
             # context — workspace, loop history, context-dir — so the session operates
             # with the project's cohesive shared context. First turn only (is_new); the
             # workspace is already the session cwd (bound at create).
-            if is_new and getattr(session, "project_id", ""):
+            if is_new and session.project_id:
                 _proj_pre = _project_context_preamble(session.project_id)
                 if _proj_pre:
                     message = f"{_proj_pre}\n\n{message}"
@@ -1393,7 +1423,7 @@ async def _run_chat(
                     {
                         "session": session.key,
                         "kind": "context",
-                        "text": f"Injected {ctx_len:,} chars of context (memory, lessons, history, episodic)",
+                        "text": f"Injected {ctx_len:,} chars of context (memory, lessons, history, episodic)",  # noqa: E501
                     },
                 )
         else:
@@ -1425,12 +1455,9 @@ async def _run_chat(
                 history_key = _history_key_for(session.key)
                 disk_count = 0
                 if state.conversation_log:
-                    disk_count = len(
-                        state.conversation_log.read_messages(history_key)
-                    )
+                    disk_count = len(state.conversation_log.read_messages(history_key))
                 mem_count = sum(
-                    1 for m in session.messages
-                    if m.get("role") in ("user", "assistant")
+                    1 for m in session.messages if m.get("role") in ("user", "assistant")
                 )
                 if mem_count > disk_count:
                     history = _build_history_prefix(session)
@@ -1481,9 +1508,12 @@ async def _run_chat(
                         _mirror_chan, f"💬 _{_mirror_msg}_", _mirror_thread
                     )
                     # Start a stream for real-time tool animations
-                    _mirror_stream_ts = await state.channel_delivery.start_stream(
-                        _mirror_chan, _mirror_thread, initial_text="Thinking…"
-                    ) or ""
+                    _mirror_stream_ts = (
+                        await state.channel_delivery.start_stream(
+                            _mirror_chan, _mirror_thread, initial_text="Thinking…"
+                        )
+                        or ""
+                    )
                 except Exception:
                     logger.debug("Failed to mirror user message to the channel", exc_info=True)
 
@@ -1500,7 +1530,7 @@ async def _run_chat(
                 last_heartbeat = time.time()
 
             # Security: tool_call_id originates from LLM — redact before any use
-            if hasattr(event, 'tool_call_id') and event.tool_call_id:
+            if hasattr(event, "tool_call_id") and event.tool_call_id:
                 _tcid, _ = redact_exfiltration_urls(event.tool_call_id)
                 _tcid, _ = redact_credentials(_tcid)
                 event.tool_call_id = _tcid
@@ -1524,7 +1554,10 @@ async def _run_chat(
                             m.setdefault("meta", {})["done"] = True
                             tcid = m.get("meta", {}).get("tool_call_id", "")
                             if tcid:
-                                state.broadcast_ws("tool_result", {"session": session.key, "tool_call_id": tcid, "output": ""})
+                                state.broadcast_ws(
+                                    "tool_result",
+                                    {"session": session.key, "tool_call_id": tcid, "output": ""},
+                                )
                         elif m.get("role") not in ("tool", "permission", "chunk"):
                             break
                 in_tool_group = False
@@ -1595,7 +1628,20 @@ async def _run_chat(
                         "input": _input_obj,
                     },
                 )
-                session.append("tool", _title, "msg msg-tool", meta={"tool_call_id": event.tool_call_id, "purpose": _purpose, "input": _input_preview} if event.tool_call_id else None)
+                session.append(
+                    "tool",
+                    _title,
+                    "msg msg-tool",
+                    meta=(
+                        {
+                            "tool_call_id": event.tool_call_id,
+                            "purpose": _purpose,
+                            "input": _input_preview,
+                        }
+                        if event.tool_call_id
+                        else None
+                    ),
+                )
                 # Snapshot before/after for a write tool so file-change chips
                 # can render below the assistant message at turn end.
                 _capture_file_change(session, event.title, event.tool_input)
@@ -1616,9 +1662,14 @@ async def _run_chat(
                     # runtime auto-approved under YOLO/policy=auto (which never reach
                     # the chat_runner approval gate). The one place risk is guaranteed
                     # logged for a forensic "what destructive tool ran" query.
-                    metadata={"risk": resolve_effective_risk(
-                        getattr(event, "risk_level", "") or "", event.title, event.tool_kind, event.tool_input
-                    )},
+                    metadata={
+                        "risk": resolve_effective_risk(
+                            getattr(event, "risk_level", "") or "",
+                            event.title,
+                            event.tool_kind,
+                            event.tool_input,
+                        )
+                    },
                 )
                 # Fire PreToolUse hooks for auto-approved tools.
                 # NOTE: For EVENT_TOOL_CALL, hooks are informational only - the tool
@@ -1629,14 +1680,19 @@ async def _run_chat(
                     _raw = _raw[9:]
                 if event.tool_call_id:
                     _pending_tools[event.tool_call_id] = _raw
-                await fire_tool_hooks(state._hook_store, event.title, tool_input_to_str(event.tool_input))
+                await fire_tool_hooks(
+                    state._hook_store, event.title, tool_input_to_str(event.tool_input)
+                )
                 # Mirror tool call to linked channel stream
                 if _mirror_stream_ts and state.channel_delivery:
                     try:
                         if _mirror_active_task:
                             await state.channel_delivery.append_stream_task(
-                                _mirror_chan, _mirror_stream_ts,
-                                _mirror_active_task, _mirror_active_task_title, "complete",
+                                _mirror_chan,
+                                _mirror_stream_ts,
+                                _mirror_active_task,
+                                _mirror_active_task_title,
+                                "complete",
                             )
                         _mirror_task_counter += 1
                         _mirror_active_task = f"tool_{_mirror_task_counter}"
@@ -1646,8 +1702,11 @@ async def _run_chat(
                         _task_title = _task_title[:75]
                         _mirror_active_task_title = _task_title
                         await state.channel_delivery.append_stream_task(
-                            _mirror_chan, _mirror_stream_ts,
-                            _mirror_active_task, _task_title, "in_progress",
+                            _mirror_chan,
+                            _mirror_stream_ts,
+                            _mirror_active_task,
+                            _task_title,
+                            "in_progress",
                         )
                     except Exception:
                         logger.debug("Mirror tool task failed", exc_info=True)
@@ -1672,7 +1731,10 @@ async def _run_chat(
                         _u_detail, _ = redact_exfiltration_urls(event.title)
                         _u_detail, _ = redact_credentials(_u_detail)
                     for m in reversed(session.messages):
-                        if m.get("role") == "tool" and m.get("meta", {}).get("tool_call_id") == event.tool_call_id:
+                        if (
+                            m.get("role") == "tool"
+                            and m.get("meta", {}).get("tool_call_id") == event.tool_call_id
+                        ):
                             _meta = m.setdefault("meta", {})
                             if _u_input:
                                 _meta["input"] = _u_input
@@ -1731,7 +1793,10 @@ async def _run_chat(
                 # survive page reload (persisted in message meta, replayed via SSE).
                 if event.tool_call_id:
                     for m in reversed(session.messages):
-                        if m.get("role") == "tool" and m.get("meta", {}).get("tool_call_id") == event.tool_call_id:
+                        if (
+                            m.get("role") == "tool"
+                            and m.get("meta", {}).get("tool_call_id") == event.tool_call_id
+                        ):
                             _meta = m.setdefault("meta", {})
                             _meta["done"] = True
                             _meta["output"] = _out
@@ -1876,7 +1941,8 @@ async def _run_chat(
                         _parsed_input = None
                     try:
                         pre_hook_results = await _fire(
-                            HOOK_EVENT_PRE_TOOL_USE, tool_name=validated_tool,
+                            HOOK_EVENT_PRE_TOOL_USE,
+                            tool_name=validated_tool,
                             tool_input=_parsed_input,
                         )
                     except Exception as hook_exc:
@@ -1919,12 +1985,20 @@ async def _run_chat(
                 # single source of truth (task_modes.resolve_effective_risk) — also
                 # surfaced to the user on the approval card below.
                 effective_risk = resolve_effective_risk(
-                    getattr(event, "risk_level", "") or "", event.title, event.tool_kind, event.tool_input
+                    getattr(event, "risk_level", "") or "",
+                    event.title,
+                    event.tool_kind,
+                    event.tool_input,
                 )
                 # Trust-reads: auto-approve any EFFECTIVE-SAFE tool (read_file, grep,
                 # knowledge_search, web_search, AND read-only bash — subsumed as safe
                 # by invocation). CAUTION/DESTRUCTIVE still prompt.
-                if session._trust_reads and not session._trust and not yolo_active and effective_risk == "safe":
+                if (
+                    session._trust_reads
+                    and not session._trust
+                    and not yolo_active
+                    and effective_risk == "safe"
+                ):
                     try:
                         validated_tool = _validate_tool_name(event.title, event.tool_kind)
                     except ValueError as e:
@@ -1941,7 +2015,16 @@ async def _run_chat(
                         "tool",
                         f"{_tool_title}",
                         "msg msg-tool",
-                        meta={"tool_call_id": event.tool_call_id, "purpose": redact_credentials(redact_exfiltration_urls((event.tool_purpose or "")[:200])[0])[0]} if event.tool_call_id else None,
+                        meta=(
+                            {
+                                "tool_call_id": event.tool_call_id,
+                                "purpose": redact_credentials(
+                                    redact_exfiltration_urls((event.tool_purpose or "")[:200])[0]
+                                )[0],
+                            }
+                            if event.tool_call_id
+                            else None
+                        ),
                     )
                     sel().log_tool_invocation(
                         session_key=session_key,
@@ -1974,12 +2057,15 @@ async def _run_chat(
                         continue
                     if not _pre_tool_hooks_fired:
                         try:
-                            _parsed_input = json.loads(event.tool_input) if event.tool_input else None
+                            _parsed_input = (
+                                json.loads(event.tool_input) if event.tool_input else None
+                            )
                         except Exception:
                             _parsed_input = None
                         try:
                             pre_hook_results = await _fire(
-                                HOOK_EVENT_PRE_TOOL_USE, tool_name=validated_tool,
+                                HOOK_EVENT_PRE_TOOL_USE,
+                                tool_name=validated_tool,
                                 tool_input=_parsed_input,
                             )
                         except Exception as hook_exc:
@@ -2023,19 +2109,36 @@ async def _run_chat(
                         # security auditor can see a DESTRUCTIVE tool ran under trust/
                         # YOLO without a human prompt — the highest-value audit signal
                         # under the "risk is an indicator, floor covers everything" model.
-                        metadata={"reason": "yolo" if yolo_active else "trust", "risk": effective_risk},
+                        metadata={
+                            "reason": "yolo" if yolo_active else "trust",
+                            "risk": effective_risk,
+                        },
                     )
                     continue
                 # Auto-reject remaining tools after one rejection in a batch
-                if getattr(session, '_batch_rejected', False):
+                if getattr(session, "_batch_rejected", False):
                     await client.reject_tool(event.request_id)
                     _title, _ = redact_exfiltration_urls(event.title)
                     _title, _ = redact_credentials(_title)
-                    _purpose = redact_credentials(redact_exfiltration_urls((event.tool_purpose or "")[:200])[0])[0]
-                    session.append("tool", f"{_title} (rejected)", "msg msg-tool",
-                                meta={"tool_call_id": event.tool_call_id, "purpose": _purpose} if event.tool_call_id else None)
+                    _purpose = redact_credentials(
+                        redact_exfiltration_urls((event.tool_purpose or "")[:200])[0]
+                    )[0]
+                    session.append(
+                        "tool",
+                        f"{_title} (rejected)",
+                        "msg msg-tool",
+                        meta=(
+                            {"tool_call_id": event.tool_call_id, "purpose": _purpose}
+                            if event.tool_call_id
+                            else None
+                        ),
+                    )
                     # Mark the permission as resolved so UI shows rejection
-                    perm_meta: dict[str, str] = {"request_id": str(event.request_id), "tool_call_id": event.tool_call_id or "", "resolved": "rejected"}
+                    perm_meta: dict[str, str] = {
+                        "request_id": str(event.request_id),
+                        "tool_call_id": event.tool_call_id or "",
+                        "resolved": "rejected",
+                    }
                     session.append("permission", _title, json.dumps(perm_meta))
                     sel().log_tool_invocation(
                         session_key=session_key,
@@ -2050,7 +2153,10 @@ async def _run_chat(
                     logger.warning("AUTO-REJECTED tool=%r (batch rejection)", event.title)
                     continue
                 # Interactive approval — send to frontend, wait for decision
-                perm_meta = {"request_id": str(event.request_id), "tool_call_id": event.tool_call_id or ""}
+                perm_meta = {
+                    "request_id": str(event.request_id),
+                    "tool_call_id": event.tool_call_id or "",
+                }
                 if event.tool_input:
                     # The native loop hands us a parsed dict; ACP agents hand us a
                     # JSON string. The redact guards and the approval-card contract
@@ -2129,7 +2235,8 @@ async def _run_chat(
                         _parsed_input = None
                     try:
                         pre_hook_results = await _fire(
-                            HOOK_EVENT_PRE_TOOL_USE, tool_name=validated_tool,
+                            HOOK_EVENT_PRE_TOOL_USE,
+                            tool_name=validated_tool,
                             tool_input=_parsed_input,
                         )
                     except Exception as hook_exc:
@@ -2168,8 +2275,23 @@ async def _run_chat(
                         await client.approve_tool(event.request_id)
                         _approved_title, _ = redact_exfiltration_urls(event.title)
                         _approved_title, _ = redact_credentials(_approved_title)
-                        session.append("tool", f"{_approved_title}", "msg msg-tool",
-                                    meta={"tool_call_id": event.tool_call_id, "purpose": redact_credentials(redact_exfiltration_urls((event.tool_purpose or "")[:200])[0])[0]} if event.tool_call_id else None)
+                        session.append(
+                            "tool",
+                            f"{_approved_title}",
+                            "msg msg-tool",
+                            meta=(
+                                {
+                                    "tool_call_id": event.tool_call_id,
+                                    "purpose": redact_credentials(
+                                        redact_exfiltration_urls((event.tool_purpose or "")[:200])[
+                                            0
+                                        ]
+                                    )[0],
+                                }
+                                if event.tool_call_id
+                                else None
+                            ),
+                        )
                         sel().log_tool_invocation(
                             session_key=session_key,
                             agent=_agent_label(session),
@@ -2198,7 +2320,11 @@ async def _run_chat(
                     # mark batch_rejected as true and continue loop instead of breaking
                     # This will allow for marking other batched approval requests as rejected too
                     session._batch_rejected = True
-                    logger.warning("PERM REJECTED tool=%r outcome=%r — auto-rejecting remaining batch", event.title, outcome)
+                    logger.warning(
+                        "PERM REJECTED tool=%r outcome=%r — auto-rejecting remaining batch",
+                        event.title,
+                        outcome,
+                    )
                     continue
             elif event.kind == EVENT_COMPACTION_STATUS:
                 logger.debug("Main loop: compaction event text=%r", event.text)
@@ -2212,7 +2338,11 @@ async def _run_chat(
                 state.broadcast_ws("session_clear", {"session": session.key})
                 state.broadcast_ws(
                     "chat_message",
-                    {"session": session.key, "role": "assistant", "content": "Conversation cleared."},
+                    {
+                        "session": session.key,
+                        "role": "assistant",
+                        "content": "Conversation cleared.",
+                    },
                 )
             elif event.kind == EVENT_AGENT_SWITCHED:
                 new_agent, _ = redact_credentials(event.text)
@@ -2263,14 +2393,8 @@ async def _run_chat(
                     # model-provider offers.
                     _record_model = session.model
                     if not _record_model:
-                        _prov_model = getattr(
-                            getattr(client, "client", None), "_model", ""
-                        ) or ""
-                        if (
-                            isinstance(_prov_model, str)
-                            and _prov_model
-                            and _prov_model != "auto"
-                        ):
+                        _prov_model = getattr(getattr(client, "client", None), "_model", "") or ""
+                        if isinstance(_prov_model, str) and _prov_model and _prov_model != "auto":
                             _record_model = _prov_model
                     # Derive cost from the pricing table when the provider didn't
                     # report one (most set cost_usd=0.0). Now that the model is
@@ -2279,6 +2403,7 @@ async def _run_chat(
                     # unpriced), so the provider-reported value (if any) always wins.
                     if not event.cost_usd and _record_model:
                         from personalclaw.pricing import estimate_cost
+
                         event.cost_usd = estimate_cost(
                             _record_model,
                             input_tokens=event.input_tokens,
@@ -2351,11 +2476,7 @@ async def _run_chat(
             if compaction_result["type"] == "completed":
                 summary, _ = redact_credentials(compaction_result.get("summary", ""))
                 summary, _ = redact_exfiltration_urls(summary)
-                msg = (
-                    f"Conversation compacted: {summary}"
-                    if summary
-                    else "Conversation compacted."
-                )
+                msg = f"Conversation compacted: {summary}" if summary else "Conversation compacted."
             elif compaction_result["type"] == "failed":
                 msg = "Compaction failed."
             else:
@@ -2432,13 +2553,17 @@ async def _run_chat(
             # correction before the next turn (vs waiting for session-end
             # consolidation). Best-effort + gated; never blocks. Skips incognito.
             try:
-                _maybe_after_turn_review(state, session, message, assistant_text, _turn_tool_call_count, provider=client)
+                _maybe_after_turn_review(
+                    state, session, message, assistant_text, _turn_tool_call_count, provider=client
+                )
             except Exception:
                 logger.debug("after-turn review failed", exc_info=True)
             # Skill axis (4-tier ladder): a background LLM review that may PROPOSE a
             # skill (propose-only queue). Non-blocking; own config flag.
             try:
-                _maybe_skill_ladder_review(state, session, message, assistant_text, _turn_tool_call_count)
+                _maybe_skill_ladder_review(
+                    state, session, message, assistant_text, _turn_tool_call_count
+                )
             except Exception:
                 logger.debug("skill-ladder review scheduling failed", exc_info=True)
         state.sessions.check_context_usage(session_key, client)
@@ -2456,7 +2581,7 @@ async def _run_chat(
                 {
                     "session": session.key,
                     "kind": "stats",
-                    "text": f"Turn complete: {_turn_event_count} events, {_turn_tool_call_count} tool calls, context {round(pct)}%",
+                    "text": f"Turn complete: {_turn_event_count} events, {_turn_tool_call_count} tool calls, context {round(pct)}%",  # noqa: E501
                 },
             )
         _stop_text = redact_exfiltration_urls(assistant_text[:500])[0]
@@ -2476,13 +2601,21 @@ async def _run_chat(
     except asyncio.CancelledError:
         if assistant_text:
             session.messages = [m for m in session.messages if m.get("role") != "chunk"]
-            session.append("assistant", redact_credentials(redact_exfiltration_urls(assistant_text)[0])[0], "msg msg-a")
+            session.append(
+                "assistant",
+                redact_credentials(redact_exfiltration_urls(assistant_text)[0])[0],
+                "msg msg-a",
+            )
     except AcpProcessDied as exc:
         logger.warning("ACP process died in session %s: %s — resetting session", session.key, exc)
         needs_session_reset = True
         if assistant_text:
             session.messages = [m for m in session.messages if m.get("role") != "chunk"]
-            session.append("assistant", redact_credentials(redact_exfiltration_urls(assistant_text)[0])[0], "msg msg-a")
+            session.append(
+                "assistant",
+                redact_credentials(redact_exfiltration_urls(assistant_text)[0])[0],
+                "msg msg-a",
+            )
         session._acp_pipe_death_retries += 1
         if _prompt_depth == 0 and session._acp_pipe_death_retries <= 3:
             session.queue_insert(0, message)
@@ -2493,11 +2626,17 @@ async def _run_chat(
             session.append("error", "⟳ Connection lost — please retry.", "msg msg-err")
     except PromptBusyExhaustedError:
         # Provider was killed after prompt-busy retries exhausted — reset + re-queue.
-        logger.info("Prompt busy exhausted in session %s — resetting session and re-queuing", session.key)
+        logger.info(
+            "Prompt busy exhausted in session %s — resetting session and re-queuing", session.key
+        )
         needs_session_reset = True  # checked in finally block
         if assistant_text:
             session.messages = [m for m in session.messages if m.get("role") != "chunk"]
-            session.append("assistant", redact_credentials(redact_exfiltration_urls(assistant_text)[0])[0], "msg msg-a")
+            session.append(
+                "assistant",
+                redact_credentials(redact_exfiltration_urls(assistant_text)[0])[0],
+                "msg msg-a",
+            )
         session._prompt_busy_retries += 1
         if _prompt_depth == 0 and session._prompt_busy_retries <= 3:
             session.queue_insert(0, message)
@@ -2513,14 +2652,13 @@ async def _run_chat(
         # (and dashboard messages) get executed on a fresh provider instead of
         # surfacing a bare error card with no work done.
         _retry_eligible = (
-            "already in progress" in _msg
-            or "process exited" in _msg
-            or "not running" in _msg
+            "already in progress" in _msg or "process exited" in _msg or "not running" in _msg
         )
         if _retry_eligible and _prompt_depth == 0:
             logger.info(
                 "ACP transient (%s) in session %s — resetting session and re-queuing",
-                _msg[:80], session.key,
+                _msg[:80],
+                session.key,
             )
             needs_session_reset = True  # checked in finally block
             if assistant_text:
@@ -2564,8 +2702,8 @@ async def _run_chat(
         # A persistently-broken worker is bounded by the service's consecutive-
         # error cap and (for goal loops) the supervisor's fail-fast.
         try:
-            from personalclaw.autonudge import (
-                get_instance as _autonudge_get,  # circular: autonudge -> dashboard.chat -> chat_runner
+            from personalclaw.autonudge import (  # circular: autonudge -> dashboard.chat -> chat_runner  # noqa: E501
+                get_instance as _autonudge_get,
             )
 
             _autonudge = _autonudge_get()
@@ -2586,8 +2724,11 @@ async def _run_chat(
             try:
                 if _mirror_active_task:
                     await state.channel_delivery.append_stream_task(
-                        _mirror_chan, _mirror_stream_ts,
-                        _mirror_active_task, _mirror_active_task_title, "complete",
+                        _mirror_chan,
+                        _mirror_stream_ts,
+                        _mirror_active_task,
+                        _mirror_active_task_title,
+                        "complete",
                     )
             except Exception:
                 logger.debug("Task append cleanup failed", exc_info=True)
@@ -2617,7 +2758,9 @@ async def _run_chat(
                 _cfg = AppConfig.load()
                 merge = _cfg.dashboard.merge_queued_messages
             except Exception:
-                logger.warning("Failed to load config; falling back to sequential dequeue", exc_info=True)
+                logger.warning(
+                    "Failed to load config; falling back to sequential dequeue", exc_info=True
+                )
                 merge = False
             next_msg, consumed = _dequeue_next_message(session, merge_enabled=merge)
             # Notify frontend to remove each consumed queued card
@@ -2625,7 +2768,10 @@ async def _run_chat(
                 _c, _ = redact_exfiltration_urls(item["content"])
                 _c, _ = redact_credentials(_c)
                 _redacted = _redact_for_display(_c)
-                state.broadcast_ws("queue_pop", {"session": session.key, "content": _redacted, "queue_id": item["id"]})
+                state.broadcast_ws(
+                    "queue_pop",
+                    {"session": session.key, "content": _redacted, "queue_id": item["id"]},
+                )
             # Redact merged message before storing in session
             next_msg, _ = redact_exfiltration_urls(next_msg)
             next_msg, _ = redact_credentials(next_msg)
@@ -2654,7 +2800,11 @@ async def _run_chat(
                 _disp = _redact_for_display(_disp)
                 state.broadcast_ws(
                     "chat_user_message",
-                    {"session": session.key, "content": _disp, "ts": session.messages[-1].get("ts", "")},
+                    {
+                        "session": session.key,
+                        "content": _disp,
+                        "ts": session.messages[-1].get("ts", ""),
+                    },
                 )
 
             task = asyncio.create_task(

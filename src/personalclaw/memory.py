@@ -48,7 +48,6 @@ def memory_dir() -> Path:
     return workspace_dir() / MEMORY_DIR_NAME
 
 
-
 # ── MemoryStore ──
 
 

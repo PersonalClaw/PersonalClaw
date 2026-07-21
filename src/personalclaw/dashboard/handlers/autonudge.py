@@ -90,7 +90,9 @@ async def api_autonudge_start(request: web.Request) -> web.Response:
     if not stop_sentinel_path:
         session = state._sessions.get(session_name)
         if session:
-            stop_sentinel_path = resolve_stop_sentinel(session_name, getattr(session, "workspace_dir", ""))
+            stop_sentinel_path = resolve_stop_sentinel(
+                session_name, getattr(session, "workspace_dir", "")
+            )
             Path(stop_sentinel_path).unlink(missing_ok=True)
     loop = await svc.add(
         session_name=session_name,

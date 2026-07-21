@@ -124,15 +124,19 @@ class TestMigration:
 
     def test_migrates_old_store_deletes_legacy_orphans_renames_chore(self, tmp_path):
         import json
+
         # OLD layout: legacy flat orphans at projects/ + the old tasks/projects store.
         (tmp_path / "projects").mkdir(parents=True)
         (tmp_path / "projects" / "deadbeef.json").write_text(
-            json.dumps({"id": "deadbeef", "name": "Use below report", "phases": [1, 2, 3]}))
+            json.dumps({"id": "deadbeef", "name": "Use below report", "phases": [1, 2, 3]})
+        )
         (tmp_path / "tasks" / "projects").mkdir(parents=True)
         (tmp_path / "tasks" / "projects" / "chore.json").write_text(
-            json.dumps({"id": "chore", "name": "Chore", "is_default": True}))
+            json.dumps({"id": "chore", "name": "Chore", "is_default": True})
+        )
         (tmp_path / "tasks" / "projects" / "p-keep0001.json").write_text(
-            json.dumps({"id": "p-keep0001", "name": "Real Work"}))
+            json.dumps({"id": "p-keep0001", "name": "Real Work"})
+        )
         with patch("personalclaw.tasks.hierarchy.config_dir", return_value=tmp_path):
             store = HierarchyStore()
             names = {p.name for p in store.list_projects()}

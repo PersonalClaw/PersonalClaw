@@ -13,8 +13,8 @@ import pytest
 
 from personalclaw.schedule import (
     _TIMER_POLL_SECS,
-    ScheduleJob,
     ScheduleDefinition,
+    ScheduleJob,
     ScheduleService,
     _job_tz,
     compute_next_run_ts,
@@ -86,14 +86,18 @@ class TestCronService:
     def test_add_job_at(self, tmp_path: Path) -> None:
         svc = ScheduleService(base_dir=tmp_path)
         svc._load()
-        job = svc.add_job(name="once", action=make_agent_action(message="do it"), at_ts=9999999999.0)
+        job = svc.add_job(
+            name="once", action=make_agent_action(message="do it"), at_ts=9999999999.0
+        )
         assert job.schedule.kind == "at"
         assert job.schedule.at_ts == 9999999999.0
 
     def test_add_job_cron_expr(self, tmp_path: Path) -> None:
         svc = ScheduleService(base_dir=tmp_path)
         svc._load()
-        job = svc.add_job(name="daily", action=make_agent_action(message="briefing"), cron_expr="0 9 * * *")
+        job = svc.add_job(
+            name="daily", action=make_agent_action(message="briefing"), cron_expr="0 9 * * *"
+        )
         assert job.schedule.kind == "cron"
         assert job.schedule.cron_expr == "0 9 * * *"
 
@@ -142,7 +146,9 @@ class TestCronService:
     def test_persistence_cron_expr(self, tmp_path: Path) -> None:
         svc1 = ScheduleService(base_dir=tmp_path)
         svc1._load()
-        svc1.add_job(name="daily", action=make_agent_action(message="hi"), cron_expr="0 9 * * MON-FRI")
+        svc1.add_job(
+            name="daily", action=make_agent_action(message="hi"), cron_expr="0 9 * * MON-FRI"
+        )
 
         svc2 = ScheduleService(base_dir=tmp_path)
         svc2._load()
@@ -188,13 +194,23 @@ class TestCronService:
     def test_add_job_with_channel(self, tmp_path: Path) -> None:
         svc = ScheduleService(base_dir=tmp_path)
         svc._load()
-        job = svc.add_job(name="ops", action=make_agent_action(message="check"), every_secs=300, channel="C0AP77JJSN6")
+        job = svc.add_job(
+            name="ops",
+            action=make_agent_action(message="check"),
+            every_secs=300,
+            channel="C0AP77JJSN6",
+        )
         assert job.channel == "C0AP77JJSN6"
 
     def test_add_job_channel_persists(self, tmp_path: Path) -> None:
         svc = ScheduleService(base_dir=tmp_path)
         svc._load()
-        job = svc.add_job(name="ops", action=make_agent_action(message="check"), every_secs=300, channel="C0AP77JJSN6")
+        job = svc.add_job(
+            name="ops",
+            action=make_agent_action(message="check"),
+            every_secs=300,
+            channel="C0AP77JJSN6",
+        )
         svc2 = ScheduleService(base_dir=tmp_path)
         svc2._load()
         loaded = [j for j in svc2.list_jobs() if j.id == job.id][0]
@@ -215,7 +231,7 @@ class TestCronService:
     def test_approval_mode_persists(self, tmp_path: Path) -> None:
         svc1 = ScheduleService(base_dir=tmp_path)
         svc1._load()
-        job = svc1.add_job(
+        svc1.add_job(
             name="auto-job",
             action=make_agent_action(message="go", approval_mode="auto"),
             every_secs=300,
@@ -416,10 +432,19 @@ class TestFormatSchedule:
         # Mock "now" to 2026-04-10, job at 3PM same day
         fake_now = datetime(2026, 4, 10, 12, 0, tzinfo=timezone.utc)
         # Mock only covers now() and fromtimestamp() — extend if format_schedule evolves.
-        monkeypatch.setattr("personalclaw.schedule.datetime", type("D", (datetime,), {
-            "now": classmethod(lambda cls, tz=None: fake_now),
-            "fromtimestamp": staticmethod(lambda ts, tz=None: datetime.fromtimestamp(ts, tz)),
-        }))
+        monkeypatch.setattr(
+            "personalclaw.schedule.datetime",
+            type(
+                "D",
+                (datetime,),
+                {
+                    "now": classmethod(lambda cls, tz=None: fake_now),
+                    "fromtimestamp": staticmethod(
+                        lambda ts, tz=None: datetime.fromtimestamp(ts, tz)
+                    ),
+                },
+            ),
+        )
         job_ts = datetime(2026, 4, 10, 15, 0, tzinfo=timezone.utc).timestamp()
         result = format_schedule(ScheduleDefinition(kind="at", at_ts=job_ts))
         assert result.startswith("at ")
@@ -431,10 +456,19 @@ class TestFormatSchedule:
         # Mock "now" to 2026-04-10, job on Apr 17
         fake_now = datetime(2026, 4, 10, 12, 0, tzinfo=timezone.utc)
         # Mock only covers now() and fromtimestamp() — extend if format_schedule evolves.
-        monkeypatch.setattr("personalclaw.schedule.datetime", type("D", (datetime,), {
-            "now": classmethod(lambda cls, tz=None: fake_now),
-            "fromtimestamp": staticmethod(lambda ts, tz=None: datetime.fromtimestamp(ts, tz)),
-        }))
+        monkeypatch.setattr(
+            "personalclaw.schedule.datetime",
+            type(
+                "D",
+                (datetime,),
+                {
+                    "now": classmethod(lambda cls, tz=None: fake_now),
+                    "fromtimestamp": staticmethod(
+                        lambda ts, tz=None: datetime.fromtimestamp(ts, tz)
+                    ),
+                },
+            ),
+        )
         job_ts = datetime(2026, 4, 17, 8, 0, tzinfo=timezone.utc).timestamp()
         result = format_schedule(ScheduleDefinition(kind="at", at_ts=job_ts))
         assert "Apr 17" in result
@@ -610,7 +644,9 @@ class TestTimezoneScheduling:
     """Tests for timezone-aware cron scheduling."""
 
     def test_job_tz_returns_zoneinfo(self) -> None:
-        job = ScheduleJob(id="j1", name="t", action=make_agent_action(message="m"), timezone="America/Toronto")
+        job = ScheduleJob(
+            id="j1", name="t", action=make_agent_action(message="m"), timezone="America/Toronto"
+        )
         tz = _job_tz(job)
         assert isinstance(tz, ZoneInfo)
         assert str(tz) == "America/Toronto"
@@ -624,7 +660,9 @@ class TestTimezoneScheduling:
         assert _job_tz(job) == ZoneInfo("UTC")
 
     def test_job_tz_invalid_falls_back_to_utc(self) -> None:
-        job = ScheduleJob(id="j1", name="t", action=make_agent_action(message="m"), timezone="Fake/Zone")
+        job = ScheduleJob(
+            id="j1", name="t", action=make_agent_action(message="m"), timezone="Fake/Zone"
+        )
         assert _job_tz(job) == ZoneInfo("UTC")
 
     def test_compute_next_run_ts_with_timezone(self) -> None:

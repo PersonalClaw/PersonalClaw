@@ -278,7 +278,9 @@ class AcpClient:
         if not self._session_id:
             raise AcpError("Cannot set model before session is initialized")
         req = self._dialect.set_model_request(
-            session_id=self._session_id, model=model_id, default_model="\x00",
+            session_id=self._session_id,
+            model=model_id,
+            default_model="\x00",
         )
         await self._send_dialect_request(req)
         self._model = model_id
@@ -328,7 +330,10 @@ class AcpClient:
 
         for attempt in range(2):
             try:
-                if self._transport.process is not None and self._transport.process.returncode is not None:
+                if (
+                    self._transport.process is not None
+                    and self._transport.process.returncode is not None
+                ):
                     await self._reset()
                 if self._connection is None:
                     await self._open_connection()
@@ -409,7 +414,9 @@ class AcpClient:
                         self._resumed = True
                         logger.info("ACP session resumed: %s", resume_sid)
                 except (AcpError, AcpTimeoutError):
-                    logger.info("session/load failed for %s, falling back to session/new", resume_sid)
+                    logger.info(
+                        "session/load failed for %s, falling back to session/new", resume_sid
+                    )
             else:
                 logger.info("Session file missing for %s, skipping load", resume_sid)
 
@@ -484,7 +491,9 @@ class AcpClient:
         )
         self._session_id = self._session.session_id
         self._session_new_snapshot = dict(conn.last_session_new_snapshot or {})
-        _activate = self._dialect.activate_agent_request(session_id=self._session_id, agent=self._agent)
+        _activate = self._dialect.activate_agent_request(
+            session_id=self._session_id, agent=self._agent
+        )
         if _activate is not None:
             await conn.send_request(_activate.method, _activate.params)
         _set_model = self._dialect.set_model_request(

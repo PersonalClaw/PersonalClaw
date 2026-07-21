@@ -1,4 +1,4 @@
-"""Memory API handlers — preferences, projects, history, settings, semantic, episodic, embeddings, graph."""
+"""Memory API handlers — preferences, projects, history, settings, semantic, episodic, embeddings, graph."""  # noqa: E501
 
 import asyncio
 import json
@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 def _sel():
     """Late-binding sel() for test monkeypatch compatibility."""
     import personalclaw.dashboard.handlers as _pkg  # noqa: F811
+
     return _pkg.sel()
 
 
@@ -28,6 +29,7 @@ def _path_home_pclaw() -> Path:
     """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
     try:
         from personalclaw.config.loader import config_dir as _cd
+
         return _cd()
     except Exception:
         return Path.home() / ".personalclaw"
@@ -112,12 +114,16 @@ async def api_memory_settings(request: web.Request) -> web.Response:
                 try:
                     mem["history_idle_hours"] = max(0.5, float(body["history_idle_hours"]))
                 except (ValueError, TypeError):
-                    return web.json_response({"error": "history_idle_hours must be numeric"}, status=400)
+                    return web.json_response(
+                        {"error": "history_idle_hours must be numeric"}, status=400
+                    )
             if "history_max_days" in body:
                 try:
                     mem["history_max_days"] = max(7, int(body["history_max_days"]))
                 except (ValueError, TypeError):
-                    return web.json_response({"error": "history_max_days must be an integer"}, status=400)
+                    return web.json_response(
+                        {"error": "history_max_days must be an integer"}, status=400
+                    )
             if "migrated" in body:
                 mem["migrated"] = bool(body["migrated"])
             # Behavior toggles (booleans) — the injection + proactive-memory
@@ -201,6 +207,7 @@ def _auto_wire_embed_fn(store) -> None:
     """Wire embed_fn from the Settings > Models active embedding selection."""
     try:
         from personalclaw.embedding_providers.registry import get_active_embed_fn
+
         embed_fn = get_active_embed_fn()
         if embed_fn:
             store.embed_fn = embed_fn
@@ -224,10 +231,15 @@ async def api_memory_semantic_write(request: web.Request) -> web.Response:
     if _is_restricted_session(request.app["state"], request):
         sk = request.headers.get("X-Session-Key", "")
         _sel().log_api_access(
-            caller=sk, operation="semantic.write", outcome="denied",
-            source="dashboard", resources="restricted_session_block",
+            caller=sk,
+            operation="semantic.write",
+            outcome="denied",
+            source="dashboard",
+            resources="restricted_session_block",
         )
-        return web.json_response({"error": "Memory writes are not allowed in this session mode."}, status=403)
+        return web.json_response(
+            {"error": "Memory writes are not allowed in this session mode."}, status=403
+        )
     svc = _get_service(request.app["state"])
     try:
         body = await request.json()
@@ -237,7 +249,11 @@ async def api_memory_semantic_write(request: web.Request) -> web.Response:
         return web.json_response({"error": "JSON body must be an object"}, status=400)
     key = body.get("key", "")
     value = body.get("value")
-    confidence = float(body.get("confidence", 1.0)) if isinstance(body.get("confidence"), (int, float)) else 1.0
+    confidence = (
+        float(body.get("confidence", 1.0))
+        if isinstance(body.get("confidence"), (int, float))
+        else 1.0
+    )
     source = body.get("source", "user_explicit")
     if not key or value is None:
         return web.json_response({"error": "key and value required"}, status=400)
@@ -246,8 +262,11 @@ async def api_memory_semantic_write(request: web.Request) -> web.Response:
         code, message = err
         sk = request.headers.get("X-Session-Key", "")
         _sel().log_api_access(
-            caller=sk, operation="semantic.write", outcome="rejected",
-            source="dashboard", resources=f"{code.value}:{key}",
+            caller=sk,
+            operation="semantic.write",
+            outcome="rejected",
+            source="dashboard",
+            resources=f"{code.value}:{key}",
         )
         status = 409 if code == SemanticRejectCode.CONFLICT else 422
         msg, _ = redact_exfiltration_urls(message)
@@ -255,8 +274,11 @@ async def api_memory_semantic_write(request: web.Request) -> web.Response:
         return web.json_response({"error": msg}, status=status)
     sk = request.headers.get("X-Session-Key", "")
     _sel().log_api_access(
-        caller=sk, operation="semantic.write", outcome="success",
-        source="dashboard", resources=key,
+        caller=sk,
+        operation="semantic.write",
+        outcome="success",
+        source="dashboard",
+        resources=key,
     )
     return web.json_response({"ok": True})
 
@@ -266,10 +288,15 @@ async def api_memory_semantic_delete(request: web.Request) -> web.Response:
     if _is_restricted_session(request.app["state"], request):
         sk = request.headers.get("X-Session-Key", "")
         _sel().log_api_access(
-            caller=sk, operation="semantic.delete", outcome="denied",
-            source="dashboard", resources="restricted_session_block",
+            caller=sk,
+            operation="semantic.delete",
+            outcome="denied",
+            source="dashboard",
+            resources="restricted_session_block",
         )
-        return web.json_response({"error": "Memory writes are not allowed in this session mode."}, status=403)
+        return web.json_response(
+            {"error": "Memory writes are not allowed in this session mode."}, status=403
+        )
     svc = _get_service(request.app["state"])
     key = request.match_info["key"]
     ok = svc.delete_semantic(key, source="user_explicit")
@@ -314,8 +341,10 @@ async def api_memory_event_undo(request: web.Request) -> web.Response:
     ok, message = svc.undo_event(event_id)
     try:
         _sel().log_api_access(
-            caller="dashboard:ui", operation="memory.undo_event",
-            outcome="allowed" if ok else "denied", resources=f"event={event_id}: {message}",
+            caller="dashboard:ui",
+            operation="memory.undo_event",
+            outcome="allowed" if ok else "denied",
+            resources=f"event={event_id}: {message}",
         )
     except Exception:
         logger.debug("SEL audit failed for memory undo", exc_info=True)
@@ -369,6 +398,7 @@ async def api_memory_embedding_status(request: web.Request) -> web.Response:
         # In-process model: report whether it's downloaded (via the native provider's
         # catalog — the sentence-transformers app; False when it isn't installed).
         from personalclaw.embedding_providers.registry import is_native_model_downloaded
+
         model_available = await is_native_model_downloaded(model_id)
         server_healthy = model_available
     else:
@@ -393,10 +423,14 @@ async def api_memory_embedding_status(request: web.Request) -> web.Response:
 
 
 async def api_memory_enable_embeddings(request: web.Request) -> web.Response:
-    """POST /api/memory/enable-embeddings — build the FAISS vector store for the active native model."""
+    """POST /api/memory/enable-embeddings — build the FAISS vector store for the active native model."""  # noqa: E501
     global _embedding_setup_status
     from personalclaw.config.loader import config_path  # noqa: F811
-    from personalclaw.embedding_providers.registry import _NATIVE_NAMES, _active_embedding_spec, get_active_embed_fn
+    from personalclaw.embedding_providers.registry import (
+        _NATIVE_NAMES,
+        _active_embedding_spec,
+        get_active_embed_fn,
+    )
 
     if _embedding_setup_status["step"] == "error":
         _embedding_setup_status = {"step": "idle", "error": ""}
@@ -415,11 +449,20 @@ async def api_memory_enable_embeddings(request: web.Request) -> web.Response:
         )
     model_name = spec[1]
 
-    from personalclaw.embedding_providers.registry import is_native_model_downloaded, native_provider
+    from personalclaw.embedding_providers.registry import (
+        is_native_model_downloaded,
+        native_provider,
+    )
+
     if native_provider() is None:
-        _embedding_setup_status = {"step": "idle", "error": "sentence-transformers app not installed"}
+        _embedding_setup_status = {
+            "step": "idle",
+            "error": "sentence-transformers app not installed",
+        }
         return web.json_response(
-            {"error": "The Sentence Transformers app is not installed. Install it (Store) or bind a remote embedding provider."},
+            {
+                "error": "The Sentence Transformers app is not installed. Install it (Store) or bind a remote embedding provider."  # noqa: E501
+            },
             status=400,
         )
 
@@ -428,15 +471,19 @@ async def api_memory_enable_embeddings(request: web.Request) -> web.Response:
     except ImportError:
         _embedding_setup_status = {"step": "idle", "error": "faiss-cpu not installed"}
         return web.json_response(
-            {"error": "faiss-cpu is not installed. Install with: pip install 'personalclaw[embeddings]'"},
+            {
+                "error": "faiss-cpu is not installed. Install with: pip install 'personalclaw[embeddings]'"  # noqa: E501
+            },
             status=400,
         )
 
     if not await is_native_model_downloaded(model_name):
         _embedding_setup_status = {"step": "idle", "error": "No embedding model downloaded"}
         return web.json_response(
-            {"error": f"Embedding model '{model_name}' not downloaded. "
-             "Download one first (POST /api/models/downloads with kind=embedding)."},
+            {
+                "error": f"Embedding model '{model_name}' not downloaded. "
+                "Download one first (POST /api/models/downloads with kind=embedding)."
+            },
             status=400,
         )
 
@@ -479,6 +526,7 @@ async def api_memory_enable_embeddings(request: web.Request) -> web.Response:
 async def api_memory_disable_embeddings(request: web.Request) -> web.Response:
     """POST /api/memory/disable-embeddings — clear the active embedding selection."""
     from personalclaw.providers.use_cases import load_active_models, save_active_models
+
     active = load_active_models()
     active.pop("embedding", None)
     save_active_models(active)
@@ -532,6 +580,7 @@ async def api_memory_delete_model(request: web.Request) -> web.Response:
         return web.json_response({"error": "Missing 'model' field"}, status=400)
 
     from personalclaw.embedding_providers.registry import delete_native_model, native_provider
+
     if native_provider() is None:
         return web.json_response({"error": "Sentence Transformers app not installed"}, status=400)
 
@@ -578,6 +627,7 @@ async def api_memory_activate_model(request: web.Request) -> web.Response:
     # provider-agnostic path (same the store uses everywhere) rather than the local
     # substrate directly.
     from personalclaw.providers.use_cases import load_active_models, save_active_models
+
     active = load_active_models()
     active["embedding"] = [f"native:{model_name}"]
     save_active_models(active)
@@ -591,7 +641,9 @@ async def api_memory_activate_model(request: web.Request) -> web.Response:
     cleared = store.clear_embeddings()
     store.embed_fn = embed_fn
 
-    return web.json_response({"ok": True, "model": model_name, "dim": dim, "embeddings_cleared": cleared})
+    return web.json_response(
+        {"ok": True, "model": model_name, "dim": dim, "embeddings_cleared": cleared}
+    )
 
 
 async def api_memory_episodic_search(request: web.Request) -> web.Response:
@@ -604,9 +656,7 @@ async def api_memory_episodic_search(request: web.Request) -> web.Response:
         limit = 20
     tag_filter = [t.strip() for t in request.query.get("tags", "").split(",") if t.strip()] or None
     results = []
-    for e in svc.search_episodic(
-        query_text=query, limit=limit, tag_filter=tag_filter
-    ):
+    for e in svc.search_episodic(query_text=query, limit=limit, tag_filter=tag_filter):
         d = {k: v for k, v in dict(e).items() if not isinstance(v, (bytes, memoryview))}
         results.append(_redact_memory_field(d))
     return web.json_response({"results": results})
@@ -630,10 +680,15 @@ async def api_memory_recall(request: web.Request) -> web.Response:
     if _blocks_reads_session(state, request):
         sk = request.headers.get("X-Session-Key", "")
         _sel().log_api_access(
-            caller=sk, operation="memory.recall", outcome="denied",
-            source="dashboard", resources=sk,
+            caller=sk,
+            operation="memory.recall",
+            outcome="denied",
+            source="dashboard",
+            resources=sk,
         )
-        return web.json_response({"result": "No matching memory found.", "query": "", "deep": False})
+        return web.json_response(
+            {"result": "No matching memory found.", "query": "", "deep": False}
+        )
     svc = _get_service(request.app["state"])
     query = request.query.get("q", "")[:500]
     if not query:
@@ -732,7 +787,8 @@ async def api_memory_stats(request: web.Request) -> web.Response:
     for f in [md / "preferences.md", md / "projects.md"]:
         if f.is_file():
             has_legacy = any(
-                line.strip().startswith("- ") for line in f.read_text(encoding="utf-8", errors="replace").splitlines()
+                line.strip().startswith("- ")
+                for line in f.read_text(encoding="utf-8", errors="replace").splitlines()
             )
             if has_legacy:
                 break
@@ -819,6 +875,7 @@ async def api_memory_migrate(request: web.Request) -> web.Response:
         # embedding model is active.
         if not store.embed_fn:
             from personalclaw.embedding_providers.registry import get_active_embed_fn
+
             store.embed_fn = get_active_embed_fn()
 
         # Run in executor to avoid blocking event loop (can take 30+ seconds)
@@ -838,10 +895,15 @@ async def api_memory_import(request: web.Request) -> web.Response:
     if _is_restricted_session(request.app["state"], request):
         sk = request.headers.get("X-Session-Key", "")
         _sel().log_api_access(
-            caller=sk, operation="memory.import", outcome="denied",
-            source="dashboard", resources="restricted_session_block",
+            caller=sk,
+            operation="memory.import",
+            outcome="denied",
+            source="dashboard",
+            resources="restricted_session_block",
         )
-        return web.json_response({"error": "Memory writes are not allowed in this session mode."}, status=403)
+        return web.json_response(
+            {"error": "Memory writes are not allowed in this session mode."}, status=403
+        )
     store = _get_provider(request.app["state"])
     try:
         data = await request.json()
@@ -876,10 +938,15 @@ async def api_memory_consolidate(request: web.Request) -> web.Response:
     if _is_restricted_session(state, request):
         sk = request.headers.get("X-Session-Key", "")
         _sel().log_api_access(
-            caller=sk, operation="memory.consolidate", outcome="denied",
-            source="dashboard", resources="restricted_session_block",
+            caller=sk,
+            operation="memory.consolidate",
+            outcome="denied",
+            source="dashboard",
+            resources="restricted_session_block",
         )
-        return web.json_response({"error": "Memory writes are not allowed in this session mode."}, status=403)
+        return web.json_response(
+            {"error": "Memory writes are not allowed in this session mode."}, status=403
+        )
     if not state.consolidator:
         return web.json_response({"error": "consolidator not available"}, status=503)
     try:
@@ -961,8 +1028,13 @@ def _build_memory_graph(mem: Any, lessons: list) -> tuple[list[dict], list[dict]
                 # selected list entry to its graph node WITHOUT re-deriving the md5 id
                 # (which would couple the FE to the label-truncation rules here). When
                 # no explicit ref is given it defaults to the prefix:label identity.
-                {"id": nid, "label": label[:60], "group": group, "title": title or label,
-                 "ref": ref or f"{prefix}:{label}"}
+                {
+                    "id": nid,
+                    "label": label[:60],
+                    "group": group,
+                    "title": title or label,
+                    "ref": ref or f"{prefix}:{label}",
+                }
             )
             node_ids[f"{prefix}:{label}"] = nid
         return nid
@@ -972,12 +1044,7 @@ def _build_memory_graph(mem: Any, lessons: list) -> tuple[list[dict], list[dict]
         pref_text = mem.read_preferences() or ""
         for line in pref_text.splitlines():
             line = line.strip().removeprefix("- ").strip()
-            if (
-                line
-                and not line.startswith("#")
-                and not line.startswith("<!--")
-                and len(line) > 5
-            ):
+            if line and not line.startswith("#") and not line.startswith("<!--") and len(line) > 5:
                 _add("pref", line[:80], "preference", line)
     except Exception:
         pass

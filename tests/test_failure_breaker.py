@@ -8,10 +8,9 @@ import pytest
 
 from personalclaw.agents.native.runtime import (
     _BREAKER_BLOCK,
-    _BREAKER_WARN,
     _STRUCT_REPEAT,
-    _FailureBreaker,
     NativeAgentRuntime,
+    _FailureBreaker,
     _params_key,
     _result_digest,
 )
@@ -23,7 +22,6 @@ from personalclaw.llm.events import (
     AgentEvent,
 )
 from personalclaw.tool_providers.base import ToolDefinition, ToolProvider, ToolResult
-
 
 # ── unit: _FailureBreaker + _params_key ──
 
@@ -77,9 +75,9 @@ def test_result_digest_strips_volatile_fields():
 def test_structural_no_progress_detected_on_third_repeat():
     b = _FailureBreaker()
     sig = "tool:args\x1fSAME"
-    assert b.record_structural(sig) == ""   # 1st
-    assert b.record_structural(sig) == ""   # 2nd
-    reason = b.record_structural(sig)        # 3rd → no-progress
+    assert b.record_structural(sig) == ""  # 1st
+    assert b.record_structural(sig) == ""  # 2nd
+    reason = b.record_structural(sig)  # 3rd → no-progress
     assert reason and "same result" in reason
 
 
@@ -139,7 +137,14 @@ class _AlwaysFailTool(ToolProvider):
         return "Mock"
 
     async def list_tools(self):
-        return [ToolDefinition(name="flaky", description="d", parameters={"type": "object"}, requires_approval=False)]
+        return [
+            ToolDefinition(
+                name="flaky",
+                description="d",
+                parameters={"type": "object"},
+                requires_approval=False,
+            )
+        ]
 
     async def invoke(self, tool_name, arguments):
         self.invoked += 1
@@ -161,7 +166,12 @@ class _RepeatModel:
         self.last_tools = tools
         self.calls += 1
         if self.calls <= self._n:
-            yield AgentEvent(kind=EVENT_TOOL_CALL, tool_call_id=f"c{self.calls}", title="flaky", tool_input='{"x": 1}')
+            yield AgentEvent(
+                kind=EVENT_TOOL_CALL,
+                tool_call_id=f"c{self.calls}",
+                title="flaky",
+                tool_input='{"x": 1}',
+            )
             yield AgentEvent(kind=EVENT_COMPLETE)
         else:
             yield AgentEvent(kind=EVENT_COMPLETE)
@@ -180,10 +190,12 @@ async def test_repeated_failure_gets_blocked_and_stops_invoking():
     rt._max_turns = _BREAKER_BLOCK + 5
     await rt.start()
     results = []
+
     async def pump():
         async for ev in rt.stream("go"):
             if ev.kind == EVENT_TOOL_RESULT:
                 results.append(str(ev.tool_output))
+
     await asyncio.wait_for(pump(), timeout=5)
 
     # The tool is invoked at most _BREAKER_BLOCK times — past that it's blocked
@@ -204,12 +216,22 @@ async def test_success_resets_streak_no_block():
             self.calls = 0
 
         @property
-        def name(self): return "mock"
+        def name(self):
+            return "mock"
+
         @property
-        def display_name(self): return "Mock"
+        def display_name(self):
+            return "Mock"
 
         async def list_tools(self):
-            return [ToolDefinition(name="flip", description="d", parameters={"type": "object"}, requires_approval=False)]
+            return [
+                ToolDefinition(
+                    name="flip",
+                    description="d",
+                    parameters={"type": "object"},
+                    requires_approval=False,
+                )
+            ]
 
         async def invoke(self, tool_name, arguments):
             self.calls += 1
@@ -217,18 +239,22 @@ async def test_success_resets_streak_no_block():
                 return ToolResult(success=False, error="transient")
             return ToolResult(success=True, output="ok")
 
-    model = _RepeatModel(n_calls=4)
-    # rebind the scripted tool name to "flip"
-    model_calls = {"n": 0}
-
     class _FlipModel:
         supports_tools = True
         _model = "scripted"
-        def __init__(self): self.calls = 0
+
+        def __init__(self):
+            self.calls = 0
+
         async def complete(self, messages, *, tools=None, model=None, reasoning_effort=""):
             self.calls += 1
             if self.calls <= 4:
-                yield AgentEvent(kind=EVENT_TOOL_CALL, tool_call_id=f"c{self.calls}", title="flip", tool_input='{"x": 1}')
+                yield AgentEvent(
+                    kind=EVENT_TOOL_CALL,
+                    tool_call_id=f"c{self.calls}",
+                    title="flip",
+                    tool_input='{"x": 1}',
+                )
                 yield AgentEvent(kind=EVENT_COMPLETE)
             else:
                 yield AgentEvent(kind=EVENT_COMPLETE)
@@ -241,9 +267,11 @@ async def test_success_resets_streak_no_block():
     )
     rt._max_turns = 10
     await rt.start()
+
     async def pump():
         async for _ in rt.stream("go"):
             pass
+
     await asyncio.wait_for(pump(), timeout=5)
     # All 4 calls invoked — the success on call 3 reset the streak so it never blocked.
     assert tool.calls == 4
@@ -255,15 +283,26 @@ async def test_structural_loop_warns_on_successful_repetition():
     the structural detector — the failure breaker never would (nothing failed)."""
 
     class _SameResultTool(ToolProvider):
-        def __init__(self): self.calls = 0
+        def __init__(self):
+            self.calls = 0
 
         @property
-        def name(self): return "mock"
+        def name(self):
+            return "mock"
+
         @property
-        def display_name(self): return "Mock"
+        def display_name(self):
+            return "Mock"
 
         async def list_tools(self):
-            return [ToolDefinition(name="spin", description="d", parameters={"type": "object"}, requires_approval=False)]
+            return [
+                ToolDefinition(
+                    name="spin",
+                    description="d",
+                    parameters={"type": "object"},
+                    requires_approval=False,
+                )
+            ]
 
         async def invoke(self, tool_name, arguments):
             self.calls += 1
@@ -273,11 +312,19 @@ async def test_structural_loop_warns_on_successful_repetition():
     class _SpinModel:
         supports_tools = True
         _model = "scripted"
-        def __init__(self): self.calls = 0
+
+        def __init__(self):
+            self.calls = 0
+
         async def complete(self, messages, *, tools=None, model=None, reasoning_effort=""):
             self.calls += 1
             if self.calls <= _STRUCT_REPEAT + 1:
-                yield AgentEvent(kind=EVENT_TOOL_CALL, tool_call_id=f"c{self.calls}", title="spin", tool_input='{"x": 1}')
+                yield AgentEvent(
+                    kind=EVENT_TOOL_CALL,
+                    tool_call_id=f"c{self.calls}",
+                    title="spin",
+                    tool_input='{"x": 1}',
+                )
                 yield AgentEvent(kind=EVENT_COMPLETE)
             else:
                 yield AgentEvent(kind=EVENT_COMPLETE)
@@ -291,10 +338,12 @@ async def test_structural_loop_warns_on_successful_repetition():
     rt._max_turns = _STRUCT_REPEAT + 3
     await rt.start()
     results = []
+
     async def pump():
         async for ev in rt.stream("go"):
             if ev.kind == EVENT_TOOL_RESULT:
                 results.append(str(ev.tool_output))
+
     await asyncio.wait_for(pump(), timeout=5)
     # The tool kept succeeding (never blocked), but the structural warning fired.
     assert tool.calls >= _STRUCT_REPEAT

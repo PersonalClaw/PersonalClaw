@@ -6,7 +6,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from personalclaw.dashboard.handlers import api_send_message, api_channel_profile  # noqa: E402
+from personalclaw.dashboard.handlers import api_channel_profile, api_send_message  # noqa: E402
 
 
 def _make_app(state) -> web.Application:
@@ -44,7 +44,9 @@ class TestTargetedChannel:
         state = _mock_state(channel_delivery=slack, owner_id="U_OWNER")
         app = _make_app(state)
 
-        with patch("personalclaw.dashboard.handlers.messaging._is_tracked_channel", return_value=True):
+        with patch(
+            "personalclaw.dashboard.handlers.messaging._is_tracked_channel", return_value=True
+        ):
             async with TestClient(TestServer(app)) as client:
                 resp = await client.post(
                     "/api/send-message",
@@ -52,8 +54,20 @@ class TestTargetedChannel:
                 )
                 assert resp.status == 200
                 data = await resp.json()
-                assert data == {"ok": True, "channel": True, "session": False, "ts": "1712793600.000001"}
-                slack.deliver_text.assert_called_once_with("C0123ABC456", "hello channel", thread_ts=None, unfurl_links=None, unfurl_media=None, reply_broadcast=None)
+                assert data == {
+                    "ok": True,
+                    "channel": True,
+                    "session": False,
+                    "ts": "1712793600.000001",
+                }
+                slack.deliver_text.assert_called_once_with(
+                    "C0123ABC456",
+                    "hello channel",
+                    thread_ts=None,
+                    unfurl_links=None,
+                    unfurl_media=None,
+                    reply_broadcast=None,
+                )
                 slack.open_dm.assert_not_called()
 
     @pytest.mark.asyncio
@@ -62,7 +76,9 @@ class TestTargetedChannel:
         state = _mock_state(channel_delivery=MagicMock(), owner_id="U_OWNER")
         app = _make_app(state)
 
-        with patch("personalclaw.dashboard.handlers.messaging._is_tracked_channel", return_value=False):
+        with patch(
+            "personalclaw.dashboard.handlers.messaging._is_tracked_channel", return_value=False
+        ):
             async with TestClient(TestServer(app)) as client:
                 resp = await client.post(
                     "/api/send-message",
@@ -92,9 +108,21 @@ class TestTargetedUser:
                 )
                 assert resp.status == 200
                 data = await resp.json()
-                assert data == {"ok": True, "channel": True, "session": False, "ts": "1712793600.000001"}
+                assert data == {
+                    "ok": True,
+                    "channel": True,
+                    "session": False,
+                    "ts": "1712793600.000001",
+                }
                 slack.open_dm.assert_called_once_with("U0123ABC456")
-                slack.deliver_text.assert_called_once_with("D_USER_DM", "hello user", thread_ts=None, unfurl_links=None, unfurl_media=None, reply_broadcast=None)
+                slack.deliver_text.assert_called_once_with(
+                    "D_USER_DM",
+                    "hello user",
+                    thread_ts=None,
+                    unfurl_links=None,
+                    unfurl_media=None,
+                    reply_broadcast=None,
+                )
 
     @pytest.mark.asyncio
     async def test_disallowed_user_returns_403(self, mock_sel):
@@ -151,14 +179,24 @@ class TestFallbackToOwnerDM:
         app = _make_app(state)
 
         async with TestClient(TestServer(app)) as client:
-            resp = await client.post(
-                "/api/send-message", json={"text": "hello owner"}
-            )
+            resp = await client.post("/api/send-message", json={"text": "hello owner"})
             assert resp.status == 200
             data = await resp.json()
-            assert data == {"ok": True, "channel": True, "session": False, "ts": "1712793600.000001"}
+            assert data == {
+                "ok": True,
+                "channel": True,
+                "session": False,
+                "ts": "1712793600.000001",
+            }
             slack.open_dm.assert_called_once_with("U_OWNER")
-            slack.deliver_text.assert_called_once_with("D_OWNER", "hello owner", thread_ts=None, unfurl_links=None, unfurl_media=None, reply_broadcast=None)
+            slack.deliver_text.assert_called_once_with(
+                "D_OWNER",
+                "hello owner",
+                thread_ts=None,
+                unfurl_links=None,
+                unfurl_media=None,
+                reply_broadcast=None,
+            )
 
 
 # ── api_channel_profile tests (#7) ──
@@ -181,7 +219,12 @@ class TestUnfurlControl:
             )
             assert resp.status == 200
             slack.deliver_text.assert_called_once_with(
-                "D_OWNER", "no previews", thread_ts=None, unfurl_links=False, unfurl_media=False, reply_broadcast=None,
+                "D_OWNER",
+                "no previews",
+                thread_ts=None,
+                unfurl_links=False,
+                unfurl_media=False,
+                reply_broadcast=None,
             )
 
     @pytest.mark.asyncio
@@ -195,11 +238,17 @@ class TestUnfurlControl:
 
         async with TestClient(TestServer(app)) as client:
             resp = await client.post(
-                "/api/send-message", json={"text": "with previews"},
+                "/api/send-message",
+                json={"text": "with previews"},
             )
             assert resp.status == 200
             slack.deliver_text.assert_called_once_with(
-                "D_OWNER", "with previews", thread_ts=None, unfurl_links=None, unfurl_media=None, reply_broadcast=None,
+                "D_OWNER",
+                "with previews",
+                thread_ts=None,
+                unfurl_links=None,
+                unfurl_media=None,
+                reply_broadcast=None,
             )
 
     @pytest.mark.asyncio
@@ -218,7 +267,12 @@ class TestUnfurlControl:
             )
             assert resp.status == 200
             slack.deliver_text.assert_called_once_with(
-                "D_OWNER", "null test", thread_ts=None, unfurl_links=None, unfurl_media=None, reply_broadcast=None,
+                "D_OWNER",
+                "null test",
+                thread_ts=None,
+                unfurl_links=None,
+                unfurl_media=None,
+                reply_broadcast=None,
             )
 
     @pytest.mark.asyncio
@@ -270,21 +324,21 @@ class TestSlackProfile:
     async def test_happy_path(self, mock_sel):
         """Valid user ID returns profile with redacted fields."""
         slack = MagicMock()
-        slack.resolve_user_profile = AsyncMock(return_value={
-            "id": "U0123ABC456",
-            "name": "testuser",
-            "real_name": "Test User",
-            "title": "Engineer",
-            "timezone": "America/Los_Angeles",
-        })
+        slack.resolve_user_profile = AsyncMock(
+            return_value={
+                "id": "U0123ABC456",
+                "name": "testuser",
+                "real_name": "Test User",
+                "title": "Engineer",
+                "timezone": "America/Los_Angeles",
+            }
+        )
         state = _mock_state(channel_delivery=slack)
         app = _make_app(state)
 
         with patch("personalclaw.dashboard.handlers.messaging._is_owner_user", return_value=True):
             async with TestClient(TestServer(app)) as client:
-                resp = await client.post(
-                    "/api/channel/profile", json={"user": "U0123ABC456"}
-                )
+                resp = await client.post("/api/channel/profile", json={"user": "U0123ABC456"})
                 assert resp.status == 200
                 data = await resp.json()
                 assert data["profile"]["name"] == "testuser"
@@ -306,9 +360,7 @@ class TestSlackProfile:
         app = _make_app(state)
 
         async with TestClient(TestServer(app)) as client:
-            resp = await client.post(
-                "/api/channel/profile", json={"user": "not-a-slack-id"}
-            )
+            resp = await client.post("/api/channel/profile", json={"user": "not-a-slack-id"})
             assert resp.status == 400
 
     @pytest.mark.asyncio
@@ -318,9 +370,7 @@ class TestSlackProfile:
         app = _make_app(state)
 
         async with TestClient(TestServer(app)) as client:
-            resp = await client.post(
-                "/api/channel/profile", json={"user": 12345}
-            )
+            resp = await client.post("/api/channel/profile", json={"user": 12345})
             assert resp.status == 400
 
     @pytest.mark.asyncio
@@ -333,9 +383,7 @@ class TestSlackProfile:
 
         with patch("personalclaw.dashboard.handlers.messaging._is_owner_user", return_value=True):
             async with TestClient(TestServer(app)) as client:
-                resp = await client.post(
-                    "/api/channel/profile", json={"user": "U0123ABC456"}
-                )
+                resp = await client.post("/api/channel/profile", json={"user": "U0123ABC456"})
                 assert resp.status == 502
                 mock_sel.log_tool_invocation.assert_called_with(
                     session_key="dashboard",
@@ -353,9 +401,7 @@ class TestSlackProfile:
 
         with patch("personalclaw.dashboard.handlers.messaging._is_owner_user", return_value=True):
             async with TestClient(TestServer(app)) as client:
-                resp = await client.post(
-                    "/api/channel/profile", json={"user": "U0123ABC456"}
-                )
+                resp = await client.post("/api/channel/profile", json={"user": "U0123ABC456"})
                 assert resp.status == 503
 
     @pytest.mark.asyncio
@@ -366,9 +412,7 @@ class TestSlackProfile:
 
         with patch("personalclaw.dashboard.handlers.messaging._is_owner_user", return_value=False):
             async with TestClient(TestServer(app)) as client:
-                resp = await client.post(
-                    "/api/channel/profile", json={"user": "U0123ABC456"}
-                )
+                resp = await client.post("/api/channel/profile", json={"user": "U0123ABC456"})
                 assert resp.status == 403
                 data = await resp.json()
                 assert data == {"error": "user not in allowlist"}
@@ -393,9 +437,7 @@ class TestSlackProfile:
 
         with patch("personalclaw.dashboard.handlers.messaging._is_owner_user", return_value=True):
             async with TestClient(TestServer(app)) as client:
-                resp = await client.post(
-                    "/api/channel/profile", json={"user": "U0123ABC456"}
-                )
+                resp = await client.post("/api/channel/profile", json={"user": "U0123ABC456"})
                 assert resp.status == 429
                 mock_sel.log_tool_invocation.assert_called_once_with(
                     session_key="dashboard",
@@ -411,19 +453,19 @@ class TestSlackProfile:
         slack = MagicMock()
         # Use a URL with a long base64-like query that triggers exfil detection
         exfil_url = "https://evil.com/steal?d=" + "A" * 200
-        slack.resolve_user_profile = AsyncMock(return_value={
-            "id": "U0123ABC456",
-            "name": "testuser",
-            "status_text": f"check {exfil_url}",
-        })
+        slack.resolve_user_profile = AsyncMock(
+            return_value={
+                "id": "U0123ABC456",
+                "name": "testuser",
+                "status_text": f"check {exfil_url}",
+            }
+        )
         state = _mock_state(channel_delivery=slack)
         app = _make_app(state)
 
         with patch("personalclaw.dashboard.handlers.messaging._is_owner_user", return_value=True):
             async with TestClient(TestServer(app)) as client:
-                resp = await client.post(
-                    "/api/channel/profile", json={"user": "U0123ABC456"}
-                )
+                resp = await client.post("/api/channel/profile", json={"user": "U0123ABC456"})
                 assert resp.status == 200
                 data = await resp.json()
                 status = data["profile"].get("status_text", "")
@@ -449,9 +491,12 @@ class TestThreadTsAndBroadcast:
             )
             assert resp.status == 200
             slack.deliver_text.assert_called_once_with(
-                "D_OWNER", "threaded",
+                "D_OWNER",
+                "threaded",
                 thread_ts="1712793600.123456",
-                unfurl_links=None, unfurl_media=None, reply_broadcast=None,
+                unfurl_links=None,
+                unfurl_media=None,
+                reply_broadcast=None,
             )
 
     @pytest.mark.asyncio
@@ -474,9 +519,11 @@ class TestThreadTsAndBroadcast:
             )
             assert resp.status == 200
             slack.deliver_text.assert_called_once_with(
-                "D_OWNER", "broadcast me",
+                "D_OWNER",
+                "broadcast me",
                 thread_ts="1712793600.123456",
-                unfurl_links=None, unfurl_media=None,
+                unfurl_links=None,
+                unfurl_media=None,
                 reply_broadcast=True,
             )
 
@@ -531,7 +578,9 @@ class TestThreadTsAndBroadcast:
         state = _mock_state(channel_delivery=slack, owner_id="U_OWNER")
         app = _make_app(state)
 
-        with patch("personalclaw.dashboard.handlers.messaging._is_tracked_channel", return_value=True):
+        with patch(
+            "personalclaw.dashboard.handlers.messaging._is_tracked_channel", return_value=True
+        ):
             async with TestClient(TestServer(app)) as client:
                 resp = await client.post(
                     "/api/send-message",
@@ -544,9 +593,11 @@ class TestThreadTsAndBroadcast:
                 )
                 assert resp.status == 200
                 slack.deliver_text.assert_called_once_with(
-                    "C0AP0AT1ESJ", "threaded channel",
+                    "C0AP0AT1ESJ",
+                    "threaded channel",
                     thread_ts="1712793600.123456",
-                    unfurl_links=None, unfurl_media=None,
+                    unfurl_links=None,
+                    unfurl_media=None,
                     reply_broadcast=True,
                 )
                 slack.open_dm.assert_not_called()

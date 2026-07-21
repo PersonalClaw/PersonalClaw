@@ -45,8 +45,9 @@ def test_disabled_never_applies():
 
 
 def test_roundtrip_dict():
-    i = Intent(id="inv", goal="track investment ideas", enabled_for=["bookmark"],
-               propose_skill=True)
+    i = Intent(
+        id="inv", goal="track investment ideas", enabled_for=["bookmark"], propose_skill=True
+    )
     assert Intent.from_dict(i.to_dict()) == i
 
 
@@ -126,9 +127,11 @@ class _StubPool:
         return self._r
 
 
-_MATCH = ('{"relevant": true, "takeaway": "Cheap NAS build", '
-          '"fields": [{"name": "budget", "type": "number", "value": 400}, '
-          '{"name": "stack", "type": "tags", "value": ["truenas", "zfs"]}]}')
+_MATCH = (
+    '{"relevant": true, "takeaway": "Cheap NAS build", '
+    '"fields": [{"name": "budget", "type": "number", "value": 400}, '
+    '{"name": "stack", "type": "tags", "value": ["truenas", "zfs"]}]}'
+)
 
 
 def test_match_relevant_returns_typed_fields():
@@ -150,6 +153,7 @@ def test_match_raise_on_error_distinguishes_failure_from_not_relevant():
     """A model failure is swallowed to None by default (graceful ingest path), but
     raise_on_error=True propagates it so a retroactive run can report 'couldn't
     evaluate' instead of a misleading 0-match."""
+
     class _BoomPool:
         async def send(self, prompt, timeout=None):
             raise RuntimeError("pool cold")
@@ -190,14 +194,22 @@ def test_run_intents_matches_multiple_concurrently():
 
 def test_run_intents_isolates_one_failing_intent():
     """One intent's matcher blowing up doesn't sink the others (gather isolates it)."""
+
     class _FlakyPool:
-        def __init__(self): self.n = 0
+        def __init__(self):
+            self.n = 0
+
         async def send(self, prompt, timeout=None):
             self.n += 1
             if self.n == 1:
                 raise RuntimeError("boom")
             return _MATCH
-    out = _run(run_intents([Intent(id="x", goal="g"), Intent(id="y", goal="g")], "note", "c", pool=_FlakyPool()))
+
+    out = _run(
+        run_intents(
+            [Intent(id="x", goal="g"), Intent(id="y", goal="g")], "note", "c", pool=_FlakyPool()
+        )
+    )
     # The failing one is dropped; the other still matches.
     assert len(out) == 1
 
@@ -210,9 +222,14 @@ def test_outcome_record_and_query(tmp_path):
 
     s = KnowledgeStore(str(tmp_path / "k.db"))
     iid = s.create_typed_item(item_type="note", title="N", content="x")
-    s.record_intent_outcome("lab", intent_name="homelab", item_id=iid,
-                            item_title="N", takeaway="t",
-                            fields=[{"name": "a", "type": "string", "value": "b"}])
+    s.record_intent_outcome(
+        "lab",
+        intent_name="homelab",
+        item_id=iid,
+        item_title="N",
+        takeaway="t",
+        fields=[{"name": "a", "type": "string", "value": "b"}],
+    )
     by_intent = s.outcomes_for_intent("lab")
     assert len(by_intent) == 1
     assert by_intent[0]["takeaway"] == "t"
@@ -281,8 +298,9 @@ def test_runner_records_intent_outcomes(tmp_path):
     ensure_nodes_registered()
     s = KnowledgeStore(str(tmp_path / "k.db"))
     IntentStore(tmp_path / "intents.json").upsert(Intent(id="topics", goal="track topics"))
-    iid = s.create_typed_item(item_type="note", title="N",
-                              content="A note about astronomy and telescopes.")
+    iid = s.create_typed_item(
+        item_type="note", title="N", content="A note about astronomy and telescopes."
+    )
     resp = '{"relevant": true, "takeaway": "astronomy", "fields": []}'
     _run(ingest_item(s, iid, insights_pool=_StubPool(resp)))
     outcomes = s.outcomes_for_item(iid)
@@ -301,7 +319,11 @@ def test_reingest_clears_stale_outcome_when_no_longer_relevant(tmp_path):
     s = KnowledgeStore(str(tmp_path / "k.db"))
     IntentStore(tmp_path / "intents.json").upsert(Intent(id="topics", goal="track topics"))
     iid = s.create_typed_item(item_type="note", title="N", content="about astronomy")
-    _run(ingest_item(s, iid, insights_pool=_StubPool('{"relevant": true, "takeaway": "astro", "fields": []}')))
+    _run(
+        ingest_item(
+            s, iid, insights_pool=_StubPool('{"relevant": true, "takeaway": "astro", "fields": []}')
+        )
+    )
     assert len(s.outcomes_for_item(iid)) == 1
     # Re-ingest with content that no longer matches → outcome cleared, none re-recorded.
     s.update_item(iid, content="unrelated grocery list")

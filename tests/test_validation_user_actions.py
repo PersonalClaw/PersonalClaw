@@ -415,9 +415,10 @@ class TestMcpScheduleUserActions:
     # -- schedule_remove_all --
 
     def test_remove_all(self):
-        with patch("personalclaw.mcp_schedule.ScheduleService") as mock_svc, patch.dict(
-            "os.environ", {"PERSONALCLAW_CLI": "1"}, clear=False
-        ) as env:
+        with (
+            patch("personalclaw.mcp_schedule.ScheduleService") as mock_svc,
+            patch.dict("os.environ", {"PERSONALCLAW_CLI": "1"}, clear=False) as env,
+        ):
             env.pop("PERSONALCLAW_SESSION_KEY", None)
             svc = mock_svc.return_value
             job = MagicMock()

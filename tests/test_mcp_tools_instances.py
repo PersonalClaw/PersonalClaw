@@ -19,10 +19,12 @@ from personalclaw.providers import mcp_instances as mi
 @pytest.fixture(autouse=True)
 def _home(tmp_path, monkeypatch):
     monkeypatch.setattr(mi, "_mcp_json_path", lambda: tmp_path / "mcp.json")
+
     # _save imports agent._atomic_json_write — stub to a plain write to avoid
     # pulling the whole agent module / rebuild machinery into a unit test.
     def _fake_save(data):
         (tmp_path / "mcp.json").write_text(json.dumps(data), encoding="utf-8")
+
     monkeypatch.setattr(mi, "_save", _fake_save)
     return tmp_path
 
@@ -32,16 +34,24 @@ def _read(tmp_path) -> dict:
 
 
 def test_create_stdio_writes_mcp_json(_home):
-    inst = mi.create_instance("filesystem-mcp", {
-        "transport": "stdio", "command": "npx", "args": "-y server-fs /tmp", "endpoint": "",
-    })
+    inst = mi.create_instance(
+        "filesystem-mcp",
+        {
+            "transport": "stdio",
+            "command": "npx",
+            "args": "-y server-fs /tmp",
+            "endpoint": "",
+        },
+    )
     assert inst.id == "filesystem-mcp"
     data = _read(_home)["mcpServers"]["filesystem-mcp"]
     assert data == {"command": "npx", "args": ["-y", "server-fs", "/tmp"]}
 
 
 def test_create_sse_writes_url(_home):
-    mi.create_instance("remote", {"transport": "sse", "endpoint": "https://x/sse", "command": "", "args": ""})
+    mi.create_instance(
+        "remote", {"transport": "sse", "endpoint": "https://x/sse", "command": "", "args": ""}
+    )
     assert _read(_home)["mcpServers"]["remote"] == {"url": "https://x/sse"}
 
 
@@ -57,11 +67,18 @@ def test_create_duplicate_rejected(_home):
 
 
 def test_list_maps_servers_to_instances(_home):
-    (_home / "mcp.json").write_text(json.dumps({"mcpServers": {
-        "a": {"command": "npx", "args": ["x"]},
-        "b": {"url": "https://b/sse"},
-        "c": {"command": "node", "disabled": True},
-    }}), encoding="utf-8")
+    (_home / "mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "a": {"command": "npx", "args": ["x"]},
+                    "b": {"url": "https://b/sse"},
+                    "c": {"command": "node", "disabled": True},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     insts = {i.id: i for i in mi.list_instances()}
     assert insts["a"].config["transport"] == "stdio"
     assert insts["a"].config["args"] == "x"
@@ -71,10 +88,19 @@ def test_list_maps_servers_to_instances(_home):
 
 
 def test_update_preserves_env(_home):
-    (_home / "mcp.json").write_text(json.dumps({"mcpServers": {
-        "s": {"command": "npx", "args": ["old"], "env": {"API_KEY": "secret"}},
-    }}), encoding="utf-8")
-    mi.update_instance("s", config={"transport": "stdio", "command": "npx", "args": "new", "endpoint": ""})
+    (_home / "mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "s": {"command": "npx", "args": ["old"], "env": {"API_KEY": "secret"}},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    mi.update_instance(
+        "s", config={"transport": "stdio", "command": "npx", "args": "new", "endpoint": ""}
+    )
     spec = _read(_home)["mcpServers"]["s"]
     assert spec["args"] == ["new"]
     assert spec["env"] == {"API_KEY": "secret"}  # preserved across edit

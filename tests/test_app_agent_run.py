@@ -24,17 +24,35 @@ from personalclaw.dashboard.handlers.apps import register_app_routes
 
 class _FakeSubagents:
     """Minimal subagents store: spawn returns a done info with a result."""
+
     max_concurrent = 4
 
     def __init__(self):
         self._runs = {}
 
-    def spawn(self, task, *, parent_session_key="", agent="", max_turns=0,
-              approval_mode=None, silent=False, cwd=""):
+    def spawn(
+        self,
+        task,
+        *,
+        parent_session_key="",
+        agent="",
+        max_turns=0,
+        approval_mode=None,
+        silent=False,
+        cwd="",
+    ):
         info = SimpleNamespace(
-            id="run-1", task=task, done=True, started=0.0, turns=2,
-            result=f"Summarized: {task}", error="", result_path="",
-            last_tool="", parent=parent_session_key, approval_mode=approval_mode,
+            id="run-1",
+            task=task,
+            done=True,
+            started=0.0,
+            turns=2,
+            result=f"Summarized: {task}",
+            error="",
+            result_path="",
+            last_tool="",
+            parent=parent_session_key,
+            approval_mode=approval_mode,
             silent=silent,
         )
         self._runs[info.id] = info
@@ -46,8 +64,10 @@ class _FakeSubagents:
 
 @asynccontextmanager
 async def _client(tmp_path):
-    with patch("personalclaw.config.loader.config_dir", return_value=tmp_path), \
-         patch.object(manager, "config_dir", return_value=tmp_path):
+    with (
+        patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
+        patch.object(manager, "config_dir", return_value=tmp_path),
+    ):
         app = web.Application()
         app["state"] = SimpleNamespace(subagents=_FakeSubagents())
         register_app_routes(app)

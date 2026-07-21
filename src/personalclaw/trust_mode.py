@@ -27,7 +27,7 @@ from collections.abc import Callable
 logger = logging.getLogger(__name__)
 
 # Default TTLs (seconds) for surface-driven activation.
-YOLO_CHANNEL_TTL_SECS = 1800        # 30 min — channel `!yolo on`
+YOLO_CHANNEL_TTL_SECS = 1800  # 30 min — channel `!yolo on`
 YOLO_DASHBOARD_TTL_SECS = 6 * 3600  # 6 h — dashboard trust toggle (security ceiling)
 
 
@@ -37,7 +37,7 @@ class _TrustMode:
 
     def __init__(self) -> None:
         self._active: bool = False
-        self._expires_at: float = 0.0        # 0.0 == no expiry (permanent)
+        self._expires_at: float = 0.0  # 0.0 == no expiry (permanent)
         self._from_config: bool = False
         self._active_ttl: int = 0
         self._on_disable: list[Callable[[str], None]] = []

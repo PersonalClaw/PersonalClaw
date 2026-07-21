@@ -10,9 +10,9 @@ from chat_test_helpers import _make_state
 
 def _make_channel_app(state):
     from personalclaw.dashboard.chat_channel import (
-        api_chat_session_handoff,
-        api_chat_session_channel_link,
         api_channel_reply_targets,
+        api_chat_session_channel_link,
+        api_chat_session_handoff,
     )
 
     app = web.Application()
@@ -72,10 +72,12 @@ class TestChannelReplyTargets:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         state.channel_delivery = MagicMock()
-        state.channel_delivery.list_reply_channels = MagicMock(return_value=[
-            {"id": "dm", "name": "Direct Message"},
-            {"id": "C1", "name": "general"},
-        ])
+        state.channel_delivery.list_reply_channels = MagicMock(
+            return_value=[
+                {"id": "dm", "name": "Direct Message"},
+                {"id": "C1", "name": "general"},
+            ]
+        )
         async with TestClient(TestServer(_make_channel_app(state))) as client:
             resp = await client.get("/api/channels/reply-targets")
             assert resp.status == 200

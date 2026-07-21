@@ -52,13 +52,16 @@ def clear_sentinels(workspace_dir: str, files_dir: str, sentinels: list[str]) ->
         for s in sentinels:
             try:
                 p = os.path.join(base, s)
-                os.path.isfile(p) and os.unlink(p)
+                if os.path.isfile(p):
+                    os.unlink(p)
             except OSError:
                 pass
 
 
 async def run_planner_pass(
-    state, svc, *,
+    state,
+    svc,
+    *,
     session_key: str,
     agent_name: str,
     workspace_dir: str,
@@ -105,12 +108,17 @@ async def run_planner_pass(
     stop_path = os.path.join(files_dir, stop_sentinel_name) if files_dir else ""
     if stop_path:
         try:
-            os.path.isfile(stop_path) and os.unlink(stop_path)
+            if os.path.isfile(stop_path):
+                os.unlink(stop_path)
         except OSError:
             pass
     try:
         session = state.get_or_create_session(
-            name=skey, agent=agent_name, model=model, workspace_dir=cwd, app=app,
+            name=skey,
+            agent=agent_name,
+            model=model,
+            workspace_dir=cwd,
+            app=app,
         )
         session._trust = True
         if provider:
@@ -129,13 +137,19 @@ async def run_planner_pass(
         # shared autonomous-run framing so the planner never offers menus / waits for a
         # user. One choke point → fixes BOTH the Code and Goal Loop planners.
         from personalclaw.autonomous_framing import with_autonomous_framing
+
         framed_brief = with_autonomous_framing(brief)
         await svc.add(
-            session_name=skey, message=framed_brief, idle_secs=60,
-            max_cycles=PLANNER_MAX_CYCLES, first_idle_secs=PLANNER_FIRST_IDLE,
+            session_name=skey,
+            message=framed_brief,
+            idle_secs=60,
+            max_cycles=PLANNER_MAX_CYCLES,
+            first_idle_secs=PLANNER_FIRST_IDLE,
             stop_sentinel_path=stop_path,
         )
-        deadline = time.time() + (timeout_secs if timeout_secs is not None else PLANNER_TIMEOUT_SECS)
+        deadline = time.time() + (
+            timeout_secs if timeout_secs is not None else PLANNER_TIMEOUT_SECS
+        )
         # Once the planner loop is gone OR deactivated (it exhausted PLANNER_MAX_CYCLES
         # without writing the sentinel — narrated but never authored the file, or hit a
         # model error), no further cycle will run, so polling to the full deadline is a
@@ -161,7 +175,10 @@ async def run_planner_pass(
                 if dead_polls >= _GRACE_POLLS:
                     logger.info(
                         "run_planner_pass: planner loop for %s ended without writing %s "
-                        "— stopping poll early", skey, sentinel)
+                        "— stopping poll early",
+                        skey,
+                        sentinel,
+                    )
                     return None
             else:
                 dead_polls = 0

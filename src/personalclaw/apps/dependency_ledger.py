@@ -37,23 +37,26 @@ _DEP_KINDS = ("mcp", "skills", "agents")
 
 
 class DepDisposition(str, Enum):
-    REMOVABLE = "removable"        # only this app referenced it
-    SHARED = "shared"             # another app still needs it
+    REMOVABLE = "removable"  # only this app referenced it
+    SHARED = "shared"  # another app still needs it
     USER_INSTALLED = "userInstalled"  # no app owns it — user installed directly
 
 
 @dataclass
 class DepClassification:
-    key: str        # "<kind>:<id>"
-    kind: str       # mcp | skill | agent
+    key: str  # "<kind>:<id>"
+    kind: str  # mcp | skill | agent
     dep_id: str
     disposition: DepDisposition
     remaining: list[str]  # apps (other than the one removed) still referencing it
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "key": self.key, "kind": self.kind, "id": self.dep_id,
-            "disposition": self.disposition.value, "remaining": list(self.remaining),
+            "key": self.key,
+            "kind": self.kind,
+            "id": self.dep_id,
+            "disposition": self.disposition.value,
+            "remaining": list(self.remaining),
         }
 
 
@@ -150,8 +153,11 @@ def classify_uninstall(manifest: AppManifest) -> list[DepClassification]:
             disp = DepDisposition.SHARED
         else:
             disp = DepDisposition.REMOVABLE
-        out.append(DepClassification(key=key, kind=kind, dep_id=dep_id,
-                                     disposition=disp, remaining=remaining))
+        out.append(
+            DepClassification(
+                key=key, kind=kind, dep_id=dep_id, disposition=disp, remaining=remaining
+            )
+        )
     return out
 
 

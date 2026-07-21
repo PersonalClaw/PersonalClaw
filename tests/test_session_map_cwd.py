@@ -142,10 +142,10 @@ class TestCwdExtractionFromProvider:
     def test_extracts_work_dir_from_provider(self):
         provider = MagicMock()
         provider._work_dir = Path("/home/user/project")
-        _cwd_str = str(provider._work_dir) if hasattr(provider, '_work_dir') else ""
+        _cwd_str = str(provider._work_dir) if hasattr(provider, "_work_dir") else ""
         assert _cwd_str == "/home/user/project"
 
     def test_returns_empty_when_no_work_dir(self):
         provider = MagicMock(spec=[])
-        _cwd_str = str(provider._work_dir) if hasattr(provider, '_work_dir') else ""
+        _cwd_str = str(provider._work_dir) if hasattr(provider, "_work_dir") else ""
         assert _cwd_str == ""

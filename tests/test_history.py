@@ -341,7 +341,10 @@ class TestCanonicalKey:
         assert ConversationLog._canonical_key("dashboard_chat-1-100") == "dashboard_chat-1-100"
 
     def test_double_prefix_collapsed(self):
-        assert ConversationLog._canonical_key("dashboard_dashboard_chat-1-100") == "dashboard_chat-1-100"
+        assert (
+            ConversationLog._canonical_key("dashboard_dashboard_chat-1-100")
+            == "dashboard_chat-1-100"
+        )
 
     def test_triple_prefix_collapsed(self):
         assert ConversationLog._canonical_key("dashboard_dashboard_dashboard_x") == "dashboard_x"
@@ -543,6 +546,7 @@ class TestSearchSessions:
             encoding="utf-8",
         )
         import os
+
         os.utime(tmp_path / "title-match.jsonl", (1000, 1000))
         os.utime(tmp_path / "content-only.jsonl", (2000, 2000))
         log = ConversationLog(base_dir=tmp_path)
@@ -550,7 +554,7 @@ class TestSearchSessions:
         assert [s["key"] for s in results] == ["title-match", "content-only"]
 
     def test_more_content_hits_ranks_higher(self, tmp_path):
-        """Session with more content occurrences ranks above one with fewer (same length + no title match).
+        """Session with more content occurrences ranks above one with fewer (same length + no title match).  # noqa: E501
 
         Expected winner ``many`` is written *older* than ``few`` so that
         recency alone would place it second - only the hit-count scoring
@@ -567,6 +571,7 @@ class TestSearchSessions:
             encoding="utf-8",
         )
         import os
+
         os.utime(tmp_path / "many.jsonl", (1000, 1000))
         os.utime(tmp_path / "few.jsonl", (2000, 2000))
         log = ConversationLog(base_dir=tmp_path)
@@ -590,6 +595,7 @@ class TestSearchSessions:
             encoding="utf-8",
         )
         import os
+
         os.utime(tmp_path / "short.jsonl", (1000, 1000))
         os.utime(tmp_path / "long.jsonl", (2000, 2000))
         log = ConversationLog(base_dir=tmp_path)
@@ -612,21 +618,19 @@ class TestSearchSessions:
         newest-first-on-tie invariant isn't satisfied trivially.
         """
         (tmp_path / "older.jsonl").write_text(
-            '{"_type": "metadata", "title": "t"}\n'
-            '{"role": "user", "content": "webhook"}\n',
+            '{"_type": "metadata", "title": "t"}\n' '{"role": "user", "content": "webhook"}\n',
             encoding="utf-8",
         )
         (tmp_path / "middle-title.jsonl").write_text(
-            '{"_type": "metadata", "title": "webhook"}\n'
-            '{"role": "user", "content": "x"}\n',
+            '{"_type": "metadata", "title": "webhook"}\n' '{"role": "user", "content": "x"}\n',
             encoding="utf-8",
         )
         (tmp_path / "newer.jsonl").write_text(
-            '{"_type": "metadata", "title": "t"}\n'
-            '{"role": "user", "content": "webhook"}\n',
+            '{"_type": "metadata", "title": "t"}\n' '{"role": "user", "content": "webhook"}\n',
             encoding="utf-8",
         )
         import os
+
         os.utime(tmp_path / "older.jsonl", (1000, 1000))
         os.utime(tmp_path / "middle-title.jsonl", (1500, 1500))
         os.utime(tmp_path / "newer.jsonl", (2000, 2000))
@@ -652,6 +656,7 @@ class TestSearchSessions:
             encoding="utf-8",
         )
         import os
+
         os.utime(tmp_path / "strong.jsonl", (1000, 1000))
         os.utime(tmp_path / "weak.jsonl", (2000, 2000))
         log = ConversationLog(base_dir=tmp_path)
@@ -681,6 +686,7 @@ class TestSearchSessions:
             encoding="utf-8",
         )
         import os
+
         os.utime(tmp_path / "title-only.jsonl", (1000, 1000))
         os.utime(tmp_path / "heavy-content.jsonl", (2000, 2000))
         log = ConversationLog(base_dir=tmp_path)
@@ -708,6 +714,7 @@ class TestSearchSessions:
         # HFS+) can give all three files the same mtime, making the
         # list_sessions() order non-deterministic without this.
         import os
+
         os.utime(tmp_path / "old-strong.jsonl", (1000, 1000))
         os.utime(tmp_path / "new-weak-1.jsonl", (2000, 2000))
         os.utime(tmp_path / "new-weak-2.jsonl", (3000, 3000))
@@ -806,7 +813,7 @@ class TestArchive:
         assert p.name.startswith("slack_C123_456__")
 
     def test_multiple_rotations_produce_multiple_archives(self, tmp_path, monkeypatch):
-        """A session that keeps growing across multiple rotate cycles produces multiple archive files."""
+        """A session that keeps growing across multiple rotate cycles produces multiple archive files."""  # noqa: E501
         monkeypatch.setattr("personalclaw.history._SESSION_MAX_BYTES", 200)
         monkeypatch.setattr("personalclaw.history._SESSION_KEEP_LINES", 2)
         log = ConversationLog(base_dir=tmp_path)
@@ -818,13 +825,23 @@ class TestArchive:
         assert len(archives) >= 2, f"expected multiple archives, got {len(archives)}"
 
     def test_archive_header_is_valid_json_metadata_line(self, tmp_path):
-        """First line of archive is a JSON metadata row; remaining lines are original message jsonl."""
+        """First line of archive is a JSON metadata row; remaining lines are original message jsonl."""  # noqa: E501
         from personalclaw.history import _archive_lines
 
-        p = _archive_lines("k", ['{"role":"user","content":"a"}\n', '{"role":"assistant","content":"b"}\n'], reason="rotate", base=tmp_path)
+        p = _archive_lines(
+            "k",
+            ['{"role":"user","content":"a"}\n', '{"role":"assistant","content":"b"}\n'],
+            reason="rotate",
+            base=tmp_path,
+        )
         lines = p.read_text().splitlines()
         header = json.loads(lines[0])
-        assert header == {"_type": "archive", "reason": "rotate", "archived_at": header["archived_at"], "count": 2}
+        assert header == {
+            "_type": "archive",
+            "reason": "rotate",
+            "archived_at": header["archived_at"],
+            "count": 2,
+        }
         assert json.loads(lines[1])["role"] == "user"
         assert json.loads(lines[2])["role"] == "assistant"
 
@@ -1013,9 +1030,9 @@ class TestArchiveOnlyDropped:
         assert len(archives) == 1
         archived = archives[0].read_text()
         # Only the dropped message A should be in the archive (not B or C).
-        assert "\"content\": \"A\"" in archived
-        assert "\"content\": \"B\"" not in archived
-        assert "\"content\": \"C\"" not in archived
+        assert '"content": "A"' in archived
+        assert '"content": "B"' not in archived
+        assert '"content": "C"' not in archived
         header = json.loads(archived.splitlines()[0])
         assert header["count"] == 1
 
@@ -1104,8 +1121,10 @@ class TestExplicitConsolidationTriggers:
         c = self._make_consolidator()
 
         async def run():
-            with patch.object(c, "consolidate_now", new_callable=AsyncMock, return_value=True) as cn, \
-                 patch.object(type(c), "_svc", create=True) as svc_prop:
+            with (
+                patch.object(c, "consolidate_now", new_callable=AsyncMock, return_value=True) as cn,
+                patch.object(type(c), "_svc", create=True) as svc_prop,
+            ):
                 seal = MagicMock(return_value=0)
                 svc_prop.__get__ = lambda *a: type("S", (), {"seal_session": seal})()
                 ran = await c.consolidate_session("k")
@@ -1136,9 +1155,11 @@ class TestExplicitConsolidationTriggers:
 
         async def run():
             calls = []
+
             async def fake_consolidate(key, include_history=True):
                 calls.append(key)
                 c._running.discard(key)  # mirrors _consolidate's finally
+
             with patch.object(c, "_consolidate", side_effect=fake_consolidate):
                 await c.consolidate_now("k")
                 await c.consolidate_now("k")
@@ -1161,12 +1182,14 @@ class TestStopEventContextInjection:
         log.append("sess1", "user", "hello")
         log.append("sess1", "assistant", "hi")
         # Append a resolved stop_event as a system message
-        stop_data = json.dumps({
-            "kind": "stop_event",
-            "id": "stop-abc",
-            "state": "stopped",
-            "outcome": "soft",
-        })
+        stop_data = json.dumps(
+            {
+                "kind": "stop_event",
+                "id": "stop-abc",
+                "state": "stopped",
+                "outcome": "soft",
+            }
+        )
         log.append("sess1", "system", stop_data)
 
         result = _build_stop_event_notes(log, "sess1")
@@ -1180,18 +1203,18 @@ class TestStopEventContextInjection:
 
         log = ConversationLog(base_dir=tmp_path)
         for i in range(5):
-            stop_data = json.dumps({
-                "kind": "stop_event",
-                "id": f"stop-{i}",
-                "state": "stopped",
-                "outcome": "soft",
-            })
+            stop_data = json.dumps(
+                {
+                    "kind": "stop_event",
+                    "id": f"stop-{i}",
+                    "state": "stopped",
+                    "outcome": "soft",
+                }
+            )
             log.append("sess1", "system", stop_data)
 
         result = _build_stop_event_notes(log, "sess1")
-        count = result.count(
-            "[User stopped the previous turn mid-execution.]"
-        )
+        count = result.count("[User stopped the previous turn mid-execution.]")
         assert count == 3
 
     def test_context_injection_ignores_stopping_state(self, tmp_path):
@@ -1201,12 +1224,14 @@ class TestStopEventContextInjection:
         from personalclaw.context import _build_stop_event_notes
 
         log = ConversationLog(base_dir=tmp_path)
-        stop_data = json.dumps({
-            "kind": "stop_event",
-            "id": "stop-abc",
-            "state": "stopping",
-            "outcome": None,
-        })
+        stop_data = json.dumps(
+            {
+                "kind": "stop_event",
+                "id": "stop-abc",
+                "state": "stopping",
+                "outcome": None,
+            }
+        )
         log.append("sess1", "system", stop_data)
 
         result = _build_stop_event_notes(log, "sess1")
@@ -1406,6 +1431,7 @@ class TestProcessAutoSkillsIntegration:
         # under config_dir()) into tmp so the test never touches the real home.
         import personalclaw.skills.loader as _skloader
         from personalclaw.skills import proposals as _proposals
+
         monkeypatch.setattr(_skloader, "config_dir", lambda: tmp_path)
 
         with patch.object(consolidator, "_call_llm", side_effect=fake_llm):
@@ -1463,7 +1489,9 @@ class TestProcessAutoSkillsIntegration:
         assert skills.list_auto_skills() == []
 
     @pytest.mark.asyncio
-    async def test_credentials_in_llm_output_are_redacted_before_proposal(self, tmp_path, monkeypatch):
+    async def test_credentials_in_llm_output_are_redacted_before_proposal(
+        self, tmp_path, monkeypatch
+    ):
         """If the LLM returns a procedure with an AWS key, it's redacted BEFORE the
         proposal is queued (Phase F: synthesis proposes, never auto-writes). The AKIA
         key must not survive into the enqueued proposal's procedure_md."""
@@ -1504,6 +1532,7 @@ class TestProcessAutoSkillsIntegration:
 
         import personalclaw.skills.loader as _skloader
         from personalclaw.skills import proposals as _proposals
+
         monkeypatch.setattr(_skloader, "config_dir", lambda: tmp_path)
 
         with patch.object(consolidator, "_call_llm", side_effect=fake_llm):
@@ -1612,6 +1641,7 @@ class TestProcessAutoSkillsIntegration:
 
         import personalclaw.skills.loader as _skloader
         from personalclaw.skills import proposals as _proposals
+
         monkeypatch.setattr(_skloader, "config_dir", lambda: tmp_path)
 
         with patch.object(consolidator, "_call_llm", side_effect=fake_llm):
@@ -1682,7 +1712,8 @@ class TestAutoSkillSELAudit:
 
         # Expect at least one audit entry with outcome=rejected and reason=not_auto_namespace
         namespace_rejections = [
-            r for r in recorded
+            r
+            for r in recorded
             if r.get("outcome") == "rejected"
             and r.get("metadata", {}).get("reason") == "not_auto_namespace"
         ]
@@ -1740,6 +1771,7 @@ class TestAutoSkillSELAudit:
 
         import personalclaw.skills.loader as _skloader
         from personalclaw.skills import proposals as _proposals
+
         monkeypatch.setattr(_skloader, "config_dir", lambda: tmp_path)
 
         with patch.object(consolidator, "_call_llm", side_effect=fake_llm):
@@ -1748,7 +1780,8 @@ class TestAutoSkillSELAudit:
                 await consolidator._consolidate("dashboard:chat-empty", include_history=True)
 
         rejections = [
-            r for r in recorded
+            r
+            for r in recorded
             if r.get("tool_name") == "auto_skill_create"
             and r.get("outcome") == "rejected"
             and r.get("metadata", {}).get("reason") == "empty_after_redaction"
@@ -1811,7 +1844,8 @@ class TestAutoSkillSELAuditCompleteness:
                 await consolidator._consolidate("dashboard:chat-empty", include_history=True)
 
         empty_rejections = [
-            r for r in recorded
+            r
+            for r in recorded
             if r.get("tool_name") == "auto_skill_create"
             and r.get("outcome") == "rejected"
             and r.get("metadata", {}).get("reason") == "empty_after_redaction"
@@ -1872,12 +1906,11 @@ class TestAutoSkillSELAuditCompleteness:
         with patch.object(consolidator, "_call_llm", side_effect=fake_llm):
             with patch("personalclaw.history.sel") as mock_sel:
                 mock_sel.return_value.log_tool_invocation = fake_log
-                await consolidator._consolidate(
-                    "dashboard:chat-refine-empty", include_history=True
-                )
+                await consolidator._consolidate("dashboard:chat-refine-empty", include_history=True)
 
         empty_rejections = [
-            r for r in recorded
+            r
+            for r in recorded
             if r.get("tool_name") == "auto_skill_refine"
             and r.get("outcome") == "rejected"
             and r.get("metadata", {}).get("reason") == "empty_after_redaction"
@@ -1945,7 +1978,8 @@ class TestAutoSkillSELAuditCompleteness:
                 await consolidator._consolidate("dashboard:chat-oversize", include_history=True)
 
         update_rejections = [
-            r for r in recorded
+            r
+            for r in recorded
             if r.get("tool_name") == "auto_skill_refine"
             and r.get("outcome") == "rejected"
             and r.get("metadata", {}).get("reason") == "update_failed"
@@ -2021,8 +2055,10 @@ class TestPersonaCommitmentCapture:
         async def fake_llm(_prompt):
             return {
                 "history_entry": "reviewed code thoroughly",
-                "self_persona": ["favor clean-break refactors over shims",
-                                 "this user wants thorough, direct review"],
+                "self_persona": [
+                    "favor clean-break refactors over shims",
+                    "this user wants thorough, direct review",
+                ],
             }
 
         with patch.object(consolidator, "_call_llm", side_effect=fake_llm):
@@ -2050,8 +2086,13 @@ class TestPersonaCommitmentCapture:
             # Even if the LLM returns commitments, the flag-off path must not write
             return {
                 "history_entry": "discussed the migration",
-                "commitments": [{"text": "check the migration", "due_window":
-                                 "2026-07-01T09:00:00+00:00", "confidence": 0.95}],
+                "commitments": [
+                    {
+                        "text": "check the migration",
+                        "due_window": "2026-07-01T09:00:00+00:00",
+                        "confidence": 0.95,
+                    }
+                ],
             }
 
         with self._patch_flag(False):
@@ -2075,11 +2116,17 @@ class TestPersonaCommitmentCapture:
             return {
                 "history_entry": "discussed the migration",
                 "commitments": [
-                    {"text": "How did the Friday migration go?",
-                     "due_window": "2026-07-06T09:00:00+00:00", "confidence": 0.9},
+                    {
+                        "text": "How did the Friday migration go?",
+                        "due_window": "2026-07-06T09:00:00+00:00",
+                        "confidence": 0.9,
+                    },
                     # low-confidence one must be refused by the service guardrail
-                    {"text": "maybe ping about something", "due_window":
-                     "2026-07-06T09:00:00+00:00", "confidence": 0.4},
+                    {
+                        "text": "maybe ping about something",
+                        "due_window": "2026-07-06T09:00:00+00:00",
+                        "confidence": 0.4,
+                    },
                 ],
             }
 
@@ -2113,8 +2160,7 @@ class TestPersonaCommitmentCapture:
             conv_log.append("dashboard:chat-na", "assistant", f"step {i}", tools=["fs_read"])
 
         async def fake_llm(_prompt):
-            return {"history_entry": "did things",
-                    "self_persona": ["a default-agent growth note"]}
+            return {"history_entry": "did things", "self_persona": ["a default-agent growth note"]}
 
         with self._patch_flag(True):
             with patch.object(consolidator, "_call_llm", side_effect=fake_llm):
@@ -2142,16 +2188,31 @@ class TestCommitmentDeliveryScan:
 
     def test_due_commitments_all_spans_agents(self, tmp_path):
         svc = self._svc(tmp_path)
-        svc.record_commitment(agent="AgentA", channel="dashboard:s1", text="ping A",
-                              due_window="2000-01-01T00:00:00+00:00", confidence=0.95,
-                              enabled=True)
-        svc.record_commitment(agent="AgentB", channel="dashboard:s2", text="ping B",
-                              due_window="2000-01-01T00:00:00+00:00", confidence=0.95,
-                              enabled=True)
+        svc.record_commitment(
+            agent="AgentA",
+            channel="dashboard:s1",
+            text="ping A",
+            due_window="2000-01-01T00:00:00+00:00",
+            confidence=0.95,
+            enabled=True,
+        )
+        svc.record_commitment(
+            agent="AgentB",
+            channel="dashboard:s2",
+            text="ping B",
+            due_window="2000-01-01T00:00:00+00:00",
+            confidence=0.95,
+            enabled=True,
+        )
         # a future one must NOT be due
-        svc.record_commitment(agent="AgentA", channel="dashboard:s1", text="future",
-                              due_window="2999-01-01T00:00:00+00:00", confidence=0.95,
-                              enabled=True)
+        svc.record_commitment(
+            agent="AgentA",
+            channel="dashboard:s1",
+            text="future",
+            due_window="2999-01-01T00:00:00+00:00",
+            confidence=0.95,
+            enabled=True,
+        )
         due = svc.due_commitments_all(now_iso="2026-01-01T00:00:00+00:00")
         texts = {d["text"] for d in due}
         assert texts == {"ping A", "ping B"}
@@ -2163,9 +2224,14 @@ class TestCommitmentDeliveryScan:
 
     def test_dismiss_removes_from_scan(self, tmp_path):
         svc = self._svc(tmp_path)
-        key = svc.record_commitment(agent="A", channel="dashboard:s", text="ping",
-                                    due_window="2000-01-01T00:00:00+00:00",
-                                    confidence=0.95, enabled=True)
+        key = svc.record_commitment(
+            agent="A",
+            channel="dashboard:s",
+            text="ping",
+            due_window="2000-01-01T00:00:00+00:00",
+            confidence=0.95,
+            enabled=True,
+        )
         assert len(svc.due_commitments_all(now_iso="2026-01-01T00:00:00+00:00")) == 1
         assert svc.dismiss_commitment(key) is True
         assert svc.due_commitments_all(now_iso="2026-01-01T00:00:00+00:00") == []

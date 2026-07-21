@@ -26,7 +26,10 @@ def _tmp_config(monkeypatch, tmp_path):
 
 class _FakeSession:
     def __init__(self, key, running=False):
-        self.key = key; self._running = running; self._trust = True; self.messages = []
+        self.key = key
+        self._running = running
+        self._trust = True
+        self.messages = []
 
     @property
     def running(self):
@@ -36,8 +39,10 @@ class _FakeSession:
 class _FakeState:
     def __init__(self):
         self._sessions = {}
-        self.notes = []; self.refreshed = []
+        self.notes = []
+        self.refreshed = []
         from personalclaw.dashboard.sse import SseRegistry
+
         self._sse = SseRegistry()
 
     def loop_sse(self):
@@ -57,10 +62,16 @@ class _FakeNudge:
 
 class _FakeSvc:
     def __init__(self):
-        self._loops = {}; self._n = 0
+        self._loops = {}
+        self._n = 0
 
-    async def add(self, *, session_name, message, idle_secs, max_cycles, stop_sentinel_path, first_idle_secs=0):
-        self._n += 1; lp = _FakeNudge(f"N{self._n}", session_name); self._loops[lp.id] = lp; return lp
+    async def add(
+        self, *, session_name, message, idle_secs, max_cycles, stop_sentinel_path, first_idle_secs=0
+    ):
+        self._n += 1
+        lp = _FakeNudge(f"N{self._n}", session_name)
+        self._loops[lp.id] = lp
+        return lp
 
     def get_by_session(self, session_name):
         return next((lp for lp in self._loops.values() if lp.session_name == session_name), None)
@@ -80,8 +91,15 @@ def _wd():
 
 
 def _running(**over):
-    base = dict(id="", name="L", kind="goal", task="investigate the latency regression",
-                kind_config={"goal_type": "open_ended"}, idle_secs=120, max_cycles=20)
+    base = dict(
+        id="",
+        name="L",
+        kind="goal",
+        task="investigate the latency regression",
+        kind_config={"goal_type": "open_ended"},
+        idle_secs=120,
+        max_cycles=20,
+    )
     base.update(over)
     loop = store.create(Loop(**base))
     store.update_status(loop.id, LoopStatus.RUNNING)
@@ -91,21 +109,28 @@ def _running(**over):
 def _write_finding(cid, cycle, **extra):
     d = store.loop_dir(cid)
     (d / "findings" / f"cycle_{cycle:03d}.json").write_text(
-        json.dumps({"cycle": cycle, "new_findings_count": extra.pop("new_findings_count", 1), **extra}))
+        json.dumps(
+            {"cycle": cycle, "new_findings_count": extra.pop("new_findings_count", 1), **extra}
+        )
+    )
 
 
 class TestVerifiableCompletes:
     def test_verifiable_completes_when_check_passes(self):
-        c = _running(kind_config={"goal_type": "verifiable", "verify_command": "true"}, max_cycles=20)
+        c = _running(
+            kind_config={"goal_type": "verifiable", "verify_command": "true"}, max_cycles=20
+        )
         wd = _wd()
         wd._state._sessions[manager.session_key(c.id)] = _FakeSession(manager.session_key(c.id))
-        _run(wd._poll_once())            # seed liveness
+        _run(wd._poll_once())  # seed liveness
         _write_finding(c.id, 1)
-        _run(wd._poll_once())            # new finding → verify passes → complete
+        _run(wd._poll_once())  # new finding → verify passes → complete
         assert store.get(c.id).status == LoopStatus.COMPLETE.value
 
     def test_verifiable_keeps_running_when_check_fails(self):
-        c = _running(kind_config={"goal_type": "verifiable", "verify_command": "false"}, max_cycles=20)
+        c = _running(
+            kind_config={"goal_type": "verifiable", "verify_command": "false"}, max_cycles=20
+        )
         wd = _wd()
         wd._state._sessions[manager.session_key(c.id)] = _FakeSession(manager.session_key(c.id))
         _run(wd._poll_once())
@@ -121,19 +146,31 @@ class TestVerifiableMultiSubGoalGate:
     for the live b7abd778 wedge: goal marked done after phase 1/3."""
 
     def _loop(self):
-        return _running(kind="goal", task="build unbeatable tic-tac-toe", kind_config={
-            "goal_type": "verifiable", "verify_command": "npm test",
-            "sub_goals": ["engine", "minimax AI", "accessible UI",
-                          "exhaustive never-lose proof"]})
+        return _running(
+            kind="goal",
+            task="build unbeatable tic-tac-toe",
+            kind_config={
+                "goal_type": "verifiable",
+                "verify_command": "npm test",
+                "sub_goals": [
+                    "engine",
+                    "minimax AI",
+                    "accessible UI",
+                    "exhaustive never-lose proof",
+                ],
+            },
+        )
 
     def _kind(self):
         from personalclaw.loop import kinds
+
         kinds.ensure_loaded()
         return kinds.get("goal")
 
     def test_green_check_but_judge_fails_does_not_complete(self, monkeypatch):
         # Command passes, but only the engine is built → judge FAILs → NOT done.
         import personalclaw.loop.gates as gates
+
         monkeypatch.setattr(gates, "run_verify_command", lambda *a, **k: _coro(True))
         monkeypatch.setattr(gates, "judge_verdict", lambda *a, **k: _coro("FAIL"))
         loop = self._loop()
@@ -142,32 +179,48 @@ class TestVerifiableMultiSubGoalGate:
 
     def test_green_check_and_judge_passes_completes(self, monkeypatch):
         import personalclaw.loop.gates as gates
+
         monkeypatch.setattr(gates, "run_verify_command", lambda *a, **k: _coro(True))
         monkeypatch.setattr(gates, "judge_verdict", lambda *a, **k: _coro("PASS"))
         loop = self._loop()
-        findings = [{"cycle": 9, "summary": "engine+AI+UI+never-lose proof all built; all tests green"}]
+        findings = [
+            {"cycle": 9, "summary": "engine+AI+UI+never-lose proof all built; all tests green"}
+        ]
         assert _run(self._kind().is_done_signal(loop, findings)) is True
 
     def test_judge_unavailable_defers_not_false(self, monkeypatch):
         # Empty/unrendered verdict (provider down) → None (defer), not a clean pass/fail.
         import personalclaw.loop.gates as gates
+
         monkeypatch.setattr(gates, "run_verify_command", lambda *a, **k: _coro(True))
         monkeypatch.setattr(gates, "judge_verdict", lambda *a, **k: _coro(""))
         loop = self._loop()
-        assert _run(self._kind().is_done_signal(loop, [{"cycle": 1, "summary": "engine only"}])) is None
+        assert (
+            _run(self._kind().is_done_signal(loop, [{"cycle": 1, "summary": "engine only"}]))
+            is None
+        )
 
     def test_single_sub_goal_keeps_pure_command_behavior(self, monkeypatch):
         # 0/1 sub-goal → the command IS the whole goal; no judge required.
         import personalclaw.loop.gates as gates
+
         monkeypatch.setattr(gates, "run_verify_command", lambda *a, **k: _coro(True))
-        loop = _running(kind="goal", task="make tests pass", kind_config={
-            "goal_type": "verifiable", "verify_command": "npm test", "sub_goals": ["all tests pass"]})
+        loop = _running(
+            kind="goal",
+            task="make tests pass",
+            kind_config={
+                "goal_type": "verifiable",
+                "verify_command": "npm test",
+                "sub_goals": ["all tests pass"],
+            },
+        )
         assert _run(self._kind().is_done_signal(loop, [{"cycle": 1, "summary": "green"}])) is True
 
 
 def _coro(v):
     async def _c(*a, **k):
         return v
+
     return _c()
 
 
@@ -181,9 +234,9 @@ class TestNewKindsRunEndToEnd:
         c = _running(kind=kind, kind_config={}, max_cycles=1)
         wd = _wd()
         wd._state._sessions[manager.session_key(c.id)] = _FakeSession(manager.session_key(c.id))
-        _run(wd._poll_once())          # seed liveness
+        _run(wd._poll_once())  # seed liveness
         _write_finding(c.id, 1)
-        _run(wd._poll_once())          # no done-signal / no hook → budget (1) caps it
+        _run(wd._poll_once())  # no done-signal / no hook → budget (1) caps it
         assert store.get(c.id).status == LoopStatus.COMPLETE.value
 
 
@@ -201,7 +254,9 @@ class TestBudgetCap:
         assert "budget" in (store.get(c.id).error_message or "").lower()
 
     def test_genuine_complete_has_no_error_note(self):
-        c = _running(kind_config={"goal_type": "verifiable", "verify_command": "true"}, max_cycles=20)
+        c = _running(
+            kind_config={"goal_type": "verifiable", "verify_command": "true"}, max_cycles=20
+        )
         wd = _wd()
         wd._state._sessions[manager.session_key(c.id)] = _FakeSession(manager.session_key(c.id))
         _run(wd._poll_once())
@@ -249,7 +304,8 @@ class TestTrustTtl:
         # force started_at far in the past so the trust window is exceeded
         store.update_status(c.id, LoopStatus.RUNNING, started_at=1.0)
         wd = _wd()
-        sess = _FakeSession(manager.session_key(c.id)); wd._state._sessions[sess.key] = sess
+        sess = _FakeSession(manager.session_key(c.id))
+        wd._state._sessions[sess.key] = sess
         _run(wd._poll_once())
         assert store.get(c.id).status == LoopStatus.NEEDS_INPUT.value
         assert sess._trust is False
@@ -262,6 +318,7 @@ class TestCycleHook:
 
     def test_hook_completing_completes_the_loop(self, monkeypatch):
         from personalclaw.loop import kinds
+
         kinds.ensure_loaded()
         calls = {}
 
@@ -283,6 +340,7 @@ class TestCycleHook:
 
     def test_hook_returning_false_keeps_running(self, monkeypatch):
         from personalclaw.loop import kinds
+
         kinds.ensure_loaded()
 
         async def _hook(loop, findings, ctx):
@@ -306,15 +364,24 @@ class TestCycleVerdictPublish:
     def _captured_wd(self):
         wd = _wd()
         events = []
-        wd._publish = lambda lid, event, data=None: events.append((event, data))  # type: ignore[assignment]
+        wd._publish = lambda lid, event, data=None: events.append((event, data))  # type: ignore[assignment]  # noqa: E501
         return wd, events
 
     def test_publishes_persisted_verdict_and_regression(self):
         c = _running()
         wd, events = self._captured_wd()
-        store.write_verdict(c.id, 3, {"cycle": 3, "done": False, "marginal_value": 1.2,
-                                      "quality_score": 4.0, "regressed": True,
-                                      "done_reason": "slipped"})
+        store.write_verdict(
+            c.id,
+            3,
+            {
+                "cycle": 3,
+                "done": False,
+                "marginal_value": 1.2,
+                "quality_score": 4.0,
+                "regressed": True,
+                "done_reason": "slipped",
+            },
+        )
         wd._publish_cycle_verdict(c.id, 3)
         kinds_emitted = {e for e, _ in events}
         assert "cycle_verdict" in kinds_emitted and "ratchet_regression" in kinds_emitted
@@ -330,8 +397,17 @@ class TestCycleVerdictPublish:
     def test_clean_verdict_emits_no_regression(self):
         c = _running()
         wd, events = self._captured_wd()
-        store.write_verdict(c.id, 1, {"cycle": 1, "done": False, "marginal_value": 3.0,
-                                      "quality_score": 4.5, "regressed": False})
+        store.write_verdict(
+            c.id,
+            1,
+            {
+                "cycle": 1,
+                "done": False,
+                "marginal_value": 3.0,
+                "quality_score": 4.5,
+                "regressed": False,
+            },
+        )
         wd._publish_cycle_verdict(c.id, 1)
         assert [e for e, _ in events] == ["cycle_verdict"]
 
@@ -345,7 +421,7 @@ class TestJudgeErrorOnlyWhenACheckExists:
     def _captured_wd(self):
         wd = _wd()
         events = []
-        wd._publish = lambda lid, event, data=None: events.append((event, data))  # type: ignore[assignment]
+        wd._publish = lambda lid, event, data=None: events.append((event, data))  # type: ignore[assignment]  # noqa: E501
         return wd, events
 
     def test_general_without_verify_command_does_not_flag_judge_error(self):
@@ -353,9 +429,9 @@ class TestJudgeErrorOnlyWhenACheckExists:
         c = _running(kind="general", kind_config={}, max_cycles=20)
         wd, events = self._captured_wd()
         wd._state._sessions[manager.session_key(c.id)] = _FakeSession(manager.session_key(c.id))
-        _run(wd._poll_once())            # seed liveness
+        _run(wd._poll_once())  # seed liveness
         _write_finding(c.id, 1)
-        _run(wd._poll_once())            # is_done_signal → None, but no check exists
+        _run(wd._poll_once())  # is_done_signal → None, but no check exists
         assert "judge_error" not in {e for e, _ in events}
         assert store.get(c.id).status == LoopStatus.RUNNING.value
 
@@ -366,7 +442,7 @@ class TestJudgeErrorOnlyWhenACheckExists:
         wd._state._sessions[manager.session_key(c.id)] = _FakeSession(manager.session_key(c.id))
         _run(wd._poll_once())
         _write_finding(c.id, 1)
-        _run(wd._poll_once())            # judge can't assess in-test → None → degraded
+        _run(wd._poll_once())  # judge can't assess in-test → None → degraded
         assert "judge_error" in {e for e, _ in events}
 
 
@@ -380,14 +456,17 @@ class TestReconcileLinkedTasks:
     def _wire_tasks(self, monkeypatch, tmp_path):
         monkeypatch.setattr("personalclaw.tasks.hierarchy.config_dir", lambda: tmp_path)
         import personalclaw.tasks.native as nat
+
         monkeypatch.setattr(nat, "config_dir", lambda: tmp_path, raising=False)
 
     def test_closes_open_leaves_gated_open(self):
         from personalclaw.tasks import registry
+
         c = _running()
         plain = _run(registry.create_task(provider_name="native", title="done-able"))
-        gated = _run(registry.create_task(provider_name="native", title="gated",
-                                          exit_criteria=["ship it"]))
+        gated = _run(
+            registry.create_task(provider_name="native", title="gated", exit_criteria=["ship it"])
+        )
         store.link_tasks(c.id, [plain.id, gated.id])
         _run(_wd()._reconcile_linked_tasks(c.id))
         assert _run(registry.get_task(plain.id, provider_name="native")).status.value == "done"
@@ -403,11 +482,16 @@ class TestDeliverableArtifact:
 
     class _FakeProvider:
         def __init__(self):
-            self.created = []; self.updated = []
+            self.created = []
+            self.updated = []
+
         def find_by_source_path(self, source_path):
             return None
+
         def create(self, **kw):
-            self.created.append(kw); return type("A", (), {"slug": "s"})()
+            self.created.append(kw)
+            return type("A", (), {"slug": "s"})()
+
         def update(self, slug, **kw):
             self.updated.append((slug, kw))
 
@@ -426,6 +510,7 @@ class TestDeliverableArtifact:
         # panel runs. Guards the whole chain (tag format → clean_tags → tag filter), not
         # just that the right kwarg was passed to a fake.
         from personalclaw.artifacts.native import NativeArtifactProvider
+
         real = NativeArtifactProvider(root=tmp_path / "artifacts")
         monkeypatch.setattr("personalclaw.artifacts.registry.get_provider", lambda name=None: real)
         c = _running(kind_config={"goal_type": "open_ended"})
@@ -460,9 +545,12 @@ class TestDeliverableArtifact:
         # (fix 2de9af4), NOT the loop dir. The watchdog must resolve workspace-first or
         # it never finds the file → no file-backed artifact (the live repro: SPEC.md in
         # the workspace, the loop dir empty, only the worker's ad-hoc artifact_save left).
-        ws = tmp_path / "ws"; ws.mkdir()
-        c = _running(workspace_dir=str(ws),
-                     kind_config={"goal_type": "open_ended", "primary_deliverable": "SPEC.md"})
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        c = _running(
+            workspace_dir=str(ws),
+            kind_config={"goal_type": "open_ended", "primary_deliverable": "SPEC.md"},
+        )
         (ws / "SPEC.md").write_text("# SPEC\nThe locked contract.")
         # nothing in the loop dir — the OLD code looked only there and would register nothing
         prov = self._FakeProvider()

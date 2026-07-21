@@ -10,6 +10,7 @@ Property-based tests (Hypothesis) and unit tests for:
 - Tombstone pruning with session file cleanup
 - Startup sweep processing
 """
+
 import asyncio
 import json
 import time
@@ -43,9 +44,7 @@ def agent_root(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def _mock_memory_ok(monkeypatch):
     """Prevent memory guard from refusing spawns on low-RAM build machines."""
-    monkeypatch.setattr(
-        "personalclaw.subagent.check_memory_available", lambda **_kw: (True, 8.0)
-    )
+    monkeypatch.setattr("personalclaw.subagent.check_memory_available", lambda **_kw: (True, 8.0))
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -589,9 +588,7 @@ class TestStartupSweep:
             await manager._reconcile_orphans()
 
         # Verify cleanup was called for each session_id
-        called_sids = [
-            call[0][0] for call in mock_cleanup.call_args_list
-        ]
+        called_sids = [call[0][0] for call in mock_cleanup.call_args_list]
         for sid in session_ids:
             assert sid in called_sids, f"Session {sid} not cleaned up"
 

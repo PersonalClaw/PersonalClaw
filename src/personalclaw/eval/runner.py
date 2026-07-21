@@ -15,8 +15,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from personalclaw.eval.scenario import Assertion, AssertionType, Scenario, SeedProfile, Session, Turn
-from personalclaw.memory import MemoryStore
+from personalclaw.eval.scenario import (
+    Assertion,
+    AssertionType,
+    Scenario,
+    SeedProfile,
+    Session,
+    Turn,
+)
 from personalclaw.llm.base import (
     EVENT_COMPLETE,
     EVENT_PERMISSION_REQUEST,
@@ -24,6 +30,7 @@ from personalclaw.llm.base import (
     EVENT_TOOL_CALL,
     ModelProvider,
 )
+from personalclaw.memory import MemoryStore
 from personalclaw.sel import sel
 
 logger = logging.getLogger(__name__)
@@ -81,9 +88,7 @@ class ScenarioResult:
 
     @property
     def passed_assertions(self) -> int:
-        return sum(
-            1 for s in self.sessions for t in s.turns for _, ok in t.assertion_results if ok
-        )
+        return sum(1 for s in self.sessions for t in s.turns for _, ok in t.assertion_results if ok)
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -298,7 +303,8 @@ class EvalRunner:
 
             for idx, session_def in enumerate(scenario.sessions):
                 session_result = await self._run_session(
-                    session_def, ws,
+                    session_def,
+                    ws,
                     provider_factory=shared_ws_factory,
                     ctx_builder=ctx_builder if idx > 0 else None,
                 )
@@ -419,7 +425,10 @@ class EvalRunner:
         return ""
 
     async def _run_turn(
-        self, provider: ModelProvider, turn_def: Turn, session_key: str,
+        self,
+        provider: ModelProvider,
+        turn_def: Turn,
+        session_key: str,
     ) -> TurnResult:
         """Send a message and collect the response."""
         t0 = time.monotonic()
@@ -553,8 +562,7 @@ def format_results(results: list[ScenarioResult]) -> str:
                 for assertion, ok in tr.assertion_results:
                     a_status = "✅" if ok else "❌"
                     lines.append(
-                        f"     {a_status} {assertion.type.value}: "
-                        f"`{assertion.value[:50]}`"
+                        f"     {a_status} {assertion.type.value}: " f"`{assertion.value[:50]}`"
                     )
                 if not tr.passed:
                     snippet = tr.agent_response[:200].replace("\n", " ")

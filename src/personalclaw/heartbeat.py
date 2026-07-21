@@ -164,7 +164,9 @@ class HeartbeatService:
             for (task_text, deliver), result in zip(tasks, results):
                 if isinstance(result, BaseException):
                     logger.warning(
-                        "Heartbeat task failed: %s", task_text[:80], exc_info=result,
+                        "Heartbeat task failed: %s",
+                        task_text[:80],
+                        exc_info=result,
                     )
                     keep.append((task_text, deliver))
                 elif _should_keep(result):

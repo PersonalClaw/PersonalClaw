@@ -48,24 +48,24 @@ class MemoryKind(str, Enum):
     that turn memory from "facts about the user" into "memory that acts".
     """
 
-    SEMANTIC = "semantic"        # distilled fact (allow-listed key)
-    EPISODIC = "episodic"        # discrete conversation fragment
-    LESSON = "lesson"            # corrective rule (a semantic row, key=lesson.*)
-    PREFERENCE = "preference"    # user/agent preference
-    NOTE = "note"                # free note (subsumes prefs.md/projects.md text)
+    SEMANTIC = "semantic"  # distilled fact (allow-listed key)
+    EPISODIC = "episodic"  # discrete conversation fragment
+    LESSON = "lesson"  # corrective rule (a semantic row, key=lesson.*)
+    PREFERENCE = "preference"  # user/agent preference
+    NOTE = "note"  # free note (subsumes prefs.md/projects.md text)
     # NEW (M5+):
-    PROCEDURAL = "procedural"    # how-to-work prior (tool/source outcomes)
-    COMMITMENT = "commitment"    # inferred future check-in obligation
+    PROCEDURAL = "procedural"  # how-to-work prior (tool/source outcomes)
+    COMMITMENT = "commitment"  # inferred future check-in obligation
     SELF_PERSONA = "self_persona"  # the agent's positive self-model
 
 
 class MemoryTier(str, Enum):
     """DURABILITY axis — deepens via SEALING (§3.5). Independent of SCOPE."""
 
-    WORKING = "working"      # rolling session summary, always-injected
-    EPISODIC = "episodic"    # discrete facts
-    SEGMENT = "segment"      # topic clusters
-    SEMANTIC = "semantic"    # distilled truths
+    WORKING = "working"  # rolling session summary, always-injected
+    EPISODIC = "episodic"  # discrete facts
+    SEGMENT = "segment"  # topic clusters
+    SEMANTIC = "semantic"  # distilled truths
 
 
 class MemoryScope(str, Enum):
@@ -149,13 +149,13 @@ class MemoryRecord:
     source: str = ""
     # heat inputs
     recall_count: int = 0
-    visit_count: int = 0          # NEW (§3.1)
+    visit_count: int = 0  # NEW (§3.1)
     last_accessed_at: str | None = None
     # axes (NEW — §3.5; defaults preserve today's "global/durable" behavior)
     tier: MemoryTier | None = None
     scope: MemoryScope = MemoryScope.GLOBAL
     scope_ref: str | None = None
-    category: str | None = None   # fact|pref|decision|event|debug → category-TTL
+    category: str | None = None  # fact|pref|decision|event|debug → category-TTL
     # provenance + lifecycle
     superseded_by: str | None = None
     invalidated_at: str | None = None
@@ -350,10 +350,10 @@ class MemoryCapabilities:
     Mirrors the Tool result-contract + Knowledge "degrade to FTS" discipline.
     """
 
-    vector: bool = False             # supports embedding upsert + vector_query
+    vector: bool = False  # supports embedding upsert + vector_query
     transactional_batch: bool = False  # atomic multi-record put
-    event_log: bool = False          # append/read the reversible WAL
-    full_text_search: bool = True    # keyword/FTS query
+    event_log: bool = False  # append/read the reversible WAL
+    full_text_search: bool = True  # keyword/FTS query
 
     def to_dict(self) -> dict:
         return {

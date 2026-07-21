@@ -22,16 +22,19 @@ logger = logging.getLogger(__name__)
 
 # Skill-file read caps (responsiveness / DoS guard for the directory browser).
 SKILL_FILE_MAX_BYTES = 1_048_576  # 1 MiB per returned file
-SKILL_FILES_MAX = 500             # max tree entries returned
+SKILL_FILES_MAX = 500  # max tree entries returned
 
 
 def _sel_log(op: str, outcome: str, resources: str, request: web.Request) -> None:
     try:
         from personalclaw.sel import sel as _s
+
         _s().log_api_access(
             caller=request.get("user", "dashboard"),
-            operation=op, outcome=outcome,
-            source="skills", resources=resources,
+            operation=op,
+            outcome=outcome,
+            source="skills",
+            resources=resources,
         )
     except Exception:
         pass
@@ -60,6 +63,7 @@ def _loaded_by_agents(skill_keys: list[str]) -> dict[str, list[str]]:
     # (a) AgentProfile.skills — the native primary path.
     try:
         from personalclaw.config import AppConfig
+
         cfg = AppConfig.load()
         for agent_name, profile in (cfg.agents or {}).items():
             for skill_key in getattr(profile, "skills", None) or []:
@@ -90,7 +94,7 @@ def _loaded_by_agents(skill_keys: list[str]) -> dict[str, list[str]]:
                 if not isinstance(resources, list):
                     continue
                 globs = [
-                    r[len("skill://"):]
+                    r[len("skill://") :]
                     for r in resources
                     if isinstance(r, str) and r.startswith("skill://")
                 ]
@@ -117,6 +121,7 @@ def _parse_always(skill_md: Path) -> bool:
     if end == -1:
         return False
     import re
+
     for line in text[3:end].splitlines():
         m = re.match(r"^always:\s*(.+)$", line)
         if m:
@@ -160,16 +165,18 @@ async def api_skills_list(request: web.Request) -> web.Response:
             seen.add(name)
             rep = verify_skill_integrity(entry)
             integrity = "unverified" if rep.unlocked else ("intact" if rep.ok else "tampered")
-            skills.append({
-                "key": name,
-                "name": name,
-                "description": _parse_description(skill_md),
-                "always": _parse_always(skill_md),
-                "path": str(skill_md),
-                "source": "bundled" if is_bundled else "local",
-                "type": "bundled" if is_bundled else "installed",
-                "integrity": integrity,
-            })
+            skills.append(
+                {
+                    "key": name,
+                    "name": name,
+                    "description": _parse_description(skill_md),
+                    "always": _parse_always(skill_md),
+                    "path": str(skill_md),
+                    "source": "bundled" if is_bundled else "local",
+                    "type": "bundled" if is_bundled else "installed",
+                    "integrity": integrity,
+                }
+            )
     # Annotate which agents load each skill (PersonalClaw Agent entity).
     by_agent = _loaded_by_agents([s["key"] for s in skills])
     for s in skills:
@@ -208,18 +215,20 @@ async def api_skills_list(request: web.Request) -> web.Response:
                     continue
                 rep = verify_skill_integrity(entry)
                 integrity = "unverified" if rep.unlocked else ("intact" if rep.ok else "tampered")
-                skills.append({
-                    "key": f"{ag_name}/{entry.name}",
-                    "name": entry.name,
-                    "description": _parse_description(skill_md),
-                    "always": _parse_always(skill_md),
-                    "path": str(skill_md),
-                    "source": "agent-local",
-                    "type": "agent-local",
-                    "integrity": integrity,
-                    "agent": ag_name,
-                    "loaded_by_agents": [ag_name],
-                })
+                skills.append(
+                    {
+                        "key": f"{ag_name}/{entry.name}",
+                        "name": entry.name,
+                        "description": _parse_description(skill_md),
+                        "always": _parse_always(skill_md),
+                        "path": str(skill_md),
+                        "source": "agent-local",
+                        "type": "agent-local",
+                        "integrity": integrity,
+                        "agent": ag_name,
+                        "loaded_by_agents": [ag_name],
+                    }
+                )
     except Exception:
         logger.debug("agent-local skill listing failed", exc_info=True)
     return web.json_response(skills)
@@ -228,6 +237,7 @@ async def api_skills_list(request: web.Request) -> web.Response:
 async def api_skills_marketplaces(request: web.Request) -> web.Response:
     """GET /api/skills/marketplaces — list registered skill marketplaces."""
     from personalclaw.skills.marketplace import get_default_skills_registry
+
     return web.json_response(get_default_skills_registry().info())
 
 
@@ -244,6 +254,7 @@ async def api_skills_search(request: web.Request) -> web.Response:
     limit = min(int(request.rel_url.query.get("limit", "20")), 200)
 
     from personalclaw.skills.marketplace import get_default_skills_registry
+
     registry = get_default_skills_registry()
 
     if marketplace_name:
@@ -260,7 +271,9 @@ async def api_skills_search(request: web.Request) -> web.Response:
             logger.warning("skills search failed for %s: %s", marketplace_name, exc)
             return web.json_response({"error": str(exc)[:500]}, status=500)
 
-    return web.json_response({"results": [r.to_dict() for r in search_marketplaces(query, limit=limit)]})
+    return web.json_response(
+        {"results": [r.to_dict() for r in search_marketplaces(query, limit=limit)]}
+    )
 
 
 def search_marketplaces(query: str, limit: int = 20) -> list:
@@ -271,8 +284,8 @@ def search_marketplaces(query: str, limit: int = 20) -> list:
     auto-searches for installable skills during classify). Never raises — a
     failing marketplace is logged and skipped.
     """
-    from personalclaw.skills.marketplace import get_default_skills_registry
     from personalclaw.skills.loader import SkillsLoader
+    from personalclaw.skills.marketplace import get_default_skills_registry
 
     registry = get_default_skills_registry()
     installed_names = {s["key"] for s in SkillsLoader(install_builtins=False).list_skills()}
@@ -287,7 +300,9 @@ def search_marketplaces(query: str, limit: int = 20) -> list:
         except Exception as exc:
             logger.warning("skills search failed for %s: %s", name, exc)
 
-    filtered = [r for r in all_results if r.id not in installed_names and r.name not in installed_names]
+    filtered = [
+        r for r in all_results if r.id not in installed_names and r.name not in installed_names
+    ]
     filtered.sort(key=lambda r: r.installs, reverse=True)
     return filtered[:limit]
 
@@ -305,6 +320,7 @@ async def api_skills_marketplace_detail(request: web.Request) -> web.Response:
     marketplace_name = request.rel_url.query.get("marketplace", "skills.sh").strip()
 
     from personalclaw.skills.marketplace import get_default_skills_registry
+
     try:
         mp = get_default_skills_registry().get(marketplace_name)
     except KeyError:
@@ -327,7 +343,7 @@ async def api_skills_marketplace_detail(request: web.Request) -> web.Response:
         end = skill_md.find("\n---", 3)
         if end != -1:
             fm_text = skill_md[3:end].strip()
-            body = skill_md[end + 4:].lstrip("\n")
+            body = skill_md[end + 4 :].lstrip("\n")
             for line in fm_text.split("\n"):
                 if ":" in line:
                     key, _, value = line.partition(":")
@@ -339,19 +355,18 @@ async def api_skills_marketplace_detail(request: web.Request) -> web.Response:
     # JSON-safe file view: paths + a binary marker only. Raw ``data`` bytes from a binary
     # entry aren't JSON-serializable, and the preview UI only needs the tree — file
     # contents are fetched on demand via the per-file browser endpoint.
-    file_view = [
-        {"path": f.get("path", ""), "binary": "data" in f}
-        for f in detail.files
-    ]
-    return web.json_response({
-        "id": detail.id,
-        "name": detail.name,
-        "audit_status": detail.audit_status,
-        "files": file_view,
-        "frontmatter": frontmatter,
-        "body": body,
-        "marketplace": marketplace_name,
-    })
+    file_view = [{"path": f.get("path", ""), "binary": "data" in f} for f in detail.files]
+    return web.json_response(
+        {
+            "id": detail.id,
+            "name": detail.name,
+            "audit_status": detail.audit_status,
+            "files": file_view,
+            "frontmatter": frontmatter,
+            "body": body,
+            "marketplace": marketplace_name,
+        }
+    )
 
 
 def _safe_skill_name(name: str) -> bool:
@@ -366,6 +381,7 @@ def _resolve_skill_root(name: str) -> Path | None:
     ``_all_skill_paths()`` wins (project > user > agents > bundled).
     """
     from personalclaw.agent import _all_skill_paths
+
     for base_str in _all_skill_paths():
         base = Path(base_str)
         if (base / name / "SKILL.md").is_file():
@@ -462,6 +478,7 @@ async def api_skills_install(request: web.Request) -> web.Response:
         SkillInstallRefused,
         get_default_skills_registry,
     )
+
     registry = get_default_skills_registry()
     try:
         registry.get(marketplace_name)
@@ -542,20 +559,25 @@ async def api_skill_verify(request: web.Request) -> web.Response:
 
     rep = verify_skill_integrity(root / name)
     status = "unverified" if rep.unlocked else ("intact" if rep.ok else "tampered")
-    _sel_log("skills.verify", "ok" if rep.ok or rep.unlocked else "tampered", f"{name}:{status}", request)
-    return web.json_response({
-        "name": name,
-        "integrity": status,
-        "ok": rep.ok,
-        "unlocked": rep.unlocked,
-        "mutated": rep.mutated,
-        "missing": rep.missing,
-        "added": rep.added,
-        "summary": rep.summary(),
-    })
+    _sel_log(
+        "skills.verify", "ok" if rep.ok or rep.unlocked else "tampered", f"{name}:{status}", request
+    )
+    return web.json_response(
+        {
+            "name": name,
+            "integrity": status,
+            "ok": rep.ok,
+            "unlocked": rep.unlocked,
+            "mutated": rep.mutated,
+            "missing": rep.missing,
+            "added": rep.added,
+            "summary": rep.summary(),
+        }
+    )
 
 
 # ── Ephemeral session skills (skill-ephemeral-promotion) ─────────────────────
+
 
 async def api_ephemeral_skills_list(request: web.Request) -> web.Response:
     """GET /api/skills/ephemeral/{session} — the session-live drafts awaiting a
@@ -590,7 +612,9 @@ async def api_ephemeral_skill_promote(request: web.Request) -> web.Response:
         return web.json_response({"error": "slug + scope('agent'|'global') required"}, status=400)
     try:
         name = ephemeral.promote(
-            session, slug, scope,
+            session,
+            slug,
+            scope,
             agent=(str(body.get("agent", "")).strip() or None),
             title=(str(body["title"]).strip() if body.get("title") else None),
             body=(str(body["body"]) if body.get("body") else None),
@@ -617,6 +641,7 @@ async def api_ephemeral_skill_discard(request: web.Request) -> web.Response:
 
 
 # ── Skill proposals inbox (skill-evolution-proposal-only) ────────────────────
+
 
 async def api_skill_proposals_list(request: web.Request) -> web.Response:
     """GET /api/skills/proposals — the pending autonomous-synthesis proposals

@@ -212,6 +212,7 @@ class AcpSessionProvider(AgentProvider):
 
 # ── double-gate + concurrent-session opener ──────────────────────────────────
 
+
 def concurrent_sessions_enabled(dialect_id: str | None) -> bool:
     """True only when BOTH gates are on: the backend dialect declares
     ``supports_concurrent_sessions`` (proven-concurrent — currently the default dialect) AND
@@ -225,7 +226,9 @@ def concurrent_sessions_enabled(dialect_id: str | None) -> bool:
             return False
         return bool(AppConfig.load().agent.acp_concurrent_sessions)
     except Exception:
-        logger.debug("concurrent_sessions_enabled: gate check failed — treating as OFF", exc_info=True)
+        logger.debug(
+            "concurrent_sessions_enabled: gate check failed — treating as OFF", exc_info=True
+        )
         return False
 
 

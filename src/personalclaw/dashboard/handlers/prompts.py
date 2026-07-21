@@ -20,6 +20,7 @@ MAX_PROMPT_BYTES = 100_000  # 100 KB — public constant, imported across dashbo
 def _sel():
     """Late-binding sel() — allows monkeypatching at parent package level."""
     import personalclaw.dashboard.handlers as _pkg
+
     return _pkg.sel()
 
 
@@ -111,9 +112,13 @@ async def api_prompts(request: web.Request) -> web.Response:
     kind = kind_q.strip() if isinstance(kind_q, str) else ""
     prompts = _list_provider_prompts(kind)
     _sel().log_tool_invocation(
-        session_key='', agent='api', source='dashboard',
-        tool_name='api_prompts_list', tool_kind='prompt', outcome='ok',
-        metadata={'count': len(prompts), 'kind': kind or 'all'},
+        session_key="",
+        agent="api",
+        source="dashboard",
+        tool_name="api_prompts_list",
+        tool_kind="prompt",
+        outcome="ok",
+        metadata={"count": len(prompts), "kind": kind or "all"},
     )
     return web.json_response(prompts)
 
@@ -138,9 +143,13 @@ async def api_prompt_detail(request: web.Request) -> web.Response:
     tpl = provider.get_prompt(bare) if provider is not None else None
     if tpl is None:
         _sel().log_tool_invocation(
-            session_key='', agent='api', source='dashboard',
-            tool_name='api_prompt_detail', tool_kind='prompt', outcome='not_found',
-            metadata={'name': raw},
+            session_key="",
+            agent="api",
+            source="dashboard",
+            tool_name="api_prompt_detail",
+            tool_kind="prompt",
+            outcome="not_found",
+            metadata={"name": raw},
         )
         return web.json_response({"error": "not found"}, status=404)
 
@@ -152,16 +161,22 @@ async def api_prompt_detail(request: web.Request) -> web.Response:
 
     merged = merged_variables(tpl, _snippet_resolver(provider))
     _sel().log_tool_invocation(
-        session_key='', agent='api', source='dashboard',
-        tool_name='api_prompt_detail', tool_kind='prompt', outcome='ok',
-        metadata={'name': bare, 'source': 'provider'},
+        session_key="",
+        agent="api",
+        source="dashboard",
+        tool_name="api_prompt_detail",
+        tool_kind="prompt",
+        outcome="ok",
+        metadata={"name": bare, "source": "provider"},
     )
-    return web.json_response({
-        **_provider_prompt_to_listing(tpl),
-        "content": content,
-        "merged_variables": [v.to_dict() for v in merged],
-        "includes": included_snippet_names(tpl.content),
-    })
+    return web.json_response(
+        {
+            **_provider_prompt_to_listing(tpl),
+            "content": content,
+            "merged_variables": [v.to_dict() for v in merged],
+            "includes": included_snippet_names(tpl.content),
+        }
+    )
 
 
 def _build_prompt_template(body: dict[str, Any], default_name: str = "") -> Any:
@@ -176,18 +191,20 @@ def _build_prompt_template(body: dict[str, Any], default_name: str = "") -> Any:
     name = raw_name.strip()
     if not name:
         raise ValueError("Missing 'name' field")
-    return PromptTemplate.from_dict({
-        "name": name,
-        "kind": body.get("kind") or "",  # from_dict infers system/user when blank
-        "title": body.get("title") or "",
-        "description": body.get("description") or "",
-        "content": body.get("content") or "",
-        "variables": body.get("variables") or [],
-        "tags": body.get("tags") or [],
-        # Runnable template (#17): a launch_spec turns a prompt into a campaign
-        # template. from_dict ignores a non-dict, so a plain prompt stays plain.
-        "launch_spec": body.get("launch_spec") or {},
-    })
+    return PromptTemplate.from_dict(
+        {
+            "name": name,
+            "kind": body.get("kind") or "",  # from_dict infers system/user when blank
+            "title": body.get("title") or "",
+            "description": body.get("description") or "",
+            "content": body.get("content") or "",
+            "variables": body.get("variables") or [],
+            "tags": body.get("tags") or [],
+            # Runnable template (#17): a launch_spec turns a prompt into a campaign
+            # template. from_dict ignores a non-dict, so a plain prompt stays plain.
+            "launch_spec": body.get("launch_spec") or {},
+        }
+    )
 
 
 async def api_prompt_create(request: web.Request) -> web.Response:
@@ -271,8 +288,9 @@ async def api_prompt_render(request: web.Request) -> web.Response:
     tpl = provider.get_prompt(bare)
     if tpl is None:
         return web.json_response({"error": "not found"}, status=404)
-    from personalclaw.prompt_providers.engine import render_template
     from personalclaw.prompt_providers.base import PromptRenderError
+    from personalclaw.prompt_providers.engine import render_template
+
     try:
         # Compose-aware: resolve {{> snippet}} includes through the provider.
         rendered = render_template(tpl, values, resolver=_snippet_resolver(provider))
@@ -287,9 +305,23 @@ async def api_prompt_render(request: web.Request) -> web.Response:
 # rendered content becomes `task`; everything else is a loop-launch knob. Kept to the
 # spine + goal knobs a fill-and-launch needs — the same fields LoopComposer sends.
 _LAUNCH_SPEC_FIELDS = (
-    "kind", "agent", "model", "provider", "provider_agent", "reasoning_effort",
-    "execution", "roster", "strategy_id", "intake_rigor", "attended", "autopilot",
-    "max_cycles", "skill_ids", "workflow_ids", "project_id", "success_criteria",
+    "kind",
+    "agent",
+    "model",
+    "provider",
+    "provider_agent",
+    "reasoning_effort",
+    "execution",
+    "roster",
+    "strategy_id",
+    "intake_rigor",
+    "attended",
+    "autopilot",
+    "max_cycles",
+    "skill_ids",
+    "workflow_ids",
+    "project_id",
+    "success_criteria",
     "kind_config",
 )
 
@@ -324,11 +356,13 @@ async def api_campaign_template_launch(request: web.Request) -> web.Response:
     spec = tpl.launch_spec if isinstance(tpl.launch_spec, dict) else {}
     if not spec:
         return web.json_response(
-            {"error": "This template isn't runnable — it has no launch spec."}, status=400)
+            {"error": "This template isn't runnable — it has no launch spec."}, status=400
+        )
 
     # 1) Render the task via the SAME engine the render endpoint uses (compose-aware).
-    from personalclaw.prompt_providers.engine import render_template
     from personalclaw.prompt_providers.base import PromptRenderError
+    from personalclaw.prompt_providers.engine import render_template
+
     try:
         task = render_template(tpl, values, resolver=_snippet_resolver(provider))
     except PromptRenderError as exc:
@@ -336,7 +370,8 @@ async def api_campaign_template_launch(request: web.Request) -> web.Response:
     task = task.strip()
     if len(task) < 12:
         return web.json_response(
-            {"error": "The rendered task is too short — fill in more of the template."}, status=400)
+            {"error": "The rendered task is too short — fill in more of the template."}, status=400
+        )
 
     # 2) Build a loop create body from the launch_spec (over the rendered task). Allow
     # a per-launch project_id override (a template run scoped to the active project).
@@ -357,6 +392,7 @@ async def api_campaign_template_launch(request: web.Request) -> web.Response:
     from personalclaw.dashboard.handlers import loop_routes as LR
     from personalclaw.loop import kinds, manager, store, validation
     from personalclaw.loop.loop import KINDS
+
     kinds.ensure_loaded()
     kind = str(create_body.get("kind", "goal")).strip().lower() or "goal"
     if kind not in KINDS:
@@ -373,14 +409,21 @@ async def api_campaign_template_launch(request: web.Request) -> web.Response:
     reason = blocker(loop) if blocker else None
     if reason:
         # Leave the created (unstarted) draft so the user can fix + launch from the UI.
-        return web.json_response({"error": reason, "loop_id": loop.id, "started": False}, status=422)
+        return web.json_response(
+            {"error": reason, "loop_id": loop.id, "started": False}, status=422
+        )
 
     from personalclaw.autonudge import get_instance
+
     svc = get_instance()
     if svc is None:
-        return web.json_response({"error": "autonudge unavailable", "loop_id": loop.id, "started": False}, status=503)
+        return web.json_response(
+            {"error": "autonudge unavailable", "loop_id": loop.id, "started": False}, status=503
+        )
     await manager.start(request.app["state"], svc, loop.id)
-    return web.json_response({"ok": True, "loop_id": loop.id, "kind": loop.kind, "started": True}, status=201)
+    return web.json_response(
+        {"ok": True, "loop_id": loop.id, "kind": loop.kind, "started": True}, status=201
+    )
 
 
 async def api_prompt_preview(request: web.Request) -> web.Response:
@@ -412,7 +455,9 @@ async def api_prompt_preview(request: web.Request) -> web.Response:
     )
 
     variables = [
-        PromptVariable.from_dict(v) for v in (body.get("variables") or []) if isinstance(v, dict) and v.get("name")
+        PromptVariable.from_dict(v)
+        for v in (body.get("variables") or [])
+        if isinstance(v, dict) and v.get("name")
     ]
     provider = _get_default_prompt_provider()
     resolver = _snippet_resolver(provider) if provider is not None else None
@@ -422,16 +467,24 @@ async def api_prompt_preview(request: web.Request) -> web.Response:
     try:
         rendered = render(content, variables, values, resolver=resolver)
     except PromptRenderError as exc:
-        return web.json_response({
-            "ok": False, "error": str(exc),
-            "detected_variables": detected, "includes": includes,
-        })
+        return web.json_response(
+            {
+                "ok": False,
+                "error": str(exc),
+                "detected_variables": detected,
+                "includes": includes,
+            }
+        )
     rendered, _ = redact_credentials(rendered)
     rendered, _ = redact_exfiltration_urls(rendered)
-    return web.json_response({
-        "ok": True, "rendered": rendered,
-        "detected_variables": detected, "includes": includes,
-    })
+    return web.json_response(
+        {
+            "ok": True,
+            "rendered": rendered,
+            "detected_variables": detected,
+            "includes": includes,
+        }
+    )
 
 
 async def api_prompt_syntax(_request: web.Request) -> web.Response:
@@ -482,7 +535,11 @@ async def api_prompt_syntax(_request: web.Request) -> web.Response:
         "round": ("math", "round(a, n=0)", "Round to n decimals."),
         "abs": ("math", "abs(a)", "Absolute value."),
         "if": ("logic", "if(cond, a, b)", "Inline ternary — a when cond is truthy, else b."),
-        "unless": ("logic", "unless(cond, a, b)", "Inverse ternary — b when cond is truthy, else a."),
+        "unless": (
+            "logic",
+            "unless(cond, a, b)",
+            "Inverse ternary — b when cond is truthy, else a.",
+        ),
         "isString": ("type", "isString(v)", "True if v is a string."),
         "isNumber": ("type", "isNumber(v)", "True if v is a number."),
         "isBoolean": ("type", "isBoolean(v)", "True if v is a boolean."),
@@ -501,22 +558,54 @@ async def api_prompt_syntax(_request: web.Request) -> web.Response:
         for name in sorted(BUILT_IN_FUNCTIONS)
     ]
     constructs = [
-        {"category": "variable", "label": "Variable", "snippet": "{{ name }}",
-         "description": "Insert a variable's value. Dot-paths and list indexes work: {{ user.name }}, {{ items.0 }}."},
-        {"category": "variable", "label": "Typed variable", "snippet": "{{ name::text }}",
-         "description": "Declare a variable's input type inline: text, textarea, number, boolean, or select::[a, b]."},
-        {"category": "conditional", "label": "If / elif / else", "snippet": "{% if cond %}\n…\n{% elif other %}\n…\n{% else %}\n…\n{% endif %}",
-         "description": "Branch on a condition. Operators: == != > < >= <=, membership (x in y), booleans (and / or / not), grouping ( )."},
-        {"category": "loop", "label": "For loop", "snippet": "{% for item in items %}\n{{ item }}\n{% endfor %}",
-         "description": "Iterate a list/object/string. Inside: loop.index, loop.index1, loop.first, loop.last, loop.length."},
-        {"category": "function", "label": "Function call", "snippet": "{{ upper(name) }}",
-         "description": "Call a built-in. Calls nest: {{ upper(trim(name)) }}."},
-        {"category": "include", "label": "Include snippet", "snippet": "{{> snippet-name }}",
-         "description": "Inline a reusable snippet (recursive, cycle-safe)."},
-        {"category": "comment", "label": "Comment", "snippet": "{# note #}",
-         "description": "A comment — stripped from the output."},
-        {"category": "whitespace", "label": "Whitespace trim", "snippet": "{%- … -%}",
-         "description": "A leading/trailing '-' trims adjacent whitespace: {{- x -}}, {%- if … -%}."},
+        {
+            "category": "variable",
+            "label": "Variable",
+            "snippet": "{{ name }}",
+            "description": "Insert a variable's value. Dot-paths and list indexes work: {{ user.name }}, {{ items.0 }}.",  # noqa: E501
+        },
+        {
+            "category": "variable",
+            "label": "Typed variable",
+            "snippet": "{{ name::text }}",
+            "description": "Declare a variable's input type inline: text, textarea, number, boolean, or select::[a, b].",  # noqa: E501
+        },
+        {
+            "category": "conditional",
+            "label": "If / elif / else",
+            "snippet": "{% if cond %}\n…\n{% elif other %}\n…\n{% else %}\n…\n{% endif %}",
+            "description": "Branch on a condition. Operators: == != > < >= <=, membership (x in y), booleans (and / or / not), grouping ( ).",  # noqa: E501
+        },
+        {
+            "category": "loop",
+            "label": "For loop",
+            "snippet": "{% for item in items %}\n{{ item }}\n{% endfor %}",
+            "description": "Iterate a list/object/string. Inside: loop.index, loop.index1, loop.first, loop.last, loop.length.",  # noqa: E501
+        },
+        {
+            "category": "function",
+            "label": "Function call",
+            "snippet": "{{ upper(name) }}",
+            "description": "Call a built-in. Calls nest: {{ upper(trim(name)) }}.",
+        },
+        {
+            "category": "include",
+            "label": "Include snippet",
+            "snippet": "{{> snippet-name }}",
+            "description": "Inline a reusable snippet (recursive, cycle-safe).",
+        },
+        {
+            "category": "comment",
+            "label": "Comment",
+            "snippet": "{# note #}",
+            "description": "A comment — stripped from the output.",
+        },
+        {
+            "category": "whitespace",
+            "label": "Whitespace trim",
+            "snippet": "{%- … -%}",
+            "description": "A leading/trailing '-' trims adjacent whitespace: {{- x -}}, {%- if … -%}.",  # noqa: E501
+        },
     ]
     return web.json_response({"functions": functions, "constructs": constructs})
 
@@ -533,14 +622,16 @@ def _build_snippet(body: dict[str, Any], default_name: str = "") -> Any:
     name = raw_name.strip()
     if not name:
         raise ValueError("Missing 'name' field")
-    return PromptSnippet.from_dict({
-        "name": name,
-        "title": body.get("title") or "",
-        "description": body.get("description") or "",
-        "content": body.get("content") or "",
-        "variables": body.get("variables") or [],
-        "tags": body.get("tags") or [],
-    })
+    return PromptSnippet.from_dict(
+        {
+            "name": name,
+            "title": body.get("title") or "",
+            "description": body.get("description") or "",
+            "content": body.get("content") or "",
+            "variables": body.get("variables") or [],
+            "tags": body.get("tags") or [],
+        }
+    )
 
 
 async def api_snippets(request: web.Request) -> web.Response:
@@ -559,8 +650,13 @@ async def api_snippet_detail(request: web.Request) -> web.Response:
         return web.json_response({"error": "not found"}, status=404)
     content, _ = redact_credentials(snip.content)
     content, _ = redact_exfiltration_urls(content)
-    return web.json_response({**_snippet_to_listing(snip), "content": content,
-                              "used_by": _snippet_usages(provider, bare)})
+    return web.json_response(
+        {
+            **_snippet_to_listing(snip),
+            "content": content,
+            "used_by": _snippet_usages(provider, bare),
+        }
+    )
 
 
 async def api_snippet_create(request: web.Request) -> web.Response:
@@ -624,11 +720,14 @@ async def api_snippet_delete(request: web.Request) -> web.Response:
         usages = _snippet_usages(provider, bare)
         refs = usages["prompts"] + usages["snippets"]
         if refs:
-            return web.json_response({
-                "error": f"Snippet is included by {len(refs)} item(s): {', '.join(refs[:6])}"
-                         f"{'…' if len(refs) > 6 else ''}. Remove those {{{{> {bare}}}}} references first, or pass force=1.",
-                "used_by": usages,
-            }, status=409)
+            return web.json_response(
+                {
+                    "error": f"Snippet is included by {len(refs)} item(s): {', '.join(refs[:6])}"
+                    f"{'…' if len(refs) > 6 else ''}. Remove those {{{{> {bare}}}}} references first, or pass force=1.",  # noqa: E501
+                    "used_by": usages,
+                },
+                status=409,
+            )
     if not provider.delete_snippet(bare):
         return web.json_response({"error": "not found"}, status=404)
     return web.json_response({"ok": True})
@@ -654,6 +753,7 @@ async def api_snippet_render(request: web.Request) -> web.Response:
         return web.json_response({"error": "not found"}, status=404)
     from personalclaw.prompt_providers.base import PromptRenderError
     from personalclaw.prompt_providers.engine import render_snippet
+
     try:
         rendered = render_snippet(snip, values, resolver=_snippet_resolver(provider))
     except PromptRenderError as exc:
@@ -688,7 +788,7 @@ async def api_prompt_bindings(_request: web.Request) -> web.Response:
     bindings = [
         {
             "use_case": uc,
-            "ref": active.get(uc, ""),          # "" = unbound (uses the use-case default)
+            "ref": active.get(uc, ""),  # "" = unbound (uses the use-case default)
             # The prompt that actually resolves: bound ref, else this use-case's
             # own tailored bundled prompt (NOT the shared chat default).
             "effective_ref": active_prompt_ref(uc),
@@ -749,9 +849,7 @@ async def api_prompt_bindings_save(request: web.Request) -> web.Response:
         _ensure_default_providers_registered()
         provider = get_prompt_provider(provider_name)
         if provider is None or provider.get_prompt(prompt_name) is None:
-            return web.json_response(
-                {"error": f"prompt not found: {ref!r}"}, status=404
-            )
+            return web.json_response({"error": f"prompt not found: {ref!r}"}, status=404)
         active[use_case] = ref
     else:
         active.pop(use_case, None)  # clear → falls back to default
@@ -800,6 +898,7 @@ async def api_skill_detail(request: web.Request) -> web.Response:
             if s["name"] == bare_name or s["key"] == name:
                 if s["path"]:
                     from personalclaw.hooks import validate_file_path  # noqa: F811
+
                     resolved = validate_file_path(s["path"])
                     if resolved is None:
                         return web.json_response({"error": "access denied"}, status=403)

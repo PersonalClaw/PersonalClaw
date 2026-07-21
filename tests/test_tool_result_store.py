@@ -15,6 +15,7 @@ from personalclaw.tool_providers import result_store
 def _isolate(tmp_path, monkeypatch):
     import personalclaw.config.loader as cfg
     import personalclaw.session_workspace as ws
+
     monkeypatch.setattr(cfg, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(ws, "config_dir", lambda: tmp_path)
     return tmp_path
@@ -73,6 +74,7 @@ async def test_builtin_tool_result_get_roundtrip(tmp_path, monkeypatch):
     result_id; the tool_result_get builtin pulls the buried line back."""
     import personalclaw.config.loader as cfg
     import personalclaw.session_workspace as ws
+
     monkeypatch.setattr(cfg, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(ws, "config_dir", lambda: tmp_path)
     from personalclaw.agents.native.builtin_tools import NativeBuiltinToolProvider, _ok_capped
@@ -98,6 +100,7 @@ async def test_tool_result_endpoint_canonicalizes_session_key(tmp_path, monkeypa
     Regression guard for the projection UI-button key mismatch."""
     import personalclaw.config.loader as cfg
     import personalclaw.session_workspace as ws
+
     monkeypatch.setattr(cfg, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(ws, "config_dir", lambda: tmp_path)
     from aiohttp import web

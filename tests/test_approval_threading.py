@@ -180,9 +180,7 @@ class TestSubagentPassesParentKey:
 
         # Mock client whose stream yields one permission_request then ends
         mock_client = MagicMock()
-        perm_event = LLMEvent(
-            kind="permission_request", request_id="tool1", title="shell: ls"
-        )
+        perm_event = LLMEvent(kind="permission_request", request_id="tool1", title="shell: ls")
 
         async def _stream(_msg: str):
             yield perm_event
@@ -236,8 +234,9 @@ class TestApprovalModeSelAudit:
 
         mock_sel = MagicMock()
         mock_sel.log_api_access = MagicMock()
-        with patch("personalclaw.gateway.sel", return_value=mock_sel), patch(
-            "personalclaw.trust_mode.is_yolo_active", return_value=False
+        with (
+            patch("personalclaw.gateway.sel", return_value=mock_sel),
+            patch("personalclaw.trust_mode.is_yolo_active", return_value=False),
         ):
             approve_fn = gateway._interactive_approval("cron")
             result = await approve_fn(_make_event(title="shell: rm -rf /"), "")
@@ -261,8 +260,9 @@ class TestApprovalModeSelAudit:
 
         mock_sel = MagicMock()
         mock_sel.log_api_access = MagicMock()
-        with patch("personalclaw.gateway.sel", return_value=mock_sel), patch(
-            "personalclaw.trust_mode.is_yolo_active", return_value=False
+        with (
+            patch("personalclaw.gateway.sel", return_value=mock_sel),
+            patch("personalclaw.trust_mode.is_yolo_active", return_value=False),
         ):
             approve_fn = gateway._interactive_approval("subagent")
             result = await approve_fn(_make_event(title="read /tmp/foo.txt"), "")
@@ -285,8 +285,9 @@ class TestApprovalModeSelAudit:
 
         mock_sel = MagicMock()
         mock_sel.log_api_access = MagicMock()
-        with patch("personalclaw.gateway.sel", return_value=mock_sel), patch(
-            "personalclaw.trust_mode.is_yolo_active", return_value=False
+        with (
+            patch("personalclaw.gateway.sel", return_value=mock_sel),
+            patch("personalclaw.trust_mode.is_yolo_active", return_value=False),
         ):
             approve_fn = gateway._interactive_approval("subagent")
             await approve_fn(_make_event(title="shell: rm -rf /"), "")
@@ -303,8 +304,9 @@ class TestApprovalModeSelAudit:
         gateway._approval_mode = "yolo"
 
         broken_sel = MagicMock(side_effect=RuntimeError("sel unavailable"))
-        with patch("personalclaw.gateway.sel", broken_sel), patch(
-            "personalclaw.trust_mode.is_yolo_active", return_value=False
+        with (
+            patch("personalclaw.gateway.sel", broken_sel),
+            patch("personalclaw.trust_mode.is_yolo_active", return_value=False),
         ):
             approve_fn = gateway._interactive_approval("cron")
             result = await approve_fn(_make_event(), "")

@@ -37,11 +37,17 @@ async def test_crud_roundtrip(temp_native):
     client = await _client()
     try:
         # create
-        resp = await client.post("/api/workflows", json={
-            "name": "git-commit", "description": "flow", "scope": "workspace",
-            "scope_ref": "/repo/a", "match_text": "commit changes",
-            "steps": [{"title": "Test"}, {"title": "Commit"}],
-        })
+        resp = await client.post(
+            "/api/workflows",
+            json={
+                "name": "git-commit",
+                "description": "flow",
+                "scope": "workspace",
+                "scope_ref": "/repo/a",
+                "match_text": "commit changes",
+                "steps": [{"title": "Test"}, {"title": "Commit"}],
+            },
+        )
         assert resp.status == 201
         created = await resp.json()
         wid = created["id"]

@@ -36,8 +36,12 @@ class WebUITransport(ChannelTransportProvider):
         # The dashboard chat UI: rich markdown, attachments, edits, typing; inbound
         # via the chat runner (the canonical WebUI consumer). No emoji reactions.
         return ChannelCapabilities(
-            inbound=True, threads=False, attachments=True, edits=True,
-            rich_text=True, typing_indicator=True,
+            inbound=True,
+            threads=False,
+            attachments=True,
+            edits=True,
+            rich_text=True,
+            typing_indicator=True,
         )
 
     @property

@@ -126,8 +126,9 @@ def record_procedural_outcomes(service, outcomes, *, scope_ref: str | None = Non
         try:
             # task_shape kept coarse (the tool itself) for v1 — the value is the
             # tool×outcome prior, refined by recurrence/heat, not a per-call log.
-            if service.record_procedural(tool=tool, task_shape=tool, outcome=outcome,
-                                         scope_ref=scope_ref):
+            if service.record_procedural(
+                tool=tool, task_shape=tool, outcome=outcome, scope_ref=scope_ref
+            ):
                 n += 1
         except Exception:
             logger.debug("procedural capture failed for %s", tool, exc_info=True)
@@ -205,7 +206,9 @@ def run_after_turn_review(
     if not correction_text:
         return None
     # GUARDRAIL: never learn an environment-dependent failure as durable memory.
-    if is_environment_failure_claim(correction_text) or is_environment_failure_claim(assistant_text):
+    if is_environment_failure_claim(correction_text) or is_environment_failure_claim(
+        assistant_text
+    ):
         logger.info("after-turn review: skipped env-failure claim (guardrail)")
         return None
     # Frame the correction as a forward-looking lesson.
@@ -240,7 +243,9 @@ _LADDER_SCHEMA_HINT = (
 )
 
 
-def _build_ladder_prompt(*, user_message: str, assistant_text: str, loaded_skills: list[str]) -> str:
+def _build_ladder_prompt(
+    *, user_message: str, assistant_text: str, loaded_skills: list[str]
+) -> str:
     loaded = ", ".join(loaded_skills) if loaded_skills else "(none loaded this turn)"
     return (
         "You review one completed assistant turn and decide whether a REUSABLE "
@@ -257,7 +262,7 @@ def _build_ladder_prompt(*, user_message: str, assistant_text: str, loaded_skill
         "errors, or 'X is broken/not allowed' — those are not skills. Keep procedure_md "
         "concrete and generalizable.\n\n"
         f"Currently-loaded skills: {loaded}\n\n"
-        f"<untrusted_content>\nUSER: {user_message[:1500]}\n\nASSISTANT: {assistant_text[:2500]}\n</untrusted_content>"
+        f"<untrusted_content>\nUSER: {user_message[:1500]}\n\nASSISTANT: {assistant_text[:2500]}\n</untrusted_content>"  # noqa: E501
     )
 
 
@@ -276,7 +281,7 @@ def _parse_ladder_json(raw: str) -> dict | None:
     if start == -1 or end == -1 or end <= start:
         return None
     try:
-        obj = json.loads(text[start:end + 1])
+        obj = json.loads(text[start : end + 1])
         return obj if isinstance(obj, dict) else None
     except ValueError:
         return None
@@ -306,7 +311,9 @@ async def run_skill_ladder_review(
             return await one_shot_completion(p, use_case="background")
 
     prompt = _build_ladder_prompt(
-        user_message=user_message, assistant_text=assistant_text, loaded_skills=loaded_skills,
+        user_message=user_message,
+        assistant_text=assistant_text,
+        loaded_skills=loaded_skills,
     )
     try:
         raw = await completion(prompt)

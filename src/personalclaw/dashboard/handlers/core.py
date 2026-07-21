@@ -114,7 +114,8 @@ h1{font-size:1.5rem;font-weight:700;text-align:center;margin-bottom:8px;
       </div>
     </div>
   </div>
-  <p class="note">Or install from a <a href="https://github.com/PersonalClaw/PersonalClaw/releases">release</a>
+  <p class="note">Or install from a
+    <a href="https://github.com/PersonalClaw/PersonalClaw/releases">release</a>
   that bundles the dashboard pre-built.</p>
 </div>
 </body></html>"""
@@ -165,10 +166,11 @@ async def api_stt_transcribe(request: web.Request) -> web.Response:
         reader = await request.multipart()
     except (ValueError, AssertionError, RuntimeError) as exc:
         return web.json_response(
-            {"error": f"failed to parse multipart body: {exc}"}, status=400,
+            {"error": f"failed to parse multipart body: {exc}"},
+            status=400,
         )
     field = await reader.next()
-    if field is None or not hasattr(field, "name") or field.name != "audio":  # type: ignore[union-attr]
+    if field is None or not hasattr(field, "name") or field.name != "audio":  # type: ignore[union-attr]  # noqa: E501
         return web.json_response({"error": "missing audio field"}, status=400)
 
     # Use uploaded filename extension (recording.webm / .mp4 / .ogg)
@@ -194,7 +196,11 @@ async def api_stt_transcribe(request: web.Request) -> web.Response:
                 size += len(chunk)
                 if size > _stt_cap:
                     return web.json_response(
-                        {"error": check_upload(fname, field_mime, size=size, override_limit=_stt_cap).reason},
+                        {
+                            "error": check_upload(
+                                fname, field_mime, size=size, override_limit=_stt_cap
+                            ).reason
+                        },
                         status=413,
                     )
                 f.write(chunk)
@@ -303,9 +309,7 @@ async def api_security_denied_commands(_request: web.Request) -> web.Response:
     from personalclaw.security import BUILTIN_DENIED_COMMAND_PATTERNS
 
     user = list(AppConfig.load().security.denied_commands)
-    return web.json_response(
-        {"builtin": list(BUILTIN_DENIED_COMMAND_PATTERNS), "user": user}
-    )
+    return web.json_response({"builtin": list(BUILTIN_DENIED_COMMAND_PATTERNS), "user": user})
 
 
 async def api_security_egress(_request: web.Request) -> web.Response:
@@ -314,11 +318,13 @@ async def api_security_egress(_request: web.Request) -> web.Response:
     are the self-hoster's relaxations, edited via PATCH /api/config/personalclaw
     ``security.egress``."""
     eg = AppConfig.load().security.egress
-    return web.json_response({
-        "allow_hosts": list(eg.allow_hosts),
-        "deny_hosts": list(eg.deny_hosts),
-        "allow_private": bool(eg.allow_private),
-    })
+    return web.json_response(
+        {
+            "allow_hosts": list(eg.allow_hosts),
+            "deny_hosts": list(eg.deny_hosts),
+            "allow_private": bool(eg.allow_private),
+        }
+    )
 
 
 # ── PersonalClaw Config API ──
@@ -509,6 +515,8 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         if value not in spec["values"]:
             return _deny(f"invalid value, must be one of {spec['values']}", f"{path_key}={value}")
     elif spec["type"] == "int":
+        if value is None:
+            return _deny("must be an integer", f"{path_key}={value}")
         try:
             value = int(value)
         except (TypeError, ValueError):
@@ -520,6 +528,8 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         if not isinstance(value, bool):
             return _deny("must be a boolean", f"{path_key}={value}")
     elif spec["type"] == "float":
+        if value is None:
+            return _deny("must be a number", f"{path_key}={value}")
         try:
             value = float(value)
         except (TypeError, ValueError):
@@ -575,7 +585,9 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
             # path, or whitespace (a URL in the allow-list would be a footgun).
             for h in hosts:
                 if "/" in h or ":" in h or " " in h or len(h) > 253:
-                    return _deny(f"invalid host {h!r} (bare domain/hostname only)", f"{path_key}.{key}")
+                    return _deny(
+                        f"invalid host {h!r} (bare domain/hostname only)", f"{path_key}.{key}"
+                    )
             clean[key] = hosts
         ap = value.get("allow_private", False)
         if not isinstance(ap, bool):
@@ -588,6 +600,7 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         # must compile + each strategy must be a known builtin projector. Declarative
         # only (no code) — a bad rule is rejected here, never at dispatch time.
         from personalclaw.tool_providers.projection import _PROJECTORS  # noqa: F811
+
         if not isinstance(value, list):
             return _deny("must be a list", f"{path_key}={value}")
         if len(value) > 50:
@@ -677,12 +690,17 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
     if path_key == "tools.projection_rules":
         try:
             from personalclaw.tool_providers import projection  # noqa: F811
-            projection.set_user_rules([
-                projection.ProjectionRule(
-                    name=r.get("name", ""), match_regex=r.get("match_regex", ""),
-                    strategy=r.get("strategy", "log"))
-                for r in value
-            ])
+
+            projection.set_user_rules(
+                [
+                    projection.ProjectionRule(
+                        name=r.get("name", ""),
+                        match_regex=r.get("match_regex", ""),
+                        strategy=r.get("strategy", "log"),
+                    )
+                    for r in (value or [])
+                ]
+            )
         except Exception:
             logger.exception("Failed to live-apply projection rules")
 

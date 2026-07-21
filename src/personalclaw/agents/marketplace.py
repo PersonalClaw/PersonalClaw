@@ -18,14 +18,18 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+
 def _path_home_pclaw():
     """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
     try:
         from personalclaw.config.loader import config_dir as _cd
+
         return _cd()
     except Exception:
         from pathlib import Path as _P
+
         return _P.home() / ".personalclaw"
+
 
 logger = logging.getLogger(__name__)
 
@@ -100,10 +104,7 @@ class AgentDefinition:
         """Return a list of validation error strings; empty means valid."""
         errors: list[str] = []
         if not _NAME_RE.match(self.name):
-            errors.append(
-                "name must match ^[a-z0-9][a-z0-9-]{0,62}$ "
-                f"(got {self.name!r})"
-            )
+            errors.append("name must match ^[a-z0-9][a-z0-9-]{0,62}$ " f"(got {self.name!r})")
         if len(self.description) > _MAX_DESCRIPTION:
             errors.append(f"description exceeds {_MAX_DESCRIPTION} chars")
         if len(self.system_prompt) > _MAX_SYSTEM_PROMPT:
@@ -225,8 +226,13 @@ class LocalAgentMarketplace(AgentMarketplace):
         if existing is None:
             raise KeyError(f"Agent '{name}' not found")
         _UPDATABLE = {
-            "description", "model", "system_prompt", "voice",
-            "skills", "provider_entry", "mcp_servers",
+            "description",
+            "model",
+            "system_prompt",
+            "voice",
+            "skills",
+            "provider_entry",
+            "mcp_servers",
             # Agent-runtime axis — must be updatable so an agent can be (re)bound
             # to an ACP runtime ("acp:<cli>") or back to "native".
             "provider",
@@ -255,6 +261,7 @@ class LocalAgentMarketplace(AgentMarketplace):
         if not agent_dir.is_dir():
             raise KeyError(f"Agent '{name}' not found")
         import shutil
+
         shutil.rmtree(agent_dir)
         logger.info("Deleted local agent: %s", name)
 
@@ -300,8 +307,7 @@ class AgentMarketplaceRegistry:
 
     def info(self) -> list[dict[str, str]]:
         return [
-            {"name": n, "type": mp.marketplace_type}
-            for n, mp in sorted(self._marketplaces.items())
+            {"name": n, "type": mp.marketplace_type} for n, mp in sorted(self._marketplaces.items())
         ]
 
 
@@ -320,7 +326,7 @@ def get_default_agent_registry() -> AgentMarketplaceRegistry:
 
 get_default_agent_registry().register("local", LocalAgentMarketplace())
 
+
 def create_provider(config=None):
     """Extension factory for native agent provider."""
     return None  # Agent provider uses config-based definitions, not an instance
-

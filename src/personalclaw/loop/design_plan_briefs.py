@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 
-from personalclaw.planning.session import PlanSession, PlanStep
+from personalclaw.planning.session import PlanStep
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +32,30 @@ _TOKEN_STEP_KINDS = frozenset({"foundations", "palette", "typography"})
 # a phase kind where the task needs one — but this is the spine it works from. The LAST
 # step is `build_plan` (the executable phased breakdown the loop then loops over).
 STEP_KIND_GUIDE: tuple[tuple[str, str], ...] = (
-    ("brief", "the design intent: product/brand, audience, mood/voice, hard constraints, accessibility targets, and what 'done' means"),
-    ("foundations", "the foundational token decisions — which default axes to override (color anchors, type families, spacing/radius rhythm) and why"),
-    ("palette", "the color system — brand/accent/neutral + semantic role scales, light/dark, WCAG-contrast intent"),
-    ("typography", "the type + spacing system — families, the modular size scale, weights, the spacing/radius rhythm"),
-    ("components", "the core component set to generate (buttons, inputs, cards, …) and how each is styled from the tokens"),
-    ("build_plan", "the ordered build phases — each a phase the design loop executes (foundations → palette → type → components → document & export)"),
+    (
+        "brief",
+        "the design intent: product/brand, audience, mood/voice, hard constraints, accessibility targets, and what 'done' means",  # noqa: E501
+    ),
+    (
+        "foundations",
+        "the foundational token decisions — which default axes to override (color anchors, type families, spacing/radius rhythm) and why",  # noqa: E501
+    ),
+    (
+        "palette",
+        "the color system — brand/accent/neutral + semantic role scales, light/dark, WCAG-contrast intent",  # noqa: E501
+    ),
+    (
+        "typography",
+        "the type + spacing system — families, the modular size scale, weights, the spacing/radius rhythm",  # noqa: E501
+    ),
+    (
+        "components",
+        "the core component set to generate (buttons, inputs, cards, …) and how each is styled from the tokens",  # noqa: E501
+    ),
+    (
+        "build_plan",
+        "the ordered build phases — each a phase the design loop executes (foundations → palette → type → components → document & export)",  # noqa: E501
+    ),
 )
 
 
@@ -53,22 +71,29 @@ def design_inputs_block(inputs: list[dict] | None) -> list[str]:
     # How to consume each input type — concrete so the planner actually extracts from it.
     how = {
         "url": "FETCH it (web fetch) and extract its palette, type, spacing + component primitives",
-        "image": "READ the image file (it's in your current directory) — extract its color palette, type feel, and primitives",
-        "video": "the file is in your current directory — sample its frames for palette + motion/feel cues",
-        "html": "READ the HTML file in your current directory — extract its CSS tokens (colors, fonts, spacing) + components",
-        "react": "READ the React component file in your current directory — extract its style tokens + the component's shape",
-        "design_md": "READ this DESIGN.md in your current directory — it already encodes tokens/decisions; carry them forward",
+        "image": "READ the image file (it's in your current directory) — extract its color palette, type feel, and primitives",  # noqa: E501
+        "video": "the file is in your current directory — sample its frames for palette + motion/feel cues",  # noqa: E501
+        "html": "READ the HTML file in your current directory — extract its CSS tokens (colors, fonts, spacing) + components",  # noqa: E501
+        "react": "READ the React component file in your current directory — extract its style tokens + the component's shape",  # noqa: E501
+        "design_md": "READ this DESIGN.md in your current directory — it already encodes tokens/decisions; carry them forward",  # noqa: E501
     }
-    out = ["", "REFERENCE INPUTS the user provided — WORK THROUGH EACH ONE (extract its "
-           "design system into your plan, don't ignore any):"]
+    out = [
+        "",
+        "REFERENCE INPUTS the user provided — WORK THROUGH EACH ONE (extract its "
+        "design system into your plan, don't ignore any):",
+    ]
     for i in rows:
         t = str(i.get("type", "")).strip().lower()
         ref = str(i.get("ref", "")).strip()
-        out.append(f"  - [{t or 'input'}] {ref} — {how.get(t, 'inspect it and extract any design cues')}")
+        out.append(
+            f"  - [{t or 'input'}] {ref} — {how.get(t, 'inspect it and extract any design cues')}"
+        )
     return out
 
 
-def build_design_brief(task: str, workspace_dir: str = "", design_inputs: list[dict] | None = None) -> str:
+def build_design_brief(
+    task: str, workspace_dir: str = "", design_inputs: list[dict] | None = None
+) -> str:
     """Pass 1 — design the ordered step list for THIS design task.
 
     The planner studies the task + every provided reference input (URL / image / video /
@@ -241,12 +266,12 @@ def _artifact_contract(kind: str) -> str:
         # design-token document) so the walkthrough can merge it onto the loop, render a
         # live whole-system preview, and let the user edit the values before approving.
         axis = {
-            "foundations": "the foundational anchors you're overriding — e.g. color.primitive.brand.500, "
-                           "typography.family.sans, radius.md, spacing rhythm",
+            "foundations": "the foundational anchors you're overriding — e.g. color.primitive.brand.500, "  # noqa: E501
+            "typography.family.sans, radius.md, spacing rhythm",
             "palette": "the color system — color.primitive.<brand|accent|neutral>.<step> hexes "
-                       "and any color.semantic.<light|dark>.<role> values",
-            "typography": "type + spacing — typography.family.*, typography.size.*, typography.weight.*, "
-                          "spacing.*, radius.*",
+            "and any color.semantic.<light|dark>.<role> values",
+            "typography": "type + spacing — typography.family.*, typography.size.*, typography.weight.*, "  # noqa: E501
+            "spacing.*, radius.*",
         }.get(kind, "the tokens this step decides")
         return (
             f"For `{kind}`, write a JSON object with:\n"
@@ -266,7 +291,7 @@ def _artifact_contract(kind: str) -> str:
             "(e.g. your 4=0.5rem landing next to the default 3=0.75rem, so step 3 > step 4). "
             "For such a scale, EITHER omit it entirely to inherit the default unchanged, OR "
             "redefine the FULL scale yourself using one consistent convention across every key. "
-            "Ground all values in the reference inputs (the fetched site / image palette / DESIGN.md)."
+            "Ground all values in the reference inputs (the fetched site / image palette / DESIGN.md)."  # noqa: E501
         )
     return (
         f"For `{kind}`, write a JSON object with:\n"
@@ -308,11 +333,13 @@ def parse_steps_sentinel(text: str) -> tuple[str, list[dict]] | None:
         title = str(s.get("title", "")).strip()[:120]
         if not (kind or title):
             continue
-        steps.append({
-            "kind": kind or "step",
-            "title": title or kind.replace("_", " ").title(),
-            "objective": str(s.get("objective", "")).strip()[:400],
-        })
+        steps.append(
+            {
+                "kind": kind or "step",
+                "title": title or kind.replace("_", " ").title(),
+                "objective": str(s.get("objective", "")).strip()[:400],
+            }
+        )
     if not steps:
         return None
     summary = str(data.get("summary", "")).strip()[:300]
@@ -348,11 +375,13 @@ def build_plan_to_phases(artifact: dict) -> list[dict]:
         title = str(p.get("title", "")).strip() or step.replace("_", " ").title()
         if not (step or title):
             continue
-        out.append({
-            "step": step or title.lower().replace(" ", "_"),
-            "title": title,
-            "objective": str(p.get("objective", "")).strip(),
-        })
+        out.append(
+            {
+                "step": step or title.lower().replace(" ", "_"),
+                "title": title,
+                "objective": str(p.get("objective", "")).strip(),
+            }
+        )
     return out
 
 
@@ -364,6 +393,7 @@ def collect_token_overrides(steps) -> dict:
     approved system regardless of whether the FE previewed each step (D3 merges
     client-side as a live convenience; this is the server-side guarantee for D4)."""
     from personalclaw.loop import design_tokens as dt
+
     out: dict = {}
     for s in steps:
         if getattr(s, "kind", "") not in _TOKEN_STEP_KINDS:

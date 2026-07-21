@@ -165,9 +165,7 @@ class TestHandoffToChannel:
     async def test_empty_session_returns_none(self, tmp_path):
         log = ConversationLog(base_dir=tmp_path)
         delivery = MockDelivery()
-        result = await handoff_to_channel(
-            delivery, "U123", log, "nonexistent"
-        )
+        result = await handoff_to_channel(delivery, "U123", log, "nonexistent")
         assert result is None
         assert delivery.delivered == []
 
@@ -186,8 +184,13 @@ class TestHandoffToChannel:
 
         sessions = FakeSessions()
         result = await handoff_to_channel(
-            delivery, "U123", log, "dashboard:chat-1",
-            title="Test", channel="C456", sessions=sessions,
+            delivery,
+            "U123",
+            log,
+            "dashboard:chat-1",
+            title="Test",
+            channel="C456",
+            sessions=sessions,
         )
         assert result is not None
         assert "dashboard:chat-1" in sessions.linked
@@ -207,8 +210,6 @@ class TestHandoffToChannel:
         path.write_text("".join(lines))
 
         delivery = MockDelivery()
-        result = await handoff_to_channel(
-            delivery, "U123", log, "dashboard:chat-1"
-        )
+        result = await handoff_to_channel(delivery, "U123", log, "dashboard:chat-1")
         assert result is not None
         assert "Auto Title" in delivery.delivered[0][1]

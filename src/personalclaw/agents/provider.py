@@ -131,6 +131,14 @@ class AgentProvider(ABC):
         """
         return []
 
+    @classmethod
+    def agents_from_snapshot(cls, options: dict, snapshot: dict) -> list[DiscoveredAgent]:
+        """Map a warmed pool ``session/new`` snapshot to discovered agents WITHOUT
+        a fresh spawn. Default: ``[]`` — only runtimes that expose a live discovery
+        surface (the ACP runtime) override this; every other backend contributes none.
+        """
+        return []
+
     # ── lifecycle (one session) ──
     @abstractmethod
     async def start(self) -> None: ...

@@ -197,7 +197,7 @@ def run_app_doctor_probes() -> list[str]:
             continue
         if not isinstance(lines, list):
             print(
-                f"  {_STATUS_GLYPH['fail']} probe returned {type(lines).__name__}, expected list[DoctorLine]"
+                f"  {_STATUS_GLYPH['fail']} probe returned {type(lines).__name__}, expected list[DoctorLine]"  # noqa: E501
             )
             issues.append(f"{app_name} doctor probe malformed")
             continue

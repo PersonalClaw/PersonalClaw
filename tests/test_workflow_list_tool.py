@@ -108,12 +108,23 @@ class TestWorkflowRunResolveByName:
     def _payloads(self):
         # /api/workflows/<name> 404s (route keys off id); /api/workflows (list) has it;
         # /api/workflows/<id> resolves.
-        listing = {"workflows": [
-            {"id": "wf-abc123", "name": "my-sop", "enabled": True,
-             "scope": "global", "steps": [{"title": "Do the thing"}]},
-        ]}
-        detail = {"id": "wf-abc123", "name": "my-sop", "description": "",
-                  "steps": [{"title": "Do the thing", "instruction": "carefully"}]}
+        listing = {
+            "workflows": [
+                {
+                    "id": "wf-abc123",
+                    "name": "my-sop",
+                    "enabled": True,
+                    "scope": "global",
+                    "steps": [{"title": "Do the thing"}],
+                },
+            ]
+        }
+        detail = {
+            "id": "wf-abc123",
+            "name": "my-sop",
+            "description": "",
+            "steps": [{"title": "Do the thing", "instruction": "carefully"}],
+        }
         return listing, detail
 
     def test_run_resolves_name_to_id(self) -> None:

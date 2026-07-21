@@ -40,9 +40,7 @@ def test_seed_unset_home_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "PERSONALCLAW_HOME" in str(excinfo.value)
 
 
-def test_seed_unknown_fixture_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_seed_unknown_fixture_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Unknown fixture name raises SeedError with exit code 2.
 
     Regression guard for ``_resolve_fixture`` — if fixture dir lookup ever
@@ -121,13 +119,13 @@ def test_seed_path_traversal_rejected(
     # char names (``"foo\x00bar"``, ``"foo\nbar"``) also hit gate 1 via
     # the ``ord(c) < 0x20`` check (SEC-1 regression guard).
     if name in ("", ".", "./") or any(ord(c) < 0x20 for c in name):
-        assert "empty or refers to the root" in str(excinfo.value), (
-            f"expected empty-or-root gate to reject {name!r}, got: {excinfo.value}"
-        )
+        assert "empty or refers to the root" in str(
+            excinfo.value
+        ), f"expected empty-or-root gate to reject {name!r}, got: {excinfo.value}"
     else:
-        assert "path separators or '..'" in str(excinfo.value), (
-            f"expected path-separator gate to reject {name!r}, got: {excinfo.value}"
-        )
+        assert "path separators or '..'" in str(
+            excinfo.value
+        ), f"expected path-separator gate to reject {name!r}, got: {excinfo.value}"
 
 
 @patch("personalclaw.seed.sel")
@@ -173,6 +171,7 @@ def test_seed_cli_flag_registered(tmp_path: Path) -> None:
     real_home = _os.environ.get("HOME", "")
     if real_home:
         import site
+
         user_site = site.getusersitepackages()
         if isinstance(user_site, str) and _os.path.isdir(user_site):
             existing_pp = env.get("PYTHONPATH", "")
@@ -334,9 +333,7 @@ def test_seed_cmd_emits_sel_audit_on_copytree_oserror(
     assert rc == seed_mod.EXIT_IO_ERROR
     # ``seed: error:`` prefix contract: plain-ASCII, never a traceback.
     err = capsys.readouterr().err
-    assert err.startswith("seed: error:"), (
-        f"expected ASCII error prefix, got: {err!r}"
-    )
+    assert err.startswith("seed: error:"), f"expected ASCII error prefix, got: {err!r}"
     # SEL audit event fires with outcome="error".
     kw = mock_sel().log_api_access.call_args.kwargs
     assert kw["outcome"] == "error"
@@ -374,9 +371,7 @@ def test_seed_cmd_safe_audit_logs_warning_on_swallowed_failure(
     assert rc == seed_mod.EXIT_OK
     # Exactly one WARNING record from our audit handler.
     audit_records = [
-        r
-        for r in caplog.records
-        if r.name == "personalclaw.seed" and r.levelno == logging.WARNING
+        r for r in caplog.records if r.name == "personalclaw.seed" and r.levelno == logging.WARNING
     ]
     assert len(audit_records) == 1, (
         f"expected exactly one WARNING log from _safe_audit on sel() failure; "
@@ -394,9 +389,7 @@ def test_seed_cmd_safe_audit_logs_warning_on_swallowed_failure(
 # ------------------------------------------------------------------
 
 
-def test_seed_main_home_rail_refuses(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_seed_main_home_rail_refuses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``$PERSONALCLAW_HOME=~/.personalclaw`` exits 2 with 'refusing to seed main
     gateway home' message, even when the path doesn't exist yet.
 
@@ -442,9 +435,9 @@ def test_seed_main_home_rail_refuses_even_with_replace(
     assert excinfo.value.code == seed_mod.EXIT_RAIL
     assert "refusing to seed main gateway home" in str(excinfo.value)
     # The main-home rail MUST fire before rmtree runs.
-    assert (target / "real_user_data.txt").exists(), (
-        "CRITICAL: --seed-replace wiped main gateway home despite rail"
-    )
+    assert (
+        target / "real_user_data.txt"
+    ).exists(), "CRITICAL: --seed-replace wiped main gateway home despite rail"
     assert (target / "real_user_data.txt").read_text() == "don't delete me"
 
 
@@ -521,9 +514,7 @@ def test_seed_non_empty_rail_succeeds_with_replace(
     assert not (target / "subdir").exists()
     # Fixture content present.
     assert (target / "fixture.yaml").is_file()
-    assert (target / "fixture.yaml").read_text().strip() == (
-        "schema-version: 2026-04-28"
-    )
+    assert (target / "fixture.yaml").read_text().strip() == ("schema-version: 2026-04-28")
 
 
 def test_seed_replace_refuses_symlinked_target(
@@ -620,9 +611,7 @@ def test_seed_cmd_missing_seed_replace_attr_defaults_false(
 # ------------------------------------------------------------------
 
 
-def test_seed_resolve_failure_fails_closed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_seed_resolve_failure_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``resolve()`` raising ``OSError`` in the main-home check denies, not allows.
 
     A failed resolve must not fall back to the unresolved path (which would
@@ -755,12 +744,14 @@ def test_seed_audit_uses_rail_tag_not_raw_path(
 
         kw = mock_sel().log_api_access.call_args.kwargs
         # Rail constant present.
-        assert f"rail={expected_rail}" in kw["resources"], (
-            f"expected rail={expected_rail} in audit, got: {kw['resources']!r}"
-        )
+        assert (
+            f"rail={expected_rail}" in kw["resources"]
+        ), f"expected rail={expected_rail} in audit, got: {kw['resources']!r}"
         # Resolved target path must NOT leak into the audit stream —
         # that's the point of the rail-tag refactor.
-        resolved = target.resolve(strict=False) if target.exists() or target.is_symlink() else target
-        assert str(resolved) not in kw["resources"], (
-            f"audit leaked resolved path {resolved!r}: {kw['resources']!r}"
+        resolved = (
+            target.resolve(strict=False) if target.exists() or target.is_symlink() else target
         )
+        assert (
+            str(resolved) not in kw["resources"]
+        ), f"audit leaked resolved path {resolved!r}: {kw['resources']!r}"

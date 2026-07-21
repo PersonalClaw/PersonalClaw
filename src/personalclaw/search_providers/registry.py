@@ -88,7 +88,9 @@ async def resolve_search_provider_for_use_case(use_case: str) -> SearchProvider 
             return provider
         # A bound name whose provider isn't registered (disabled/removed) → fall
         # through to the implicit fallback rather than failing outright.
-        logger.info("bound search provider %r for %r is not registered; falling back", name, use_case)
+        logger.info(
+            "bound search provider %r for %r is not registered; falling back", name, use_case
+        )
         break
 
     # 2. Implicit fallback: any registered provider. For fetch-article, prefer one
@@ -119,8 +121,8 @@ async def search_with_fallback(use_case: str, query: str, **kw):
     A user may bind a keyed provider (Tavily/Exa/…) whose key later expires or hits a
     quota — the bound provider *resolves* fine but its ``search()`` raises (e.g. HTTP
     432). Rather than hard-fail (defeating the point of shipping a keyless floor), retry
-    once with the keyless provider (the one declaring keyless=True) when it's a different, registered
-    provider. Returns ``(SearchResult, fell_back: bool)``; re-raises the original error
+    once with the keyless provider (the one declaring keyless=True) when it's a different,
+    registered provider. Returns ``(SearchResult, fell_back: bool)``; re-raises the original error
     only if the fallback is unavailable or also fails.
     """
     provider = await resolve_search_provider_for_use_case(use_case)
@@ -134,7 +136,9 @@ async def search_with_fallback(use_case: str, query: str, **kw):
             raise
         logger.warning(
             "search via %r failed (%s); falling back to keyless %r",
-            provider.name, exc, fallback.name,
+            provider.name,
+            exc,
+            fallback.name,
         )
         # The keyless default may not honor every kwarg (depth/domains) — it clamps
         # them itself, so pass through unchanged.
@@ -159,7 +163,9 @@ async def fetch_with_fallback(url: str, **kw):
         try:
             return await provider.fetch(url, **kw), False
         except Exception as exc:
-            logger.warning("fetch via %r failed (%s); falling back to native pipeline", provider.name, exc)
+            logger.warning(
+                "fetch via %r failed (%s); falling back to native pipeline", provider.name, exc
+            )
 
     # Native fallback: the guarded web_fetch pipeline (no provider, no key).
     from personalclaw.web.fetch import web_fetch as _native_fetch
@@ -167,14 +173,24 @@ async def fetch_with_fallback(url: str, **kw):
     max_tokens = kw.get("max_tokens", 0) or 5000
     start_index = kw.get("start_index", 0) or 0
     outcome = await _native_fetch(
-        url, max_tokens=max_tokens, start_index=start_index, require_provenance=False,
+        url,
+        max_tokens=max_tokens,
+        start_index=start_index,
+        require_provenance=False,
     )
     if not outcome.ok:
         raise RuntimeError(outcome.error or "fetch failed")
-    return FetchResult(
-        url=outcome.url, content=outcome.content, title=outcome.title,
-        char_count=outcome.char_count, truncated=outcome.truncated, next_index=outcome.next_index,
-    ), True
+    return (
+        FetchResult(
+            url=outcome.url,
+            content=outcome.content,
+            title=outcome.title,
+            char_count=outcome.char_count,
+            truncated=outcome.truncated,
+            next_index=outcome.next_index,
+        ),
+        True,
+    )
 
 
 def can_resolve_search_use_case(use_case: str) -> bool:

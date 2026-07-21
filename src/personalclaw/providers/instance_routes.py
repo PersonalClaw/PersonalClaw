@@ -56,7 +56,9 @@ def _refresh_tool_provider_safe(name: str) -> None:
         registry.enable(name)
         _rebuild_agent_config_safe()
     except Exception:
-        logger.warning("tool-provider refresh failed after instance change for %s", name, exc_info=True)
+        logger.warning(
+            "tool-provider refresh failed after instance change for %s", name, exc_info=True
+        )
 
 
 def register_instance_routes(app: web.Application) -> None:
@@ -89,9 +91,7 @@ async def handle_list_instances(request: web.Request) -> web.Response:
     if not ext:
         return web.json_response({"error": f"Extension {name!r} not found"}, status=404)
     if not ext.provider_config.multiInstance:
-        return web.json_response(
-            {"error": f"Extension {name!r} is not multi-instance"}, status=400
-        )
+        return web.json_response({"error": f"Extension {name!r} is not multi-instance"}, status=400)
 
     # The mcp-tools card reads/writes the ONE store the native loop consumes
     # (~/.personalclaw/mcp.json), not the generic instance store.
@@ -99,9 +99,11 @@ async def handle_list_instances(request: web.Request) -> web.Response:
         return web.json_response({"instances": [i.to_dict() for i in _mcp.list_instances()]})
 
     instances = list_instances(name)
-    return web.json_response({
-        "instances": [inst.to_dict() for inst in instances],
-    })
+    return web.json_response(
+        {
+            "instances": [inst.to_dict() for inst in instances],
+        }
+    )
 
 
 async def handle_create_instance(request: web.Request) -> web.Response:
@@ -116,9 +118,7 @@ async def handle_create_instance(request: web.Request) -> web.Response:
     if not ext:
         return web.json_response({"error": f"Extension {name!r} not found"}, status=404)
     if not ext.provider_config.multiInstance:
-        return web.json_response(
-            {"error": f"Extension {name!r} is not multi-instance"}, status=400
-        )
+        return web.json_response({"error": f"Extension {name!r} is not multi-instance"}, status=400)
 
     try:
         body = await request.json()
@@ -259,8 +259,12 @@ async def handle_test_instance(request: web.Request) -> web.Response:
         except Exception as exc:
             return web.json_response({"ok": False, "message": str(exc)[:200]})
         if probed.status in ("ok", "ready", "connected"):
-            return web.json_response({"ok": True, "message": f"Connected — {len(probed.tools)} tool(s)"})
-        return web.json_response({"ok": False, "message": probed.error or f"Server status: {probed.status}"})
+            return web.json_response(
+                {"ok": True, "message": f"Connected — {len(probed.tools)} tool(s)"}
+            )
+        return web.json_response(
+            {"ok": False, "message": probed.error or f"Server status: {probed.status}"}
+        )
 
     inst = get_instance(name, instance_id)
     if not inst:
@@ -274,10 +278,11 @@ async def handle_test_instance(request: web.Request) -> web.Response:
     # For other types, try the extension factory
     try:
         from personalclaw.providers.loader import load_factory
+
         factory = load_factory(ext)
         provider = factory(inst.config)
         if hasattr(provider, "is_available"):
-            import asyncio
+
             available = await provider.is_available()
             if available:
                 return web.json_response({"ok": True, "message": "Provider available"})
@@ -290,6 +295,7 @@ async def handle_test_instance(request: web.Request) -> web.Response:
 async def _test_model_connectivity(endpoint: str) -> web.Response:
     """Test connectivity to a model endpoint (Ollama, vLLM, etc.)."""
     import aiohttp
+
     endpoint = endpoint.rstrip("/")
     try:
         async with aiohttp.ClientSession() as session:
@@ -300,19 +306,25 @@ async def _test_model_connectivity(endpoint: str) -> web.Response:
                 if r.status == 200:
                     data = await r.json()
                     models = data.get("models", [])
-                    return web.json_response({
-                        "ok": True,
-                        "message": f"Connected — {len(models)} model(s) available",
-                    })
-                return web.json_response({
-                    "ok": False,
-                    "message": f"Endpoint returned HTTP {r.status}",
-                })
+                    return web.json_response(
+                        {
+                            "ok": True,
+                            "message": f"Connected — {len(models)} model(s) available",
+                        }
+                    )
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "message": f"Endpoint returned HTTP {r.status}",
+                    }
+                )
     except aiohttp.ClientConnectorError:
-        return web.json_response({
-            "ok": False,
-            "message": f"Cannot connect to {endpoint}",
-        })
+        return web.json_response(
+            {
+                "ok": False,
+                "message": f"Cannot connect to {endpoint}",
+            }
+        )
     except Exception as exc:
         return web.json_response({"ok": False, "message": str(exc)[:200]})
 
@@ -322,7 +334,7 @@ async def _test_model_connectivity(endpoint: str) -> web.Response:
 
 async def handle_get_use_case_settings(request: web.Request) -> web.Response:
     """GET /api/models/use-cases/{use_case}/settings"""
-    from personalclaw.providers.use_cases import load_use_case_settings, VALID_USE_CASES
+    from personalclaw.providers.use_cases import VALID_USE_CASES, load_use_case_settings
 
     use_case = request.match_info["use_case"]
     if use_case not in VALID_USE_CASES:
@@ -334,7 +346,7 @@ async def handle_get_use_case_settings(request: web.Request) -> web.Response:
 
 async def handle_set_use_case_settings(request: web.Request) -> web.Response:
     """PUT /api/models/use-cases/{use_case}/settings"""
-    from personalclaw.providers.use_cases import save_use_case_settings, VALID_USE_CASES
+    from personalclaw.providers.use_cases import VALID_USE_CASES, save_use_case_settings
 
     use_case = request.match_info["use_case"]
     if use_case not in VALID_USE_CASES:

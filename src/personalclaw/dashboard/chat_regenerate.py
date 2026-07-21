@@ -74,7 +74,7 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
         if len(variants) > _MAX_VARIANTS:
             variants = variants[-_MAX_VARIANTS:]
 
-        del session.messages[u_idx + 1:]
+        del session.messages[u_idx + 1 :]
         session._dirty = True
         session._resumed_count = 0
         session._pending_variants = variants
@@ -111,7 +111,7 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
 
 
 async def api_chat_session_switch_variant(request: web.Request) -> web.Response:
-    """POST /api/chat/sessions/{session}/switch-variant — switch which regenerated variant is active."""
+    """POST /api/chat/sessions/{session}/switch-variant — switch which regenerated variant is active."""  # noqa: E501
 
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
@@ -209,11 +209,20 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
         # endpoint robust to a client whose optimistic turn had no ts yet.
         target = -1
         if ts:
-            target = next((i for i, m in enumerate(msgs) if m.get("ts") == ts and m.get("role") == "user"), -1)
-        if target < 0 and isinstance(index, int) and 0 <= index < len(msgs) and msgs[index].get("role") == "user":
+            target = next(
+                (i for i, m in enumerate(msgs) if m.get("ts") == ts and m.get("role") == "user"), -1
+            )
+        if (
+            target < 0
+            and isinstance(index, int)
+            and 0 <= index < len(msgs)
+            and msgs[index].get("role") == "user"
+        ):
             target = index
         if target < 0:
-            target = next((i for i in range(len(msgs) - 1, -1, -1) if msgs[i].get("role") == "user"), -1)
+            target = next(
+                (i for i in range(len(msgs) - 1, -1, -1) if msgs[i].get("role") == "user"), -1
+            )
         if target < 0:
             return web.json_response({"error": "no user message to edit"}, status=400)
         index = target
@@ -252,7 +261,9 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
 
         def _on_done(t: asyncio.Task) -> None:
             if not t.cancelled() and t.exception() is not None:
-                logger.error("edit-resend _run_chat failed for %s", session.key, exc_info=t.exception())
+                logger.error(
+                    "edit-resend _run_chat failed for %s", session.key, exc_info=t.exception()
+                )
 
         task.add_done_callback(_on_done)
 

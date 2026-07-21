@@ -63,10 +63,26 @@ _TAGS_DIR = "tags"
 # Frontmatter fields emitted in this deterministic order (only when non-empty),
 # so a re-render of an unchanged record produces byte-identical output.
 _FM_ORDER = (
-    "id", "kind", "tier", "scope", "scope_ref", "category",
-    "confidence", "importance", "recall_count", "visit_count",
-    "source", "conversation_id", "tags", "created_at", "updated_at",
-    "superseded_by", "invalidated_at", "due_window", "channel", "dismissed_at",
+    "id",
+    "kind",
+    "tier",
+    "scope",
+    "scope_ref",
+    "category",
+    "confidence",
+    "importance",
+    "recall_count",
+    "visit_count",
+    "source",
+    "conversation_id",
+    "tags",
+    "created_at",
+    "updated_at",
+    "superseded_by",
+    "invalidated_at",
+    "due_window",
+    "channel",
+    "dismissed_at",
 )
 
 _UNSAFE_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
@@ -120,8 +136,9 @@ class RenderedNote:
 
     __slots__ = ("relpath", "content", "links", "tags", "title")
 
-    def __init__(self, relpath: str, content: str, links: set[str],
-                 tags: list[str], title: str) -> None:
+    def __init__(
+        self, relpath: str, content: str, links: set[str], tags: list[str], title: str
+    ) -> None:
         self.relpath = relpath
         self.content = content
         self.links = links
@@ -224,8 +241,7 @@ def render_record(rec: "MemoryRecord") -> RenderedNote:
         parts.append("**Tags:** " + " ".join(f"[[{t}]]" for t in tag_links))
         parts.append("")
 
-    return RenderedNote(relpath, "\n".join(parts).rstrip() + "\n",
-                        links, list(rec.tags), title)
+    return RenderedNote(relpath, "\n".join(parts).rstrip() + "\n", links, list(rec.tags), title)
 
 
 def render_tag_hub(tag: str, members: list[tuple[str, str]]) -> RenderedNote:
@@ -235,7 +251,14 @@ def render_tag_hub(tag: str, members: list[tuple[str, str]]) -> RenderedNote:
     slug = _slug(f"tag-{tag}")
     relpath = f"{_TAGS_DIR}/{slug}.md"
     fm = _frontmatter([("kind", "tag"), ("tag", tag), ("count", len(members))])
-    lines = [fm, "", f"# #{tag}", "", f"{len(members)} memor" + ("y" if len(members) == 1 else "ies") + " with this tag:", ""]
+    lines = [
+        fm,
+        "",
+        f"# #{tag}",
+        "",
+        f"{len(members)} memor" + ("y" if len(members) == 1 else "ies") + " with this tag:",
+        "",
+    ]
     for base, title in sorted(members):
         safe_title = title.replace("]", " ").replace("[", " ").strip() or base
         lines.append(f"- [[{base}]] — {safe_title}")
@@ -268,10 +291,11 @@ def render_index(records: list["MemoryRecord"]) -> str:
 
     # Top global facts by heat — the "what does it actually know" front page.
     facts = [
-        r for r in records
+        r
+        for r in records
         if r.scope == MemoryScope.GLOBAL
-        and r.kind in (MemoryKind.SEMANTIC, MemoryKind.PREFERENCE,
-                       MemoryKind.LESSON, MemoryKind.PROCEDURAL)
+        and r.kind
+        in (MemoryKind.SEMANTIC, MemoryKind.PREFERENCE, MemoryKind.LESSON, MemoryKind.PROCEDURAL)
     ]
     facts.sort(key=lambda r: r.heat(), reverse=True)
     if facts:
@@ -334,8 +358,9 @@ class MemoryVault:
             try:
                 note = render_record(rec)
             except Exception:
-                logger.debug("vault: failed to render record %s", getattr(rec, "id", "?"),
-                             exc_info=True)
+                logger.debug(
+                    "vault: failed to render record %s", getattr(rec, "id", "?"), exc_info=True
+                )
                 continue
             # Last writer wins on a basename collision (ids are unique in practice).
             rendered[note.relpath] = note
@@ -384,18 +409,26 @@ class MemoryVault:
                 pass
 
         try:
-            atomic_write(self._manifest_path(),
-                         json.dumps(new_manifest, indent=0, sort_keys=True), fsync=False)
+            atomic_write(
+                self._manifest_path(),
+                json.dumps(new_manifest, indent=0, sort_keys=True),
+                fsync=False,
+            )
         except OSError:
             logger.debug("vault: manifest write failed", exc_info=True)
 
-        summary = {"records": len(records), "files": len(new_manifest),
-                   "written": written, "pruned": pruned}
+        summary = {
+            "records": len(records),
+            "files": len(new_manifest),
+            "written": written,
+            "pruned": pruned,
+        }
         logger.info("memory vault synced: %s", summary)
         return summary
 
 
 # ── config + wiring ─────────────────────────────────────────────────────────
+
 
 def vault_dir_from_config() -> Path | None:
     """Resolve the configured vault directory, or None when the mirror is off."""

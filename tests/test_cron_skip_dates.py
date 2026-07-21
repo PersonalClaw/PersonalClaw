@@ -7,7 +7,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from personalclaw.schedule import ScheduleJob, ScheduleDefinition, ScheduleService, make_agent_action
+from personalclaw.schedule import (
+    ScheduleDefinition,
+    ScheduleJob,
+    ScheduleService,
+    make_agent_action,
+)
 
 
 class TestIsDueSkipDates:
@@ -48,9 +53,7 @@ class TestIsDueSkipDates:
         tz = ZoneInfo("Pacific/Auckland")  # UTC+12/+13
         local_today = datetime.now(tz).strftime("%Y-%m-%d")
 
-        job = self._make_cron_job(
-            skip_dates=[local_today], timezone="Pacific/Auckland"
-        )
+        job = self._make_cron_job(skip_dates=[local_today], timezone="Pacific/Auckland")
         now = time.time()
         # Should be skipped because we're checking in Auckland's timezone
         assert not ScheduleService._is_due(job, now)
@@ -73,7 +76,8 @@ class TestIsDueSkipDates:
         # Synthetic now: 2026-04-06 12:00 UTC
         synthetic_now = timegm((2026, 4, 6, 12, 0, 0, 0, 0, 0))
         job = self._make_cron_job(
-            skip_dates=["2026-04-06"], timezone="UTC",
+            skip_dates=["2026-04-06"],
+            timezone="UTC",
             created_ts=synthetic_now - 3600,
         )
         assert not ScheduleService._is_due(job, synthetic_now)
@@ -83,7 +87,9 @@ class TestIsDueSkipDates:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         svc = ScheduleService(base_dir=tmp_path)
         svc._load()
-        job = svc.add_job(name="test", action=make_agent_action(message="hello"), cron_expr="* * * * *")
+        job = svc.add_job(
+            name="test", action=make_agent_action(message="hello"), cron_expr="* * * * *"
+        )
         job.skip_dates = [today]
         job.timezone = "UTC"
         svc._save()

@@ -17,9 +17,9 @@ from personalclaw.acp.cli_resolve import (  # noqa: F401
 from personalclaw.acp_bundles._register import register_acp_cli_entry  # noqa: F401
 
 __all__ = [
-    'resolve_acp_cli',
-    'register_acp_cli_entry',
-    'is_npx_fallback',
-    'provision_acp_adapter',
-    'node_manager_bin_globs',
+    "resolve_acp_cli",
+    "register_acp_cli_entry",
+    "is_npx_fallback",
+    "provision_acp_adapter",
+    "node_manager_bin_globs",
 ]

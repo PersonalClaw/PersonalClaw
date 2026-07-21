@@ -4,8 +4,8 @@ import pytest
 
 from personalclaw.validation import (
     CHANNEL_ID_RE,
-    SCHEDULE_ADD_SCHEMA,
     LEARN_ADD_SCHEMA,
+    SCHEDULE_ADD_SCHEMA,
     SEND_MESSAGE_SCHEMA,
     SPAWN_RUN_SCHEMA,
     FieldSpec,
@@ -397,16 +397,19 @@ class TestValidateStringField:
 # ── Channel ID Regex ──
 
 
-@pytest.mark.parametrize("channel_id,valid", [
-    ("C01ABC23DEF", True),   # standard channel
-    ("G01JWUKTY10", True),   # legacy private channel
-    ("D01ABC23DEF", True),   # DM channel
-    ("W01ABC23DEF", True),   # cross-org shared channel
-    ("X01ABC23DEF", False),  # invalid prefix
-    ("C", False),            # too short
-    ("c01abc", False),       # lowercase rejected
-    ("", False),             # empty
-])
+@pytest.mark.parametrize(
+    "channel_id,valid",
+    [
+        ("C01ABC23DEF", True),  # standard channel
+        ("G01JWUKTY10", True),  # legacy private channel
+        ("D01ABC23DEF", True),  # DM channel
+        ("W01ABC23DEF", True),  # cross-org shared channel
+        ("X01ABC23DEF", False),  # invalid prefix
+        ("C", False),  # too short
+        ("c01abc", False),  # lowercase rejected
+        ("", False),  # empty
+    ],
+)
 def test_channel_id_re(channel_id, valid):
     assert bool(CHANNEL_ID_RE.match(channel_id)) == valid
 
@@ -420,9 +423,7 @@ class TestSendMessageSchema:
 
     def test_thread_ts_rejects_garbage(self):
         with pytest.raises(ValidationError):
-            validate_tool_args(
-                {"text": "hi", "thread_ts": "not-a-ts"}, SEND_MESSAGE_SCHEMA
-            )
+            validate_tool_args({"text": "hi", "thread_ts": "not-a-ts"}, SEND_MESSAGE_SCHEMA)
 
     def test_reply_broadcast_valid(self):
         result = validate_tool_args(
@@ -433,6 +434,4 @@ class TestSendMessageSchema:
 
     def test_reply_broadcast_rejects_non_bool(self):
         with pytest.raises(ValidationError):
-            validate_tool_args(
-                {"text": "hi", "reply_broadcast": "yes"}, SEND_MESSAGE_SCHEMA
-            )
+            validate_tool_args({"text": "hi", "reply_broadcast": "yes"}, SEND_MESSAGE_SCHEMA)

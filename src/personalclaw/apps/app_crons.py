@@ -61,7 +61,8 @@ def _desired_app_crons() -> dict[str, dict]:
             job_name = f"{_APP_JOB_PREFIX}{meta.name}:{cron.name}"
             desired[job_name] = {
                 "action": make_agent_action(
-                    message=cron.message, agent=cron.agent,
+                    message=cron.message,
+                    agent=cron.agent,
                     # App crons are unattended background runs — auto-approve so a
                     # backgrounded turn can't wedge waiting on a human.
                     approval_mode="auto",
@@ -92,7 +93,8 @@ def reconcile_app_crons(crons: "ScheduleService") -> None:
         return
 
     existing = {
-        j.name: j for j in crons.list_jobs(include_disabled=True)
+        j.name: j
+        for j in crons.list_jobs(include_disabled=True)
         if j.name.startswith(_APP_JOB_PREFIX)
     }
 
@@ -112,14 +114,16 @@ def reconcile_app_crons(crons: "ScheduleService") -> None:
     # (app crons are headless, always silent), so a pre-fix job persisted with
     # silent=False must be corrected here rather than kept until re-install.
     for name, params in desired.items():
-        job = existing.get(name)
-        if job is not None:
-            if getattr(job, "silent", False) is not True:
+        cur = existing.get(name)
+        if cur is not None:
+            if getattr(cur, "silent", False) is not True:
                 try:
-                    crons.update_job(job.id, silent=True)
+                    crons.update_job(cur.id, silent=True)
                     logger.info("app-cron reconcile: set %s silent", name)
                 except Exception:
-                    logger.debug("app-cron reconcile: silent-fix failed for %s", name, exc_info=True)
+                    logger.debug(
+                        "app-cron reconcile: silent-fix failed for %s", name, exc_info=True
+                    )
             continue
         try:
             crons.add_job(

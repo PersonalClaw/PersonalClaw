@@ -47,8 +47,9 @@ class TestSpawnListAgentNames:
         fake_cfg = MagicMock()
         fake_cfg.agents = {"yolo-general": MagicMock()}
 
-        with patch("personalclaw.mcp_subagents._get", return_value=fake_response), patch(
-            "personalclaw.config.loader.AppConfig.load", return_value=fake_cfg
+        with (
+            patch("personalclaw.mcp_subagents._get", return_value=fake_response),
+            patch("personalclaw.config.loader.AppConfig.load", return_value=fake_cfg),
         ):
             result = _call_tool_inner("subagent_list", {})
 

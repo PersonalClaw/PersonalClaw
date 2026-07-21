@@ -58,9 +58,15 @@ class RetagJob:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "id": self.id, "status": self.status, "done": self.done,
-            "total": self.total, "updated": self.updated, "skipped": self.skipped,
-            "errors": self.errors, "current": self.current, "error": self.error,
+            "id": self.id,
+            "status": self.status,
+            "done": self.done,
+            "total": self.total,
+            "updated": self.updated,
+            "skipped": self.skipped,
+            "errors": self.errors,
+            "current": self.current,
+            "error": self.error,
         }
 
 
@@ -136,7 +142,8 @@ def _transcript_for(state: DashboardState, cand: _Candidate) -> str:
         text = "\n".join(lines)
     else:
         try:
-            text = state.conversation_log.load_transcript(cand.history_key)
+            clog = state.conversation_log
+            text = clog.load_transcript(cand.history_key) if clog is not None else ""
         except Exception:
             text = ""
     text = text.strip()
@@ -153,9 +160,7 @@ def _build_retag_prompt(state: DashboardState, cand: _Candidate, transcript: str
         for t in sorted(state._tags, key=lambda t: t.get("order", 0))
         if t.get("name")
     )
-    current = ", ".join(
-        tag_index[t]["name"] for t in cand.tags if t in tag_index
-    ) or "(none)"
+    current = ", ".join(tag_index[t]["name"] for t in cand.tags if t in tag_index) or "(none)"
     return (
         "You are re-evaluating the tags on a saved chat conversation.\n"
         f"Tag vocabulary: {vocab or '(none)'}\n"
@@ -246,8 +251,9 @@ def _apply_tags(state: DashboardState, cand: _Candidate, new_ids: list[str]) -> 
     return True
 
 
-async def _retag_one(state: DashboardState, job: RetagJob, cand: _Candidate,
-                     sem: asyncio.Semaphore) -> None:
+async def _retag_one(
+    state: DashboardState, job: RetagJob, cand: _Candidate, sem: asyncio.Semaphore
+) -> None:
     """Evaluate + apply one session, then publish a progress frame."""
     from personalclaw.llm_helpers import one_shot_completion
 
@@ -306,6 +312,7 @@ async def _drive(state: DashboardState, job: RetagJob) -> None:
 
 # ── HTTP API ────────────────────────────────────────────────────────────────
 
+
 async def api_retag_all(request: web.Request) -> web.Response:
     """POST /api/sessions/retag-all — start (or return) the batch re-tag job."""
     state: DashboardState = request.app["state"]
@@ -319,8 +326,11 @@ async def api_retag_all(request: web.Request) -> web.Response:
     state._background_tasks.add(task)
     task.add_done_callback(state._background_tasks.discard)
     sel().log_api_access(
-        caller="dashboard", operation="chat.retag_all",
-        outcome="allowed", source="dashboard", resources=job.id,
+        caller="dashboard",
+        operation="chat.retag_all",
+        outcome="allowed",
+        source="dashboard",
+        resources=job.id,
     )
     return web.json_response(job.to_dict(), status=202)
 
@@ -343,7 +353,10 @@ async def api_retag_cancel(request: web.Request) -> web.Response:
         return web.json_response({"error": "no running job"}, status=404)
     task.cancel()
     sel().log_api_access(
-        caller="dashboard", operation="chat.retag_cancel",
-        outcome="allowed", source="dashboard", resources=job.id,
+        caller="dashboard",
+        operation="chat.retag_cancel",
+        outcome="allowed",
+        source="dashboard",
+        resources=job.id,
     )
     return web.json_response({"ok": True})

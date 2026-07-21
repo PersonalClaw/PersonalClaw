@@ -15,7 +15,6 @@ import pytest
 from personalclaw.memory_service import MemoryService
 from personalclaw.vector_memory import VectorMemoryStore
 
-
 _EMB_DIM = 64
 _seen_texts: list[str] = []
 
@@ -49,12 +48,15 @@ def _write_episodic_on(svc, text, day_iso, conv="s1"):
     assert ok, f"episodic write unexpectedly deduped/rejected: {text!r}"
     vs = svc._vs
     row = vs.db.execute("SELECT id FROM episodic_memories ORDER BY rowid DESC LIMIT 1").fetchone()
-    vs.db.execute("UPDATE episodic_memories SET created_at = ? WHERE id = ?",
-                  (f"{day_iso}T12:00:00+00:00", row["id"]))
+    vs.db.execute(
+        "UPDATE episodic_memories SET created_at = ? WHERE id = ?",
+        (f"{day_iso}T12:00:00+00:00", row["id"]),
+    )
     vs.db.commit()
 
 
 # ── daily digest ─────────────────────────────────────────────────────────────
+
 
 def _digest_for(svc, day):
     return next((d for d in svc.daily_digests() if d["day"] == day), None)
@@ -101,6 +103,7 @@ def test_digest_falls_back_when_summarizer_raises(svc):
 
     def _boom(day, texts):
         raise RuntimeError("llm down")
+
     svc.build_daily_digest(now=now, summarizer=_boom)
     d = _digest_for(svc, "2026-07-01")
     assert d is not None and "resilient event" in d["text"]  # extractive fallback
@@ -117,6 +120,7 @@ def test_daily_digests_listing(svc):
 
 
 # ── provenance-first recall ──────────────────────────────────────────────────
+
 
 def test_recall_carries_provenance(svc):
     _write_episodic_on(svc, "deployed to prod", "2026-07-01", conv="dashboard:deploy")

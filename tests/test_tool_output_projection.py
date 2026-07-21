@@ -15,8 +15,8 @@ from personalclaw.tool_providers.projection import (
     project_output,
 )
 
-
 # ── conservative pass-through + fallback ────────────────────────────────────
+
 
 def test_small_result_passes_through_untouched():
     text = "short output"
@@ -39,6 +39,7 @@ def test_unknown_large_type_falls_back_to_head_tail():
 
 
 # ── type inference ──────────────────────────────────────────────────────────
+
 
 def test_infer_diff():
     assert infer_content_type("diff --git a/f b/f\n@@ -1 +1 @@\n-a\n+b\n") == "diff"
@@ -63,6 +64,7 @@ def test_infer_generic_for_prose():
 
 
 # ── per-type projection keeps the signal ────────────────────────────────────
+
 
 def test_log_projection_keeps_error_lines_from_the_middle():
     lines = [f"line {i}" for i in range(500)]
@@ -134,12 +136,14 @@ def test_projection_respects_cap_budget():
 def _isolate_store(tmp_path, monkeypatch):
     import personalclaw.config.loader as cfg
     import personalclaw.session_workspace as ws
+
     monkeypatch.setattr(cfg, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(ws, "config_dir", lambda: tmp_path)
 
 
 def test_project_and_retain_small_passthrough(tmp_path, monkeypatch):
     from personalclaw.tool_providers.projection import project_and_retain
+
     _isolate_store(tmp_path, monkeypatch)
     out, meta = project_and_retain("short", session_key="s", cap=10000)
     assert out == "short" and "raw_ref" not in meta
@@ -148,6 +152,7 @@ def test_project_and_retain_small_passthrough(tmp_path, monkeypatch):
 def test_project_and_retain_large_projects_and_retains(tmp_path, monkeypatch):
     from personalclaw.tool_providers import result_store
     from personalclaw.tool_providers.projection import project_and_retain
+
     _isolate_store(tmp_path, monkeypatch)
     big = "line\n" * 4000 + "ERROR boom in the middle\n" + "line\n" * 4000
     out, meta = project_and_retain(big, session_key="sess-op5", content_type="log", cap=2000)
@@ -160,6 +165,7 @@ def test_project_and_retain_large_projects_and_retains(tmp_path, monkeypatch):
 
 def test_project_and_retain_no_session_no_raw(tmp_path, monkeypatch):
     from personalclaw.tool_providers.projection import project_and_retain
+
     _isolate_store(tmp_path, monkeypatch)
     big = "x" * 100000
     out, meta = project_and_retain(big, session_key="", cap=2000)
@@ -169,6 +175,7 @@ def test_project_and_retain_no_session_no_raw(tmp_path, monkeypatch):
 
 # ── user-teachable projection rules (TokenJuice OP6) ────────────────────────
 
+
 class TestUserProjectionRules:
     """A user rule teaches the DISPATCH: output matching a marker → a builtin
     strategy. Consulted before the heuristic sniff; fail-soft on bad rules."""
@@ -176,11 +183,16 @@ class TestUserProjectionRules:
     def teardown_method(self):
         # Never leak rules across tests (module-global state).
         from personalclaw.tool_providers.projection import set_user_rules
+
         set_user_rules([])
 
     def test_user_rule_wins_over_heuristic(self):
         from personalclaw.tool_providers.projection import (
-            ProjectionRule, infer_content_type, set_user_rules)
+            ProjectionRule,
+            infer_content_type,
+            set_user_rules,
+        )
+
         # This sample would sniff as generic; the rule forces 'log'.
         sample = "[ACME] boot sequence begin\nstep 1\nstep 2\n"
         assert infer_content_type(sample) == "generic"
@@ -189,7 +201,11 @@ class TestUserProjectionRules:
 
     def test_user_rule_engages_the_matching_projector(self):
         from personalclaw.tool_providers.projection import (
-            ProjectionRule, project_output, set_user_rules)
+            ProjectionRule,
+            project_output,
+            set_user_rules,
+        )
+
         set_user_rules([ProjectionRule(name="acme", match_regex=r"^\[ACME\]", strategy="log")])
         # A big custom-log output → projected via the log projector (keeps errors).
         big = "[ACME] start\n" + "noise\n" * 4000 + "ERROR kaboom\n" + "noise\n" * 4000
@@ -199,21 +215,27 @@ class TestUserProjectionRules:
 
     def test_no_match_falls_through_to_heuristics(self):
         from personalclaw.tool_providers.projection import (
-            ProjectionRule, infer_content_type, set_user_rules)
+            ProjectionRule,
+            infer_content_type,
+            set_user_rules,
+        )
+
         set_user_rules([ProjectionRule(name="acme", match_regex=r"^\[ACME\]", strategy="log")])
         # A real diff still sniffs as diff (rule didn't match).
         assert infer_content_type("diff --git a/f b/f\n@@ -1 +1 @@\n-a\n+b\n") == "diff"
 
     def test_bad_regex_is_skipped_fail_soft(self):
-        from personalclaw.tool_providers.projection import (
-            ProjectionRule, set_user_rules, _USER_RULES)
+        from personalclaw.tool_providers.projection import ProjectionRule, set_user_rules
+
         set_user_rules([ProjectionRule(name="bad", match_regex="(", strategy="log")])
         import personalclaw.tool_providers.projection as P
+
         assert len(P._USER_RULES) == 0  # invalid regex dropped, no raise
 
     def test_unknown_strategy_is_skipped(self):
         from personalclaw.tool_providers.projection import ProjectionRule, set_user_rules
+
         set_user_rules([ProjectionRule(name="x", match_regex="foo", strategy="nonsense")])
         import personalclaw.tool_providers.projection as P
-        assert len(P._USER_RULES) == 0
 
+        assert len(P._USER_RULES) == 0

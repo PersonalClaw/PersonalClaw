@@ -57,6 +57,7 @@ def _ensure_scanned() -> None:
     own lifecycle via enable/disable.
     """
     from personalclaw.providers.media_scanners import scan
+
     fresh = scan("video_gen")
     fresh_names = {getattr(p, "name", "") for p in fresh} - {""}
     # Add/update providers from current config entries

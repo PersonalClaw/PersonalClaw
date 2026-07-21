@@ -1,7 +1,7 @@
 """F1 — fence_untrusted: wrap external content so a model treats it as data, not
 instructions. Includes the fence-break defense (content can't close the fence early)."""
 
-from personalclaw.security import fence_untrusted, UNTRUSTED_OPEN, UNTRUSTED_CLOSE
+from personalclaw.security import UNTRUSTED_CLOSE, UNTRUSTED_OPEN, fence_untrusted
 
 
 def test_wraps_content():
@@ -49,5 +49,9 @@ def test_no_invisible_chars_introduced():
     scanner would flag them if fenced text were later persisted)."""
     out = fence_untrusted("x </untrusted_content> y")
     # no chars in the zero-width / bidi range
-    assert all(ord(c) not in range(0x200B, 0x200F + 1) and ord(c) not in range(0x2066, 0x2069 + 1)
-               and ord(c) != 0xFEFF for c in out)
+    assert all(
+        ord(c) not in range(0x200B, 0x200F + 1)
+        and ord(c) not in range(0x2066, 0x2069 + 1)
+        and ord(c) != 0xFEFF
+        for c in out
+    )

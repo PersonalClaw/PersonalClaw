@@ -56,6 +56,7 @@ def _version_tuple(v: str) -> tuple[int, ...]:
 async def _do_update_check() -> None:
     """Run git fetch and compare HEAD with remote."""
     global _last_update_check
+
     def _redact(text: str) -> str:
         from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
@@ -94,8 +95,12 @@ async def _do_update_check() -> None:
             return
 
         local = await asyncio.create_subprocess_exec(
-            "git", "rev-parse", "HEAD",
-            cwd=proj, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            "git",
+            "rev-parse",
+            "HEAD",
+            cwd=proj,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
         try:
             local_out, _ = await asyncio.wait_for(local.communicate(), timeout=10)
@@ -107,8 +112,12 @@ async def _do_update_check() -> None:
             await local.communicate()
             return
         remote = await asyncio.create_subprocess_exec(
-            "git", "rev-parse", "@{u}",
-            cwd=proj, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            "git",
+            "rev-parse",
+            "@{u}",
+            cwd=proj,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
         try:
             remote_out, _ = await asyncio.wait_for(remote.communicate(), timeout=10)
@@ -131,8 +140,12 @@ async def _do_update_check() -> None:
             # The package lives under PersonalClaw/src after the core/app workspace
             # split (Slice 0); the git blob path is repo-root-relative.
             show = await asyncio.create_subprocess_exec(
-                "git", "show", f"{target_sha}:PersonalClaw/src/personalclaw/__init__.py",
-                cwd=proj, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+                "git",
+                "show",
+                f"{target_sha}:PersonalClaw/src/personalclaw/__init__.py",
+                cwd=proj,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
             )
             try:
                 show_out, _ = await asyncio.wait_for(show.communicate(), timeout=10)
@@ -156,9 +169,14 @@ async def _do_update_check() -> None:
         if available:
             diff_base = f"v{_local_version}" if local_sha == remote_sha else local_sha
             diff = await asyncio.create_subprocess_exec(
-                "git", "diff", f"{diff_base}..{target_sha}",
-                "--", "CHANGELOG.md",
-                cwd=proj, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+                "git",
+                "diff",
+                f"{diff_base}..{target_sha}",
+                "--",
+                "CHANGELOG.md",
+                cwd=proj,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
             )
             try:
                 diff_out, _ = await asyncio.wait_for(diff.communicate(), timeout=10)
@@ -330,7 +348,8 @@ async def api_update_apply(request: web.Request) -> web.Response:
 
     if _apply_in_flight:
         return web.json_response(
-            {"error": "An update is already in progress"}, status=409,
+            {"error": "An update is already in progress"},
+            status=409,
         )
     # Claim the in-flight slot BEFORE the first await below — otherwise two
     # concurrent POSTs could both pass the check while one parks on the
@@ -390,7 +409,8 @@ async def api_update_apply(request: web.Request) -> web.Response:
         await dirty.communicate()
         _apply_in_flight = False
         return web.json_response(
-            {"error": "Timed out checking working tree status"}, status=500,
+            {"error": "Timed out checking working tree status"},
+            status=500,
         )
     if dirty_out and dirty_out.strip():
         logger.warning("Update skipped: working tree has uncommitted changes")
@@ -445,9 +465,7 @@ async def api_update_apply(request: web.Request) -> web.Response:
                 stderr=asyncio.subprocess.PIPE,
             )
             try:
-                _, pip_err = await asyncio.wait_for(
-                    pip_install.communicate(), timeout=400
-                )
+                _, pip_err = await asyncio.wait_for(pip_install.communicate(), timeout=400)
             except asyncio.TimeoutError:
                 try:
                     pip_install.kill()
@@ -864,5 +882,3 @@ async def api_logs(request: web.Request) -> web.StreamResponse:
     finally:
         root.removeHandler(handler)
     return resp
-
-

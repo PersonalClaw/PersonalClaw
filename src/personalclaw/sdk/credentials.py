@@ -8,4 +8,4 @@ app imports this, not the core module, so the core path can move.
 
 from personalclaw.llm.credentials import Credential, CredentialStore  # noqa: F401
 
-__all__ = ['CredentialStore', 'Credential']
+__all__ = ["CredentialStore", "Credential"]

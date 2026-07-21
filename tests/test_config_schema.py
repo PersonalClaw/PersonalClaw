@@ -14,10 +14,10 @@ from hypothesis import strategies as st
 from personalclaw.config.loader import (
     AgentConfig,
     AgentProfile,
+    AppConfig,
     DashboardConfig,
     MemoryConfig,
     MemoryStoreConfig,
-    AppConfig,
     SessionConfig,
 )
 from personalclaw.config.schema import (

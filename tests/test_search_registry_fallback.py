@@ -21,7 +21,6 @@ import pytest
 from personalclaw.search_providers import registry as reg
 from personalclaw.search_providers import use_cases as uc
 from personalclaw.search_providers.base import (
-    FetchResult,
     SearchCapabilities,
     SearchHit,
     SearchProvider,
@@ -31,43 +30,78 @@ from personalclaw.search_providers.base import (
 
 class _Boom(SearchProvider):
     """A keyed provider whose key has expired — resolves fine, but search() raises."""
+
     def __init__(self, name="tavily", fetch=False):
         self._name, self._fetch = name, fetch
+
     @property
-    def name(self): return self._name
+    def name(self):
+        return self._name
+
     @property
-    def display_name(self): return self._name.title()
-    async def is_available(self): return True
-    def capabilities(self): return SearchCapabilities(supports_fetch=self._fetch)
-    async def search(self, q, **k): raise RuntimeError("HTTP 432 quota")
-    async def fetch(self, url, **k): raise RuntimeError("HTTP 432 quota")
+    def display_name(self):
+        return self._name.title()
+
+    async def is_available(self):
+        return True
+
+    def capabilities(self):
+        return SearchCapabilities(supports_fetch=self._fetch)
+
+    async def search(self, q, **k):
+        raise RuntimeError("HTTP 432 quota")
+
+    async def fetch(self, url, **k):
+        raise RuntimeError("HTTP 432 quota")
 
 
 class _FakeDDG(SearchProvider):
     """Stand-in for the keyless floor: declares ``keyless=True`` (the capability the
     registry selects on — no longer a hard-coded vendor name). No network."""
+
     @property
-    def name(self): return "duckduckgo"
+    def name(self):
+        return "duckduckgo"
+
     @property
-    def display_name(self): return "DuckDuckGo"
-    async def is_available(self): return True
-    def capabilities(self): return SearchCapabilities(supports_recency=True, depths=("balanced",), keyless=True)
+    def display_name(self):
+        return "DuckDuckGo"
+
+    async def is_available(self):
+        return True
+
+    def capabilities(self):
+        return SearchCapabilities(supports_recency=True, depths=("balanced",), keyless=True)
+
     async def search(self, q, **k):
-        return SearchResult(results=[SearchHit(url="https://ddg.example/r", title="R")],
-                            provider="duckduckgo", query=q)
+        return SearchResult(
+            results=[SearchHit(url="https://ddg.example/r", title="R")],
+            provider="duckduckgo",
+            query=q,
+        )
 
 
 class _Keyed(SearchProvider):
     @property
-    def name(self): return "tavily"
+    def name(self):
+        return "tavily"
+
     @property
-    def display_name(self): return "Tavily"
-    async def is_available(self): return True
-    def capabilities(self): return SearchCapabilities()
-    async def search(self, q, **k): return SearchResult(provider="tavily", query=q)
+    def display_name(self):
+        return "Tavily"
+
+    async def is_available(self):
+        return True
+
+    def capabilities(self):
+        return SearchCapabilities()
+
+    async def search(self, q, **k):
+        return SearchResult(provider="tavily", query=q)
 
 
 # ── keyless-floor resolution ────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_no_binding_resolves_to_keyless_floor(monkeypatch, tmp_path):
@@ -93,6 +127,7 @@ async def test_keyed_provider_wins_over_keyless_default(monkeypatch, tmp_path):
 
 
 # ── failure fallback (search_with_fallback) ─────────────────────────────────────
+
 
 @pytest.fixture
 def _bound_failing(monkeypatch, tmp_path):
@@ -137,6 +172,7 @@ async def test_search_reraises_when_no_keyless_fallback(monkeypatch, tmp_path):
 
 # ── fetch_with_fallback → native pipeline ──────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_fetch_falls_back_to_native_pipeline_on_provider_failure(monkeypatch, tmp_path):
     # A fetch-capable provider bound to fetch-article, but its fetch() raises → the
@@ -149,8 +185,10 @@ async def test_fetch_falls_back_to_native_pipeline_on_provider_failure(monkeypat
     from personalclaw.web import fetch as wf
 
     async def _fake_native(url, **k):
-        return wf.FetchOutcome(ok=True, url=url, title="Native", content="body",
-                               char_count=4, total_chars=4)
+        return wf.FetchOutcome(
+            ok=True, url=url, title="Native", content="body", char_count=4, total_chars=4
+        )
+
     monkeypatch.setattr(wf, "web_fetch", _fake_native)
 
     result, used_native = await reg.fetch_with_fallback("https://x.com/a")

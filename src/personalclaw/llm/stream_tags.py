@@ -135,11 +135,11 @@ class StreamingTagSplitter:
             if hold == len(self._buf):
                 return (None, False)  # whole buffer might be a partial close
             emit = self._buf[: len(self._buf) - hold]
-            self._buf = self._buf[len(self._buf) - hold:]
+            self._buf = self._buf[len(self._buf) - hold :]
             return (Segment(kind, emit) if emit else None, bool(emit) and hold == 0)
         # Found the close. Emit inner content, drop the close tag, go outside.
         inner = self._buf[:idx]
-        self._buf = self._buf[idx + len(close):]
+        self._buf = self._buf[idx + len(close) :]
         self._open = None
         return (Segment(kind, inner) if inner else None, True)
 
@@ -148,7 +148,7 @@ class StreamingTagSplitter:
         for name in self._tags:
             opener = f"<{name}>"
             if _startswith_ci(self._buf, opener):
-                self._buf = self._buf[len(opener):]
+                self._buf = self._buf[len(opener) :]
                 self._open = name
                 return name
         return None

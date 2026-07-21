@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from personalclaw.acp.client import AcpError
+from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.llm_helpers import (
     PromptBusyExhaustedError,
     ToolApprovalPolicy,
@@ -14,7 +15,6 @@ from personalclaw.llm_helpers import (
     save_conversation_turn,
     stream_and_collect,
 )
-from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 
 
 class TestParseLlmJson:
@@ -159,8 +159,9 @@ class TestStreamAndCollectPromptBusy:
         """After all retries fail, provider.shutdown() is called."""
         provider = _make_provider(error=AcpError("already in progress"))
 
-        with patch("asyncio.sleep", new_callable=AsyncMock), pytest.raises(
-            PromptBusyExhaustedError
+        with (
+            patch("asyncio.sleep", new_callable=AsyncMock),
+            pytest.raises(PromptBusyExhaustedError),
         ):
             await stream_and_collect(provider, "test")
 
@@ -203,13 +204,17 @@ class TestOneShotCompletion:
     async def test_resolves_via_use_case_bridge(self) -> None:
         from personalclaw import llm_helpers
 
-        provider = _make_provider(events=[
-            LLMEvent(kind=EVENT_TEXT_CHUNK, text='{"ok": true}'),
-            LLMEvent(kind=EVENT_COMPLETE),
-        ])
+        provider = _make_provider(
+            events=[
+                LLMEvent(kind=EVENT_TEXT_CHUNK, text='{"ok": true}'),
+                LLMEvent(kind=EVENT_COMPLETE),
+            ]
+        )
         provider.start = AsyncMock()
-        with patch("personalclaw.providers.provider_bridge.resolve_provider_for_use_case",
-                   return_value=provider) as resolve:
+        with patch(
+            "personalclaw.providers.provider_bridge.resolve_provider_for_use_case",
+            return_value=provider,
+        ) as resolve:
             out = await llm_helpers.one_shot_completion("hi", use_case="background")
         assert out == '{"ok": true}'
         # The informal "background" label collapses to the reasoning axis (→ chat
@@ -222,19 +227,25 @@ class TestOneShotCompletion:
     async def test_falls_back_to_first_registry_entry_when_bridge_fails(self) -> None:
         from personalclaw import llm_helpers
 
-        provider = _make_provider(events=[
-            LLMEvent(kind=EVENT_TEXT_CHUNK, text="hello"),
-            LLMEvent(kind=EVENT_COMPLETE),
-        ])
+        provider = _make_provider(
+            events=[
+                LLMEvent(kind=EVENT_TEXT_CHUNK, text="hello"),
+                LLMEvent(kind=EVENT_COMPLETE),
+            ]
+        )
         provider.start = AsyncMock()
         registry = MagicMock()
         entry = MagicMock()
         entry.name = "Bedrock"
         registry.list_entries.return_value = [entry]
         registry.build.return_value = provider
-        with patch("personalclaw.providers.provider_bridge.resolve_provider_for_use_case",
-                   side_effect=RuntimeError("no active selection")), \
-             patch("personalclaw.llm.registry.get_default_registry", return_value=registry):
+        with (
+            patch(
+                "personalclaw.providers.provider_bridge.resolve_provider_for_use_case",
+                side_effect=RuntimeError("no active selection"),
+            ),
+            patch("personalclaw.llm.registry.get_default_registry", return_value=registry),
+        ):
             out = await llm_helpers.one_shot_completion("hi")
         assert out == "hello"
         registry.build.assert_called_once()
@@ -245,14 +256,18 @@ class TestHumanizeProviderError:
     passthrough for the rest (never hide a real error)."""
 
     def test_billing_credits_mapped(self):
-        raw = ("Error code: 400 - {'type': 'error', 'error': {'message': "
-               "'Your credit balance is too low to access the Anthropic API.'}}")
+        raw = (
+            "Error code: 400 - {'type': 'error', 'error': {'message': "
+            "'Your credit balance is too low to access the Anthropic API.'}}"
+        )
         out = humanize_provider_error(Exception(raw))
         assert "out of credits" in out.lower()
         assert "credit balance is too low" not in out  # raw blob removed
 
     def test_rate_limit_mapped(self):
-        assert "rate-lim" in humanize_provider_error(Exception("Error code: 429 rate limit")).lower()
+        assert (
+            "rate-lim" in humanize_provider_error(Exception("Error code: 429 rate limit")).lower()
+        )
 
     def test_auth_mapped(self):
         assert "auth" in humanize_provider_error(Exception("401 invalid x-api-key")).lower()

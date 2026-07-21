@@ -20,13 +20,20 @@ from personalclaw.supply_chain import Verdict
 @pytest.fixture(autouse=True)
 def _isolate_apps(tmp_path, monkeypatch):
     import personalclaw.config.loader as loader
+
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
     return tmp_path
 
 
-def _src(tmp_path: Path, *, version: str = "1.0.0", subdir: str = "src",
-         setup: dict | None = None, files: dict[str, str] | None = None) -> Path:
+def _src(
+    tmp_path: Path,
+    *,
+    version: str = "1.0.0",
+    subdir: str = "src",
+    setup: dict | None = None,
+    files: dict[str, str] | None = None,
+) -> Path:
     d = tmp_path / subdir / "demo-app"
     d.mkdir(parents=True)
     mani = {"name": "demo-app", "version": version, "displayName": "Demo", "description": "x"}
@@ -59,19 +66,28 @@ class TestUpdate:
 
     def test_update_runs_onupdate_hook(self, tmp_path):
         app_manager.install(_src(tmp_path, version="1.0.0"))
-        res = app_manager.update(_src(
-            tmp_path, version="1.1.0", subdir="src2",
-            setup={"onUpdate": "echo done > updated_marker.txt"},
-        ))
+        res = app_manager.update(
+            _src(
+                tmp_path,
+                version="1.1.0",
+                subdir="src2",
+                setup={"onUpdate": "echo done > updated_marker.txt"},
+            )
+        )
         assert res.ok
         assert (manager.app_dir("demo-app") / "updated_marker.txt").is_file()
 
     def test_dangerous_update_refused_old_intact(self, tmp_path):
         app_manager.install(_src(tmp_path, version="1.0.0"))
-        res = app_manager.update(_src(
-            tmp_path, version="2.0.0", subdir="src2",
-            files={"scripts/evil.sh": "rm -rf / --no-preserve-root\n"},
-        ), confirm=True)
+        res = app_manager.update(
+            _src(
+                tmp_path,
+                version="2.0.0",
+                subdir="src2",
+                files={"scripts/evil.sh": "rm -rf / --no-preserve-root\n"},
+            ),
+            confirm=True,
+        )
         assert not res.ok and res.scan.verdict is Verdict.DANGEROUS
         # old version untouched
         assert manager._read_installed("demo-app").version == "1.0.0"
@@ -79,9 +95,14 @@ class TestUpdate:
 
     def test_onupdate_failure_rolls_back(self, tmp_path):
         app_manager.install(_src(tmp_path, version="1.0.0"))
-        res = app_manager.update(_src(
-            tmp_path, version="2.0.0", subdir="src2", setup={"onUpdate": "exit 9"},
-        ))
+        res = app_manager.update(
+            _src(
+                tmp_path,
+                version="2.0.0",
+                subdir="src2",
+                setup={"onUpdate": "exit 9"},
+            )
+        )
         assert not res.ok and "rolled back" in res.error
         # rolled back to 1.0.0, app still present, no leftover rollback dir
         assert manager._read_installed("demo-app").version == "1.0.0"
@@ -101,6 +122,7 @@ class TestCrashRecovery:
         live = manager.app_dir("demo-app")
         rollback = manager.apps_dir() / ".demo-app.rollback"
         import shutil
+
         shutil.move(str(live), str(rollback))
         assert not live.exists()
         recovered = app_manager.recover_interrupted_updates()

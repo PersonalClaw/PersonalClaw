@@ -19,7 +19,7 @@ Both types live HERE (in the published SDK surface) so an app imports them from
 boundary (§2.8). Core's setup/doctor runners construct + consume them.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Literal
 
 if TYPE_CHECKING:  # avoid a hard import cycle; only needed for typing

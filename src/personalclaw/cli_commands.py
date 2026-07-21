@@ -12,12 +12,12 @@ from pathlib import Path
 from personalclaw.config import config_dir
 from personalclaw.config.loader import AgentProfile, AppConfig
 from personalclaw.embedding_providers.registry import get_active_embedding_dim
-from personalclaw.schedule import ScheduleDefinition, ScheduleService, format_schedule
 from personalclaw.eval.judge import LLMJudge
 from personalclaw.eval.runner import EvalRunner, format_results, score_by_dimension
 from personalclaw.eval.scenario import AssertionType, load_scenario, load_scenarios
 from personalclaw.hooks import safe_read_file
 from personalclaw.learn import Lesson, LessonStore
+from personalclaw.schedule import ScheduleDefinition, ScheduleService, format_schedule
 from personalclaw.security import (
     BUILTIN_DENY_PATTERNS,
     redact_credentials,
@@ -200,17 +200,26 @@ def _cron(args: argparse.Namespace) -> None:
         if channel:
 
             if len(channel) > CHANNEL_MAX_LEN or not CHANNEL_ID_RE.match(channel):
-                print(f"Error: invalid channel ID format (expected {CHANNEL_ID_RE.pattern.strip('^$')})")
+                print(
+                    f"Error: invalid channel ID format (expected {CHANNEL_ID_RE.pattern.strip('^$')})"  # noqa: E501
+                )
                 return
         from personalclaw.schedule import make_agent_action
+
         action = make_agent_action(message=args.message, approval_mode=approval_mode)
         if cron_expr:
             job = svc.add_job(
-                name=args.name, action=action, cron_expr=cron_expr, channel=channel,
+                name=args.name,
+                action=action,
+                cron_expr=cron_expr,
+                channel=channel,
             )
         elif every:
             job = svc.add_job(
-                name=args.name, action=action, every_secs=every, channel=channel,
+                name=args.name,
+                action=action,
+                every_secs=every,
+                channel=channel,
             )
         else:
             print("Provide --every or --cron")
@@ -218,8 +227,10 @@ def _cron(args: argparse.Namespace) -> None:
         sched_desc = _format_schedule(job.schedule)
 
         sel().log_api_access(
-            caller="cli", operation="cron.add",
-            outcome="allowed", source="cli",
+            caller="cli",
+            operation="cron.add",
+            outcome="allowed",
+            source="cli",
             resources=f"job_id={job.id} approval_mode={approval_mode or 'default'}",
         )
         print(f"Added job: {job.id} ({job.name}) [{sched_desc}]")
@@ -235,7 +246,9 @@ def _cron(args: argparse.Namespace) -> None:
                     if val is None:
                         continue
                     if len(val) > CHANNEL_MAX_LEN or not CHANNEL_ID_RE.match(val):
-                        print(f"Error: invalid channel ID format (expected {CHANNEL_ID_RE.pattern.strip('^$')})")
+                        print(
+                            f"Error: invalid channel ID format (expected {CHANNEL_ID_RE.pattern.strip('^$')})"  # noqa: E501
+                        )
                         return
                 kwargs[field] = val
         if getattr(args, "approval_mode", None) is not None:
@@ -250,16 +263,20 @@ def _cron(args: argparse.Namespace) -> None:
         if updated:
 
             sel().log_api_access(
-                caller="cli", operation="cron.update",
-                outcome="allowed", source="cli",
+                caller="cli",
+                operation="cron.update",
+                outcome="allowed",
+                source="cli",
                 resources=f"job_id={args.job_id} fields={','.join(sorted(kwargs))}",
             )
             print(f"Updated job: {updated.id} ({updated.name})")
         else:
 
             sel().log_api_access(
-                caller="cli", operation="cron.update",
-                outcome="not_found", source="cli",
+                caller="cli",
+                operation="cron.update",
+                outcome="not_found",
+                source="cli",
                 resources=f"job_id={args.job_id} reason=not_found",
             )
             print(f"Job not found: {args.job_id}")
@@ -288,8 +305,10 @@ def _cron(args: argparse.Namespace) -> None:
 
         ok, message = trigger_schedule_job(args.job_id)
         sel().log_api_access(
-            caller="cli", operation="cron.trigger",
-            outcome="allowed" if ok else "denied", source="cli",
+            caller="cli",
+            operation="cron.trigger",
+            outcome="allowed" if ok else "denied",
+            source="cli",
             resources=f"job_id={args.job_id}",
             error="" if ok else message,
         )
@@ -367,7 +386,7 @@ def _security(args: argparse.Namespace) -> None:
             print(f"✅ HMAC chain intact: {total} entries verified.")
         else:
             print(
-                f"⚠️  HMAC chain COMPROMISED: {valid}/{total} entries valid, {total - valid} tampered."
+                f"⚠️  HMAC chain COMPROMISED: {valid}/{total} entries valid, {total - valid} tampered."  # noqa: E501
             )
     else:
         print("Usage: personalclaw security {audit|deny-list|events|verify}")
@@ -391,7 +410,9 @@ async def _run_eval(args: argparse.Namespace) -> None:
                     break
             if resolved is None:
                 available = sorted(
-                    f.stem for f in scenarios_dir.iterdir() if f.suffix in (".json", ".yaml", ".yml")
+                    f.stem
+                    for f in scenarios_dir.iterdir()
+                    if f.suffix in (".json", ".yaml", ".yml")
                 )
                 print(f"Error: scenario '{name}' not found.")
                 print(f"Available scenarios: {', '.join(available)}")
@@ -407,7 +428,9 @@ async def _run_eval(args: argparse.Namespace) -> None:
     config = AppConfig.load()
     provider_factory = config.create_provider_factory()
 
-    runner = EvalRunner(provider_factory=provider_factory, judge_enabled=getattr(args, "judge", False))
+    runner = EvalRunner(
+        provider_factory=provider_factory, judge_enabled=getattr(args, "judge", False)
+    )
     results = await runner.run_scenarios(scenarios)
 
     # LLM Judge scoring
@@ -428,12 +451,13 @@ async def _run_eval(args: argparse.Namespace) -> None:
                                         tr.user_message,
                                         tr.agent_response,
                                     )
-                                    tr.assertion_results[idx] = (a, verdict.score >= judge.pass_threshold)
+                                    tr.assertion_results[idx] = (
+                                        a,
+                                        verdict.score >= judge.pass_threshold,
+                                    )
                                     reason, _ = redact_exfiltration_urls(verdict.reason)
                                     reason, _ = redact_credentials(reason)
-                                    print(
-                                        f"  🧑‍⚖️ Judge: {verdict.score}/5 — {reason}"
-                                    )
+                                    print(f"  🧑‍⚖️ Judge: {verdict.score}/5 — {reason}")
                                 except Exception as exc:
                                     print(f"  ⚠️ Judge failed for turn: {exc}")
                                     tr.assertion_results[idx] = (a, False)
@@ -572,8 +596,12 @@ def _memory_cmd(args: argparse.Namespace) -> None:
 
         elif action == "stats":
             stats = store.memory_stats()
-            print(f"  Semantic: {stats['semantic_active']} active, {stats['semantic_deleted']} deleted")
-            print(f"  Episodic: {stats['episodic_active']} active, {stats['episodic_deleted']} deleted")
+            print(
+                f"  Semantic: {stats['semantic_active']} active, {stats['semantic_deleted']} deleted"  # noqa: E501
+            )
+            print(
+                f"  Episodic: {stats['episodic_active']} active, {stats['episodic_deleted']} deleted"  # noqa: E501
+            )
             print(f"  FAISS index: {stats['faiss_index_size']} vectors")
             print(f"  Audit events: {stats['events_count']}")
 

@@ -50,8 +50,9 @@ def mock_sel(monkeypatch):
 # ── Helpers ──
 
 
-def _provider_prompt(tmp_path, name, content="Do the thing.", *, description="",
-                     variables=None, tags=None):
+def _provider_prompt(
+    tmp_path, name, content="Do the thing.", *, description="", variables=None, tags=None
+):
     """Write a native-provider YAML prompt under ~/.personalclaw/prompts/."""
     d = tmp_path / ".personalclaw" / "prompts"
     d.mkdir(parents=True, exist_ok=True)
@@ -97,13 +98,18 @@ class _State:
         pass
 
     def __init__(self):
-        self.sessions = type('_MockSessions', (), {
-            'get_channel_link': lambda self, k: ('', ''),
-            'set_channel_link': lambda self, k, t, c: None,
-            'get_or_create': None, 'get_pid': lambda self, k: None,
-            'set_approval_policy': lambda self, k, v: None,
-            'check_context_usage': lambda self, k, c: None,
-        })()
+        self.sessions = type(
+            "_MockSessions",
+            (),
+            {
+                "get_channel_link": lambda self, k: ("", ""),
+                "set_channel_link": lambda self, k, t, c: None,
+                "get_or_create": None,
+                "get_pid": lambda self, k: None,
+                "set_approval_policy": lambda self, k, v: None,
+                "check_context_usage": lambda self, k, c: None,
+            },
+        )()
 
     def push_sessions_update(self):
         pass
@@ -129,7 +135,10 @@ class TestListProviderPrompts:
         r = _list_provider_prompts()
         assert len(r) == 1
         assert (r[0]["name"], r[0]["fullName"], r[0]["source"]) == (
-            "my-prompt", "my-prompt", "user")
+            "my-prompt",
+            "my-prompt",
+            "user",
+        )
         assert r[0]["description"] == "A test prompt"
 
     def test_lists_multiple_sorted(self, tmp_path):
@@ -140,7 +149,9 @@ class TestListProviderPrompts:
 
     def test_surfaces_variables_and_tags(self, tmp_path):
         _provider_prompt(
-            tmp_path, "templated", "Hello {{who}}.",
+            tmp_path,
+            "templated",
+            "Hello {{who}}.",
             variables=[{"name": "who", "type": "string", "required": True}],
             tags=["greet"],
         )
@@ -182,15 +193,19 @@ class TestExpandPromptMention:
 
     def test_renders_inline_variables(self, tmp_path):
         _provider_prompt(
-            tmp_path, "greet", "Hello {{who}}!",
+            tmp_path,
+            "greet",
+            "Hello {{who}}!",
             variables=[{"name": "who", "type": "string", "required": True}],
         )
-        msg, status = _expand_prompt_mention('@greet who=World', _State(), _Session())
+        msg, status = _expand_prompt_mention("@greet who=World", _State(), _Session())
         assert status == "ok" and "Hello World!" in msg
 
     def test_missing_required_variable_blocked(self, tmp_path):
         _provider_prompt(
-            tmp_path, "needvar", "Hello {{who}}!",
+            tmp_path,
+            "needvar",
+            "Hello {{who}}!",
             variables=[{"name": "who", "type": "string", "required": True}],
         )
         session = _Session()
@@ -294,10 +309,13 @@ class TestRunChatPrompts:
     def test_slash_get_render_failure_blocked(self, tmp_path, mock_sel):
         """A prompt with a missing required variable is reported as blocked."""
         _provider_prompt(
-            tmp_path, "needvar", "Hello {{who}}!",
+            tmp_path,
+            "needvar",
+            "Hello {{who}}!",
             variables=[{"name": "who", "type": "string", "required": True}],
         )
         s, sl = _ss()
         asyncio.run(_run_chat(s, sl, "/prompts get needvar"))
-        assert any("could not be rendered" in m[1] or "blocked" in m[1].lower()
-                   for m in sl.messages)
+        assert any(
+            "could not be rendered" in m[1] or "blocked" in m[1].lower() for m in sl.messages
+        )

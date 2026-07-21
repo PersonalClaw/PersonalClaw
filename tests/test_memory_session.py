@@ -76,17 +76,37 @@ def test_seal_session_distills_to_durable_episodic(svc):
 
 def test_seal_sweeps_unpromoted_session_records(svc):
     # a session-scoped record that never earned promotion is swept on seal
-    svc.put([MemoryRecord(id="pref.session_scratch", kind=MemoryKind.SEMANTIC,
-                          value="scratch", confidence=0.9, source="service",
-                          scope=MemoryScope.SESSION, scope_ref="sess-y")])
+    svc.put(
+        [
+            MemoryRecord(
+                id="pref.session_scratch",
+                kind=MemoryKind.SEMANTIC,
+                value="scratch",
+                confidence=0.9,
+                source="service",
+                scope=MemoryScope.SESSION,
+                scope_ref="sess-y",
+            )
+        ]
+    )
     assert svc.get_record("pref.session_scratch") is not None
     svc.seal_session("sess-y")
     assert svc.get_record("pref.session_scratch") is None  # swept
 
 
 def test_seal_does_not_touch_global_records(svc):
-    svc.put([MemoryRecord(id="pref.durable", kind=MemoryKind.SEMANTIC, value="keep",
-                          confidence=0.9, source="user_explicit", scope=MemoryScope.GLOBAL)])
+    svc.put(
+        [
+            MemoryRecord(
+                id="pref.durable",
+                kind=MemoryKind.SEMANTIC,
+                value="keep",
+                confidence=0.9,
+                source="user_explicit",
+                scope=MemoryScope.GLOBAL,
+            )
+        ]
+    )
     svc.seal_session("sess-z")
     assert svc.get_record("pref.durable") is not None
 
@@ -96,10 +116,21 @@ def test_seal_does_not_touch_global_records(svc):
 
 def test_promote_by_heat_promotes_hot_recurring(svc):
     # a session-scoped record with high recall_count + recency → promotable
-    svc.put([MemoryRecord(id="pref.hot", kind=MemoryKind.SEMANTIC, value="hot fact",
-                          confidence=0.9, source="service", scope=MemoryScope.WORKSPACE,
-                          scope_ref="/r", recall_count=5,
-                          last_accessed_at=datetime.now(tz=timezone.utc).isoformat())])
+    svc.put(
+        [
+            MemoryRecord(
+                id="pref.hot",
+                kind=MemoryKind.SEMANTIC,
+                value="hot fact",
+                confidence=0.9,
+                source="service",
+                scope=MemoryScope.WORKSPACE,
+                scope_ref="/r",
+                recall_count=5,
+                last_accessed_at=datetime.now(tz=timezone.utc).isoformat(),
+            )
+        ]
+    )
     n = svc.promote_by_heat(threshold=0.5)
     assert n >= 1
     assert svc.get_record("pref.hot").scope == MemoryScope.GLOBAL
@@ -108,9 +139,20 @@ def test_promote_by_heat_promotes_hot_recurring(svc):
 def test_promote_by_heat_skips_cold(svc):
     # session record with no recall + old → stays in scope (anti-noise)
     old = (datetime.now(tz=timezone.utc) - timedelta(days=200)).isoformat()
-    svc.put([MemoryRecord(id="pref.cold", kind=MemoryKind.SEMANTIC, value="cold",
-                          confidence=0.9, source="service", scope=MemoryScope.SESSION,
-                          scope_ref="s", recall_count=0)])
+    svc.put(
+        [
+            MemoryRecord(
+                id="pref.cold",
+                kind=MemoryKind.SEMANTIC,
+                value="cold",
+                confidence=0.9,
+                source="service",
+                scope=MemoryScope.SESSION,
+                scope_ref="s",
+                recall_count=0,
+            )
+        ]
+    )
     # semantic_memory has no last_accessed_at column; heat uses updated_at there.
     svc._vs.db.execute("UPDATE semantic_memory SET updated_at=? WHERE key='pref.cold'", (old,))
     svc._vs.db.commit()
@@ -119,10 +161,21 @@ def test_promote_by_heat_skips_cold(svc):
 
 
 def test_promote_never_touches_already_global(svc):
-    svc.put([MemoryRecord(id="pref.g", kind=MemoryKind.SEMANTIC, value="g", confidence=0.9,
-                          source="service", scope=MemoryScope.GLOBAL, recall_count=99,
-                          last_accessed_at=datetime.now(tz=timezone.utc).isoformat())])
+    svc.put(
+        [
+            MemoryRecord(
+                id="pref.g",
+                kind=MemoryKind.SEMANTIC,
+                value="g",
+                confidence=0.9,
+                source="service",
+                scope=MemoryScope.GLOBAL,
+                recall_count=99,
+                last_accessed_at=datetime.now(tz=timezone.utc).isoformat(),
+            )
+        ]
+    )
     # already global → no-op (count unaffected)
-    n = svc.promote_by_heat(threshold=0.1)
+    svc.promote_by_heat(threshold=0.1)
     # n counts only newly-promoted; the global one isn't re-promoted
     assert svc.get_record("pref.g").scope == MemoryScope.GLOBAL

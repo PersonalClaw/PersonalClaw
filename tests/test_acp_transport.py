@@ -15,18 +15,23 @@ from personalclaw.acp.transport import AcpProcess
 
 
 def _mk(**kw) -> AcpProcess:
-    return AcpProcess(command=kw.pop("command", ["/bin/echo"]), work_dir=kw.pop("work_dir", "/tmp"), **kw)
+    return AcpProcess(
+        command=kw.pop("command", ["/bin/echo"]), work_dir=kw.pop("work_dir", "/tmp"), **kw
+    )
 
 
 async def _spawned_env(transport: AcpProcess) -> dict:
     """Spawn *transport* against a mocked subprocess and return the env dict it passed
     to ``create_subprocess_exec`` (the env-building the transport owns)."""
-    with patch(
-        "personalclaw.acp.transport.wrap_argv", return_value=(["/bin/echo"], None)
-    ), patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec, patch(
-        "personalclaw.session._track_pid"
-    ), patch("personalclaw.session._track_session_pid"):
-        proc = MagicMock(); proc.pid = 12345; proc.returncode = None
+    with (
+        patch("personalclaw.acp.transport.wrap_argv", return_value=(["/bin/echo"], None)),
+        patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec,
+        patch("personalclaw.session._track_pid"),
+        patch("personalclaw.session._track_session_pid"),
+    ):
+        proc = MagicMock()
+        proc.pid = 12345
+        proc.returncode = None
         # Give stderr an awaitable readline that immediately signals EOF so the
         # background _drain_stderr task exits cleanly (no 'MagicMock not awaitable').
         proc.stderr = MagicMock()
@@ -165,9 +170,11 @@ async def test_kill_sigterm_then_sweeps_escaped():
     t._process = proc
     t._pid = 4321
     t._child_pids = {}
-    with patch("os.killpg") as killpg, patch("os.getpgid", return_value=4321), patch(
-        "personalclaw.acp.transport._kill_escaped_children"
-    ) as sweep:
+    with (
+        patch("os.killpg") as killpg,
+        patch("os.getpgid", return_value=4321),
+        patch("personalclaw.acp.transport._kill_escaped_children") as sweep,
+    ):
         await t.kill()
     killpg.assert_called_once()
     sweep.assert_called_once()
@@ -182,9 +189,11 @@ def test_teardown_clears_and_unlinks(tmp_path):
     sb.write_text("profile")
     t._sandbox_cleanup = str(sb)
     t._child_pids = {123: None}
-    with patch("personalclaw.session._untrack_child_pids"), patch(
-        "personalclaw.session._untrack_pid"
-    ), patch("personalclaw.session._untrack_session_pid"):
+    with (
+        patch("personalclaw.session._untrack_child_pids"),
+        patch("personalclaw.session._untrack_pid"),
+        patch("personalclaw.session._untrack_session_pid"),
+    ):
         t.teardown()
     assert t._process is None
     assert t.pid is None

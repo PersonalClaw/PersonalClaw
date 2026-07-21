@@ -229,7 +229,7 @@ async def stream_response(
                     next_periodic = loop_now + periodic.interval
 
             # Wait for the next event or the keepalive/periodic deadline.
-            timeout = _KEEPALIVE_SECS
+            timeout: float = _KEEPALIVE_SECS
             if periodic is not None:
                 timeout = min(
                     timeout,

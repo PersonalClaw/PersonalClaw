@@ -7,20 +7,18 @@ from __future__ import annotations
 
 # The canonical SDLC ladder — the ordered stages a greenfield/full run walks.
 SDLC_STAGES: tuple[str, ...] = (
-    "ideation",        # shape a raw idea into a problem statement
-    "requirements",    # BRD — what must be true for users/business
-    "design",          # TRD / tech design — how it'll be built
-    "decomposition",   # break the design into ordered, executable tasks
+    "ideation",  # shape a raw idea into a problem statement
+    "requirements",  # BRD — what must be true for users/business
+    "design",  # TRD / tech design — how it'll be built
+    "decomposition",  # break the design into ordered, executable tasks
     "implementation",  # write the code
-    "verification",    # tests / QA — prove it works
-    "review",          # code review / address CR comments
+    "verification",  # tests / QA — prove it works
+    "review",  # code review / address CR comments
 )
 
 # Lateral entry types — tasks that don't begin at ideation and run a tailored,
 # shorter stage plan (the classifier may still expand them).
-LATERAL_ENTRIES: frozenset[str] = frozenset(
-    {"bugfix", "cr_comments", "refactor", "investigation"}
-)
+LATERAL_ENTRIES: frozenset[str] = frozenset({"bugfix", "cr_comments", "refactor", "investigation"})
 
 # Valid entry stages = the ladder ∪ the lateral entries.
 ENTRY_STAGES: frozenset[str] = frozenset(SDLC_STAGES) | LATERAL_ENTRIES

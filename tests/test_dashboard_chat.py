@@ -120,9 +120,7 @@ class TestApiChatDrainOnDisconnect:
             sl.append("chunk", "partial answer", "chunk")
             await asyncio.sleep(60)
 
-        monkeypatch.setattr(
-            "personalclaw.dashboard.chat_handlers._run_chat", fake_run_chat
-        )
+        monkeypatch.setattr("personalclaw.dashboard.chat_handlers._run_chat", fake_run_chat)
 
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post(
@@ -415,7 +413,8 @@ class TestSessionLifecycle:
 
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post(
-                "/api/chat/sessions/s1/approve", json={"action": "approved", "request_id": "req-xyz"}
+                "/api/chat/sessions/s1/approve",
+                json={"action": "approved", "request_id": "req-xyz"},
             )
             assert (await resp.json())["ok"] is True
             state.broadcast_ws.assert_any_call(
@@ -435,7 +434,8 @@ class TestSessionLifecycle:
 
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post(
-                "/api/chat/sessions/s1/approve", json={"action": "rejected", "request_id": "req-rej"}
+                "/api/chat/sessions/s1/approve",
+                json={"action": "rejected", "request_id": "req-rej"},
             )
             assert (await resp.json())["ok"] is True
             state.broadcast_ws.assert_any_call(
@@ -628,7 +628,7 @@ class TestChunkCleanup:
 
 class TestPrepareMessages:
     def test_queued_preserved_done_stripped(self):
-        """queued messages must survive _prepare_messages so the frontend shows the banner after tab switch."""
+        """queued messages must survive _prepare_messages so the frontend shows the banner after tab switch."""  # noqa: E501
         from personalclaw.dashboard.chat import _prepare_messages
 
         msgs = [
@@ -714,6 +714,7 @@ class TestHistorySaveOnClose:
         session.drain()
         # Persist first (a real chat has an on-disk transcript before delete).
         from personalclaw.dashboard.chat import _save_session_to_history
+
         _save_session_to_history(state, session, force=True)
         assert state.conversation_log.has_log("dashboard:s1")
 
@@ -731,6 +732,7 @@ class TestHistorySaveOnClose:
         contract — exercised directly since delete now hard-purges rather than saves)."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         from personalclaw.dashboard.chat import _save_session_to_history
+
         state = _make_state(tmp_path)
         session = state.get_or_create_session("s1")
         session.append("user", "run ls")
@@ -826,6 +828,7 @@ class TestResumeDedupe:
         since Delete now hard-purges rather than saving.)"""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         from personalclaw.dashboard.chat import _save_session_to_history
+
         state = _make_state(tmp_path)
         log = state.conversation_log
         log.append("dashboard:s1", "user", "hello")
@@ -853,6 +856,7 @@ class TestHistoryKeyPrefix:
         (dashboard:dashboard:…). Exercised via the save path since Delete now purges."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         from personalclaw.dashboard.chat import _save_session_to_history
+
         state = _make_state(tmp_path)
         log = state.conversation_log
         log.append("dashboard:chat-1", "user", "hello")
@@ -1415,7 +1419,9 @@ class TestRunChatSegmentFlush:
         state.context_builder = None
         state.consolidator = None
         state._hook_store = None
-        import personalclaw.trust_mode as _tm; _tm.disable_yolo()
+        import personalclaw.trust_mode as _tm
+
+        _tm.disable_yolo()
         return state
 
     @pytest.mark.asyncio
@@ -1659,6 +1665,7 @@ class TestModelBackfillOnComplete:
         def _fake_estimate(model, **kw):
             captured.append(model)
             return 0.0
+
         monkeypatch.setattr("personalclaw.pricing.estimate_cost", _fake_estimate)
         return captured
 
@@ -1691,13 +1698,13 @@ class TestModelBackfillOnComplete:
         state.context_builder = None
         state.consolidator = None
         state._hook_store = None
-        import personalclaw.trust_mode as _tm; _tm.disable_yolo()
+        import personalclaw.trust_mode as _tm
+
+        _tm.disable_yolo()
         return state
 
     @pytest.mark.asyncio
-    async def test_late_backfill_populates_model_for_cc_session(
-        self, tmp_path, monkeypatch
-    ):
+    async def test_late_backfill_populates_model_for_cc_session(self, tmp_path, monkeypatch):
         """When session.model is empty at EVENT_COMPLETE but the provider has
         learned its model (CC init event), persist_token_record receives the
         provider model and session.model is updated.
@@ -1987,12 +1994,14 @@ class TestRuntimeWiring:
             assert data["agent"] == "new-agent"
 
         meta = state.conversation_log.get_metadata(history_key)
-        assert meta.get("agent") == "new-agent", (
-            f"expected new-agent in metadata, got {meta.get('agent')!r}"
-        )
+        assert (
+            meta.get("agent") == "new-agent"
+        ), f"expected new-agent in metadata, got {meta.get('agent')!r}"
 
     @pytest.mark.asyncio
-    async def test_api_chat_session_create_response_includes_workspace_dir(self, tmp_path, monkeypatch):
+    async def test_api_chat_session_create_response_includes_workspace_dir(
+        self, tmp_path, monkeypatch
+    ):
         """api_chat_session_create resolves the agent's working directory onto the session.
 
         The named-workspace registry was flattened: a session's workspace IS its
@@ -2038,7 +2047,9 @@ class TestRuntimeWiring:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
 
-        session = state.get_or_create_session("ws-test", agent="oncall", workspace_dir="/tmp/oncall")
+        session = state.get_or_create_session(
+            "ws-test", agent="oncall", workspace_dir="/tmp/oncall"
+        )
         assert session.workspace_dir == "/tmp/oncall"
         assert session.agent == "oncall"
 
@@ -2221,7 +2232,9 @@ class TestApiChatModePropagation:
     @pytest.mark.asyncio
     async def test_yolo_mode_propagates_auto_policy(self, tmp_path, monkeypatch):
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        import personalclaw.trust_mode as _tm; _tm.disable_yolo()
+        import personalclaw.trust_mode as _tm
+
+        _tm.disable_yolo()
         state = _make_state(tmp_path)
         state.push_sessions_update = MagicMock()
         state.get_or_create_session("s1")
@@ -2242,7 +2255,9 @@ class TestApiChatModePropagation:
     @pytest.mark.asyncio
     async def test_normal_mode_clears_policy(self, tmp_path, monkeypatch):
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        import personalclaw.trust_mode as _tm; _tm.enable_yolo(ttl_secs=1800)
+        import personalclaw.trust_mode as _tm
+
+        _tm.enable_yolo(ttl_secs=1800)
         state = _make_state(tmp_path)
         state.enable_yolo()
         state.push_sessions_update = MagicMock()
@@ -2262,7 +2277,9 @@ class TestApiChatModePropagation:
         _task_mode='plan' WITHOUT touching the approval flags (clean-break: task mode
         complements approval, no longer a mutually-exclusive approval rung)."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        import personalclaw.trust_mode as _tm; _tm.disable_yolo()
+        import personalclaw.trust_mode as _tm
+
+        _tm.disable_yolo()
         state = _make_state(tmp_path)
         state.push_sessions_update = MagicMock()
         session = state.get_or_create_session("s1")
@@ -2279,7 +2296,9 @@ class TestApiChatModePropagation:
     async def test_task_mode_switch_and_validation(self, tmp_path, monkeypatch):
         """Switching task mode replaces it; an invalid mode is rejected 400."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        import personalclaw.trust_mode as _tm; _tm.disable_yolo()
+        import personalclaw.trust_mode as _tm
+
+        _tm.disable_yolo()
         state = _make_state(tmp_path)
         state.push_sessions_update = MagicMock()
         session = state.get_or_create_session("s1")
@@ -2310,10 +2329,15 @@ class TestApiChatModePropagation:
         session = state.get_or_create_session("s1")
 
         async with TestClient(TestServer(_make_app_with_agent_routes(state))) as client:
-            resp = await client.post("/api/chat/sessions/s1/acp-agent", json={
-                "provider": "acp:test-cli", "provider_agent": "gpu-dev",
-                "model": "glm-5", "reasoning_effort": "high",
-            })
+            resp = await client.post(
+                "/api/chat/sessions/s1/acp-agent",
+                json={
+                    "provider": "acp:test-cli",
+                    "provider_agent": "gpu-dev",
+                    "model": "glm-5",
+                    "reasoning_effort": "high",
+                },
+            )
             data = await resp.json()
             assert data["ok"] is True
 
@@ -2383,11 +2407,17 @@ class TestApiChatModePropagation:
         state = _make_state(tmp_path)
         session = state.get_or_create_session("s1")
         async with TestClient(TestServer(_make_app(state))) as _client:
-            assert (await (await _client.get("/api/chat/sessions/s1")).json())["approval"] == "normal"
+            assert (await (await _client.get("/api/chat/sessions/s1")).json())[
+                "approval"
+            ] == "normal"
             session._trust_reads = True
-            assert (await (await _client.get("/api/chat/sessions/s1")).json())["approval"] == "trust_reads"
+            assert (await (await _client.get("/api/chat/sessions/s1")).json())[
+                "approval"
+            ] == "trust_reads"
             session._trust = True
-            assert (await (await _client.get("/api/chat/sessions/s1")).json())["approval"] == "trust"
+            assert (await (await _client.get("/api/chat/sessions/s1")).json())[
+                "approval"
+            ] == "trust"
             state.enable_yolo()  # global, outranks per-session trust
             assert (await (await _client.get("/api/chat/sessions/s1")).json())["approval"] == "yolo"
 
@@ -2395,7 +2425,9 @@ class TestApiChatModePropagation:
     async def test_trust_mode_scoped_to_session(self, tmp_path, monkeypatch):
         """Trust with session_key only trusts that session."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        import personalclaw.trust_mode as _tm; _tm.disable_yolo()
+        import personalclaw.trust_mode as _tm
+
+        _tm.disable_yolo()
         state = _make_state(tmp_path)
         state.push_sessions_update = MagicMock()
         s1 = state.get_or_create_session("s1")
@@ -2412,7 +2444,9 @@ class TestApiChatModePropagation:
     async def test_trust_mode_all_sessions_when_no_session(self, tmp_path, monkeypatch):
         """Trust without session_key trusts all sessions."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        import personalclaw.trust_mode as _tm; _tm.disable_yolo()
+        import personalclaw.trust_mode as _tm
+
+        _tm.disable_yolo()
         state = _make_state(tmp_path)
         state.push_sessions_update = MagicMock()
         s1 = state.get_or_create_session("s1")
@@ -2427,7 +2461,9 @@ class TestApiChatModePropagation:
     async def test_normal_mode_scoped_resets_only_session(self, tmp_path, monkeypatch):
         """Normal mode with session_key should only reset that session."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        import personalclaw.trust_mode as _tm; _tm.disable_yolo()
+        import personalclaw.trust_mode as _tm
+
+        _tm.disable_yolo()
         state = _make_state(tmp_path)
         state.push_sessions_update = MagicMock()
         s1 = state.get_or_create_session("s1")
@@ -2446,7 +2482,9 @@ class TestApiChatModePropagation:
     async def test_normal_mode_resets_all_sessions_when_no_session(self, tmp_path, monkeypatch):
         """Normal mode without session_key resets all session trust."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        import personalclaw.trust_mode as _tm; _tm.disable_yolo()
+        import personalclaw.trust_mode as _tm
+
+        _tm.disable_yolo()
         state = _make_state(tmp_path)
         state.push_sessions_update = MagicMock()
         s1 = state.get_or_create_session("s1")
@@ -2462,12 +2500,16 @@ class TestApiChatModePropagation:
     async def test_trust_mode_unknown_session_returns_400(self, tmp_path, monkeypatch):
         """Trust with unknown session_key must return 400, not trust all."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        import personalclaw.trust_mode as _tm; _tm.disable_yolo()
+        import personalclaw.trust_mode as _tm
+
+        _tm.disable_yolo()
         state = _make_state(tmp_path)
         state.push_sessions_update = MagicMock()
 
         async with TestClient(TestServer(_make_app(state))) as client:
-            resp = await client.post("/api/chat/mode", json={"mode": "trust", "session": "nonexistent"})
+            resp = await client.post(
+                "/api/chat/mode", json={"mode": "trust", "session": "nonexistent"}
+            )
             assert resp.status == 400
             assert (await resp.json())["error"] == "unknown session"
 
@@ -2475,12 +2517,16 @@ class TestApiChatModePropagation:
     async def test_normal_mode_unknown_session_returns_400(self, tmp_path, monkeypatch):
         """Normal with unknown session_key must return 400, not reset all."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        import personalclaw.trust_mode as _tm; _tm.disable_yolo()
+        import personalclaw.trust_mode as _tm
+
+        _tm.disable_yolo()
         state = _make_state(tmp_path)
         state.push_sessions_update = MagicMock()
 
         async with TestClient(TestServer(_make_app(state))) as client:
-            resp = await client.post("/api/chat/mode", json={"mode": "normal", "session": "nonexistent"})
+            resp = await client.post(
+                "/api/chat/mode", json={"mode": "normal", "session": "nonexistent"}
+            )
             assert resp.status == 400
             assert (await resp.json())["error"] == "unknown session"
 
@@ -2488,7 +2534,9 @@ class TestApiChatModePropagation:
     async def test_trust_session_preserves_other_session_trust(self, tmp_path, monkeypatch):
         """trusting session B must not wipe trust from session A."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        import personalclaw.trust_mode as _tm; _tm.disable_yolo()
+        import personalclaw.trust_mode as _tm
+
+        _tm.disable_yolo()
         state = _make_state(tmp_path)
         state.push_sessions_update = MagicMock()
         s1 = state.get_or_create_session("s1")
@@ -2506,7 +2554,9 @@ class TestApiChatModePropagation:
     async def test_yolo_restores_per_session_trust(self, tmp_path, monkeypatch):
         """YOLO does not mutate per-session trust; disabling preserves it."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        import personalclaw.trust_mode as _tm; _tm.disable_yolo()
+        import personalclaw.trust_mode as _tm
+
+        _tm.disable_yolo()
         state = _make_state(tmp_path)
         state.push_sessions_update = MagicMock()
         s1 = state.get_or_create_session("s1")
@@ -2544,12 +2594,15 @@ class TestApiChatModePropagation:
         # expires_at==0.0 means permanent, so use a small positive past value).
         state.enable_yolo()
         import personalclaw.trust_mode as _tm
+
         _tm._TRUST._expires_at = 1.0  # positive but far in the past → expired
 
         assert state.is_yolo_active() is False
         assert s1._trust is True  # per-session trust survives expiry
 
-        cleared = [c[0][0] for c in state.sessions.set_approval_policy.call_args_list if c[0][1] == ""]
+        cleared = [
+            c[0][0] for c in state.sessions.set_approval_policy.call_args_list if c[0][1] == ""
+        ]
         assert "dashboard:s2" in cleared
         assert "dashboard:s1" not in cleared
 
@@ -2679,7 +2732,11 @@ class TestApiChatAgentPassing:
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post(
                 "/api/chat?ws=1",
-                json={"message": "hello", "session": "external-my-skill", "agent": "my-custom-agent"},
+                json={
+                    "message": "hello",
+                    "session": "external-my-skill",
+                    "agent": "my-custom-agent",
+                },
             )
             data = await resp.json()
             assert data["ok"] is True
@@ -3307,6 +3364,8 @@ class TestHistoryKeyFor:
         from personalclaw.dashboard.chat import _history_key_for
 
         assert _history_key_for("chat-1-100") == "dashboard:chat-1-100"
+
+
 # ── Folder CRUD tests ──
 
 
@@ -3344,7 +3403,9 @@ class TestFolderCRUD:
         async with TestClient(TestServer(app)) as client:
             resp = await client.post("/api/chat/folders", json={"name": "Parent"})
             parent = await resp.json()
-            resp = await client.post("/api/chat/folders", json={"name": "Child", "parent_id": parent["id"]})
+            resp = await client.post(
+                "/api/chat/folders", json={"name": "Child", "parent_id": parent["id"]}
+            )
             child = await resp.json()
             assert child["parent_id"] == parent["id"]
 
@@ -3354,7 +3415,9 @@ class TestFolderCRUD:
         state = _make_state(tmp_path)
         app = _make_folder_app(state)
         async with TestClient(TestServer(app)) as client:
-            resp = await client.post("/api/chat/folders", json={"name": "Orphan", "parent_id": "nonexistent"})
+            resp = await client.post(
+                "/api/chat/folders", json={"name": "Orphan", "parent_id": "nonexistent"}
+            )
             assert resp.status == 400
 
     @pytest.mark.asyncio
@@ -3459,7 +3522,9 @@ class TestFolderCRUD:
         state._folders = [{"id": "f1", "name": "Test", "order": 0, "collapsed": False}]
         app = _make_folder_app(state)
         async with TestClient(TestServer(app)) as client:
-            resp = await client.patch("/api/chat/sessions/mysession/folder", json={"folder_id": "f1"})
+            resp = await client.patch(
+                "/api/chat/sessions/mysession/folder", json={"folder_id": "f1"}
+            )
             assert resp.status == 200
             data = await resp.json()
             assert data["folder_id"] == "f1"
@@ -3493,7 +3558,9 @@ class TestFolderCRUD:
         state.get_or_create_session("mysession")
         app = _make_folder_app(state)
         async with TestClient(TestServer(app)) as client:
-            resp = await client.patch("/api/chat/sessions/mysession/folder", json={"folder_id": "nonexistent"})
+            resp = await client.patch(
+                "/api/chat/sessions/mysession/folder", json={"folder_id": "nonexistent"}
+            )
             assert resp.status == 400
 
     @pytest.mark.asyncio
@@ -3551,7 +3618,9 @@ class TestFolderPersistence:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         import json
 
-        (tmp_path / "folders.json").write_text(json.dumps([{"id": "f1", "name": "Test", "order": 0}]))
+        (tmp_path / "folders.json").write_text(
+            json.dumps([{"id": "f1", "name": "Test", "order": 0}])
+        )
         state = _make_state(tmp_path)
         state.load_folders()
         assert len(state._folders) == 1
@@ -3704,8 +3773,15 @@ class TestGenerateFolderIcon:
         state.save_folders = MagicMock()
         state.push_sessions_update = MagicMock()
 
-        with patch("personalclaw.dashboard.chat_folders.redact_exfiltration_urls", return_value=("🔥", False)) as mock_url, \
-             patch("personalclaw.dashboard.chat_folders.redact_credentials", return_value=("🔥", False)) as mock_cred:
+        with (
+            patch(
+                "personalclaw.dashboard.chat_folders.redact_exfiltration_urls",
+                return_value=("🔥", False),
+            ) as mock_url,
+            patch(
+                "personalclaw.dashboard.chat_folders.redact_credentials", return_value=("🔥", False)
+            ) as mock_cred,
+        ):
             folder = {"id": "f1", "name": "Oncall"}
             state._folders = [folder]
             await _generate_folder_icon(state, folder)
@@ -3724,7 +3800,7 @@ class TestGenerateFolderIcon:
 
         mock_event = MagicMock()
         mock_event.kind = "text_chunk"
-        mock_event.text = "\u2764\uFE0F"  # ❤️
+        mock_event.text = "\u2764\ufe0f"  # ❤️
         done_event = MagicMock()
         done_event.kind = "complete"
         monkeypatch.setattr("personalclaw.llm.base.EVENT_TEXT_CHUNK", "text_chunk")
@@ -3742,7 +3818,7 @@ class TestGenerateFolderIcon:
         state._folders = [folder]
         await _generate_folder_icon(state, folder)
 
-        assert folder["icon"] == "\u2764\uFE0F"
+        assert folder["icon"] == "\u2764\ufe0f"
         state.save_folders.assert_called_once()
 
     @pytest.mark.asyncio
@@ -3856,9 +3932,7 @@ class TestFolderAssignmentPersistence:
         session._resumed_count = len(session.messages)
         app = _make_folder_app(state)
         async with TestClient(TestServer(app)) as client:
-            resp = await client.patch(
-                "/api/chat/sessions/pinsession/pin", json={"pinned": True}
-            )
+            resp = await client.patch("/api/chat/sessions/pinsession/pin", json={"pinned": True})
             assert resp.status == 200
             path = tmp_path / "dashboard_pinsession.jsonl"
             assert path.exists(), "pinned save must reach disk on resumed session"
@@ -3915,6 +3989,8 @@ class TestNewPlanResetsAutoRun:
 
         assert session._auto_run is False, "_auto_run must be reset for new plan"
         assert session._orch_tracker is None
+
+
 # ── Regenerate + variant switching ──
 
 
@@ -4215,9 +4291,7 @@ class TestRegenerateAndVariants:
         session.append("assistant", "v1")
         session.messages[-1]["variants"] = [{"content": "v1"}]
         async with TestClient(TestServer(_make_app(state))) as client:
-            resp = await client.post(
-                "/api/chat/sessions/s1/switch-variant", data="not-json"
-            )
+            resp = await client.post("/api/chat/sessions/s1/switch-variant", data="not-json")
             assert resp.status == 400
 
     @pytest.mark.asyncio
@@ -4228,9 +4302,7 @@ class TestRegenerateAndVariants:
         session.append("assistant", "v1")
         session.messages[-1]["variants"] = [{"content": "v1"}]
         async with TestClient(TestServer(_make_app(state))) as client:
-            resp = await client.post(
-                "/api/chat/sessions/s1/switch-variant", json={"index": "abc"}
-            )
+            resp = await client.post("/api/chat/sessions/s1/switch-variant", json={"index": "abc"})
             assert resp.status == 400
 
     @pytest.mark.asyncio
@@ -4253,9 +4325,7 @@ class TestRegenerateAndVariants:
                 # Let the failing task propagate through done_callback
                 for _ in range(5):
                     await asyncio.sleep(0)
-        assert session._pending_variants == [], (
-            "pending variants must be cleared when task errors"
-        )
+        assert session._pending_variants == [], "pending variants must be cleared when task errors"
 
     @pytest.mark.asyncio
     async def test_flush_segment_attaches_pending_variants(self, tmp_path, monkeypatch):
@@ -4376,9 +4446,9 @@ class TestRegenerateAndVariants:
                 session.task.cancel()
                 for _ in range(5):
                     await asyncio.sleep(0)
-        assert session._pending_variants == [], (
-            "pending variants must be cleared when task is cancelled"
-        )
+        assert (
+            session._pending_variants == []
+        ), "pending variants must be cleared when task is cancelled"
 
     @pytest.mark.asyncio
     async def test_prepare_messages_redacts_variant_content(self, tmp_path, monkeypatch):
@@ -4479,9 +4549,7 @@ class TestForkSession:
 
         app = _make_app(state)
         async with TestClient(TestServer(app)) as client:
-            resp = await client.post(
-                "/api/chat/sessions/src/fork", json={"at_message_index": 1}
-            )
+            resp = await client.post("/api/chat/sessions/src/fork", json={"at_message_index": 1})
             assert resp.status == 200
             data = await resp.json()
             assert data["messages"] == 2
@@ -4573,7 +4641,8 @@ class TestForkSession:
         app = _make_app(state)
         async with TestClient(TestServer(app)) as client:
             resp = await client.post(
-                "/api/chat/sessions/src/fork", json={"prompt": "fix the bug"},
+                "/api/chat/sessions/src/fork",
+                json={"prompt": "fix the bug"},
             )
             data = await resp.json()
             assert data["ok"] is True
@@ -4638,9 +4707,7 @@ class TestForkSession:
 
         app = _make_app(state)
         async with TestClient(TestServer(app)) as client:
-            resp = await client.post(
-                "/api/chat/sessions/src/fork", json={"at_message_index": True}
-            )
+            resp = await client.post("/api/chat/sessions/src/fork", json={"at_message_index": True})
             assert resp.status == 400
 
     @pytest.mark.asyncio
@@ -4652,9 +4719,7 @@ class TestForkSession:
 
         app = _make_app(state)
         async with TestClient(TestServer(app)) as client:
-            resp = await client.post(
-                "/api/chat/sessions/src/fork", json={"at_message_index": -1}
-            )
+            resp = await client.post("/api/chat/sessions/src/fork", json={"at_message_index": -1})
             assert resp.status == 400
 
     @pytest.mark.asyncio
@@ -4697,12 +4762,8 @@ class TestForkSession:
         hk = _history_key_for(new_key)
         meta = state.conversation_log.get_metadata(hk)
         disk_msgs = state.conversation_log.read_messages(hk)
-        assert meta.get("forked_from") == "dashboard:src", (
-            f"forked_from not persisted; meta={meta}"
-        )
-        assert len(disk_msgs) == 2, (
-            f"forked messages not persisted (got {len(disk_msgs)})"
-        )
+        assert meta.get("forked_from") == "dashboard:src", f"forked_from not persisted; meta={meta}"
+        assert len(disk_msgs) == 2, f"forked messages not persisted (got {len(disk_msgs)})"
 
     @pytest.mark.asyncio
     async def test_fork_rejects_oversized_prompt(self, tmp_path):
@@ -4729,9 +4790,7 @@ class TestForkSession:
 
         app = _make_app(state)
         async with TestClient(TestServer(app)) as client:
-            resp = await client.post(
-                "/api/chat/sessions/src/fork", json={"at_message_index": 5}
-            )
+            resp = await client.post("/api/chat/sessions/src/fork", json={"at_message_index": 5})
             assert resp.status == 400
 
     @pytest.mark.asyncio
@@ -4746,6 +4805,7 @@ class TestForkSession:
         class _FakeTask:
             def done(self):
                 return False
+
         session.task = _FakeTask()  # type: ignore[assignment]
         assert session.running is True
 
@@ -4824,9 +4884,10 @@ class TestForkSession:
 
         recent = state.conversation_log.recent(_history_key_for(new_key))
         visible = [m for m in recent if m.get("role") in ("user", "assistant")]
-        assert [m["content"] for m in visible] == ["parent question", "parent answer"], (
-            f"fork history not readable as new-session context: {visible}"
-        )
+        assert [m["content"] for m in visible] == [
+            "parent question",
+            "parent answer",
+        ], f"fork history not readable as new-session context: {visible}"
 
     @pytest.mark.asyncio
     async def test_fork_does_not_clone_parent_agent_session_id(self, tmp_path, monkeypatch):
@@ -4857,16 +4918,16 @@ class TestForkSession:
         # Inspect _data directly to skip SessionMap.get()'s agent-session file
         # existence check (we don't spawn real agent processes in unit tests).
         reloaded = SessionMap()
-        assert reloaded._data.get("dashboard:src", {}).get("sid") == "parent-agent-sid-abc123", (
-            "parent's agent sid should survive fork unchanged"
-        )
-        assert f"dashboard:{new_key}" not in reloaded._data, (
-            "forked session must NOT inherit parent's agent sid"
-        )
+        assert (
+            reloaded._data.get("dashboard:src", {}).get("sid") == "parent-agent-sid-abc123"
+        ), "parent's agent sid should survive fork unchanged"
+        assert (
+            f"dashboard:{new_key}" not in reloaded._data
+        ), "forked session must NOT inherit parent's agent sid"
 
     @pytest.mark.asyncio
     async def test_fork_of_fork_chains_forked_from(self, tmp_path):
-        """M10: fork of a fork titles correctly and `forked_from` points to intermediate, not root."""
+        """M10: fork of a fork titles correctly and `forked_from` points to intermediate, not root."""  # noqa: E501
         state = _make_state(tmp_path)
         root = state.get_or_create_session("root")
         root.title = "Original"
@@ -4892,9 +4953,9 @@ class TestForkSession:
 
         leaf = state._sessions.get(d2["key"])
         assert d2["title"] == "Fork of Fork of Original"
-        assert leaf.forked_from == f"dashboard:{mid_key}", (
-            f"leaf forked_from should point to intermediate, got {leaf.forked_from}"
-        )
+        assert (
+            leaf.forked_from == f"dashboard:{mid_key}"
+        ), f"leaf forked_from should point to intermediate, got {leaf.forked_from}"
         assert leaf.forked_from != "dashboard:root"
         visible = [m for m in leaf.messages if m["role"] in ("user", "assistant")]
         assert [m["content"] for m in visible] == ["q1", "a1", "q2", "a2"]
@@ -4908,6 +4969,7 @@ class TestForkSession:
             session.append("user" if i % 2 == 0 else "assistant", f"m{i}", "msg")
         session.drain()
         from personalclaw.dashboard.chat import _save_session_to_history
+
         _save_session_to_history(state, session)
         # Simulate restore cap: keep only last 50 in memory.
         # Clear _dirty so the endpoint's flush-if-dirty path doesn't overwrite disk.
@@ -4920,9 +4982,9 @@ class TestForkSession:
             assert resp.status == 200
             data = await resp.json()
 
-        assert data["messages"] == 250, (
-            f"fork should read full history from disk, got {data['messages']}"
-        )
+        assert (
+            data["messages"] == 250
+        ), f"fork should read full history from disk, got {data['messages']}"
         new_session = state._sessions.get(data["key"])
         visible = [m for m in new_session.messages if m["role"] in ("user", "assistant")]
         assert len(visible) == 250
@@ -4938,6 +5000,7 @@ class TestForkSession:
             session.append("user" if i % 2 == 0 else "assistant", f"m{i}", "msg")
         session.drain()
         from personalclaw.dashboard.chat import _save_session_to_history
+
         _save_session_to_history(state, session)
         # Simulate restore with cap: real path caps messages then sets
         # _resumed_count to the capped length. User then sends new messages.
@@ -4955,9 +5018,9 @@ class TestForkSession:
             data = await resp.json()
 
         # Full 250 on disk + 2 new dirty messages = 252 total.
-        assert data["messages"] == 252, (
-            f"fork must preserve full disk history + dirty tail, got {data['messages']}"
-        )
+        assert (
+            data["messages"] == 252
+        ), f"fork must preserve full disk history + dirty tail, got {data['messages']}"
         new_session = state._sessions.get(data["key"])
         visible = [m for m in new_session.messages if m["role"] in ("user", "assistant")]
         assert visible[0]["content"] == "m0"
@@ -4970,6 +5033,7 @@ class TestForkSession:
         identical visible-message counts. Each fork produces an independent new
         session; no messages lost or duplicated."""
         import asyncio
+
         state = _make_state(tmp_path)
         session = state.get_or_create_session("src")
         session.append("user", "q1", "msg msg-u")
@@ -4988,9 +5052,9 @@ class TestForkSession:
             d1, d2 = await r1.json(), await r2.json()
 
         assert d1["key"] != d2["key"], "concurrent forks must produce distinct session keys"
-        assert d1["messages"] == d2["messages"] == 4, (
-            f"both forks must copy all 4 visible messages, got {d1['messages']}/{d2['messages']}"
-        )
+        assert (
+            d1["messages"] == d2["messages"] == 4
+        ), f"both forks must copy all 4 visible messages, got {d1['messages']}/{d2['messages']}"
         for key in (d1["key"], d2["key"]):
             new_session = state._sessions.get(key)
             visible = [m for m in new_session.messages if m["role"] in ("user", "assistant")]
@@ -5000,6 +5064,7 @@ class TestForkSession:
     async def test_fork_audits_denied_on_ephemeral(self, tmp_path, monkeypatch):
         """M-1 regression: ephemeral rejection must emit a denied SEL event."""
         from unittest.mock import MagicMock
+
         mock_sel = MagicMock()
         monkeypatch.setattr("personalclaw.dashboard.chat_fork.sel", lambda: mock_sel)
 
@@ -5024,6 +5089,7 @@ class TestForkSession:
     async def test_fork_app_isolation_rejects_cross_app(self, tmp_path, monkeypatch):
         """M-2 regression: app A cannot fork a session owned by app B."""
         from unittest.mock import MagicMock
+
         mock_sel = MagicMock()
         monkeypatch.setattr("personalclaw.dashboard.chat_fork.sel", lambda: mock_sel)
 
@@ -5048,8 +5114,9 @@ class TestForkSession:
             assert "does not own" in data["error"]
 
         # denied event logged
-        denied_calls = [c for c in mock_sel.log_api_access.call_args_list
-                        if c[1].get("outcome") == "denied"]
+        denied_calls = [
+            c for c in mock_sel.log_api_access.call_args_list if c[1].get("outcome") == "denied"
+        ]
         assert len(denied_calls) == 1
         assert denied_calls[0][1]["source"] == "app_isolation"
 
@@ -5075,12 +5142,15 @@ class TestForkSession:
             data = await resp.json()
 
         new_session = state._sessions.get(data["key"])
-        assert new_session._app == "app-X", f"forked session must inherit caller's app, got {new_session._app!r}"
+        assert (
+            new_session._app == "app-X"
+        ), f"forked session must inherit caller's app, got {new_session._app!r}"
 
     @pytest.mark.asyncio
     async def test_fork_rejects_when_session_cap_reached(self, tmp_path, monkeypatch):
         """zejiangg rev 3 #46: fork must return 429 + denied audit when session cap hit."""
         from unittest.mock import MagicMock
+
         mock_sel = MagicMock()
         monkeypatch.setattr("personalclaw.dashboard.chat_fork.sel", lambda: mock_sel)
         # Lower the cap so we don't need to create hundreds of sessions.
@@ -5102,8 +5172,9 @@ class TestForkSession:
             data = await resp.json()
             assert "cap" in data["error"].lower()
 
-        denied = [c for c in mock_sel.log_api_access.call_args_list
-                  if c[1].get("outcome") == "denied"]
+        denied = [
+            c for c in mock_sel.log_api_access.call_args_list if c[1].get("outcome") == "denied"
+        ]
         assert len(denied) == 1
         assert denied[0][1]["source"] == "rate_limit"
 
@@ -5190,6 +5261,7 @@ class TestLumonPersonaInjection:
 
     def setup_method(self):
         from personalclaw.dashboard import chat
+
         if hasattr(chat, "_cached_lumon_persona"):
             chat._cached_lumon_persona.cache_clear()
 
@@ -5197,7 +5269,9 @@ class TestLumonPersonaInjection:
         from personalclaw.dashboard.chat import _maybe_inject_persona
 
         fake_persona = "Use a light Lumon-inspired persona."
-        with patch("personalclaw.dashboard.chat_utils._cached_lumon_persona", return_value=fake_persona):
+        with patch(
+            "personalclaw.dashboard.chat_utils._cached_lumon_persona", return_value=fake_persona
+        ):
             result = _maybe_inject_persona("hello", "lumon", True)
 
         assert "[LUMON PERSONA]" in result
@@ -5218,7 +5292,10 @@ class TestLumonPersonaInjection:
     def test_persona_survives_cache_error(self):
         from personalclaw.dashboard.chat import _maybe_inject_persona
 
-        with patch("personalclaw.dashboard.chat_utils._cached_lumon_persona", side_effect=ImportError("boom")):
+        with patch(
+            "personalclaw.dashboard.chat_utils._cached_lumon_persona",
+            side_effect=ImportError("boom"),
+        ):
             result = _maybe_inject_persona("hello", "lumon", True)
         assert result == "hello"
 
@@ -5255,7 +5332,9 @@ class TestStopReasonCancelled:
         state.context_builder = None
         state.consolidator = MagicMock()
         state._hook_store = None
-        import personalclaw.trust_mode as _tm; _tm.disable_yolo()
+        import personalclaw.trust_mode as _tm
+
+        _tm.disable_yolo()
         return state
 
     @pytest.mark.asyncio
@@ -5327,9 +5406,7 @@ class TestStopReasonCancelled:
         state.consolidator.maybe_consolidate.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_handler_stop_reason_cancelled_flushes_partial_text(
-        self, tmp_path, monkeypatch
-    ):
+    async def test_handler_stop_reason_cancelled_flushes_partial_text(self, tmp_path, monkeypatch):
         """Partial text chunks before cancel must be flushed to the session."""
         from personalclaw.acp.types import STOP_REASON_CANCELLED
         from personalclaw.dashboard.chat import _run_chat
@@ -5374,9 +5451,7 @@ class TestStopTurnSessionState:
         )
 
     @pytest.mark.asyncio
-    async def test_stop_turn_session_state_transitions_soft(
-        self, tmp_path, monkeypatch
-    ):
+    async def test_stop_turn_session_state_transitions_soft(self, tmp_path, monkeypatch):
         """POST stop → idle→soft_pending; after on_soft → idle."""
         state = self._make_state(tmp_path, monkeypatch)
         session = state.get_or_create_session("s1")
@@ -5402,9 +5477,7 @@ class TestStopTurnSessionState:
         session.task.cancel()
 
     @pytest.mark.asyncio
-    async def test_stop_turn_session_state_transitions_hard(
-        self, tmp_path, monkeypatch
-    ):
+    async def test_stop_turn_session_state_transitions_hard(self, tmp_path, monkeypatch):
         """POST stop with hard outcome → idle→soft_pending→idle after on_hard."""
         state = self._make_state(tmp_path, monkeypatch)
         session = state.get_or_create_session("s1")
@@ -5453,9 +5526,7 @@ class TestStopTurnSessionState:
         session.task.cancel()
 
     @pytest.mark.asyncio
-    async def test_stop_turn_first_press_clears_queue(
-        self, tmp_path, monkeypatch
-    ):
+    async def test_stop_turn_first_press_clears_queue(self, tmp_path, monkeypatch):
         """Queue populated; POST stop; queue empty (via stop_turn side effect)."""
         state = self._make_state(tmp_path, monkeypatch)
         session = state.get_or_create_session("s1")
@@ -5480,9 +5551,7 @@ class TestStopTurnSessionState:
         session.task.cancel()
 
     @pytest.mark.asyncio
-    async def test_stop_event_appears_in_transcript(
-        self, tmp_path, monkeypatch
-    ):
+    async def test_stop_event_appears_in_transcript(self, tmp_path, monkeypatch):
         """After stop, session messages contain a stop_event entry."""
         import json
 
@@ -5590,12 +5659,14 @@ class TestStopHistoryBanner:
         session.append("user", "hello")
         session.append("assistant", "hi there")
         # cls must be a JSON-encoded dict (same format api_chat_session_stop uses)
-        cls_json = json.dumps({
-            "kind": "stop_event",
-            "id": "stop-abc",
-            "state": "stopped",
-            "outcome": "soft",
-        })
+        cls_json = json.dumps(
+            {
+                "kind": "stop_event",
+                "id": "stop-abc",
+                "state": "stopped",
+                "outcome": "soft",
+            }
+        )
         session.append("system", cls_json, cls_json)
         assert self._last_stop_soft(session) is True
 
@@ -5606,12 +5677,14 @@ class TestStopHistoryBanner:
         session = _ChatSession("s1")
         session.append("user", "hello")
         session.append("assistant", "hi there")
-        cls_json = json.dumps({
-            "kind": "stop_event",
-            "id": "stop-abc",
-            "state": "stop_failed_reset",
-            "outcome": "hard",
-        })
+        cls_json = json.dumps(
+            {
+                "kind": "stop_event",
+                "id": "stop-abc",
+                "state": "stop_failed_reset",
+                "outcome": "hard",
+            }
+        )
         session.append("system", cls_json, cls_json)
         assert self._last_stop_soft(session) is False
 
@@ -5712,7 +5785,9 @@ class TestAcpProcessDiedRecovery:
         state, session, client, _run_chat = self._make_state_and_session(tmp_path)
 
         async def _stream_then_die(msg):
-            yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="partial output with AKIA1234567890ABCDEF secret")
+            yield LLMEvent(
+                kind=EVENT_TEXT_CHUNK, text="partial output with AKIA1234567890ABCDEF secret"
+            )
             raise AcpProcessDied("pipe broken")
 
         client.stream = _stream_then_die

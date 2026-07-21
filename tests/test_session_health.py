@@ -14,6 +14,7 @@ def _ts_from_file(path: Path) -> str:
 def _write_log(path: Path, lines: list[str]) -> None:
     path.write_text("\n".join(lines) + "\n")
     import os
+
     os.utime(path, None)
 
 
@@ -25,9 +26,12 @@ def test_dead_provider_is_not_flagged(tmp_path: Path) -> None:
     log = tmp_path / "gateway.log"
     _write_log(log, [""])  # touch to get mtime
     ts = _ts_from_file(log)
-    _write_log(log, [
-        f"{ts} WARNING personalclaw.session: Session chat-2-1776999999 has dead provider — removing stale entry",
-    ])
+    _write_log(
+        log,
+        [
+            f"{ts} WARNING personalclaw.session: Session chat-2-1776999999 has dead provider — removing stale entry",  # noqa: E501
+        ],
+    )
     result = session_health.compute_session_health(log_path=log, now=log.stat().st_mtime)
     assert "chat-2-1776999999" not in result
     assert result == {}
@@ -37,9 +41,12 @@ def test_detects_prompt_stuck(tmp_path: Path) -> None:
     log = tmp_path / "gateway.log"
     _write_log(log, [""])  # touch to get mtime
     ts = _ts_from_file(log)
-    _write_log(log, [
-        f"{ts} WARNING personalclaw.dashboard.chat: ACP error in session chat-9-1776732990: Prompt error: {{'code': -32603, 'message': 'Internal error', 'data': 'Prompt already in progress'}}",
-    ])
+    _write_log(
+        log,
+        [
+            f"{ts} WARNING personalclaw.dashboard.chat: ACP error in session chat-9-1776732990: Prompt error: {{'code': -32603, 'message': 'Internal error', 'data': 'Prompt already in progress'}}",  # noqa: E501
+        ],
+    )
     result = session_health.compute_session_health(log_path=log, now=log.stat().st_mtime)
     assert result["chat-9-1776732990"]["reason"] == "prompt_stuck"
 
@@ -48,11 +55,14 @@ def test_ignores_internal_background_sessions(tmp_path: Path) -> None:
     log = tmp_path / "gateway.log"
     _write_log(log, [""])  # touch to get mtime
     ts = _ts_from_file(log)
-    _write_log(log, [
-        f"{ts} WARNING personalclaw.gateway: Injected timeout error for subagent abc into session _bg",
-        f"{ts} WARNING personalclaw.gateway: Injected timeout error for subagent def into session cron_367da8a3",
-        f"{ts} WARNING personalclaw.gateway: Injected timeout error for subagent ghi into session cron:daily_check",
-    ])
+    _write_log(
+        log,
+        [
+            f"{ts} WARNING personalclaw.gateway: Injected timeout error for subagent abc into session _bg",  # noqa: E501
+            f"{ts} WARNING personalclaw.gateway: Injected timeout error for subagent def into session cron_367da8a3",  # noqa: E501
+            f"{ts} WARNING personalclaw.gateway: Injected timeout error for subagent ghi into session cron:daily_check",  # noqa: E501
+        ],
+    )
     result = session_health.compute_session_health(log_path=log, now=log.stat().st_mtime)
     assert result == {}
 
@@ -61,10 +71,13 @@ def test_last_reason_wins_per_session(tmp_path: Path) -> None:
     log = tmp_path / "gateway.log"
     _write_log(log, [""])  # touch to get mtime
     ts = _ts_from_file(log)
-    _write_log(log, [
-        f"{ts} WARNING personalclaw.gateway: Injected timeout error for subagent abc into session chat-3-111",
-        f"{ts} WARNING personalclaw.dashboard.chat: ACP error in session chat-3-111: Prompt already in progress",
-    ])
+    _write_log(
+        log,
+        [
+            f"{ts} WARNING personalclaw.gateway: Injected timeout error for subagent abc into session chat-3-111",  # noqa: E501
+            f"{ts} WARNING personalclaw.dashboard.chat: ACP error in session chat-3-111: Prompt already in progress",  # noqa: E501
+        ],
+    )
     result = session_health.compute_session_health(log_path=log, now=log.stat().st_mtime)
     assert result["chat-3-111"]["reason"] == "prompt_stuck"
 
@@ -75,9 +88,12 @@ def test_skips_lines_outside_window(tmp_path: Path) -> None:
     _write_log(log, [""])  # touch to get mtime
     mtime_dt = datetime.datetime.fromtimestamp(log.stat().st_mtime)
     old = (mtime_dt - datetime.timedelta(minutes=20)).strftime("%H:%M:%S")
-    _write_log(log, [
-        f"{old} WARNING personalclaw.dashboard.chat: ACP error in session chat-4-222: Prompt already in progress",
-    ])
+    _write_log(
+        log,
+        [
+            f"{old} WARNING personalclaw.dashboard.chat: ACP error in session chat-4-222: Prompt already in progress",  # noqa: E501
+        ],
+    )
     result = session_health.compute_session_health(log_path=log)
     assert result == {}
 

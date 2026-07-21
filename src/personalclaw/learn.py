@@ -130,9 +130,7 @@ class LessonStore:
         kept = [le for le in lessons if lower not in le.rule.lower()]
         if len(kept) == len(lessons):
             return False
-        atomic_write(
-            self._path, "".join(json.dumps(asdict(le)) + "\n" for le in kept)
-        )
+        atomic_write(self._path, "".join(json.dumps(asdict(le)) + "\n" for le in kept))
         self._cache = None  # invalidate
         return True
 

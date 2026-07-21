@@ -103,36 +103,44 @@ class LexiconService:
             logger.info("lexicon rebuild: pruned %d stale graph terms", pruned)
         return n
 
-    def add_manual_term(self, canonical: str, *, aliases: list[str] | None = None,
-                        entity_type: str = "manual") -> str:
+    def add_manual_term(
+        self, canonical: str, *, aliases: list[str] | None = None, entity_type: str = "manual"
+    ) -> str:
         keys: list[str] = []
         for surface in [canonical, *(aliases or [])]:
             for tok in str(surface).split():
                 keys.extend(phonetic_keys(tok))
         term_id = f"manual_{canonical.lower().replace(' ', '_')}"
         self.store.upsert_term(
-            term_id=term_id, canonical=canonical, aliases=aliases or [],
-            phonetic_keys=sorted(set(keys)), entity_type=entity_type,
-            weight=2.0, source="manual",  # manual terms outrank raw graph terms
+            term_id=term_id,
+            canonical=canonical,
+            aliases=aliases or [],
+            phonetic_keys=sorted(set(keys)),
+            entity_type=entity_type,
+            weight=2.0,
+            source="manual",  # manual terms outrank raw graph terms
         )
         return term_id
 
     # ── LEX.3 pre-decode biasing ────────────────────────────────────────────────
-    def select_bias_terms(self, *, context_terms: list[str] | None = None,
-                          budget: int = _BIAS_BUDGET) -> list[str]:
+    def select_bias_terms(
+        self, *, context_terms: list[str] | None = None, budget: int = _BIAS_BUDGET
+    ) -> list[str]:
         """Ranked, budget-capped bias terms. Context terms (e.g. a meeting's sibling
         entities) come FIRST, then globally top-weighted terms fill the rest."""
         out: list[str] = []
         seen: set[str] = set()
-        for t in (context_terms or []):
+        for t in context_terms or []:
             t = t.strip()
             if t and t.lower() not in seen:
-                seen.add(t.lower()); out.append(t)
+                seen.add(t.lower())
+                out.append(t)
                 if len(out) >= budget:
                     return out
         for term in self.store.top_terms(budget * 2):
             if term.canonical.lower() not in seen:
-                seen.add(term.canonical.lower()); out.append(term.canonical)
+                seen.add(term.canonical.lower())
+                out.append(term.canonical)
                 if len(out) >= budget:
                     break
         return out
@@ -214,8 +222,9 @@ class LexiconService:
         return best
 
     # ── LEX.5 learned-corrections loop ───────────────────────────────────────────
-    def learn_correction(self, heard: str, meant: str, *, always: bool = False,
-                         threshold: int = 2) -> None:
+    def learn_correction(
+        self, heard: str, meant: str, *, always: bool = False, threshold: int = 2
+    ) -> None:
         """Record a user transcript fix: upsert heard→meant, raise the term's weight so it's
         more likely biased next time, and (past threshold / 'always') flip auto_apply."""
         heard = heard.strip()
@@ -223,8 +232,9 @@ class LexiconService:
         if not heard or not meant or heard == meant:
             return
         key = (phonetic_keys(meant) or [""])[0]
-        self.store.upsert_correction(heard, meant, phonetic_key=key,
-                                     auto_apply=True if always else None, threshold=threshold)
+        self.store.upsert_correction(
+            heard, meant, phonetic_key=key, auto_apply=True if always else None, threshold=threshold
+        )
         # Make sure the corrected term exists in the Lexicon + bump its weight. Exact
         # canonical match — a LIKE substring search would let a superstring term (e.g.
         # "Kubernetes Cluster") mask "Kubernetes", skipping the add AND stranding the
@@ -243,8 +253,9 @@ class LexiconService:
 
 
 # ── module-level bias seam (called by TranscriptionNode) ─────────────────────────
-async def select_bias_terms(*, context_item_id: str | None = None,
-                            budget: int = _BIAS_BUDGET) -> list[str]:
+async def select_bias_terms(
+    *, context_item_id: str | None = None, budget: int = _BIAS_BUDGET
+) -> list[str]:
     """The node-facing entry point (LEX.3). Resolves context entities for the item's
     siblings when available, else falls back to globally top-weighted terms. Returns []
     when the Lexicon is empty/unavailable so transcription just runs unbiased."""

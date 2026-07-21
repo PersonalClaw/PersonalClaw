@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from personalclaw.dashboard.handlers.triggers import api_trigger_create, api_triggers
 from personalclaw.schedule import ScheduleDefinition, ScheduleJob, make_agent_action
-from personalclaw.dashboard.handlers.triggers import api_triggers, api_trigger_create
 
 
 def _action(task="m", approval_mode=""):
@@ -20,7 +20,10 @@ class TestScheduleTriggerApprovalMode:
     def _make_request(self, body: dict) -> MagicMock:
         mock_state = MagicMock()
         mock_state.crons.add_job.return_value = ScheduleJob(
-            id="abc", name="t", action=make_agent_action(message="m"), schedule=ScheduleDefinition(kind="every", every_secs=300)
+            id="abc",
+            name="t",
+            action=make_agent_action(message="m"),
+            schedule=ScheduleDefinition(kind="every", every_secs=300),
         )
         mock_state.crons.is_running.return_value = False
         mock_state.crons.running_since.return_value = None
@@ -34,7 +37,12 @@ class TestScheduleTriggerApprovalMode:
     @pytest.mark.asyncio
     async def test_valid_approval_mode_auto(self):
         request = self._make_request(
-            {"trigger_type": "schedule", "name": "t", "every": 300, "action": _action(approval_mode="auto")}
+            {
+                "trigger_type": "schedule",
+                "name": "t",
+                "every": 300,
+                "action": _action(approval_mode="auto"),
+            }
         )
         resp = await api_trigger_create(request)
         assert resp.status == 200
@@ -45,7 +53,12 @@ class TestScheduleTriggerApprovalMode:
     @pytest.mark.asyncio
     async def test_invalid_approval_mode_rejected(self):
         request = self._make_request(
-            {"trigger_type": "schedule", "name": "t", "every": 300, "action": _action(approval_mode="evil")}
+            {
+                "trigger_type": "schedule",
+                "name": "t",
+                "every": 300,
+                "action": _action(approval_mode="evil"),
+            }
         )
         resp = await api_trigger_create(request)
         assert resp.status == 400
@@ -54,7 +67,13 @@ class TestScheduleTriggerApprovalMode:
     @pytest.mark.asyncio
     async def test_silent_flag_set(self):
         request = self._make_request(
-            {"trigger_type": "schedule", "name": "t", "every": 300, "silent": True, "action": _action()}
+            {
+                "trigger_type": "schedule",
+                "name": "t",
+                "every": 300,
+                "silent": True,
+                "action": _action(),
+            }
         )
         resp = await api_trigger_create(request)
         assert resp.status == 200

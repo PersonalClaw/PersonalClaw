@@ -251,11 +251,7 @@ class InboxStore:
         from the InboxService maintenance loop when auto-cleanup is enabled.
         """
         cutoff = time.time() - (retention_days * 86400)
-        expired = [
-            item_id
-            for item_id, item in self.items.items()
-            if item.created_at < cutoff
-        ]
+        expired = [item_id for item_id, item in self.items.items() if item.created_at < cutoff]
         for item_id in expired:
             del self.items[item_id]
         if expired:

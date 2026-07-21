@@ -28,9 +28,8 @@ def _resolver(mapping):
         if host not in mapping:
             raise socket.gaierror(host)
         return mapping[host]
+
     return _r
-
-
 
 
 def _web_tool_provider_cls():
@@ -39,6 +38,7 @@ def _web_tool_provider_cls():
     import importlib.util
     import sys
     from pathlib import Path
+
     app_dir = Path(__file__).resolve().parents[2] / "apps" / "web-tools"
     if not app_dir.is_dir():  # standalone core clone — the web-tools app isn't present
         pytest.skip("web-tools app dir not present (standalone clone)")
@@ -58,6 +58,7 @@ def _web_tool_provider_cls():
             sys.path.remove(str(app_dir))
     return mod.WebToolProvider
 
+
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch):
     monkeypatch.setattr(wf, "_seen_by_session", {})
@@ -65,6 +66,7 @@ def _isolate(monkeypatch):
 
 
 # ── render_url ────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_render_unavailable_without_playwright(monkeypatch):
@@ -80,8 +82,10 @@ async def test_render_egress_guard_blocks_before_browser(monkeypatch):
     # Playwright "available", but the URL resolves to a private IP → the egress guard
     # denies it BEFORE any browser launch (async_playwright must never be reached).
     monkeypatch.setattr(rd, "is_available", lambda: True)
+
     def _boom(*a, **k):
         raise AssertionError("browser must not launch for a guard-denied URL")
+
     # If the code tried to import/use playwright, this would surface — but the guard
     # returns first, so we just assert the deny outcome.
     out = await render_url("http://internal", resolver=_resolver({"internal": ["10.0.0.5"]}))
@@ -96,22 +100,32 @@ async def test_render_guard_allows_public_then_would_launch(monkeypatch):
     # returns an unavailable result (proves the guard is not what stops it here).
     monkeypatch.setattr(rd, "is_available", lambda: True)  # claim available…
     # …but the real import inside will fail (not installed) → handled gracefully.
-    out = await render_url("https://example.com", resolver=_resolver({"example.com": ["93.184.216.34"]}))
+    out = await render_url(
+        "https://example.com", resolver=_resolver({"example.com": ["93.184.216.34"]})
+    )
     assert out.ok is False  # import fails in this env
     assert out.unavailable is True or "import" in out.error.lower()
 
 
 # ── web_fetch(render=True) ──────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_web_fetch_render_falls_back_to_http_when_unavailable(monkeypatch):
     # render requested but unavailable → falls through to the normal HTTP fetch.
     async def _fake_render(url, **kw):
         return RenderResult(ok=False, url=url, unavailable=True, error="no playwright")
+
     monkeypatch.setattr(rd, "render_url", _fake_render)
+
     async def _fake_net(url, **kw):
-        return FetchResponse(url=url, status=200, headers={"Content-Type": "text/html"},
-                             body=b"<html><body><p>http path body content here</p></body></html>")
+        return FetchResponse(
+            url=url,
+            status=200,
+            headers={"Content-Type": "text/html"},
+            body=b"<html><body><p>http path body content here</p></body></html>",
+        )
+
     monkeypatch.setattr(wf, "net_fetch", _fake_net)
     out = await web_fetch("https://example.com/p", require_provenance=False, render=True)
     assert out.ok is True
@@ -122,11 +136,18 @@ async def test_web_fetch_render_falls_back_to_http_when_unavailable(monkeypatch)
 async def test_web_fetch_render_uses_rendered_html(monkeypatch):
     # A successful render: web_fetch extracts from the rendered HTML, not an HTTP fetch.
     async def _fake_render(url, **kw):
-        return RenderResult(ok=True, url=url, status=200,
-                            html="<html><body><article><p>JS-rendered content that is long enough.</p></article></body></html>")
+        return RenderResult(
+            ok=True,
+            url=url,
+            status=200,
+            html="<html><body><article><p>JS-rendered content that is long enough.</p></article></body></html>",  # noqa: E501
+        )
+
     monkeypatch.setattr(rd, "render_url", _fake_render)
+
     async def _net_boom(url, **kw):
         raise AssertionError("net_fetch must not be called when render succeeds")
+
     monkeypatch.setattr(wf, "net_fetch", _net_boom)
     out = await web_fetch("https://spa.example.com/p", require_provenance=False, render=True)
     assert out.ok is True
@@ -137,11 +158,19 @@ async def test_web_fetch_render_uses_rendered_html(monkeypatch):
 async def test_web_fetch_render_error_surfaces(monkeypatch):
     # A genuine render failure (not unavailability) surfaces, no silent HTTP fallback.
     async def _fake_render(url, **kw):
-        return RenderResult(ok=False, url=url, unavailable=False, error="render failed: timeout",
-                            recovery_hints=["retry"])
+        return RenderResult(
+            ok=False,
+            url=url,
+            unavailable=False,
+            error="render failed: timeout",
+            recovery_hints=["retry"],
+        )
+
     monkeypatch.setattr(rd, "render_url", _fake_render)
+
     async def _net_boom(url, **kw):
         raise AssertionError("net_fetch must not be called when render hard-fails")
+
     monkeypatch.setattr(wf, "net_fetch", _net_boom)
     out = await web_fetch("https://x.com/p", require_provenance=False, render=True)
     assert out.ok is False

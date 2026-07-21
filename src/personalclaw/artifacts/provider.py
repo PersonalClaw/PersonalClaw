@@ -65,12 +65,11 @@ class ArtifactProvider(ABC):
         slug: str | None = None,
         source_path: str = "",
         description: str = "",
-        tags: list[str] | None = None,
+        tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
         actor: str | None = None,
         session_id: str | None = None,
         project_id: str = "",
-    ) -> Artifact:
-        ...
+    ) -> Artifact: ...
 
     @abstractmethod
     def update(
@@ -84,9 +83,8 @@ class ArtifactProvider(ABC):
         session_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        tags: list[str] | None = None,
-    ) -> Artifact | None:
-        ...
+        tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
+    ) -> Artifact | None: ...
 
     def revert(
         self,
@@ -117,7 +115,7 @@ class ArtifactProvider(ABC):
         source: str = "chat",
         slug: str | None = None,
         description: str = "",
-        tags: list[str] | None = None,
+        tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
         actor: str | None = None,
         session_id: str | None = None,
         project_id: str = "",
@@ -143,12 +141,10 @@ class ArtifactProvider(ABC):
         return None
 
     @abstractmethod
-    def delete(self, slug: str) -> bool:
-        ...
+    def delete(self, slug: str) -> bool: ...
 
     @abstractmethod
-    def list_versions(self, slug: str) -> list[int]:
-        ...
+    def list_versions(self, slug: str) -> list[int]: ...  # type: ignore[valid-type]  # CI-1
 
     @abstractmethod
     def find_by_source_path(self, source_path: str) -> Artifact | None:

@@ -22,18 +22,28 @@ from personalclaw.apps.manifest import AppManifest
 @pytest.fixture(autouse=True)
 def _isolate_apps(tmp_path, monkeypatch):
     import personalclaw.config.loader as loader
+
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
     return tmp_path
 
 
 def _manifest(name: str, *, mcp=None, skills=None, agents=None) -> AppManifest:
-    return AppManifest.from_dict({
-        "name": name, "version": "1.0.0", "displayName": name, "description": "x",
-        "dependencies": {"marketplace": {
-            "mcp": mcp or [], "skills": skills or [], "agents": agents or [],
-        }},
-    })
+    return AppManifest.from_dict(
+        {
+            "name": name,
+            "version": "1.0.0",
+            "displayName": name,
+            "description": "x",
+            "dependencies": {
+                "marketplace": {
+                    "mcp": mcp or [],
+                    "skills": skills or [],
+                    "agents": agents or [],
+                }
+            },
+        }
+    )
 
 
 def _src(tmp_path: Path, name: str, *, subdir: str, mcp=None) -> Path:

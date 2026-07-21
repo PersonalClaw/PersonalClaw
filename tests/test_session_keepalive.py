@@ -40,9 +40,7 @@ async def test_keepalive_missing_session_key_returns_400():
 async def test_keepalive_unknown_session_returns_404():
     state = MagicMock()
     state.sessions = _FakeSessions(provider=MagicMock())
-    resp = await api_session_keepalive(
-        _make_request({"X-Session-Key": "unknown"}, state)
-    )
+    resp = await api_session_keepalive(_make_request({"X-Session-Key": "unknown"}, state))
     assert resp.status == 404
 
 
@@ -51,9 +49,7 @@ async def test_keepalive_calls_touch_activity_on_provider():
     provider = MagicMock()
     state = MagicMock()
     state.sessions = _FakeSessions(provider=provider)
-    resp = await api_session_keepalive(
-        _make_request({"X-Session-Key": "known"}, state)
-    )
+    resp = await api_session_keepalive(_make_request({"X-Session-Key": "known"}, state))
     assert resp.status == 200
     provider.touch_activity.assert_called_once_with()
 
@@ -64,8 +60,9 @@ def test_wait_tool_posts_keepalive_periodically():
 
     from personalclaw.mcp_core import _call_tool
 
-    with patch("personalclaw.mcp_core._post") as mock_post, patch.object(
-        _time, "sleep", return_value=None
+    with (
+        patch("personalclaw.mcp_core._post") as mock_post,
+        patch.object(_time, "sleep", return_value=None),
     ):
         mock_post.return_value = {}
 

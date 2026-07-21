@@ -63,17 +63,28 @@ class ExifNode:
 
     async def run(self, inputs, ctx: NodeContext) -> NodeOutput:
         if not ctx.file_path:
-            return NodeOutput(node_type=self.node_type, backend=self.backend, success=False, error="no file")
+            return NodeOutput(
+                node_type=self.node_type, backend=self.backend, success=False, error="no file"
+            )
         meta: dict = {}
         try:
             from PIL import Image  # type: ignore
 
             with Image.open(ctx.file_path) as im:
-                meta = {"width": im.width, "height": im.height, "format": im.format, "mode": im.mode}
+                meta = {
+                    "width": im.width,
+                    "height": im.height,
+                    "format": im.format,
+                    "mode": im.mode,
+                }
         except Exception as exc:
-            return NodeOutput(node_type=self.node_type, backend=self.backend, success=False, error=str(exc))
+            return NodeOutput(
+                node_type=self.node_type, backend=self.backend, success=False, error=str(exc)
+            )
         # Structural only — feeds metadata, not the text pool.
-        return NodeOutput(node_type=self.node_type, backend=self.backend, metadata=meta, pooled=False)
+        return NodeOutput(
+            node_type=self.node_type, backend=self.backend, metadata=meta, pooled=False
+        )
 
 
 # ── image: model-backed ──
@@ -90,13 +101,17 @@ class OcrNode:
         # OCR a single image (ctx.file_path) OR frames passed by an upstream node.
         images = _images_from(inputs, ctx)
         if not images:
-            return NodeOutput(node_type=self.node_type, backend=self.backend, success=False, error="no image")
+            return NodeOutput(
+                node_type=self.node_type, backend=self.backend, success=False, error="no image"
+            )
         text = await complete_text(
             self.uses_use_case,
-            "Transcribe ALL text visible in this image verbatim. Output only the text, no commentary.",
+            "Transcribe ALL text visible in this image verbatim. Output only the text, no commentary.",  # noqa: E501
             images=images[:1],
         )
-        return NodeOutput(node_type=self.node_type, backend=self.backend, text=text, classification="text-heavy")
+        return NodeOutput(
+            node_type=self.node_type, backend=self.backend, text=text, classification="text-heavy"
+        )
 
 
 class VisionNode:
@@ -107,16 +122,18 @@ class VisionNode:
     async def run(self, inputs, ctx: NodeContext) -> NodeOutput:
         images = _images_from(inputs, ctx)
         if not images:
-            return NodeOutput(node_type=self.node_type, backend=self.backend, success=False, error="no image")
+            return NodeOutput(
+                node_type=self.node_type, backend=self.backend, success=False, error="no image"
+            )
         # A single-image item → describe the one image. A video hands several sampled
         # frames → describe them together as one scene (up to 4, in time order) so the
         # description reflects the whole clip, not just its first frame.
         multi = len(images) > 1
         prompt = (
             "These are frames sampled in time order from a video. Describe what the video "
-            "shows overall: subjects, setting, notable objects, any on-screen text, and what it conveys."
-            if multi else
-            "Describe this image in detail: subjects, setting, notable objects, any text, and overall meaning."
+            "shows overall: subjects, setting, notable objects, any on-screen text, and what it conveys."  # noqa: E501
+            if multi
+            else "Describe this image in detail: subjects, setting, notable objects, any text, and overall meaning."  # noqa: E501
         )
         text = await complete_text(self.uses_use_case, prompt, images=images[:4])
         return NodeOutput(node_type=self.node_type, backend=self.backend, text=text)
@@ -133,7 +150,9 @@ class TranscriptionNode:
     async def run(self, inputs, ctx: NodeContext) -> NodeOutput:
         audio = _audio_from(inputs, ctx)
         if not audio:
-            return NodeOutput(node_type=self.node_type, backend=self.backend, success=False, error="no audio")
+            return NodeOutput(
+                node_type=self.node_type, backend=self.backend, success=False, error="no audio"
+            )
         try:
             from personalclaw.transcribe import transcribe_audio_detailed
 
@@ -143,7 +162,9 @@ class TranscriptionNode:
             bias_terms = await _lexicon_bias_terms(ctx)
             result = await transcribe_audio_detailed(audio, bias_terms=bias_terms)
         except Exception as exc:
-            return NodeOutput(node_type=self.node_type, backend=self.backend, success=False, error=str(exc))
+            return NodeOutput(
+                node_type=self.node_type, backend=self.backend, success=False, error=str(exc)
+            )
         # An empty transcript is a valid result (silent / no-speech / music audio) —
         # NOT a failure. Return success with empty text so the item lands 'done', not
         # an alarming 'failed'. The transcription genuinely ran; there was just no speech.
@@ -155,7 +176,12 @@ class TranscriptionNode:
         metadata: dict = {}
         if result.segments:
             metadata["transcript"] = result.to_dict()
-        return NodeOutput(node_type=self.node_type, backend=self.backend, text=result.text or "", metadata=metadata)
+        return NodeOutput(
+            node_type=self.node_type,
+            backend=self.backend,
+            text=result.text or "",
+            metadata=metadata,
+        )
 
 
 class LexiconCorrectionNode:
@@ -182,12 +208,20 @@ class LexiconCorrectionNode:
             return NodeOutput(node_type=self.node_type, backend=self.backend, text=flat)
         try:
             from personalclaw.lexicon import get_lexicon_service
-            from personalclaw.stt.provider import TranscriptResult, TranscriptSegment, TranscriptWord
+            from personalclaw.stt.provider import (
+                TranscriptResult,
+                TranscriptSegment,
+                TranscriptWord,
+            )
 
             svc = get_lexicon_service()
             if svc.store.count_terms() == 0:
-                return NodeOutput(node_type=self.node_type, backend=self.backend,
-                                  text=flat, metadata={"transcript": transcript})
+                return NodeOutput(
+                    node_type=self.node_type,
+                    backend=self.backend,
+                    text=flat,
+                    metadata={"transcript": transcript},
+                )
             # Rehydrate the dict → TranscriptResult so the service mutates typed objects.
             result = TranscriptResult(
                 text=transcript.get("text", ""),
@@ -195,28 +229,43 @@ class LexiconCorrectionNode:
                 duration=transcript.get("duration", 0.0),
                 segments=[
                     TranscriptSegment(
-                        start=s.get("start", 0.0), end=s.get("end", 0.0), text=s.get("text", ""),
+                        start=s.get("start", 0.0),
+                        end=s.get("end", 0.0),
+                        text=s.get("text", ""),
                         speaker=s.get("speaker"),
-                        words=[TranscriptWord(w.get("start", 0.0), w.get("end", 0.0),
-                                              w.get("word", ""), w.get("prob", 1.0))
-                               for w in s.get("words", [])],
+                        words=[
+                            TranscriptWord(
+                                w.get("start", 0.0),
+                                w.get("end", 0.0),
+                                w.get("word", ""),
+                                w.get("prob", 1.0),
+                            )
+                            for w in s.get("words", [])
+                        ],
                     )
                     for s in transcript.get("segments", [])
                 ],
             )
             outcome = svc.correct(result)
         except Exception:
-            logger.debug("lexicon_correction failed (non-fatal); passing transcript through", exc_info=True)
-            return NodeOutput(node_type=self.node_type, backend=self.backend,
-                              text=flat, metadata={"transcript": transcript})
+            logger.debug(
+                "lexicon_correction failed (non-fatal); passing transcript through", exc_info=True
+            )
+            return NodeOutput(
+                node_type=self.node_type,
+                backend=self.backend,
+                text=flat,
+                metadata={"transcript": transcript},
+            )
 
         meta = {
             "transcript": result.to_dict(),
             "corrections_applied": [c.__dict__ for c in outcome.applied],
             "corrections_suggested": [c.__dict__ for c in outcome.suggested],
         }
-        return NodeOutput(node_type=self.node_type, backend=self.backend,
-                          text=result.text or flat, metadata=meta)
+        return NodeOutput(
+            node_type=self.node_type, backend=self.backend, text=result.text or flat, metadata=meta
+        )
 
 
 class DiarizationNode:
@@ -231,17 +280,23 @@ class DiarizationNode:
     async def run(self, inputs, ctx: NodeContext) -> NodeOutput:
         audio = _audio_from(inputs, ctx)
         if not audio:
-            return NodeOutput(node_type=self.node_type, backend=self.backend, success=False, error="no audio")
+            return NodeOutput(
+                node_type=self.node_type, backend=self.backend, success=False, error="no audio"
+            )
         try:
             from personalclaw.diarize import diarize_audio
 
             turns = await diarize_audio(audio)
         except Exception as exc:
-            return NodeOutput(node_type=self.node_type, backend=self.backend, success=False, error=str(exc))
+            return NodeOutput(
+                node_type=self.node_type, backend=self.backend, success=False, error=str(exc)
+            )
         if not turns:
             # No model bound / no speech → pass through (fusion will no-op).
             return NodeOutput(node_type=self.node_type, backend=self.backend, text="")
-        meta = {"speaker_turns": [{"start": t.start, "end": t.end, "speaker": t.speaker} for t in turns]}
+        meta = {
+            "speaker_turns": [{"start": t.start, "end": t.end, "speaker": t.speaker} for t in turns]
+        }
         return NodeOutput(node_type=self.node_type, backend=self.backend, metadata=meta)
 
 
@@ -265,12 +320,20 @@ class SpeakerFusionNode:
             return NodeOutput(node_type=self.node_type, backend=self.backend, text=flat)
         if not turns:
             # No diarization → pass the transcript through untouched.
-            return NodeOutput(node_type=self.node_type, backend=self.backend,
-                              text=flat, metadata={"transcript": transcript})
+            return NodeOutput(
+                node_type=self.node_type,
+                backend=self.backend,
+                text=flat,
+                metadata={"transcript": transcript},
+            )
         fused = _fuse_speakers(transcript, turns)
         attributed = _speaker_attributed_text(fused)
-        return NodeOutput(node_type=self.node_type, backend=self.backend,
-                          text=attributed or flat, metadata={"transcript": fused})
+        return NodeOutput(
+            node_type=self.node_type,
+            backend=self.backend,
+            text=attributed or flat,
+            metadata={"transcript": fused},
+        )
 
 
 def _speaker_turns_from(inputs: dict) -> list[dict]:
@@ -297,7 +360,10 @@ def _fuse_speakers(transcript: dict, turns: list[dict]) -> dict:
     for seg in transcript.get("segments", []):
         words = seg.get("words", [])
         if not words:
-            seg = {**seg, "speaker": _speaker_for(seg.get("start", 0.0), seg.get("end", 0.0), turns)}
+            seg = {
+                **seg,
+                "speaker": _speaker_for(seg.get("start", 0.0), seg.get("end", 0.0), turns),
+            }
             out_segments.append(seg)
             continue
         # Walk words; start a new sub-segment whenever the speaker changes.
@@ -368,17 +434,29 @@ class AvSplitNode:
     uses_use_case = None
 
     async def run(self, inputs, ctx: NodeContext) -> NodeOutput:
-        if not ctx.file_path or not _ffmpeg():
-            return NodeOutput(node_type=self.node_type, backend=self.backend, success=False, error="no ffmpeg/file", pooled=False)
+        ff = _ffmpeg()
+        if not ctx.file_path or not ff:
+            return NodeOutput(
+                node_type=self.node_type,
+                backend=self.backend,
+                success=False,
+                error="no ffmpeg/file",
+                pooled=False,
+            )
         work = ctx.work_dir or os.path.dirname(ctx.file_path)
         audio_out = os.path.join(work, f"{ctx.item_id}.audio.wav")
-        cmd = [_ffmpeg(), "-y", "-i", ctx.file_path, "-vn", "-ac", "1", "-ar", "16000", audio_out]
+        cmd = [ff, "-y", "-i", ctx.file_path, "-vn", "-ac", "1", "-ar", "16000", audio_out]
         rc = await _run_cmd(cmd)
         meta = {"video": ctx.file_path}
         if rc == 0 and os.path.exists(audio_out):
             meta["audio"] = audio_out
-        return NodeOutput(node_type=self.node_type, backend=self.backend, pooled=False,
-                          artifacts=[audio_out] if "audio" in meta else [], metadata=meta)
+        return NodeOutput(
+            node_type=self.node_type,
+            backend=self.backend,
+            pooled=False,
+            artifacts=[audio_out] if "audio" in meta else [],
+            metadata=meta,
+        )
 
 
 class FrameExtractNode:
@@ -393,8 +471,15 @@ class FrameExtractNode:
     uses_use_case = None
 
     async def run(self, inputs, ctx: NodeContext) -> NodeOutput:
-        if not ctx.file_path or not _ffmpeg():
-            return NodeOutput(node_type=self.node_type, backend=self.backend, success=False, error="no ffmpeg/file", pooled=False)
+        ff = _ffmpeg()
+        if not ctx.file_path or not ff:
+            return NodeOutput(
+                node_type=self.node_type,
+                backend=self.backend,
+                success=False,
+                error="no ffmpeg/file",
+                pooled=False,
+            )
         work = ctx.work_dir or os.path.dirname(ctx.file_path)
         params = ctx.params or {}
         dense_regions = params.get("dense_regions") or []
@@ -403,36 +488,74 @@ class FrameExtractNode:
         if dense_regions:
             # Adaptive iteration: sample the flagged regions densely (an extra frame
             # set per region at a tighter fps). Denser each iteration.
-            dense_fps = min(2.0, 0.3 * (2 ** iteration))  # 0.6 → 1.2 → 2.0 fps, capped
+            dense_fps = min(2.0, 0.3 * (2**iteration))  # 0.6 → 1.2 → 2.0 fps, capped
             frames = list(self._existing_frames(work, ctx.item_id))  # keep the coarse set
             for ri, region in enumerate(dense_regions):
-                start = float(region.get("start", 0)); end = float(region.get("end", 0))
+                start = float(region.get("start", 0))
+                end = float(region.get("end", 0))
                 pat = os.path.join(work, f"{ctx.item_id}.dense{iteration}_{ri}_%03d.jpg")
                 # end<=start → sample from `start` to the end of the clip (no -to).
                 span = ["-to", str(end)] if end > start else []
-                cmd = [_ffmpeg(), "-y", "-ss", str(start), *span, "-i", ctx.file_path,
-                       "-vf", f"fps={dense_fps}", "-frames:v", str(_FRAME_CAP), pat]
+                cmd = [
+                    ff,
+                    "-y",
+                    "-ss",
+                    str(start),
+                    *span,
+                    "-i",
+                    ctx.file_path,
+                    "-vf",
+                    f"fps={dense_fps}",
+                    "-frames:v",
+                    str(_FRAME_CAP),
+                    pat,
+                ]
                 await _run_cmd(cmd)
             frames = sorted(self._existing_frames(work, ctx.item_id))
-            return NodeOutput(node_type=self.node_type, backend=self.backend, pooled=False,
-                              artifacts=frames, metadata={"frame_count": len(frames),
-                                                          "dense_iteration": iteration,
-                                                          "dense_regions": dense_regions})
+            return NodeOutput(
+                node_type=self.node_type,
+                backend=self.backend,
+                pooled=False,
+                artifacts=frames,
+                metadata={
+                    "frame_count": len(frames),
+                    "dense_iteration": iteration,
+                    "dense_regions": dense_regions,
+                },
+            )
 
         # Initial coarse pass.
         pattern = os.path.join(work, f"{ctx.item_id}.frame_%03d.jpg")
-        cmd = [_ffmpeg(), "-y", "-i", ctx.file_path, "-vf", "fps=1/10", "-frames:v", str(_FRAME_CAP), pattern]
+        cmd = [
+            ff,
+            "-y",
+            "-i",
+            ctx.file_path,
+            "-vf",
+            "fps=1/10",
+            "-frames:v",
+            str(_FRAME_CAP),
+            pattern,
+        ]
         await _run_cmd(cmd)
         frames = sorted(self._existing_frames(work, ctx.item_id))
-        return NodeOutput(node_type=self.node_type, backend=self.backend, pooled=False,
-                          artifacts=frames, metadata={"frame_count": len(frames)})
+        return NodeOutput(
+            node_type=self.node_type,
+            backend=self.backend,
+            pooled=False,
+            artifacts=frames,
+            metadata={"frame_count": len(frames)},
+        )
 
     @staticmethod
     def _existing_frames(work: str, item_id: str) -> list[str]:
         if not os.path.isdir(work):
             return []
-        return [os.path.join(work, f) for f in os.listdir(work)
-                if f.startswith(f"{item_id}.frame_") or f.startswith(f"{item_id}.dense")]
+        return [
+            os.path.join(work, f)
+            for f in os.listdir(work)
+            if f.startswith(f"{item_id}.frame_") or f.startswith(f"{item_id}.dense")
+        ]
 
 
 # ── video: model-backed ──
@@ -455,7 +578,13 @@ class VideoClassifyNode:
     async def run(self, inputs, ctx: NodeContext) -> NodeOutput:
         frames = _frames_from(inputs)
         if not frames:
-            return NodeOutput(node_type=self.node_type, backend=self.backend, success=False, error="no frames", pooled=False)
+            return NodeOutput(
+                node_type=self.node_type,
+                backend=self.backend,
+                success=False,
+                error="no frames",
+                pooled=False,
+            )
         iteration = int((ctx.params or {}).get("loop_iteration", 0))
 
         # Ask the model both for the dominant content kind AND whether specific time
@@ -471,18 +600,32 @@ class VideoClassifyNode:
         )
         raw = await complete_text(self.uses_use_case, prompt, images=frames[:6])
         v = (raw or "").strip().lower()
-        content_cls = "text-heavy" if "text" in v else "talking-head" if "talking" in v else "visual"
+        content_cls = (
+            "text-heavy" if "text" in v else "talking-head" if "talking" in v else "visual"
+        )
         wants_dense = "dense=yes" in v or ("dense" in v and "yes" in v)
 
         # Content-heavy AND flagged dense AND still within the loop budget → request a
         # denser pass. dense_regions defaults to the whole timeline on the first ask;
         # a real duration probe refines it (region-aware: only the flagged span).
-        if wants_dense and content_cls in ("text-heavy", "visual") and iteration < self._MAX_DENSE_ITERS:
+        if (
+            wants_dense
+            and content_cls in ("text-heavy", "visual")
+            and iteration < self._MAX_DENSE_ITERS
+        ):
             regions = self._dense_regions(ctx, frames)
             return NodeOutput(
-                node_type=self.node_type, backend=self.backend, classification="needs-denser",
-                metadata={"verdict": content_cls, "dense": True, "dense_regions": regions,
-                          "iteration": iteration}, pooled=False)
+                node_type=self.node_type,
+                backend=self.backend,
+                classification="needs-denser",
+                metadata={
+                    "verdict": content_cls,
+                    "dense": True,
+                    "dense_regions": regions,
+                    "iteration": iteration,
+                },
+                pooled=False,
+            )
 
         # Carry the frames through as artifacts. ocr/vision are DIRECT successors of
         # video_classify (edges: classify→vision/ocr) and the executor feeds a node only
@@ -490,9 +633,14 @@ class VideoClassifyNode:
         # node sees no frame_extract output and falls back to the raw .mp4 (which a vision
         # model can't read → empty extraction → consolidate fails). Passing frames here
         # is what lets vision/ocr actually receive the sampled JPGs.
-        return NodeOutput(node_type=self.node_type, backend=self.backend, classification=content_cls,
-                          artifacts=list(frames), metadata={"verdict": content_cls, "dense": wants_dense,
-                                    "iterations": iteration}, pooled=False)
+        return NodeOutput(
+            node_type=self.node_type,
+            backend=self.backend,
+            classification=content_cls,
+            artifacts=list(frames),
+            metadata={"verdict": content_cls, "dense": wants_dense, "iterations": iteration},
+            pooled=False,
+        )
 
     def _dense_regions(self, ctx: NodeContext, frames: list) -> list[dict]:
         """Timestamp ranges to resample densely. Region-aware: uses the media duration
@@ -506,9 +654,20 @@ class VideoClassifyNode:
         if ffprobe and ctx.file_path:
             try:
                 out = subprocess.run(
-                    [ffprobe, "-v", "error", "-show_entries", "format=duration",
-                     "-of", "default=noprint_wrappers=1:nokey=1", ctx.file_path],
-                    capture_output=True, text=True, timeout=15)
+                    [
+                        ffprobe,
+                        "-v",
+                        "error",
+                        "-show_entries",
+                        "format=duration",
+                        "-of",
+                        "default=noprint_wrappers=1:nokey=1",
+                        ctx.file_path,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
                 dur = float((out.stdout or "").strip() or 0)
             except (ValueError, OSError, subprocess.SubprocessError):
                 dur = 0.0
@@ -531,18 +690,25 @@ class VideoConsolidateNode:
             if o and o.success and o.text:
                 pieces.append(f"[{nt}]\n{o.text}")
         if not pieces:
-            return NodeOutput(node_type=self.node_type, backend=self.backend, success=False, error="nothing to consolidate")
+            return NodeOutput(
+                node_type=self.node_type,
+                backend=self.backend,
+                success=False,
+                error="nothing to consolidate",
+            )
         merged_src = "\n\n".join(pieces)
         text = await complete_text(
             self.uses_use_case,
             "Below are extracted signals from a video (frame text/descriptions and/or an audio "
-            "transcript). Write a single coherent description of what the video contains and conveys.\n\n"
+            "transcript). Write a single coherent description of what the video contains and conveys.\n\n"  # noqa: E501
             + merged_src,
         )
-        return NodeOutput(node_type=self.node_type, backend=self.backend, text=text or merged_src,
-                          metadata={"sources": [p.split("]")[0].strip("[") for p in pieces]})
-
-
+        return NodeOutput(
+            node_type=self.node_type,
+            backend=self.backend,
+            text=text or merged_src,
+            metadata={"sources": [p.split("]")[0].strip("[") for p in pieces]},
+        )
 
 
 # ── input helpers ──
@@ -584,7 +750,9 @@ def _audio_from(inputs: dict, ctx: NodeContext) -> str:
 async def _run_cmd(cmd: list[str]) -> int:
     try:
         proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            *cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         await proc.wait()
         return proc.returncode or 0
@@ -595,8 +763,16 @@ async def _run_cmd(cmd: list[str]) -> int:
 
 def register() -> None:
     for node in (
-        ExifNode(), OcrNode(), VisionNode(), TranscriptionNode(),
-        AvSplitNode(), FrameExtractNode(), VideoClassifyNode(), VideoConsolidateNode(),
-        LexiconCorrectionNode(), DiarizationNode(), SpeakerFusionNode(),
+        ExifNode(),
+        OcrNode(),
+        VisionNode(),
+        TranscriptionNode(),
+        AvSplitNode(),
+        FrameExtractNode(),
+        VideoClassifyNode(),
+        VideoConsolidateNode(),
+        LexiconCorrectionNode(),
+        DiarizationNode(),
+        SpeakerFusionNode(),
     ):
         register_node(node)

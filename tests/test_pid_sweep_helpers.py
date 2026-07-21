@@ -461,9 +461,7 @@ class TestPeriodicSweepIntegration:
             assert orphan_pid in confirmed
 
             # Phase 2b: kill and writeback
-            orphan_killed = _kill_confirmed_and_writeback(
-                my_gw, confirmed, killed_or_dead
-            )
+            orphan_killed = _kill_confirmed_and_writeback(my_gw, confirmed, killed_or_dead)
             assert orphan_killed == 1
 
         # PID file should be cleaned
@@ -498,17 +496,13 @@ class TestPeriodicSweepIntegration:
         session_pid_file.write_text(f"{my_gw}:{managed_pid}\n")
 
         with patch("os.kill"):  # alive
-            killed_or_dead, candidates = _periodic_pid_sweep(
-                my_gw, {managed_pid}
-            )
+            killed_or_dead, candidates = _periodic_pid_sweep(my_gw, {managed_pid})
 
         assert managed_pid not in candidates
         assert len(killed_or_dead) == 0
 
     @pytest.mark.asyncio
-    async def test_catch_all_exception_does_not_crash(
-        self, session_pid_file: Path
-    ) -> None:
+    async def test_catch_all_exception_does_not_crash(self, session_pid_file: Path) -> None:
         """The except Exception catch-all at L1628 prevents crashes."""
         my_gw = os.getpid()
         session_pid_file.write_text(f"{my_gw}:99999\n")

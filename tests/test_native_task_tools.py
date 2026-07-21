@@ -17,8 +17,10 @@ def provider(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
     store = tmp_path / "home"
-    with patch("personalclaw.tasks.native.config_dir", return_value=store), \
-         patch("personalclaw.tasks.hierarchy.config_dir", return_value=store):
+    with (
+        patch("personalclaw.tasks.native.config_dir", return_value=store),
+        patch("personalclaw.tasks.hierarchy.config_dir", return_value=store),
+    ):
         yield NativeBuiltinToolProvider(ws)
     registry._providers.clear()
 
@@ -27,8 +29,15 @@ def provider(tmp_path):
 async def test_task_tools_listed(provider):
     names = {t.name for t in await provider.list_tools()}
     assert {
-        "task_create", "task_list", "task_get", "task_update", "task_ready",
-        "task_search", "project_create", "project_list", "task_list_create",
+        "task_create",
+        "task_list",
+        "task_get",
+        "task_update",
+        "task_ready",
+        "task_search",
+        "project_create",
+        "project_list",
+        "task_list_create",
     } <= names
 
 
@@ -59,15 +68,18 @@ async def test_task_list_and_search(provider):
 
 @pytest.mark.asyncio
 async def test_task_update_status_and_complete_gate(provider):
-    r = await provider.invoke("task_create", {
-        "title": "Ship", "exit_criteria": [{"description": "tests pass", "met": False}]})
+    r = await provider.invoke(
+        "task_create",
+        {"title": "Ship", "exit_criteria": [{"description": "tests pass", "met": False}]},
+    )
     tid = r.output.split("created task ")[1].split(":")[0]
     # Completing while a criterion is unmet is rejected with a helpful hint.
     blocked = await provider.invoke("task_update", {"id": tid, "status": "done"})
     assert not blocked.success and "exit criteria" in blocked.error
     # Mark the criterion met, then completing succeeds.
-    await provider.invoke("task_update", {
-        "id": tid, "exit_criteria": [{"description": "tests pass", "met": True}]})
+    await provider.invoke(
+        "task_update", {"id": tid, "exit_criteria": [{"description": "tests pass", "met": True}]}
+    )
     ok = await provider.invoke("task_update", {"id": tid, "status": "done"})
     assert ok.success and "[done]" in ok.output
 

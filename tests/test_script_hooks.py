@@ -264,7 +264,9 @@ class TestRunScriptHook:
             name="stdin",
             event=HOOK_EVENT_USER_PROMPT_SUBMIT,
             provider="bash",
-            provider_config={"command": f"{sys.executable} -c 'import sys, json; print(json.load(sys.stdin)[\"hook_event_name\"])'"},
+            provider_config={
+                "command": f"{sys.executable} -c 'import sys, json; print(json.load(sys.stdin)[\"hook_event_name\"])'"  # noqa: E501
+            },
             timeout=30,
             enabled=True,
         )
@@ -425,7 +427,9 @@ class TestScriptHookStoreFire:
             {
                 "name": "input-hook",
                 "event": HOOK_EVENT_PRE_TOOL_USE,
-                "provider_config": {"command": f'{sys.executable} -c \'import sys, json; print(json.load(sys.stdin).get("tool_input", {{}}).get("test_key"))\''},
+                "provider_config": {
+                    "command": f'{sys.executable} -c \'import sys, json; print(json.load(sys.stdin).get("tool_input", {{}}).get("test_key"))\''  # noqa: E501
+                },
                 "timeout": 30,
             }
         )

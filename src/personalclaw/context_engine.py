@@ -67,7 +67,9 @@ class ContextEngine(Protocol):
         """A message was added to the session — store/index it (may be a no-op)."""
         ...
 
-    def assemble(self, builder: "ContextBuilder", text: str, *, is_new_session: bool, **kwargs: Any) -> AssembledContext:
+    def assemble(
+        self, builder: "ContextBuilder", text: str, *, is_new_session: bool, **kwargs: Any
+    ) -> AssembledContext:
         """Produce the full turn prompt. ``kwargs`` are ``build_message``'s params."""
         ...
 
@@ -106,8 +108,10 @@ class DefaultContextEngine:
         # opts out (active_recall=False).
         if is_new_session and not kwargs.get("blocks_reads") and active_recall:
             recall = active_recall_block(
-                builder, text,
-                cwd=kwargs.get("cwd"), memory_store=kwargs.get("memory_store"),
+                builder,
+                text,
+                cwd=kwargs.get("cwd"),
+                memory_store=kwargs.get("memory_store"),
             )
             if recall:
                 full_message = recall + full_message
@@ -133,13 +137,18 @@ _RECALL_BREAKER_TRIP = 3  # consecutive timeouts → disable active recall this 
 def _active_recall_enabled() -> tuple[bool, int]:
     try:
         from personalclaw.config.loader import AppConfig
+
         mem = AppConfig.load().memory
-        return bool(getattr(mem, "active_recall", True)), int(getattr(mem, "active_recall_timeout_ms", 1500))
+        return bool(getattr(mem, "active_recall", True)), int(
+            getattr(mem, "active_recall_timeout_ms", 1500)
+        )
     except Exception:
         return True, 1500
 
 
-def active_recall_block(builder: "ContextBuilder", text: str, *, cwd: str | None, memory_store: str | None) -> str:
+def active_recall_block(
+    builder: "ContextBuilder", text: str, *, cwd: str | None, memory_store: str | None
+) -> str:
     """Query-relevant memory for THIS turn, fenced as untrusted context, or "".
 
     Reuses PClaw's hybrid episodic retrieval (vector + relevance filter) on the
@@ -170,7 +179,8 @@ def active_recall_block(builder: "ContextBuilder", text: str, *, cwd: str | None
         _recall_consecutive_timeouts += 1
         logger.info(
             "active recall timed out (%dms); consecutive=%d",
-            timeout_ms, _recall_consecutive_timeouts,
+            timeout_ms,
+            _recall_consecutive_timeouts,
         )
         return ""
     except Exception:
@@ -212,13 +222,17 @@ def set_engine(engine: ContextEngine | None) -> None:
     if missing:
         logger.error(
             "Rejecting context engine %r — missing hooks %s; staying on default",
-            getattr(engine, "name", "?"), missing,
+            getattr(engine, "name", "?"),
+            missing,
         )
         _active = _DEFAULT
         return
     _active = engine
-    logger.info("Context engine set to %r (owns_compaction=%s)",
-                engine.name, getattr(engine, "owns_compaction", False))
+    logger.info(
+        "Context engine set to %r (owns_compaction=%s)",
+        engine.name,
+        getattr(engine, "owns_compaction", False),
+    )
 
 
 def assemble_context(
@@ -239,7 +253,8 @@ def assemble_context(
     except Exception:
         logger.warning(
             "Context engine %r failed in assemble — quarantining to default engine",
-            getattr(engine, "name", "?"), exc_info=True,
+            getattr(engine, "name", "?"),
+            exc_info=True,
         )
         set_engine(None)  # quarantine: stop using the broken engine this process
         return _DEFAULT.assemble(builder, text, is_new_session=is_new_session, **kwargs)

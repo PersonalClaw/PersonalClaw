@@ -64,11 +64,13 @@ def _redact_item(item: dict) -> dict:
 # intent rather than letting a hot topic surface stale items.
 _RECENCY_HALF_LIFE_DAYS = 2.0
 
+
 def _inbox_config():
     """The live inbox config. DashboardState has no `.config` attribute — the inbox
     handlers read the config via AppConfig.load() (matching api_inbox_status), which
     reflects config.json edits made through the PATCH endpoint on the next read."""
     from personalclaw.config.loader import AppConfig
+
     return AppConfig.load().inbox
 
 
@@ -87,6 +89,7 @@ def _engagement_store(state: "DashboardState"):
         store = getattr(state, "_engagement_store", None)
         if store is None:
             from personalclaw.engagement_signals import EngagementStore
+
             hl = 0.0
             try:
                 hl = float(_inbox_config().engagement_half_life_days or 0.0)
@@ -122,6 +125,7 @@ def _record_signal(state: "DashboardState", item, signal: str) -> None:
     if store is None:
         return
     import time
+
     now = time.time()
     for tk in _topic_keys(item):
         store.record(tk, signal, now=now)
@@ -138,7 +142,9 @@ def _rank_items(state: "DashboardState", items: list) -> list:
     if store is None:
         return baseline
     import time
+
     from personalclaw.engagement_signals import rank_by_engagement
+
     now = time.time()
     if not baseline:
         return baseline
@@ -158,6 +164,7 @@ def _rank_items(state: "DashboardState", items: list) -> list:
         """Adapter: weight_for(item) = product of weight_for over the item's topic keys,
         so rank_by_engagement's single-key contract composes multiple coarse keys (channel
         × sender × classification) without inlining its own recency×weight math."""
+
         def weight_for(self, item, *, now):
             w = 1.0
             for tk in _topic_keys(item):
@@ -167,7 +174,11 @@ def _rank_items(state: "DashboardState", items: list) -> list:
     # topic_key is identity: the item itself is the "key", and _MultiKeyWeight folds its
     # per-field weights — so the ONE rank_by_engagement blend still owns recency×weight.
     return rank_by_engagement(
-        baseline, recency_key=_recency, topic_key=lambda i: i, store=_MultiKeyWeight(), now=now,
+        baseline,
+        recency_key=_recency,
+        topic_key=lambda i: i,
+        store=_MultiKeyWeight(),
+        now=now,
     )
 
 
@@ -221,7 +232,13 @@ async def api_inbox_update(request: web.Request) -> web.Response:
         return web.json_response({"error": "not found"}, status=404)
 
     try:
-        sel().log_tool_invocation(session_key="dashboard:inbox", tool_name="inbox_update", outcome="success", request_id=item_id, source="dashboard")
+        sel().log_tool_invocation(
+            session_key="dashboard:inbox",
+            tool_name="inbox_update",
+            outcome="success",
+            request_id=item_id,
+            source="dashboard",
+        )
     except Exception:
         logger.warning("SEL audit failed for inbox update", exc_info=True)
 
@@ -240,7 +257,13 @@ async def api_inbox_dismiss_all(request: web.Request) -> web.Response:
         count += 1
     inbox_state.save()
     try:
-        sel().log_tool_invocation(session_key="dashboard:inbox", tool_name="inbox_dismiss_all", outcome="success", request_id=f"count:{count}", source="dashboard")
+        sel().log_tool_invocation(
+            session_key="dashboard:inbox",
+            tool_name="inbox_dismiss_all",
+            outcome="success",
+            request_id=f"count:{count}",
+            source="dashboard",
+        )
     except Exception:
         logger.warning("SEL audit failed for inbox dismiss_all", exc_info=True)
     return web.json_response({"ok": True, "dismissed": count})
@@ -259,12 +282,24 @@ async def api_inbox_draft(request: web.Request) -> web.Response:
     if not item:
         logger.warning("Draft failed for %s", item_id)
         try:
-            sel().log_tool_invocation(session_key="dashboard:inbox", tool_name="inbox_draft", outcome="failure", request_id=item_id, source="dashboard")
+            sel().log_tool_invocation(
+                session_key="dashboard:inbox",
+                tool_name="inbox_draft",
+                outcome="failure",
+                request_id=item_id,
+                source="dashboard",
+            )
         except Exception:
             logger.warning("SEL audit failed for inbox draft failure", exc_info=True)
         return web.json_response({"error": "not found or draft failed"}, status=404)
     try:
-        sel().log_tool_invocation(session_key="dashboard:inbox", tool_name="inbox_draft", outcome="success", request_id=item_id, source="dashboard")
+        sel().log_tool_invocation(
+            session_key="dashboard:inbox",
+            tool_name="inbox_draft",
+            outcome="success",
+            request_id=item_id,
+            source="dashboard",
+        )
     except Exception:
         logger.warning("SEL audit failed for inbox draft success", exc_info=True)
     state.broadcast_ws("inbox_item_updated", _redact_item(item.to_dict()))
@@ -306,7 +341,9 @@ async def api_inbox_send(request: web.Request) -> web.Response:
     if not item:
         return web.json_response({"error": "not found"}, status=404)
     if not getattr(item, "can_reply", False):
-        return web.json_response({"error": "this item's source does not support replies"}, status=400)
+        return web.json_response(
+            {"error": "this item's source does not support replies"}, status=400
+        )
 
     if item.source == "native":
         # Route the reply back to the posting agent's session when it's a live
@@ -316,6 +353,7 @@ async def api_inbox_send(request: web.Request) -> web.Response:
         session = state.get_session(target) if target else None
         if session is not None:
             from personalclaw.dashboard.chat_runner import _run_chat
+
             session.enqueue_or_run_prompt(text, _run_chat, state)
             delivered = True
         inbox.update(item_id, status=ItemStatus.HANDLED.value, draft=text)
@@ -323,7 +361,9 @@ async def api_inbox_send(request: web.Request) -> web.Response:
         state.broadcast_ws("inbox_item_updated", _redact_item(item.to_dict()))
         return web.json_response({"ok": True, "delivered_to_session": delivered})
 
-    return web.json_response({"error": f"replies for source {item.source!r} are not yet wired"}, status=503)
+    return web.json_response(
+        {"error": f"replies for source {item.source!r} are not yet wired"}, status=503
+    )
 
 
 async def api_inbox_open(request: web.Request) -> web.Response:
@@ -372,7 +412,18 @@ async def api_inbox_status(request: web.Request) -> web.Response:
     inbox_state, inbox = _get_inbox(state)
 
     svc = getattr(state, "_inbox_svc", None)
-    health = svc.health() if svc else {"running": False, "last_poll_at": 0, "last_poll_ok": False, "last_error": "Service not initialized", "poll_count": 0, "stale": False}
+    health = (
+        svc.health()
+        if svc
+        else {
+            "running": False,
+            "last_poll_at": 0,
+            "last_poll_ok": False,
+            "last_error": "Service not initialized",
+            "poll_count": 0,
+            "stale": False,
+        }
+    )
 
     # Per-source health. The native source is ALWAYS active (push-based agent→inbox
     # sink); the poll-based providers run only when cfg.inbox.enabled. So "native
@@ -382,26 +433,35 @@ async def api_inbox_status(request: web.Request) -> web.Response:
         from personalclaw.inbox_providers import get_message_providers
 
         for name in get_message_providers():
-            sources.append({"name": name, "active": bool(sec.enabled), "kind": "poll", "can_reply": name != "filesystem"})
+            sources.append(
+                {
+                    "name": name,
+                    "active": bool(sec.enabled),
+                    "kind": "poll",
+                    "can_reply": name != "filesystem",
+                }
+            )
     except Exception:
         logger.debug("inbox status: provider enumeration failed", exc_info=True)
 
-    return web.json_response({
-        "enabled": sec.enabled,
-        "native_source_active": True,
-        "sources": sources,
-        "user_id": sec.user_id,
-        "watched_channels": [
-            {"id": ch_id, "name": inbox_state.channel_names.get(ch_id, ch_id)}
-            for ch_id in sec.watched_channels
-        ],
-        "channel_names": inbox_state.channel_names,
-        "poll_interval_seconds": sec.poll_interval_seconds,
-        "style_rules": sec.style_rules,
-        "pending_count": len(inbox.pending()),
-        "total_count": len(inbox.items),
-        "health": health,
-    })
+    return web.json_response(
+        {
+            "enabled": sec.enabled,
+            "native_source_active": True,
+            "sources": sources,
+            "user_id": sec.user_id,
+            "watched_channels": [
+                {"id": ch_id, "name": inbox_state.channel_names.get(ch_id, ch_id)}
+                for ch_id in sec.watched_channels
+            ],
+            "channel_names": inbox_state.channel_names,
+            "poll_interval_seconds": sec.poll_interval_seconds,
+            "style_rules": sec.style_rules,
+            "pending_count": len(inbox.pending()),
+            "total_count": len(inbox.items),
+            "health": health,
+        }
+    )
 
 
 async def api_inbox_digest(request: web.Request) -> web.Response:
@@ -440,9 +500,11 @@ async def api_inbox_providers(request: web.Request) -> web.Response:
     result = []
     for name, cls in providers.items():
         instance = cls()
-        result.append({
-            "name": name,
-            "display_name": getattr(instance, "display_name", name.replace("_", " ").title()),
-            "source_name": instance.source_name,
-        })
+        result.append(
+            {
+                "name": name,
+                "display_name": getattr(instance, "display_name", name.replace("_", " ").title()),
+                "source_name": instance.source_name,
+            }
+        )
     return web.json_response({"providers": result})

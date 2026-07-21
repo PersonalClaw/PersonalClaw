@@ -178,7 +178,9 @@ class TestTrustReadsApproval:
         session._approval_futures["test"] = fut
 
         async with TestClient(TestServer(_make_app(state))) as client:
-            resp = await client.post("/api/chat/sessions/s1/approve", json={"action": "trust_reads"})
+            resp = await client.post(
+                "/api/chat/sessions/s1/approve", json={"action": "trust_reads"}
+            )
             data = await resp.json()
             assert data["ok"] is True
             # trust_reads is deferred — set by main loop after future consumed
@@ -193,7 +195,9 @@ class TestTrustReadsApproval:
         session = state.get_or_create_session("s1")
 
         async with TestClient(TestServer(_make_app(state))) as client:
-            resp = await client.post("/api/chat/mode", json={"mode": "trust_reads", "session": "s1"})
+            resp = await client.post(
+                "/api/chat/mode", json={"mode": "trust_reads", "session": "s1"}
+            )
             data = await resp.json()
             assert resp.status == 200
             assert data["ok"] is True

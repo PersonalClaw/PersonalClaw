@@ -10,7 +10,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # Stub out heavy transitive imports before importing subagent
 _STUBS = [
     "personalclaw.context",

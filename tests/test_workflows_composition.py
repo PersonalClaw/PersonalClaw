@@ -6,7 +6,6 @@ flatten + provenance + depth cap), agent-scope scope_ref validation, and the
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 import pytest
 
@@ -31,16 +30,21 @@ def _run(coro):
 
 # ── model + serialization ──
 
+
 class TestRefModel:
     def test_step_is_ref_xor_title(self):
         assert WorkflowStep(id="s1", ref="wf-x").is_ref()
         assert not WorkflowStep(id="s1", title="do it").is_ref()
 
     def test_ref_round_trips_markdown(self, tmp_path):
-        wf = Workflow(id="wf-1", name="parent", steps=[
-            WorkflowStep(id="s1", title="first"),
-            WorkflowStep(id="s2", ref="wf-child"),
-        ])
+        wf = Workflow(
+            id="wf-1",
+            name="parent",
+            steps=[
+                WorkflowStep(id="s1", title="first"),
+                WorkflowStep(id="s2", ref="wf-child"),
+            ],
+        )
         md = native.assemble_markdown(wf)
         assert "@ref:wf-child" in md
         fm, body = native.parse_frontmatter(md)
@@ -50,6 +54,7 @@ class TestRefModel:
 
 
 # ── composition graph (pure) ──
+
 
 class TestComposition:
     def _wf(self, wid, refs=(), **kw):
@@ -91,14 +96,22 @@ class TestComposition:
         comp.validate_scope(wf)  # no raise
 
     def test_expand_inline_flatten_with_provenance(self):
-        a = Workflow(id="a", name="ship", steps=[
-            WorkflowStep(id="s1", title="build"),
-            WorkflowStep(id="s2", ref="b"),
-        ])
-        b = Workflow(id="b", name="commit", steps=[
-            WorkflowStep(id="s1", title="stage"),
-            WorkflowStep(id="s2", title="commit"),
-        ])
+        a = Workflow(
+            id="a",
+            name="ship",
+            steps=[
+                WorkflowStep(id="s1", title="build"),
+                WorkflowStep(id="s2", ref="b"),
+            ],
+        )
+        b = Workflow(
+            id="b",
+            name="commit",
+            steps=[
+                WorkflowStep(id="s1", title="stage"),
+                WorkflowStep(id="s2", title="commit"),
+            ],
+        )
         expanded = comp.expand_steps(a, {"a": a, "b": b})
         assert [e.title for e in expanded] == ["build", "stage", "commit"]
         assert expanded[0].source_workflow == "ship" and expanded[0].depth == 0
@@ -111,8 +124,10 @@ class TestComposition:
         for i in range(n):
             nxt = [f"w{i+1}"] if i + 1 < n else []
             wfs[f"w{i}"] = Workflow(
-                id=f"w{i}", name=f"w{i}",
-                steps=[WorkflowStep(id="s1", ref=r) for r in nxt] or [WorkflowStep(id="s1", title="leaf")],
+                id=f"w{i}",
+                name=f"w{i}",
+                steps=[WorkflowStep(id="s1", ref=r) for r in nxt]
+                or [WorkflowStep(id="s1", title="leaf")],
             )
         expanded = comp.expand_steps(wfs["w0"], wfs)
         assert any("max workflow depth reached" in e.title for e in expanded)
@@ -124,11 +139,14 @@ class TestComposition:
 
     def test_resolve_agent_id(self):
         assert comp.resolve_agent_id("default", "native", None) == "default"
-        assert comp.resolve_agent_id(None, "acp:test-cli", "researcher") == "acp:test-cli/researcher"
+        assert (
+            comp.resolve_agent_id(None, "acp:test-cli", "researcher") == "acp:test-cli/researcher"
+        )
         assert comp.resolve_agent_id(None, "acp:claude-code", "") == "acp:claude-code"
 
 
 # ── registry integration (write-path enforcement) ──
+
 
 class TestRegistryEnforcement:
     def test_create_rejects_dangling_ref(self, store):
@@ -138,15 +156,18 @@ class TestRegistryEnforcement:
             # rolled back — not persisted
             wfs, _ = await registry.list_all_workflows()
             assert all(w.name != "parent" for w in wfs)
+
         _run(go())
 
     def test_create_then_ref_persists(self, store):
         async def go():
             child = await registry.create_workflow(name="child", steps=[{"title": "x"}])
             parent = await registry.create_workflow(
-                name="parent", steps=[{"title": "first"}, {"ref": child.id}])
+                name="parent", steps=[{"title": "first"}, {"ref": child.id}]
+            )
             reloaded = await registry.get_workflow(parent.id)
             assert reloaded.steps[1].ref == child.id
+
         _run(go())
 
     def test_update_cycle_rolls_back(self, store):
@@ -158,6 +179,7 @@ class TestRegistryEnforcement:
                 await registry.update_workflow(a.id, steps=[{"ref": b.id}])
             reloaded = await registry.get_workflow(a.id)
             assert reloaded.steps[0].title == "x" and not reloaded.steps[0].is_ref()
+
         _run(go())
 
     def test_delete_refused_when_referenced(self, store):
@@ -167,10 +189,12 @@ class TestRegistryEnforcement:
             with pytest.raises(registry.WorkflowReferencedError) as ei:
                 await registry.delete_workflow(child.id)
             assert any(r["name"] == "parent" for r in ei.value.referrers)
+
         _run(go())
 
     def test_agent_scope_requires_ref(self, store):
         async def go():
             with pytest.raises(comp.WorkflowIntegrityError):
                 await registry.create_workflow(name="a", scope="agent", steps=[{"title": "x"}])
+
         _run(go())

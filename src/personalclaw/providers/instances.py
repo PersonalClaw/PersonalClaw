@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 def _instances_dir(extension_name: str) -> Path:
     from personalclaw.config.loader import config_dir
+
     return config_dir() / "extensions" / extension_name / "instances"
 
 

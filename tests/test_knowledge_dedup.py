@@ -22,7 +22,7 @@ def _item(id, title, emb, **kw):
 def test_cosine_basics():
     assert cosine_similarity([1.0, 0.0], [1.0, 0.0]) == 1.0
     assert cosine_similarity([1.0, 0.0], [0.0, 1.0]) == 0.0
-    assert cosine_similarity([], [1.0]) == 0.0          # empty
+    assert cosine_similarity([], [1.0]) == 0.0  # empty
     assert cosine_similarity([1.0, 2.0], [1.0]) == 0.0  # length mismatch → defensive 0
 
 
@@ -30,7 +30,9 @@ def test_normalize_filename_stem_drops_ext_date_punct():
     assert normalize_filename_stem("Q3 Report 2026-07.pdf") == "q3 report"
     assert normalize_filename_stem("weekly-standup_2026-Q3") == "weekly standup"
     # same series, different month → SAME stem (date stripped)
-    assert normalize_filename_stem("Q3 Report 2026-07") == normalize_filename_stem("q3-report 2026-08")
+    assert normalize_filename_stem("Q3 Report 2026-07") == normalize_filename_stem(
+        "q3-report 2026-08"
+    )
 
 
 def test_extract_series_date():
@@ -43,7 +45,7 @@ def test_report_series_NOT_collapsed(TMP=None):
     # THE HEADLINE RISK: identical title + identical embedding, DIFFERENT dates → DISTINCT.
     emb = [0.1, 0.2, 0.3, 0.4]
     a = _item("a", "Daily Standup 2026-07-06", emb)
-    b = _item("b", "Daily Standup 2026-07-07", emb)   # same vector, next day
+    b = _item("b", "Daily Standup 2026-07-07", emb)  # same vector, next day
     v = resolve_duplicate(a, b)
     assert v.is_dup is False
     assert "series date differs" in v.reason
@@ -55,13 +57,13 @@ def test_true_fuzzy_dup_detected():
     b = _item("b", "Architecture Overview.pdf", emb, word_count=900, processing_status="done")
     v = resolve_duplicate(a, b)
     assert v.is_dup is True
-    assert v.winner_id == "b" and v.loser_id == "a"   # richer (done, more words) wins
+    assert v.winner_id == "b" and v.loser_id == "a"  # richer (done, more words) wins
 
 
 def test_filename_gate_blocks_unrelated():
     emb = [1.0, 0.0]
     a = _item("a", "Totally Different Topic", emb)
-    b = _item("b", "Architecture Overview", emb)      # same vector but disjoint titles
+    b = _item("b", "Architecture Overview", emb)  # same vector but disjoint titles
     v = resolve_duplicate(a, b)
     assert v.is_dup is False and "filename" in v.reason
 
@@ -93,7 +95,7 @@ def test_same_date_token_still_dups():
     b = _item("b", "Daily Standup 2026-07-07.pdf", emb, word_count=800, processing_status="done")
     v = resolve_duplicate(a, b)
     assert v.is_dup is True
-    assert v.winner_id == "b"          # richer copy wins; same-date does not block the merge
+    assert v.winner_id == "b"  # richer copy wins; same-date does not block the merge
 
 
 def test_asymmetric_date_does_not_gate():
@@ -110,13 +112,37 @@ def test_asymmetric_date_does_not_gate():
 
 
 def test_format_recall_winner_precedence():
-    done_file = {"id": "f", "processing_status": "done", "item_type": "file", "word_count": 100, "created_at": "2026-01-01"}
-    partial_bm = {"id": "b", "processing_status": "partial", "item_type": "bookmark", "word_count": 999, "created_at": "2026-09-01"}
+    done_file = {
+        "id": "f",
+        "processing_status": "done",
+        "item_type": "file",
+        "word_count": 100,
+        "created_at": "2026-01-01",
+    }
+    partial_bm = {
+        "id": "b",
+        "processing_status": "partial",
+        "item_type": "bookmark",
+        "word_count": 999,
+        "created_at": "2026-09-01",
+    }
     w, loser = format_recall_winner(done_file, partial_bm)
-    assert w["id"] == "f"          # done>partial + file>bookmark beats higher word_count
+    assert w["id"] == "f"  # done>partial + file>bookmark beats higher word_count
     # tie on status+type → higher word_count wins
-    a = {"id": "a", "processing_status": "done", "item_type": "file", "word_count": 50, "created_at": "2026-01-01"}
-    b = {"id": "b", "processing_status": "done", "item_type": "file", "word_count": 500, "created_at": "2026-01-01"}
+    a = {
+        "id": "a",
+        "processing_status": "done",
+        "item_type": "file",
+        "word_count": 50,
+        "created_at": "2026-01-01",
+    }
+    b = {
+        "id": "b",
+        "processing_status": "done",
+        "item_type": "file",
+        "word_count": 500,
+        "created_at": "2026-01-01",
+    }
     w2, _ = format_recall_winner(a, b)
     assert w2["id"] == "b"
 
@@ -128,12 +154,24 @@ def test_format_recall_prefers_content_len_over_stale_word_count():
     higher word_count was kept and the richer one archived."""
     # Both same status+type; the RICHER item has more content_len but a STALE word_count=0
     # (the exact ingest-ordering situation that inverted the live pick).
-    thin = {"id": "thin", "processing_status": "done", "item_type": "note",
-            "content_len": 102, "word_count": 16, "created_at": "2026-07-07T15:51:00"}
-    rich = {"id": "rich", "processing_status": "done", "item_type": "note",
-            "content_len": 296, "word_count": 0, "created_at": "2026-07-07T15:52:00"}
+    thin = {
+        "id": "thin",
+        "processing_status": "done",
+        "item_type": "note",
+        "content_len": 102,
+        "word_count": 16,
+        "created_at": "2026-07-07T15:51:00",
+    }
+    rich = {
+        "id": "rich",
+        "processing_status": "done",
+        "item_type": "note",
+        "content_len": 296,
+        "word_count": 0,
+        "created_at": "2026-07-07T15:52:00",
+    }
     w, loser = format_recall_winner(thin, rich)
-    assert w["id"] == "rich" and loser["id"] == "thin"   # more content wins despite wc=0
+    assert w["id"] == "rich" and loser["id"] == "thin"  # more content wins despite wc=0
 
 
 def test_format_recall_falls_back_to_word_count_without_content_len():

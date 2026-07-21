@@ -28,7 +28,18 @@ MAX_EVENTS_PER_ARTIFACT = 500
 MAX_EVENT_METADATA_KEYS = 8
 MAX_EVENT_METADATA_VALUE_LEN = 256
 
-ALLOWED_KINDS = {"widget", "html", "react", "markdown", "svg", "json", "text", "infographic", "document", "image"}
+ALLOWED_KINDS = {
+    "widget",
+    "html",
+    "react",
+    "markdown",
+    "svg",
+    "json",
+    "text",
+    "infographic",
+    "document",
+    "image",
+}
 ALLOWED_SOURCES = {"chat", "cron", "subagent", "manual", "import"}
 ALLOWED_EVENT_TYPES = {"created", "edited", "iterated", "referenced", "reverted"}
 
@@ -67,6 +78,7 @@ _EXT_TO_MIME = {ext: mime for mime, ext in _MIME_TO_EXT.items()}
 def mime_for_ext(ext: str, default: str = "image/png") -> str:
     """MIME type for an on-disk binary extension (png fallback)."""
     return _EXT_TO_MIME.get((ext or "").strip().lower().lstrip("."), default)
+
 
 # Slug: URL-safe handle, 1-80 chars, no leading/trailing hyphen. Blocks path
 # traversal (no dots, slashes, or separators survive slugify) — the security

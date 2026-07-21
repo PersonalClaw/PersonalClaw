@@ -15,8 +15,8 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
+from personalclaw.apps.manager import app_dir, list_apps
 from personalclaw.apps.manifest import AppManifest
-from personalclaw.apps.manager import list_apps, app_dir
 
 if TYPE_CHECKING:
     from personalclaw.providers.registry import RegisteredProvider
@@ -92,7 +92,8 @@ def _load_ext_module(ext: "RegisteredProvider", module_path: str) -> Any:
     if is_bundled or "." in module_path:
         added = False
         if ext_dir and str(ext_dir) not in sys.path:
-            sys.path.insert(0, str(ext_dir)); added = True
+            sys.path.insert(0, str(ext_dir))
+            added = True
         try:
             return importlib.import_module(module_path)
         finally:
@@ -175,7 +176,6 @@ def load_availability(ext: "RegisteredProvider") -> "Callable[[], tuple[bool, st
 
 def _resolve_ext_dir(ext: "RegisteredProvider") -> Path | None:
     """Determine the filesystem root for an extension's code."""
-    from personalclaw.providers.registry import RegisteredProvider
 
     name = ext.name
     bundled_path = BUNDLED_DIR / name
@@ -205,6 +205,7 @@ def _seed_extension_prompts(manifest: AppManifest, *, enabled: bool) -> None:
         return
     try:
         from personalclaw.apps.prompt_seed import seed_app_prompts
+
         seed_app_prompts(manifest, ext_dir)
     except Exception:
         logger.debug("extension %s: prompt seed failed", name, exc_info=True)
@@ -225,8 +226,9 @@ def _seed_promptonly_installed_apps() -> None:
             manifest = AppManifest.from_dict(manifest_data)
             _seed_extension_prompts(manifest, enabled=True)
         except Exception:
-            logger.debug("prompt-only app %s: seed failed",
-                         app_info.get("name", "?"), exc_info=True)
+            logger.debug(
+                "prompt-only app %s: seed failed", app_info.get("name", "?"), exc_info=True
+            )
 
 
 def load_all_extensions() -> None:
@@ -272,9 +274,7 @@ def load_all_extensions() -> None:
     for manifest, enabled in discover_installed_extensions():
         registry.register(manifest, enabled=enabled)
         _seed_extension_prompts(manifest, enabled=enabled)
-        logger.debug(
-            "Registered installed extension: %s (enabled=%s)", manifest.name, enabled
-        )
+        logger.debug("Registered installed extension: %s (enabled=%s)", manifest.name, enabled)
 
     # An installed app that has NO provider (a pure prompts/skills/sops app) is not
     # in either discovery list above, yet still owns prompts it must seed at startup.

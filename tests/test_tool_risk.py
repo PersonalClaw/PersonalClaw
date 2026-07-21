@@ -20,7 +20,6 @@ import pytest
 
 from personalclaw.task_modes import infer_risk_from_name, resolve_effective_risk
 
-
 # ── infer_risk_from_name: declared risk from a bare/prefixed tool name ──
 # (name, expected) — destructive verb wins; read verb short-circuits to safe;
 # other mutating verb → caution; nothing recognizable → safe (construction default).
@@ -91,7 +90,7 @@ _RESOLVE_CASES = [
     #    else FLOOR at caution (never silently safe → trust-reads can't auto-approve)
     ("", "mcp/x/delete_thing", "", {"id": "1"}, "destructive"),
     ("", "mcp/x/create_thing", "", {"id": "1"}, "caution"),
-    ("", "mcp/x/frobnicate", "", {"a": 1}, "caution"),   # unknown external → caution floor
+    ("", "mcp/x/frobnicate", "", {"a": 1}, "caution"),  # unknown external → caution floor
     ("", "weird_external_tool", "", {}, "caution"),
     (None, "some_writer", "", {"x": 1}, "caution"),
 ]
@@ -110,7 +109,10 @@ def test_resolve_accepts_risklevel_enum():
     assert resolve_effective_risk(RiskLevel.DESTRUCTIVE, "artifact_delete", "", {}) == "destructive"
     assert resolve_effective_risk(RiskLevel.SAFE, "read_file", "read", {}) == "safe"
     # enum + read-only bash still downgrades
-    assert resolve_effective_risk(RiskLevel.DESTRUCTIVE, "bash", "execute", {"command": "cat x"}) == "safe"
+    assert (
+        resolve_effective_risk(RiskLevel.DESTRUCTIVE, "bash", "execute", {"command": "cat x"})
+        == "safe"
+    )
 
 
 def test_unknown_external_never_resolves_safe_by_name_absence():

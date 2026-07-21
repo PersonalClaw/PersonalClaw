@@ -63,11 +63,14 @@ def home_patch(tmp_path):
     def fake_expanduser(p):
         return p.replace("~", str(tmp_path))
 
-    with patch("os.path.expanduser", side_effect=fake_expanduser), patch(
-        "os.path.realpath", side_effect=real_realpath
-    ), patch("pathlib.Path.home", return_value=tmp_path), patch(
-        "personalclaw.dashboard.handlers.files._dashboard_roots",
-        return_value=[("Test", str(tmp_path))],
+    with (
+        patch("os.path.expanduser", side_effect=fake_expanduser),
+        patch("os.path.realpath", side_effect=real_realpath),
+        patch("pathlib.Path.home", return_value=tmp_path),
+        patch(
+            "personalclaw.dashboard.handlers.files._dashboard_roots",
+            return_value=[("Test", str(tmp_path))],
+        ),
     ):
         yield tmp_path
 
@@ -280,10 +283,22 @@ class TestSendMessage:
             resp = await client.post("/api/send-message", json={"text": "hello", "title": "Test"})
             assert resp.status == 200
             data = await resp.json()
-            assert data == {"ok": True, "channel": True, "session": False, "ts": "1712793600.000001"}
+            assert data == {
+                "ok": True,
+                "channel": True,
+                "session": False,
+                "ts": "1712793600.000001",
+            }
             state.notify.assert_called_once_with("agent", "Test", "hello")
             slack.open_dm.assert_called_once_with("U123")
-            slack.deliver_text.assert_called_once_with("C123", "hello", thread_ts=None, unfurl_links=None, unfurl_media=None, reply_broadcast=None)
+            slack.deliver_text.assert_called_once_with(
+                "C123",
+                "hello",
+                thread_ts=None,
+                unfurl_links=None,
+                unfurl_media=None,
+                reply_broadcast=None,
+            )
 
     @pytest.mark.asyncio
     async def test_send_message_slack_error(self):
@@ -328,8 +343,21 @@ class TestSendMessage:
             )
             assert resp.status == 200
             data = await resp.json()
-            assert data == {"ok": True, "channel": True, "session": False, "ts": "1712793600.000001"}
-            slack.deliver_rich.assert_called_once_with("C123", blocks, "fallback", thread_ts=None, unfurl_links=None, unfurl_media=None, reply_broadcast=None)
+            assert data == {
+                "ok": True,
+                "channel": True,
+                "session": False,
+                "ts": "1712793600.000001",
+            }
+            slack.deliver_rich.assert_called_once_with(
+                "C123",
+                blocks,
+                "fallback",
+                thread_ts=None,
+                unfurl_links=None,
+                unfurl_media=None,
+                reply_broadcast=None,
+            )
             slack.deliver_text.assert_not_called()
 
     @pytest.mark.asyncio
@@ -343,7 +371,14 @@ class TestSendMessage:
         async with TestClient(TestServer(app)) as client:
             resp = await client.post("/api/send-message", json={"text": "hello"})
             assert resp.status == 200
-            slack.deliver_text.assert_called_once_with("C123", "hello", thread_ts=None, unfurl_links=None, unfurl_media=None, reply_broadcast=None)
+            slack.deliver_text.assert_called_once_with(
+                "C123",
+                "hello",
+                thread_ts=None,
+                unfurl_links=None,
+                unfurl_media=None,
+                reply_broadcast=None,
+            )
             slack.deliver_rich.assert_not_called()
 
     @pytest.mark.asyncio
@@ -384,12 +419,22 @@ class TestSendMessage:
         mock_job.session_key = "dashboard:chat-1-1712793600"
         state.crons.list_jobs = MagicMock(return_value=[mock_job])
         app = _make_send_app(state)
-        with patch("personalclaw.dashboard.chat_runner._run_chat", new_callable=AsyncMock) as mock_run, \
-             patch("personalclaw.dashboard.handlers.messaging._rehydrate_session_from_history") as mock_rehydrate:
+        with (
+            patch(
+                "personalclaw.dashboard.chat_runner._run_chat", new_callable=AsyncMock
+            ) as mock_run,
+            patch(
+                "personalclaw.dashboard.handlers.messaging._rehydrate_session_from_history"
+            ) as mock_rehydrate,
+        ):
             async with TestClient(TestServer(app)) as client:
                 resp = await client.post(
                     "/api/send-message",
-                    json={"text": "build failed", "session": "origin", "caller_session": "cron:abc12345"},
+                    json={
+                        "text": "build failed",
+                        "session": "origin",
+                        "caller_session": "cron:abc12345",
+                    },
                 )
                 assert resp.status == 200
                 data = await resp.json()
@@ -414,7 +459,9 @@ class TestSendMessage:
         mock_session = MagicMock()
         mock_session.running = True
         mock_session._queue = []
-        mock_session.queue_append = lambda content: (mock_session._queue.append({"id": "test", "content": content}) or "test")
+        mock_session.queue_append = lambda content: (
+            mock_session._queue.append({"id": "test", "content": content}) or "test"
+        )
         state.get_session = MagicMock(return_value=mock_session)
         mock_job = MagicMock()
         mock_job.id = "abc12345"
@@ -422,11 +469,17 @@ class TestSendMessage:
         mock_job.session_key = "dashboard:chat-1-1712793600"
         state.crons.list_jobs = MagicMock(return_value=[mock_job])
         app = _make_send_app(state)
-        with patch("personalclaw.dashboard.handlers.messaging._rehydrate_session_from_history") as mock_rehydrate:
+        with patch(
+            "personalclaw.dashboard.handlers.messaging._rehydrate_session_from_history"
+        ) as mock_rehydrate:
             async with TestClient(TestServer(app)) as client:
                 resp = await client.post(
                     "/api/send-message",
-                    json={"text": "build failed", "session": "origin", "caller_session": "cron:abc12345"},
+                    json={
+                        "text": "build failed",
+                        "session": "origin",
+                        "caller_session": "cron:abc12345",
+                    },
                 )
                 assert resp.status == 200
                 data = await resp.json()
@@ -472,8 +525,15 @@ class TestSendMessage:
         mock_job.session_key = "dashboard:chat-1-1712793600"
         state.crons.list_jobs = MagicMock(return_value=[mock_job])
         app = _make_send_app(state)
-        with patch("personalclaw.dashboard.chat_runner._run_chat", new_callable=AsyncMock) as mock_run, \
-             patch("personalclaw.dashboard.handlers.messaging._rehydrate_session_from_history", return_value=mock_session) as mock_rehydrate:
+        with (
+            patch(
+                "personalclaw.dashboard.chat_runner._run_chat", new_callable=AsyncMock
+            ) as mock_run,
+            patch(
+                "personalclaw.dashboard.handlers.messaging._rehydrate_session_from_history",
+                return_value=mock_session,
+            ) as mock_rehydrate,
+        ):
             async with TestClient(TestServer(app)) as client:
                 resp = await client.post(
                     "/api/send-message",
@@ -510,7 +570,10 @@ class TestSendMessage:
         mock_job.session_key = "dashboard:chat-1-1712793600"
         state.crons.list_jobs = MagicMock(return_value=[mock_job])
         app = _make_send_app(state)
-        with patch("personalclaw.dashboard.handlers.messaging._rehydrate_session_from_history", return_value=None) as mock_rehydrate:
+        with patch(
+            "personalclaw.dashboard.handlers.messaging._rehydrate_session_from_history",
+            return_value=None,
+        ) as mock_rehydrate:
             async with TestClient(TestServer(app)) as client:
                 resp = await client.post(
                     "/api/send-message",
@@ -547,11 +610,17 @@ class TestSendMessage:
         state = _mock_state()
         state.get_session = MagicMock()
         app = _make_send_app(state)
-        with patch("personalclaw.dashboard.handlers.messaging._rehydrate_session_from_history") as mock_rehydrate:
+        with patch(
+            "personalclaw.dashboard.handlers.messaging._rehydrate_session_from_history"
+        ) as mock_rehydrate:
             async with TestClient(TestServer(app)) as client:
                 resp = await client.post(
                     "/api/send-message",
-                    json={"text": "update", "session": "chat-1-1712793600", "caller_session": "cron:abc"},
+                    json={
+                        "text": "update",
+                        "session": "chat-1-1712793600",
+                        "caller_session": "cron:abc",
+                    },
                 )
                 assert resp.status == 200
                 data = await resp.json()
@@ -580,11 +649,17 @@ class TestSendMessage:
         mock_job.session_key = "dashboard:chat-1-1712793600"
         state.crons.list_jobs = MagicMock(return_value=[mock_job])
         app = _make_send_app(state)
-        with patch("personalclaw.dashboard.handlers.messaging._rehydrate_session_from_history") as mock_rehydrate:
+        with patch(
+            "personalclaw.dashboard.handlers.messaging._rehydrate_session_from_history"
+        ) as mock_rehydrate:
             async with TestClient(TestServer(app)) as client:
                 resp = await client.post(
                     "/api/send-message",
-                    json={"text": "heads up", "session": "channel", "caller_session": "cron:abc12345"},
+                    json={
+                        "text": "heads up",
+                        "session": "channel",
+                        "caller_session": "cron:abc12345",
+                    },
                 )
                 assert resp.status == 200
                 data = await resp.json()
@@ -648,22 +723,27 @@ class TestFileMove:
         src = home_patch / "a.txt"
         src.write_text("x")
         async with TestClient(TestServer(_make_app())) as client:
-            r = await client.post("/api/file-move", json={"src": str(src), "dest": str(home_patch / "b.txt")})
+            r = await client.post(
+                "/api/file-move", json={"src": str(src), "dest": str(home_patch / "b.txt")}
+            )
             assert r.status == 200
         assert not src.exists()
         assert (home_patch / "b.txt").read_text() == "x"
 
     @pytest.mark.asyncio
     async def test_move_refuses_existing_dest(self, mock_sel, home_patch):
-        src = home_patch / "a.txt"; src.write_text("x")
-        dest = home_patch / "b.txt"; dest.write_text("y")
+        src = home_patch / "a.txt"
+        src.write_text("x")
+        dest = home_patch / "b.txt"
+        dest.write_text("y")
         async with TestClient(TestServer(_make_app())) as client:
             r = await client.post("/api/file-move", json={"src": str(src), "dest": str(dest)})
             assert r.status == 409
 
     @pytest.mark.asyncio
     async def test_move_outside_allowlist_denied(self, mock_sel, home_patch):
-        src = home_patch / "a.txt"; src.write_text("x")
+        src = home_patch / "a.txt"
+        src.write_text("x")
         async with TestClient(TestServer(_make_app())) as client:
             r = await client.post("/api/file-move", json={"src": str(src), "dest": "/etc/evil.txt"})
             assert r.status == 400
@@ -672,14 +752,18 @@ class TestFileMove:
     @pytest.mark.asyncio
     async def test_move_missing_source_404(self, mock_sel, home_patch):
         async with TestClient(TestServer(_make_app())) as client:
-            r = await client.post("/api/file-move", json={"src": str(home_patch / "nope.txt"), "dest": str(home_patch / "x.txt")})
+            r = await client.post(
+                "/api/file-move",
+                json={"src": str(home_patch / "nope.txt"), "dest": str(home_patch / "x.txt")},
+            )
             assert r.status == 404
 
 
 class TestFileDelete:
     @pytest.mark.asyncio
     async def test_delete_file(self, mock_sel, home_patch):
-        f = home_patch / "a.txt"; f.write_text("x")
+        f = home_patch / "a.txt"
+        f.write_text("x")
         async with TestClient(TestServer(_make_app())) as client:
             r = await client.post("/api/file-delete", json={"path": str(f)})
             assert r.status == 200
@@ -687,7 +771,9 @@ class TestFileDelete:
 
     @pytest.mark.asyncio
     async def test_delete_dir_recursive(self, mock_sel, home_patch):
-        d = home_patch / "sub"; d.mkdir(); (d / "x.txt").write_text("x")
+        d = home_patch / "sub"
+        d.mkdir()
+        (d / "x.txt").write_text("x")
         async with TestClient(TestServer(_make_app())) as client:
             r = await client.post("/api/file-delete", json={"path": str(d)})
             assert r.status == 200
@@ -710,6 +796,7 @@ class TestFileUpload:
     @pytest.mark.asyncio
     async def test_upload_success(self, mock_sel, home_patch):
         from aiohttp import FormData
+
         async with TestClient(TestServer(_make_app())) as client:
             fd = FormData()
             fd.add_field("file", b"payload", filename="up.txt", content_type="text/plain")
@@ -722,6 +809,7 @@ class TestFileUpload:
     @pytest.mark.asyncio
     async def test_upload_forbidden_dir(self, mock_sel, home_patch):
         from aiohttp import FormData
+
         async with TestClient(TestServer(_make_app())) as client:
             fd = FormData()
             fd.add_field("file", b"x", filename="up.txt", content_type="text/plain")
@@ -731,6 +819,7 @@ class TestFileUpload:
     @pytest.mark.asyncio
     async def test_upload_refuses_existing(self, mock_sel, home_patch):
         from aiohttp import FormData
+
         (home_patch / "up.txt").write_text("old")
         async with TestClient(TestServer(_make_app())) as client:
             fd = FormData()
@@ -754,6 +843,7 @@ class TestDashboardRootsProjectWorkspace:
     def _isolated_home(self, tmp_path, monkeypatch):
         import personalclaw.config.loader as cfg
         import personalclaw.tasks.hierarchy as hier
+
         monkeypatch.setattr(cfg, "config_dir", lambda: tmp_path)
         monkeypatch.setattr(hier, "config_dir", lambda: tmp_path, raising=False)
         return tmp_path
@@ -771,8 +861,9 @@ class TestDashboardRootsProjectWorkspace:
         proj = _store().create_project(name="ZZ-Roots-Probe", workspace_dir=str(ws))
 
         roots = _dashboard_roots()
-        assert any(label.startswith("Project: ZZ-Roots-Probe") for label, _ in roots), \
-            "bound project workspace must be surfaced as a dashboard root"
+        assert any(
+            label.startswith("Project: ZZ-Roots-Probe") for label, _ in roots
+        ), "bound project workspace must be surfaced as a dashboard root"
         # The bound workspace dir AND files under it are admitted by the allowlist.
         assert _validate_dashboard_path(str(ws)) is not None
         assert _validate_dashboard_path(str(ws / "main.py")) is not None
@@ -799,8 +890,9 @@ class TestDashboardRootsProjectWorkspace:
 
         _store().create_project(name="ZZ-Sys-Probe", workspace_dir="/etc")
         labels = [label for label, _ in _dashboard_roots()]
-        assert not any(label.startswith("Project: ZZ-Sys-Probe") for label in labels), \
-            "a system-root workspace must not be surfaced as a browsable root"
+        assert not any(
+            label.startswith("Project: ZZ-Sys-Probe") for label in labels
+        ), "a system-root workspace must not be surfaced as a browsable root"
         # /etc (and files under it) stay blocked — not admitted via the binding.
         assert _validate_dashboard_path("/etc") is None
         assert _validate_dashboard_path("/etc/passwd") is None

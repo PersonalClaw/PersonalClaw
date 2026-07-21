@@ -85,7 +85,7 @@ def _build_sensitive_regex() -> re.Pattern[str]:
     escaped_dirs = [re.escape(d) for d in _SENSITIVE_HOME_DIRS]
     dirs_pattern = "|".join(escaped_dirs)
     return re.compile(
-        rf"(?:{_READ_CMDS}.*|{_SCRIPT_OPEN}.*|.*[<>|]\s*){home_alts}/(?:{dirs_pattern})(?:/|\s|$|['\"])",
+        rf"(?:{_READ_CMDS}.*|{_SCRIPT_OPEN}.*|.*[<>|]\s*){home_alts}/(?:{dirs_pattern})(?:/|\s|$|['\"])",  # noqa: E501
         re.IGNORECASE,
     )
 
@@ -135,13 +135,37 @@ def is_sensitive_path(path_str: str) -> bool:
 # /private/var/folders. Single source of truth — both the Code workspace validation and
 # the create-dir / browse-dirs handlers call this so the surfaces can never drift.
 _SYSTEM_SUBTREES: tuple[str, ...] = (
-    "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/boot", "/dev", "/proc",
-    "/sys", "/root", "/System", "/Library", "/Applications", "/cores", "/Network",
-    "/private/etc", "/private/usr", "/private/var/root",
+    "/etc",
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/lib",
+    "/lib64",
+    "/boot",
+    "/dev",
+    "/proc",
+    "/sys",
+    "/root",
+    "/System",
+    "/Library",
+    "/Applications",
+    "/cores",
+    "/Network",
+    "/private/etc",
+    "/private/usr",
+    "/private/var/root",
 )
 _SYSTEM_PARENTS: tuple[str, ...] = (
-    "/", "/Volumes", "/private", "/var", "/opt", "/mnt", "/media",
-    "/private/var", "/private/tmp", "/tmp",
+    "/",
+    "/Volumes",
+    "/private",
+    "/var",
+    "/opt",
+    "/mnt",
+    "/media",
+    "/private/var",
+    "/private/tmp",
+    "/tmp",
 )
 
 
@@ -217,19 +241,23 @@ _S3_PRESIGNED_RE = re.compile(
 
 # Only these parameter keys are allowed in a presigned URL.  Any extra
 # keys cause the fast-path to reject, falling through to normal checks.
-_S3_PRESIGNED_PARAMS = frozenset({
-    "X-Amz-Algorithm", "X-Amz-Credential", "X-Amz-Date",
-    "X-Amz-Expires", "X-Amz-SignedHeaders", "X-Amz-Signature",
-    "X-Amz-Security-Token",
-})
+_S3_PRESIGNED_PARAMS = frozenset(
+    {
+        "X-Amz-Algorithm",
+        "X-Amz-Credential",
+        "X-Amz-Date",
+        "X-Amz-Expires",
+        "X-Amz-SignedHeaders",
+        "X-Amz-Signature",
+        "X-Amz-Security-Token",
+    }
+)
 
 
 # Structural validators for presigned param values that would otherwise
 # false-positive against _EXFIL_PATTERNS.  Each value is validated rather
 # than exempted, so attacker-controlled data cannot be smuggled through.
-_STS_TOKEN_RE = re.compile(
-    r"^(?:FwoGZX|IQoJb3JpZ2lu)[A-Za-z0-9+/=%]{1,2000}$"
-)
+_STS_TOKEN_RE = re.compile(r"^(?:FwoGZX|IQoJb3JpZ2lu)[A-Za-z0-9+/=%]{1,2000}$")
 _CREDENTIAL_RE = re.compile(
     r"^(?:AKIA|ASIA)[A-Z0-9]{16}(?:%2F|/)[0-9]{8}"
     r"(?:%2F|/)[a-z0-9-]+(?:%2F|/)s3(?:%2F|/)aws4_request$"
@@ -690,7 +718,8 @@ def fence_untrusted(text: str, *, source: str = "") -> str:
     # human-legible, and crucially adds NO invisible/zero-width chars (which the
     # memory-write scanner would flag if this fenced text were later persisted).
     safe = text.replace("<untrusted_content>", "&lt;untrusted_content&gt;").replace(
-        "</untrusted_content>", "&lt;/untrusted_content&gt;")
+        "</untrusted_content>", "&lt;/untrusted_content&gt;"
+    )
     label = f" source={source}" if source else ""
     return f"{UNTRUSTED_OPEN[:-1]}{label}>\n{safe}\n{UNTRUSTED_CLOSE}"
 
@@ -766,10 +795,10 @@ def _emit_deny_exception_event(tool_name: str, deny_pattern: str) -> bool:
 # The per-(tool|params) failure breaker (rel-consecutive-failure-breaker) is the
 # hard loop cap behind this — this only shapes the single observation.
 
-DENY_KIND_USER = "user"          # interactive: the user declined this call
-DENY_KIND_HOOK = "hook"          # a user-authored PreToolUse hook blocked it
+DENY_KIND_USER = "user"  # interactive: the user declined this call
+DENY_KIND_HOOK = "hook"  # a user-authored PreToolUse hook blocked it
 DENY_KIND_READONLY = "readonly"  # the read-only gate blocked a write
-DENY_KIND_POLICY = "policy"      # security deny-list pattern (HARD)
+DENY_KIND_POLICY = "policy"  # security deny-list pattern (HARD)
 DENY_KIND_SENSITIVE = "sensitive"  # sensitive-path access (HARD)
 
 _HARD_DENY_KINDS = frozenset({DENY_KIND_POLICY, DENY_KIND_SENSITIVE})

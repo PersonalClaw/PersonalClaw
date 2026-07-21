@@ -5,17 +5,16 @@ from __future__ import annotations
 
 import pytest
 
+from personalclaw.loop import instrument
 from personalclaw.loop.granularity import (
     calibrated_band,
-    dial_for,
     returns_exhausted,
     returns_exhausted_calibrated,
 )
 from personalclaw.loop.judge import CycleVerdict, adjudicate
-from personalclaw.loop import instrument
-
 
 # ── calibrated band ────────────────────────────────────────────────────────
+
 
 def test_band_flat_trail_equals_floor():
     # A calm (zero-variance) signal must behave exactly like the fixed dial.
@@ -39,6 +38,7 @@ def test_band_never_below_floor():
 
 
 # ── calibrated returns-exhaustion ──────────────────────────────────────────
+
 
 def test_calibrated_falls_back_to_fixed_below_min_reps():
     # Below _MIN_REPS the calibrated variant must match the plain fixed-threshold one.
@@ -74,6 +74,7 @@ def test_calibrated_exhausts_after_extended_low_run_when_noisy():
 
 # ── adjudicate (adversarial skeptic merge) ─────────────────────────────────
 
+
 def test_adjudicate_done_needs_two_yeses():
     primary = CycleVerdict(done=True, done_reason="met", marginal_value=1.0, quality_score=4.0)
     # skeptic disagrees → completion overturned
@@ -106,11 +107,13 @@ def test_adjudicate_carries_primary_scores():
 
 # ── canary probe ───────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_canary_trustworthy_when_judge_separates():
     async def good(goal, dod, finding, prior):
         strong = "Implemented" in (finding.get("summary") or "")
         return CycleVerdict(quality_score=4.5 if strong else 0.5)
+
     assert await instrument.probe_judge(good) is True
 
 
@@ -118,6 +121,7 @@ async def test_canary_trustworthy_when_judge_separates():
 async def test_canary_blind_when_judge_collapses():
     async def blind(goal, dod, finding, prior):
         return CycleVerdict(quality_score=3.0)  # identical for strong + null → no separation
+
     assert await instrument.probe_judge(blind) is False
 
 
@@ -125,6 +129,7 @@ async def test_canary_blind_when_judge_collapses():
 async def test_canary_defers_when_probe_unrunnable():
     async def dead(goal, dod, finding, prior):
         return None
+
     assert await instrument.probe_judge(dead) is None  # never a false-blind
 
 
@@ -132,10 +137,12 @@ async def test_canary_defers_when_probe_unrunnable():
 async def test_canary_defers_on_exception():
     async def boom(goal, dod, finding, prior):
         raise RuntimeError("model down")
+
     assert await instrument.probe_judge(boom) is None
 
 
 # ── observability fields ───────────────────────────────────────────────────
+
 
 def test_verdict_to_dict_lean_by_default():
     d = CycleVerdict(marginal_value=1.0, quality_score=2.0).to_dict()
@@ -149,26 +156,41 @@ def test_verdict_to_dict_includes_set_observability():
 
 # ── reproduce_confirm anchor resolution (V5 fix: fall back to the kind's deliverable) ──
 
+
 @pytest.mark.asyncio
 async def test_reproduce_uses_kind_deliverable_when_cfg_empty(monkeypatch, tmp_path):
     """An open-ended loop with empty cfg.deliverables must still reproduce against the
     kind's canonical deliverable (REPORT.md) — the common case the gate previously missed."""
-    from personalclaw.loop import store, judge as judge_mod
+    from personalclaw.loop import store
     from personalclaw.loop.loop import Loop
+
     monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
     (tmp_path / "REPORT.md").write_text("# Report\nreal deliverable content", encoding="utf-8")
     import json as _json
-    loop = store.create(Loop(id="", name="g", kind="goal", task="t", success_criteria="c",
-                             workspace_dir=str(tmp_path),
-                             kind_config={"goal_type": "open_ended", "deliverables": []}))
+
+    loop = store.create(
+        Loop(
+            id="",
+            name="g",
+            kind="goal",
+            task="t",
+            success_criteria="c",
+            workspace_dir=str(tmp_path),
+            kind_config={"goal_type": "open_ended", "deliverables": []},
+        )
+    )
     # A finding is a cycle_NNN.json file in the loop's findings/ dir (worker-written on disk).
     fdir = store.safe_loop_dir(loop.id) / "findings"
     fdir.mkdir(parents=True, exist_ok=True)
-    (fdir / "cycle_001.json").write_text(_json.dumps({"cycle": 1, "summary": "wrote REPORT.md"}), encoding="utf-8")
+    (fdir / "cycle_001.json").write_text(
+        _json.dumps({"cycle": 1, "summary": "wrote REPORT.md"}), encoding="utf-8"
+    )
     captured = {}
+
     async def spy(goal, sc, finding, prior, **kw):
         captured.update(kw)  # capture the deliverables the reproduce threaded in
         return CycleVerdict(done=True, quality_score=4.0)
+
     monkeypatch.setattr("personalclaw.loop.judge.assess_cycle", spy)
     result = await instrument.reproduce_confirm(loop)
     assert result is True  # fresh pass agreed
@@ -181,7 +203,15 @@ async def test_reproduce_none_when_no_anchor_and_no_kind_deliverable(monkeypatch
     returns None (nothing independent to reproduce) — the gate stays fail-safe."""
     from personalclaw.loop import store
     from personalclaw.loop.loop import Loop
+
     monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
-    loop = store.create(Loop(id="", name="g", kind="goal", task="t",
-                             kind_config={"goal_type": "verifiable", "deliverables": []}))
+    loop = store.create(
+        Loop(
+            id="",
+            name="g",
+            kind="goal",
+            task="t",
+            kind_config={"goal_type": "verifiable", "deliverables": []},
+        )
+    )
     assert await instrument.reproduce_confirm(loop) is None

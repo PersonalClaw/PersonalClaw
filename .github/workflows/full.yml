@@ -1,0 +1,111 @@
+# Full verification — push to main + nightly cron. The broader matrix + coverage +
+# supply-chain audit that the ≤10-min PR gate (ci.yml) deliberately omits.
+# Jobs are the stable ids per CI-RELEASE-ENGINEERING C1: matrix · audit · coverage.
+name: Full
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 7 * * *"  # nightly 07:00 UTC
+  workflow_dispatch: {}
+
+concurrency:
+  group: full-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    # Python {3.12, 3.13} × OS {ubuntu, macos}. ARM runners are added by
+    # PLATFORM-REACH (plan 39) — this job is the seam it extends.
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    # No PERSONALCLAW_HOME — the suite runs under the no-global-home contract; a global
+    # value defeats the Path.home()/default-.personalclaw tests (see ci.yml test job).
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Set up Python ${{ matrix.python }}
+        run: uv python install ${{ matrix.python }}
+      - name: Install (locked)
+        run: uv sync --locked --extra dev --python ${{ matrix.python }}
+      - name: pytest (full suite)
+        # The frontend URL-doctrine + config round-trip tests are part of this suite;
+        # named here for legibility in the job summary.
+        run: uv run pytest
+
+  audit:
+    # Report-only supply-chain scan — visibility, not a merge gate (soul guardrail:
+    # substrate not bureaucracy). Dependabot (S4) drives the actual update PRs.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: pip-audit
+        run: |
+          uv pip install --system -e .
+          uv pip install --system pip-audit
+          python -m pip_audit || true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - name: npm audit (root workspace)
+        run: npm ci && npm audit || true
+
+  coverage:
+    runs-on: ubuntu-latest
+    # No PERSONALCLAW_HOME — see the matrix job / ci.yml test job.
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: pytest with coverage XML
+        run: uv run pytest --cov=personalclaw --cov-report=xml
+      - name: Coverage badge (self-owned shields JSON — no third-party service)
+        run: |
+          uv run python - <<'PY'
+          import json, xml.etree.ElementTree as ET
+          rate = float(ET.parse("coverage.xml").getroot().get("line-rate", "0")) * 100
+          color = "brightgreen" if rate >= 85 else "green" if rate >= 70 else "yellow" if rate >= 50 else "red"
+          json.dump({"schemaVersion": 1, "label": "coverage",
+                     "message": f"{rate:.0f}%", "color": color},
+                    open("coverage-badge.json", "w"))
+          print(f"coverage {rate:.1f}%")
+          PY
+          # Owner task (S4): publish coverage-badge.json to a gist/website repo and
+          # point a README shields endpoint at it. Emitted as an artifact until then.
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage.xml
+            coverage-badge.json
+          if-no-files-found: warn

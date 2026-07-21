@@ -114,9 +114,7 @@ async def test_stream_response_delivers_then_closes(monkeypatch) -> None:
     hub = SseHub()
 
     async def handler(request: web.Request) -> web.StreamResponse:
-        return await sse_mod.stream_response(
-            request, hub, on_connect=[("hello", {"v": 1})]
-        )
+        return await sse_mod.stream_response(request, hub, on_connect=[("hello", {"v": 1})])
 
     app = web.Application()
     app.router.add_get("/s", handler)
@@ -161,8 +159,11 @@ async def test_stream_response_close_after_connect_does_not_hang() -> None:
 
     async def handler(request: web.Request) -> web.StreamResponse:
         return await sse_mod.stream_response(
-            request, registry.hub(feed), on_connect=[("status", {"processing_status": "done"})],
-            registry_evict=(registry, feed), close_after_connect=True,
+            request,
+            registry.hub(feed),
+            on_connect=[("status", {"processing_status": "done"})],
+            registry_evict=(registry, feed),
+            close_after_connect=True,
         )
 
     app = web.Application()

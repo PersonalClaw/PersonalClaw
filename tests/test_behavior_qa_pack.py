@@ -112,7 +112,14 @@ class TestApprovalGatingBehavior:
                 return "Mock"
 
             async def list_tools(self):
-                return [ToolDefinition(name="danger", description="d", parameters={"type": "object"}, requires_approval=True)]
+                return [
+                    ToolDefinition(
+                        name="danger",
+                        description="d",
+                        parameters={"type": "object"},
+                        requires_approval=True,
+                    )
+                ]
 
             async def invoke(self, tool_name, arguments):
                 self.invoked += 1
@@ -128,7 +135,9 @@ class TestApprovalGatingBehavior:
             async def complete(self, messages, *, tools=None, model=None, reasoning_effort=""):
                 self.calls += 1
                 if self.calls == 1:
-                    yield AgentEvent(kind=EVENT_TOOL_CALL, tool_call_id="c1", title="danger", tool_input="{}")
+                    yield AgentEvent(
+                        kind=EVENT_TOOL_CALL, tool_call_id="c1", title="danger", tool_input="{}"
+                    )
                     yield AgentEvent(kind=EVENT_COMPLETE)
                 else:
                     yield AgentEvent(kind=EVENT_COMPLETE)
@@ -169,14 +178,18 @@ class TestWorkerNeverCertifiesOwnWork:
     def test_brief_instructs_worker_not_to_self_certify(self, tmp_path, monkeypatch):
         # The worker's brief explicitly forbids self-certifying done-ness.
         monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
-        from personalclaw.loop.loop import Loop
         from personalclaw.loop import manager, store
+        from personalclaw.loop.loop import Loop
 
-        c = store.create(Loop(
-            id="", name="t", kind="goal",
-            task="Investigate the latency regression across the request path thoroughly.",
-            success_criteria="tests pass",
-        ))
+        c = store.create(
+            Loop(
+                id="",
+                name="t",
+                kind="goal",
+                task="Investigate the latency regression across the request path thoroughly.",
+                success_criteria="tests pass",
+            )
+        )
         manager.write_brief(store.get(c.id))
         brief = (store.loop_dir(c.id) / "brief.md").read_text()
         assert "never you" in brief or "separate check" in brief

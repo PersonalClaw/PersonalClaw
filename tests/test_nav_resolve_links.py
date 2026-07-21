@@ -21,14 +21,16 @@ from personalclaw.dashboard.chat_handlers import (
     api_nav_resolve_links,
 )
 
-
 # ── pure helpers ──
 
 
 class TestNavLinkHelpers:
     def test_prompt_numbers_each_link_in_order(self) -> None:
         prompt = _build_nav_links_prompt(
-            [{"url": "https://github.com/a/b", "context": "the repo"}, {"url": "https://x.io/y", "context": ""}]
+            [
+                {"url": "https://github.com/a/b", "context": "the repo"},
+                {"url": "https://x.io/y", "context": ""},
+            ]
         )
         assert "0: https://github.com/a/b" in prompt
         assert "context: the repo" in prompt
@@ -70,10 +72,15 @@ async def test_resolves_batch_with_single_model_call() -> None:
         with patch("personalclaw.llm_helpers.one_shot_completion", mock):
             resp = await client.post(
                 "/api/chat/nav/resolve-links",
-                json={"links": [
-                    {"url": "https://github.com/anthropics/anthropic-sdk-python", "context": "the sdk"},
-                    {"url": "https://example.com/page", "context": ""},
-                ]},
+                json={
+                    "links": [
+                        {
+                            "url": "https://github.com/anthropics/anthropic-sdk-python",
+                            "context": "the sdk",
+                        },
+                        {"url": "https://example.com/page", "context": ""},
+                    ]
+                },
             )
             assert resp.status == 200
             body = await resp.json()
@@ -105,7 +112,12 @@ async def test_model_failure_soft_fails_to_empty_summaries() -> None:
         with patch("personalclaw.llm_helpers.one_shot_completion", mock):
             resp = await client.post(
                 "/api/chat/nav/resolve-links",
-                json={"links": [{"url": "https://x.io/a", "context": ""}, {"url": "https://x.io/b", "context": ""}]},
+                json={
+                    "links": [
+                        {"url": "https://x.io/a", "context": ""},
+                        {"url": "https://x.io/b", "context": ""},
+                    ]
+                },
             )
             assert resp.status == 200
             # Soft-fail: aligned-length list of empty strings (UI keeps fallback labels).
@@ -128,7 +140,12 @@ async def test_caps_link_count_before_model_call() -> None:
         with patch("personalclaw.llm_helpers.one_shot_completion", _capture):
             resp = await client.post(
                 "/api/chat/nav/resolve-links",
-                json={"links": [{"url": f"https://x.io/{i}", "context": ""} for i in range(_NAV_MAX_LINKS + 20)]},
+                json={
+                    "links": [
+                        {"url": f"https://x.io/{i}", "context": ""}
+                        for i in range(_NAV_MAX_LINKS + 20)
+                    ]
+                },
             )
             assert resp.status == 200
             body = await resp.json()

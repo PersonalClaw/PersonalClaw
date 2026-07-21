@@ -98,7 +98,7 @@ LOOP_WORKER_SYSTEM_PROMPT = (
     "7. End the turn. The next cycle fires automatically.\n\n"
     "Attendedness (from brief.md): in ATTENDED mode, if the goal or scope is "
     "genuinely ambiguous in a way that would change your direction, you MAY write "
-    "one {\"question\", \"why\"} to questions.json and end the turn. In UNATTENDED "
+    'one {"question", "why"} to questions.json and end the turn. In UNATTENDED '
     "mode, NEVER write questions.json — instead investigate the question yourself, "
     "pick the best-reasoned answer, record the assumption in your finding, and "
     "proceed. Never push to git, never run destructive operations, never read "
@@ -236,7 +236,7 @@ CODER_SYSTEM_PROMPT = (
     "criteria.\n"
     "7. End the turn. The next cycle fires automatically.\n\n"
     "Attendedness (from brief.md): in ATTENDED mode you MAY write one "
-    "{\"question\", \"why\"} to questions.json for a genuinely direction-changing "
+    '{"question", "why"} to questions.json for a genuinely direction-changing '
     "ambiguity and end the turn. In UNATTENDED mode, NEVER write questions.json — "
     "investigate, decide, record the assumption, and proceed. When the workspace "
     "is a git repo, COMMIT your work on the CURRENT branch (`git` tool: add → "
@@ -308,7 +308,7 @@ def make_code_planner_profile(profile_cls: type) -> Any:
     ``profile_cls`` injected to avoid the import cycle, like the other builders."""
     return profile_cls(
         provider="native",
-        description="Built-in investigative planner for the Code engine (reads real context, then plans; never executes).",
+        description="Built-in investigative planner for the Code engine (reads real context, then plans; never executes).",  # noqa: E501
         system_prompt=CODE_PLANNER_SYSTEM_PROMPT,
         model="",  # inherit the chat use-case binding
         skills=[],
@@ -357,7 +357,15 @@ def make_lite_agent_profile(profile_cls: type) -> Any:
 # the background-chore worker or the goal loop. The seeded default chat agent
 # (``PersonalClaw``) is intentionally NOT reserved — it is a starting point the
 # user is meant to tune.
-RESERVED_AGENT_NAMES = frozenset({LITE_AGENT_NAME, LOOP_WORKER_AGENT_NAME, LOOP_PLANNER_AGENT_NAME, CODER_AGENT_NAME, CODE_PLANNER_AGENT_NAME})
+RESERVED_AGENT_NAMES = frozenset(
+    {
+        LITE_AGENT_NAME,
+        LOOP_WORKER_AGENT_NAME,
+        LOOP_PLANNER_AGENT_NAME,
+        CODER_AGENT_NAME,
+        CODE_PLANNER_AGENT_NAME,
+    }
+)
 
 # System agents that USED to be seeded but have been retired (renamed or removed).
 # The config loader prunes any of these left behind in an existing on-disk config.json

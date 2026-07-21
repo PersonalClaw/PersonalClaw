@@ -13,8 +13,9 @@ class TestSpawnRunSessionKeyRouting:
         """PERSONALCLAW_SESSION_KEY env var is used as parent_session."""
         from personalclaw.mcp_subagents import _call_tool as _sa_call_tool
 
-        with patch("personalclaw.mcp_subagents._post") as mock_post, patch.dict(
-            "os.environ", {"PERSONALCLAW_SESSION_KEY": "sess-from-env"}
+        with (
+            patch("personalclaw.mcp_subagents._post") as mock_post,
+            patch.dict("os.environ", {"PERSONALCLAW_SESSION_KEY": "sess-from-env"}),
         ):
             mock_post.return_value = {"id": "agent1"}
 
@@ -28,8 +29,9 @@ class TestSpawnRunSessionKeyRouting:
 
         from personalclaw.mcp_subagents import _call_tool as _sa_call_tool
 
-        with patch("personalclaw.mcp_subagents._post") as mock_post, patch(
-            "pathlib.Path.home", return_value=tmp_path / "fake_home"
+        with (
+            patch("personalclaw.mcp_subagents._post") as mock_post,
+            patch("pathlib.Path.home", return_value=tmp_path / "fake_home"),
         ):
             env = os.environ.copy()
             env.pop("PERSONALCLAW_SESSION_KEY", None)
@@ -50,11 +52,14 @@ class TestSendMessageUnfurlForwarding:
         with patch("personalclaw.mcp_core._post") as mock_post:
             mock_post.return_value = {"ok": True}
 
-            _call_tool("notify", {
-                "text": "test",
-                "unfurl_links": False,
-                "unfurl_media": False,
-            })
+            _call_tool(
+                "notify",
+                {
+                    "text": "test",
+                    "unfurl_links": False,
+                    "unfurl_media": False,
+                },
+            )
 
             payload = mock_post.call_args[0][1]
             assert payload["unfurl_links"] is False
@@ -81,8 +86,9 @@ class TestSendMessageCronAutoOrigin:
 
     def test_auto_applies_origin_for_cron_caller(self):
         """Cron caller with bare send_message(text=...) → session=origin injected."""
-        with patch("personalclaw.mcp_core._post") as mock_post, patch.dict(
-            "os.environ", {"PERSONALCLAW_SESSION_KEY": "cron:abc123"}
+        with (
+            patch("personalclaw.mcp_core._post") as mock_post,
+            patch.dict("os.environ", {"PERSONALCLAW_SESSION_KEY": "cron:abc123"}),
         ):
             mock_post.return_value = {"ok": True}
             _call_tool("notify", {"text": "build passed"})
@@ -92,8 +98,9 @@ class TestSendMessageCronAutoOrigin:
 
     def test_explicit_channel_suppresses_auto_default(self):
         """Cron caller with explicit channel=... → no session auto-default."""
-        with patch("personalclaw.mcp_core._post") as mock_post, patch.dict(
-            "os.environ", {"PERSONALCLAW_SESSION_KEY": "cron:abc123"}
+        with (
+            patch("personalclaw.mcp_core._post") as mock_post,
+            patch.dict("os.environ", {"PERSONALCLAW_SESSION_KEY": "cron:abc123"}),
         ):
             mock_post.return_value = {"ok": True}
             _call_tool("notify", {"text": "hi", "channel": "C12345"})
@@ -104,8 +111,9 @@ class TestSendMessageCronAutoOrigin:
 
     def test_explicit_user_suppresses_auto_default(self):
         """Cron caller with explicit user=... (intentional Slack DM) → no auto-default."""
-        with patch("personalclaw.mcp_core._post") as mock_post, patch.dict(
-            "os.environ", {"PERSONALCLAW_SESSION_KEY": "cron:abc123"}
+        with (
+            patch("personalclaw.mcp_core._post") as mock_post,
+            patch.dict("os.environ", {"PERSONALCLAW_SESSION_KEY": "cron:abc123"}),
         ):
             mock_post.return_value = {"ok": True}
             _call_tool("notify", {"text": "hi", "user": "U05J78ZGYNQ"})
@@ -116,8 +124,9 @@ class TestSendMessageCronAutoOrigin:
 
     def test_non_cron_session_skips_auto_default(self):
         """Dashboard (non-cron) caller → no auto-default, sends to owner DM as before."""
-        with patch("personalclaw.mcp_core._post") as mock_post, patch.dict(
-            "os.environ", {"PERSONALCLAW_SESSION_KEY": "dashboard:chat-1"}
+        with (
+            patch("personalclaw.mcp_core._post") as mock_post,
+            patch.dict("os.environ", {"PERSONALCLAW_SESSION_KEY": "dashboard:chat-1"}),
         ):
             mock_post.return_value = {"ok": True}
             _call_tool("notify", {"text": "hi"})
@@ -141,8 +150,9 @@ class TestSendMessageCronAutoOrigin:
 
     def test_explicit_session_origin_is_idempotent(self):
         """LLM explicitly passes session=origin from cron → still origin, no double-application."""
-        with patch("personalclaw.mcp_core._post") as mock_post, patch.dict(
-            "os.environ", {"PERSONALCLAW_SESSION_KEY": "cron:abc123"}
+        with (
+            patch("personalclaw.mcp_core._post") as mock_post,
+            patch.dict("os.environ", {"PERSONALCLAW_SESSION_KEY": "cron:abc123"}),
         ):
             mock_post.return_value = {"ok": True}
             _call_tool("notify", {"text": "hi", "session": "origin"})
@@ -152,8 +162,9 @@ class TestSendMessageCronAutoOrigin:
 
     def test_explicit_session_channel_is_accepted(self):
         """session='channel' is a valid explicit opt-out value."""
-        with patch("personalclaw.mcp_core._post") as mock_post, patch.dict(
-            "os.environ", {"PERSONALCLAW_SESSION_KEY": "cron:abc123"}
+        with (
+            patch("personalclaw.mcp_core._post") as mock_post,
+            patch.dict("os.environ", {"PERSONALCLAW_SESSION_KEY": "cron:abc123"}),
         ):
             mock_post.return_value = {"ok": True}
             _call_tool("notify", {"text": "hi", "session": "channel"})
@@ -163,8 +174,9 @@ class TestSendMessageCronAutoOrigin:
 
     def test_invalid_session_value_rejected(self):
         """session must match the ^(origin|channel)$ pattern; other values rejected."""
-        with patch("personalclaw.mcp_core._post") as mock_post, patch.dict(
-            "os.environ", {"PERSONALCLAW_SESSION_KEY": "cron:abc123"}
+        with (
+            patch("personalclaw.mcp_core._post") as mock_post,
+            patch.dict("os.environ", {"PERSONALCLAW_SESSION_KEY": "cron:abc123"}),
         ):
             result = _call_tool("notify", {"text": "hi", "session": "bogus"})
             # Validator-level rejection (pattern mismatch on FieldSpec), not

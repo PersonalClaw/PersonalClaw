@@ -23,6 +23,7 @@ def _ensure_registry_entry(name: str, *, type_: str = "ollama") -> None:
     # takes for a not-yet-registered type — so declare CHAT on the entry directly
     # instead of reading it from a (possibly-unregistered) type descriptor.
     from personalclaw.llm.capabilities import Capability
+
     reg = get_default_registry()
     if any(e.name == name for e in reg.list_entries()):
         return
@@ -40,7 +41,9 @@ def _ensure_registry_entry(name: str, *, type_: str = "ollama") -> None:
 def test_true_when_active_model_selected():
     """An active model selected for the use case ⇒ resolvable, regardless of
     registry state (the Settings → Models selection the bridge resolves first)."""
-    with patch("personalclaw.providers.use_cases.active_model_refs", return_value=["MyCloud:gpt-x"]):
+    with patch(
+        "personalclaw.providers.use_cases.active_model_refs", return_value=["MyCloud:gpt-x"]
+    ):
         assert pb.can_resolve_use_case("chat") is True
 
 
@@ -56,8 +59,10 @@ def test_false_when_no_selection_and_no_capable_entry():
     """No active selection and an EMPTY registry ⇒ not resolvable ⇒ needs_model /
     defer bg. The probe imports ``get_default_registry`` locally from
     ``llm.registry``, so that module path is the patch hook."""
-    with patch("personalclaw.providers.use_cases.active_model_refs", return_value=[]), \
-        patch("personalclaw.llm.registry.get_default_registry") as gdr:
+    with (
+        patch("personalclaw.providers.use_cases.active_model_refs", return_value=[]),
+        patch("personalclaw.llm.registry.get_default_registry") as gdr,
+    ):
         reg = MagicMock()
         reg.list_entries.return_value = []
         gdr.return_value = reg
@@ -68,8 +73,10 @@ def test_false_when_only_acp_agent_entry_present():
     """An agent-runtime entry (``acp_agent``) is NOT a model provider — a registry
     holding only it must report needs_model=true. This is the subtle case the old
     onboarding heuristic had to special-case; the probe owns it now."""
-    with patch("personalclaw.providers.use_cases.active_model_refs", return_value=[]), \
-        patch("personalclaw.llm.registry.get_default_registry") as gdr:
+    with (
+        patch("personalclaw.providers.use_cases.active_model_refs", return_value=[]),
+        patch("personalclaw.llm.registry.get_default_registry") as gdr,
+    ):
         entry = MagicMock()
         entry.type = "acp_agent"
         entry.declared_capabilities = frozenset()
@@ -87,8 +94,10 @@ def test_chat_subcategory_falls_back_to_chat_selection():
     """A chat sub-category (reasoning) with no model of its own borrows the
     parent ``chat`` selection — active_model_refs handles the fallback, so the
     probe reports resolvable."""
-    with patch("personalclaw.providers.use_cases.load_active_models",
-               return_value={"chat": ["MyCloud:gpt-x"]}):
+    with patch(
+        "personalclaw.providers.use_cases.load_active_models",
+        return_value={"chat": ["MyCloud:gpt-x"]},
+    ):
         assert pb.can_resolve_use_case("reasoning") is True
 
 
@@ -99,9 +108,11 @@ def test_does_not_build_a_provider():
     native-runtime build."""
     _ensure_registry_entry("MyCloud2")
     reg = get_default_registry()
-    with patch("personalclaw.providers.use_cases.active_model_refs", return_value=[]), \
-        patch.object(reg, "build") as build, \
-        patch.object(pb, "_build_native_runtime") as build_native:
+    with (
+        patch("personalclaw.providers.use_cases.active_model_refs", return_value=[]),
+        patch.object(reg, "build") as build,
+        patch.object(pb, "_build_native_runtime") as build_native,
+    ):
         pb.can_resolve_use_case("chat")
         build.assert_not_called()
         build_native.assert_not_called()

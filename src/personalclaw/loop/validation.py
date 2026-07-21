@@ -91,7 +91,9 @@ def workspace_dir_errors(workspace_dir: str, *, require_exists: bool = True) -> 
     return []
 
 
-def spec_edit_errors(body: dict, *, kind: str, existing_kind_config: dict | None = None) -> list[str]:
+def spec_edit_errors(
+    body: dict, *, kind: str, existing_kind_config: dict | None = None
+) -> list[str]:
     """Security-relevant checks for a PUT spec edit — mirrors the create gate so an
     edit can't smuggle in what create rejects (a sensitive/relative workspace_dir, or
     a destructive verify/test command). Only fields present in ``body`` are checked.
@@ -99,11 +101,14 @@ def spec_edit_errors(body: dict, *, kind: str, existing_kind_config: dict | None
     route through the kind's ``validate_config`` (errors only — warnings don't block
     an edit). ``existing_kind_config`` lets the kind see the merged config."""
     from personalclaw.loop import kinds
+
     kinds.ensure_loaded()
     errors: list[str] = []
     if "workspace_dir" in body:
         # Path-safety is hard; existence is deferred (the dir may be created before launch).
-        errors.extend(workspace_dir_errors(str(body.get("workspace_dir") or ""), require_exists=False))
+        errors.extend(
+            workspace_dir_errors(str(body.get("workspace_dir") or ""), require_exists=False)
+        )
     # Screen commands via the kind. Build a config view: the patch's kind_config (or
     # flat command fields) merged over the existing config so a partial patch is judged
     # in context. Only command/stage validity errors block; warnings are advisory.
@@ -123,7 +128,10 @@ def spec_edit_errors(body: dict, *, kind: str, existing_kind_config: dict | None
                 errors.extend(k_errors)
             except Exception:
                 import logging
-                logging.getLogger(__name__).debug("kind %s validate_config (edit) errored", kind, exc_info=True)
+
+                logging.getLogger(__name__).debug(
+                    "kind %s validate_config (edit) errored", kind, exc_info=True
+                )
     return errors
 
 
@@ -131,6 +139,7 @@ def validate(config: dict, *, agent_exists: bool = True) -> ValidationResult:
     """Deterministic pre-flight on a unified loop-creation payload. ``agent_exists``
     is supplied by the HTTP layer (validation stays free of the agent registry)."""
     from personalclaw.loop import kinds
+
     kinds.ensure_loaded()
     cfg = AppConfig.load().loops
     errors: list[str] = []
@@ -138,11 +147,14 @@ def validate(config: dict, *, agent_exists: bool = True) -> ValidationResult:
 
     task = str(config.get("task") or config.get("goal") or "").strip()
     if len(task) < _MIN_TASK_LEN:
-        errors.append(f"Task is too vague — describe it in more detail (min {_MIN_TASK_LEN} characters).")
+        errors.append(
+            f"Task is too vague — describe it in more detail (min {_MIN_TASK_LEN} characters)."
+        )
     elif len(task) > _MAX_TASK_LEN:
         errors.append(
             f"Task is too large ({len(task):,} characters) — trim it to under "
-            f"{_MAX_TASK_LEN:,} (link or summarize a big document instead of pasting it whole).")
+            f"{_MAX_TASK_LEN:,} (link or summarize a big document instead of pasting it whole)."
+        )
 
     # Cycle budget — the safety cap. 0 == ongoing/forever (relies on a DoD/stop/
     # stagnation to ever finish). Negative is invalid; over the hard cap is rejected.
@@ -159,21 +171,31 @@ def validate(config: dict, *, agent_exists: bool = True) -> ValidationResult:
         errors.append(f"Max cycles cannot exceed the hard cap of {cfg.max_cycles_hard_cap}.")
     elif max_cycles > 50:
         low, high = max_cycles * 0.10, max_cycles * 0.30
-        warnings.append(f"High cycle count ({max_cycles}). Estimated cost: ~${low:.2f}–${high:.2f}.")
+        warnings.append(
+            f"High cycle count ({max_cycles}). Estimated cost: ~${low:.2f}–${high:.2f}."
+        )
 
     # Idle timeout (the per-cycle nudge cadence) — same numeric guard; a non-numeric
     # value is a clean error, not a launch-time crash.
-    if "idle_secs" in config and config.get("idle_secs") not in (None, "") \
-            and _as_int(config.get("idle_secs")) is None:
+    if (
+        "idle_secs" in config
+        and config.get("idle_secs") not in (None, "")
+        and _as_int(config.get("idle_secs")) is None
+    ):
         errors.append("Idle timeout must be a whole number of seconds.")
 
     # Path-safety is a hard error; existence is deferred to a warning — the loop is
     # created as a draft and the launch action re-validates the dir (launch_blocker).
     ws = str(config.get("workspace_dir") or "")
     errors.extend(workspace_dir_errors(ws, require_exists=False))
-    if ws.strip() and not workspace_dir_errors(ws, require_exists=False) \
-            and workspace_dir_errors(ws, require_exists=True):
-        warnings.append("Workspace directory does not exist yet — create or pick it before launching.")
+    if (
+        ws.strip()
+        and not workspace_dir_errors(ws, require_exists=False)
+        and workspace_dir_errors(ws, require_exists=True)
+    ):
+        warnings.append(
+            "Workspace directory does not exist yet — create or pick it before launching."
+        )
 
     if not agent_exists:
         errors.append("Selected worker agent does not exist.")
@@ -190,7 +212,10 @@ def validate(config: dict, *, agent_exists: bool = True) -> ValidationResult:
             warnings.extend(k_warnings)
         except Exception:
             import logging
-            logging.getLogger(__name__).debug("kind %s validate_config errored", kind, exc_info=True)
+
+            logging.getLogger(__name__).debug(
+                "kind %s validate_config errored", kind, exc_info=True
+            )
 
     # An uncapped loop (max_cycles=0) estimates against the hard cap — and the duration
     # must derive from the SAME effective count, never N cycles but 0 minutes.

@@ -8,10 +8,10 @@ merged-variable resolution, and the model's kind/title/type migration.
 import pytest
 
 from personalclaw.prompt_providers.base import (
+    PromptRenderError,
     PromptSnippet,
     PromptTemplate,
     PromptVariable,
-    PromptRenderError,
     normalize_variable_type,
 )
 from personalclaw.prompt_providers.engine import (
@@ -20,7 +20,6 @@ from personalclaw.prompt_providers.engine import (
     merged_variables,
     parse_type_decl,
     render,
-    render_template,
 )
 
 
@@ -29,6 +28,7 @@ def _var(name, **kw):
 
 
 # ── variables + coercion ─────────────────────────────────────────────────────
+
 
 def test_basic_variable_substitution():
     out = render("Hello {{who}}!", [_var("who")], {"who": "world"})
@@ -73,6 +73,7 @@ def test_dot_path_lookup():
 
 # ── built-in functions ───────────────────────────────────────────────────────
 
+
 def test_function_upper_and_join():
     assert render("{{upper(x)}}", [_var("x")], {"x": "hi"}) == "HI"
     assert render("{{join(xs)}}", [], {"xs": ["a", "b", "c"]}) == "a, b, c"
@@ -89,6 +90,7 @@ def test_unknown_function_raises():
 
 
 # ── conditionals ─────────────────────────────────────────────────────────────
+
 
 def test_if_truthy():
     tpl = "{% if vip %}Welcome VIP{% else %}Hello{% endif %}"
@@ -110,11 +112,14 @@ def test_if_string_equality():
 
 def test_nested_if():
     tpl = "{% if a %}{% if b %}both{% else %}only-a{% endif %}{% endif %}"
-    assert render(tpl, [_var("a", type="boolean"), _var("b", type="boolean")],
-                  {"a": True, "b": False}) == "only-a"
+    assert (
+        render(tpl, [_var("a", type="boolean"), _var("b", type="boolean")], {"a": True, "b": False})
+        == "only-a"
+    )
 
 
 # ── loops ────────────────────────────────────────────────────────────────────
+
 
 def test_for_loop():
     tpl = "{% for item in items %}- {{item}}\n{% endfor %}"
@@ -122,7 +127,7 @@ def test_for_loop():
 
 
 def test_for_loop_index_helpers():
-    tpl = "{% for i in xs %}{{loop.index1}}:{{i}}{% if loop.last %}.{% else %}, {% endif %}{% endfor %}"
+    tpl = "{% for i in xs %}{{loop.index1}}:{{i}}{% if loop.last %}.{% else %}, {% endif %}{% endfor %}"  # noqa: E501
     assert render(tpl, [], {"xs": ["a", "b"]}) == "1:a, 2:b."
 
 
@@ -138,11 +143,13 @@ def test_loop_iteration_cap():
 
 # ── comments ─────────────────────────────────────────────────────────────────
 
+
 def test_comments_stripped():
     assert render("a{# hidden #}b", [], {}) == "ab"
 
 
 # ── snippet includes ─────────────────────────────────────────────────────────
+
 
 def _resolver(snippets):
     by_name = {s.name: s for s in snippets}
@@ -190,11 +197,18 @@ def test_snippet_variable_renders_in_host():
 
 # ── merged variables ─────────────────────────────────────────────────────────
 
+
 def test_merged_variables_union_host_wins():
-    snip = PromptSnippet(name="sig", content="{{author}} {{shared}}",
-                         variables=[_var("author"), _var("shared", description="from snippet")])
-    tpl = PromptTemplate(name="p", content="{{shared}} {{> sig}}",
-                         variables=[_var("shared", description="from host")])
+    snip = PromptSnippet(
+        name="sig",
+        content="{{author}} {{shared}}",
+        variables=[_var("author"), _var("shared", description="from snippet")],
+    )
+    tpl = PromptTemplate(
+        name="p",
+        content="{{shared}} {{> sig}}",
+        variables=[_var("shared", description="from host")],
+    )
     merged = merged_variables(tpl, _resolver([snip]))
     names = [v.name for v in merged]
     assert names == ["shared", "author"]  # host's shared first, snippet's author added
@@ -206,6 +220,7 @@ def test_included_snippet_names_order_deduped():
 
 
 # ── model: kind / title / type migration ─────────────────────────────────────
+
 
 def test_template_kind_defaults_and_title_humanized():
     t = PromptTemplate.from_dict({"name": "system-chat", "content": "x"})
@@ -238,8 +253,14 @@ def test_variable_from_dict_migrates_type():
 
 
 def test_roundtrip_to_dict_from_dict():
-    t = PromptTemplate(name="x", kind="user", title="X", content="{{a}}",
-                       variables=[_var("a", type="number", required=True)], tags=["t"])
+    t = PromptTemplate(
+        name="x",
+        kind="user",
+        title="X",
+        content="{{a}}",
+        variables=[_var("a", type="number", required=True)],
+        tags=["t"],
+    )
     t2 = PromptTemplate.from_dict(t.to_dict())
     assert t2.kind == "user" and t2.title == "X" and t2.variables[0].type == "number"
 
@@ -251,6 +272,7 @@ def test_snippet_roundtrip():
 
 
 # ── elif chains ──────────────────────────────────────────────────────────────
+
 
 def test_elif_chain():
     tpl = "{% if n == 1 %}one{% elif n == 2 %}two{% elif n == 3 %}three{% else %}many{% endif %}"
@@ -277,35 +299,69 @@ def test_elif_first_match_wins_and_nested_intact():
 
 # ── boolean operators + membership ───────────────────────────────────────────
 
+
 def test_boolean_and_or_not():
     b = lambda *n: [_var(x, type="boolean") for x in n]  # noqa: E731
-    assert render("{% if a and b %}Y{% else %}N{% endif %}", b("a", "b"), {"a": True, "b": True}) == "Y"
-    assert render("{% if a and b %}Y{% else %}N{% endif %}", b("a", "b"), {"a": True, "b": False}) == "N"
-    assert render("{% if a or b %}Y{% else %}N{% endif %}", b("a", "b"), {"a": False, "b": True}) == "Y"
+    assert (
+        render("{% if a and b %}Y{% else %}N{% endif %}", b("a", "b"), {"a": True, "b": True})
+        == "Y"
+    )
+    assert (
+        render("{% if a and b %}Y{% else %}N{% endif %}", b("a", "b"), {"a": True, "b": False})
+        == "N"
+    )
+    assert (
+        render("{% if a or b %}Y{% else %}N{% endif %}", b("a", "b"), {"a": False, "b": True})
+        == "Y"
+    )
     assert render("{% if not a %}Y{% else %}N{% endif %}", b("a"), {"a": False}) == "Y"
 
 
 def test_boolean_grouping_and_precedence():
     v = [_var(x, type="boolean") for x in "abc"]
     # or binds looser than and: a or (b and c)
-    assert render("{% if a or b and c %}Y{% else %}N{% endif %}", v, {"a": True, "b": False, "c": False}) == "Y"
+    assert (
+        render(
+            "{% if a or b and c %}Y{% else %}N{% endif %}", v, {"a": True, "b": False, "c": False}
+        )
+        == "Y"
+    )
     # parens override
-    assert render("{% if (a or b) and c %}Y{% else %}N{% endif %}", v, {"a": True, "b": False, "c": False}) == "N"
-    assert render("{% if (a or b) and c %}Y{% else %}N{% endif %}", v, {"a": True, "b": False, "c": True}) == "Y"
+    assert (
+        render(
+            "{% if (a or b) and c %}Y{% else %}N{% endif %}", v, {"a": True, "b": False, "c": False}
+        )
+        == "N"
+    )
+    assert (
+        render(
+            "{% if (a or b) and c %}Y{% else %}N{% endif %}", v, {"a": True, "b": False, "c": True}
+        )
+        == "Y"
+    )
 
 
 def test_boolean_mixes_with_comparisons():
-    assert render("{% if n == 1 or n == 2 %}Y{% else %}N{% endif %}", [_var("n", type="number")], {"n": 2}) == "Y"
+    assert (
+        render(
+            "{% if n == 1 or n == 2 %}Y{% else %}N{% endif %}", [_var("n", type="number")], {"n": 2}
+        )
+        == "Y"
+    )
 
 
 def test_in_and_contains():
     assert render('{% if "x" in tags %}Y{% else %}N{% endif %}', [], {"tags": ["x", "y"]}) == "Y"
     assert render('{% if "z" in tags %}Y{% else %}N{% endif %}', [], {"tags": ["x", "y"]}) == "N"
-    assert render('{% if name contains "lib" %}Y{% else %}N{% endif %}', [], {"name": "claw-lib"}) == "Y"
+    assert (
+        render('{% if name contains "lib" %}Y{% else %}N{% endif %}', [], {"name": "claw-lib"})
+        == "Y"
+    )
     assert render('{% if "k" in obj %}Y{% else %}N{% endif %}', [], {"obj": {"k": 1}}) == "Y"
 
 
 # ── whitespace control ───────────────────────────────────────────────────────
+
 
 def test_whitespace_control_trims():
     assert render("a\n{%- if true %}b{% endif %}", []) == "ab"
@@ -321,6 +377,7 @@ def test_whitespace_control_absent_is_noop():
 
 
 # ── new built-in functions ───────────────────────────────────────────────────
+
 
 def test_new_string_array_functions():
     assert render('{{ split("a,b,c") }}', []) == '["a", "b", "c"]'
@@ -359,9 +416,13 @@ def test_nested_function_calls():
 
 # ── inline ::type variable declarations ──────────────────────────────────────
 
+
 def test_inline_type_suffix_stripped_at_render():
     assert render("Hi {{ name::text }}", [_var("name")], {"name": "Ada"}) == "Hi Ada"
-    assert render("Tone {{ tone::select::[formal, casual] }}", [_var("tone")], {"tone": "casual"}) == "Tone casual"
+    assert (
+        render("Tone {{ tone::select::[formal, casual] }}", [_var("tone")], {"tone": "casual"})
+        == "Tone casual"
+    )
     assert render("X {{ x::[a, b] }}", [_var("x")], {"x": "a"}) == "X a"
 
 

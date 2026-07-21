@@ -16,6 +16,14 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
   `personalclaw doctor` via manifest `cli.setup` / `cli.doctor` (`module:function`),
   and declare its log namespaces via `loggerRoots`. `personalclaw setup --app <name>`
   runs just one app's setup step. Core names no channel vendor in its CLI.
+- **CI & release engineering** — GitHub Actions for both repos: `ci.yml`
+  (lint/test/web/rails, ≤10-min budget) and `full.yml` (3.12/3.13 × ubuntu/macos
+  matrix, audit, coverage) on core; manifest-validate/tests/boundary on the apps repo.
+  A tag-triggered `release.yml` builds the wheel (with the prebuilt SPA) + multi-arch
+  GHCR images, publishes to PyPI via Trusted Publishing behind an owner-approval gate,
+  and attaches an SBOM + build-provenance attestations. `uv.lock` pins the dependency
+  graph (CI installs `--locked`); Dependabot watches pip/npm/actions weekly. See the
+  [supply-chain posture](README.md#supply-chain).
 
 ### Changed
 

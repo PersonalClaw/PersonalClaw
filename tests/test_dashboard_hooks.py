@@ -6,7 +6,11 @@ import pytest
 
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.history import ConversationLog
-from personalclaw.hooks import HOOK_EVENT_AGENT_SPAWN, HOOK_EVENT_USER_PROMPT_SUBMIT, ScriptHookStore
+from personalclaw.hooks import (
+    HOOK_EVENT_AGENT_SPAWN,
+    HOOK_EVENT_USER_PROMPT_SUBMIT,
+    ScriptHookStore,
+)
 
 
 def _make_state(tmp_path):
@@ -72,13 +76,15 @@ class TestAgentSpawnHookInjection:
 
         state = _make_state(tmp_path)
         hook_store = ScriptHookStore(config_dir=tmp_path)
-        hook = hook_store.create({
-            "name": "startup-prefs",
-            "event": HOOK_EVENT_AGENT_SPAWN,
-            "provider": "bash",
-            "provider_config": {"command": "echo 'Enable caveman mode'"},
-            "timeout": 5,
-        })
+        hook = hook_store.create(
+            {
+                "name": "startup-prefs",
+                "event": HOOK_EVENT_AGENT_SPAWN,
+                "provider": "bash",
+                "provider_config": {"command": "echo 'Enable caveman mode'"},
+                "timeout": 5,
+            }
+        )
         state._hook_store = hook_store
         # E3: triggers fire agent-scoped — only the IDs the session's agent
         # references are fired. Wire the created trigger to the session's agent so
@@ -120,13 +126,15 @@ class TestAgentSpawnHookInjection:
 
         state = _make_state(tmp_path)
         hook_store = ScriptHookStore(config_dir=tmp_path)
-        hook_store.create({
-            "name": "startup-prefs",
-            "event": HOOK_EVENT_AGENT_SPAWN,
-            "provider": "bash",
-            "provider_config": {"command": "echo 'Enable caveman mode'"},
-            "timeout": 5,
-        })
+        hook_store.create(
+            {
+                "name": "startup-prefs",
+                "event": HOOK_EVENT_AGENT_SPAWN,
+                "provider": "bash",
+                "provider_config": {"command": "echo 'Enable caveman mode'"},
+                "timeout": 5,
+            }
+        )
         state._hook_store = hook_store
 
         captured_message = None

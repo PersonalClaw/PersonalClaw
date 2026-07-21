@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from personalclaw.lexicon.phonetics import double_metaphone, phonetic_keys, sounds_like
 from personalclaw.lexicon.service import LexiconService
 from personalclaw.lexicon.store import LexiconStore
@@ -76,10 +74,12 @@ class TestService:
 
     def test_rebuild_from_graph(self, tmp_path):
         svc = self._svc(tmp_path)
-        n = svc.rebuild_from_graph([
-            {"id": "e1", "name": "Kubernetes", "entity_type": "tech", "aliases": ["K8s"]},
-            {"id": "e2", "name": "PersonalClaw", "entity_type": "project", "aliases": []},
-        ])
+        n = svc.rebuild_from_graph(
+            [
+                {"id": "e1", "name": "Kubernetes", "entity_type": "tech", "aliases": ["K8s"]},
+                {"id": "e2", "name": "PersonalClaw", "entity_type": "project", "aliases": []},
+            ]
+        )
         assert n == 2 and svc.store.count_terms() == 2
 
     def test_rebuild_prunes_stale_graph_terms(self, tmp_path):
@@ -126,11 +126,18 @@ class TestService:
         svc.rebuild_from_graph([{"id": "e1", "name": "Kubernetes", "entity_type": "tech"}])
         r = TranscriptResult(
             text="deploy to kubernetis",
-            segments=[TranscriptSegment(0, 2, "deploy to kubernetis", words=[
-                TranscriptWord(0, 0.5, "deploy", 0.98),
-                TranscriptWord(0.5, 0.7, "to", 0.99),
-                TranscriptWord(0.7, 1.6, "kubernetis", 0.4),  # low-confidence mishearing
-            ])],
+            segments=[
+                TranscriptSegment(
+                    0,
+                    2,
+                    "deploy to kubernetis",
+                    words=[
+                        TranscriptWord(0, 0.5, "deploy", 0.98),
+                        TranscriptWord(0.5, 0.7, "to", 0.99),
+                        TranscriptWord(0.7, 1.6, "kubernetis", 0.4),  # low-confidence mishearing
+                    ],
+                )
+            ],
         )
         outcome = svc.correct(r)
         # A non-learned phonetic match at low confidence is PROPOSED, not auto-applied.
@@ -142,12 +149,19 @@ class TestService:
         svc.learn_correction("niro", "Nero", always=True)
         r = TranscriptResult(
             text="ask niro about it",
-            segments=[TranscriptSegment(0, 2, "ask niro about it", words=[
-                TranscriptWord(0, 0.3, "ask", 0.9),
-                TranscriptWord(0.3, 0.8, "niro", 0.95),  # high-conf, but a learned fix
-                TranscriptWord(0.8, 1.2, "about", 0.9),
-                TranscriptWord(1.2, 1.5, "it", 0.9),
-            ])],
+            segments=[
+                TranscriptSegment(
+                    0,
+                    2,
+                    "ask niro about it",
+                    words=[
+                        TranscriptWord(0, 0.3, "ask", 0.9),
+                        TranscriptWord(0.3, 0.8, "niro", 0.95),  # high-conf, but a learned fix
+                        TranscriptWord(0.8, 1.2, "about", 0.9),
+                        TranscriptWord(1.2, 1.5, "it", 0.9),
+                    ],
+                )
+            ],
         )
         outcome = svc.correct(r)
         assert any(c.suggested == "Nero" for c in outcome.applied)
@@ -155,9 +169,9 @@ class TestService:
 
     def test_learn_correction_flips_auto_apply_at_threshold(self, tmp_path):
         svc = self._svc(tmp_path)
-        svc.learn_correction("niro", "Nero")   # count 1
+        svc.learn_correction("niro", "Nero")  # count 1
         assert svc.store.auto_corrections() == {}
-        svc.learn_correction("niro", "Nero")   # count 2 → auto
+        svc.learn_correction("niro", "Nero")  # count 2 → auto
         assert svc.store.auto_corrections() == {"niro": "Nero"}
 
     def test_truncating_mishearing_matched_by_prefix(self, tmp_path):
@@ -166,18 +180,36 @@ class TestService:
         # phonetic-PREFIX fallback catches it and PROPOSES the correction.
         svc = self._svc(tmp_path)
         svc.rebuild_from_graph([{"id": "e1", "name": "Kubernetes", "entity_type": "tech"}])
-        r = TranscriptResult(text="cubeer scales", segments=[
-            TranscriptSegment(0, 1, "cubeer scales", words=[
-                TranscriptWord(0, 0.5, "Cubeer", 0.27),  # low-confidence real mishearing
-                TranscriptWord(0.5, 1.0, "scales", 0.9)])])
+        r = TranscriptResult(
+            text="cubeer scales",
+            segments=[
+                TranscriptSegment(
+                    0,
+                    1,
+                    "cubeer scales",
+                    words=[
+                        TranscriptWord(0, 0.5, "Cubeer", 0.27),  # low-confidence real mishearing
+                        TranscriptWord(0.5, 1.0, "scales", 0.9),
+                    ],
+                )
+            ],
+        )
         outcome = svc.correct(r)
         assert any(c.suggested == "Kubernetes" for c in outcome.suggested)
 
     def test_stop_words_not_corrected(self, tmp_path):
         svc = self._svc(tmp_path)
         svc.rebuild_from_graph([{"id": "e1", "name": "The", "entity_type": "x"}])
-        r = TranscriptResult(text="the cat", segments=[
-            TranscriptSegment(0, 1, "the cat", words=[
-                TranscriptWord(0, 0.5, "the", 0.3), TranscriptWord(0.5, 1, "cat", 0.3)])])
+        r = TranscriptResult(
+            text="the cat",
+            segments=[
+                TranscriptSegment(
+                    0,
+                    1,
+                    "the cat",
+                    words=[TranscriptWord(0, 0.5, "the", 0.3), TranscriptWord(0.5, 1, "cat", 0.3)],
+                )
+            ],
+        )
         outcome = svc.correct(r)
         assert not any(c.heard == "the" for c in outcome.applied + outcome.suggested)

@@ -73,8 +73,10 @@ class ProviderRegistry:
         # Additional providers this same app contributes hang off the primary.
         primary.extra = [
             RegisteredProvider(
-                name=manifest.name, manifest=manifest,
-                provider_config=cfg, enabled=False,
+                name=manifest.name,
+                manifest=manifest,
+                provider_config=cfg,
+                enabled=False,
             )
             for cfg in provider_configs[1:]
         ]
@@ -98,9 +100,7 @@ class ProviderRegistry:
             ext.provider_instance = instance
             ext.enabled = True
             ext.error = ""
-            logger.info(
-                "Enabled extension %s (type=%s)", ext.name, ext.provider_config.type
-            )
+            logger.info("Enabled extension %s (type=%s)", ext.name, ext.provider_config.type)
             return True
         except Exception as exc:
             ext.error = str(exc)
@@ -168,10 +168,7 @@ class ProviderRegistry:
         return out
 
     def list_by_type(self, provider_type: str) -> list[RegisteredProvider]:
-        return [
-            ext for ext in self.list_extensions()
-            if ext.provider_config.type == provider_type
-        ]
+        return [ext for ext in self.list_extensions() if ext.provider_config.type == provider_type]
 
 
 class _TypeHandler:
@@ -193,20 +190,24 @@ class _TypeHandler:
 
 # Type handlers for each provider type
 
+
 class TaskTypeHandler(_TypeHandler):
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
         from personalclaw.providers.settings import ProviderSettings
+
         config = ProviderSettings.load(ext.name)
         factory = load_factory(ext)
         return factory(config)
 
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.tasks.registry import register_provider
+
         register_provider(instance)
 
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.tasks.registry import unregister_provider
+
         unregister_provider(instance.name)
 
 
@@ -214,16 +215,19 @@ class WorkflowTypeHandler(_TypeHandler):
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
         from personalclaw.providers.settings import ProviderSettings
+
         config = ProviderSettings.load(ext.name)
         factory = load_factory(ext)
         return factory(config)
 
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.workflows.registry import register_provider
+
         register_provider(instance)
 
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.workflows.registry import unregister_provider
+
         unregister_provider(instance.name)
 
 
@@ -231,6 +235,7 @@ class ToolTypeHandler(_TypeHandler):
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
         from personalclaw.providers.settings import ProviderSettings
+
         factory = load_factory(ext)
         # A multiInstance tool app (e.g. openai-tools) builds ONE provider per
         # configured instance — the app-level singleton config is empty, so the
@@ -240,6 +245,7 @@ class ToolTypeHandler(_TypeHandler):
         # this, instances added via "Add instance" never become live tool providers.
         if ext.provider_config.multiInstance:
             from personalclaw.providers.instances import list_instances
+
             enabled = [i for i in list_instances(ext.name) if i.enabled]
             if not enabled:
                 logger.info("Tool extension %s has no enabled instances", ext.name)
@@ -266,12 +272,14 @@ class ToolTypeHandler(_TypeHandler):
 
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.tool_providers.registry import register_provider
+
         providers = instance if isinstance(instance, list) else [instance]
         for provider in providers:
             register_provider(provider)
 
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.tool_providers.registry import unregister_provider
+
         providers = instance if isinstance(instance, list) else [instance]
         for provider in providers:
             unregister_provider(getattr(provider, "name", ext.name))
@@ -289,16 +297,19 @@ class SearchTypeHandler(_TypeHandler):
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
         from personalclaw.providers.settings import ProviderSettings
+
         config = ProviderSettings.load(ext.name)
         factory = load_factory(ext)
         return factory(config)
 
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.search_providers.registry import register_provider
+
         register_provider(instance)
 
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.search_providers.registry import unregister_provider
+
         unregister_provider(getattr(instance, "name", ext.name))
 
 
@@ -312,16 +323,19 @@ class ActionTypeHandler(_TypeHandler):
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
         from personalclaw.providers.settings import ProviderSettings
+
         config = ProviderSettings.load(ext.name)
         factory = load_factory(ext)
         return factory(config)
 
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.action_providers.registry import register_action_provider
+
         register_action_provider(instance)
 
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.action_providers.registry import _providers
+
         _providers.pop(getattr(instance, "name", ""), None)
 
 
@@ -338,16 +352,19 @@ class ChannelTypeHandler(_TypeHandler):
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
         from personalclaw.providers.settings import ProviderSettings
+
         config = ProviderSettings.load(ext.name)
         factory = load_factory(ext)
         return factory(config)
 
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.channel_transports import register_transport
+
         register_transport(instance)
 
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.channel_transports import unregister_transport
+
         unregister_transport(getattr(instance, "name", ext.name))
 
 
@@ -362,16 +379,19 @@ class PromptTypeHandler(_TypeHandler):
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
         from personalclaw.providers.settings import ProviderSettings
+
         config = ProviderSettings.load(ext.name)
         factory = load_factory(ext)
         return factory(config)
 
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.prompt_providers.registry import register_prompt_provider
+
         register_prompt_provider(instance)
 
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.prompt_providers.registry import _providers
+
         _providers.pop(getattr(instance, "name", ""), None)
 
 
@@ -379,17 +399,20 @@ class MemoryTypeHandler(_TypeHandler):
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
         from personalclaw.providers.settings import ProviderSettings
+
         config = ProviderSettings.load(ext.name)
         factory = load_factory(ext)
         return factory(config)
 
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.memory_providers.registry import register_provider
+
         provider_name = getattr(instance, "name", ext.name)
         register_provider(provider_name, instance)
 
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.memory_providers.registry import unregister_provider
+
         provider_name = getattr(instance, "name", ext.name)
         unregister_provider(provider_name)
 
@@ -427,6 +450,7 @@ class EntitySeamHandler(_TypeHandler):
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
         from personalclaw.providers.settings import ProviderSettings
+
         config = ProviderSettings.load(ext.name)
         factory = load_factory(ext)
         return factory(config)
@@ -463,6 +487,7 @@ class ModelTypeHandler(_TypeHandler):
 
         if ext.provider_config.multiInstance:
             from personalclaw.providers.instances import list_instances
+
             instances = list_instances(ext.name)
             enabled = [i for i in instances if i.enabled]
             if not enabled:
@@ -481,8 +506,7 @@ class ModelTypeHandler(_TypeHandler):
                     providers.append(provider)
                 except Exception:
                     logger.warning(
-                        "Failed to create instance %s of %s",
-                        inst.id, ext.name, exc_info=True
+                        "Failed to create instance %s of %s", inst.id, ext.name, exc_info=True
                     )
             return providers if providers else None
 
@@ -500,8 +524,9 @@ class ModelTypeHandler(_TypeHandler):
             # the per-capability inference registration below.
             from personalclaw.local_models.registry import (
                 is_local_model_provider,
-                register_provider as reg_local,
             )
+            from personalclaw.local_models.registry import register_provider as reg_local
+
             if is_local_model_provider(provider, capabilities=list(caps)):
                 # Key by the APP name (ext.name) — matches the Providers UI + the
                 # existing ``provider:model`` binding refs, even when the provider's
@@ -514,33 +539,47 @@ class ModelTypeHandler(_TypeHandler):
             # provider, etc. Every branch is isinstance-guarded against its base.
             if "embedding" in caps:
                 from personalclaw.embedding_providers.base import EmbeddingProvider as _EMB
+
                 if isinstance(provider, _EMB):
-                    from personalclaw.embedding_providers.registry import register_provider as reg_emb
+                    from personalclaw.embedding_providers.registry import (
+                        register_provider as reg_emb,
+                    )
+
                     reg_emb(provider)
             if "stt" in caps:
                 from personalclaw.stt.provider import SttProvider as _STT
+
                 if isinstance(provider, _STT):
                     from personalclaw.stt.registry import register_provider as reg_stt
+
                     reg_stt(provider)
             if "tts" in caps:
                 from personalclaw.tts.provider import TtsProvider as _TTS
+
                 if isinstance(provider, _TTS):
                     from personalclaw.tts.registry import register_provider as reg_tts
+
                     reg_tts(provider)
             if "diarization" in caps:
                 from personalclaw.diarization.provider import DiarizationProvider as _DIA
+
                 if isinstance(provider, _DIA):
                     from personalclaw.diarization.registry import register_provider as reg_diar
+
                     reg_diar(provider)
             if "image_gen" in caps:
                 from personalclaw.image_gen.provider import ImageGenProvider as _IGP
+
                 if isinstance(provider, _IGP):
                     from personalclaw.image_gen.registry import register_provider as reg_img
+
                     reg_img(provider)
             if "video_gen" in caps:
                 from personalclaw.video_gen.provider import VideoGenProvider as _VGP
+
                 if isinstance(provider, _VGP):
                     from personalclaw.video_gen.registry import register_provider as reg_vid
+
                     reg_vid(provider)
 
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
@@ -550,24 +589,33 @@ class ModelTypeHandler(_TypeHandler):
             provider_name = getattr(provider, "name", ext.name)
             # Local-model registry is keyed by the APP name (see register()).
             from personalclaw.local_models.registry import unregister_provider as unreg_local
+
             unreg_local(ext.name)
             if "embedding" in caps:
-                from personalclaw.embedding_providers.registry import unregister_provider as unreg_emb
+                from personalclaw.embedding_providers.registry import (
+                    unregister_provider as unreg_emb,
+                )
+
                 unreg_emb(provider_name)
             if "stt" in caps:
                 from personalclaw.stt.registry import unregister_provider as unreg_stt
+
                 unreg_stt(provider_name)
             if "tts" in caps:
                 from personalclaw.tts.registry import unregister_provider as unreg_tts
+
                 unreg_tts(provider_name)
             if "diarization" in caps:
                 from personalclaw.diarization.registry import unregister_provider as unreg_diar
+
                 unreg_diar(provider_name)
             if "image_gen" in caps:
                 from personalclaw.image_gen.registry import unregister_provider as unreg_img
+
                 unreg_img(provider_name)
             if "video_gen" in caps:
                 from personalclaw.video_gen.registry import unregister_provider as unreg_vid
+
                 unreg_vid(provider_name)
 
 
@@ -586,27 +634,39 @@ def get_provider_registry() -> ProviderRegistry:
         # Enable/disable + Settings seams only — each names where the entity
         # actually lives. See EntitySeamHandler: registering an instance here
         # would create a second source of truth nothing reads (the Bedrock trap).
-        _registry.register_type_handler("agent", EntitySeamHandler(
-            source_of_truth="config.json agents{} (AgentProfile); marketplaces "
-            "self-register in agents.marketplace + entry-points. Factory returns "
-            "None by design (agents are config-based, not instances).",
-        ))
-        _registry.register_type_handler("knowledge", EntitySeamHandler(
-            source_of_truth="personalclaw.knowledge.* store/pipeline/retrieval "
-            "(dashboard.handlers.knowledge). Factory returns None by design; "
-            "knowledge_providers.registry has no consumer.",
-        ))
-        _registry.register_type_handler("inbox", EntitySeamHandler(
-            source_of_truth="entry-point discovery (personalclaw.message_source_"
-            "providers) read by inbox.py / handlers_inbox; no in-memory registry.",
-        ))
-        _registry.register_type_handler("notification", EntitySeamHandler(
-            source_of_truth="delivery preferences live in entity_settings/"
-            "notifications.json, enforced by DashboardState.notify()'s gate "
-            "(providers.entity_routes.notification_allowed). No provider "
-            "declares type=notification; pluggable delivery backends remain "
-            "a future design.",
-        ))
+        _registry.register_type_handler(
+            "agent",
+            EntitySeamHandler(
+                source_of_truth="config.json agents{} (AgentProfile); marketplaces "
+                "self-register in agents.marketplace + entry-points. Factory returns "
+                "None by design (agents are config-based, not instances).",
+            ),
+        )
+        _registry.register_type_handler(
+            "knowledge",
+            EntitySeamHandler(
+                source_of_truth="personalclaw.knowledge.* store/pipeline/retrieval "
+                "(dashboard.handlers.knowledge). Factory returns None by design; "
+                "knowledge_providers.registry has no consumer.",
+            ),
+        )
+        _registry.register_type_handler(
+            "inbox",
+            EntitySeamHandler(
+                source_of_truth="entry-point discovery (personalclaw.message_source_"
+                "providers) read by inbox.py / handlers_inbox; no in-memory registry.",
+            ),
+        )
+        _registry.register_type_handler(
+            "notification",
+            EntitySeamHandler(
+                source_of_truth="delivery preferences live in entity_settings/"
+                "notifications.json, enforced by DashboardState.notify()'s gate "
+                "(providers.entity_routes.notification_allowed). No provider "
+                "declares type=notification; pluggable delivery backends remain "
+                "a future design.",
+            ),
+        )
         _registry.register_type_handler("channel", ChannelTypeHandler())
         # NOTE: there is intentionally NO "space" provider type. Multi-agent
         # native feature (one engine + a switchable orchestration strategy), not
@@ -614,12 +674,15 @@ def get_provider_registry() -> ProviderRegistry:
         # Spaces, not Settings > Providers. the goal loop orchestrator drives personas directly
         # to the filesystem under the config dir; it never flows through this
         # extension registry.
-        _registry.register_type_handler("skills", EntitySeamHandler(
-            source_of_truth="MISMATCH (owner: S1/E11 skills): factory returns a "
-            "SkillsLoader (built ad-hoc by ~8 call sites), but SkillsRegistry "
-            "holds SkillsMarketplace; native/installed marketplaces self-register "
-            "in skills.native on import. Reconcile the contract before wiring.",
-        ))
+        _registry.register_type_handler(
+            "skills",
+            EntitySeamHandler(
+                source_of_truth="MISMATCH (owner: S1/E11 skills): factory returns a "
+                "SkillsLoader (built ad-hoc by ~8 call sites), but SkillsRegistry "
+                "holds SkillsMarketplace; native/installed marketplaces self-register "
+                "in skills.native on import. Reconcile the contract before wiring.",
+            ),
+        )
     return _registry
 
 

@@ -8,8 +8,6 @@ they run without the optional ``mcp`` SDK extra.
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from personalclaw.mcp_client import (
@@ -37,9 +35,9 @@ def test_conn_key_poolable_shares_scope():
     # now (name, scope, spec_hash) (P23e); the scope component (k[1]) is still "".
     k1 = _conn_key("s", _POOLABLE, "sess-1")
     k2 = _conn_key("s", _POOLABLE, "sess-2")
-    assert k1 == k2                       # same spec → identical key → one shared conn
-    assert k1[0] == "s" and k1[1] == ""   # name + shared scope
-    assert len(k1) == 3 and k1[2]         # carries a non-empty content hash
+    assert k1 == k2  # same spec → identical key → one shared conn
+    assert k1[0] == "s" and k1[1] == ""  # name + shared scope
+    assert len(k1) == 3 and k1[2]  # carries a non-empty content hash
 
 
 def test_conn_key_stateful_scopes_by_session():
@@ -174,6 +172,7 @@ def test_breaker_trips_after_threshold_failures():
     for _ in range(_BREAKER_THRESHOLD):
         conn._note_failure()
     import time
+
     assert conn._breaker_until > time.monotonic()  # cooldown armed
 
 
@@ -181,6 +180,7 @@ def test_breaker_trips_after_threshold_failures():
 async def test_breaker_blocks_respawn_during_cooldown():
     conn = McpServerConn("bad", _STATEFUL)
     import time
+
     conn._consecutive_failures = _BREAKER_THRESHOLD
     conn._breaker_until = time.monotonic() + 60
     # ensure_started must refuse without spawning a task.
@@ -234,7 +234,7 @@ def test_reconcile_replaces_conn_when_spec_content_changes():
     # Re-load with a DIFFERENT command → new content hash → the old conn is stale.
     reg.load_from_specs({"srv": {"command": "new", "poolable": True}})
     c_new = reg.get("srv", "")
-    assert c_new is not c_old            # spawned fresh for the new spec
+    assert c_new is not c_old  # spawned fresh for the new spec
     # only ONE canonical "srv" conn remains (the old-hash orphan was dropped)
     canon = [k for k in reg._conns if k[0] == "srv" and k[1] == ""]
     assert len(canon) == 1
@@ -246,7 +246,7 @@ def test_pool_stats_counts_spawns_reuse_and_shape():
     reg.load_from_specs({"shared": _POOLABLE, "browser": _STATEFUL})
     # 2 canonical conns spawned on load. Serve the shared one twice (reuse) + a session.
     reg.get("shared", "sess-1")
-    reg.get("shared", "sess-2")   # reuses the shared conn (no new spawn)
+    reg.get("shared", "sess-2")  # reuses the shared conn (no new spawn)
     reg.get("browser", "sess-1")  # new session conn (spawn)
     s = reg.pool_stats()
     assert s["configured_servers"] == 2

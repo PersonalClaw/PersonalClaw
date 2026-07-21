@@ -135,10 +135,15 @@ class FrameRouter:
                     continue  # non-JSON line (stray log) — skip, keep reading
                 if not isinstance(raw, dict):
                     continue
-                self._route(JsonRpcMessage(
-                    id=raw.get("id"), method=raw.get("method"),
-                    result=raw.get("result"), error=raw.get("error"), params=raw.get("params"),
-                ))
+                self._route(
+                    JsonRpcMessage(
+                        id=raw.get("id"),
+                        method=raw.get("method"),
+                        result=raw.get("result"),
+                        error=raw.get("error"),
+                        params=raw.get("params"),
+                    )
+                )
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # reader died unexpectedly — fail cleanly, never hang
@@ -185,7 +190,7 @@ class FrameRouter:
             q.put_nowait(msg)
         except asyncio.QueueFull:
             try:
-                q.get_nowait()   # drop the oldest frame
+                q.get_nowait()  # drop the oldest frame
                 q.put_nowait(msg)
                 logger.warning("ACP FrameRouter: session queue full — dropped oldest frame")
             except (asyncio.QueueEmpty, asyncio.QueueFull):

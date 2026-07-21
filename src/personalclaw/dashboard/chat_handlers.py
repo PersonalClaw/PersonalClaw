@@ -101,21 +101,27 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         if not session._app:
             # Unscoped session created by dashboard — apps cannot access it.
             sel().log_api_access(
-                caller=request_app, operation="chat_send", outcome="denied",
-                source="app_isolation", resources=f"session={session.key}",
+                caller=request_app,
+                operation="chat_send",
+                outcome="denied",
+                source="app_isolation",
+                resources=f"session={session.key}",
                 error="app cannot access unscoped sessions",
             )
             return web.json_response({"error": "app cannot access unscoped sessions"}, status=403)
         elif request_app != session._app:
             sel().log_api_access(
-                caller=request_app, operation="chat_send", outcome="denied",
-                source="app_isolation", resources=f"session={session.key}",
+                caller=request_app,
+                operation="chat_send",
+                outcome="denied",
+                source="app_isolation",
+                resources=f"session={session.key}",
                 error="app does not own this session",
             )
             return web.json_response({"error": "app does not own this session"}, status=403)
 
     if session.agent not in (None, ""):
-        # Session already has an agent — only reject explicit mismatches (non-empty different agent).
+        # Session already has an agent — only reject explicit mismatches (non-empty different agent).  # noqa: E501
         # Empty agent in request means "use existing" (e.g. follow-up messages from frontend).
         if agent and session.agent != agent:
             _emit_agent_assignment(session.key, agent or "", outcome="denied_mismatch")
@@ -148,10 +154,14 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         if message and mode == "steer" and state.sessions.add_steer(session.key, message):
             _c, _ = redact_exfiltration_urls(message)
             _c, _ = redact_credentials(_c)
-            state.broadcast_ws("activity_event", {
-                "session": session.key, "kind": "status",
-                "text": f"Steering: {_redact_for_display(_c)[:80]}",
-            })
+            state.broadcast_ws(
+                "activity_event",
+                {
+                    "session": session.key,
+                    "kind": "status",
+                    "text": f"Steering: {_redact_for_display(_c)[:80]}",
+                },
+            )
             return web.json_response({"ok": True, "steered": True})
         # followup / collect / steer-when-not-native → queue as before.
         if message:
@@ -159,7 +169,15 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
             _c, _ = redact_exfiltration_urls(message)
             _c, _ = redact_credentials(_c)
             _redacted = _redact_for_display(_c)
-            state.broadcast_ws("queue_push", {"session": session.key, "content": _redacted, "ts": datetime.now(timezone.utc).isoformat(), "queue_id": qid})
+            state.broadcast_ws(
+                "queue_push",
+                {
+                    "session": session.key,
+                    "content": _redacted,
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "queue_id": qid,
+                },
+            )
         return web.json_response({"ok": True, "queued": True})
 
     if not message:
@@ -175,8 +193,8 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
 
     # ── AutoNudge: user input cancels any pending nudge timer (user wins). ──
     try:
-        from personalclaw.autonudge import (
-            get_instance as _autonudge_get,  # circular: autonudge -> dashboard.chat -> chat_handlers
+        from personalclaw.autonudge import (  # circular: autonudge -> dashboard.chat -> chat_handlers  # noqa: E501
+            get_instance as _autonudge_get,
         )
 
         _autonudge = _autonudge_get()
@@ -285,16 +303,17 @@ def _origin_of(name: str, app: str = "") -> tuple[str, str]:
                 # loop-plan-<id> (the stepwise planner → no standing loop to link).
                 if name.startswith(_LOOP_PLAN_PREFIX):
                     return origin, ""
-                rest = name[len(prefix):]
+                rest = name[len(prefix) :]
                 from personalclaw.loop import store as loop_store
+
                 if loop_store.valid_loop_id(rest):
-                    return origin, rest          # main worker → exact loop id
+                    return origin, rest  # main worker → exact loop id
                 # task-worker loop-<id>-<taskid>: the loop id is the FIRST segment (the
                 # task id itself is hyphenated, e.g. t-abc, so a trailing rsplit is
                 # wrong) — take the leading segment when it's a valid loop id.
                 head = rest.split("-", 1)[0]
                 return origin, (head if loop_store.valid_loop_id(head) else rest)
-            return origin, name[len(prefix):]
+            return origin, name[len(prefix) :]
     if app in ("loop", "code", "campaign"):
         return "loop" if app == "code" else app, ""
     return "manual", ""
@@ -312,8 +331,9 @@ def _origin_label(origin: str, source_id: str) -> str:
     try:
         if origin == "loop":
             from personalclaw.loop import store as loop_store
+
             lp = loop_store.get(source_id)
-            return (lp.name if lp and lp.name else source_id)
+            return lp.name if lp and lp.name else source_id
     except Exception:
         logger.debug("origin label lookup failed for %s/%s", origin, source_id, exc_info=True)
     return source_id
@@ -385,7 +405,11 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
                 link_thread, link_channel = state.sessions.get_channel_link(name)
             except Exception:
                 link_thread = link_channel = None
-            if not link_thread and raw_key == name and not raw_key.startswith(("dashboard:", "dashboard_")):
+            if (
+                not link_thread
+                and raw_key == name
+                and not raw_key.startswith(("dashboard:", "dashboard_"))
+            ):
                 continue  # non-dashboard, non-channel (worker namespace) — not chat history
             if name in seen:
                 continue
@@ -409,9 +433,11 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
                 "running": False,
                 "created": meta.get("created_at") or d.get("created", ""),
                 "last_ts": "",
-                "last_activity_ts": datetime.fromtimestamp(
-                    d["modified"], tz=timezone.utc
-                ).isoformat() if d.get("modified") else "",
+                "last_activity_ts": (
+                    datetime.fromtimestamp(d["modified"], tz=timezone.utc).isoformat()
+                    if d.get("modified")
+                    else ""
+                ),
                 "folder_id": meta.get("folder_id", ""),
                 "pinned": bool(meta.get("pinned")),
                 "tags": [t for t in meta.get("tags", []) if isinstance(t, str)],
@@ -481,7 +507,9 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
     # Canonical persisted key — a channel-provider thread keeps its own bare key;
     # a dashboard session uses the dashboard: namespace. Resolve provider-agnostically
     # (falls back to the dashboard form for a live session with no disk history yet).
-    resolved_key = resolve_history_key(state.conversation_log, session.key) or _history_key_for(session.key)
+    resolved_key = resolve_history_key(state.conversation_log, session.key) or _history_key_for(
+        session.key
+    )
 
     limit_raw = request.query.get("limit")
     before = request.query.get("before")
@@ -497,9 +525,7 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             try:
                 disk_msgs = state.conversation_log.read_messages_chained(history_key)
             except Exception:
-                logger.warning(
-                    "read_messages_chained failed for %s", history_key, exc_info=True
-                )
+                logger.warning("read_messages_chained failed for %s", history_key, exc_info=True)
                 disk_msgs = []
             older = disk_msgs[: session._disk_older_count] if disk_msgs else []
             messages = older + mem_msgs
@@ -548,7 +574,10 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             "running": session.running,
             "stopping": session._stopping,
             "messages": prepared,
-            "queue": [{"id": q["id"], "content": _redact_for_display(q["content"])} for q in session._queue],
+            "queue": [
+                {"id": q["id"], "content": _redact_for_display(q["content"])}
+                for q in session._queue
+            ],
             "total": total,
             "has_more": has_more,
             # agent/model binding so the composer restores the SAME selection the
@@ -568,10 +597,13 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             # trust_reads precedence so the single enum the UI uses round-trips.
             "task_mode": getattr(session, "_task_mode", "agent") or "agent",
             "approval": (
-                "yolo" if state.is_yolo_active()
-                else "trust" if session._trust
-                else "trust_reads" if session._trust_reads
-                else "normal"
+                "yolo"
+                if state.is_yolo_active()
+                else (
+                    "trust"
+                    if session._trust
+                    else "trust_reads" if session._trust_reads else "normal"
+                )
             ),
             # Memory mode so mode-gated affordances restore on reopen (e.g. the chat
             # page hides Fork on a non-persistent session — the backend refuses to
@@ -584,7 +616,11 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             # silently — no `chat_done` fires while awaiting the human).
             "pending_approval": any(not f.done() for f in session._approval_futures.values()),
             # persisted side-chat transcript (reloads attached to the session).
-            "side": session._side.to_dict() if getattr(session, "_side", None) and session._side.messages else None,
+            "side": (
+                session._side.to_dict()
+                if session._side is not None and session._side.messages
+                else None
+            ),
         }
     )
 
@@ -620,6 +656,7 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
     if project_id:
         try:
             from personalclaw.tasks.hierarchy import HierarchyStore
+
             proj = HierarchyStore().get_project(project_id)
             pdir = str(getattr(proj, "workspace_dir", "") or "") if proj else ""
             if pdir:
@@ -632,7 +669,11 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
         if memory_mode not in ("persistent", "incognito", "temporary"):
             return web.json_response({"error": "invalid memory_mode"}, status=400)
         session = state.get_or_create_session(
-            name, agent=agent, workspace_dir=workspace_dir, model=model, mode=body.get("mode", ""),
+            name,
+            agent=agent,
+            workspace_dir=workspace_dir,
+            model=model,
+            mode=body.get("mode", ""),
             memory_mode=memory_mode,
             ephemeral=body.get("ephemeral"),
             app=request.get("app", ""),
@@ -651,11 +692,14 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
     if project_id:
         try:
             from personalclaw.tasks.hierarchy import HierarchyStore
+
             ctx = str(HierarchyStore().context_dir(project_id))
             if ctx and ctx not in (session._extra_tool_roots or []):
                 session._extra_tool_roots = [*(session._extra_tool_roots or []), ctx]
         except Exception:
-            logger.debug("project context-dir tool-root grant failed for %s", project_id, exc_info=True)
+            logger.debug(
+                "project context-dir tool-root grant failed for %s", project_id, exc_info=True
+            )
     # Default the working directory to the workspace root so file search works
     # out of the box.
     if not session.workspace_dir:
@@ -733,9 +777,7 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
             session._stop_state = "idle"
             state.push_sessions_update()
 
-        await state.sessions.stop_turn(
-            _history_key_for(name), force=True, on_hard=_on_hard_force
-        )
+        await state.sessions.stop_turn(_history_key_for(name), force=True, on_hard=_on_hard_force)
         sel().log_tool_invocation(
             session_key=_history_key_for(name),
             agent=getattr(session, "agent", "") or "personalclaw",
@@ -790,12 +832,14 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
     stop_msg = json.dumps(stop_data)
     session.append("system", stop_msg, stop_msg)
     state.push_sessions_update()
-    logger.info(
-        "Stop: cooperative cancel for session %s (queue=%d)", name, len(session._queue)
-    )
+    logger.info("Stop: cooperative cancel for session %s (queue=%d)", name, len(session._queue))
 
     async def _on_soft() -> None:
-        logger.debug("_on_soft called: stop_state=%r stop_event_id=%r", session._stop_state, session._stop_event_id)
+        logger.debug(
+            "_on_soft called: stop_state=%r stop_event_id=%r",
+            session._stop_state,
+            session._stop_event_id,
+        )
         if session._stop_state != "soft_pending":
             logger.debug("_on_soft: state not soft_pending, bail")
             return
@@ -881,7 +925,11 @@ async def api_chat_session_interrupt(request: web.Request) -> web.Response:
     stop_msg = json.dumps(stop_data)
     session.append("system", stop_msg, stop_msg)
     state.push_sessions_update()
-    logger.info("Interrupt: cooperative cancel for session %s (queue=%d preserved)", name, len(session._queue))
+    logger.info(
+        "Interrupt: cooperative cancel for session %s (queue=%d preserved)",
+        name,
+        len(session._queue),
+    )
 
     async def _on_soft() -> None:
         if session._stop_state != "soft_pending":
@@ -930,11 +978,16 @@ async def api_chat_session_queue_cancel(request: web.Request) -> web.Response:
         return web.json_response({"error": "queue item not found"}, status=404)
     _remove_queued_by_id(session.messages, queue_id)
     _redacted = _redact_for_display(content)
-    state.broadcast_ws("queue_cancel", {"session": name, "queue_id": queue_id, "content": _redacted})
+    state.broadcast_ws(
+        "queue_cancel", {"session": name, "queue_id": queue_id, "content": _redacted}
+    )
     state.push_sessions_update()
     sel().log_tool_invocation(
-        session_key=f"dashboard:{name}", agent="personalclaw", source="dashboard",
-        tool_name="queue_cancel", tool_kind="permission",
+        session_key=f"dashboard:{name}",
+        agent="personalclaw",
+        source="dashboard",
+        tool_name="queue_cancel",
+        tool_kind="permission",
         outcome="allowed",
         metadata={"queue_id": queue_id, "session": name},
     )
@@ -960,8 +1013,9 @@ async def api_chat_session_delete(request: web.Request) -> web.Response:
     on_disk = False
     if not session and state.conversation_log:
         try:
-            on_disk = bool(state.conversation_log.get_metadata(history_key)) or \
-                state.conversation_log.has_log(history_key)
+            on_disk = bool(
+                state.conversation_log.get_metadata(history_key)
+            ) or state.conversation_log.has_log(history_key)
         except Exception:
             on_disk = False
     if not session and not on_disk:
@@ -975,15 +1029,21 @@ async def api_chat_session_delete(request: web.Request) -> web.Response:
     if request_app and session is not None:
         if session._app != request_app:
             sel().log_api_access(
-                caller=request_app, operation="session_delete", outcome="denied",
-                source="app_isolation", resources=f"session={name}",
+                caller=request_app,
+                operation="session_delete",
+                outcome="denied",
+                source="app_isolation",
+                resources=f"session={name}",
                 error="app does not own this session",
             )
             return web.json_response({"error": "app does not own this session"}, status=403)
         if not session._app:
             sel().log_api_access(
-                caller=request_app, operation="session_delete", outcome="denied",
-                source="app_isolation", resources=f"session={name}",
+                caller=request_app,
+                operation="session_delete",
+                outcome="denied",
+                source="app_isolation",
+                resources=f"session={name}",
                 error="app cannot delete unscoped sessions",
             )
             return web.json_response({"error": "app cannot delete unscoped sessions"}, status=403)
@@ -1018,6 +1078,7 @@ async def api_chat_session_delete(request: web.Request) -> web.Response:
     #    but the bare id is also used by some paths — purge both forms.
     try:
         from personalclaw.tool_providers import result_store
+
         for _sid in {history_key, name}:
             result_store.purge_session(_sid)
     except Exception:
@@ -1096,11 +1157,21 @@ async def api_chat_sessions_cleanup(request: web.Request) -> web.Response:
     # Dry-run: return the exact list without archiving
     if dry_run:
         sel().log_api_access(
-            caller="dashboard", operation="chat.cleanup_dry_run",
-            outcome="allowed", source="dashboard",
+            caller="dashboard",
+            operation="chat.cleanup_dry_run",
+            outcome="allowed",
+            source="dashboard",
             resources=f"count={len(stale_keys)} threshold={max_days}d",
         )
-        return web.json_response({"ok": True, "dry_run": True, "keys": stale_keys, "count": len(stale_keys), "active_is_stale": active_is_stale})
+        return web.json_response(
+            {
+                "ok": True,
+                "dry_run": True,
+                "keys": stale_keys,
+                "count": len(stale_keys),
+                "active_is_stale": active_is_stale,
+            }
+        )
     archived: list[str] = []
     failed: list[str] = []
     _tasks_to_cancel: list[asyncio.Task] = []
@@ -1139,9 +1210,11 @@ async def api_chat_sessions_cleanup(request: web.Request) -> web.Response:
         operation="chat.sessions_cleanup",
         outcome="ok" if not failed else ("partial" if archived else "error"),
         source="dashboard",
-        resources=f"archived={len(archived)} failed={len(failed)} threshold={max_days}d keys={','.join(archived[:10])}",
+        resources=f"archived={len(archived)} failed={len(failed)} threshold={max_days}d keys={','.join(archived[:10])}",  # noqa: E501
     )
-    return web.json_response({"ok": True, "archived": len(archived), "keys": archived, "failed": failed})
+    return web.json_response(
+        {"ok": True, "archived": len(archived), "keys": archived, "failed": failed}
+    )
 
 
 async def api_chat_session_agent(request: web.Request) -> web.Response:
@@ -1183,7 +1256,9 @@ async def api_chat_session_agent(request: web.Request) -> web.Response:
         logger.warning("Failed to resolve agent bindings for %r", agent_name, exc_info=True)
 
     # Reset session so next message uses the new agent
-    logger.info("Session %s agent switched to %r, resetting session", name, agent_name or "personalclaw")
+    logger.info(
+        "Session %s agent switched to %r, resetting session", name, agent_name or "personalclaw"
+    )
     await state.sessions.reset(_history_key_for(name))
     # Persist the new agent so the session resumes under the correct agent
     # after a gateway restart.  Written after reset succeeds so we never
@@ -1195,9 +1270,7 @@ async def api_chat_session_agent(request: web.Request) -> web.Response:
                 {"agent": agent_name, "acp_provider": "", "acp_provider_agent": ""},
             )
         except Exception:
-            logger.warning(
-                "Failed to persist agent for session %s", name, exc_info=True
-            )
+            logger.warning("Failed to persist agent for session %s", name, exc_info=True)
     state.push_sessions_update()
     return web.json_response(
         {"ok": True, "agent": agent_name, "workspace_dir": session.workspace_dir}
@@ -1246,7 +1319,11 @@ async def api_chat_session_acp_agent(request: web.Request) -> web.Response:
 
     logger.info(
         "Session %s ACP override → provider=%r agent=%r model=%r effort=%r",
-        name, provider, provider_agent, session.model, effort,
+        name,
+        provider,
+        provider_agent,
+        session.model,
+        effort,
     )
     await state.sessions.reset(_history_key_for(name))
     # Persist so the ephemeral binding survives a gateway restart for THIS
@@ -1266,8 +1343,13 @@ async def api_chat_session_acp_agent(request: web.Request) -> web.Response:
             logger.warning("Failed to persist ACP override for session %s", name, exc_info=True)
     state.push_sessions_update()
     return web.json_response(
-        {"ok": True, "provider": provider, "provider_agent": session.acp_provider_agent,
-         "model": session.model, "reasoning_effort": effort}
+        {
+            "ok": True,
+            "provider": provider,
+            "provider_agent": session.acp_provider_agent,
+            "model": session.model,
+            "reasoning_effort": effort,
+        }
     )
 
 
@@ -1372,7 +1454,7 @@ async def api_chat_session_workspace_dir(request: web.Request) -> web.Response:
                 operation="chat_session_workspace_dir",
                 outcome="denied",
                 resources=f"session={name} workspace_dir={workspace_dir}",
-                error="sensitive path"
+                error="sensitive path",
             )
             return web.json_response({"error": "Access denied"}, status=403)
     session.workspace_dir = workspace_dir
@@ -1429,8 +1511,7 @@ async def api_recent_projects(request: web.Request) -> web.Response:
         if not isinstance(dirs, list):
             dirs = []
         return [
-            d for d in dirs
-            if isinstance(d, str) and os.path.isdir(d) and not is_sensitive_path(d)
+            d for d in dirs if isinstance(d, str) and os.path.isdir(d) and not is_sensitive_path(d)
         ]
 
     dirs = await asyncio.to_thread(_read_recent_projects)
@@ -1473,15 +1554,23 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
         if request_app:
             if not existing._app:
                 sel().log_api_access(
-                    caller=request_app, operation="session_resume", outcome="denied",
-                    source="app_isolation", resources=f"session={existing.key}",
+                    caller=request_app,
+                    operation="session_resume",
+                    outcome="denied",
+                    source="app_isolation",
+                    resources=f"session={existing.key}",
                     error="app cannot access unscoped sessions",
                 )
-                return web.json_response({"error": "app cannot access unscoped sessions"}, status=403)
+                return web.json_response(
+                    {"error": "app cannot access unscoped sessions"}, status=403
+                )
             elif request_app != existing._app:
                 sel().log_api_access(
-                    caller=request_app, operation="session_resume", outcome="denied",
-                    source="app_isolation", resources=f"session={existing.key}",
+                    caller=request_app,
+                    operation="session_resume",
+                    outcome="denied",
+                    source="app_isolation",
+                    resources=f"session={existing.key}",
                     error="app does not own this session",
                 )
                 return web.json_response({"error": "app does not own this session"}, status=403)
@@ -1493,7 +1582,10 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
                 "ok": True,
                 "key": existing.key,
                 "messages": prepared,
-                "queue": [{"id": q["id"], "content": _redact_for_display(q["content"])} for q in existing._queue],
+                "queue": [
+                    {"id": q["id"], "content": _redact_for_display(q["content"])}
+                    for q in existing._queue
+                ],
                 "total": total,
                 "has_more": total > 200,
                 "memory_mode": existing.memory_mode,
@@ -1574,7 +1666,18 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
     _sync_dashboard_sessions(state)
     state.push_sessions_update()
     return web.json_response(
-        {"ok": True, "key": session.key, "messages": _prepare_messages(recent, session.running), "queue": [{"id": q["id"], "content": _redact_for_display(q["content"])} for q in session._queue], "total": total, "has_more": total > len(recent), "memory_mode": session.memory_mode}
+        {
+            "ok": True,
+            "key": session.key,
+            "messages": _prepare_messages(recent, session.running),
+            "queue": [
+                {"id": q["id"], "content": _redact_for_display(q["content"])}
+                for q in session._queue
+            ],
+            "total": total,
+            "has_more": total > len(recent),
+            "memory_mode": session.memory_mode,
+        }
     )
 
 
@@ -1804,6 +1907,7 @@ async def api_chat_session_approve(request: web.Request) -> web.Response:
         state.sessions.set_approval_policy(f"dashboard:{name}", "auto")
         action = "approved"
         from personalclaw.agents.defaults import is_reserved_agent
+
         try:
             cfg = AppConfig.load()
             # Resolve the grant target: an empty session.agent means the implicit
@@ -1823,7 +1927,10 @@ async def api_chat_session_approve(request: web.Request) -> web.Response:
                     resources=f"{name} agent={agent_name}",
                 )
             else:
-                logger.info("trust_agent on non-persistable agent %r — session-scope only", agent_name or "(none)")
+                logger.info(
+                    "trust_agent on non-persistable agent %r — session-scope only",
+                    agent_name or "(none)",
+                )
         except Exception:
             logger.warning("Failed to persist always-for-agent grant", exc_info=True)
     # Trust-reads: auto-approve read-only bash commands for this session
@@ -1864,7 +1971,8 @@ async def api_chat_session_approve(request: web.Request) -> web.Response:
     # Persist resolved state into the permission message so it survives tab switches
     if request_id:
         _mark_permission_resolved(
-            session.messages, request_id,
+            session.messages,
+            request_id,
             original_action if original_action in ("trust", "trust_reads") else resolved,
         )
     # Broadcast first to ensure frontend is unblocked
@@ -2005,7 +2113,8 @@ async def api_chat_session_context(request: web.Request) -> web.Response:
         source_count = sum(1 for e in session._pending_context if e.get("source") == source)
         if source_count >= _MAX_CONTEXT_PER_SOURCE:
             return web.json_response(
-                {"error": f"source {source!r} has {_MAX_CONTEXT_PER_SOURCE} pending entries"}, status=429
+                {"error": f"source {source!r} has {_MAX_CONTEXT_PER_SOURCE} pending entries"},
+                status=429,
             )
 
     # FIFO eviction: cap pending queue at 50 entries
@@ -2099,7 +2208,9 @@ async def api_nav_resolve_links(request: web.Request) -> web.Response:
         url = str(item.get("url", "")).strip()
         if not url:
             continue
-        links.append({"url": url, "context": str(item.get("context", "")).strip()[:_NAV_CONTEXT_CAP]})
+        links.append(
+            {"url": url, "context": str(item.get("context", "")).strip()[:_NAV_CONTEXT_CAP]}
+        )
 
     if not links:
         return web.json_response({"summaries": []})

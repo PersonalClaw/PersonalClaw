@@ -17,19 +17,19 @@ the key design line that keeps this function pure (see the plan's Risks §).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 
 class Action(str, Enum):
     """What the supervisor should do with a loop this tick."""
 
-    EXECUTE = "execute"     # run/continue the current step's work (arm a worker cycle)
-    WAITING = "waiting"     # nothing to do yet (e.g. a worker turn is still in flight)
-    HOLD = "hold"           # stay on this step (bake/dwell not elapsed, or metric marginal)
-    ADVANCE = "advance"     # step's gate passed → move to the next step
-    ROLLBACK = "rollback"   # metric regressed below the prior step's floor → step back
-    COMPLETE = "complete"   # the whole loop is done
+    EXECUTE = "execute"  # run/continue the current step's work (arm a worker cycle)
+    WAITING = "waiting"  # nothing to do yet (e.g. a worker turn is still in flight)
+    HOLD = "hold"  # stay on this step (bake/dwell not elapsed, or metric marginal)
+    ADVANCE = "advance"  # step's gate passed → move to the next step
+    ROLLBACK = "rollback"  # metric regressed below the prior step's floor → step back
+    COMPLETE = "complete"  # the whole loop is done
 
 
 @dataclass(frozen=True)
@@ -37,12 +37,16 @@ class Decision:
     """The immutable outcome of one :func:`evaluate` call."""
 
     action: Action
-    step_index: int          # the step the loop should be on AFTER applying this decision
-    reason: str = ""         # human-facing why (surfaced in events / cockpit)
+    step_index: int  # the step the loop should be on AFTER applying this decision
+    reason: str = ""  # human-facing why (surfaced in events / cockpit)
     metric: float | None = None  # the metric value the decision was made against, for observability
 
     def to_dict(self) -> dict:
-        d: dict = {"action": self.action.value, "step_index": self.step_index, "reason": self.reason}
+        d: dict = {
+            "action": self.action.value,
+            "step_index": self.step_index,
+            "reason": self.reason,
+        }
         if self.metric is not None:
             d["metric"] = round(self.metric, 3)
         return d
@@ -53,10 +57,12 @@ class StepConfig:
     """One step's tick parameters (from a plan-phase dict). All optional — the
     defaults reproduce today's no-dwell, no-metric-gate behavior."""
 
-    min_dwell_secs: float = 0.0   # a hold floor: stay on this step at least this long (bake period)
-    min_findings: int = 0         # require at least this many findings before the step can advance
+    min_dwell_secs: float = 0.0  # a hold floor: stay on this step at least this long (bake period)
+    min_findings: int = 0  # require at least this many findings before the step can advance
     metric_pass: float | None = None  # metric ≥ this → advance; None disables the metric gate
-    metric_hold: float | None = None  # metric in [hold, pass) → hold; below hold (+ prior floor) → rollback
+    metric_hold: float | None = (
+        None  # metric in [hold, pass) → hold; below hold (+ prior floor) → rollback
+    )
 
 
 @dataclass(frozen=True)
@@ -64,9 +70,9 @@ class TickConfig:
     """The loop-level, tick-relevant config snapshot (immutable). Derived from the
     Loop row + kind_config by the adapter; never holds live handles."""
 
-    steps: tuple[StepConfig, ...] = ()   # per-step configs, indexed by step_index
-    max_cycles: int = 0                  # 0 = uncapped (forever); else a hard budget
-    rollback_cap: int = 3                # consecutive rollbacks on one step before giving up → COMPLETE(blocked)
+    steps: tuple[StepConfig, ...] = ()  # per-step configs, indexed by step_index
+    max_cycles: int = 0  # 0 = uncapped (forever); else a hard budget
+    rollback_cap: int = 3  # consecutive rollbacks on one step before giving up → COMPLETE(blocked)
     # A loop with no steps (a plain point-in-time open-ended/monitor loop) has steps=()
     # and evaluate() degrades to the budget/dwell-free path (EXECUTE until an external
     # done-signal completes it) — this engine governs *stepwise* loops (SDLC/design/plan
@@ -84,15 +90,19 @@ class TickState:
     files), so a restarted process rebuilds an identical snapshot and re-derives the
     same Decision — the restartability guarantee."""
 
-    step_index: int              # current step (0-based); == len(steps) means past the last step
-    step_started_at: float       # monotonic-ish epoch when the current step began
-    findings_in_step: int = 0    # findings produced since this step began
-    gate_passed: bool = False    # did the adapter's I/O (verify/judge) say this step's exit is met?
+    step_index: int  # current step (0-based); == len(steps) means past the last step
+    step_started_at: float  # monotonic-ish epoch when the current step began
+    findings_in_step: int = 0  # findings produced since this step began
+    gate_passed: bool = False  # did the adapter's I/O (verify/judge) say this step's exit is met?
     metric: float | None = None  # the metric the adapter observed (verify exit / quality score)
-    worker_in_flight: bool = False   # a worker turn is currently running → WAITING (don't double-arm)
-    prior_step_floor: float | None = None  # the metric floor established by the prior step (rollback ref)
-    rollbacks_on_step: int = 0   # consecutive rollbacks already taken on this step
-    total_cycles: int = 0        # cycles run so far (for the max_cycles budget)
+    worker_in_flight: bool = (
+        False  # a worker turn is currently running → WAITING (don't double-arm)
+    )
+    prior_step_floor: float | None = (
+        None  # the metric floor established by the prior step (rollback ref)
+    )
+    rollbacks_on_step: int = 0  # consecutive rollbacks already taken on this step
+    total_cycles: int = 0  # cycles run so far (for the max_cycles budget)
 
 
 def evaluate(cfg: TickConfig, state: TickState, now: float) -> Decision:
@@ -128,17 +138,27 @@ def evaluate(cfg: TickConfig, state: TickState, now: float) -> Decision:
 
     # 4. Metric regression → rollback to the prior step (bounded by rollback_cap).
     #    Only meaningful when the step is metric-gated AND a prior floor exists.
-    if (step.metric_pass is not None and state.metric is not None
-            and state.prior_step_floor is not None
-            and state.metric < state.prior_step_floor):
+    if (
+        step.metric_pass is not None
+        and state.metric is not None
+        and state.prior_step_floor is not None
+        and state.metric < state.prior_step_floor
+    ):
         if state.rollbacks_on_step >= cfg.rollback_cap:
-            return Decision(Action.COMPLETE, state.step_index,
-                            f"rollback cap ({cfg.rollback_cap}) hit on step {state.step_index} — blocked",
-                            state.metric)
+            return Decision(
+                Action.COMPLETE,
+                state.step_index,
+                f"rollback cap ({cfg.rollback_cap}) hit on step {state.step_index} — blocked",
+                state.metric,
+            )
         prior = max(0, state.step_index - 1)
-        return Decision(Action.ROLLBACK, prior,
-                        f"metric {state.metric:.2f} regressed below prior floor "
-                        f"{state.prior_step_floor:.2f}", state.metric)
+        return Decision(
+            Action.ROLLBACK,
+            prior,
+            f"metric {state.metric:.2f} regressed below prior floor "
+            f"{state.prior_step_floor:.2f}",
+            state.metric,
+        )
 
     # 5. Bake/dwell floor — a step with a min_dwell holds until the clock elapses,
     #    UNLESS its gate already passed and dwell is zero (handled at 7 as zero-wait).
@@ -148,12 +168,18 @@ def evaluate(cfg: TickConfig, state: TickState, now: float) -> Decision:
 
     # 6. Not enough evidence yet to even consider advancing → keep working this step.
     if state.findings_in_step < step.min_findings:
-        return Decision(Action.EXECUTE, state.step_index,
-                        f"gathering evidence ({state.findings_in_step}/{step.min_findings})", state.metric)
+        return Decision(
+            Action.EXECUTE,
+            state.step_index,
+            f"gathering evidence ({state.findings_in_step}/{step.min_findings})",
+            state.metric,
+        )
 
     # 7. Gate passed → advance (metric gate, if configured, must also clear the pass line).
     if state.gate_passed:
-        if step.metric_pass is None or (state.metric is not None and state.metric >= step.metric_pass):
+        if step.metric_pass is None or (
+            state.metric is not None and state.metric >= step.metric_pass
+        ):
             nxt = state.step_index + 1
             done = nxt >= n_steps if n_steps else False
             return Decision(
@@ -165,10 +191,18 @@ def evaluate(cfg: TickConfig, state: TickState, now: float) -> Decision:
         # gate passed structurally but metric below pass → fall through to marginal/hold.
 
     # 8. Metric-gated + marginal (between hold and pass) → hold for another cycle.
-    if (step.metric_pass is not None and step.metric_hold is not None and state.metric is not None
-            and step.metric_hold <= state.metric < step.metric_pass):
-        return Decision(Action.HOLD, state.step_index,
-                        f"metric {state.metric:.2f} marginal (< pass {step.metric_pass:.2f})", state.metric)
+    if (
+        step.metric_pass is not None
+        and step.metric_hold is not None
+        and state.metric is not None
+        and step.metric_hold <= state.metric < step.metric_pass
+    ):
+        return Decision(
+            Action.HOLD,
+            state.step_index,
+            f"metric {state.metric:.2f} marginal (< pass {step.metric_pass:.2f})",
+            state.metric,
+        )
 
     # 9. Default — keep executing the current step.
     return Decision(Action.EXECUTE, state.step_index, "continue current step", state.metric)
@@ -209,8 +243,12 @@ def collapse(cfg: TickConfig, state: TickState, now: float, *, max_iters: int = 
 def _needs_observation(step: StepConfig) -> bool:
     """True if leaving this step requires an adapter observation (gate/metric/dwell/
     evidence) — i.e. it is NOT instant."""
-    return (step.min_dwell_secs > 0 or step.min_findings > 0
-            or step.metric_pass is not None or step.metric_hold is not None)
+    return (
+        step.min_dwell_secs > 0
+        or step.min_findings > 0
+        or step.metric_pass is not None
+        or step.metric_hold is not None
+    )
 
 
 # ── pure adapters: plan-phase dict → tick config ────────────────────────────
@@ -219,9 +257,10 @@ def _needs_observation(step: StepConfig) -> bool:
 # knowing the phase-dict shape. Pure + defensive: unknown/garbage fields are ignored,
 # so a phase with none of the P6 keys yields today's no-dwell/no-metric StepConfig().
 
+
 def _opt_float(v: object) -> float | None:
     try:
-        return float(v) if v is not None and str(v).strip() != "" else None  # type: ignore[arg-type]
+        return float(v) if v is not None and str(v).strip() != "" else None  # type: ignore[arg-type]  # noqa: E501
     except (TypeError, ValueError):
         return None
 
@@ -248,7 +287,9 @@ def step_config_from_phase(phase: dict) -> StepConfig:
 def tick_config_from_plan(plan: list, max_cycles: int = 0, rollback_cap: int = 3) -> TickConfig:
     """Build a TickConfig from a loop's execution_plan (list of phase dicts) + budget."""
     steps = tuple(step_config_from_phase(p) for p in (plan or []))
-    return TickConfig(steps=steps, max_cycles=max(0, int(max_cycles or 0)), rollback_cap=rollback_cap)
+    return TickConfig(
+        steps=steps, max_cycles=max(0, int(max_cycles or 0)), rollback_cap=rollback_cap
+    )
 
 
 def tick_state_from_snapshot(
@@ -292,18 +333,20 @@ def validate_step_phase(phase: dict) -> list[str]:
     if not isinstance(phase, dict):
         return errs
     if "min_dwell_secs" in phase and _opt_float(phase.get("min_dwell_secs")) is None:
-        errs.append(f"phase {phase.get('title','?')!r}: min_dwell_secs must be a number")
+        errs.append(f"phase {phase.get('title', '?')!r}: min_dwell_secs must be a number")
     if "min_findings" in phase:
         try:
             if int(phase["min_findings"]) < 0:
-                errs.append(f"phase {phase.get('title','?')!r}: min_findings must be ≥ 0")
+                errs.append(f"phase {phase.get('title', '?')!r}: min_findings must be ≥ 0")
         except (TypeError, ValueError):
-            errs.append(f"phase {phase.get('title','?')!r}: min_findings must be an integer")
+            errs.append(f"phase {phase.get('title', '?')!r}: min_findings must be an integer")
     mp, mh = _opt_float(phase.get("metric_pass")), _opt_float(phase.get("metric_hold"))
     if "metric_pass" in phase and mp is None:
-        errs.append(f"phase {phase.get('title','?')!r}: metric_pass must be a number")
+        errs.append(f"phase {phase.get('title', '?')!r}: metric_pass must be a number")
     if "metric_hold" in phase and mh is None:
-        errs.append(f"phase {phase.get('title','?')!r}: metric_hold must be a number")
+        errs.append(f"phase {phase.get('title', '?')!r}: metric_hold must be a number")
     if mp is not None and mh is not None and mh > mp:
-        errs.append(f"phase {phase.get('title','?')!r}: metric_hold ({mh}) must be ≤ metric_pass ({mp})")
+        errs.append(
+            f"phase {phase.get('title', '?')!r}: metric_hold ({mh}) must be ≤ metric_pass ({mp})"
+        )
     return errs

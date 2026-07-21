@@ -5,14 +5,21 @@ import os
 from personalclaw.knowledge.store import KnowledgeStore, normalize_url
 
 __all__ = [
-    "KnowledgeStore", "normalize_url", "knowledge_db_path", "knowledge_files_dir",
-    "get_knowledge_store", "get_knowledge_llm_pool", "get_knowledge_embedder",
+    "KnowledgeStore",
+    "normalize_url",
+    "knowledge_db_path",
+    "knowledge_files_dir",
+    "get_knowledge_store",
+    "get_knowledge_llm_pool",
+    "get_knowledge_embedder",
 ]
 
 _store: "KnowledgeStore | None" = None
 _llm_pool = None  # lazy process-wide LLMPool for callers without a gateway handle
 _embedder = None  # cached process-wide embedder for callers without a gateway handle
-_embedder_spec: object = False  # the embedding selection the cache was built for (sentinel: not yet built)
+_embedder_spec: object = (
+    False  # the embedding selection the cache was built for (sentinel: not yet built)
+)
 
 
 def knowledge_db_path() -> str:
@@ -75,14 +82,16 @@ def get_knowledge_embedder():
     global _embedder, _embedder_spec
     try:
         from personalclaw.embedding_providers.registry import _active_embedding_spec
+
         spec = _active_embedding_spec()
     except Exception:
         spec = None
     if spec != _embedder_spec:
         try:
+            import json as _json
+
             from personalclaw.config.loader import config_path
             from personalclaw.knowledge.embedder import create_embedder_from_config
-            import json as _json
 
             cfg_path = config_path()
             cfg = _json.loads(cfg_path.read_text()) if cfg_path.exists() else {}

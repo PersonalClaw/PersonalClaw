@@ -29,7 +29,7 @@ def session_key(loop_id: str) -> str:
 
 def loop_id_from_session_key(key: str) -> str:
     """Inverse of :func:`session_key` — '' if ``key`` isn't a loop worker key."""
-    return key[len("loop-"):] if key.startswith("loop-") else ""
+    return key[len("loop-") :] if key.startswith("loop-") else ""
 
 
 def _context_dir(loop: Loop) -> str:
@@ -38,6 +38,7 @@ def _context_dir(loop: Loop) -> str:
         return ""
     try:
         from personalclaw import projects as projects_svc
+
         return projects_svc.context_dir(loop.project_id) or ""
     except Exception:
         logger.debug("context_dir lookup failed for %s", loop.id, exc_info=True)
@@ -53,12 +54,15 @@ def _project_brief_block(loop: Loop) -> str:
         return ""
     try:
         from personalclaw.tasks.hierarchy import HierarchyStore
+
         project = HierarchyStore().get_project(loop.project_id)
         brief = (getattr(project, "brief", "") or "").strip() if project else ""
         if not brief:
             return ""
-        return ("**Project brief** — the goal/scope/background of the project this loop "
-                f"belongs to. Treat it as foundational context for everything you do:\n\n{brief}")
+        return (
+            "**Project brief** — the goal/scope/background of the project this loop "
+            f"belongs to. Treat it as foundational context for everything you do:\n\n{brief}"
+        )
     except Exception:
         logger.debug("project-brief lookup failed for %s", loop.id, exc_info=True)
         return ""
@@ -76,8 +80,10 @@ def _sibling_loops_block(loop: Loop) -> str:
         siblings = [lp for lp in store.list_for_project(loop.project_id) if lp.id != loop.id]
         if not siblings:
             return ""
-        lines = [f"**Other loops on this project ({len(siblings)})** — their outcomes live in "
-                 "the shared context dir above; read them for continuity:"]
+        lines = [
+            f"**Other loops on this project ({len(siblings)})** — their outcomes live in "
+            "the shared context dir above; read them for continuity:"
+        ]
         for lp in siblings[:12]:
             lines.append(f"    • [{lp.kind}] {lp.name or lp.task[:60]} — {lp.status}")
         return "\n".join(lines)
@@ -131,6 +137,7 @@ async def start(state, svc, loop_id: str) -> Loop:
     # empty per-sub-goal TaskLists the user never asked for.
     if getattr(strat, "provisions_tasks", False):
         from personalclaw.loop import tasks_link
+
         provisioned = tasks_link.provision(loop_id)
         if provisioned is not None:
             loop = provisioned
@@ -189,7 +196,9 @@ async def start(state, svc, loop_id: str) -> Loop:
     try:
         state.sessions.set_approval_policy(session.key, "auto")
     except Exception:
-        logger.warning("loop: failed to set auto approval_policy for %s", session.key, exc_info=True)
+        logger.warning(
+            "loop: failed to set auto approval_policy for %s", session.key, exc_info=True
+        )
     # Unattended loop: strip interactive tools from the worker's toolset (T5) so a
     # cycle can't wedge on an option-prompt-shaped tool. Pairs with the watchdog's
     # "unattended NEVER pauses" question-discard — that handles a stray question
@@ -219,6 +228,7 @@ def _build_nudge_message(strat, loop: Loop, d) -> str:
         # Counter the base chat prompt's [OPTIONS: …] rule so it doesn't leak into
         # the loop's narration. Attended loops keep their own ask path.
         from personalclaw.autonomous_framing import with_autonomous_framing
+
         msg = with_autonomous_framing(msg)
     return msg
 
@@ -233,6 +243,7 @@ async def rearm_nudge_message(svc, loop_id: str) -> None:
     raises into the cycle hook."""
     try:
         from personalclaw.loop import kinds
+
         kinds.ensure_loaded()
         loop = store.get(loop_id)
         if loop is None:
@@ -295,12 +306,14 @@ async def nudge(state, svc, loop_id: str, text: str, task_id: str = "") -> Loop 
         # A project-level steer in parallel mode: fan out to every LIVE task-worker,
         # since the shared file is read by no one there.
         if _is_parallel(loop):
-            for tid in (loop.kind_config.get("queued_task_ids", []) or []):
+            for tid in loop.kind_config.get("queued_task_ids", []) or []:
                 try:
                     if svc.get_by_session(task_session_key(loop_id, tid)) is not None:
                         store.write_task_guidance(loop_id, tid, text)
                 except Exception:
-                    logger.debug("fan-out steer to task %s failed for %s", tid, loop_id, exc_info=True)
+                    logger.debug(
+                        "fan-out steer to task %s failed for %s", tid, loop_id, exc_info=True
+                    )
     store.append_nudge(loop_id, text, sent_at_cycle=loop.total_cycles)
     # A steer on a NEEDS_INPUT (awaiting answer) or BLOCKED (stall-paused, its nudge
     # loop deactivated) loop must RE-ARM the worker so the steer is actually consumed
@@ -312,6 +325,7 @@ async def nudge(state, svc, loop_id: str, text: str, task_id: str = "") -> Loop 
         # Kind-agnostic — reuses the kind's launch precondition (also enforced by the
         # start action + the reaper).
         from personalclaw.loop import kinds
+
         kinds.ensure_loaded()
         strat = kinds.get_or_none(loop.kind)
         blocker = getattr(strat, "launch_blocker", None)
@@ -337,16 +351,33 @@ def _task_cycle_nudge(loop: Loop, task, worktree_dir: str, loop_dir: str) -> str
     """The per-cycle trigger for a parallel task-worker: it works ONLY its task, in
     its own worktree, marks the task done, and writes a task finding. Ported from
     code/manager._task_cycle_nudge."""
-    plan = "\n".join(f"   - {a.get('content', '')}" for a in (getattr(task, "action_plan", None) or []) if a.get("content"))
-    crit = "\n".join(f"   - {c.get('description', '')}" for c in (getattr(task, "exit_criteria", None) or []) if c.get("description"))
+    plan = "\n".join(
+        f"   - {a.get('content', '')}"
+        for a in (getattr(task, "action_plan", None) or [])
+        if a.get("content")
+    )
+    crit = "\n".join(
+        f"   - {c.get('description', '')}"
+        for c in (getattr(task, "exit_criteria", None) or [])
+        if c.get("description")
+    )
     pending = store.read_task_guidance(loop.id, task.id)
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
-    rendered = render_use_case_prompt("parallel_worker_nudge", {
-        "loop_id": loop.id, "task_title": task.title, "task_id": task.id,
-        "worktree_dir": worktree_dir, "loop_dir": loop_dir,
-        "task_description": getattr(task, "description", ""),
-        "plan": plan, "criteria": crit, "guidance": pending.strip(),
-    })
+
+    rendered = render_use_case_prompt(
+        "parallel_worker_nudge",
+        {
+            "loop_id": loop.id,
+            "task_title": task.title,
+            "task_id": task.id,
+            "worktree_dir": worktree_dir,
+            "loop_dir": loop_dir,
+            "task_description": getattr(task, "description", ""),
+            "plan": plan,
+            "criteria": crit,
+            "guidance": pending.strip(),
+        },
+    )
     if rendered is not None:
         return rendered
     lines = [
@@ -391,8 +422,11 @@ async def spawn_task_worker(state, svc, loop: Loop, task, worktree_dir: str) -> 
     kinds.ensure_loaded()
     strat = kinds.get_or_none(loop.kind)
     session = state.get_or_create_session(
-        name=skey, agent=loop.agent or (strat.default_agent if strat else ""),
-        model=loop.model, workspace_dir=worktree_dir, app="loop",
+        name=skey,
+        agent=loop.agent or (strat.default_agent if strat else ""),
+        model=loop.model,
+        workspace_dir=worktree_dir,
+        app="loop",
     )
     if loop.provider:
         session.acp_provider = loop.provider
@@ -405,7 +439,9 @@ async def spawn_task_worker(state, svc, loop: Loop, task, worktree_dir: str) -> 
     try:
         state.sessions.set_approval_policy(session.key, "auto")
     except Exception:
-        logger.warning("loop: failed to set auto approval_policy for %s", session.key, exc_info=True)
+        logger.warning(
+            "loop: failed to set auto approval_policy for %s", session.key, exc_info=True
+        )
     d = store.loop_dir(loop.id)
     roots = [str(d)] if d is not None else []
     ctx = _context_dir(loop)
@@ -417,15 +453,19 @@ async def spawn_task_worker(state, svc, loop: Loop, task, worktree_dir: str) -> 
     msg = _task_cycle_nudge(loop, task, worktree_dir, str(d) if d else "")
     if not loop.attended:
         from personalclaw.autonomous_framing import with_autonomous_framing
+
         msg = with_autonomous_framing(msg)
     await svc.add(
-        session_name=skey, message=msg,
-        idle_secs=loop.idle_secs or cfg.default_idle_secs, max_cycles=loop.max_cycles,
+        session_name=skey,
+        message=msg,
+        idle_secs=loop.idle_secs or cfg.default_idle_secs,
+        max_cycles=loop.max_cycles,
         stop_sentinel_path=str(d / store.STOP_SENTINEL) if d else "",
         first_idle_secs=_FIRST_CYCLE_IDLE_SECS,
     )
     try:
         from personalclaw.tasks import registry
+
         await registry.update_task(task.id, provider_name="native", status="in_progress")
     except Exception:
         logger.debug("mark in_progress failed for task %s", task.id, exc_info=True)
@@ -466,6 +506,7 @@ async def teardown_for_delete(svc, loop_id: str) -> None:
     await _teardown(svc, loop_id)
     try:
         from personalclaw.loop import tasks_link
+
         await tasks_link.teardown_tasks(loop_id)
     except Exception:
         logger.debug("teardown_tasks failed for %s", loop_id, exc_info=True)
@@ -487,6 +528,7 @@ async def _teardown(svc, loop_id: str) -> None:
     if loop is not None and (loop.workspace_dir or "").strip():
         try:
             from personalclaw.loop import worktree
+
             worktree.cleanup_all(loop.workspace_dir, loop.tasks_project_id)
         except Exception:
             logger.debug("worktree cleanup failed for %s", loop_id, exc_info=True)
@@ -527,9 +569,13 @@ async def reap_orphaned_loops(state, svc) -> int:
         blocker = getattr(strat, "launch_blocker", None)
         reason = blocker(loop) if blocker else None
         if reason:
-            store.write_question(loop.id, f"{reason} (the workspace went missing during a restart).")
+            store.write_question(
+                loop.id, f"{reason} (the workspace went missing during a restart)."
+            )
             store.update_status(loop.id, LoopStatus.NEEDS_INPUT)
-            logger.warning("loop: orphaned %s blocked from re-arm (%s) — paused for the user", loop.id, reason)
+            logger.warning(
+                "loop: orphaned %s blocked from re-arm (%s) — paused for the user", loop.id, reason
+            )
             return
         await start(state, svc, loop.id)
         logger.info("loop: re-armed orphaned %s after restart", loop.id)
@@ -539,6 +585,7 @@ async def reap_orphaned_loops(state, svc) -> int:
         # of freezing on a spinner forever. Lazy import (plan_walkthrough → store, no
         # manager cycle, but kept lazy for symmetry + cheap startup).
         from personalclaw.loop import plan_walkthrough as pw
+
         await pw.advance_plan(state, svc, loop.id)
         logger.info("loop: re-kicked stranded planning loop %s after restart", loop.id)
 

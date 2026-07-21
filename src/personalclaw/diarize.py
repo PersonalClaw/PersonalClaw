@@ -48,8 +48,11 @@ async def diarize_audio(
     provider, model_id = resolved
     try:
         return await provider.diarize(
-            audio_path, model=model_id, num_speakers=num_speakers,
-            min_speakers=min_speakers, max_speakers=max_speakers,
+            audio_path,
+            model=model_id,
+            num_speakers=num_speakers,
+            min_speakers=min_speakers,
+            max_speakers=max_speakers,
         )
     except Exception:
         logger.warning("diarization failed for %s", audio_path, exc_info=True)

@@ -36,9 +36,7 @@ async def _simulate_inject_with_retry(
             except Exception:
                 pass
             if subagent_mgr:
-                subagent_mgr.notify_injection_failed(
-                    info, reason="ACP process died"
-                )
+                subagent_mgr.notify_injection_failed(info, reason="ACP process died")
             return None
     return None
 

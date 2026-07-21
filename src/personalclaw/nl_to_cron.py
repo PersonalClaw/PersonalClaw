@@ -55,6 +55,7 @@ async def nl_to_cron(request: str, *, ask=None) -> tuple[str, str]:
 
         async def ask(p: str) -> str:  # noqa: ANN001
             return await one_shot_completion(p, use_case="background")
+
     # The conversion instruction lives in the prompt system (bundled
     # ``task-nl-to-cron``, bindable in Settings → Prompts), rendered with the request.
     from personalclaw.prompt_providers.runtime import render_use_case_prompt

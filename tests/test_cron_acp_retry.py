@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from personalclaw.acp.client import AcpError
-from personalclaw.schedule import ScheduleJob, ScheduleDefinition, make_agent_action
+from personalclaw.schedule import ScheduleDefinition, ScheduleJob, make_agent_action
 
 
 @pytest.fixture

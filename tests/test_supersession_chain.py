@@ -30,7 +30,7 @@ def test_supersede_sets_pointer_and_invalidates(vs):
     vs.set_semantic("pref.editor_v2", "neovim", 1.0, "user_explicit")
     assert vs.supersede_semantic("pref.editor", "pref.editor_v2", "user_explicit") is True
     row = vs.db.execute(
-        "SELECT is_deleted, superseded_by, invalidated_at FROM semantic_memory WHERE key='pref.editor'"
+        "SELECT is_deleted, superseded_by, invalidated_at FROM semantic_memory WHERE key='pref.editor'"  # noqa: E501
     ).fetchone()
     assert row["is_deleted"] == 1
     assert row["superseded_by"] == "pref.editor_v2"
@@ -87,6 +87,6 @@ def test_supersede_logs_event(vs):
     vs.set_semantic("pref.b", "2", 1.0, "user_explicit")
     vs.supersede_semantic("pref.a", "pref.b", "user_explicit")
     events = vs.db.execute(
-        "SELECT event_type, new_value FROM memory_events WHERE memory_key='pref.a' AND event_type='supersede'"
+        "SELECT event_type, new_value FROM memory_events WHERE memory_key='pref.a' AND event_type='supersede'"  # noqa: E501
     ).fetchall()
     assert events and events[-1]["new_value"] == "pref.b"

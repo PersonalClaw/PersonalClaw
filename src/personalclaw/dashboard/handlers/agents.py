@@ -435,8 +435,10 @@ async def api_default_agent(request: web.Request) -> web.Response:
             known = set((AppConfig.load().agents or {}).keys())
             if name not in known:
                 return web.json_response(
-                    {"error": f"Unknown agent {name!r}. Create it first (Agents), or pick an "
-                     f"existing one. Known: {sorted(known)}"},
+                    {
+                        "error": f"Unknown agent {name!r}. Create it first (Agents), or pick an "
+                        f"existing one. Known: {sorted(known)}"
+                    },
                     status=400,
                 )
         path = _h.config_path()
@@ -514,7 +516,9 @@ async def api_slash_commands(request: web.Request) -> web.Response:
     These map to deterministic actions, so they work on any model. Other "/…"
     text stays typeable and dispatches to the native harness, but isn't advertised
     (an unrecognising model would only improvise it)."""
-    return web.json_response([{"name": c, "description": d} for c, d in _SLASH_COMMAND_HINTS.items()])
+    return web.json_response(
+        [{"name": c, "description": d} for c, d in _SLASH_COMMAND_HINTS.items()]
+    )
 
 
 async def api_agent_detail(request: web.Request) -> web.Response:
@@ -540,7 +544,9 @@ async def api_agent_detail(request: web.Request) -> web.Response:
                         "personalclaw-lite.json",
                         "PersonalClawAICapabilities-personalclaw-lite.json",
                     ):
-                        return web.json_response({"error": "cannot delete personalclaw"}, status=400)
+                        return web.json_response(
+                            {"error": "cannot delete personalclaw"}, status=400
+                        )
                     f.unlink()
                     state: DashboardState = request.app["state"]
                     state.push_refresh("agents")
@@ -678,9 +684,12 @@ async def api_personalclaw_agents_create(request: web.Request) -> web.Response:
     # into filesystem paths or shell commands. Same shape as the prompt-name
     # regex.
     import re as _re
+
     if not _re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", name):
         return web.json_response(
-            {"error": "Agent name must match ^[a-zA-Z0-9_-]{1,64}$ (letters, digits, dashes, underscores)"},
+            {
+                "error": "Agent name must match ^[a-zA-Z0-9_-]{1,64}$ (letters, digits, dashes, underscores)"  # noqa: E501
+            },
             status=400,
         )
     async with _get_config_lock():
@@ -703,7 +712,9 @@ async def api_personalclaw_agents_create(request: web.Request) -> web.Response:
             # Triggers referenced at create time must persist too — the update
             # handler accepts them, so the create path has to match or triggers
             # chosen in the create form are silently lost until re-edit.
-            triggers=[str(t) for t in body["triggers"]] if isinstance(body.get("triggers"), list) else [],
+            triggers=(
+                [str(t) for t in body["triggers"]] if isinstance(body.get("triggers"), list) else []
+            ),
             source=body.get("source", "personalclaw"),
         )
         cfg.save()

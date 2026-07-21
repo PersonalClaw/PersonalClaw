@@ -24,7 +24,11 @@ def _call() -> list:
 
 
 def test_active_models_carry_superset_shape(monkeypatch):
-    monkeypatch.setattr(mr, "load_active_models", lambda: {"chat": ["Bedrock:global.anthropic.claude-opus-4-8", "bare-model"]})
+    monkeypatch.setattr(
+        mr,
+        "load_active_models",
+        lambda: {"chat": ["Bedrock:global.anthropic.claude-opus-4-8", "bare-model"]},
+    )
     rows = _call()
     assert len(rows) == 2
     qualified = next(r for r in rows if r["provider"] == "Bedrock")
@@ -50,32 +54,41 @@ def test_fallback_discovers_across_provider_families(monkeypatch):
     from personalclaw.llm.catalog import ModelCatalog, ModelInfo
 
     monkeypatch.setattr(mr, "load_active_models", lambda: {})
-    monkeypatch.setattr(mr, "_get_providers_from_config", lambda: [
-        {"type": "ollama", "name": "ollama", "options": {"endpoint": "http://x"}},
-        {"type": "bedrock", "name": "Bedrock", "options": {"region": "us-east-1"}},
-    ])
+    monkeypatch.setattr(
+        mr,
+        "_get_providers_from_config",
+        lambda: [
+            {"type": "ollama", "name": "ollama", "options": {"endpoint": "http://x"}},
+            {"type": "bedrock", "name": "Bedrock", "options": {"region": "us-east-1"}},
+        ],
+    )
 
     class _FakeCatalog(ModelCatalog):
         def __init__(self, models):
             self._models = models
+
         async def list_models(self):
             return self._models
 
     catalogs = {
-        "ollama": _FakeCatalog([
-            ModelInfo(id="llama3", name="llama3", capabilities=["chat"]),
-            ModelInfo(id="nomic-embed", name="nomic-embed", capabilities=["embedding"]),
-        ]),
-        "Bedrock": _FakeCatalog([
-            ModelInfo(id="anthropic.claude-x", name="Claude X", capabilities=["chat"]),
-        ]),
+        "ollama": _FakeCatalog(
+            [
+                ModelInfo(id="llama3", name="llama3", capabilities=["chat"]),
+                ModelInfo(id="nomic-embed", name="nomic-embed", capabilities=["embedding"]),
+            ]
+        ),
+        "Bedrock": _FakeCatalog(
+            [
+                ModelInfo(id="anthropic.claude-x", name="Claude X", capabilities=["chat"]),
+            ]
+        ),
     }
     monkeypatch.setattr(mr, "_catalog_for_config_provider", lambda p: catalogs.get(p.get("name")))
 
     rows = _call()
     ids = {r["model_id"] for r in rows}
-    assert "llama3" in ids                 # ollama chat model
-    assert "anthropic.claude-x" in ids     # bedrock chat model
-    assert "nomic-embed" not in ids        # embedding model excluded (chat-only)
+    assert "llama3" in ids  # ollama chat model
+    assert "anthropic.claude-x" in ids  # bedrock chat model
+    assert "nomic-embed" not in ids  # embedding model excluded (chat-only)
     for r in rows:
         assert {"name", "model_name", "model_id", "provider", "description"} <= set(r)

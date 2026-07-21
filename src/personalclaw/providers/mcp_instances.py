@@ -109,9 +109,7 @@ def list_instances() -> list[ExtensionInstance]:
     if not isinstance(servers, dict):
         return []
     return [
-        _spec_to_instance(name, spec)
-        for name, spec in servers.items()
-        if isinstance(spec, dict)
+        _spec_to_instance(name, spec) for name, spec in servers.items() if isinstance(spec, dict)
     ]
 
 

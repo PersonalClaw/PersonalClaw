@@ -32,12 +32,12 @@ UPLOAD_CATEGORIES = ("video", "audio", "image", "document", "archive", "other")
 
 # Default per-category byte caps. Rationale is in large-file-upload-rethink.md §3.
 _DEFAULT_LIMITS: dict[str, int] = {
-    "video": 2 * _GB,      # the driving requirement — screen recordings + real footage
-    "audio": 1 * _GB,      # long/lossless recordings, below video
-    "image": 200 * _MB,    # RAW / .tiff / panorama / high-res bursts (was 25 MB — too small)
+    "video": 2 * _GB,  # the driving requirement — screen recordings + real footage
+    "audio": 1 * _GB,  # long/lossless recordings, below video
+    "image": 200 * _MB,  # RAW / .tiff / panorama / high-res bursts (was 25 MB — too small)
     "document": 100 * _MB,  # PDFs with scans/embeds
     "archive": 500 * _MB,  # zip import / bundles
-    "other": 100 * _MB,    # fallback
+    "other": 100 * _MB,  # fallback
 }
 
 # Above this size a single-POST upload is fragile (browser memory, proxy timeout,

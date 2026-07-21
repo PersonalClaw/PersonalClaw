@@ -5,7 +5,6 @@ from __future__ import annotations
 from personalclaw.agents.marketplace import AgentDefinition
 from personalclaw.config.loader import _compose_voice
 
-
 # ── compose: voice goes BEFORE the operating rules ──
 
 
@@ -48,7 +47,9 @@ def test_config_profile_voice_round_trips(tmp_path, monkeypatch):
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     from personalclaw.config.loader import AppConfig, config_path
 
-    config_path().write_text(json.dumps({"agents": {"bot": {"voice": "dry wit", "system_prompt": "rules"}}}))
+    config_path().write_text(
+        json.dumps({"agents": {"bot": {"voice": "dry wit", "system_prompt": "rules"}}})
+    )
     cfg = AppConfig.load()
     assert cfg.agents["bot"].voice == "dry wit"
     # survives a save round-trip (asdict serialization emits voice)

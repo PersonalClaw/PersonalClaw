@@ -26,6 +26,7 @@ from personalclaw.skills import AutoSkillProvenance
 if TYPE_CHECKING:
     from personalclaw.learn import LessonStore
     from personalclaw.memory import MemoryStore
+    from personalclaw.memory_service import MemoryService
     from personalclaw.session import SessionManager
     from personalclaw.skills import SkillsLoader
     from personalclaw.vector_memory import VectorMemoryStore
@@ -52,8 +53,10 @@ def _archive_dir(base: Path | None = None) -> Path:
     return (base or _sessions_dir()) / ARCHIVE_DIR_NAME
 
 
-def _archive_lines(key: str, lines: list[str], reason: str, base: Path | None = None) -> Path | None:
-    """Append dropped message lines to archive/{key}.{YYYYMMDD-HHMMSS}.jsonl. Returns path or None."""
+def _archive_lines(
+    key: str, lines: list[str], reason: str, base: Path | None = None
+) -> Path | None:
+    """Append dropped message lines to archive/{key}.{YYYYMMDD-HHMMSS}.jsonl. Returns path or None."""  # noqa: E501
     if not lines:
         return None
     import itertools
@@ -63,10 +66,20 @@ def _archive_lines(key: str, lines: list[str], reason: str, base: Path | None = 
     now = datetime.now()
     stamp = now.strftime("%Y%m%d-%H%M%S")
     safekey = _safe_key(key)
-    header = json.dumps({"_type": "archive", "reason": reason, "archived_at": now.isoformat(), "count": len(lines)}) + "\n"
+    header = (
+        json.dumps(
+            {
+                "_type": "archive",
+                "reason": reason,
+                "archived_at": now.isoformat(),
+                "count": len(lines),
+            }
+        )
+        + "\n"
+    )
     payload = header + "".join(lines)
     # Atomic exclusive-create to avoid TOCTOU clobber when two archives land in the same second.
-    # Use '__' delimiter so keys containing dots (e.g. a channel thread_ts) don't confuse rfind('.') parsing.
+    # Use '__' delimiter so keys containing dots (e.g. a channel thread_ts) don't confuse rfind('.') parsing.  # noqa: E501
     for n in itertools.count():
         if n > 1000:
             raise RuntimeError(f"Failed to create archive file after {n} attempts")
@@ -77,7 +90,13 @@ def _archive_lines(key: str, lines: list[str], reason: str, base: Path | None = 
             break
         except FileExistsError:
             continue
-    logger.info("Archived %d lines from session %s to %s (reason=%s)", len(lines), key, candidate.name, reason)
+    logger.info(
+        "Archived %d lines from session %s to %s (reason=%s)",
+        len(lines),
+        key,
+        candidate.name,
+        reason,
+    )
     _cleanup_old_archives(base=base)
     return candidate
 
@@ -85,7 +104,9 @@ def _archive_lines(key: str, lines: list[str], reason: str, base: Path | None = 
 _last_cleanup: float = 0.0
 
 
-def _cleanup_old_archives(retention_days: int = ARCHIVE_RETENTION_DAYS, base: Path | None = None) -> int:
+def _cleanup_old_archives(
+    retention_days: int = ARCHIVE_RETENTION_DAYS, base: Path | None = None
+) -> int:
     """Delete archive files older than retention_days. Rate-limited to once per hour."""
     global _last_cleanup
     import time as _time
@@ -488,7 +509,10 @@ class ConversationLog:
                         head_lines.append(line)
                         try:
                             d = json.loads(line.strip())
-                            if d.get("_type") == "metadata" and d.get("memory_mode") in ("incognito", "temporary"):
+                            if d.get("_type") == "metadata" and d.get("memory_mode") in (
+                                "incognito",
+                                "temporary",
+                            ):
                                 is_restricted = True
                                 break
                         except (json.JSONDecodeError, ValueError):
@@ -739,7 +763,12 @@ class ConversationLog:
         # returns when len(lines) <= _SESSION_KEEP_LINES, so this only fires when
         # there are genuinely more lines than we keep.
         try:
-            _archive_lines(path.stem, lines[dropped_start:-_SESSION_KEEP_LINES], reason="rotate", base=self._dir)
+            _archive_lines(
+                path.stem,
+                lines[dropped_start:-_SESSION_KEEP_LINES],
+                reason="rotate",
+                base=self._dir,
+            )
         except Exception:
             logger.warning("Failed to archive rotated lines for %s", path.stem, exc_info=True)
 
@@ -873,7 +902,7 @@ class HistoryConsolidator:
         self._lesson_store = lesson_store
         self._history_idle_secs = history_idle_secs
         self._vector_store = vector_store
-        self._memory_service = None  # lazily built MemoryService over the store
+        self._memory_service: "MemoryService | None" = None  # lazily built over the store
         self._migrated = migrated
         self._skills_loader = skills_loader
         self._auto_skills_enabled = auto_skills_enabled
@@ -937,7 +966,7 @@ class HistoryConsolidator:
         t = asyncio.create_task(self._consolidate(key, include_history=False))
         self._tasks.add(t)
 
-        def _on_done(fut: asyncio.Task, k: str = key, off: int = total) -> None:  # type: ignore[type-arg]
+        def _on_done(fut: asyncio.Task, k: str = key, off: int = total) -> None:  # type: ignore[type-arg]  # noqa: E501
             self._tasks.discard(fut)
             if not fut.cancelled() and fut.exception() is None:
                 self._prefs_offset[k] = off
@@ -1019,9 +1048,11 @@ class HistoryConsolidator:
 
         # Consolidate plan lessons (global, not per-session) — only after 20+ new events
         _now = _time.monotonic()
-        if ("plan_lessons" not in self._running
-                and _now >= self._plan_consolidation_backoff
-                and _now >= self._plan_next_check):
+        if (
+            "plan_lessons" not in self._running
+            and _now >= self._plan_consolidation_backoff
+            and _now >= self._plan_next_check
+        ):
             try:
                 from personalclaw.context_management import plan_memory_path
 
@@ -1040,6 +1071,7 @@ class HistoryConsolidator:
     async def _consolidate_plan_lessons(self, path: Path) -> None:
         """Consolidate plan memory into plan_lessons.md using LLM."""
         try:
+
             def _count_lines(p: Path) -> int:
                 with open(p, encoding="utf-8") as f:
                     return sum(1 for _ in f)
@@ -1175,10 +1207,12 @@ class HistoryConsolidator:
             # when wrong' class, so the prompt demands high-confidence + genuinely
             # useful time-bound follow-ups the user did NOT ask to be reminded of.
             if include_history and has_vector and self._proactive_commitments:
-                keys.append(render_snippet_block(
-                    "consolidation-key-commitments",
-                    {"max_commitments": self._proactive_commitments_max},
-                ))
+                keys.append(
+                    render_snippet_block(
+                        "consolidation-key-commitments",
+                        {"max_commitments": self._proactive_commitments_max},
+                    )
+                )
 
             # ── Auto skill creation ──
             # Only eligible when the feature is enabled, we have a loader to
@@ -1200,7 +1234,9 @@ class HistoryConsolidator:
             # The envelope (intro + section ordering + closing instruction) is the
             # bundled ``task-memory-consolidation`` prompt; the optional context
             # sections are assembled here in the same order as before.
-            semantic_block = f"\n\n## Current Semantic Memory\n{semantic_json}" if has_vector else ""
+            semantic_block = (
+                f"\n\n## Current Semantic Memory\n{semantic_json}" if has_vector else ""
+            )
             markdown_blocks = ""
             if not self._migrated:
                 markdown_blocks = (
@@ -1209,15 +1245,18 @@ class HistoryConsolidator:
                 )
             from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
-            prompt = render_use_case_prompt(
-                "memory_consolidation",
-                {
-                    "numbered_keys": numbered,
-                    "semantic_block": semantic_block,
-                    "markdown_blocks": markdown_blocks,
-                    "conversation": conversation,
-                },
-            ) or ""
+            prompt = (
+                render_use_case_prompt(
+                    "memory_consolidation",
+                    {
+                        "numbered_keys": numbered,
+                        "semantic_block": semantic_block,
+                        "markdown_blocks": markdown_blocks,
+                        "conversation": conversation,
+                    },
+                )
+                or ""
+            )
 
             result = await self._call_llm(prompt)
             if not result:
@@ -1274,9 +1313,7 @@ class HistoryConsolidator:
                 try:
                     self._process_auto_skills(result, key)
                 except Exception:
-                    logger.warning(
-                        "Auto-skill processing failed for %s", key, exc_info=True
-                    )
+                    logger.warning("Auto-skill processing failed for %s", key, exc_info=True)
 
             # Only advance the consolidated offset for history consolidation.
             # Prefs-only consolidation uses a separate in-memory offset.
@@ -1364,9 +1401,7 @@ class HistoryConsolidator:
             if not acquired:
                 return  # another process is already promoting
             self._last_promote_monotonic = now
-            promoted = svc.promote_episodic_patterns(
-                max_promotions=cfg.auto_promote_max_per_run
-            )
+            promoted = svc.promote_episodic_patterns(max_promotions=cfg.auto_promote_max_per_run)
         if promoted:
             logger.info("Autonomous promotion: %d episodic→semantic", promoted)
             try:
@@ -1539,8 +1574,13 @@ class HistoryConsolidator:
                 continue
             try:
                 if self._svc.record_commitment(
-                    agent=agent, channel=channel, text=safe, due_window=due,
-                    confidence=conf, enabled=True, max_per_day=max_per_day,
+                    agent=agent,
+                    channel=channel,
+                    text=safe,
+                    due_window=due,
+                    confidence=conf,
+                    enabled=True,
+                    max_per_day=max_per_day,
                 ):
                     written += 1
             except Exception:
@@ -1660,9 +1700,7 @@ class HistoryConsolidator:
         if isinstance(refined, dict):
             name = str(refined.get("name", "")).strip()
             if not self._skills_loader.is_auto_generated(name):
-                logger.info(
-                    "Auto-skill refine rejected for %s: not in auto namespace", name
-                )
+                logger.info("Auto-skill refine rejected for %s: not in auto namespace", name)
                 sel().log_tool_invocation(
                     session_key=key,
                     tool_name="auto_skill_refine",
@@ -1724,9 +1762,7 @@ class HistoryConsolidator:
                 # file missing, or other internal rejection.  Audit it so
                 # operators can trace why a refine was proposed but not
                 # applied.
-                logger.info(
-                    "Auto-skill refine rejected for %s (update_failed)", name
-                )
+                logger.info("Auto-skill refine rejected for %s (update_failed)", name)
                 sel().log_tool_invocation(
                     session_key=key,
                     tool_name="auto_skill_refine",

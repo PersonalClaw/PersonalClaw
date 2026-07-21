@@ -26,8 +26,8 @@ AUTONOMOUS_TURN_PREAMBLE = (
     "You are running unattended. Your output is read later as a report; no one "
     "can answer questions or pick options during this run. Therefore:\n"
     "- Do NOT ask the user questions or wait for input.\n"
-    "- Do NOT offer interactive menus or option lists (no \"[OPTIONS: …]\", no "
-    "\"which would you like?\").\n"
+    '- Do NOT offer interactive menus or option lists (no "[OPTIONS: …]", no '
+    '"which would you like?").\n'
     "- Complete the task end-to-end with the tools available, then report what "
     "you did and found.\n"
     "- If a decision is genuinely blocked on missing input, state the blocker "

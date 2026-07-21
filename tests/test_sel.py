@@ -105,15 +105,17 @@ class TestEventLogging:
 
     def test_log_chains_hashes(self, log, sel_dir):
         for i in range(3):
-            log.log(SecurityEvent(
-                event_id=f"evt{i}",
-                timestamp="2026-01-01T00:00:00+00:00",
-                event_type="tool_invocation",
-                caller_identity="dashboard:slot0",
-                agent="personalclaw",
-                source="dashboard",
-                operation=f"op{i}",
-            ))
+            log.log(
+                SecurityEvent(
+                    event_id=f"evt{i}",
+                    timestamp="2026-01-01T00:00:00+00:00",
+                    event_type="tool_invocation",
+                    caller_identity="dashboard:slot0",
+                    agent="personalclaw",
+                    source="dashboard",
+                    operation=f"op{i}",
+                )
+            )
         sel_file = sel_dir / "security_events.jsonl"
         lines = sel_file.read_text().strip().splitlines()
         entries = [json.loads(line) for line in lines]
@@ -168,38 +170,44 @@ class TestVerifyIntegrity:
 
     def test_valid_chain(self, log):
         for i in range(5):
-            log.log(SecurityEvent(
-                event_id=f"evt{i}",
-                timestamp="2026-01-01T00:00:00+00:00",
-                event_type="tool_invocation",
-                caller_identity="dashboard:slot0",
-                agent="personalclaw",
-                source="dashboard",
-                operation=f"op{i}",
-            ))
+            log.log(
+                SecurityEvent(
+                    event_id=f"evt{i}",
+                    timestamp="2026-01-01T00:00:00+00:00",
+                    event_type="tool_invocation",
+                    caller_identity="dashboard:slot0",
+                    agent="personalclaw",
+                    source="dashboard",
+                    operation=f"op{i}",
+                )
+            )
         total, valid = log.verify_integrity()
         assert total == 5
         assert valid == 5
 
     def test_detects_tampered_entry(self, log, sel_dir):
-        log.log(SecurityEvent(
-            event_id="evt0",
-            timestamp="2026-01-01T00:00:00+00:00",
-            event_type="tool_invocation",
-            caller_identity="dashboard:slot0",
-            agent="personalclaw",
-            source="dashboard",
-            operation="op0",
-        ))
-        log.log(SecurityEvent(
-            event_id="evt1",
-            timestamp="2026-01-01T00:00:00+00:00",
-            event_type="tool_invocation",
-            caller_identity="dashboard:slot0",
-            agent="personalclaw",
-            source="dashboard",
-            operation="op1",
-        ))
+        log.log(
+            SecurityEvent(
+                event_id="evt0",
+                timestamp="2026-01-01T00:00:00+00:00",
+                event_type="tool_invocation",
+                caller_identity="dashboard:slot0",
+                agent="personalclaw",
+                source="dashboard",
+                operation="op0",
+            )
+        )
+        log.log(
+            SecurityEvent(
+                event_id="evt1",
+                timestamp="2026-01-01T00:00:00+00:00",
+                event_type="tool_invocation",
+                caller_identity="dashboard:slot0",
+                agent="personalclaw",
+                source="dashboard",
+                operation="op1",
+            )
+        )
         # Tamper with first entry
         sel_file = sel_dir / "security_events.jsonl"
         lines = sel_file.read_text().strip().splitlines()
@@ -217,15 +225,17 @@ class TestVerifyIntegrity:
 class TestRecent:
     def test_returns_most_recent(self, log):
         for i in range(10):
-            log.log(SecurityEvent(
-                event_id=f"evt{i}",
-                timestamp=f"2026-01-01T00:0{i}:00+00:00",
-                event_type="tool_invocation",
-                caller_identity="dashboard:slot0",
-                agent="personalclaw",
-                source="dashboard",
-                operation=f"op{i}",
-            ))
+            log.log(
+                SecurityEvent(
+                    event_id=f"evt{i}",
+                    timestamp=f"2026-01-01T00:0{i}:00+00:00",
+                    event_type="tool_invocation",
+                    caller_identity="dashboard:slot0",
+                    agent="personalclaw",
+                    source="dashboard",
+                    operation=f"op{i}",
+                )
+            )
         results = log.recent(limit=3)
         assert len(results) == 3
         assert results[0]["event_id"] == "evt9"
@@ -238,24 +248,28 @@ class TestRecent:
 class TestPrune:
     def test_removes_old_entries(self, log, sel_dir):
         # Write an entry with an old timestamp
-        log.log(SecurityEvent(
-            event_id="old",
-            timestamp="2020-01-01T00:00:00+00:00",
-            event_type="tool_invocation",
-            caller_identity="dashboard:slot0",
-            agent="personalclaw",
-            source="dashboard",
-            operation="old_op",
-        ))
-        log.log(SecurityEvent(
-            event_id="new",
-            timestamp="2099-01-01T00:00:00+00:00",
-            event_type="tool_invocation",
-            caller_identity="dashboard:slot0",
-            agent="personalclaw",
-            source="dashboard",
-            operation="new_op",
-        ))
+        log.log(
+            SecurityEvent(
+                event_id="old",
+                timestamp="2020-01-01T00:00:00+00:00",
+                event_type="tool_invocation",
+                caller_identity="dashboard:slot0",
+                agent="personalclaw",
+                source="dashboard",
+                operation="old_op",
+            )
+        )
+        log.log(
+            SecurityEvent(
+                event_id="new",
+                timestamp="2099-01-01T00:00:00+00:00",
+                event_type="tool_invocation",
+                caller_identity="dashboard:slot0",
+                agent="personalclaw",
+                source="dashboard",
+                operation="new_op",
+            )
+        )
         removed = log.prune(keep_days=365)
         assert removed == 1
         sel_file = sel_dir / "security_events.jsonl"
@@ -269,15 +283,17 @@ class TestPrune:
     def test_size_cap_keeps_newest(self, log, sel_dir):
         # All recent (never age-pruned), but more than the size cap → keep newest N.
         for i in range(10):
-            log.log(SecurityEvent(
-                event_id=f"e{i}",
-                timestamp="2099-01-01T00:00:00+00:00",
-                event_type="tool_invocation",
-                caller_identity="dashboard:slot0",
-                agent="personalclaw",
-                source="dashboard",
-                operation=f"op{i}",
-            ))
+            log.log(
+                SecurityEvent(
+                    event_id=f"e{i}",
+                    timestamp="2099-01-01T00:00:00+00:00",
+                    event_type="tool_invocation",
+                    caller_identity="dashboard:slot0",
+                    agent="personalclaw",
+                    source="dashboard",
+                    operation=f"op{i}",
+                )
+            )
         removed = log.prune(keep_days=365, max_entries=4)
         assert removed == 6
         remaining = (sel_dir / "security_events.jsonl").read_text().strip().splitlines()
@@ -288,15 +304,17 @@ class TestPrune:
 
     def test_size_cap_disabled(self, log, sel_dir):
         for i in range(5):
-            log.log(SecurityEvent(
-                event_id=f"e{i}",
-                timestamp="2099-01-01T00:00:00+00:00",
-                event_type="tool_invocation",
-                caller_identity="dashboard:slot0",
-                agent="personalclaw",
-                source="dashboard",
-                operation=f"op{i}",
-            ))
+            log.log(
+                SecurityEvent(
+                    event_id=f"e{i}",
+                    timestamp="2099-01-01T00:00:00+00:00",
+                    event_type="tool_invocation",
+                    caller_identity="dashboard:slot0",
+                    agent="personalclaw",
+                    source="dashboard",
+                    operation=f"op{i}",
+                )
+            )
         assert log.prune(keep_days=365, max_entries=0) == 0
         assert len((sel_dir / "security_events.jsonl").read_text().strip().splitlines()) == 5
 
@@ -305,15 +323,17 @@ class TestForwardCallback:
     def test_callback_called_on_log(self, log):
         received = []
         log.set_forward_callback(lambda evt: received.append(evt))
-        log.log(SecurityEvent(
-            event_id="cb1",
-            timestamp="2026-01-01T00:00:00+00:00",
-            event_type="tool_invocation",
-            caller_identity="dashboard:slot0",
-            agent="personalclaw",
-            source="dashboard",
-            operation="test_op",
-        ))
+        log.log(
+            SecurityEvent(
+                event_id="cb1",
+                timestamp="2026-01-01T00:00:00+00:00",
+                event_type="tool_invocation",
+                caller_identity="dashboard:slot0",
+                agent="personalclaw",
+                source="dashboard",
+                operation="test_op",
+            )
+        )
         assert len(received) == 1
         assert received[0]["event_id"] == "cb1"
 
@@ -322,15 +342,17 @@ class TestForwardCallback:
             raise RuntimeError("callback exploded")
 
         log.set_forward_callback(bad_callback)
-        log.log(SecurityEvent(
-            event_id="cb2",
-            timestamp="2026-01-01T00:00:00+00:00",
-            event_type="tool_invocation",
-            caller_identity="dashboard:slot0",
-            agent="personalclaw",
-            source="dashboard",
-            operation="test_op",
-        ))
+        log.log(
+            SecurityEvent(
+                event_id="cb2",
+                timestamp="2026-01-01T00:00:00+00:00",
+                event_type="tool_invocation",
+                caller_identity="dashboard:slot0",
+                agent="personalclaw",
+                source="dashboard",
+                operation="test_op",
+            )
+        )
         # Event should still be written despite callback failure
         sel_file = sel_dir / "security_events.jsonl"
         assert sel_file.exists()
@@ -340,17 +362,20 @@ class TestForwardCallback:
 class TestThreadSafety:
     def test_concurrent_writes(self, log, sel_dir):
         """Multiple threads writing simultaneously should not corrupt the log."""
+
         def write_events(start_id, count):
             for i in range(count):
-                log.log(SecurityEvent(
-                    event_id=f"t{start_id}_{i}",
-                    timestamp="2026-01-01T00:00:00+00:00",
-                    event_type="tool_invocation",
-                    caller_identity="dashboard:slot0",
-                    agent="personalclaw",
-                    source="dashboard",
-                    operation=f"op{start_id}_{i}",
-                ))
+                log.log(
+                    SecurityEvent(
+                        event_id=f"t{start_id}_{i}",
+                        timestamp="2026-01-01T00:00:00+00:00",
+                        event_type="tool_invocation",
+                        caller_identity="dashboard:slot0",
+                        agent="personalclaw",
+                        source="dashboard",
+                        operation=f"op{start_id}_{i}",
+                    )
+                )
 
         threads = [threading.Thread(target=write_events, args=(t, 10)) for t in range(4)]
         for t in threads:
@@ -367,16 +392,19 @@ class TestThreadSafety:
 
 
 class TestInferSource:
-    @pytest.mark.parametrize("key,expected", [
-        ("dashboard:slot0", "dashboard"),
-        ("dashboard:slot5", "dashboard"),
-        ("cron:job123", "cron"),
-        ("subagent:abc", "subagent"),
-        ("_bg", "background"),
-        ("cli_chat", "cli"),
-        ("C08HZAWV4TP:thread123", "channel"),
-        ("random_key", "channel"),
-    ])
+    @pytest.mark.parametrize(
+        "key,expected",
+        [
+            ("dashboard:slot0", "dashboard"),
+            ("dashboard:slot5", "dashboard"),
+            ("cron:job123", "cron"),
+            ("subagent:abc", "subagent"),
+            ("_bg", "background"),
+            ("cli_chat", "cli"),
+            ("C08HZAWV4TP:thread123", "channel"),
+            ("random_key", "channel"),
+        ],
+    )
     def test_infer_source(self, key, expected):
         assert _infer_source(key) == expected
 
@@ -396,15 +424,17 @@ class TestSingleton:
 
 class TestReadLastHash:
     def test_reads_hash_from_existing_file(self, log, sel_dir):
-        log.log(SecurityEvent(
-            event_id="first",
-            timestamp="2026-01-01T00:00:00+00:00",
-            event_type="tool_invocation",
-            caller_identity="dashboard:slot0",
-            agent="personalclaw",
-            source="dashboard",
-            operation="op1",
-        ))
+        log.log(
+            SecurityEvent(
+                event_id="first",
+                timestamp="2026-01-01T00:00:00+00:00",
+                event_type="tool_invocation",
+                caller_identity="dashboard:slot0",
+                agent="personalclaw",
+                source="dashboard",
+                operation="op1",
+            )
+        )
         expected_hash = log._last_hash
         # Reset and re-read
         SecurityEventLog._instance = None
@@ -482,9 +512,7 @@ class TestLogHashAndCallbackExtras:
         # Hash MUST be stable when only the (excluded) entry_hash field changes.
         assert log._compute_hash(evt) == h_before
 
-    def test_log_invokes_forward_callback_with_redacted_payload(
-        self, tmp_path: Path
-    ) -> None:
+    def test_log_invokes_forward_callback_with_redacted_payload(self, tmp_path: Path) -> None:
         log = SecurityEventLog(base_dir=tmp_path)
         captured: list[dict] = []
         log.set_forward_callback(captured.append)

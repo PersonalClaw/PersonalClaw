@@ -40,7 +40,9 @@ def _set_cfg(monkeypatch, **over):
 
 
 def test_fires_every_nth_consolidation(monkeypatch):
-    _set_cfg(monkeypatch, auto_promote_enabled=True, auto_promote_every_n=3, auto_promote_max_per_run=5)
+    _set_cfg(
+        monkeypatch, auto_promote_enabled=True, auto_promote_every_n=3, auto_promote_max_per_run=5
+    )
     c = _consolidator()
     mem, vs = _memory_with_promote()
     # Calls 1,2 → no promotion; call 3 → fires.
@@ -64,7 +66,9 @@ def test_disabled_never_fires(monkeypatch):
 
 
 def test_min_interval_blocks_rapid_refire(monkeypatch):
-    _set_cfg(monkeypatch, auto_promote_enabled=True, auto_promote_every_n=1, auto_promote_max_per_run=5)
+    _set_cfg(
+        monkeypatch, auto_promote_enabled=True, auto_promote_every_n=1, auto_promote_max_per_run=5
+    )
     c = _consolidator()
     mem, vs = _memory_with_promote()
     base = 1000.0
@@ -120,15 +124,25 @@ def test_promote_respects_max_promotions_cap():
 # ── mem-dreaming-signals: the 6-signal weighted promotion score ──
 
 
-def _member(imp=0.8, convo="c0", visits=1, text="the user prefers concise code answers", days_ago=0):
+def _member(
+    imp=0.8, convo="c0", visits=1, text="the user prefers concise code answers", days_ago=0
+):
     from datetime import datetime, timedelta
-    return {"importance": imp, "conversation_id": convo, "visit_count": visits,
-            "text": text, "created_at": (datetime.now() - timedelta(days=days_ago)).isoformat()}
+
+    return {
+        "importance": imp,
+        "conversation_id": convo,
+        "visit_count": visits,
+        "text": text,
+        "created_at": (datetime.now() - timedelta(days=days_ago)).isoformat(),
+    }
 
 
 def test_dream_score_rewards_cross_context_recurrence():
     import time
+
     from personalclaw.vector_memory import dream_score
+
     now = time.time()
     # 5 members across 3 conversations, high importance, recent → strong
     strong = [_member(convo=f"c{i % 3}") for i in range(5)]
@@ -142,22 +156,28 @@ def test_dream_score_rewards_cross_context_recurrence():
 
 def test_dream_score_empty_cluster():
     import time
+
     from personalclaw.vector_memory import dream_score
+
     r = dream_score([], now_ts=time.time())
     assert r["score"] == 0.0 and r["frequency"] == 0
 
 
 def test_conceptual_richness_bounds():
     from personalclaw.vector_memory import _conceptual_richness
+
     assert _conceptual_richness("") == 0.0
     # a varied, longer fragment scores higher than a short repetitive one
-    rich = _conceptual_richness("the quick brown fox jumps over many distinct lazy sleeping dogs today")
+    rich = _conceptual_richness(
+        "the quick brown fox jumps over many distinct lazy sleeping dogs today"
+    )
     poor = _conceptual_richness("a a a a a")
     assert 0.0 <= poor < rich <= 1.0
 
 
 def test_weights_sum_to_one():
     from personalclaw.vector_memory import _DREAM_WEIGHTS
+
     assert abs(sum(_DREAM_WEIGHTS.values()) - 1.0) < 1e-9
 
 
@@ -166,8 +186,13 @@ def test_dream_score_bounded_for_any_importance():
     (relevance is self-clamped like every other signal, so the weighted sum can't
     dip below 0 or exceed 1)."""
     from personalclaw.vector_memory import dream_score
-    base = {"conversation_id": "c1", "created_at": "2026-07-01T00:00:00",
-            "visit_count": 2, "text": "rich diverse distinct concepts here"}
+
+    base = {
+        "conversation_id": "c1",
+        "created_at": "2026-07-01T00:00:00",
+        "visit_count": 2,
+        "text": "rich diverse distinct concepts here",
+    }
     for imp in (-5.0, -0.3, 0.0, 0.5, 1.0, 5.0):
         r = dream_score([{**base, "importance": imp}], now_ts=1783000000.0)
         assert 0.0 <= r["score"] <= 1.0, f"score out of [0,1] for importance={imp}"
@@ -178,7 +203,9 @@ def test_promote_end_to_end_gates_on_score():
     does not — even at the same member count."""
     import tempfile
     from pathlib import Path
+
     from personalclaw.vector_memory import VectorMemoryStore
+
     try:
         import numpy  # noqa: F401
     except Exception:
@@ -189,7 +216,10 @@ def test_promote_end_to_end_gates_on_score():
         return  # no embedder in this env → promotion guarded off; covered by unit tests
     # 5 near-identical "user prefers" fragments across 3 conversations → should promote
     for i in range(5):
-        vs.write_episodic(f"The user prefers tabs over spaces in Python", conversation_id=f"c{i % 3}",
-                          importance=0.9)
+        vs.write_episodic(
+            "The user prefers tabs over spaces in Python",
+            conversation_id=f"c{i % 3}",
+            importance=0.9,
+        )
     n = vs.promote_episodic_patterns(min_count=3)
     assert n >= 0  # promotes when the key-inference matches; gates are exercised regardless

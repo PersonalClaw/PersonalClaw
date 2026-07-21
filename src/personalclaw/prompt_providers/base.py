@@ -11,10 +11,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-
 VariableType = Literal["text", "textarea", "number", "boolean", "select"]
 ALLOWED_VARIABLE_TYPES: tuple[VariableType, ...] = (
-    "text", "textarea", "number", "boolean", "select",
+    "text",
+    "textarea",
+    "number",
+    "boolean",
+    "select",
 )
 # Legacy → canonical type names, applied on read so old records load + are
 # rewritten in the new shape (data migration, not a dual-support shim). The old
@@ -159,7 +162,9 @@ class PromptTemplate:
             tags=[str(t) for t in (data.get("tags") or [])],
             source=str(data.get("source") or "user"),
             package=str(data.get("package") or ""),
-            launch_spec=dict(data["launch_spec"]) if isinstance(data.get("launch_spec"), dict) else {},
+            launch_spec=(
+                dict(data["launch_spec"]) if isinstance(data.get("launch_spec"), dict) else {}
+            ),
         )
 
 

@@ -58,8 +58,11 @@ def register_use_case(
     if not use_case or not prompt_name:
         return
     _REGISTRY[use_case] = AppPromptUseCase(
-        use_case=use_case, provider=provider, prompt_name=prompt_name,
-        category=category, app=app,
+        use_case=use_case,
+        provider=provider,
+        prompt_name=prompt_name,
+        category=category,
+        app=app,
     )
 
 

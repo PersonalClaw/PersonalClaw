@@ -33,6 +33,7 @@ def _put_request(body: dict):
 
     async def _json():
         return body
+
     request.json = _json
     return request
 

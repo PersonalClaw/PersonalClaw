@@ -93,7 +93,7 @@ class SkillUsageStore:
         ts = (now or datetime.now(tz=timezone.utc)).isoformat(timespec="seconds")
         try:
             data = self._load()
-            row = data.get(name) if isinstance(data.get(name), dict) else {}
+            row = _r if isinstance((_r := data.get(name)), dict) else {}
             new_count = int(row.get("count", 0) or 0) + 1
             data[name] = {"count": new_count, "last_used_at": ts}
             atomic_write(self._path, json.dumps(data, indent=2, sort_keys=True))
@@ -111,7 +111,7 @@ class SkillUsageStore:
         try:
             data = self._load()
             for name in names:
-                row = data.get(name) if isinstance(data.get(name), dict) else {}
+                row = _r if isinstance((_r := data.get(name)), dict) else {}
                 data[name] = {"count": int(row.get("count", 0) or 0) + 1, "last_used_at": ts}
             atomic_write(self._path, json.dumps(data, indent=2, sort_keys=True))
         except Exception:

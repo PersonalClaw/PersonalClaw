@@ -132,6 +132,7 @@ def test_context_injection_is_vector_store_only(tmp_path, monkeypatch):
     # Plant a lesson ONLY in the JSONL store; with no vector store attached, it
     # must NOT appear in the injected context (no dual-source read).
     from personalclaw.learn import Lesson
+
     jsonl.save(Lesson(rule="JSONL-ONLY-LESSON", category="tool", ts="2026-01-01T00:00:00"))
     ctx = builder.build_session_context()
     assert "JSONL-ONLY-LESSON" not in ctx

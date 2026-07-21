@@ -76,13 +76,16 @@ async def test_claim_specializes_acp_connection(monkeypatch):
     cp.set_acp_pool(_FakePool(prov))
     try:
         claimed = await sm._claim_acp_pool(
-            "dashboard:s1", "C1", "gpu-dev", "claude-opus-4.8",
+            "dashboard:s1",
+            "C1",
+            "gpu-dev",
+            "claude-opus-4.8",
             {"provider_kind": "acp:test-cli", "agent": "gpu-dev"},
         )
         assert claimed is prov
         assert prov.session_key == "dashboard:s1" and prov.channel == "C1"
-        assert prov.agent_set == "gpu-dev"           # persona bound live
-        assert prov.model_set == "claude-opus-4.8"   # model bound live
+        assert prov.agent_set == "gpu-dev"  # persona bound live
+        assert prov.model_set == "claude-opus-4.8"  # model bound live
     finally:
         cp.set_acp_pool(None)
 
@@ -97,7 +100,11 @@ async def test_claim_skips_non_acp_runtime(monkeypatch):
     try:
         # native runtime → never consults the pool.
         claimed = await sm._claim_acp_pool(
-            "dashboard:s1", None, "default", None, {"provider_kind": "native"},
+            "dashboard:s1",
+            None,
+            "default",
+            None,
+            {"provider_kind": "native"},
         )
         assert claimed is None
         assert pool.claimed == []
@@ -113,7 +120,11 @@ async def test_claim_none_when_pool_empty(monkeypatch):
     cp.set_acp_pool(_FakePool(None))  # pool returns no connection
     try:
         claimed = await sm._claim_acp_pool(
-            "dashboard:s1", None, "gpu-dev", None, {"provider_kind": "acp:test-cli"},
+            "dashboard:s1",
+            None,
+            "gpu-dev",
+            None,
+            {"provider_kind": "acp:test-cli"},
         )
         assert claimed is None
     finally:
@@ -127,6 +138,10 @@ async def test_claim_none_when_no_pool():
     sm = _make_sm()
     cp.set_acp_pool(None)
     claimed = await sm._claim_acp_pool(
-        "dashboard:s1", None, "gpu-dev", None, {"provider_kind": "acp:test-cli"},
+        "dashboard:s1",
+        None,
+        "gpu-dev",
+        None,
+        {"provider_kind": "acp:test-cli"},
     )
     assert claimed is None

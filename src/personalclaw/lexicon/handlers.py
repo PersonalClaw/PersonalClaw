@@ -19,16 +19,24 @@ logger = logging.getLogger(__name__)
 
 def _term_dict(t) -> dict:
     return {
-        "id": t.id, "canonical": t.canonical, "aliases": t.aliases,
-        "entity_type": t.entity_type, "weight": t.weight, "source": t.source,
+        "id": t.id,
+        "canonical": t.canonical,
+        "aliases": t.aliases,
+        "entity_type": t.entity_type,
+        "weight": t.weight,
+        "source": t.source,
         "enabled": t.enabled,
     }
 
 
 def _corr_dict(c) -> dict:
     return {
-        "id": c.id, "heard": c.heard, "meant": c.meant, "count": c.count,
-        "auto_apply": c.auto_apply, "last_seen": c.last_seen,
+        "id": c.id,
+        "heard": c.heard,
+        "meant": c.meant,
+        "count": c.count,
+        "auto_apply": c.auto_apply,
+        "last_seen": c.last_seen,
     }
 
 
@@ -38,10 +46,12 @@ async def api_lexicon_terms(request: web.Request) -> web.Response:
     source = request.query.get("source", "")
     search = request.query.get("search", "")
     terms = svc.list_terms(source=source, search=search)
-    return web.json_response({
-        "terms": [_term_dict(t) for t in terms],
-        "total": svc.store.count_terms(),
-    })
+    return web.json_response(
+        {
+            "terms": [_term_dict(t) for t in terms],
+            "total": svc.store.count_terms(),
+        }
+    )
 
 
 async def api_lexicon_add_term(request: web.Request) -> web.Response:
@@ -98,8 +108,14 @@ async def api_lexicon_rebuild(request: web.Request) -> web.Response:
                 aliases = _json.loads(r["aliases"] or "[]")
             except Exception:
                 aliases = []
-            entities.append({"id": r["id"], "name": r["name"],
-                             "entity_type": r["entity_type"], "aliases": aliases})
+            entities.append(
+                {
+                    "id": r["id"],
+                    "name": r["name"],
+                    "entity_type": r["entity_type"],
+                    "aliases": aliases,
+                }
+            )
     except Exception:
         # Don't rebuild against a failed read — the resync now PRUNES absent graph
         # terms, so treating a read failure as "no entities" would wipe them all.

@@ -12,17 +12,15 @@ from __future__ import annotations
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from chat_test_helpers import _make_state
 
 from personalclaw.dashboard.chat import api_chat_session_edit_resend
-from chat_test_helpers import _make_state
 
 
 def _make_app(state) -> web.Application:
     app = web.Application()
     app["state"] = state
-    app.router.add_post(
-        "/api/chat/sessions/{session}/edit-resend", api_chat_session_edit_resend
-    )
+    app.router.add_post("/api/chat/sessions/{session}/edit-resend", api_chat_session_edit_resend)
     return app
 
 
@@ -75,13 +73,18 @@ class TestEditResend:
             )
             assert r1.status == 200
             # the re-appended message carries the client ts verbatim
-            assert [m for m in session.messages if m["role"] == "user"][-1]["ts"] == "2026-06-30T05:00:00+00:00"
+            assert [m for m in session.messages if m["role"] == "user"][-1][
+                "ts"
+            ] == "2026-06-30T05:00:00+00:00"
 
             # a SECOND edit, now locating by that ts, succeeds (the original bug)
             r2 = await client.post(
                 "/api/chat/sessions/s1/edit-resend",
-                json={"content": "q3", "ts": "2026-06-30T05:00:00+00:00",
-                      "client_ts": "2026-06-30T05:01:00+00:00"},
+                json={
+                    "content": "q3",
+                    "ts": "2026-06-30T05:00:00+00:00",
+                    "client_ts": "2026-06-30T05:01:00+00:00",
+                },
             )
             assert r2.status == 200
             users = [m for m in session.messages if m["role"] == "user"]

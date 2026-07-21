@@ -1,0 +1,193 @@
+# Release — triggered by a version tag (v*). Builds the ONE artifact set every
+# install channel projects from (wheel with prebuilt web/dist + multi-arch images),
+# publishes to PyPI via Trusted Publishing (no stored tokens), and attaches
+# provenance. Publish jobs sit behind the `release` / `release-client` environments
+# (owner-approved manual gate). Job ids per CI-RELEASE-ENGINEERING C1.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag/ref to build (manual runs)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # The wheel MUST carry web/dist: run the web build FIRST, then python -m build
+    # (setup.py's BuildWithWeb copies web/dist into the package). Verified locally:
+    # the wheel contains static/dist/index.html + JS assets.
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - name: Build the SPA (npm from repo root)
+        run: |
+          npm ci
+          npm run build
+      - name: Install uv + build backend
+        uses: astral-sh/setup-uv@v5
+      - name: Build sdist + wheel (with web/dist)
+        run: |
+          uv python install 3.12
+          uv pip install --system build
+          python -m build
+      - name: Verify the wheel carries the SPA
+        run: |
+          python - <<'PY'
+          import glob, zipfile, sys
+          whl = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(whl).namelist()
+          assert any(n.endswith("static/dist/index.html") for n in names), "wheel missing SPA (web/dist)"
+          print("OK: wheel carries the SPA —", whl)
+          PY
+      - name: Derive version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: SBOM (syft SPDX-JSON over the built dist)
+        uses: anchore/sbom-action@v0
+        with:
+          path: dist/
+          format: spdx-json
+          artifact-name: personalclaw-sbom.spdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  pypi:
+    # personalclaw → PyPI via Trusted Publishing. Owner-approved via the `release`
+    # environment gate. No stored token (OIDC).
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write  # OIDC for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      # The client package ships from its own source tree/job — keep only the
+      # personalclaw distributions here.
+      - name: Keep only personalclaw distributions
+        run: |
+          find dist -maxdepth 1 -type f ! -name 'personalclaw-*' -delete
+          ls -la dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  pypi-client:
+    # personalclaw-client → PyPI, SEPARATE environment (release-client): PyPI's
+    # pending-publisher tuple (owner, repo, workflow, environment) must be unique
+    # per project, so the two packages use distinct environments (both owner-gated).
+    # The client is published by DISTRIBUTION S2; this job is the seam it fills in
+    # (it builds + publishes packages/personalclaw-client-py).
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release-client
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv + build the client
+        uses: astral-sh/setup-uv@v5
+      - name: Build client sdist + wheel
+        run: |
+          uv python install 3.12
+          uv pip install --system build
+          python -m build packages/personalclaw-client-py --outdir dist-client
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-client/
+
+  images:
+    # Multi-arch GHCR images (amd64 + arm64). Auth = GITHUB_TOKEN (no extra secret).
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - name: gateway
+            dockerfile: deploy/docker/Dockerfile.backend
+          - name: web
+            dockerfile: deploy/docker/Dockerfile.web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/personalclaw/personalclaw-${{ matrix.name }}:${{ needs.build.outputs.version }}
+            ghcr.io/personalclaw/personalclaw-${{ matrix.name }}:latest
+
+  notes:
+    # GitHub Release with notes drawn from CHANGELOG.md for this version.
+    needs: [build, pypi, images]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Extract this version's CHANGELOG section
+        run: |
+          python - <<'PY' > release-notes.md
+          import re, os, pathlib
+          ver = os.environ["GITHUB_REF_NAME"].lstrip("v")
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          # Body under "## [<ver>] ...header..." up to the next "## " heading (a
+          # top-level release heading, NOT a "### " subsection) or end of file.
+          m = re.search(rf"^## \[{re.escape(ver)}\][^\n]*\n(.*?)(?=^## \[|\Z)", text, re.S | re.M)
+          print(m.group(1).strip() if m else f"Release {ver}.")
+          PY
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file release-notes.md \
+            $([ "${GITHUB_REF_NAME}" != "${GITHUB_REF_NAME%rc*}" ] && echo --prerelease)
+
+  attest:
+    # Build-provenance attestations on the wheel (zero key management — GitHub OIDC).
+    needs: [build, notes]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      attestations: write
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: "dist/*"

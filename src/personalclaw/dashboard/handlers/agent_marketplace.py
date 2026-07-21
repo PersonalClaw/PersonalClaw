@@ -68,7 +68,12 @@ async def api_agent_marketplace_list(request: web.Request) -> web.Response:
     """GET /api/agent-marketplace/agents — list agents from a marketplace."""
     mp = _marketplace(request)
     agents = [a.to_dict() for a in mp.list()]
-    return web.json_response({"agents": agents, "marketplace": request.rel_url.query.get("marketplace", _DEFAULT_MARKETPLACE)})
+    return web.json_response(
+        {
+            "agents": agents,
+            "marketplace": request.rel_url.query.get("marketplace", _DEFAULT_MARKETPLACE),
+        }
+    )
 
 
 async def api_agent_marketplace_get(request: web.Request) -> web.Response:
@@ -98,7 +103,9 @@ async def api_agent_marketplace_create(request: web.Request) -> web.Response:
     try:
         mp = get_default_agent_registry().get(str(marketplace_name))
     except KeyError:
-        return web.json_response({"error": f"Marketplace '{marketplace_name}' not registered"}, status=400)
+        return web.json_response(
+            {"error": f"Marketplace '{marketplace_name}' not registered"}, status=400
+        )
 
     defn = AgentDefinition(
         name=name,
@@ -197,6 +204,7 @@ async def api_agent_marketplace_activate(request: web.Request) -> web.Response:
     # Re-install agent config so the prompt file is picked up by the ACP provider
     try:
         from personalclaw.agent import rebuild_agent_config
+
         rebuild_agent_config()
     except Exception as exc:
         logger.warning("rebuild_agent_config failed after activate: %s", exc)
@@ -209,7 +217,9 @@ async def api_agent_marketplace_activate(request: web.Request) -> web.Response:
         except Exception:
             pass
 
-    return web.json_response({"ok": True, "name": name, "prompt_path": str(prompt_path) if defn.system_prompt else ""})
+    return web.json_response(
+        {"ok": True, "name": name, "prompt_path": str(prompt_path) if defn.system_prompt else ""}
+    )
 
 
 # ── Test ──────────────────────────────────────────────────────────────────────
@@ -236,21 +246,24 @@ async def api_agent_marketplace_test(request: web.Request) -> web.Response:
     except Exception:
         body = {}
 
-    test_prompt = str(body.get("prompt", "")).strip() or "Hello! Please introduce yourself in one sentence."
+    test_prompt = (
+        str(body.get("prompt", "")).strip() or "Hello! Please introduce yourself in one sentence."
+    )
 
     state = request.app.get("state")
     if state is None or state.sessions is None:
-        return web.json_response({"error": "No active session manager; start the gateway first"}, status=503)
+        return web.json_response(
+            {"error": "No active session manager; start the gateway first"}, status=503
+        )
 
     import time
+
     start = time.monotonic()
 
     # Build a combined prompt: inject system prompt as a preamble if defined
     full_prompt = test_prompt
     if defn.system_prompt:
-        full_prompt = (
-            f"<system>\n{defn.system_prompt[:2000]}\n</system>\n\n{test_prompt}"
-        )
+        full_prompt = f"<system>\n{defn.system_prompt[:2000]}\n</system>\n\n{test_prompt}"
 
     try:
         from personalclaw.llm_helpers import ToolApprovalPolicy, stream_and_collect
