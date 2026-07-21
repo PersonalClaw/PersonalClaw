@@ -510,13 +510,28 @@ async def api_update_apply(request: web.Request) -> web.Response:
         return web.json_response({"error": "PERSONALCLAW_PROJECT_DIR not set"}, status=400)
 
     # Ride releases by default vs track every commit: dashboard.update_dev_mode
-    # selects the git updater's cadence. The existing commits-behind probe below
-    # already short-circuits to a plain restart when there is nothing new to
-    # pull, so tag-vs-commit gating is advisory here — the tag-driven
-    # availability signal is surfaced by GET /api/update/check (build_update_status);
-    # the apply path stays hermetic (no network) and reuses the pull pipeline.
+    # selects the git updater's cadence. Off (default) = the checkout rides
+    # release TAGS like every other install kind; on = the contributor "track
+    # every commit" behavior. Enforced HERMETICALLY: read the CACHED release view
+    # (no network — the check endpoint refreshes it) and, when dev mode is off and
+    # we're already on the latest release tag, degrade to restart-only instead of
+    # pulling arbitrary main commits.
     _dev_mode = AppConfig.load().dashboard.update_dev_mode
-    logger.debug("git update apply: update_dev_mode=%s", _dev_mode)
+    _on_latest_tag = False
+    if not _dev_mode:
+        try:
+            from personalclaw.dashboard.handlers.updates_kind import (
+                _normalize_version,
+                _read_cache,
+                _version_tuple,
+            )
+
+            _cached_tag = _normalize_version(str(_read_cache().get("tag") or ""))
+            if _cached_tag and _version_tuple(_cached_tag) <= _version_tuple(_local_version):
+                _on_latest_tag = True
+        except Exception:
+            _on_latest_tag = False
+    logger.debug("git update apply: update_dev_mode=%s on_latest_tag=%s", _dev_mode, _on_latest_tag)
 
     if _apply_in_flight:
         return web.json_response(
@@ -534,13 +549,19 @@ async def api_update_apply(request: web.Request) -> web.Response:
     # Nothing-to-pull probe FIRST (before the dirty gate): "Update & Restart"
     # with no upstream or an already-up-to-date checkout degrades gracefully
     # to a plain restart instead of 409ing on tree state that can't matter.
+    # When dev mode is off and we're already on the latest release tag, take the
+    # same restart-only path even if new commits exist (ride tags, not commits).
     behind = await _commits_behind_upstream(proj)
-    if behind is None or behind == 0:
-        note = (
-            "No upstream configured — restarting…"
-            if behind is None
-            else "Already up to date — restarting…"
-        )
+    if behind is None or behind == 0 or _on_latest_tag:
+        if _on_latest_tag and behind:
+            note = (
+                "On the latest release — restarting… "
+                "(enable Developer update mode to track commits)"
+            )
+        elif behind is None:
+            note = "No upstream configured — restarting…"
+        else:
+            note = "Already up to date — restarting…"
         logger.info("Update apply: nothing to pull (%s) — restarting only", note)
         _auth_mode = _live_auth_mode(request)
 
