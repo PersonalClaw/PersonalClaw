@@ -101,3 +101,51 @@ async def test_pip_kind_routes_to_pip_update(monkeypatch) -> None:
     body = json.loads(resp.body.decode())
     assert called["pip"] is True
     assert body["kind"] == "pip"
+
+
+# ── T4.5: dashboard.update_dev_mode endpoint (config round-trip) ─────────────
+
+
+def _post_devmode(body: object):
+    req = make_mocked_request("POST", "/api/update/dev-mode")
+
+    async def _j():
+        return body
+
+    req.json = _j  # type: ignore[method-assign]
+    return req
+
+
+@pytest.mark.asyncio
+async def test_dev_mode_persists_nested(monkeypatch, tmp_path) -> None:
+    cfg = tmp_path / "config.json"
+    monkeypatch.setattr(upd, "config_path", lambda: cfg, raising=False)
+    resp = await upd.api_update_dev_mode(_post_devmode({"enabled": True}))
+    body = json.loads(resp.body.decode())
+    assert body == {"ok": True, "update_dev_mode": True}
+    saved = json.loads(cfg.read_text())
+    assert saved["dashboard"]["update_dev_mode"] is True
+    # And it survives a real config load (round-trip).
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    from personalclaw.config.loader import AppConfig
+
+    assert AppConfig.load().dashboard.update_dev_mode is True
+
+
+@pytest.mark.asyncio
+async def test_dev_mode_rejects_non_bool(monkeypatch, tmp_path) -> None:
+    cfg = tmp_path / "config.json"
+    monkeypatch.setattr(upd, "config_path", lambda: cfg, raising=False)
+    resp = await upd.api_update_dev_mode(_post_devmode({"enabled": "yes"}))
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_dev_mode_preserves_other_dashboard_keys(monkeypatch, tmp_path) -> None:
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"dashboard": {"user_name": "Keyur"}}))
+    monkeypatch.setattr(upd, "config_path", lambda: cfg, raising=False)
+    await upd.api_update_dev_mode(_post_devmode({"enabled": True}))
+    saved = json.loads(cfg.read_text())
+    assert saved["dashboard"]["user_name"] == "Keyur"  # not clobbered
+    assert saved["dashboard"]["update_dev_mode"] is True

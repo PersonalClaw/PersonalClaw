@@ -251,6 +251,37 @@ async def api_update_auto(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "auto_update": enabled})
 
 
+async def api_update_dev_mode(request: web.Request) -> web.Response:
+    """POST /api/update/dev-mode — toggle git dev-mode (track commits vs tags).
+
+    Persists ``dashboard.update_dev_mode`` (plan 34 T4.5). Only meaningful for a
+    git checkout — for pip/container/desktop the updater always rides releases —
+    but the flag is stored uniformly (the frontend only surfaces the control for
+    the git kind).
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    enabled = body.get("enabled", False)
+    if not isinstance(enabled, bool):
+        return web.json_response({"error": "enabled must be a boolean"}, status=400)
+    path = config_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except Exception:
+        data = {}
+    dash = data.get("dashboard")
+    if not isinstance(dash, dict):
+        dash = {}
+    dash["update_dev_mode"] = enabled
+    data["dashboard"] = dash
+    atomic_write(path, json.dumps(data, indent=2) + "\n", fsync=True)
+    return web.json_response({"ok": True, "update_dev_mode": enabled})
+
+
 async def api_changelog(request: web.Request) -> web.Response:
     """GET /api/changelog — read full CHANGELOG.md from project."""
     proj = os.environ.get("PERSONALCLAW_PROJECT_DIR", "")
