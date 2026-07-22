@@ -5,6 +5,13 @@ maintainer hand-applies them (they're small and cross-repo). This directory is a
 staging area so the content is version-controlled, reviewable, and CI-checkable
 here before it's copied out.
 
+**Status (2026-07-21): both hand-applies APPLIED.**
+1. `install.sh` → `personalclaw.dev` `public/install`, served at `/install` with
+   `Content-Type: text/plain; charset=utf-8` (vercel.json). Build-verified byte-identical.
+2. `openai`/`anthropic` `pythonDependencies` → the 12 SDK-backed provider apps in
+   `PersonalClawApps` (all 10 openai-wire + 2 anthropic-wire apps, not just the two
+   named below — see the corrected list in §2). Manifests validated + app tests green.
+
 ---
 
 ## 1. `install.sh` → the website repo (personalclaw.dev, plan 36) — T2.2
@@ -37,23 +44,24 @@ the shared venv. In each app's `app.json` / `manifest.json`, add (or extend) the
 top-level `dependencies` object — mirroring the slack-channel precedent
 (plan 32 T1.5, commit `7538b63`):
 
-**openai-models** `app.json`:
+**Corrected scope (applied 2026-07-21):** the dependency is required by *every* app
+that constructs core's `OpenAIProvider`/`AnthropicProvider` (the inference path uses
+the vendor SDK's own client — `llm/catalog.py:322` — while only `/v1/models`
+discovery is SDK-free). That is **12 apps, not 2**:
 
-```json
-"dependencies": { "pythonDependencies": ["openai>=1.0"] }
-```
+- `"pythonDependencies": ["openai>=1.0"]` (openai wire) — `openai-models`,
+  `openai-compatible`, `alibaba-models`, `deepseek-models`, `google-models`,
+  `groq-models`, `mistral-models`, `together-models`, `vllm-models`, `meta-muse-spark`
+- `"pythonDependencies": ["anthropic>=0.20"]` (anthropic wire) — `anthropic-models`,
+  `anthropic-compatible`
 
-**anthropic-models** `app.json`:
-
-```json
-"dependencies": { "pythonDependencies": ["anthropic>=0.20"] }
-```
-
-If the OpenAI STT/TTS providers ship as their own apps (not under openai-models),
-add the same `"openai>=1.0"` line to those manifests. After install/update the
+Not affected: `ollama-models` (httpx — a core dep), `bedrock-models` (already declares
+`boto3`), `openai-tools` (REST via `net.fetch`, no SDK). Specifiers match core's
+canonical `[openai]`/`[anthropic]` extras exactly. The block is inserted before
+`provider` (slack-channel precedent, plan 32 T1.5 `7538b63`). After install/update the
 pipeline pip-installs these; a newly-introduced dep needs a gateway restart
-(`restart_required` in the install result). The `[openai]` / `[anthropic]`
-packaging extras remain the plain-pip/uv path for users who don't install an app.
+(`restart_required` in the install result). The `[openai]` / `[anthropic]` packaging
+extras remain the plain-pip/uv path for users who don't install an app.
 
 ---
 

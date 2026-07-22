@@ -291,3 +291,56 @@ Format: one line per task/event — `DONE` / `DEVIATION` / `DISCOVERY` / `BLOCKE
 ### Post-closeout contract audit — Cycle 17
 
 - **C2 WIRE-SHAPE CONFORMANCE (Tier-S) — audited + locked** — Verified `build_update_status` emits exactly the C2 contract keys (`kind, current, latest, update_available, commits_behind, apply_method, instructions`) with the pinned per-kind semantics: `apply_method` git=`pipeline`/pip=`pip_upgrade`/container=`instructions`/desktop=`desktop_delegate`; `commits_behind` = null for non-git; `instructions` = 2 compose commands for container, `[]` otherwise; `current`/`latest` normalized (no leading `v`). Two additive extras (`release_name`, `release_notes`) are a backward-compatible superset. Added `test_c2_wire_shape_conformance` locking the shape so a future refactor can't silently drift the Tier-S wire shape. Evidence: `test_updates_kind` 19 passed; `make lint` green (mypy 453).
+
+### Cross-repo hand-applies COMPLETED — 2026-07-21
+
+The two T2.2 / T1.4 sibling-repo deliverables that closeout had left staged (they land
+outside the core repo, so the core-scoped loop couldn't apply them) are now **applied and
+validated in the sibling repos** — closing the live gap where the README hero command
+`curl -fsSL https://personalclaw.dev/install | sh` (README.md:137,151; getting-started.md:30)
+resolved to a 404.
+
+- **DONE — `install.sh` → `personalclaw.dev`** — Copied `deploy/website/install.sh` to the
+  website repo at `public/install` (Astro serves `public/` verbatim → `/install`); added a
+  `/install` header rule in `vercel.json` for `Content-Type: text/plain; charset=utf-8`.
+  Validated: `sh -n` + `dash -n` clean; `astro check` OK; `npm run build` OK; `dist/install`
+  is byte-identical to the staged source; `validate:build` OK (HTML-route validator is
+  unaffected by the extension-less asset). **Owner note:** the full website pre-push gate
+  (`npm run test:prepush` → Playwright visual + Lighthouse) still runs at push time per
+  CLAUDE.md §5; the correctness-relevant subset was run here.
+- **DONE — provider-app `pythonDependencies` → `PersonalClawApps`** — Corrected the scope
+  the staged note under-counted: the SDK is needed by **all 12 apps** that build core's
+  `OpenAIProvider`/`AnthropicProvider` (inference uses the vendor SDK client — `llm/catalog.py:322`),
+  not just `openai-models`/`anthropic-models`. Added `"openai>=1.0"` to the 10 openai-wire apps
+  (openai-models, openai-compatible, alibaba-, deepseek-, google-, groq-, mistral-, together-,
+  vllm-models, meta-muse-spark) and `"anthropic>=0.20"` to the 2 anthropic-wire apps
+  (anthropic-models, anthropic-compatible); specifiers match core's canonical extras. Not touched:
+  ollama-models (httpx is a core dep), bedrock-models (already declares boto3), openai-tools
+  (REST via net.fetch). Validated: all 38 apps-repo manifests parse + round-trip stable against
+  core's `AppManifest`; the 12 edited manifests each expose their dep through the parser; per-bundle
+  app tests green (openai-models 16, anthropic-models 19, vllm-models 19, google/deepseek/groq/
+  mistral/together 9 each, openai-compatible + anthropic-compatible 7 each).
+
+**Remaining plan-34 items are now owner real-world tasks** (need PyPI credentials or a clean
+machine): T2.1 first PyPI publish; V1–V4 clean-machine walkthroughs. The sibling-repo changes
+are committed on branches pending owner review + the per-repo push gates (website
+`feature-install-endpoint`: `test:prepush` green locally; apps `feature-provider-sdk-deps`:
+manifest-validate/tests/boundary green locally).
+
+### Release dry-run — RELEASE-BLOCKING BUG found + fixed (2026-07-21)
+
+Before queuing the first `v0.1.0` tag, dry-ran the exact `release.yml` build path locally
+(`npm run build` → `python -m build` → `scripts/verify_wheel.py`). **`verify_wheel.py` FAILED:
+the wheel carried no SPA.** Root cause: `python -m build` (no args — the release + `make build`
+command) builds the sdist first, then builds the wheel **from the sdist**; `setup.py`'s
+`BuildWithWeb` only copies `web/dist` when it exists in the build tree, but the sdist never
+included `web/dist` (no `MANIFEST.in`), so the wheel-from-sdist shipped SPA-less. The earlier
+"wheel proven servable" evidence used `python -m build --wheel` (builds from the source tree,
+where `web/dist` exists) — a **different** command than the release job runs — so the defect
+stayed latent, and the release pipeline had **never actually run** (no tag had ever been pushed).
+Fix on branch `fix-sdist-bundles-spa`: add `MANIFEST.in` grafting `web/dist` into the sdist (the
+sdist is now self-contained too), guarded by `tests/test_sdist_bundles_spa.py` + a CHANGELOG
+Fixed entry. Re-ran `python -m build` (no args) + `verify_wheel.py`: **PASS** — wheel carries the
+SPA (453 assets), installs Node-free into a scratch venv, boots `gateway --test-mode`, serves
+`/` (200 HTML) + `/api/healthz` (200). This doubles as the S1/V1 Node-absent evidence. **This
+bug must land before the first tag push** or the release job's verify-wheel step fails.
