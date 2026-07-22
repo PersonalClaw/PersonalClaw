@@ -6,25 +6,28 @@ FROM mirror.gcr.io/library/node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copy only package manifests first to exploit layer caching
-COPY web/package.json web/package-lock.json* \
-     web/yarn.lock* web/pnpm-lock.yaml* ./
+# npm-workspaces install: the ONLY lockfile lives at the repo root (web/ and
+# desktop/ carry none — npm/cli#4828), so `npm ci` must run from the root with
+# every workspace's package.json present. Manifests first for layer caching.
+COPY package.json package-lock.json ./
+COPY web/package.json web/
+COPY desktop/package.json desktop/
 
-RUN npm ci --prefer-offline
+RUN npm ci --workspace=web --prefer-offline
 
 # Copy full web source and build
-COPY web/ ./
+COPY web/ web/
 
 # tsc + vite on this SPA need more than node's default (~2 GiB) old-space heap;
 # without this the in-container build dies with "JavaScript heap out of memory"
 # even when the container itself has plenty of RAM.
-RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build
+RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build --workspace=web
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
 FROM mirror.gcr.io/library/nginx:1.27-alpine AS runtime
 
-# Copy built SPA
-COPY --from=builder /app/dist /usr/share/nginx/html
+# Copy built SPA (vite outputs to web/dist under the workspace root)
+COPY --from=builder /app/web/dist /usr/share/nginx/html
 
 # Mark this as a container install (plan 34 T3.1). The gateway's
 # detect_install_kind() reads PERSONALCLAW_INSTALL_KIND and only the BACKEND
