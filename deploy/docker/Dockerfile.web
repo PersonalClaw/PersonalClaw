@@ -8,10 +8,12 @@ WORKDIR /app
 
 # npm-workspaces install: the ONLY lockfile lives at the repo root (web/ and
 # desktop/ carry none — npm/cli#4828), so `npm ci` must run from the root with
-# every workspace's package.json present. Manifests first for layer caching.
+# the target workspace's package.json present. The `desktop` workspace is NOT
+# copied — it's excluded by .dockerignore and `--workspace=web` doesn't need it
+# (verified: npm ci resolves web's tree from the root lock alone). Manifests
+# first for layer caching.
 COPY package.json package-lock.json ./
 COPY web/package.json web/
-COPY desktop/package.json desktop/
 
 RUN npm ci --workspace=web --prefer-offline
 
