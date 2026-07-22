@@ -1,6 +1,6 @@
 # CI — PR + feature-branch push. Fast verification gate (≤10-min budget).
 # Jobs are the stable ids other roadmap plans reference (CI-RELEASE-ENGINEERING C1):
-# lint · test · web · rails · client. Heavier matrix/coverage/audit live in full.yml (main + nightly).
+# lint · test · web · rails · client · dco (PR-only). Heavier matrix/coverage/audit live in full.yml (main + nightly).
 name: CI
 
 on:
@@ -128,3 +128,30 @@ jobs:
           uv venv .venv-client
           uv pip install --python .venv-client "packages/personalclaw-client-py[dev]"
           .venv-client/bin/python -m pytest packages/personalclaw-client-py/tests
+
+  dco:
+    # Every commit in a PR must carry a Signed-off-by trailer (DCO — plan 37).
+    # Pure-git check (no external action): diff the PR range against its base and
+    # fail on any commit missing sign-off. PR-only — a feature-branch push has no
+    # base to diff, and the merge to main preserves the signed commits.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Verify DCO sign-off on every commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          missing=0
+          for sha in $(git rev-list "$BASE_SHA".."$HEAD_SHA"); do
+            author="$(git show -s --format='%an <%ae>' "$sha")"
+            if ! git show -s --format='%(trailers:key=Signed-off-by,valueonly)' "$sha" | grep -qF "$author"; then
+              echo "::error::commit $sha is missing a matching 'Signed-off-by: $author' trailer — run: git commit -s (or git rebase --signoff)"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] && echo "DCO: all commits signed off."
+          exit "$missing"
