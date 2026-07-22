@@ -9,7 +9,7 @@ from importlib.metadata import version as _pkg_version
 # source-tree run (no dist-info, e.g. `python -m personalclaw` from a checkout
 # without `pip install -e .`) falls back to the literal below. The consistency
 # test (tests/test_version_consistency.py) asserts the three agree at release time.
-_FALLBACK_VERSION = "0.1.0"
+_FALLBACK_VERSION = "0.1.1"
 try:
     __version__ = _pkg_version("personalclaw")
 except PackageNotFoundError:  # running from an uninstalled source tree

@@ -10,6 +10,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 
+## [0.1.1] — 2026-07-22
+
+### Fixed
+
+- **Blank dashboard in v0.1.0 (critical).**
+- **`monaco-editor` was never declared as a dependency**
+
+## [0.1.0] — 2026-07-19
+
 ### Added
 
 - **App-contributed CLI seams**
@@ -28,11 +37,6 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 ### Fixed
 
 - **Release wheel now bundles the SPA when built via `python -m build`.**
-
-## [0.1.0] — 2026-07-19
-
-Initial public release — the first end-to-end PersonalClaw: a self-hosted, local-first,
-provider-agnostic personal AI agent behind one gateway and one web dashboard.
 
 ### Added
 

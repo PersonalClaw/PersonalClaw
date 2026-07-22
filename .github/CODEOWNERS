@@ -1,0 +1,7 @@
+# Code ownership for review routing. Solo-maintained today, so one catch-all rule is the
+# whole file. The roadmap is maintainer-curated and is NOT in this repository, so there is
+# no path here to route it to — propose roadmap changes via an issue → Discussions rather
+# than a PR (see CONTRIBUTING.md § The model).
+
+*                       @keyurgolani
+/docs/roadmap/          @keyurgolani
