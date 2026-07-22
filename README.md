@@ -120,7 +120,11 @@ drafts replies, and workflow SOPs surfaced automatically when they match.
 ### 🛡️ Security-first
 Tool approval modes, a shell-command denylist, an egress guard with allow/deny host policy,
 a tamper-evident (HMAC) security event log, app-scoped tokens, and honest labeling of the
-one permission it can't technically enforce. See the [security model](docs/architecture/security.md).
+one permission it can't technically enforce. Controls are enforced at the point of execution,
+not merely requested in a prompt — the [threat model](docs/security/threat-model.md) maps each
+to the OWASP Agentic Top-10 with code citations and states the limitations plainly. Found a
+security issue? Report it privately via [our security policy](SECURITY.md). See also the
+[security model](docs/architecture/security.md).
 
 ## Quickstart
 
