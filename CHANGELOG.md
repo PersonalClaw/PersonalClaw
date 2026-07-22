@@ -71,6 +71,16 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 - **`personalclaw gateway --slack-only`** — the legacy alias for `--headless` is
   removed. Use `--headless`.
 
+### Fixed
+
+- **Release wheel now bundles the SPA when built via `python -m build`.** The release
+  pipeline (and `make build`) build the sdist first, then build the wheel from that
+  sdist; the built `web/dist` was not included in the sdist, so the wheel-from-sdist
+  shipped without the dashboard and failed `scripts/verify_wheel.py`. A new
+  `MANIFEST.in` grafts `web/dist` into the sdist, which also makes the sdist itself
+  self-contained (a wheel built from the PyPI sdist serves the dashboard too). Guarded
+  by `tests/test_sdist_bundles_spa.py`. (plan 34; caught in the release dry-run.)
+
 ## [0.1.0] — 2026-07-19
 
 Initial public release — the first end-to-end PersonalClaw: a self-hosted, local-first,
