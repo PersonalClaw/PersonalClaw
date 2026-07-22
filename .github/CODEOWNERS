@@ -1,0 +1,6 @@
+# Code ownership for review routing. Solo-maintained today; the roadmap directory
+# is called out explicitly to signal that the plan set is maintainer-curated
+# (propose changes via an issue → Discussions, not a direct PR — see CONTRIBUTING.md).
+
+*                       @keyurgolani
+/docs/roadmap/          @keyurgolani

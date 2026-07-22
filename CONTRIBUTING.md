@@ -3,6 +3,47 @@
 Thanks for contributing. This document covers the project's engineering
 doctrine, how to set up a dev environment, and what we expect from a PR.
 
+Agents (Claude Code and other coding agents) should read
+[AGENTS.md](AGENTS.md) — the same rules, compressed to a build/test/lint +
+doctrine + rejection-list brief.
+
+## The model
+
+PersonalClaw is a **solo-maintained** project growing its first contributors. The
+governance is sized to match — no committees, no RFC process, no CLA — but the
+engineering bar is not lowered.
+
+- **This repo (core) is a high-doctrine working tree.** PRs are welcome, held to
+  the full validation bar below. It is the source of product truth.
+- **The roadmap is maintainer-owned, with a written intake path** — not a closed
+  door. To propose or reshape roadmap work: open an **issue** describing the
+  problem → discuss in **[Discussions → Roadmap Input](https://github.com/PersonalClaw/PersonalClaw/discussions)**
+  → the maintainer files or updates a plan under `docs/roadmap/plans/`. Please
+  don't edit `docs/roadmap/` directly in a PR; the plan set is curated so the
+  execution order stays coherent.
+- **The newcomer ramp is the [apps repo](https://github.com/PersonalClaw/PersonalClawApps)**,
+  not a softened core. First-party and community apps meet the SDK-contract bar
+  (import core only via `personalclaw.sdk.*`), ship per-app tests, and get a
+  faster review turnaround. If you're looking for a first contribution, start
+  there or with a [good first issue](https://github.com/PersonalClaw/PersonalClaw/labels/good-first-issue).
+
+## Developer Certificate of Origin (DCO)
+
+Contributions are accepted under the [DCO](https://developercertificate.org/) —
+a lightweight alternative to a CLA that keeps MIT provenance clean without
+paperwork. Every commit must carry a `Signed-off-by` trailer, which you add by
+committing with `-s`:
+
+```bash
+git commit -s -m "fix(memory): correct recall ordering"
+```
+
+This appends `Signed-off-by: Your Name <your@email>` (using your git
+`user.name`/`user.email`), certifying you wrote the change or have the right to
+submit it under the project's license. A CI check enforces it on every PR; an
+unsigned commit fails. If you forget, `git commit --amend -s` (or `git rebase
+--signoff`) fixes it.
+
 ## Doctrine for all new work
 
 These principles have governed every feature in the codebase; new work is held
