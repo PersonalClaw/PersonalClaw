@@ -25,6 +25,10 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 
 - **`personalclaw gateway --slack-only`**
 
+### Fixed
+
+- **Release wheel now bundles the SPA when built via `python -m build`.**
+
 ## [0.1.0] — 2026-07-19
 
 Initial public release — the first end-to-end PersonalClaw: a self-hosted, local-first,

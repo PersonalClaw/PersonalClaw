@@ -38,10 +38,13 @@ jobs:
       - name: Install uv + build backend
         uses: astral-sh/setup-uv@v7
       - name: Build sdist + wheel (with web/dist)
+        # `uv build` (not `uv pip install --system build` + `python -m build`): the
+        # runner's /usr python is PEP-668 externally managed, so --system errors.
+        # uv build runs the same sdist-first-then-wheel-from-sdist flow in its own
+        # isolated env — same fix as the ci.yml client job (PR #16).
         run: |
           uv python install 3.12
-          uv pip install --system build
-          python -m build
+          uv build --out-dir dist
       - name: Verify the wheel contract (SPA packaged + Node-free serve)
         run: |
           # Full C4 contract (scripts/verify_wheel.py): asserts the SPA is in the
@@ -101,10 +104,10 @@ jobs:
       - name: Install uv + build the client
         uses: astral-sh/setup-uv@v7
       - name: Build client sdist + wheel
+        # uv build, not --system pip: the runner python is PEP-668 externally managed.
         run: |
           uv python install 3.12
-          uv pip install --system build
-          python -m build packages/personalclaw-client-py --outdir dist-client
+          uv build packages/personalclaw-client-py --out-dir dist-client
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist-client/

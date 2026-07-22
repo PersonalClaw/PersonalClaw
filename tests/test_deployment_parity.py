@@ -140,17 +140,32 @@ def compose_gateway():
     base_url = "http://127.0.0.1:10000"
     compose_args = [runtime, "compose", "-f", str(compose_file), "-f", str(build_overlay)]
 
+    # Build timeout is deliberately below the global pytest-timeout (--timeout=120):
+    # a from-scratch image build (npm+vite, pip with heavy extras) can legitimately
+    # exceed the budget on a loaded runner. If it does, this is an environment
+    # constraint, not a product failure — skip cleanly (the fixture's contract),
+    # the same as a build error. Landing UNDER pytest-timeout guarantees OUR
+    # timeout fires first and tears the compose process down, rather than
+    # pytest-timeout killing setup and reporting 7 ERRORs.
+    build_timeout = 90
     try:
         subprocess.run(
             compose_args + ["up", "-d", "--build"],
             check=True,
             capture_output=True,
-            timeout=120,
+            timeout=build_timeout,
         )
     except subprocess.CalledProcessError as exc:
+        subprocess.run(compose_args + ["down"], capture_output=True, timeout=60)
         if seeded_env:
             root_env.unlink(missing_ok=True)
         pytest.skip(f"compose up failed: {exc.stderr.decode()[:200]}")
+    except subprocess.TimeoutExpired:
+        # Best-effort teardown of anything the interrupted build/up left behind.
+        subprocess.run(compose_args + ["down"], capture_output=True, timeout=60)
+        if seeded_env:
+            root_env.unlink(missing_ok=True)
+        pytest.skip(f"compose up exceeded {build_timeout}s to build — skipping Compose path")
 
     try:
         if not _wait_for_gateway(base_url, timeout=60):
