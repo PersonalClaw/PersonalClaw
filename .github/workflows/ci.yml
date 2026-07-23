@@ -74,6 +74,15 @@ jobs:
         run: npm run test:web
       - name: build (tsc + vite)
         run: npm run build
+      # Render smoke: mount the BUILT bundle in headless Chromium and assert it
+      # actually renders. typecheck/vitest/build all stayed green through the
+      # v0.1.0 dual-React blank-dashboard regression — nothing above this line
+      # ever loads the artifact in a browser; this step is what would have
+      # caught it. Same script as the local pre-push gate (scripts/run_prepush.sh).
+      - name: install chromium (render smoke)
+        run: npx playwright install --with-deps chromium
+      - name: render smoke (built SPA mounts in a real browser)
+        run: npm run smoke:render
 
   rails:
     # Cheap anti-regression rails: the machine-checked invariants roadmap plans add.

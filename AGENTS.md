@@ -16,12 +16,24 @@ make serve              # dev gateway on :10000, state under ./.dev-home (NEVER 
 
 make lint               # black --check + isort --check + flake8 + mypy — must pass
 make test               # full pytest suite
-cd web && npm run typecheck && npm test && npm run build   # when web/ changed
+npm run typecheck:web && npm run test:web && npm run build   # when web/ changed (from root)
+npm run smoke:render    # then: mount the BUILT bundle in headless Chromium
 ```
 
 Definition of done for any change: `make lint` green · targeted `pytest` green ·
-`make test` green before the final commit · the web gate when `web/` changed ·
-new behavior has tests · docs moved with the change.
+`make test` green before the final commit · the web gate **including the render
+smoke** when `web/` or the npm manifest/lockfile changed · new behavior has
+tests · docs moved with the change.
+
+**Render smoke is non-negotiable for frontend-affecting pushes.** typecheck,
+vitest (jsdom), and `vite build` can ALL pass while the built bundle crashes at
+first render (this shipped as the v0.1.0 blank dashboard — a dual-React
+dependency skew). Only loading the artifact in a real browser proves it
+renders. One-time setup per clone: `npm run hooks:install` (repository-owned
+pre-push hook) + `npx playwright install chromium`. The hook runs the full
+clean-install chain automatically when outgoing commits touch `web/`,
+`package.json`, or `package-lock.json`; CI repeats it on every PR. Never bypass
+a red gate with `--no-verify` — that is reserved for owner-declared emergencies.
 
 ## Doctrine (non-negotiable)
 

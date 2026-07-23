@@ -89,6 +89,10 @@ make web-build
 
 # run an isolated dev gateway (state under ./.dev-home, never ~/.personalclaw)
 make serve
+
+# one-time: repository-owned git hooks (pre-push render-smoke gate) + browser
+npm run hooks:install
+npx playwright install chromium
 ```
 
 Useful Makefile targets (see `make help` for the full list):
@@ -101,7 +105,27 @@ Useful Makefile targets (see `make help` for the full list):
 | `make serve` / `make serve-fresh` | Dev gateway on `:10000` with an isolated `PERSONALCLAW_HOME` / same, after a fresh SPA build. |
 | `make serve-web` | Vite dev server with HMR on `:3000`, proxying to a running gateway. |
 
-Frontend tests run from `web/`: `npm test` (vitest).
+Frontend tests run from the repo root: `npm run test:web` (vitest).
+
+**The render-smoke gate.** Static checks are not enough for the frontend:
+typecheck, vitest (jsdom), and `vite build` all passed while the v0.1.0
+release shipped a blank dashboard — a dependency skew split the installed tree
+across React 18 and React-DOM 19, and the bundle crashed at first render in a
+way only a real browser exposes. So every frontend-affecting push must also
+prove the **built artifact mounts**: `npm run smoke:render` serves `web/dist`
+and loads the key routes in headless Chromium, asserting `#root` renders real
+content with no uncaught errors and no ErrorBoundary fallback. The
+repository-owned pre-push hook (`npm run hooks:install`, one-time) runs the
+whole chain — clean `npm ci` (this is what catches declared-vs-resolved
+lockfile skew), typecheck, vitest, build, render smoke — automatically whenever
+outgoing commits touch `web/`, `package.json`, or `package-lock.json`, and CI's
+`web` job repeats it on every PR. To smoke a live dev gateway instead of the
+static server: `PC_SMOKE_URL=http://127.0.0.1:10000 npm run smoke:render`.
+
+The same bar applies to dependency updates: a Dependabot or manual bump of
+React or the build toolchain merges only after this gate is green — reviewing
+the diff is not sufficient for changes whose failure mode is invisible to
+static checks.
 
 **Frontend builds run from the repo root**, never from inside `web/`. The root
 `package.json` owns an npm **workspace** (`web`, `desktop`) with a single

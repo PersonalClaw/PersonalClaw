@@ -13,6 +13,11 @@ updates:
         patterns: ["*"]
 
   # Frontend — the single root npm workspace (web + desktop share one lockfile).
+  # Merge bar: every npm PR must pass ci.yml's `web` job INCLUDING the render
+  # smoke (the built bundle mounted in headless Chromium). The v0.1.0 blank
+  # dashboard came from a dependabot React bump whose failure mode was invisible
+  # to typecheck/vitest/build — never merge a toolchain/React bump on green
+  # static checks alone.
   - package-ecosystem: npm
     directory: /
     schedule:
