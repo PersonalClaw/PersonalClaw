@@ -86,3 +86,26 @@ def test_changelog_latest_matches_pyproject() -> None:
         f"pyproject [project].version={_pyproject_version()!r} — add/rename the "
         "release heading to match before cutting the release"
     )
+
+
+def _client_version() -> str:
+    with (_REPO_ROOT / "packages" / "personalclaw-client-py" / "pyproject.toml").open("rb") as fh:
+        data = tomllib.load(fh)
+    return str(data["project"]["version"])
+
+
+def test_client_version_locksteps_core() -> None:
+    """``personalclaw-client`` releases in LOCKSTEP with core (owner policy,
+    2026-07-22): the client's version always equals core's, bumped every release
+    whether or not the client changed.
+
+    This keeps the two PyPI packages' versioning legible (client X.Y.Z pairs
+    with core X.Y.Z) and makes the release pipeline idempotent — every tag
+    carries a fresh, publishable client version, so the pypi-client job can
+    never fail on PyPI's no-re-upload rule for an unchanged package.
+    """
+    assert _client_version() == _pyproject_version(), (
+        f"personalclaw-client version={_client_version()!r} disagrees with core "
+        f"version={_pyproject_version()!r} — bump packages/personalclaw-client-py/"
+        "pyproject.toml in the same release-prep commit (lockstep policy)"
+    )
