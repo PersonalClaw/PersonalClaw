@@ -10,6 +10,26 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 
+## [0.1.1] — 2026-07-22
+
+### Fixed
+
+- **Blank dashboard in v0.1.0 (critical).** The released SPA crashed at first
+  render with `TypeError: Cannot read properties of null (reading 'useContext')`
+  — a dependency-group bump had split the installed tree across React 18 and
+  React-DOM 19 (the classic dual-React invalid-hook failure), so every install
+  kind (pip/uv, container, git) served an empty page. The web toolchain is
+  reverted to its known-good React-18 set, a root npm `overrides` pins
+  `@types/react`/`@types/react-dom` so transitive packages cannot drag React-19
+  types back in, and the lockfile is regenerated from a clean install so the
+  declared and resolved trees agree.
+- **`monaco-editor` was never declared as a dependency** — it is a peer of
+  `@monaco-editor/react` and imported directly, but resolved only by lockfile
+  accident; a clean reinstall broke the build. Now a direct dependency
+  (`^0.55.1`, the version v0.1.0 shipped transitively).
+
+## [0.1.0] — 2026-07-19
+
 ### Added
 
 - **App-contributed CLI seams** — an app can now hook into `personalclaw setup` and
@@ -81,7 +101,6 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
   self-contained (a wheel built from the PyPI sdist serves the dashboard too). Guarded
   by `tests/test_sdist_bundles_spa.py`. (plan 34; caught in the release dry-run.)
 
-## [0.1.0] — 2026-07-19
 
 Initial public release — the first end-to-end PersonalClaw: a self-hosted, local-first,
 provider-agnostic personal AI agent behind one gateway and one web dashboard.
@@ -121,5 +140,6 @@ provider-agnostic personal AI agent behind one gateway and one web dashboard.
   machine.
 - Requires Python 3.12+; a model-provider API key (or a local Ollama) to start chatting.
 
-[Unreleased]: https://github.com/PersonalClaw/PersonalClaw/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/PersonalClaw/PersonalClaw/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/PersonalClaw/PersonalClaw/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/PersonalClaw/PersonalClaw/releases/tag/v0.1.0
