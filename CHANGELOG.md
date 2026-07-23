@@ -10,6 +10,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 
+### Added
+
+- **Render-smoke gate** (`npm run smoke:render`): the built SPA is now loaded
+  in headless Chromium — key routes must mount real content with no uncaught
+  errors — before any frontend-affecting push (repository-owned pre-push hook,
+  `npm run hooks:install`) and on every PR (CI `web` job). Closes the
+  verification hole behind the v0.1.0 blank dashboard, where typecheck, unit
+  tests, and the production build all passed without ever rendering the
+  artifact in a browser.
+
 ## [0.1.1] — 2026-07-22
 
 ### Fixed

@@ -6,7 +6,12 @@
     "dev": "npm run dev --workspace=web",
     "build": "npm run build --workspace=web",
     "typecheck:web": "npm run typecheck --workspace=web",
-    "test:web": "npm run test --workspace=web"
+    "test:web": "npm run test --workspace=web",
+    "smoke:render": "node scripts/render_smoke.mjs",
+    "hooks:install": "sh scripts/install_git_hooks.sh"
+  },
+  "devDependencies": {
+    "playwright": "^1.61.1"
   },
   "overrides": {
     "@types/react": "^18.3.18",
