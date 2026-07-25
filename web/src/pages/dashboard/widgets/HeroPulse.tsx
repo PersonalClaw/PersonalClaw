@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { motion } from 'framer-motion'
 import {
-  Activity, Inbox, ListTodo, Bell, ShieldCheck, Wifi, WifiOff,
+  Activity, Inbox, ListTodo, Bell, ShieldCheck,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useDashboardLive } from '../DashboardLive'
@@ -12,8 +12,9 @@ const ACTIVE_LOOP_STATES = new Set(['running', 'paused', 'stagnant', 'blocked', 
 
 /** Hero Pulse Strip — WS-live at-a-glance counts across the whole system, each a
  *  click-through into its section. Counts bounce on change (the count is the
- *  motion `key`, so it re-mounts + pops when it ticks). A connectivity dot + the
- *  gateway version round out the strip.
+ *  motion `key`, so it re-mounts + pops when it ticks). Gateway connectivity and
+ *  version are NOT here — the shell's top-right SystemWidget owns both (a live
+ *  dot on every page + the version in its expanded card).
  *
  *  Two placements, one visible at a time (DashboardPage swaps them at `lg`):
  *  - `header`: compact single-line row, right-aligned in the TopBar. Degrades
@@ -26,7 +27,7 @@ const ACTIVE_LOOP_STATES = new Set(['running', 'paused', 'stagnant', 'blocked', 
  *    greeting. */
 export function HeroPulse({ navigate, variant = 'strip' }: RouteProps & { variant?: 'header' | 'strip' }) {
   const header = variant === 'header'
-  const { connected, approvals, inbox, tasks, loops, notifications, status } = useDashboardLive()
+  const { approvals, inbox, tasks, loops, notifications } = useDashboardLive()
 
   const runningLoops = useMemo(
     () => loops.filter((l) => ACTIVE_LOOP_STATES.has(l.status)).length,
@@ -69,22 +70,10 @@ export function HeroPulse({ navigate, variant = 'strip' }: RouteProps & { varian
           <span data-type="body-m" className={`text-on-surface-low group-hover:text-on-surface-var ${header ? 'hidden 2xl:inline' : ''}`}>{p.label}</span>
         </button>
       ))}
-
-      <div className={header ? 'ml-xs flex items-center gap-m' : 'ml-auto flex items-center gap-m pr-xs'}>
-        {status?.version && (
-          <span data-type="body-m" className={`hidden text-on-surface-low ${header ? '2xl:inline' : 'sm:inline'}`}>v{status.version}</span>
-        )}
-        <span
-          className="flex items-center gap-xs rounded-pill px-m py-xs"
-          style={{ background: connected ? 'color-mix(in srgb, var(--color-ok) 14%, transparent)' : 'color-mix(in srgb, var(--color-danger) 14%, transparent)' }}
-          title={connected ? 'Gateway connected' : 'Reconnecting…'}
-        >
-          {connected ? <Wifi size={14} className="text-ok" /> : <WifiOff size={14} className="text-danger" />}
-          <span data-type="body-m" style={{ color: connected ? 'var(--color-ok)' : 'var(--color-danger)' }}>
-            {connected ? 'Live' : 'Offline'}
-          </span>
-        </span>
-      </div>
+      {/* Neither gateway connectivity NOR version is shown here — the app shell's
+          top-right corner carries a live connectivity dot (ui/SystemWidget) on
+          every page, and its expanded card carries the gateway version, so the
+          dashboard strip is just the at-a-glance count pills. */}
     </div>
   )
 }

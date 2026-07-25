@@ -651,7 +651,7 @@ export interface SystemAgentStats {
   total_turns: number; total_duration_ms: number
 }
 export interface SystemInfo {
-  hostname: string; os: string; platform: string; python: string; arch: string; pid: number; cpu_count: number; cwd: string
+  hostname: string; version?: string; os: string; platform: string; python: string; arch: string; pid: number; cpu_count: number; cwd: string
   mem_total_gb: number; proc_mem_mb: number; mem_free_gb: number; mem_used_gb: number
   load_1m: number; load_5m: number; load_15m: number; cpu_pct: number; proc_cpu_pct?: number; ip?: string
   disk_total_gb?: number; disk_free_gb?: number
