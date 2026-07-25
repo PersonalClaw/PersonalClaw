@@ -293,6 +293,36 @@ def _remove_app_prompts(manifest: AppManifest, name: str) -> None:
         logger.debug("app %s: prompt remove failed", name, exc_info=True)
 
 
+def _origin_of(name: str) -> str:
+    """The recorded install origin for an app (default ``local`` if absent)."""
+    meta = _read_installed(name)
+    return getattr(meta, "origin", "") or "local" if meta is not None else "local"
+
+
+def _seed_app_skills(manifest: AppManifest, name: str, *, origin: str | None = None) -> None:
+    """Seed the app's declared SKILL.md skills THROUGH the supply-chain chokepoint
+    (an app OWNS its skills; the gate is never bypassed). Best-effort: a seeding
+    failure never breaks the lifecycle."""
+    if not manifest.skills:
+        return
+    try:
+        from personalclaw.apps.skill_seed import seed_app_skills
+
+        seed_app_skills(manifest, app_dir(name), origin=origin or _origin_of(name))
+    except Exception:
+        logger.debug("app %s: skill seed failed", name, exc_info=True)
+
+
+def _remove_app_skills(manifest: AppManifest, name: str) -> None:
+    """Remove the app's own seeded skills (provenance-keyed, never a user's skill)."""
+    try:
+        from personalclaw.apps.skill_seed import remove_app_skills
+
+        remove_app_skills(manifest, app_dir(name))
+    except Exception:
+        logger.debug("app %s: skill remove failed", name, exc_info=True)
+
+
 def install(
     source: str | Path,
     *,
@@ -449,6 +479,9 @@ def install(
         # Seed the app's own prompts/snippets into the native store (idempotent,
         # non-clobbering) so an app OWNS the prompts it ships.
         _seed_app_prompts(manifest, name)
+        # Seed the app's own skills through the supply-chain chokepoint (scan at the
+        # app's trust tier) — an app skill never bypasses the gate (§4.1).
+        _seed_app_skills(manifest, name, origin=meta.origin)
         # Record this app against each shared dependency it declares (A3 ledger),
         # so a later uninstall can tell removable from shared.
         try:
@@ -568,6 +601,9 @@ def update(
         # them) so a prompt renamed/removed between versions doesn't linger.
         if old_manifest is not None:
             _remove_app_prompts(old_manifest, name)
+            # Same for the old app's skills — removed pre-swap so the new version's
+            # skills re-seed cleanly through the scan (§4.1 "/update re-passes").
+            _remove_app_skills(old_manifest, name)
 
         # ── the swap: live → .rollback, new → live ──
         if rollback.exists():
@@ -593,6 +629,7 @@ def update(
                 _register_mcp(old_manifest)  # restore old app's MCP servers
                 _start_backend(old_manifest)  # bring the old backend back up
                 _seed_app_prompts(old_manifest, name)  # restore old app's prompts
+                _seed_app_skills(old_manifest, name)  # restore old app's skills
             _audit("update", "error", name, caller=caller, error=str(exc))
             return InstallResult(
                 ok=False, name=name, scan=report, error=f"update failed, rolled back: {exc}"
@@ -614,6 +651,7 @@ def update(
         # carries no live prompts). Non-clobbering, so a user edit survives.
         if meta is None or meta.enabled:
             _seed_app_prompts(manifest, name)
+            _seed_app_skills(manifest, name)  # re-seed the new app's skills (re-scans)
             _register_mcp(manifest)  # wire the new app's MCP servers
             _start_backend(manifest)  # launch the new backend (skip if disabled)
         _audit("update", "ok", name, caller=caller)
@@ -859,6 +897,7 @@ def enable(name: str, *, caller: str = "app_manager") -> bool:
         _provider_registry().enable(name)
     if manifest is not None:
         _seed_app_prompts(manifest, name)  # the app OWNS its prompts; seed on enable
+        _seed_app_skills(manifest, name, origin=meta.origin)  # + its skills (via the gate)
         _register_mcp(manifest)
         _start_backend(manifest)
     _audit("enable", "ok", name, caller=caller)
@@ -891,6 +930,7 @@ def disable(name: str, *, caller: str = "app_manager") -> bool:
         _provider_registry().disable(name)
     if manifest is not None:
         _remove_app_prompts(manifest, name)  # drop the app's own seeded prompts
+        _remove_app_skills(manifest, name)  # drop the app's own seeded skills
         try:
             _run_hook(
                 manifest.setup.onDisable,
@@ -964,6 +1004,7 @@ def force_uninstall(name: str, *, caller: str = "app_manager") -> bool:
     _deregister_mcp(name)
     if manifest is not None:
         _remove_app_prompts(manifest, name)  # drop the app's own seeded prompts
+        _remove_app_skills(manifest, name)  # drop the app's own seeded skills
         try:
             _run_hook(
                 manifest.setup.onUninstall,

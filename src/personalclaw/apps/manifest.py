@@ -21,6 +21,9 @@ from typing import Any
 
 KEBAB_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+([+-]|$)")
+# A backend-route ``op`` id (§4.2) — snake_case identifier; it becomes the tool
+# suffix ``app_<name>_<op>``, so keep it to a clean identifier shape.
+ROUTE_OP_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 @dataclass
@@ -162,6 +165,76 @@ class UIConfig:
 
 
 @dataclass
+class AppSkill:
+    """One SKILL.md skill directory an app ships and OWNS (§4.1).
+
+    Declared as ``{path: "skills/my-skill/"}`` (dir path relative to the app root,
+    containing a ``SKILL.md``). On enable / startup discovery the dir is installed
+    into the user skills tree through the supply-chain chokepoint
+    (:meth:`SkillsRegistry.install_scanned` → quarantine → ``scan_dir`` at the app's
+    trust tier → ``.pclaw-lock.json``) — an app skill never bypasses the gate just
+    because it arrived inside an app. Idempotent + non-clobbering; removed on
+    disable/uninstall keyed by the app's own declaration. See apps.skill_seed.
+    """
+
+    path: str = ""  # dir path relative to the app root, e.g. "skills/deploy-site/"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"path": self.path}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AppSkill":
+        return cls(path=str(data.get("path", "")))
+
+
+@dataclass
+class RouteEntry:
+    """One agent-callable backend route an app declares in its manifest.
+
+    Declared statically in ``backend.routes[]`` so the agent-callable surface is
+    readable WITHOUT executing app code (the manifest module's design rule). Each
+    entry names a stable ``op`` (the tool suffix ``app_<name>_<op>``), the HTTP
+    ``method`` + ``path`` on the app backend, a human ``summary``, and optional
+    JSON-schema-ish ``params`` (query/path) / ``body`` hints. ``agentCallable``
+    (default True) gates whether the route is exposed as an agent tool + through
+    ``call-app-route`` — a declared-but-not-callable route documents the surface
+    without surfacing it. See :class:`~personalclaw.tool_providers` AppRoutesToolProvider.
+    """
+
+    op: str = ""  # stable operation id → tool suffix, e.g. "list_artifacts"
+    method: str = "GET"  # HTTP verb
+    path: str = ""  # path on the app backend, e.g. "/artifacts"
+    summary: str = ""  # one-line human description
+    params: dict[str, Any] = field(default_factory=dict)  # query/path param hints
+    body: dict[str, Any] = field(default_factory=dict)  # request-body shape hint
+    agentCallable: bool = True  # expose as agent tool + call-app-route  # noqa: N815
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {"op": self.op, "method": self.method, "path": self.path}
+        if self.summary:
+            d["summary"] = self.summary
+        if self.params:
+            d["params"] = self.params
+        if self.body:
+            d["body"] = self.body
+        if not self.agentCallable:
+            d["agentCallable"] = False
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RouteEntry":
+        return cls(
+            op=str(data.get("op", "")),
+            method=str(data.get("method", "GET")).upper() or "GET",
+            path=str(data.get("path", "")),
+            summary=str(data.get("summary", "")),
+            params=dict(data.get("params", {})) if isinstance(data.get("params"), dict) else {},
+            body=dict(data.get("body", {})) if isinstance(data.get("body"), dict) else {},
+            agentCallable=bool(data.get("agentCallable", True)),  # noqa: N815
+        )
+
+
+@dataclass
 class BackendConfig:
     """Backend process configuration for an app."""
 
@@ -169,6 +242,9 @@ class BackendConfig:
     port: str = "auto"  # "auto" or a specific port number
     healthCheck: str = "/health"  # health check endpoint path  # noqa: N815
     type: str = ""  # "python", "asgi", "node", or "" (auto-detect)
+    # Declared agent-callable route surface (§4.2). Read without executing app
+    # code; surfaced as ``app_<name>_<op>`` tools + drivable via ``call-app-route``.
+    routes: list[RouteEntry] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {}
@@ -180,6 +256,8 @@ class BackendConfig:
             d["healthCheck"] = self.healthCheck
         if self.type:
             d["type"] = self.type
+        if self.routes:
+            d["routes"] = [r.to_dict() for r in self.routes]
         return d
 
     @classmethod
@@ -189,6 +267,7 @@ class BackendConfig:
             port=str(data.get("port", "auto")),
             healthCheck=str(data.get("healthCheck", "/health")),  # noqa: N815
             type=str(data.get("type", "")),
+            routes=[RouteEntry.from_dict(r) for r in data.get("routes", []) if isinstance(r, dict)],
         )
 
 
@@ -639,10 +718,12 @@ _KNOWN_FIELDS = frozenset(
         "native",
         "cli",
         "loggerRoots",
+        # App-owned SKILL.md skills (§4.1) — a typed field again, seeded through
+        # the supply-chain chokepoint on enable. See apps.skill_seed.
+        "skills",
         # Legacy fields (stripped — no runtime consumer): parsed to extra for
         # forward-compat but no longer modeled as typed attributes.
         "agents",
-        "skills",
         "sops",
     }
 )
@@ -686,6 +767,14 @@ class AppManifest:
     # for a prompt, a ``use_case``. Seeded into the native prompt store on enable
     # (idempotent, non-clobbering) and removed on disable. See apps.prompt_seed.
     prompts: list[str] = field(default_factory=list)
+
+    # --- App-owned skills (§4.1) ---
+    # SKILL.md skill dirs (paths relative to the app dir) the app SHIPS and OWNS.
+    # Seeded into the user skills tree on enable THROUGH the supply-chain chokepoint
+    # (quarantine → scan at the app's trust tier → lock), idempotent + non-clobbering,
+    # removed on disable. See apps.skill_seed.
+    skills: list[AppSkill] = field(default_factory=list)
+
     mcpServers: dict[str, Any] = field(default_factory=dict)  # MCP server configs  # noqa: N815
 
     # --- Scheduling ---
@@ -780,6 +869,11 @@ class AppManifest:
             if ".." in str(p):
                 errors.append(f"prompts path contains path traversal: {p!r}")
 
+        # Path traversal check on app-owned skill dir paths (§4.1)
+        for sk in self.skills:
+            if ".." in str(sk.path):
+                errors.append(f"skills path contains path traversal: {sk.path!r}")
+
         # UI entry path traversal check
         if self.ui.entry and ".." in self.ui.entry:
             errors.append(f"ui.entry contains path traversal: {self.ui.entry!r}")
@@ -801,6 +895,27 @@ class AppManifest:
                 errors.append(
                     f"cron entry {cron.name!r} must specify either 'every' or 'cron_expr'"
                 )
+
+        # Declared backend routes (§4.2) — statically checkable without app code.
+        seen_ops: set[str] = set()
+        for r in self.backend.routes:
+            if not r.op:
+                errors.append("backend route missing required field: op")
+            elif not ROUTE_OP_RE.match(r.op):
+                errors.append(
+                    f"backend route op must be a valid identifier "
+                    f"(lowercase alphanumeric + underscores), got: {r.op!r}"
+                )
+            elif r.op in seen_ops:
+                errors.append(f"backend route op declared more than once: {r.op!r}")
+            else:
+                seen_ops.add(r.op)
+            if not r.path:
+                errors.append(f"backend route {r.op!r} missing required field: path")
+            elif not r.path.startswith("/"):
+                errors.append(f"backend route {r.op!r} path must start with '/': {r.path!r}")
+            if ".." in r.path:
+                errors.append(f"backend route path contains path traversal: {r.path!r}")
 
         # Provider validation — the single ``provider`` and each of ``providers``.
         for prov in self.all_providers():
@@ -843,6 +958,8 @@ class AppManifest:
             d["minPersonalClawVersion"] = self.minPersonalClawVersion
         if self.prompts:
             d["prompts"] = self.prompts
+        if self.skills:
+            d["skills"] = [s.to_dict() for s in self.skills]
         if self.mcpServers:
             d["mcpServers"] = self.mcpServers
         if self.crons:
@@ -954,6 +1071,11 @@ class AppManifest:
             license=str(data.get("license", "")),
             minPersonalClawVersion=str(data.get("minPersonalClawVersion", "")),  # noqa: N815
             prompts=[str(p) for p in data.get("prompts", []) if p],
+            skills=[
+                AppSkill.from_dict(s)
+                for s in data.get("skills", [])
+                if isinstance(s, dict) and s.get("path")
+            ],
             mcpServers=dict(data.get("mcpServers", {})),  # noqa: N815
             crons=crons,
             ui=ui,

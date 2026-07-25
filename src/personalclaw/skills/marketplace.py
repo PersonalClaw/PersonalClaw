@@ -371,57 +371,78 @@ class SkillsRegistry:
         """The install CHOKEPOINT (S3): every install routes through here so one gate
         covers all marketplaces and each ``install()`` stays a dumb file-writer.
 
-        fetch → stage to quarantine → whole-dir scan at the marketplace's trust tier →
-        decide → commit or refuse, recording ``lock.json`` provenance + a SEL audit.
+        Resolves the registered marketplace by name and delegates to the shared gate
+        :func:`install_scanned`. Raises :class:`SkillInstallRefused` on a blocked
+        verdict; returns an :class:`InstallResult` on success."""
+        return install_scanned(
+            self.get(marketplace_name), marketplace_name, skill_id, target_dir, force=force
+        )
 
-        - ``clean`` / ``low`` → commit.
-        - ``warning`` → refuse unless ``force`` (a calculated, explicit override).
-        - ``dangerous`` → REFUSE; ``force`` does NOT override (the load-bearing floor).
 
-        Quarantine-first means dangerous content never lands in the live skills tree.
-        Raises :class:`SkillInstallRefused` on a blocked verdict; returns an
-        :class:`InstallResult` on success."""
-        import shutil
-        import tempfile
+def install_scanned(
+    marketplace: "SkillsMarketplace",
+    source: str,
+    skill_id: str,
+    target_dir: Path,
+    *,
+    force: bool = False,
+) -> "InstallResult":
+    """The single supply-chain install gate — used by both registered-marketplace
+    installs (:meth:`SkillsRegistry.install_guarded`) and app-owned skill seeding
+    (:mod:`personalclaw.apps.skill_seed`), which passes a transient marketplace
+    rooted at the app dir. One gate implementation, so nothing writes to the live
+    skills tree without passing through it.
 
-        from personalclaw.supply_chain import TrustTier, Verdict, scan_dir
+    fetch → stage to quarantine → whole-dir scan at the marketplace's trust tier →
+    decide → commit the scanned bytes + ``.pclaw-lock.json`` provenance + SEL audit.
 
-        mp = self.get(marketplace_name)
-        try:
-            tier = TrustTier(mp.trust_tier)
-        except ValueError:
-            tier = TrustTier.COMMUNITY
+    - ``clean`` / ``low`` → commit.
+    - ``warning`` → refuse unless ``force`` (a calculated, explicit override).
+    - ``dangerous`` → REFUSE; ``force`` does NOT override (the load-bearing floor).
 
-        detail = mp.fetch(skill_id)
-        staged_root = Path(tempfile.mkdtemp(prefix="pclaw-skill-quarantine-"))
-        try:
-            # Stage the fetched payload to quarantine (path-safe) BEFORE any scan/commit.
-            staged_skill = staged_root / (detail.name or skill_id)
-            _stage_files(detail.files, staged_skill)
+    Quarantine-first means dangerous content never lands in the live skills tree.
+    Raises :class:`SkillInstallRefused` on a blocked verdict; returns an
+    :class:`InstallResult` on success."""
+    import shutil
+    import tempfile
 
-            report = scan_dir(staged_skill, tier)
-            _audit_install(marketplace_name, skill_id, tier, report, outcome="scanned")
+    from personalclaw.supply_chain import TrustTier, Verdict, scan_dir
 
-            if report.verdict is Verdict.DANGEROUS:
-                _audit_install(marketplace_name, skill_id, tier, report, outcome="refused")
-                raise SkillInstallRefused(report, dangerous=True)
-            if report.verdict is Verdict.WARNING and not force:
-                _audit_install(marketplace_name, skill_id, tier, report, outcome="needs_confirm")
-                raise SkillInstallRefused(report, dangerous=False)
+    try:
+        tier = TrustTier(marketplace.trust_tier)
+    except ValueError:
+        tier = TrustTier.COMMUNITY
 
-            # Commit the EXACT bytes we just scanned — write ``detail.files`` (the same
-            # in-memory payload that was staged + scanned) straight to the live tree.
-            # We never re-fetch: a re-fetch would open a TOCTOU window (a server could
-            # serve clean content to the scan and malicious content to the commit) and,
-            # for the skills.sh CLI fallback, would skip the scan entirely. Committing the
-            # scanned bytes closes both. install_skill_files re-runs its per-file scan as
-            # defense-in-depth and validates SKILL.md.
-            written = install_skill_files(detail.files, detail.name or skill_id, target_dir)
-            _write_lock(target_dir, detail, marketplace_name, tier, report)
-            _audit_install(marketplace_name, skill_id, tier, report, outcome="installed")
-            return InstallResult(path=written, report=report, tier=tier)
-        finally:
-            shutil.rmtree(staged_root, ignore_errors=True)
+    detail = marketplace.fetch(skill_id)
+    staged_root = Path(tempfile.mkdtemp(prefix="pclaw-skill-quarantine-"))
+    try:
+        # Stage the fetched payload to quarantine (path-safe) BEFORE any scan/commit.
+        staged_skill = staged_root / (detail.name or skill_id)
+        _stage_files(detail.files, staged_skill)
+
+        report = scan_dir(staged_skill, tier)
+        _audit_install(source, skill_id, tier, report, outcome="scanned")
+
+        if report.verdict is Verdict.DANGEROUS:
+            _audit_install(source, skill_id, tier, report, outcome="refused")
+            raise SkillInstallRefused(report, dangerous=True)
+        if report.verdict is Verdict.WARNING and not force:
+            _audit_install(source, skill_id, tier, report, outcome="needs_confirm")
+            raise SkillInstallRefused(report, dangerous=False)
+
+        # Commit the EXACT bytes we just scanned — write ``detail.files`` (the same
+        # in-memory payload that was staged + scanned) straight to the live tree.
+        # We never re-fetch: a re-fetch would open a TOCTOU window (a server could
+        # serve clean content to the scan and malicious content to the commit) and,
+        # for the skills.sh CLI fallback, would skip the scan entirely. Committing the
+        # scanned bytes closes both. install_skill_files re-runs its per-file scan as
+        # defense-in-depth and validates SKILL.md.
+        written = install_skill_files(detail.files, detail.name or skill_id, target_dir)
+        _write_lock(target_dir, detail, source, tier, report)
+        _audit_install(source, skill_id, tier, report, outcome="installed")
+        return InstallResult(path=written, report=report, tier=tier)
+    finally:
+        shutil.rmtree(staged_root, ignore_errors=True)
 
 
 _DEFAULT_REGISTRY: SkillsRegistry | None = None

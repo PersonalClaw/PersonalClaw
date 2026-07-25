@@ -211,20 +211,56 @@ def _seed_extension_prompts(manifest: AppManifest, *, enabled: bool) -> None:
         logger.debug("extension %s: prompt seed failed", name, exc_info=True)
 
 
+def _installed_origin(name: str) -> str:
+    """The recorded install origin for an installed app (default ``local``)."""
+    try:
+        from personalclaw.apps.app_manager import _origin_of
+
+        return _origin_of(name)
+    except Exception:
+        return "local"
+
+
+def _seed_extension_skills(manifest: AppManifest, *, enabled: bool, origin: str) -> None:
+    """Seed an extension's declared SKILL.md skills at startup (an app OWNS its skills).
+
+    Mirrors :func:`_seed_extension_prompts` but routes through the supply-chain
+    chokepoint at the app's trust ``origin`` — an app skill never bypasses the gate
+    (§4.1). A disabled installed extension carries no live skills, so seeding is
+    skipped for it. Best-effort: never breaks discovery."""
+    if not getattr(manifest, "skills", None) or not enabled:
+        return
+    name = manifest.name
+    ext_dir = BUNDLED_DIR / name
+    if not ext_dir.is_dir():
+        ext_dir = app_dir(name)
+    if not ext_dir.is_dir():
+        return
+    try:
+        from personalclaw.apps.skill_seed import seed_app_skills
+
+        seed_app_skills(manifest, ext_dir, origin=origin)
+    except Exception:
+        logger.debug("extension %s: skill seed failed", name, exc_info=True)
+
+
 def _seed_promptonly_installed_apps() -> None:
-    """Seed prompts for enabled installed apps that declare prompts but NO provider
-    (so they aren't in ``discover_installed_extensions``). Best-effort."""
+    """Seed prompts + skills for enabled installed apps that declare them but have NO
+    provider (so they aren't in ``discover_installed_extensions``). Best-effort."""
     for app_info in list_apps():
         if not app_info.get("enabled", False):
             continue
         manifest_data = app_info.get("manifest", {})
         if manifest_data.get("provider") or manifest_data.get("providers"):
             continue  # provider apps already seeded via the discovery path
-        if not manifest_data.get("prompts"):
+        if not manifest_data.get("prompts") and not manifest_data.get("skills"):
             continue
         try:
             manifest = AppManifest.from_dict(manifest_data)
             _seed_extension_prompts(manifest, enabled=True)
+            _seed_extension_skills(
+                manifest, enabled=True, origin=str(app_info.get("origin", "") or "local")
+            )
         except Exception:
             logger.debug(
                 "prompt-only app %s: seed failed", app_info.get("name", "?"), exc_info=True
@@ -266,19 +302,33 @@ def load_all_extensions() -> None:
 
     for manifest in discover_bundled_extensions():
         registry.register(manifest, enabled=True)
-        # An always-on bundled provider OWNS its prompts: seed them at startup the
-        # same way core seeds its catalog (idempotent, non-clobbering).
+        # An always-on bundled provider OWNS its prompts + skills: seed them at
+        # startup the same way core seeds its catalog (idempotent, non-clobbering).
+        # A bundled extension is native → the ``builtin`` trust tier.
         _seed_extension_prompts(manifest, enabled=True)
+        _seed_extension_skills(manifest, enabled=True, origin="builtin")
         logger.debug("Registered bundled extension: %s", manifest.name)
 
     for manifest, enabled in discover_installed_extensions():
         registry.register(manifest, enabled=enabled)
         _seed_extension_prompts(manifest, enabled=enabled)
+        _seed_extension_skills(manifest, enabled=enabled, origin=_installed_origin(manifest.name))
         logger.debug("Registered installed extension: %s (enabled=%s)", manifest.name, enabled)
 
     # An installed app that has NO provider (a pure prompts/skills/sops app) is not
     # in either discovery list above, yet still owns prompts it must seed at startup.
     _seed_promptonly_installed_apps()
+
+    # The single generic app-route tool provider (§4.2): surfaces every enabled
+    # app's declared agentCallable backend routes as ``app_<name>_<op>`` tools. It
+    # reads the installed apps live on each list_tools, so enable/disable/update
+    # resync for free — registering it once here is enough.
+    try:
+        from personalclaw.tool_providers.app_routes import register as _register_app_routes
+
+        _register_app_routes()
+    except Exception:
+        logger.debug("app-routes tool provider registration failed", exc_info=True)
 
     # Relaunch enabled apps' backend subprocesses (they don't survive a gateway
     # restart) so an installed+enabled app's reverse-proxy is live from startup.

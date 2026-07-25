@@ -608,6 +608,10 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         "invoke-agent",
         "run-prompt",
         "run-workflow",
+        # PLATFORM-LEGIBILITY §4.2: drive any enabled app's declared agentCallable
+        # backend route (the ONE app-route action provider; per-app providers can't
+        # be enumerated in a static frozenset).
+        "call-app-route",
     }
 )
 

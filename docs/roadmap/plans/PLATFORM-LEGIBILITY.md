@@ -412,3 +412,76 @@ skipped / 13 xfailed; `web/` untouched (no frontend surface — the skill/refere
 CLI), so the web gate is N/A. CHANGELOG `Added` entry landed. No E1–E6 blocker. Clean-break
 under the pre-1.0 banner (the reference is generated build artifact, not persisted user state).
 Local branch `feature-platform-legibility-s3` (off S2's branch), unpushed.
+
+### 2026-07-25 — S4 (§4) app legibility — declared skills + auto-surfaced route tools — DONE
+
+Made an installed app's two agent-facing surfaces LEGIBLE and DRIVABLE from a static
+manifest declaration, both readable without executing app code — closing the exact
+manifest-vs-UI dead-path the audit kept refinding (§4 recon facts, log lines 32–33).
+
+**§4.1 — app-declared skills, seeded through the chokepoint.** Revived the dead
+`skills` manifest field (was a LEGACY stripped no-consumer field) as a typed
+`list[AppSkill]` (`{path}`, dir relative to app root, holding a `SKILL.md`).
+- **`src/personalclaw/apps/skill_seed.py`** (new) — the prompt-seed twin with the one
+  rule prompts don't need: an app skill NEVER bypasses the supply-chain gate. A
+  transient single-app `_AppSkillsMarketplace` (subclasses `SkillsMarketplace`) feeds
+  each declared dir through `install_scanned` (quarantine → `scan_dir` at the app's
+  trust tier → commit + `.pclaw-lock.json` provenance/SEL) — a DANGEROUS verdict
+  refuses always, WARNING without force. Idempotent + non-clobbering (an existing
+  same-named dir is left untouched); `remove_app_skills` deletes ONLY dirs whose lock
+  records `source == app:<name>`, never a user's own or another app's.
+- **`apps/manifest.py`** — `AppSkill` dataclass + `skills` threaded through
+  `to_dict`/`from_dict`/`validate` (traversal-guarded path). **`providers/loader.py`** —
+  `_seed_extension_skills` at startup discovery (bundled `builtin` tier; installed apps
+  at their ledger origin) + `_seed_promptonly_installed_apps` covers no-provider apps.
+  **`apps/app_manager.py`** — seed on enable/install, remove on disable/uninstall,
+  remove-old→re-seed-new across `/update` (re-scans a changed skill).
+
+**§4.2 — route-table tool surfacing (MCPify, adapted).** One generic provider, never
+N generated ones.
+- **`apps/manifest.py`** — `RouteEntry` (`op`/`method`/`path`/`summary`/`params`/`body`/
+  `agentCallable`) + `BackendConfig.routes`; `validate()` enforces `ROUTE_OP_RE`, unique
+  ops, `/`-rooted traversal-free paths.
+- **`src/personalclaw/tool_providers/app_routes.py`** (new) — `AppRoutesToolProvider`
+  re-reads enabled apps on every `list_tools` (enable/disable/`/update` resync for
+  free — no registration churn), surfacing `app_<name>_<op>` tools with verb-keyed risk
+  (GET→SAFE, POST/PUT/PATCH→CAUTION, DELETE→DESTRUCTIVE). `resolve_route` is the SINGLE
+  gate (refuses an undeclared/non-`agentCallable` op with an `ERR_APP_ROUTE_UNKNOWN`
+  envelope carrying the callable ops as `suggestions`), substitutes path placeholders,
+  and splits leftover args to query (safe verbs) vs JSON body (mutating). `call_app_route`
+  proxies through the existing reverse proxy under `LOOPBACK_INTERNAL` with a fresh
+  app-scoped token (`ERR_APP_BACKEND_UNAVAILABLE` when the backend's down). `app_surfaces()`
+  renders the same declarations for the manifest (`tool: null` for a documented-but-not-
+  callable route); `note_proxy_status` fires a deduped `app.route.drift` notification on
+  the first proxy 404 (dead-declared route caught the moment it's called). Registered once
+  in `loader.py`.
+- **`action_providers/call_app_route_provider.py`** (new) — the ONE `call-app-route` action
+  (per-app generated providers can't be enumerated in the static allowlist), sharing
+  `resolve_route`+`call_app_route` so the tool path and action path can't diverge. Added to
+  `ALLOWED_HOOK_PROVIDERS` (`validation.py`) + registered in `action_providers/registry.py`
+  in the same change (else hook create/update rejects it).
+- **`manifest.py`** — `/api/manifest`'s `app_surfaces[]` now delegates to `app_surfaces()`.
+- **Proving pair retrofitted:** Growth `app.json` (17 routes) + Minutes `app.json` (24
+  routes) in `PersonalClawApps` — both validate clean and round-trip.
+
+**Drift-safe by design:** the manifest drift test's fixture registers only native
+`BUNDLED_DIR` provider manifests into a cleared tool registry, and a bare test home has no
+enabled apps with routes — so the runtime-only `AppRoutesToolProvider` and its dynamic
+`app_<name>_<op>` tools never appear there (no `TOOL_META` needed), while at runtime they
+DO flow into `tools[]` + `app_surfaces[]`.
+
+**Tests:** `tests/test_app_owned_skills.py` (7 — chokepoint provenance, idempotent
+non-clobber, provenance-keyed removal leaving user + other-app skills untouched, skip flag,
+empty no-op) and `tests/test_app_routes.py` (25 — callable-only tool generation + verb risk,
+disabled→zero, param-schema union, gate refusals with suggestions, path/query/body split,
+`app_surfaces` null-tool + sorting, one-shot drift, proxy up/down/404, action refusals +
+shared-gate + allowlist/registration).
+
+**Gate:** `make lint` clean (black/isort/flake8/mypy — 906 files, 462 source files; fixed a
+mypy arg-type on `_AppSkillsMarketplace` by making it subclass `SkillsMarketplace`); targeted
+pytest (105 — new pair + prompts + manifest + drift + supply-chain) green; `make test` 7762
+passed / 28 skipped / 13 xfailed; `web/` untouched (backend + manifest only), web gate N/A.
+CHANGELOG `Added` entry landed. No E1–E6 blocker. Clean-break under the pre-1.0 banner (the
+`skills` seed writes provenance-locked user-tree state, removable on disable; route tools are
+read-through, no persisted state). Local branch `feature-platform-legibility-s4` (off S3's
+branch), unpushed.

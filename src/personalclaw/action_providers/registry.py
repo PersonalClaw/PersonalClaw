@@ -68,3 +68,9 @@ def _ensure_default_providers_registered() -> None:
         from personalclaw.action_providers.run_workflow_provider import RunWorkflowActionProvider
 
         register_action_provider(RunWorkflowActionProvider())
+    if "call-app-route" not in _providers:
+        from personalclaw.action_providers.call_app_route_provider import (
+            CallAppRouteActionProvider,
+        )
+
+        register_action_provider(CallAppRouteActionProvider())

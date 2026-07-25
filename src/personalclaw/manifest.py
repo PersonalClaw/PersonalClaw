@@ -154,8 +154,23 @@ async def build_manifest(app: "web.Application | None" = None) -> dict[str, Any]
         "apiVersion": API_VERSION,
         "tools": await _tools_section(),
         "routes": _routes_section(app),
-        # app_surfaces[] is populated by APP-LEGIBILITY (S4) once apps declare
-        # their route tables; an empty list until then (shape is stable now).
-        "app_surfaces": [],
+        # app_surfaces[] — every enabled app's declared route table + the generated
+        # tool name for each agent-callable route (§4.2). Same source the
+        # AppRoutesToolProvider generates tools from, so the manifest and the live
+        # tool surface can't drift from each other.
+        "app_surfaces": _app_surfaces_section(),
         "providers": _providers_section(),
     }
+
+
+def _app_surfaces_section() -> list[dict[str, Any]]:
+    """``app_surfaces[]`` — delegated to the module that owns the route→tool
+    mapping (:mod:`tool_providers.app_routes`); best-effort so a broken app
+    manifest never sinks the whole manifest."""
+    try:
+        from personalclaw.tool_providers.app_routes import app_surfaces
+
+        return app_surfaces()
+    except Exception:
+        logger.debug("app_surfaces generation failed", exc_info=True)
+        return []
