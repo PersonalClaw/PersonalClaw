@@ -382,6 +382,13 @@ export interface SkillSearchResult { id: string; name: string; description: stri
 export interface SkillMarketplaceDetail { id: string; name: string; audit_status?: string; files: Array<{ path: string; binary?: boolean }>; frontmatter?: Record<string, unknown>; body?: string; marketplace?: string }
 export interface ToolItem { name: string; description: string; provider: string; parameters?: Record<string, unknown>; requires_approval?: boolean; risk_level?: 'safe' | 'caution' | 'destructive'; disabled?: boolean; locked?: boolean; providerDisabled?: boolean }
 export interface ToolLoadFailure { provider: string; error: string }
+// The generated self-description document served at GET /api/manifest — the same
+// shape an agent driving this instance reads (personalclaw/manifest.py).
+export interface ManifestToolExample { summary: string; args: Record<string, unknown> }
+export interface ManifestTool { name: string; provider: string; description: string; parameters?: Record<string, unknown>; requires_approval: boolean; risk_level: string; response_type: string; error_codes: string[]; examples: ManifestToolExample[] }
+export interface ManifestRoute { method: string; path: string; summary: string; agent_callable: boolean }
+export interface ManifestProvider { app: string; type: string; provider_type: string; capabilities: string[]; enabled: boolean; error?: string | null }
+export interface Manifest { apiVersion: number; tools: ManifestTool[]; routes: ManifestRoute[]; app_surfaces: unknown[]; providers: { types: string[]; registered: ManifestProvider[] } }
 export interface McpServer {
   name: string; command?: string; args?: string[]; status: string; tools: Array<string | { name: string; description?: string }>
   error?: string; source?: string; enabled?: boolean; presence?: Record<string, boolean>
@@ -1596,6 +1603,8 @@ export const api = {
 
   // tools
   tools: () => get<{ tools: ToolItem[] }>('/api/tools').then((d) => d.tools),
+  // the generated self-description document (tools + routes + providers)
+  manifest: () => get<Manifest>('/api/manifest'),
   // full catalog envelope incl. operator-visible load failures (broken providers/sources)
   toolsIndex: () => get<{ tools: ToolItem[]; load_failures?: ToolLoadFailure[] }>('/api/tools'),
   invokeTool: (tool: string, args: Record<string, unknown>, provider?: string) =>
