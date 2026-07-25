@@ -779,6 +779,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                 originalLength: d.original_length != null ? Number(d.original_length) : sg.originalLength,
                 recoveryHints: Array.isArray(d.recovery_hints) && d.recovery_hints.length
                   ? (d.recovery_hints as string[]) : sg.recoveryHints,
+                agentError: d.agent_error ? (d.agent_error as ToolSegment['agentError']) : sg.agentError,
                 ok: d.ok === false ? false : sg.ok }
             : sg))
         break

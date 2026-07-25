@@ -1774,6 +1774,9 @@ async def _run_chat(
                 # Tool-call outcome: only present (and False) when the tool FAILED, so
                 # the card can color-code it; absent → success (renders as before).
                 _tool_ok = _tmeta.get("ok")
+                # PLATFORM-LEGIBILITY §2: the coded WHAT/WHY/FIX envelope (dict form)
+                # on a failed call, so the tool card renders code + rows + did-you-mean.
+                _agent_error = _tmeta.get("agent_error")
                 state.broadcast_ws(
                     "tool_result",
                     {
@@ -1785,6 +1788,7 @@ async def _run_chat(
                         "truncated": _truncated,
                         "original_length": _orig_len,
                         "recovery_hints": _recovery,
+                        **({"agent_error": _agent_error} if _agent_error else {}),
                         **({"ok": bool(_tool_ok)} if _tool_ok is not None else {}),
                     },
                 )
@@ -1810,6 +1814,8 @@ async def _run_chat(
                                     _meta["original_length"] = _orig_len
                             if _recovery:
                                 _meta["recovery_hints"] = _recovery
+                            if _agent_error:
+                                _meta["agent_error"] = _agent_error
                             if _tool_ok is not None and not _tool_ok:
                                 _meta["ok"] = False
                             break

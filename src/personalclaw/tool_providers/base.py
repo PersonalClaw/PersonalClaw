@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from personalclaw.errors import AgentError
+
 
 class RiskLevel(str, Enum):
     """How risky a tool call is — a gradient over the old binary approval flag.
@@ -99,6 +101,11 @@ class ToolResult:
     recovery_hints: list[str] = field(default_factory=list)
     truncated: bool = False
     original_length: int | None = None
+    # PLATFORM-LEGIBILITY §2: the WHAT/WHY/FIX envelope for a failure an agent can
+    # recover from. When set, its ``render()`` supplies the model-facing text and
+    # its structural fields flow to the FE tool card + external clients. Additive:
+    # existing results (``None``) render exactly as before via ``error``/hints.
+    agent_error: "AgentError | None" = None
 
 
 def maybe_truncate(text: str, cap: int | None) -> tuple[str, bool, int | None]:

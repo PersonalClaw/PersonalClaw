@@ -18,6 +18,8 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw.errors import AgentError
+
 # ── Constants ──
 
 # Max lengths for string inputs
@@ -97,12 +99,20 @@ _ALLOWED_CONTROL = frozenset({"\n", "\r", "\t"})
 
 
 class ValidationError(Exception):
-    """Raised when input validation fails."""
+    """Raised when input validation fails.
 
-    def __init__(self, field: str, message: str) -> None:
+    Optionally carries a PLATFORM-LEGIBILITY §2 :class:`~personalclaw.errors.AgentError`
+    so a tool-arg rejection reaches the model as WHAT/WHY/FIX + did-you-mean
+    ``suggestions`` (the allowed set) instead of an opaque one-liner. When present,
+    the string form of the exception IS the envelope's ``render()`` — one message,
+    no divergence. Absent → the plain ``field: message`` string as before.
+    """
+
+    def __init__(self, field: str, message: str, agent_error: "AgentError | None" = None) -> None:
         self.field = field
         self.message = message
-        super().__init__(f"{field}: {message}")
+        self.agent_error = agent_error
+        super().__init__(agent_error.render() if agent_error is not None else f"{field}: {message}")
 
 
 # ── Field Validators ──
@@ -119,6 +129,11 @@ class FieldSpec:
     min_val: float | None = None  # for numeric fields
     max_val: float | None = None
     allowed: frozenset[str] | None = None  # enum allow-list
+    # PLATFORM-LEGIBILITY §2: the AgentError code for an out-of-``allowed`` value.
+    # Defaults to the generic tool-arg code; a field whose enum has a dedicated
+    # failure surface (the hook-provider allow-list) overrides it so an agent can
+    # branch on the specific code, not the catch-all.
+    enum_error_code: str = "ERR_TOOL_ARG_INVALID"
     pattern: re.Pattern[str] | None = None  # regex pattern
     default: Any = None
     item_type: type | None = None  # type: ignore[valid-type]  # for list fields: expected type of each element  # noqa: E501
@@ -180,7 +195,22 @@ def validate_field(value: Any, spec: FieldSpec) -> Any:
         if spec.max_len and len(value) > spec.max_len:
             raise ValidationError(spec.name, f"exceeds max length {spec.max_len}")
         if spec.allowed and value not in spec.allowed:
-            raise ValidationError(spec.name, f"must be one of: {', '.join(sorted(spec.allowed))}")
+            allowed = tuple(sorted(spec.allowed))
+            # PLATFORM-LEGIBILITY §2: an out-of-set enum is the archetypal
+            # burns-a-turn opaque failure (e.g. the ALLOWED_HOOK_PROVIDERS reject).
+            # Hand the model the allowed set as did-you-mean suggestions so it
+            # self-corrects on the next turn instead of guessing.
+            raise ValidationError(
+                spec.name,
+                f"must be one of: {', '.join(allowed)}",
+                AgentError(
+                    code=spec.enum_error_code,
+                    what=f"the {spec.name!r} argument value {value!r} is not allowed",
+                    why=f"{spec.name!r} accepts only a fixed set of values",
+                    fix=f"set {spec.name!r} to one of the allowed values",
+                    suggestions=allowed,
+                ),
+            )
         if spec.pattern and value and not spec.pattern.match(value):
             raise ValidationError(spec.name, "invalid format")
 
@@ -585,7 +615,13 @@ HOOK_CREATE_SCHEMA = ToolSchema(
     tool_name="hook_create",
     fields=[
         FieldSpec("name", str, required=True, max_len=200),
-        FieldSpec("provider", str, required=True, allowed=ALLOWED_HOOK_PROVIDERS),
+        FieldSpec(
+            "provider",
+            str,
+            required=True,
+            allowed=ALLOWED_HOOK_PROVIDERS,
+            enum_error_code="ERR_HOOK_PROVIDER_UNKNOWN",
+        ),
         FieldSpec("provider_config", dict, required=True),
         FieldSpec("event", str, required=True, allowed=ALLOWED_HOOK_EVENTS),
         FieldSpec("matcher", str, max_len=500, default=""),  # optional: empty = match all
@@ -598,7 +634,12 @@ HOOK_UPDATE_SCHEMA = ToolSchema(
     tool_name="hook_update",
     fields=[
         FieldSpec("name", str, max_len=200),  # optional on update
-        FieldSpec("provider", str, allowed=ALLOWED_HOOK_PROVIDERS),
+        FieldSpec(
+            "provider",
+            str,
+            allowed=ALLOWED_HOOK_PROVIDERS,
+            enum_error_code="ERR_HOOK_PROVIDER_UNKNOWN",
+        ),
         FieldSpec("provider_config", dict),
         FieldSpec("event", str, allowed=ALLOWED_HOOK_EVENTS),
         FieldSpec("matcher", str, max_len=500),  # optional: empty = match all

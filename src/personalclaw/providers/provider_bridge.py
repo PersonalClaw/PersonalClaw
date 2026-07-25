@@ -20,6 +20,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from personalclaw.errors import AgentError
 from personalclaw.llm.base import ModelProvider
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,18 @@ def _capability_enum(capability: str):
 
 
 class ProviderResolutionError(Exception):
-    """Raised when a provider cannot be resolved from extension instances."""
+    """Raised when a provider cannot be resolved from extension instances.
+
+    PLATFORM-LEGIBILITY §2: may carry an optional ``agent_error`` WHAT/WHY/FIX
+    envelope. When present, its ``render()`` string IS this exception's message,
+    so every place that already surfaces ``str(exc)`` into a turn (a background
+    turn that dies on a stale pin, the mid-turn factory) shows the coded,
+    actionable failure — no parallel structure, and no dead field.
+    """
+
+    def __init__(self, message: str, agent_error: "AgentError | None" = None):
+        self.agent_error = agent_error
+        super().__init__(agent_error.render() if agent_error is not None else message)
 
 
 def _agent_provider_kind(agent: str | None) -> str:
@@ -662,7 +674,19 @@ def resolve_provider_for_use_case(
         raise ProviderResolutionError(
             f"The model selected for {use_case!r} ({ref!r}) isn't available — its "
             f"provider {provider_name!r} isn't installed or configured. Install it "
-            f"in the App Store, or pick a different model in Settings → Models."
+            f"in the App Store, or pick a different model in Settings → Models.",
+            AgentError(
+                code="ERR_MODEL_UNRESOLVED",
+                what=(f"the model pinned for use case {use_case!r} ({ref!r}) cannot be built"),
+                why=(
+                    f"the active ref names provider {provider_name!r}, which is absent "
+                    f"from config.json (its app isn't installed or configured)"
+                ),
+                fix=(
+                    f"install {provider_name!r} in the App Store, or rebind {use_case!r} "
+                    f"to an available model in Settings → Models"
+                ),
+            ),
         )
 
     # No active selection → implicit fallback: first configured provider declaring
@@ -681,7 +705,13 @@ def resolve_provider_for_use_case(
 
     raise ProviderResolutionError(
         f"No provider configured for use case {use_case!r}. "
-        f"Add a model provider in Settings → Providers."
+        f"Add a model provider in Settings → Providers.",
+        AgentError(
+            code="ERR_MODEL_UNRESOLVED",
+            what=f"no model provider resolves for use case {use_case!r}",
+            why="no provider in config.json declares the capability this use case needs",
+            fix=f"add a model provider in Settings → Providers, then bind {use_case!r} to it",
+        ),
     )
 
 

@@ -24,7 +24,19 @@ export interface ToolSegment {
   truncated?: boolean     // output was projected/capped
   originalLength?: number // raw char length when truncated
   recoveryHints?: string[] // TC5: concrete next-steps on a failed tool call
+  agentError?: AgentError  // PLATFORM-LEGIBILITY §2: coded WHAT/WHY/FIX envelope on a failed call
   ok?: boolean            // tool-call outcome — only present (false) when it FAILED, for color-coding
+}
+
+/** PLATFORM-LEGIBILITY §2: the structured error envelope carried on a failed
+ *  tool result's meta (`agent_error`). `code` is a stable, append-only key the
+ *  UI (and external clients) branch on; what/why/fix are the rendered lines. */
+export interface AgentError {
+  code: string
+  what: string
+  why: string
+  fix: string
+  suggestions?: string[]
 }
 
 export interface ApprovalSegment {
@@ -160,7 +172,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { index, files: [...files.values()], links: [...links.values()] }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string } }
 
 /** Re-collapse a persisted user message: the stored content has paste markers
  *  expanded to full text (the model saw that), but meta.pastes lets us swap each
@@ -244,9 +256,10 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
         if (m.meta?.raw_ref) existing.rawRef = m.meta.raw_ref
         if (m.meta?.truncated) { existing.truncated = true; existing.originalLength = m.meta.original_length }
         if (m.meta?.recovery_hints?.length) existing.recoveryHints = m.meta.recovery_hints
+        if (m.meta?.agent_error) existing.agentError = m.meta.agent_error
         if (m.meta?.ok === false) existing.ok = false
       } else {
-        const seg: ToolSegment = { kind: 'tool', id, tool: toolName(m.meta, m.content), detail: m.meta?.detail, input: m.meta?.input, output: m.meta?.output, purpose: m.meta?.purpose, done: !!m.meta?.done, contentType: m.meta?.content_type, rawRef: m.meta?.raw_ref, truncated: m.meta?.truncated, originalLength: m.meta?.original_length, recoveryHints: m.meta?.recovery_hints, ok: m.meta?.ok === false ? false : undefined }
+        const seg: ToolSegment = { kind: 'tool', id, tool: toolName(m.meta, m.content), detail: m.meta?.detail, input: m.meta?.input, output: m.meta?.output, purpose: m.meta?.purpose, done: !!m.meta?.done, contentType: m.meta?.content_type, rawRef: m.meta?.raw_ref, truncated: m.meta?.truncated, originalLength: m.meta?.original_length, recoveryHints: m.meta?.recovery_hints, agentError: m.meta?.agent_error, ok: m.meta?.ok === false ? false : undefined }
         toolIndex.set(id, seg)
         lastAssistant().segments.push(seg)
       }

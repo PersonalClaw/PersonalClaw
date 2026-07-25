@@ -947,6 +947,12 @@ class NativeAgentRuntime(AgentProvider):
             hints = getattr(result, "recovery_hints", None)
             if hints:
                 meta["recovery_hints"] = list(hints)
+            # PLATFORM-LEGIBILITY §2: carry the WHAT/WHY/FIX envelope structurally so
+            # the tool card can render coded rows + did-you-mean suggestions (the
+            # string form already went to the model via format_tool_result).
+            agent_error = getattr(result, "agent_error", None)
+            if agent_error is not None:
+                meta["agent_error"] = agent_error.to_dict()
         self._last_result_meta = meta
         return format_tool_result(result)
 

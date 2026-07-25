@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw.errors import AgentError
+
 
 @dataclass
 class ActionContext:
@@ -45,6 +47,31 @@ class ActionResult:
     #               "launched", not "succeeded" — honest "started ≠ succeeded"
     #               status (T7). The spawned turn records its own outcome.
     outcome: str = ""
+    # PLATFORM-LEGIBILITY §2: the WHAT/WHY/FIX envelope for a failed action. The
+    # three dispatch seams wrap an uncaught provider exception into one, so
+    # app-contributed providers inherit the envelope without knowing it exists.
+    agent_error: "AgentError | None" = None
+
+
+def provider_failure(provider_name: str, exc: BaseException) -> AgentError:
+    """The generic WHAT/WHY/FIX envelope a dispatch seam wraps an uncaught provider
+    exception into (PLATFORM-LEGIBILITY §2).
+
+    A well-behaved provider returns ``ActionResult(success=False, error=…)``; a
+    misbehaving (often app-contributed) one *raises*. The three dispatch seams
+    (hooks, cron, event-triggers) funnel that raise through here so every provider
+    — including ones that never heard of the envelope — surfaces the same coded,
+    actionable failure instead of a bare ``str(exc)``.
+    """
+    return AgentError(
+        code="ERR_ACTION_PROVIDER_FAILED",
+        what=f"action provider {provider_name!r} failed: {type(exc).__name__}: {exc}",
+        why="the provider raised an exception instead of returning a result",
+        fix=(
+            "check the action config against the provider's expected fields, "
+            "or inspect the provider's logs for the underlying cause"
+        ),
+    )
 
 
 class ActionProvider(ABC):

@@ -128,11 +128,16 @@ def test_active_selection_naming_unknown_provider_raises_immediately():
         gdr.return_value = reg
         try:
             pb.resolve_provider_for_use_case("embedding", agent=None)
-            raised, msg = False, ""
+            raised, msg, err = False, "", None
         except pb.ProviderResolutionError as exc:
-            raised, msg = True, str(exc)
+            raised, msg, err = True, str(exc), exc.agent_error
     assert raised
-    assert "DoesNotExistAnywhere" in msg and "isn't available" in msg
+    # PLATFORM-LEGIBILITY §2: the message is now the WHAT/WHY/FIX envelope. It
+    # still names the unresolvable provider (in WHY) and points at the fix
+    # (install / rebind), and carries the stable ERR_MODEL_UNRESOLVED code.
+    assert "DoesNotExistAnywhere" in msg
+    assert err is not None and err.code == "ERR_MODEL_UNRESOLVED"
+    assert "install" in err.fix.lower() or "rebind" in err.fix.lower()
 
 
 def test_fallback_chat_model_skips_stale_default_agent_pin():

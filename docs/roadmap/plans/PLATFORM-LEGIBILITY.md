@@ -273,3 +273,78 @@ non-`/api` leaked; 57 tools; 26 providers.
 skipped / 13 xfailed; web typecheck + test (225) + build all green. No E1–E6 blocker.
 Committed clean-break under the pre-1.0 banner (no gates/migrations — this slice adds no
 persisted state). Local branch `feature-platform-legibility`, unpushed.
+
+### 2026-07-25 — S2 (§2) WHAT/WHY/FIX error envelope — DONE
+
+Shipped the platform-wide `AgentError` carrier + its append-only registry, attached at
+exactly the seams §2.2 names — no new dispatch layer:
+
+- **`src/personalclaw/errors.py`** (new, cycle-free — zero personalclaw imports) — the
+  `@dataclass(frozen=True) AgentError{code, what, why, fix, suggestions}` with
+  `render()` (the `WHAT:/WHY:/FIX:` + optional `DID YOU MEAN:` lines fed into the model)
+  and `to_dict()` (the structural carrier for the FE card + external clients). Plus
+  `ERROR_CODES` seeded with the 4 codes this slice's seams raise:
+  `ERR_TOOL_ARG_INVALID`, `ERR_MODEL_UNRESOLVED`, `ERR_HOOK_PROVIDER_UNKNOWN`,
+  `ERR_ACTION_PROVIDER_FAILED`. The module docstring pins the §2.2-vs-AgentError
+  boundary (HTTP `lowercase_snake` on the wire vs `ERR_UPPER_SNAKE` into the session —
+  orthogonal by convention AND by surface, so they never collide).
+- **Tool seam** — `ToolResult` (`tool_providers/base.py`) gains optional
+  `agent_error: AgentError`; `format_tool_result` (`agents/native/tools.py`) renders
+  `agent_error.render()` in place of the bare error, hints appended after; the native
+  runtime meta serializer (`runtime.py:~954`) carries `agent_error.to_dict()` on failure.
+- **Action-provider seam** — `ActionResult` (`action_providers/base.py`) gains the same
+  optional field; a module-level `provider_failure(provider_name, exc) → AgentError`
+  (`ERR_ACTION_PROVIDER_FAILED`) wraps uncaught provider exceptions at all three dispatch
+  seams (`hooks.py`, `gateway.py`, `event_triggers.py`) so **app-contributed providers
+  inherit the envelope without knowing it exists**. At the fire-and-forget
+  `event_triggers` seam (no result surface) the coded envelope becomes the
+  `logger.warning(...render())` line — legible where it used to be an opaque debug
+  traceback.
+- **Provider-resolution seam** — `ProviderResolutionError`
+  (`providers/provider_bridge.py`) gains an optional `agent_error`; its `render()` becomes
+  the exception message when present (else the human message survives as fallback), so a
+  background turn that dies on a stale/absent pin tells the agent which use-case to rebind
+  (`ERR_MODEL_UNRESOLVED`, both the stale-pin and no-provider raises).
+- **Gate/validation seam** — `ValidationError` gains an optional `agent_error`;
+  `FieldSpec` gains `enum_error_code` (default `ERR_TOOL_ARG_INVALID`) so the allowed-set
+  branch raises a coded envelope with `suggestions` = the allowed set. The
+  `HOOK_CREATE/UPDATE` `provider` specs override it to `ERR_HOOK_PROVIDER_UNKNOWN`. The
+  message reaches the model verbatim through `mcp_shared.call_tool_with_logging`'s
+  `f"Error: {e}"` (the exception str IS `render()`), so the wiring is live, not dead-ended.
+- **FE** — `chatTypes.ts` gains `ToolSegment.agentError` (+ an `AgentError` interface) and
+  wires `m.meta?.agent_error` in both merge + new-segment paths; `chat_runner.py` spreads
+  `agent_error` into the `tool_result` WS payload and persists it to message meta;
+  `ChatPage.tsx` threads it in `case 'tool_result'`; `ToolCard.tsx` renders a
+  danger-bordered What/Why/Fix `<dl>` + did-you-mean suggestion pills above the recovery
+  hints — no new segment type.
+
+**Append-only enforcement.** `tests/test_error_codes_append_only.py` freezes the 4
+released codes + meanings in a `_RELEASED` baseline (a deliberate copy, not a subset
+import — it detects an in-place reword) and asserts: no removal, no meaning change, the
+`ERR_UPPER_SNAKE` convention (regex), no collision with the §2.2 `lowercase_snake` space,
+and every code has a non-empty meaning. `test_agent_error_envelope.py` covers
+render/to_dict/frozen, envelope-over-bare-error + envelope-then-hints + fallback,
+`provider_failure`, `ProviderResolutionError` render-is-message, and the hook-provider /
+generic-enum code selection. The S1 drift test's `test_declared_error_codes_exist` guard
+is now non-vacuous (imports the real `ERROR_CODES`); per §2 line 99, per-tool
+`error_codes` retrofit stays incremental — `TOOL_META` entries remain `[]` until a tool
+declares one, and the guard enforces the moment one is added.
+
+**DEVIATION — updated 4 pre-existing assertions (root-caused, not weakened).**
+`test_active_selection_naming_unknown_provider_raises_immediately`, `test_string_allowed`,
+`test_learn_add_bad_category`, `test_learn_invalid_category` pinned the OLD prose
+(`"isn't available"`, `"must be one of"`) that the envelope deliberately replaces —
+exactly the S2 deliverable. Grep confirmed NO production code branches on that prose (only
+the raise sites themselves), so this is a documented behavior change, not a test to keep.
+Each assertion was re-pointed at the STRONGER new contract (the offending value is still
+named, plus `agent_error.suggestions` carries the allowed set / `ERR_MODEL_UNRESOLVED` +
+the fix names rebind-or-install), never softened to green.
+
+**Boundary held.** No route handler emits `AgentError`; §2.2 route-error responses are
+untouched. Clean-break under the pre-1.0 banner (no gates/migrations — no persisted-state
+shape change; the FE reads `meta.agent_error` defensively).
+
+**Gate:** `make lint` clean (black/isort/flake8/mypy — 897 files, 457 source files);
+targeted pytest (20, the two new suites) green; `make test` 7730 passed / 28 skipped / 13
+xfailed; web typecheck + test (225) + build all green. No E1–E6 blocker. Local branch
+`feature-platform-legibility-s2` (off S1's branch), unpushed.
