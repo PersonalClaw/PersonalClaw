@@ -10,14 +10,15 @@ import { SidePanel } from '../../ui/SidePanel'
 import { ListControls } from '../../ui/ListControls'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { Markdown } from '../../ui/Markdown'
-import { ListSkeleton } from '../../ui/ListScaffold'
+import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring } from '../../design/motion'
 import { confirm } from '../../ui/dialog'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { api, type NotificationItem } from '../../lib/api'
-import { kindMeta, kindsPresent, bucketOf, BUCKET_ORDER, relTime, clockTime, firstLine } from './notificationMeta'
+import { kindMeta, kindsPresent, bucketOf, BUCKET_ORDER, relTime, clockTime, firstLine, unreadRail, toneChipBg } from './notificationMeta'
+import { fvs } from '../../design/fontWeight'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 
 /** Notifications = a triage feed of agent/schedule/trigger/task events. Items are
@@ -98,7 +99,7 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
         <SidePanel key={open.ts} fillHeight storeKey="notif-panel-w" icon={(() => { const km = kindMeta(open.kind); return <km.icon size={18} style={{ color: km.tone }} /> })()} title={open.title} onClose={() => setOpenTs("")}>
           <div className="flex flex-col gap-l">
             <div className="flex flex-wrap items-center gap-s text-[0.8125rem]">
-              {(() => { const km = kindMeta(open.kind); return <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${km.tone} 16%, transparent)`, color: km.tone }}><km.icon size={13} /> {km.label}</span> })()}
+              {(() => { const km = kindMeta(open.kind); return <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={{ background: toneChipBg(km.tone), color: km.tone }}><km.icon size={13} /> {km.label}</span> })()}
               <span className="text-on-surface-low">{clockTime(open.ts)}</span>
               {open.acked && <span className="text-on-surface-low inline-flex items-center gap-1"><Check size={13} /> read</span>}
             </div>
@@ -125,16 +126,16 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
     >
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
         {filtered === null ? <ListSkeleton rows={6} /> : items && items.length === 0 ? (
-          <EmptyFeed />
+          <EmptyState icon={Bell} title="You're all caught up" hint="Schedule runs, trigger fires, agent updates, and task results surface here for you to review." />
         ) : (
           <>
             {filtered.length === 0 ? (
-              <div className="text-center text-on-surface-low text-[0.875rem] py-2xl">Nothing matches this filter.</div>
+              <div className="text-center text-on-surface-low text-[0.8125rem] py-2xl">Nothing matches this filter.</div>
             ) : (
               <div className="flex flex-col gap-l">
                 {BUCKET_ORDER.filter((b) => groups[b]?.length).map((b) => (
                   <div key={b}>
-                    <div className="mb-s text-on-surface-low text-[0.7rem] uppercase tracking-wide">{b}</div>
+                    <div className="mb-s text-on-surface-low text-[0.75rem] uppercase tracking-wide">{b}</div>
                     <div className="flex flex-col gap-s">
                       {groups[b].map((n, i) => <Row key={n.ts} n={n} index={i} now={now} onOpen={() => setOpenTs(n.ts)} onAck={() => ack(n)} onUnack={() => unack(n)} onDelete={() => remove(n)} />)}
                     </div>
@@ -165,11 +166,11 @@ function Row({ n, index, now, onOpen, onAck, onUnack, onDelete }: { n: Notificat
     <ContextMenu items={menuItems}>
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(index * 0.03, 0.3) }}
       className="group relative flex items-center gap-m rounded-lg bg-surface-container px-m py-2.5 cursor-pointer hover:bg-surface-high transition-colors"
-      style={n.acked ? undefined : { boxShadow: `inset 2px 0 0 0 ${km.tone}` }} onClick={onOpen}>
-      <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${km.tone} 16%, transparent)` }}><km.icon size={19} style={{ color: km.tone }} /></span>
+      style={unreadRail(km.tone, n.acked)} onClick={onOpen}>
+      <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: toneChipBg(km.tone) }}><km.icon size={19} style={{ color: km.tone }} /></span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-s">
-          <span className={`truncate text-[0.9375rem] ${n.acked ? 'text-on-surface-var' : 'text-on-surface'}`} style={{ fontVariationSettings: '"wght" 500' }}>{n.title}</span>
+          <span className={`truncate text-[0.9375rem] ${n.acked ? 'text-on-surface-var' : 'text-on-surface'}`} style={fvs(500)}>{n.title}</span>
           <span className="shrink-0 text-on-surface-low text-[0.75rem]">{relTime(n.ts, now)}</span>
         </div>
         <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{firstLine(n.body)}</p>
@@ -185,12 +186,4 @@ function Row({ n, index, now, onOpen, onAck, onUnack, onDelete }: { n: Notificat
   )
 }
 
-function EmptyFeed() {
-  return (
-    <div className="grid place-items-center py-2xl text-center">
-      <Bell size={28} className="text-on-surface-low mb-m" />
-      <div className="text-on-surface text-[1rem]" style={{ fontVariationSettings: '"wght" 500' }}>You're all caught up</div>
-      <p className="mt-1 text-on-surface-low text-[0.875rem] max-w-[420px]">Schedule runs, trigger fires, agent updates, and task results surface here for you to review.</p>
-    </div>
-  )
-}
+

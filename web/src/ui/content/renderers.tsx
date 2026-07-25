@@ -79,7 +79,7 @@ const SanitizedEmpty = memo(function SanitizedEmpty({ what }: { what: string }) 
       <div className="flex max-w-sm flex-col items-center gap-1.5 text-center text-on-surface-low">
         <ShieldAlert size={22} className="opacity-40" />
         <p className="text-[0.8125rem]">Nothing to display.</p>
-        <p className="text-[0.7rem] opacity-80">The {what} had no renderable content after sanitizing — script, handlers, and unsafe markup are removed. Switch to Edit to see the raw source.</p>
+        <p className="text-[0.75rem] opacity-80">The {what} had no renderable content after sanitizing — script, handlers, and unsafe markup are removed. Switch to Edit to see the raw source.</p>
       </div>
     </div>
   )

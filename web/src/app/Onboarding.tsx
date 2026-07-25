@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
+import { withWeight } from '../design/fontWeight'
 import { motion } from 'framer-motion'
 import { ArrowRight, User, Cpu, Sparkles, Loader2, ExternalLink, Check } from 'lucide-react'
 import { ClawMark } from '../ui/ClawMark'
 import { DotGlow } from '../ui/DotGlow'
+import { TextLink } from '../ui/TextLink'
 import { spring, stagger, listItemEnter } from '../design/motion'
 import { useIdentity, firstNameOf } from './identity'
 import { APP_NAME } from './config'
@@ -103,7 +105,7 @@ function NameStep({ value, onChange, onSubmit }: { value: string; onChange: (v: 
       <input autoFocus value={value} onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') onSubmit() }}
         placeholder="Your name"
-        className="min-w-0 flex-1 bg-transparent px-m text-on-surface text-[1rem] placeholder:text-on-surface-low outline-none" />
+        className="min-w-0 flex-1 bg-transparent px-m text-on-surface text-[1.0625rem] placeholder:text-on-surface-low outline-none" />
       <motion.button whileTap={{ scale: 0.96 }} transition={spring.spatialFast} onClick={onSubmit} type="button"
         disabled={!value.trim()}
         className="inline-flex size-9 shrink-0 items-center justify-center rounded-pill disabled:opacity-40"
@@ -136,14 +138,14 @@ function ModelStep({ readiness, onResolved, onSkip, onOpenSettings }: { readines
   if (!readiness) return <Centered><Loader2 size={18} className="animate-spin text-on-surface-low" /></Centered>
 
   if (!readiness.needs_model) {
-    return <p className="inline-flex items-center gap-1.5 text-[0.875rem]" style={{ color: 'var(--color-success)' }}><Check size={15} /> A chat model is configured — you're ready.</p>
+    return <p className="inline-flex items-center gap-1.5 text-[0.8125rem]" style={{ color: 'var(--color-success)' }}><Check size={15} /> A chat model is configured — you're ready.</p>
   }
 
   // No provider at all → can't bind here; point to Settings, allow skip.
   if (!readiness.has_model_provider) {
     return (
       <div className="flex flex-col gap-m">
-        <p className="text-on-surface-var text-[0.875rem] leading-relaxed">No model provider is connected yet, so chat can't run. Connect one in <span className="text-on-surface">Settings → Providers</span> after setup — it only takes a moment.</p>
+        <p className="text-on-surface-var text-[0.8125rem] leading-relaxed">No model provider is connected yet, so chat can't run. Connect one in <span className="text-on-surface">Settings → Providers</span> after setup — it only takes a moment.</p>
         <div className="flex items-center gap-s">
           {/* Commit the name BEFORE navigating: the App.tsx guard redirects back
               to onboarding while `onboarded` is false, so without the commit
@@ -167,9 +169,9 @@ function ModelStep({ readiness, onResolved, onSkip, onOpenSettings }: { readines
   }
   return (
     <div className="flex flex-col gap-m">
-      <p className="text-on-surface-var text-[0.875rem]">Pick the model the agent should chat with:</p>
+      <p className="text-on-surface-var text-[0.8125rem]">Pick the model the agent should chat with:</p>
       {models === null ? <Centered><Loader2 size={16} className="animate-spin text-on-surface-low" /></Centered>
-        : models.length === 0 ? <p className="text-on-surface-low text-[0.8125rem]">No chat-capable models found. <button onClick={onSkip} className="text-primary hover:underline">Set up later</button></p>
+        : models.length === 0 ? <p className="text-on-surface-low text-[0.8125rem]">No chat-capable models found. <TextLink onClick={onSkip}>Set up later</TextLink></p>
         : (
           <motion.div className="flex flex-col gap-1.5"
             initial="initial" animate="animate" variants={{ animate: { transition: stagger() } }}>
@@ -178,8 +180,8 @@ function ModelStep({ readiness, onResolved, onSkip, onOpenSettings }: { readines
                 className="flex items-center gap-2 rounded-lg bg-surface-high px-3 py-2.5 text-left transition-colors hover:bg-surface-highest disabled:opacity-50">
                 <Cpu size={15} className="shrink-0 text-primary" />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-on-surface text-[0.875rem]">{m.model_id}</div>
-                  <div className="text-on-surface-low text-[0.7rem]">{m.provider}</div>
+                  <div className="truncate text-on-surface text-[0.8125rem]">{m.model_id}</div>
+                  <div className="text-on-surface-low text-[0.75rem]">{m.provider}</div>
                 </div>
                 {binding === m.name && <Loader2 size={15} className="shrink-0 animate-spin text-on-surface-low" />}
               </motion.button>
@@ -203,7 +205,7 @@ function ReadyStep({ name, modelSummary, onFinish }: { name: string; modelSummar
       </motion.div>
       <motion.button whileTap={{ scale: 0.98 }} transition={spring.spatialFast} onClick={onFinish} type="button"
         className="inline-flex items-center justify-center gap-1.5 self-start rounded-pill px-5 h-11 text-[0.9375rem]"
-        style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)', fontVariationSettings: '"wght" 500' }}>
+        style={withWeight({ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }, 500)}>
         Start using {APP_NAME} <ArrowRight size={17} />
       </motion.button>
     </div>
@@ -212,7 +214,7 @@ function ReadyStep({ name, modelSummary, onFinish }: { name: string; modelSummar
 
 function Recap({ ok, label }: { ok: boolean; label: string }) {
   return (
-    <div className="flex items-center gap-2 text-[0.875rem]">
+    <div className="flex items-center gap-2 text-[0.8125rem]">
       <span className="grid size-5 place-items-center rounded-full" style={{ background: ok ? 'var(--color-success)' : 'var(--color-surface-high)', color: ok ? 'var(--color-on-primary)' : 'var(--color-on-surface-low)' }}><Check size={12} /></span>
       <span className="text-on-surface-var">{label}</span>
     </div>

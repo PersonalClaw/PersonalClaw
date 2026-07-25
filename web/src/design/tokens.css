@@ -40,8 +40,11 @@
   /* ── color: semantic ── */
   --color-ok: #0ebc5f;
   --color-warn: #ff8d41;
-  --color-danger: #f55e57;
-  --color-info: #4e8ff8;
+  --color-danger: #f66c66;
+  --color-info: #5e99f9;
+  /* Light-mode values live in the .light block below — they are DARKER shades
+     of the same hues so status text passes WCAG AA on white and on the 14–16%
+     tinted chip backgrounds components derive with color-mix. */
   /* Aliases for the longer-form names used across many components (status pills,
      Settings, Knowledge, artifacts, …). Without these the var() references fell back
      to off-theme hardcoded hex (e.g. gold #d4a017 instead of the warn orange). */
@@ -152,11 +155,16 @@
   --color-on-surface-var: #5f6368;
   --color-outline: #8e918f;
   --color-outline-variant: #e1e3e1;
-  --color-primary: #e85a3f;
+  --color-primary: #c8452e;
   --color-on-primary: #ffffff;
   --color-primary-container: #ffe0d6;
   --color-on-primary-container: #3f1008;
-  --color-primary-emphasis: #c8452e;
+  --color-primary-emphasis: #a33922;
+  /* semantic status hues, AA-dark for light surfaces (see tokenRegistry.ts) */
+  --color-ok: #076e37;
+  --color-warn: #954c19;
+  --color-danger: #af2f29;
+  --color-info: #145cbf;
   --shadow-composer: 0 2px 8px -2px rgb(96 110 130 / 0.18);
   --shadow-menu: 0 0 20px rgb(96 110 130 / 0.16);
   --shadow-sheet: 0 16px 40px rgb(96 110 130 / 0.22);
@@ -261,6 +269,22 @@
      intended caption sizing. label-s = mid-weight chip/meta, body-s = caption prose. */
   [data-type="label-s"]    { font-size: 0.8125rem;line-height: 1.125rem;font-variation-settings: "wght" 470; }
   [data-type="body-s"]     { font-size: 0.8125rem;line-height: 1.125rem;font-variation-settings: "wght" 400; }
+  /* caption (0.75rem) — the smallest tier: dense chip/badge/timestamp micro-text.
+     Added in the type-scale normalization (T2.1) as the on-ramp home for the
+     sub-0.8125rem drift (0.6–0.78rem) that had accumulated app-wide. Mid-weight
+     (470), like label-s, since these are overwhelmingly meta/chip labels. */
+  [data-type="caption"]    { font-size: 0.75rem;  line-height: 1rem;    font-variation-settings: "wght" 470; }
+
+  /* Variable-font WEIGHT utilities — the canonical way to nudge weight on text
+     that already has its size (vs a type-role, which sets size+weight together).
+     Mirrors design/fontWeight.ts's fvs(); replaces ~180 inline
+     `font-variation-settings: "wght" <n>` scattered across pages. Same output. */
+  .fw-400 { font-variation-settings: "wght" 400; }
+  .fw-470 { font-variation-settings: "wght" 470; }
+  .fw-500 { font-variation-settings: "wght" 500; }
+  .fw-550 { font-variation-settings: "wght" 550; }
+  .fw-600 { font-variation-settings: "wght" 600; }
+  .fw-650 { font-variation-settings: "wght" 650; }
 }
 
 /* Blinking caret at the reveal head while the Code cockpit animates a file write

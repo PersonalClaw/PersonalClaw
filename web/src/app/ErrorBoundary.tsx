@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from 'react'
+import { fvs } from '../design/fontWeight'
 import { AlertTriangle, RotateCcw } from 'lucide-react'
 
 interface Props { children: ReactNode; resetKey?: string }
@@ -44,10 +45,10 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="flex h-full flex-col items-center justify-center gap-m px-l text-center">
           <AlertTriangle size={32} className="text-on-surface-low" />
-          <div className="text-on-surface text-[1rem]" style={{ fontVariationSettings: '"wght" 500' }}>
+          <div className="text-on-surface text-[1.0625rem]" style={fvs(500)}>
             {chunk ? 'A new version is available' : 'This page hit an error'}
           </div>
-          <p className="max-w-md text-on-surface-low text-[0.875rem]">
+          <p className="max-w-md text-on-surface-low text-[0.8125rem]">
             {chunk
               ? 'The app was updated while this tab was open. Reload to load the latest version.'
               : (this.state.error.message || 'Something went wrong rendering this view.')}

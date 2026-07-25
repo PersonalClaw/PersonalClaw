@@ -1,11 +1,13 @@
 import { useMemo, useRef } from 'react'
-import { X, Plus, Wand2, Puzzle } from 'lucide-react'
+import { Plus, Wand2, Puzzle } from 'lucide-react'
 import type { PromptVariable, PromptVarType } from '../../lib/api'
-import { VAR_TYPES, detectPlaceholders, detectIncludes } from './promptMeta'
+import { AddItemButton } from '../../ui/AddItemButton'
+import { detectPlaceholders, detectIncludes } from './promptMeta'
 import type { PromptDraft } from './PromptForm'
 import { PromptPreviewPane } from './PromptPreviewPane'
 import { SyntaxReference } from './SyntaxReference'
 import { RunnableTemplateField } from './RunnableTemplateField'
+import { VariableRow } from './VariableRow'
 
 /** Edit-mode fields that mirror the view's section rhythm (Description → Tags →
  *  Variables → Template). Same `Section` wrapper as the read view, so toggling
@@ -38,7 +40,7 @@ export function PromptEditFields({ draft, onChange, Section }: {
   const updateVar = (i: number, patch: Partial<PromptVariable>) => set('variables', draft.variables.map((v, idx) => idx === i ? { ...v, ...patch } : v))
   const removeVar = (i: number) => set('variables', draft.variables.filter((_, idx) => idx !== i))
 
-  const inputCls = 'w-full rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.875rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
+  const inputCls = 'w-full rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
 
   return (
     <div className="flex flex-col gap-l">
@@ -64,7 +66,7 @@ export function PromptEditFields({ draft, onChange, Section }: {
           {draft.variables.map((v, i) => (
             <VariableRow key={i} v={v} onChange={(patch) => updateVar(i, patch)} onRemove={() => removeVar(i)} />
           ))}
-          <button type="button" onClick={() => addVar()} className="inline-flex items-center gap-1.5 self-start rounded-md bg-surface-container px-m h-9 text-on-surface-var text-[0.8125rem] hover:bg-surface-high transition-colors"><Plus size={14} /> Add variable</button>
+          <AddItemButton className="self-start" onClick={() => addVar()}><Plus size={14} /> Add variable</AddItemButton>
         </div>
       </Section>
 
@@ -110,29 +112,3 @@ export function PromptEditFields({ draft, onChange, Section }: {
   )
 }
 
-function VariableRow({ v, onChange, onRemove }: { v: PromptVariable; onChange: (patch: Partial<PromptVariable>) => void; onRemove: () => void }) {
-  return (
-    <div className="rounded-md bg-surface-container p-2 flex flex-col gap-2">
-      <div className="flex items-center gap-s">
-        <input value={v.name} onChange={(e) => onChange({ name: e.target.value.replace(/[^a-zA-Z0-9_]/g, '_') })} placeholder="variable_name" aria-label="Variable name"
-          className="flex-1 h-8 rounded-md bg-surface px-m font-mono text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-        <select value={v.type} onChange={(e) => onChange({ type: e.target.value as PromptVarType })} aria-label="Variable type"
-          className="h-8 appearance-none rounded-md bg-surface pl-m pr-7 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]">
-          {VAR_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
-        </select>
-        <button type="button" onClick={() => onChange({ required: !v.required })} className="rounded-pill px-2 h-7 text-[0.7rem] transition-colors" style={v.required ? { background: 'color-mix(in srgb, var(--color-danger) 18%, transparent)', color: 'var(--color-danger)' } : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>{v.required ? 'required' : 'optional'}</button>
-        <button type="button" onClick={onRemove} className="text-on-surface-low hover:text-danger px-1"><X size={14} /></button>
-      </div>
-      <div className="flex items-center gap-s">
-        <input value={v.description ?? ''} onChange={(e) => onChange({ description: e.target.value })} placeholder="Description (shown when invoked)"
-          className="flex-1 h-8 rounded-md bg-surface px-m text-on-surface-var text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-        <input value={v.default == null ? '' : String(v.default)} onChange={(e) => onChange({ default: e.target.value })} placeholder="default"
-          className="w-28 h-8 rounded-md bg-surface px-m text-on-surface-var text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-      </div>
-      {v.type === 'select' && (
-        <input value={(v.options ?? []).join(', ')} onChange={(e) => onChange({ options: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })} placeholder="Choices, comma-separated"
-          className="h-8 rounded-md bg-surface px-m text-on-surface-var text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-      )}
-    </div>
-  )
-}

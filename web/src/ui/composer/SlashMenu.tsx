@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { createPortal } from 'react-dom'
 import { Slash } from 'lucide-react'
 import { api } from '../../lib/api'
@@ -96,8 +97,8 @@ export function SlashMenu({ query, anchorRef, open, onSelect, onClose }: {
           style={i === sel ? { background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' } : undefined}>
           <Slash size={13} className={`shrink-0 ${i === sel ? 'text-primary' : 'text-on-surface-low'}`} />
           <span className="min-w-0 flex-1">
-            <span className="block truncate font-mono text-on-surface text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 500' }}>{c.name}</span>
-            {c.description && <span className="block truncate text-on-surface-low text-[0.7rem]">{c.description}</span>}
+            <span className="block truncate font-mono text-on-surface text-[0.8125rem]" style={fvs(500)}>{c.name}</span>
+            {c.description && <span className="block truncate text-on-surface-low text-[0.75rem]">{c.description}</span>}
           </span>
         </button>
       ))}

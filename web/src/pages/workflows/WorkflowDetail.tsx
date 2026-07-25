@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Pencil, Trash2, Check, X, Beaker, Loader2, ArrowRight, Lock, ArrowUpFromLine } from 'lucide-react'
 import { Button } from '../../ui/Button'
+import { FormFooter } from '../../ui/FormFooter'
+import { fvs, withWeight } from '../../design/fontWeight'
 import { Toggle } from '../../ui/Toggle'
+import { TextInput } from '../../ui/forms'
 import { Markdown } from '../../ui/Markdown'
 import { confirmDelete } from '../../ui/dialog'
 import { api, type WorkflowItem, type WorkflowMatch, type WorkflowScope, type WorkflowGraph } from '../../lib/api'
@@ -66,10 +69,10 @@ export function WorkflowDetail({ workflow, onSaved, onDeleted, editing: editingP
       <div className="flex flex-col gap-l">
         <WorkflowForm draft={draft} onChange={setDraft} compact allWorkflows={allWorkflows} />
         {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
-        <div className="sticky bottom-0 -mx-l px-l py-3 bg-surface/95 border-t border-outline-variant/40 flex justify-end gap-s">
+        <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(workflow)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} disabled={saving || !draft.name.trim()}><Check size={15} /> {saving ? 'Saving…' : 'Save'}</Button>
-        </div>
+        </FormFooter>
       </div>
     )
   }
@@ -107,7 +110,7 @@ export function WorkflowDetail({ workflow, onSaved, onDeleted, editing: editingP
 
       {workflow.match_text && (
         <Section label="Fires when">
-          <p className="text-on-surface-var text-[0.875rem] leading-relaxed italic">“{workflow.match_text}”</p>
+          <p className="text-on-surface-var text-[0.8125rem] leading-relaxed italic">“{workflow.match_text}”</p>
         </Section>
       )}
 
@@ -124,16 +127,16 @@ export function WorkflowDetail({ workflow, onSaved, onDeleted, editing: editingP
                 <span className="shrink-0 inline-flex size-6 items-center justify-center rounded-pill text-[0.75rem] tabular-nums" style={{ background: 'color-mix(in srgb, var(--color-primary) 18%, transparent)' }}>{i + 1}</span>
                 <div className="flex-1 min-w-0">
                   {s.ref ? (
-                    <div className="inline-flex items-center gap-1.5 rounded-md px-m py-1.5 text-[0.875rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)' }}>
+                    <div className="inline-flex items-center gap-1.5 rounded-md px-m py-1.5 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)' }}>
                       <Beaker size={13} className="text-primary" />
                       <span className="text-on-surface-var">Run workflow</span>
-                      <span className="text-on-surface" style={{ fontVariationSettings: '"wght" 600' }}>{refWf?.name ?? s.ref}</span>
-                      {!refWf && <span className="text-danger text-[0.7rem]">(missing)</span>}
+                      <span className="text-on-surface" style={fvs(600)}>{refWf?.name ?? s.ref}</span>
+                      {!refWf && <span className="text-danger text-[0.75rem]">(missing)</span>}
                     </div>
                   ) : (
                     <>
-                      <div className="text-on-surface text-[0.9375rem]" style={{ fontVariationSettings: '"wght" 500' }}>{s.title}</div>
-                      {s.instruction && <div className="mt-1 text-on-surface-var text-[0.875rem] leading-relaxed"><Markdown>{s.instruction}</Markdown></div>}
+                      <div className="text-on-surface text-[0.9375rem]" style={fvs(500)}>{s.title}</div>
+                      {s.instruction && <div className="mt-1 text-on-surface-var text-[0.8125rem] leading-relaxed"><Markdown>{s.instruction}</Markdown></div>}
                     </>
                   )}
                 </div>
@@ -194,7 +197,7 @@ function WorkflowDag({ graph }: { graph: WorkflowGraph }) {
         state: bad.has(n.id) ? 'error' : 'todo',
         content: (
           <div className="flex h-full items-center">
-            <span className="truncate text-[0.75rem]" style={{ color: 'var(--color-on-surface)', fontVariationSettings: '"wght" 500' }}>{n.name}</span>
+            <span className="truncate text-[0.75rem]" style={withWeight({ color: 'var(--color-on-surface)' }, 500)}>{n.name}</span>
           </div>
         ),
       }
@@ -231,7 +234,7 @@ function CompositionGraph({ workflowId }: { workflowId: string }) {
   return (
     <Section label={`Composition · ${g.nodes.length} workflows`}>
       {g.cycles.length > 0 && (
-        <div className="mb-2 flex items-start gap-1.5 rounded-md px-2.5 py-1.5 text-[0.8rem]"
+        <div className="mb-2 flex items-start gap-1.5 rounded-md px-2.5 py-1.5 text-[0.8125rem]"
           style={{ background: 'color-mix(in srgb, var(--color-danger) 12%, transparent)', color: 'var(--color-danger)' }}>
           <X size={13} className="mt-0.5 shrink-0" />
           <span>Reference cycle detected: {g.cycles.map((c) => c.join(' → ')).join('; ')}</span>
@@ -252,8 +255,8 @@ function CompositionGraph({ workflowId }: { workflowId: string }) {
               <span className="shrink-0 text-on-surface-low tabular-nums">{i + 1}.</span>
               {nested && <Beaker size={12} className="mt-0.5 shrink-0 text-primary" />}
               <span className="min-w-0">
-                <span className={nested ? 'text-on-surface-var' : 'text-on-surface'} style={nested ? undefined : { fontVariationSettings: '"wght" 550' }}>{step.title}</span>
-                {step.source_workflow && <span className="ml-1.5 text-on-surface-low text-[0.7rem]">· from {step.source_workflow}</span>}
+                <span className={nested ? 'text-on-surface-var' : 'text-on-surface'} style={nested ? undefined : fvs(550)}>{step.title}</span>
+                {step.source_workflow && <span className="ml-1.5 text-on-surface-low text-[0.75rem]">· from {step.source_workflow}</span>}
               </span>
             </li>
           )
@@ -281,9 +284,11 @@ function TestMatch({ workflowId }: { workflowId: string }) {
   return (
     <Section label="Test match">
       <div className="flex items-end gap-s">
-        <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') run() }}
-          name="workflow-test-turn" aria-label="Sample turn to test workflow match"
-          placeholder="Type a sample turn to test…" className="flex-1 h-9 rounded-md bg-surface-container px-m text-on-surface text-[0.875rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+        <div className="flex-1">
+          <TextInput value={q} onChange={setQ} onKeyDown={(e) => { if (e.key === 'Enter') run() }}
+            name="workflow-test-turn" ariaLabel="Sample turn to test workflow match"
+            placeholder="Type a sample turn to test…" size="md" surface="container" />
+        </div>
         <Button size="sm" onClick={run} disabled={loading || !q.trim()}>{loading ? <Loader2 size={15} className="animate-spin" /> : <Beaker size={15} />} Test</Button>
       </div>
       {res && (
@@ -302,5 +307,5 @@ function TestMatch({ workflowId }: { workflowId: string }) {
 }
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div><div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
+  return <div><div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
 }

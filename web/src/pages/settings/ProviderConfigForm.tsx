@@ -2,6 +2,7 @@ import { useEffect, useId, useState } from 'react'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
 import { api, type ProviderSchema, type ProviderSchemaProp } from '../../lib/api'
 import { Button } from '../../ui/Button'
+import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Toggle } from '../../ui/Toggle'
 import { SavedToast } from './settingsUI'
 
@@ -37,7 +38,7 @@ export function ProviderConfigForm({ name }: { name: string }) {
     return () => { live = false }
   }, [name])
 
-  if (!schema) return <div className="py-2 text-on-surface-low text-[0.78rem]"><Loader2 size={12} className="inline animate-spin" /> Loading config…</div>
+  if (!schema) return <div className="py-2 text-on-surface-low text-[0.75rem]"><Loader2 size={12} className="inline animate-spin" /> Loading config…</div>
   const props = Object.entries(schema.properties ?? {})
   if (props.length === 0) return null
 
@@ -98,10 +99,11 @@ export function SchemaField({ fieldKey, prop, value, onChange }: {
       <div className="relative">
         <input id={id} type={showSecret ? 'text' : 'password'} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}
           placeholder={meta.placeholder ?? '••••••••'} className={inputCls + ' pr-10'} />
-        <button type="button" onClick={() => setShowSecret((s) => !s)} aria-label={showSecret ? 'Hide' : 'Show'}
-          className="absolute right-1.5 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-md text-on-surface-low hover:text-on-surface">
-          {showSecret ? <EyeOff size={14} /> : <Eye size={14} />}
-        </button>
+        <span className="absolute right-1.5 top-1/2 -translate-y-1/2">
+          <SquareIconButton label={showSecret ? 'Hide' : 'Show'} onClick={() => setShowSecret((s) => !s)}>
+            {showSecret ? <EyeOff size={14} /> : <Eye size={14} />}
+          </SquareIconButton>
+        </span>
       </div>
     )
   } else {
@@ -117,7 +119,7 @@ export function SchemaField({ fieldKey, prop, value, onChange }: {
     return (
       <div className="flex items-center justify-between gap-l">
         <div className="min-w-0">
-          <div className="text-on-surface text-[0.82rem]">{label}</div>
+          <div className="text-on-surface text-[0.8125rem]">{label}</div>
           {meta.help && <div className="mt-0.5 text-on-surface-low text-[0.75rem]">{meta.help}</div>}
         </div>
         {control}
@@ -126,7 +128,7 @@ export function SchemaField({ fieldKey, prop, value, onChange }: {
   }
   return (
     <div>
-      <label htmlFor={id} className="mb-1 block text-on-surface text-[0.82rem]">{label}</label>
+      <label htmlFor={id} className="mb-1 block text-on-surface text-[0.8125rem]">{label}</label>
       {meta.help && <div className="mb-1.5 text-on-surface-low text-[0.75rem]">{meta.help}</div>}
       {control}
     </div>

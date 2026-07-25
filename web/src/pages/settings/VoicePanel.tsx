@@ -4,6 +4,9 @@ import { api, type LexiconTerm, type LexiconCorrection } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Field, Toggle, SavedToast } from './settingsUI'
 import { FormSkeleton, ListSkeleton } from '../../ui/ListScaffold'
+import { SquareIconButton } from '../../ui/SquareIconButton'
+import { TextLink } from '../../ui/TextLink'
+import { fvs } from '../../design/fontWeight'
 
 /** Speech & Transcription — provider/model-AGNOSTIC behavior for STT (transcription)
  *  + TTS (spoken replies), plus the Vocabulary & corrections section (the user-visible
@@ -65,15 +68,15 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
             <>
               <Field label="Speaking speed" hint={`${speed.toFixed(2)}× — lower is faster.`}>
                 <div className="flex items-center gap-3">
-                  <span className="text-on-surface-low text-[0.7rem]">Fast</span>
+                  <span className="text-on-surface-low text-[0.75rem]">Fast</span>
                   <input type="range" min={0.6} max={1.6} step={0.05} value={speed}
                     onChange={(e) => setLocalSpeed(s, setTtsSettings, Number(e.target.value))}
                     onPointerUp={(e) => save({ speed: Number((e.target as HTMLInputElement).value) })}
                     // Keyboard adjustments never fire pointerup — persist those too.
                     onKeyUp={(e) => { if (RANGE_KEYS.has(e.key)) save({ speed: Number((e.target as HTMLInputElement).value) }) }}
                     className="flex-1 accent-[var(--color-primary)]" />
-                  <span className="text-on-surface-low text-[0.7rem]">Slow</span>
-                  <span className="w-10 text-right font-mono text-on-surface text-[0.72rem] tabular-nums">{speed.toFixed(2)}×</span>
+                  <span className="text-on-surface-low text-[0.75rem]">Slow</span>
+                  <span className="w-10 text-right font-mono text-on-surface text-[0.75rem] tabular-nums">{speed.toFixed(2)}×</span>
                 </div>
               </Field>
               {isRemoteVoice && (
@@ -140,8 +143,8 @@ function UseCaseVoiceSection({
         {/* The binding itself is owned by Models — show it read-only here. */}
         <Row label="Model" hint={`Bound to the ${useCase.toUpperCase()} use case — change it in Models.`}>
           {bound
-            ? <span className="rounded-md bg-surface-high px-2 py-1 font-mono text-on-surface text-[0.78rem]">{modelLabel}</span>
-            : <span className="text-on-surface-low text-[0.8rem] italic">none</span>}
+            ? <span className="rounded-md bg-surface-high px-2 py-1 font-mono text-on-surface text-[0.75rem]">{modelLabel}</span>
+            : <span className="text-on-surface-low text-[0.8125rem] italic">none</span>}
         </Row>
 
         {enabled && bound && extras?.(settings, saveSettings, boundModel)}
@@ -157,7 +160,7 @@ const selectCls = 'h-9 w-full max-w-sm rounded-md bg-surface-high px-3 text-[0.8
 
 function AvailChip({ available, okLabel, missLabel }: { available: boolean; okLabel: string; missLabel: string }) {
   return (
-    <span className="inline-flex items-center gap-1 text-[0.72rem]" style={{ color: available ? 'var(--color-success)' : 'var(--color-on-surface-low)' }}>
+    <span className="inline-flex items-center gap-1 text-[0.75rem]" style={{ color: available ? 'var(--color-success)' : 'var(--color-on-surface-low)' }}>
       {available ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />} {available ? okLabel : missLabel}
     </span>
   )
@@ -167,12 +170,11 @@ function ManageLink({ kind, go }: { kind: string; go?: (id: string) => void }) {
   if (!go) return null
   return (
     <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
-      <button type="button" onClick={() => go('models')}
-        className="inline-flex items-center gap-1 text-[0.78rem] text-primary hover:underline">
-        Bind the {kind} model in Models <ArrowRight size={13} />
-      </button>
+      <TextLink onClick={() => go('models')} icon={ArrowRight} iconPosition="trailing" size="xs">
+        Bind the {kind} model in Models
+      </TextLink>
       <button type="button" onClick={() => go('providers')}
-        className="inline-flex items-center gap-1 text-[0.78rem] text-on-surface-low hover:text-on-surface hover:underline">
+        className="inline-flex items-center gap-1 text-[0.75rem] text-on-surface-low hover:text-on-surface hover:underline">
         Add or download models in Providers <ArrowRight size={13} />
       </button>
     </div>
@@ -237,19 +239,19 @@ function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
                 value={adding} onChange={(e) => setAdding(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') addTerm() }}
                 placeholder="Add a term (e.g. Kubernetes, K8s)…"
-                className="flex-1 rounded-md border border-outline-variant/50 bg-surface-container px-3 py-2 text-[0.85rem] outline-none focus:border-primary" />
+                className="flex-1 rounded-md border border-outline-variant/50 bg-surface-container px-3 py-2 text-[0.8125rem] outline-none focus:border-primary" />
               <button type="button" onClick={addTerm} disabled={busy || !adding.trim()}
-                className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-3 text-on-primary text-[0.8rem] disabled:opacity-40">
+                className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-3 text-on-primary text-[0.8125rem] disabled:opacity-40">
                 <Plus size={15} /> Add
               </button>
               <button type="button" onClick={rebuild} disabled={busy} title="Resync from the knowledge graph"
-                className="inline-flex h-9 items-center gap-1.5 rounded-md border border-outline-variant/50 px-3 text-on-surface-low text-[0.8rem] hover:text-on-surface disabled:opacity-40">
+                className="inline-flex h-9 items-center gap-1.5 rounded-md border border-outline-variant/50 px-3 text-on-surface-low text-[0.8125rem] hover:text-on-surface disabled:opacity-40">
                 <RefreshCw size={15} className={busy ? 'animate-spin' : ''} /> Rebuild
               </button>
             </div>
-            <p className="mb-2 text-on-surface-low text-[0.78rem]">{data.total} in your lexicon.</p>
+            <p className="mb-2 text-on-surface-low text-[0.75rem]">{data.total} in your lexicon.</p>
             {data.terms.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-6 text-center text-on-surface-low text-[0.82rem]">
+              <div className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-6 text-center text-on-surface-low text-[0.8125rem]">
                 No terms yet. <span className="text-on-surface">Rebuild</span> to seed from your knowledge graph, or add one above.
               </div>
             ) : (
@@ -263,10 +265,10 @@ function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
               </div>
             )}
 
-            <h4 className="mt-6 mb-1 text-on-surface text-[0.875rem]" style={{ fontVariationSettings: '"wght" 600' }}>Learned corrections</h4>
-            <p className="mb-2 text-on-surface-low text-[0.78rem]">Fixes captured from your transcript edits. Toggle “always” to auto-apply next time.</p>
+            <h4 className="mt-6 mb-1 text-on-surface text-[0.8125rem]" style={fvs(600)}>Learned corrections</h4>
+            <p className="mb-2 text-on-surface-low text-[0.75rem]">Fixes captured from your transcript edits. Toggle “always” to auto-apply next time.</p>
             {data.corrections.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-6 text-center text-on-surface-low text-[0.82rem]">
+              <div className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-6 text-center text-on-surface-low text-[0.8125rem]">
                 No learned corrections yet. When you fix a mis-heard term in a transcript, it shows up here.
               </div>
             ) : (
@@ -290,21 +292,18 @@ function TermRow({ term, onChanged }: { term: LexiconTerm; onChanged: () => void
   const act = async (fn: () => Promise<unknown>) => { setBusy(true); try { await fn(); onChanged() } finally { setBusy(false) } }
   return (
     <div className={`flex items-center gap-2 py-2 ${term.enabled ? '' : 'opacity-50'}`}>
-      <span className="flex-1 truncate text-[0.85rem]">
+      <span className="flex-1 truncate text-[0.8125rem]">
         {term.canonical}
         {term.aliases.length > 0 && <span className="ml-1.5 text-on-surface-low text-[0.75rem]">({term.aliases.join(', ')})</span>}
       </span>
-      <span className={`rounded px-1.5 py-0.5 text-[0.68rem] ${badge.cls}`}>{badge.label}</span>
+      <span className={`rounded px-1.5 py-0.5 text-[0.75rem] ${badge.cls}`}>{badge.label}</span>
       <button type="button" disabled={busy} title={term.enabled ? 'Disable (prune)' : 'Enable'}
         onClick={() => act(() => api.lexiconSetTermEnabled(term.id, !term.enabled))}
         className="inline-flex h-7 w-7 items-center justify-center rounded text-on-surface-low hover:text-on-surface disabled:opacity-40">
         {term.enabled ? <X size={14} /> : <Check size={14} />}
       </button>
-      <button type="button" disabled={busy} title="Delete"
-        onClick={() => act(() => api.lexiconDeleteTerm(term.id))}
-        className="inline-flex h-7 w-7 items-center justify-center rounded text-on-surface-low hover:text-danger disabled:opacity-40">
-        <Trash2 size={14} />
-      </button>
+      <SquareIconButton icon={Trash2} tone="danger" label="Delete" disabled={busy}
+        onClick={() => act(() => api.lexiconDeleteTerm(term.id))} />
     </div>
   )
 }
@@ -313,16 +312,16 @@ function CorrectionRow({ corr, onChanged }: { corr: LexiconCorrection; onChanged
   const [busy, setBusy] = useState(false)
   const toggle = async () => { setBusy(true); try { await api.lexiconSetCorrectionAuto(corr.id, !corr.auto_apply); onChanged() } finally { setBusy(false) } }
   return (
-    <div className="flex items-center gap-2 py-2 text-[0.85rem]">
+    <div className="flex items-center gap-2 py-2 text-[0.8125rem]">
       <span className="flex-1 truncate">
         <span className="text-on-surface-low line-through">{corr.heard}</span>
         <span className="mx-1.5 text-on-surface-low">→</span>
         <span className="text-on-surface">{corr.meant}</span>
-        <span className="ml-2 text-on-surface-low text-[0.72rem]">×{corr.count}</span>
+        <span className="ml-2 text-on-surface-low text-[0.75rem]">×{corr.count}</span>
       </span>
       <button type="button" onClick={toggle} disabled={busy}
         title={corr.auto_apply ? 'Auto-applied — click to make it a suggestion' : 'Always fix this automatically'}
-        className={`inline-flex h-7 items-center gap-1 rounded px-2 text-[0.72rem] transition-colors disabled:opacity-40 ${
+        className={`inline-flex h-7 items-center gap-1 rounded px-2 text-[0.75rem] transition-colors disabled:opacity-40 ${
           corr.auto_apply ? 'bg-ok/15' : 'border border-outline-variant/50 text-on-surface-low hover:text-on-surface'}`}>
         <Wand2 size={12} /> {corr.auto_apply ? 'Always' : 'Suggest'}
       </button>

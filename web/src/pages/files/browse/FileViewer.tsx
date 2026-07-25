@@ -1,4 +1,5 @@
 import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from 'react'
+import { fvs } from '../../../design/fontWeight'
 import { Download, Loader2, BookmarkPlus, FileWarning, RotateCcw, FolderOpen } from 'lucide-react'
 import { api, type FsEntry } from '../../../lib/api'
 import { useIsMac } from '../../../app/usePlatform'
@@ -6,6 +7,11 @@ import { confirm } from '../../../ui/dialog'
 import { fmtBytes, baseName, monacoLang } from '../fileMeta'
 import { useFileWatch } from './useFileWatch'
 import { ContentSurface, type ContentSurfaceHandle } from '../../../ui/content/ContentSurface'
+import { SquareIconButton } from '../../../ui/SquareIconButton'
+import { QuietButton } from '../../../ui/QuietButton'
+import { Button } from '../../../ui/Button'
+import { TextLink } from '../../../ui/TextLink'
+import { Centered } from '../../../ui/Centered'
 import { resolveContentType, getContentType } from '../../../ui/content/contentTypes'
 import type { CommentTarget } from '../../../ui/content/commentTarget'
 
@@ -153,12 +159,9 @@ export const FileViewer = forwardRef<FileViewerHandle, ViewerProps>(function Fil
       <Centered>
         <div className="flex flex-col items-center gap-2 text-on-surface-low">
           <FileWarning size={26} className="opacity-40" />
-          <p className="text-[0.875rem]">Couldn't open this file.</p>
+          <p className="text-[0.8125rem]">Couldn't open this file.</p>
           <p className="text-[0.75rem] text-on-surface-low/80">{err}</p>
-          <button type="button" onClick={() => setAttempt((n) => n + 1)}
-            className="mt-1 inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[0.75rem] text-primary hover:bg-surface-high">
-            <RotateCcw size={13} /> Try again
-          </button>
+          <Button variant="ghost" size="xs" onClick={() => setAttempt((n) => n + 1)} className="mt-1 text-primary"><RotateCcw size={13} /> Try again</Button>
         </div>
       </Centered>
     )
@@ -168,9 +171,8 @@ export const FileViewer = forwardRef<FileViewerHandle, ViewerProps>(function Fil
       <Centered>
         <div className="flex flex-col items-center gap-2 text-on-surface-low">
           <FileWarning size={26} className="opacity-40" />
-          <p className="text-[0.875rem]">This looks like a binary file — it can't be shown as text.</p>
-          <a href={api.fileRawUrl(entry.path, true)} target="_blank" rel="noreferrer"
-            className="text-[0.8125rem] text-primary hover:underline">Download to inspect it</a>
+          <p className="text-[0.8125rem]">This looks like a binary file — it can't be shown as text.</p>
+          <TextLink href={api.fileRawUrl(entry.path, true)} external size="sm">Download to inspect it</TextLink>
         </div>
       </Centered>
     )
@@ -180,15 +182,15 @@ export const FileViewer = forwardRef<FileViewerHandle, ViewerProps>(function Fil
   // Header chrome the file host owns: name + size + on-disk-change badge.
   const headerLeft = (
     <>
-      <span className="truncate text-on-surface text-[0.875rem] font-mono" style={{ fontVariationSettings: '"wght" 500' }}>{fileName}</span>
+      <span className="truncate text-on-surface text-[0.8125rem] font-mono" style={fvs(500)}>{fileName}</span>
       {diskChanged && !noText && (
-        <span className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[0.65rem]"
+        <span className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[0.75rem]"
           style={{ background: 'color-mix(in srgb, var(--color-warn) 16%, transparent)', color: 'var(--color-warn)' }}
           title="The file changed on disk (another process — or an agent — rewrote it) while you were editing. Saving overwrites those changes; Revert to take the disk version.">
           <FileWarning size={11} /> changed on disk
         </span>
       )}
-      {!compact && <span className="shrink-0 text-on-surface-low text-[0.7rem] tabular-nums">{fmtBytes(entry.size)}</span>}
+      {!compact && <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{fmtBytes(entry.size)}</span>}
     </>
   )
   // Host actions: save-as-artifact (text only) + download (always, incl. binary).
@@ -196,17 +198,14 @@ export const FileViewer = forwardRef<FileViewerHandle, ViewerProps>(function Fil
     <>
       {!noText && !truncated && content !== null && (
         compact
-          ? <button onClick={() => onSaveAsArtifact(entry, draft)} type="button" title="Save as a versioned artifact"
-              className="inline-flex size-7 items-center justify-center rounded-md text-on-surface-low hover:bg-surface-high hover:text-on-surface"><BookmarkPlus size={13} /></button>
-          : <button onClick={() => onSaveAsArtifact(entry, draft)} type="button" title="Save as a versioned artifact"
-              className="inline-flex items-center gap-1 rounded-md px-2 h-7 text-[0.75rem] text-on-surface-low hover:bg-surface-high hover:text-on-surface">
+          ? <SquareIconButton icon={BookmarkPlus} iconSize={13} label="Save as a versioned artifact" onClick={() => onSaveAsArtifact(entry, draft)} />
+          : <QuietButton onClick={() => onSaveAsArtifact(entry, draft)} title="Save as a versioned artifact">
               <BookmarkPlus size={13} /> Artifact
-            </button>
+            </QuietButton>
       )}
       {/* Reveal in Finder — macOS only (the gateway runs `open -R`). */}
       {isMac && (
-        <button onClick={() => { void api.revealPath(entry.path, 'reveal').catch(() => {}) }} type="button" title="Reveal in Finder"
-          className="inline-flex size-7 items-center justify-center rounded-md text-on-surface-low hover:bg-surface-high hover:text-on-surface"><FolderOpen size={13} /></button>
+        <SquareIconButton icon={FolderOpen} iconSize={13} label="Reveal in Finder" onClick={() => { void api.revealPath(entry.path, 'reveal').catch(() => {}) }} />
       )}
       <a href={api.fileRawUrl(entry.path, true)} download={fileName} target="_blank" rel="noreferrer"
         className="inline-flex size-7 items-center justify-center rounded-md text-on-surface-low hover:bg-surface-high hover:text-on-surface" title="Download"><Download size={13} /></a>
@@ -240,7 +239,3 @@ export const FileViewer = forwardRef<FileViewerHandle, ViewerProps>(function Fil
     />
   )
 })
-
-function Centered({ children }: { children: React.ReactNode }) {
-  return <div className="flex h-full items-center justify-center">{children}</div>
-}

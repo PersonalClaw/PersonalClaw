@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { X, Maximize2, Minimize2, Box } from 'lucide-react'
 import { IconButton } from '../../ui/IconButton'
 import { Modal } from '../../ui/Modal'
 import { Button } from '../../ui/Button'
-import { TextInput } from '../tasks/formControls'
+import { TextInput } from '../../ui/forms'
 import { spring } from '../../design/motion'
 import { api, type FsEntry } from '../../lib/api'
 import { notify } from '../../app/appSdk'
@@ -65,9 +66,9 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
   const dir = path.replace(/\/+$/, '').replace(/\/[^/]*$/, '')
   const chrome = (
     <div className="flex items-center gap-2 border-b border-outline-variant/40 px-m py-1.5">
-      <span className="min-w-0 flex-1 truncate text-on-surface-low text-[0.7rem]" title={path}>
+      <span className="min-w-0 flex-1 truncate text-on-surface-low text-[0.75rem]" title={path}>
         {dir && <span className="opacity-60">{dir}/</span>}
-        <span className="text-on-surface" style={{ fontVariationSettings: '"wght" 500' }}>{baseName(path)}</span>
+        <span className="text-on-surface" style={fvs(500)}>{baseName(path)}</span>
       </span>
       <div className="flex shrink-0 items-center gap-0.5">
         <IconButton icon={expanded ? Minimize2 : Maximize2} label={expanded ? 'Collapse to panel' : 'Expand to full width'} size={28} onClick={() => setExpanded((v) => !v)} />

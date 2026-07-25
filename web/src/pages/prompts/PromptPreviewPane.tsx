@@ -63,7 +63,7 @@ export function PromptPreviewPane({ draft }: { draft: PromptDraft }) {
 
       {vars.length > 0 && (
         <div className="flex flex-col gap-2 rounded-lg bg-surface-container p-2.5">
-          <div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">Sample values</div>
+          <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Sample values</div>
           {vars.map((v) => (
             <SampleField key={v.name} v={v} value={values[v.name]} onChange={(x) => setVal(v.name, x)} />
           ))}

@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Plus, List, LayoutGrid, GitFork, Columns3, MessageSquare, FolderKanban, X, Search, AlertTriangle, RotateCcw, ListChecks, Target, Code2, Check, CheckCircle2, Trash2 } from 'lucide-react'
+import { Plus, List, LayoutGrid, GitFork, Columns3, MessageSquare, FolderKanban, X, RotateCcw, ListChecks, Target, Code2, Check, CheckCircle2, Trash2 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
+import { fvs } from '../../design/fontWeight'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
+import { InlineError } from '../../ui/InlineError'
+import { SearchField } from '../../ui/SearchField'
+import { TextLink } from '../../ui/TextLink'
 import { confirmDelete } from '../../ui/dialog'
 import { SidePanel } from '../../ui/SidePanel'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -310,16 +314,8 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
         <div className="shrink-0 border-b border-outline-variant/30">
           <div className="mx-auto flex w-full items-center gap-s px-l py-m" style={{ maxWidth: 'var(--content-width)' }}>
             {!FULL_WIDTH.includes(view) && (
-              <div className="relative min-w-[12rem] flex-1">
-                <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-low" />
-                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search tasks" aria-label="Search tasks"
-                  type="search"
-                  onKeyDown={(e) => { if (e.key === 'Escape' && query) { e.preventDefault(); e.stopPropagation(); setQuery('') } }}
-                  className="h-10 w-full rounded-pill bg-surface-high pl-9 pr-9 text-[0.9375rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-                {query && (
-                  <button type="button" onClick={() => setQuery('')} aria-label="Clear search"
-                    className="absolute right-2.5 top-1/2 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-full text-on-surface-low hover:bg-surface-highest hover:text-on-surface"><X size={14} /></button>
-                )}
+              <div className="min-w-[12rem] flex-1">
+                <SearchField value={query} onChange={setQuery} placeholder="Search tasks" ariaLabel="Search tasks" />
               </div>
             )}
             <FilterMenu sections={filterSections} />
@@ -339,7 +335,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
         // preset (the 'full' preset still fills the area — min(1600px,100%)).
         <div className="flex-1 min-h-0 px-l py-l flex flex-col gap-s">
           <div className="mx-auto w-full" style={{ maxWidth: 'var(--content-width)' }}>
-            {moveError && <MoveErrorBanner message={moveError} onDismiss={() => setMoveError('')} />}
+            {moveError && <InlineError animated icon onDismiss={() => setMoveError('')}>{moveError}</InlineError>}
           </div>
           <div className="mx-auto h-full min-h-0 w-full" style={{ maxWidth: 'var(--content-width)' }}>
             {filtered === null ? <ListSkeleton rows={6} /> : (tasks?.length ?? 0) === 0 ? (
@@ -355,7 +351,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
         <div className="flex-1 overflow-y-auto">
           {/* every view (incl. DAG) honors the shell content-width preset */}
           <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
-            {moveError && <div className="mb-s"><MoveErrorBanner message={moveError} onDismiss={() => setMoveError('')} /></div>}
+            {moveError && <div className="mb-s"><InlineError animated icon onDismiss={() => setMoveError('')}>{moveError}</InlineError></div>}
             {isProjectScope && projectLists.length > 0 && (
               <TaskListBar lists={projectLists} repeatableId={repeatableProject?.id}
                 active={listFilter?.id ?? ''}
@@ -390,7 +386,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
       {selected.size > 0 && (
         <div className="pointer-events-none fixed inset-x-0 bottom-6 z-30 flex justify-center px-l">
           <div className="pointer-events-auto flex items-center gap-2 rounded-pill bg-surface-highest/95 px-3 py-2 shadow-sheet backdrop-blur">
-            <span className="pl-1 text-on-surface text-[0.82rem] tabular-nums" style={{ fontVariationSettings: '"wght" 600' }}>{selected.size} selected</span>
+            <span className="pl-1 text-on-surface text-[0.8125rem] tabular-nums" style={fvs(600)}>{selected.size} selected</span>
             <span className="h-4 w-px bg-outline-variant/50" aria-hidden />
             <Button size="sm" variant="ghost" disabled={bulkBusy} onClick={() => runBulk('update', { status: 'done' })}><CheckCircle2 size={14} /> Complete</Button>
             <Button size="sm" variant="ghost" disabled={bulkBusy} onClick={async () => { if (await confirmDelete('task', `${selected.size} tasks`)) runBulk('delete') }}><Trash2 size={14} /> Delete</Button>
@@ -410,7 +406,7 @@ function TaskListBar({ lists, repeatableId, active, onPick, onReset }: {
 }) {
   return (
     <div className="mb-m flex flex-wrap items-center gap-s">
-      <span className="inline-flex items-center gap-1 text-on-surface-low text-[0.7rem] uppercase tracking-wide"><ListChecks size={12} /> Task lists</span>
+      <span className="inline-flex items-center gap-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide"><ListChecks size={12} /> Task lists</span>
       {lists.map((l) => {
         const isActive = active === l.id
         const repeatable = !!repeatableId && l.project_id === repeatableId
@@ -430,19 +426,6 @@ function TaskListBar({ lists, repeatableId, active, onPick, onReset }: {
   )
 }
 
-/** Transient warn-tone banner shown when a board drag is rejected by the server. */
-function MoveErrorBanner({ message, onDismiss }: { message: string; onDismiss: () => void }) {
-  return (
-    <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
-      className="flex items-start gap-s rounded-md px-m py-2 text-[0.8125rem]"
-      style={{ background: 'color-mix(in srgb, var(--color-warn) 14%, transparent)' }} role="alert">
-      <AlertTriangle size={15} className="text-warn shrink-0 mt-0.5" />
-      <span className="flex-1 text-on-surface">{message}</span>
-      <button type="button" onClick={onDismiss} className="shrink-0 text-on-surface-low hover:text-on-surface" aria-label="Dismiss"><X size={14} /></button>
-    </motion.div>
-  )
-}
-
 function MetaLine({ t, onProject }: { t: TaskItem; onProject?: (p: string) => void }) {
   const pm = priorityMeta(t.priority)
   const due = dueMeta(t.due)
@@ -450,8 +433,8 @@ function MetaLine({ t, onProject }: { t: TaskItem; onProject?: (p: string) => vo
   return (
     <div className="mt-1 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
       <span style={{ color: pm.tone }}>{pm.label}</span>
-      {t.project && <button type="button" onClick={(e) => { e.stopPropagation(); onProject?.(t.project!) }}
-        className="inline-flex items-center gap-1 text-primary hover:underline" title={`Filter by project “${t.project}”`}><FolderKanban size={11} /> {t.project}</button>}
+      {t.project && <TextLink onClick={(e) => { e.stopPropagation(); onProject?.(t.project!) }}
+        icon={FolderKanban} iconSize={11} title={`Filter by project “${t.project}”`}>{t.project}</TextLink>}
       {due && <span style={{ color: due.tone }}>· {due.label}</span>}
       {exit.length > 0 && <span>· {exitDoneCount(exit)}/{exit.length} criteria</span>}
       {typeof t.comment_count === 'number' && t.comment_count > 0 && <span className="inline-flex items-center gap-1"><MessageSquare size={11} /> {t.comment_count}</span>}
@@ -486,10 +469,10 @@ function TaskRow({ t, index, onOpen, onProject, selected, selecting, onToggleSel
       </button>
       <sm.icon size={20} className="shrink-0" style={{ color: sm.tone }} />
       <div className="flex-1 min-w-0">
-        <span className={`block truncate text-[0.9375rem] ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`} style={{ fontVariationSettings: '"wght" 500' }}>{t.title}</span>
+        <span className={`block truncate text-[0.9375rem] ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`} style={fvs(500)}>{t.title}</span>
         <MetaLine t={t} onProject={onProject} />
       </div>
-      {(t.labels?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{t.labels!.slice(0, 2).map((l) => <span key={l} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.7rem]">{l}</span>)}</div>}
+      {(t.labels?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{t.labels!.slice(0, 2).map((l) => <span key={l} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{l}</span>)}</div>}
     </motion.div>
     </ContextMenu>
   )
@@ -511,22 +494,22 @@ function TaskCard({ t, index, onOpen, onProject }: { t: TaskItem; index: number;
       onClick={onOpen} className="group flex flex-col gap-m rounded-xl bg-surface-container p-l cursor-pointer transition-colors hover:bg-surface-high">
       <div className="flex items-start gap-s">
         <sm.icon size={18} className="shrink-0 mt-0.5" style={{ color: sm.tone }} />
-        <span className={`flex-1 text-[0.9375rem] leading-snug ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`} style={{ fontVariationSettings: '"wght" 500' }}>{t.title}</span>
-        {t.assignee && <span className="shrink-0 inline-flex items-center rounded-pill px-2 h-6 text-[0.7rem] bg-surface-high text-on-surface-var" title={`Assigned to ${t.assignee}`}>@{t.assignee}</span>}
+        <span className={`flex-1 text-[0.9375rem] leading-snug ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`} style={fvs(500)}>{t.title}</span>
+        {t.assignee && <span className="shrink-0 inline-flex items-center rounded-pill px-2 h-6 text-[0.75rem] bg-surface-high text-on-surface-var" title={`Assigned to ${t.assignee}`}>@{t.assignee}</span>}
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="inline-flex items-center rounded-pill px-2 h-6 text-[0.7rem]" style={{ background: `color-mix(in srgb, ${sm.tone} 16%, transparent)`, color: sm.tone }}>{sm.label}</span>
-        <span className="inline-flex items-center rounded-pill px-2 h-6 text-[0.7rem]" style={{ background: `color-mix(in srgb, ${pm.tone} 14%, transparent)`, color: pm.tone }}>{pm.label}</span>
-        {t.project && <button type="button" onClick={(e) => { e.stopPropagation(); onProject?.(t.project!) }} title={`Filter by project “${t.project}”`} className="inline-flex items-center gap-1 rounded-pill px-2 h-6 text-[0.7rem] hover:brightness-125" style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)', color: 'var(--color-primary)' }}><FolderKanban size={10} /> {t.project}</button>}
-        {due && <span className="inline-flex items-center rounded-pill px-2 h-6 text-[0.7rem]" style={{ background: `color-mix(in srgb, ${due.tone} 14%, transparent)`, color: due.tone }}>{due.label}</span>}
-        {(t.labels ?? []).slice(0, 2).map((l) => <span key={l} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.7rem]">{l}</span>)}
+        <span className="inline-flex items-center rounded-pill px-2 h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${sm.tone} 16%, transparent)`, color: sm.tone }}>{sm.label}</span>
+        <span className="inline-flex items-center rounded-pill px-2 h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${pm.tone} 14%, transparent)`, color: pm.tone }}>{pm.label}</span>
+        {t.project && <button type="button" onClick={(e) => { e.stopPropagation(); onProject?.(t.project!) }} title={`Filter by project “${t.project}”`} className="inline-flex items-center gap-1 rounded-pill px-2 h-6 text-[0.75rem] hover:brightness-125" style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)', color: 'var(--color-primary)' }}><FolderKanban size={10} /> {t.project}</button>}
+        {due && <span className="inline-flex items-center rounded-pill px-2 h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${due.tone} 14%, transparent)`, color: due.tone }}>{due.label}</span>}
+        {(t.labels ?? []).slice(0, 2).map((l) => <span key={l} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{l}</span>)}
       </div>
       {exit.length > 0 && (
         <div className="flex items-center gap-s">
           {/* the exit-criteria progress fills with a spring on mount/change instead
               of snapping to width — a small "progress earned" moment */}
           <div className="flex-1 h-1 rounded-pill bg-surface-high overflow-hidden"><motion.div className="h-full rounded-pill" style={{ background: 'var(--color-ok)' }} initial={{ width: 0 }} animate={{ width: `${(exitDone / exit.length) * 100}%` }} transition={spring.spatialSlow} /></div>
-          <span className="shrink-0 text-on-surface-low text-[0.65rem] tabular-nums">{exitDone}/{exit.length}</span>
+          <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{exitDone}/{exit.length}</span>
         </div>
       )}
     </motion.div>

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { RotateCw, Plug } from 'lucide-react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -151,14 +152,14 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
       <div ref={hostRef} className="h-full w-full" />
 
       {status === 'reconnecting' && (
-        <div className="absolute inset-x-0 top-0 flex items-center justify-center gap-1.5 bg-warning/20 px-3 py-1 text-center text-[0.7rem] text-on-surface">
+        <div className="absolute inset-x-0 top-0 flex items-center justify-center gap-1.5 bg-warning/20 px-3 py-1 text-center text-[0.75rem] text-on-surface">
           <Plug size={11} className="animate-pulse" /> Reconnecting…
         </div>
       )}
       {(status === 'exited' || status === 'error') && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-canvas/70 backdrop-blur-sm">
           <div className="text-center">
-            <div className="text-on-surface text-[0.9375rem]" style={{ fontVariationSettings: '"wght" 500' }}>
+            <div className="text-on-surface text-[0.9375rem]" style={fvs(500)}>
               {status === 'error' ? 'Session error' : exitCode ? `Process exited (code ${exitCode})` : 'Process exited'}
             </div>
             <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">The shell session has ended.</div>

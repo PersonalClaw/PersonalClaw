@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Plus, Minus, Maximize2 } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { api, type MemoryGraphData } from '../../lib/api'
+import { GraphZoomControls } from '../../ui/GraphZoomControls'
 
 /** Memory graph — the auto-linked node graph of the whole memory store (facts +
  *  their relations), laid out radially in SVG (no graph-lib dependency; mirrors
@@ -128,7 +129,7 @@ export function MemoryGraph({ data, focusRef, hopDepth = 1, onSelectRef, boxHeig
   const endDrag = () => { drag.current = null }
 
   if (!graph) return <div ref={boxRef} className="grid place-items-center text-on-surface-low" style={{ height: boxH }}><Loader2 size={20} className="animate-spin" /></div>
-  if (graph.nodes.length === 0) return <div ref={boxRef} className="grid place-items-center text-on-surface-low text-[0.875rem]" style={{ height: boxH }}>No memory graph yet — facts and their links appear here as memory grows.</div>
+  if (graph.nodes.length === 0) return <div ref={boxRef} className="grid place-items-center text-on-surface-low text-[0.8125rem]" style={{ height: boxH }}>No memory graph yet — facts and their links appear here as memory grows.</div>
 
   const degree = new Map<string, number>()
   for (const e of graph.edges) { degree.set(e.from, (degree.get(e.from) ?? 0) + 1); degree.set(e.to, (degree.get(e.to) ?? 0) + 1) }
@@ -180,19 +181,15 @@ export function MemoryGraph({ data, focusRef, hopDepth = 1, onSelectRef, boxHeig
       {groups.length > 0 && (
         <div className="absolute left-3 top-3 flex max-w-[45%] flex-wrap gap-1.5 rounded-lg bg-surface-high/80 p-1.5 backdrop-blur">
           {groups.slice(0, 8).map((g) => (
-            <span key={g} className="inline-flex items-center gap-1 text-on-surface-low text-[0.68rem]">
+            <span key={g} className="inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]">
               <span className="size-2 rounded-pill" style={{ background: groupColor(g) }} />{g}
             </span>
           ))}
         </div>
       )}
 
-      <div className="absolute bottom-3 right-3 flex flex-col gap-1 rounded-lg bg-surface-high/90 p-1 backdrop-blur">
-        <button type="button" onClick={() => zoomBy(1.25)} title="Zoom in" className="grid size-7 place-items-center rounded text-on-surface-var hover:bg-surface-container hover:text-on-surface"><Plus size={15} /></button>
-        <button type="button" onClick={() => zoomBy(1 / 1.25)} title="Zoom out" className="grid size-7 place-items-center rounded text-on-surface-var hover:bg-surface-container hover:text-on-surface"><Minus size={15} /></button>
-        <button type="button" onClick={reset} title="Reset view" className="grid size-7 place-items-center rounded text-on-surface-var hover:bg-surface-container hover:text-on-surface"><Maximize2 size={14} /></button>
-      </div>
-      <div className="absolute bottom-3 left-3 rounded-pill bg-surface-high/80 px-2 py-0.5 text-on-surface-low text-[0.7rem] tabular-nums backdrop-blur">
+      <GraphZoomControls onZoomIn={() => zoomBy(1.25)} onZoomOut={() => zoomBy(1 / 1.25)} onReset={reset} />
+      <div className="absolute bottom-3 left-3 rounded-pill bg-surface-high/80 px-2 py-0.5 text-on-surface-low text-[0.75rem] tabular-nums backdrop-blur">
         {graph.nodes.length} facts · {graph.edges.length} links · {Math.round(view.scale * 100)}%
       </div>
     </div>

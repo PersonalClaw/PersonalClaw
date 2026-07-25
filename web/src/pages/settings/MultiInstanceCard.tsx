@@ -4,8 +4,11 @@ import { api, type SettingsProvider, type ProviderInstance, type ProviderSchema,
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { confirmDelete } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
+import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Toggle } from './settingsUI'
-import { SchemaField, schemaDefaults, inputCls } from './ProviderConfigForm'
+import { SchemaField, schemaDefaults } from './ProviderConfigForm'
+import { TextInput } from '../../ui/forms'
+import { fvs } from '../../design/fontWeight'
 
 /** A multiInstance=true provider rendered as a frame for N named instances.
  *  Each instance has its own schema-driven config (test / edit / delete); an
@@ -45,23 +48,23 @@ export function MultiInstanceCard({ ext, onChanged }: { ext: SettingsProvider; o
         <span className="size-2 shrink-0 rounded-full" style={{ background: ext.enabled ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-            <span className="truncate text-on-surface text-[0.9375rem]" style={{ fontVariationSettings: '"wght" 500' }}>{ext.displayName || ext.name}</span>
-            {ext.version && <span className="text-on-surface-low text-[0.68rem]">v{ext.version}</span>}
-            <span className="rounded-pill px-1.5 py-0.5 text-[0.62rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)', color: 'var(--color-primary)' }}>multi-instance</span>
-            {ext.enabled && <span className="text-on-surface-low text-[0.68rem]">{count} {count === 1 ? 'instance' : 'instances'}</span>}
+            <span className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{ext.displayName || ext.name}</span>
+            {ext.version && <span className="text-on-surface-low text-[0.75rem]">v{ext.version}</span>}
+            <span className="rounded-pill px-1.5 py-0.5 text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)', color: 'var(--color-primary)' }}>multi-instance</span>
+            {ext.enabled && <span className="text-on-surface-low text-[0.75rem]">{count} {count === 1 ? 'instance' : 'instances'}</span>}
           </div>
           {ext.description && <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{ext.description}</p>}
         </div>
         <Toggle on={ext.enabled} onChange={toggle} label={`Toggle ${ext.name}`} />
       </div>
-      {ext.error && <div className="mt-2 flex items-center gap-1.5 text-[0.78rem]" style={{ color: 'var(--color-danger)' }}><AlertTriangle size={12} /> {ext.error}</div>}
+      {ext.error && <div className="mt-2 flex items-center gap-1.5 text-[0.75rem]" style={{ color: 'var(--color-danger)' }}><AlertTriangle size={12} /> {ext.error}</div>}
 
       {ext.enabled && (
         <div className="mt-3 flex flex-col gap-2 border-t border-outline-variant/30 pt-3">
           {instances === undefined ? (
-            <div className="py-1 text-on-surface-low text-[0.78rem]"><Loader2 size={12} className="inline animate-spin" /> Loading instances…</div>
+            <div className="py-1 text-on-surface-low text-[0.75rem]"><Loader2 size={12} className="inline animate-spin" /> Loading instances…</div>
           ) : instances.length === 0 && !adding ? (
-            <p className="text-on-surface-low text-[0.8rem]">No instances yet. Add one to start using this provider.</p>
+            <p className="text-on-surface-low text-[0.8125rem]">No instances yet. Add one to start using this provider.</p>
           ) : (
             instances.map((inst) => <InstanceRow key={inst.id} ext={ext} inst={inst} schema={schema} onChanged={reloadInstances} />)
           )}
@@ -107,11 +110,11 @@ function InstanceRow({ ext, inst, schema, onChanged }: {
     <div className="rounded-md bg-surface-high px-3 py-2" style={{ opacity: busy ? 0.5 : 1 }}>
       <div className="flex items-center gap-2">
         <Plug size={14} className="shrink-0 text-on-surface-low" />
-        <span className="min-w-0 flex-1 truncate text-on-surface text-[0.84rem]">{inst.display_name || inst.id}</span>
+        <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{inst.display_name || inst.id}</span>
         <div className="flex shrink-0 items-center gap-0.5">
-          <IconBtn label="Test" onClick={runTest} active={testing}>{testing ? <Loader2 size={13} className="animate-spin" /> : <Wifi size={13} />}</IconBtn>
-          <IconBtn label="Edit" onClick={() => setEditing((v) => !v)} on={editing}>{editing ? <X size={13} /> : <Pencil size={13} />}</IconBtn>
-          <IconBtn label="Delete" onClick={remove}><Trash2 size={13} /></IconBtn>
+          <SquareIconButton label="Test" onClick={runTest} disabled={testing}>{testing ? <Loader2 size={13} className="animate-spin" /> : <Wifi size={13} />}</SquareIconButton>
+          <SquareIconButton label="Edit" onClick={() => setEditing((v) => !v)} on={editing}>{editing ? <X size={13} /> : <Pencil size={13} />}</SquareIconButton>
+          <SquareIconButton label="Delete" onClick={remove}><Trash2 size={13} /></SquareIconButton>
         </div>
       </div>
       {test && (
@@ -154,7 +157,9 @@ function AddInstanceForm({ ext, schema, onDone }: {
 
   return (
     <div className="rounded-md border border-outline-variant/40 bg-surface p-3">
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Instance name (e.g. filesystem-mcp)" className={inputCls + ' mb-2'} />
+      <div className="mb-2">
+        <TextInput ariaLabel="Instance name" value={name} onChange={setName} placeholder="Instance name (e.g. filesystem-mcp)" size="md" surface="high" />
+      </div>
       {props.length > 0 && (
         <div className="flex flex-col gap-3">
           {props.map(([k, p]) => <SchemaField key={k} fieldKey={k} prop={p} value={config[k]} onChange={(v) => setConfig((c) => ({ ...c, [k]: v }))} />)}
@@ -166,17 +171,5 @@ function AddInstanceForm({ ext, schema, onDone }: {
         {error && <span className="text-[0.75rem]" style={{ color: 'var(--color-danger)' }}>{error}</span>}
       </div>
     </div>
-  )
-}
-
-function IconBtn({ children, label, onClick, on, active }: {
-  children: React.ReactNode; label: string; onClick: () => void; on?: boolean; active?: boolean
-}) {
-  return (
-    <button type="button" onClick={onClick} disabled={active} aria-label={label} title={label}
-      className="grid size-7 place-items-center rounded-md text-on-surface-low transition-colors hover:text-on-surface disabled:opacity-50"
-      style={on ? { background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)', color: 'var(--color-primary)' } : undefined}>
-      {children}
-    </button>
   )
 }

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { ChevronRight, Loader2, Check, Zap, Maximize2, Lightbulb, AlertTriangle } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { spring } from '../../design/motion'
@@ -32,7 +33,7 @@ export function ToolCard({ seg }: { seg: ToolSegment }) {
         </motion.span>
         <Icon size={14} className="shrink-0 text-primary" />
         {/* stable tool name — the identity you scan for */}
-        <span className="shrink-0 text-on-surface text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 550' }}>{label}</span>
+        <span className="shrink-0 text-on-surface text-[0.8125rem]" style={fvs(550)}>{label}</span>
         {/* refined summary (command / file) — muted, mono, gives way under pressure */}
         {detail && (
           <>
@@ -60,11 +61,11 @@ export function ToolCard({ seg }: { seg: ToolSegment }) {
               {/* Type-aware / native-override OUTPUT. */}
               {renderToolOutput(seg)}
               {seg.done && (seg.output == null || seg.output === '') && (
-                <p className="text-on-surface-low text-[0.7rem]">No output.</p>
+                <p className="text-on-surface-low text-[0.75rem]">No output.</p>
               )}
               {/* Truncation chip + "show full result" (rawRef → tool_result_get). */}
               {seg.truncated && (
-                <div className="mt-1.5 flex items-center gap-2 text-on-surface-low text-[0.68rem]">
+                <div className="mt-1.5 flex items-center gap-2 text-on-surface-low text-[0.75rem]">
                   <span>
                     showing a projection{seg.originalLength ? ` of ${seg.originalLength.toLocaleString()} chars` : ''}
                   </span>
@@ -80,7 +81,7 @@ export function ToolCard({ seg }: { seg: ToolSegment }) {
                   surfaced so the user (and the reading agent) sees how to recover. */}
               {seg.recoveryHints && seg.recoveryHints.length > 0 && (
                 <div className="mt-1.5 rounded-md bg-surface-container px-2.5 py-1.5">
-                  <div className="mb-0.5 flex items-center gap-1 text-on-surface-low text-[0.68rem] uppercase tracking-wide">
+                  <div className="mb-0.5 flex items-center gap-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">
                     <Lightbulb size={11} /> Next steps
                   </div>
                   <ul className="flex flex-col gap-0.5">

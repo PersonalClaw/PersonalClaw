@@ -5,6 +5,7 @@ import { api, type EgressPolicyConfig } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader, Section } from './settingsUI'
 import { CardGridSkeleton } from '../../ui/ListScaffold'
+import { fvs } from '../../design/fontWeight'
 
 /** Security posture → /api/security/stats (counts) + /api/security/denied-commands
  *  (the bash denylist: always-on built-ins shown read-only; user patterns editable). */
@@ -40,8 +41,8 @@ export function SecurityPanel() {
                 <c.icon size={17} className="text-primary" />
               </span>
               <div className="min-w-0">
-                <div className="text-on-surface text-[1.25rem] tabular-nums" style={{ fontVariationSettings: '"wght" 600' }}>{c.value}</div>
-                <div className="text-on-surface text-[0.875rem]">{c.label}</div>
+                <div className="text-on-surface text-[1.25rem] tabular-nums" style={fvs(600)}>{c.value}</div>
+                <div className="text-on-surface text-[0.8125rem]">{c.label}</div>
                 <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">{c.hint}</div>
               </div>
             </div>
@@ -89,11 +90,11 @@ function EgressPolicyEditor() {
             onChange={(e) => save({ ...eg, allow_private: e.target.checked })}
             className="mt-0.5 size-4 shrink-0 accent-primary" />
           <span className="min-w-0">
-            <span className="text-on-surface text-[0.875rem]">Allow all private networks</span>
+            <span className="text-on-surface text-[0.8125rem]">Allow all private networks</span>
             <span className="block text-on-surface-low text-[0.8125rem]">Permit egress to any private/LAN address, not just the allow-list. Only on a fully trusted network — this removes SSRF protection for the whole LAN.</span>
           </span>
         </label>
-        {err && <div className="text-error text-[0.8125rem]">{err}</div>}
+        {err && <div className="text-danger text-[0.8125rem]">{err}</div>}
       </div>
     </Section>
   )
@@ -113,7 +114,7 @@ function HostList({ label, hint, hosts, disabled, onChange }: {
   }
   return (
     <div>
-      <div className="mb-1 flex items-center gap-1.5 text-on-surface text-[0.875rem]"><Globe size={13} className="text-on-surface-low" /> {label}</div>
+      <div className="mb-1 flex items-center gap-1.5 text-on-surface text-[0.8125rem]"><Globe size={13} className="text-on-surface-low" /> {label}</div>
       <div className="mb-2 text-on-surface-low text-[0.8125rem]">{hint}</div>
       <div className="flex flex-col gap-1.5">
         {hosts.map((h) => (
@@ -208,7 +209,7 @@ function DeniedCommandsEditor({ builtin, user, onChange }: { builtin: string[]; 
                 <Plus size={15} /> Add
               </button>
             </div>
-            {err && <div className="text-error text-[0.8125rem]">{err}</div>}
+            {err && <div className="text-danger text-[0.8125rem]">{err}</div>}
           </div>
         </div>
       </div>

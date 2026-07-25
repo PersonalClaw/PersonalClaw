@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { withWeight } from '../../design/fontWeight'
 import { GitFork, Route, TriangleAlert, Activity } from 'lucide-react'
 import { api, type TaskItem, type DependencyAnalysis } from '../../lib/api'
 import { statusMeta, priorityMeta, TERMINAL } from './taskMeta'
@@ -135,8 +136,8 @@ export function TaskGraph({ tasks, onOpen }: { tasks: TaskItem[]; onOpen: (id: s
               ringed: criticalSet.has(t.id),
               content: (
                 <div className="flex h-full flex-col justify-center">
-                  <div className={`truncate text-[0.8125rem] leading-tight ${done ? 'line-through opacity-60' : ''}`} style={{ color: 'var(--color-on-surface)', fontVariationSettings: '"wght" 500' }}>{t.title}</div>
-                  <div className="mt-0.5 flex items-center gap-1.5 text-[0.65rem]" style={{ color: 'var(--color-on-surface-low)' }}>
+                  <div className={`truncate text-[0.8125rem] leading-tight ${done ? 'line-through opacity-60' : ''}`} style={withWeight({ color: 'var(--color-on-surface)' }, 500)}>{t.title}</div>
+                  <div className="mt-0.5 flex items-center gap-1.5 text-[0.75rem]" style={{ color: 'var(--color-on-surface-low)' }}>
                     <span style={{ color: sm.tone }}>{sm.label}</span>
                     <span style={{ color: pm.tone }}>· {pm.label}</span>
                   </div>

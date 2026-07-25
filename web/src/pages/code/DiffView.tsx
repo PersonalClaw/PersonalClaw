@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Loader2, RotateCcw } from 'lucide-react'
+import { Button } from '../../ui/Button'
 import { api } from '../../lib/api'
 import { useMode } from '../../app/theme'
 import { monacoLang } from '../files/fileMeta'
@@ -46,10 +47,9 @@ export function DiffView({ path, name, ws, deleted = false }: { path: string; na
   }, [path, attempt, deleted])
 
   if (error) return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 text-on-surface-low text-[0.875rem]">
+    <div className="flex h-full flex-col items-center justify-center gap-2 text-on-surface-low text-[0.8125rem]">
       <span>{error}</span>
-      <button type="button" onClick={() => setAttempt((n) => n + 1)}
-        className="rounded-md bg-surface-high px-3 py-1 text-on-surface-var hover:bg-surface-container hover:text-on-surface">Try again</button>
+      <Button variant="secondary" size="sm" onClick={() => setAttempt((n) => n + 1)}><RotateCcw size={15} /> Try again</Button>
     </div>
   )
   if (original === null || modified === null) {
@@ -69,13 +69,13 @@ export function DiffView({ path, name, ws, deleted = false }: { path: string; na
         {/* Label honestly: a deleted file, a new (no-HEAD) file, an empty file (both
             sides blank — "working vs HEAD" would imply a diff that doesn't exist), else
             a real working-vs-HEAD change. */}
-        <span className="text-on-surface-low text-[0.7rem]">· {
+        <span className="text-on-surface-low text-[0.75rem]">· {
           deleted ? 'deleted — removed from working tree'
           : original === '' && modified !== '' ? 'new file — not yet committed'
           : original === '' && modified === '' ? 'empty file — nothing to compare'
           : 'working vs HEAD'}</span>
         {truncated && (
-          <span className="ml-2 text-[0.7rem]" style={{ color: 'var(--color-warn)' }}>
+          <span className="ml-2 text-[0.75rem]" style={{ color: 'var(--color-warn)' }}>
             · large file — diff truncated at 512&nbsp;KB; later changes aren't shown
           </span>
         )}

@@ -1,6 +1,6 @@
 import { CalendarClock, CheckCircle2, XCircle, PlayCircle } from 'lucide-react'
 import { useDashboardLive } from '../DashboardLive'
-import { EmptyState, WidgetRow, StatusDot } from './kit'
+import { SlotEmptyState, WidgetRow, StatusDot } from './kit'
 import type { RouteProps } from '../../../app/useQueryState'
 
 /** Compact "time ago / from now" for an epoch-seconds timestamp. */
@@ -22,7 +22,7 @@ export function ScheduleWidget({ navigate }: RouteProps) {
   const { schedule } = useDashboardLive()
 
   if (schedule.length === 0) {
-    return <EmptyState icon={CalendarClock}>No recent scheduled runs.</EmptyState>
+    return <SlotEmptyState icon={CalendarClock}>No recent scheduled runs.</SlotEmptyState>
   }
 
   const outcome = (status?: string) => {

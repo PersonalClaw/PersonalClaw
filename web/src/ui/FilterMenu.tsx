@@ -1,7 +1,11 @@
 import { useId, useMemo, type ReactNode } from 'react'
+import { withWeight } from '../design/fontWeight'
 import { AnimatePresence, motion } from 'framer-motion'
 import { SlidersHorizontal, Check, type LucideIcon } from 'lucide-react'
 import { Popover } from './Popover'
+import { Button } from './Button'
+import { TextLink } from './TextLink'
+import { fvs } from '../design/fontWeight'
 import { spring, bounce } from './../design/motion'
 
 /** One selectable choice within a filter section. */
@@ -63,7 +67,7 @@ export function FilterMenu({ sections, label = 'Filter', align = 'right' }: {
               <motion.span
                 initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }}
                 transition={bounce.playful}
-                className="inline-flex items-center justify-center min-w-[1.05rem] h-[1.05rem] px-1 rounded-pill bg-primary text-on-primary text-[0.65rem] tabular-nums" style={{ fontVariationSettings: '"wght" 600' }}>{activeCount}</motion.span>
+                className="inline-flex items-center justify-center min-w-[1.05rem] h-[1.05rem] px-1 rounded-pill bg-primary text-on-primary text-[0.75rem] tabular-nums" style={fvs(600)}>{activeCount}</motion.span>
             )}
           </AnimatePresence>
         </button>
@@ -78,7 +82,7 @@ export function FilterMenu({ sections, label = 'Filter', align = 'right' }: {
               ))}
             </Section>
           ))}
-          <button type="button" onClick={close} className="mt-1 h-9 rounded-pill bg-surface-high text-on-surface text-[0.8125rem] hover:bg-surface-container transition-colors">Done</button>
+          <Button variant="ghost" size="sm" onClick={close} className="mt-1 w-full">Done</Button>
         </div>
       )}
     </Popover>
@@ -89,8 +93,8 @@ function Section({ title, onClear, children }: { title: string; onClear?: () => 
   return (
     <div className="flex flex-col gap-0.5">
       <div className="flex items-center justify-between px-2 pb-0.5">
-        <span className="text-on-surface-low text-[0.65rem] uppercase tracking-wide">{title}</span>
-        {onClear && <button type="button" onClick={onClear} className="text-primary text-[0.7rem] hover:underline">Clear</button>}
+        <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{title}</span>
+        {onClear && <TextLink onClick={onClear} size="xs">Clear</TextLink>}
       </div>
       {children}
     </div>
@@ -101,7 +105,7 @@ function Row({ option, selected, onClick, indicatorId }: { option: FilterOption;
   const Icon = option.icon
   return (
     <>
-      {option.groupLabel && <div className="mt-1 px-2 pt-1.5 text-on-surface-low text-[0.65rem] uppercase tracking-wide border-t border-on-surface/8">{option.groupLabel}</div>}
+      {option.groupLabel && <div className="mt-1 px-2 pt-1.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide border-t border-on-surface/8">{option.groupLabel}</div>}
       <motion.button type="button" onClick={onClick} whileTap={{ scale: 0.98 }} transition={spring.spatialFast}
         className={`relative flex items-center gap-s w-full rounded-md px-2 h-8 text-left transition-colors ${selected ? '' : 'hover:bg-surface-high'}`}>
         {/* liquid selected-row indicator: one shared element per section that SLIDES
@@ -112,8 +116,8 @@ function Row({ option, selected, onClick, indicatorId }: { option: FilterOption;
             className="absolute inset-0 rounded-md" style={{ background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)' }} />
         )}
         {Icon && <Icon size={14} className="relative shrink-0" style={{ color: selected ? 'var(--color-primary)' : 'var(--color-on-surface-var)' }} />}
-        <span className="relative flex-1 min-w-0 truncate text-[0.8125rem]" style={{ color: selected ? 'var(--color-primary)' : 'var(--color-on-surface)', fontVariationSettings: selected ? '"wght" 550' : '"wght" 400' }}>{option.label}</span>
-        {typeof option.count === 'number' && option.count > 0 && <span className="relative shrink-0 text-on-surface-low text-[0.7rem] tabular-nums">{option.count}</span>}
+        <span className="relative flex-1 min-w-0 truncate text-[0.8125rem]" style={withWeight({ color: selected ? 'var(--color-primary)' : 'var(--color-on-surface)' }, selected ? 550 : 400)}>{option.label}</span>
+        {typeof option.count === 'number' && option.count > 0 && <span className="relative shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{option.count}</span>}
         {selected && <Check size={14} className="relative shrink-0 text-primary" />}
       </motion.button>
     </>

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
+import { withWeight } from '../../design/fontWeight'
 import { Check } from 'lucide-react'
 import type { SavedAgent } from '../../lib/api'
 import { api } from '../../lib/api'
 import { useActiveChatModelOptions } from '../../lib/agents'
 import { Combobox } from '../../ui/Combobox'
-import { Field, TextInput, TextArea, Segmented } from '../tasks/formControls'
+import { Field, TextInput, TextArea, Segmented } from '../../ui/forms'
 import { APPROVAL_MODES } from './agentMeta'
 
 export interface AgentDraft {
@@ -113,8 +114,7 @@ function CheckList({ label, hint, options, value, onChange }: {
       <div className="rounded-md bg-surface-container">
         {options.length > 8 && (
           <div className="border-b border-outline-variant/30 p-2">
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${label.toLowerCase()}…`}
-              className="w-full h-8 rounded-md bg-surface px-m text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+            <TextInput value={q} onChange={setQ} placeholder={`Search ${label.toLowerCase()}…`} size="sm" surface="base" ariaLabel={`Search ${label.toLowerCase()}`} />
           </div>
         )}
         {options.length === 0 ? (
@@ -135,7 +135,7 @@ function CheckList({ label, hint, options, value, onChange }: {
                         <span className="truncate text-on-surface text-[0.8125rem]">{o.label}</span>
                         <RiskTag risk={o.risk} />
                       </span>
-                      {o.hint && <span className="block truncate text-on-surface-low text-[0.7rem]">{o.hint}</span>}
+                      {o.hint && <span className="block truncate text-on-surface-low text-[0.75rem]">{o.hint}</span>}
                     </span>
                   </button>
                 )
@@ -162,8 +162,8 @@ function RiskTag({ risk }: { risk?: 'safe' | 'caution' | 'destructive' }) {
   const color = risk === 'destructive' ? 'var(--color-danger)' : 'var(--color-warn)'
   const label = risk === 'destructive' ? 'Destructive' : 'Caution'
   return (
-    <span className="shrink-0 rounded-pill px-1.5 py-0.5 text-[0.6rem]" title={`Risk: ${label}`}
-      style={{ background: `color-mix(in srgb, ${color} 16%, transparent)`, color, fontVariationSettings: '"wght" 600' }}>
+    <span className="shrink-0 rounded-pill px-1.5 py-0.5 text-[0.75rem]" title={`Risk: ${label}`}
+      style={withWeight({ background: `color-mix(in srgb, ${color} 16%, transparent)`, color }, 600)}>
       {label}
     </span>
   )

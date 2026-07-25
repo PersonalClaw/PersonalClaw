@@ -3,7 +3,7 @@ import { AnimatePresence } from 'framer-motion'
 import { Check, X, ShieldCheck, Inbox, Sparkles, CheckCheck, Send } from 'lucide-react'
 import { api } from '../../../lib/api'
 import { useDashboardLive } from '../DashboardLive'
-import { EmptyState, WidgetRow, RowAction } from './kit'
+import { SlotEmptyState, WidgetRow, RowAction } from './kit'
 import type { RouteProps } from '../../../app/useQueryState'
 
 type Kind = 'approval' | 'inbox' | 'proposal'
@@ -37,7 +37,7 @@ export function ActionCenter({ navigate }: RouteProps) {
   ].filter((e) => !done.has(e.key))
 
   if (allEntries.length === 0) {
-    return <EmptyState icon={CheckCheck}>All clear — nothing waiting on you.</EmptyState>
+    return <SlotEmptyState icon={CheckCheck}>All clear — nothing waiting on you.</SlotEmptyState>
   }
 
   // Cap the visible queue so one flooded source (e.g. many skill proposals) can't

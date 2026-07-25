@@ -4,6 +4,7 @@ import { api, type PortabilityManifest } from '../../lib/api'
 import { confirm } from '../../ui/dialog'
 import { PanelHeader, Section } from './settingsUI'
 import { Button } from '../../ui/Button'
+import { fvs } from '../../design/fontWeight'
 
 /** Import / Export — back up this instance as a portable archive, or import one
  *  from another instance (with a preview before applying). Backed by
@@ -46,15 +47,15 @@ export function PortabilityPanel() {
 
       <Section title="Export" hint="Download a portable archive of your settings and data.">
         <a href={api.portabilityExportUrl()} download
-          className="inline-flex h-10 items-center gap-s rounded-pill bg-primary px-xl text-on-primary text-[0.9375rem] no-underline transition-colors hover:bg-primary-emphasis" style={{ fontVariationSettings: '"wght" 470' }}>
+          className="inline-flex h-10 items-center gap-s rounded-pill bg-primary px-xl text-on-primary text-[0.9375rem] no-underline transition-colors hover:bg-primary-emphasis" style={fvs(470)}>
           <Download size={16} /> Export archive
         </a>
-        <p className="mt-2 text-on-surface-low text-[0.78rem]">Downloads a portable bundle (config, crons, hooks, memory, workspace, skills — credentials excluded) you can store as a backup or import elsewhere. Large workspaces can take a minute to package.</p>
+        <p className="mt-2 text-on-surface-low text-[0.75rem]">Downloads a portable bundle (config, crons, hooks, memory, workspace, skills — credentials excluded) you can store as a backup or import elsewhere. Large workspaces can take a minute to package.</p>
       </Section>
 
       <Section title="Import" hint="Bring settings and data in from another PersonalClaw instance.">
         <div className="rounded-lg border border-warn/30 bg-warn/5 px-4 py-3">
-          <div className="flex items-start gap-2 text-[0.8rem]" style={{ color: 'var(--color-warning)' }}>
+          <div className="flex items-start gap-2 text-[0.8125rem]" style={{ color: 'var(--color-warning)' }}>
             <AlertTriangle size={14} className="mt-0.5 shrink-0" />
             <span>Importing merges the archive's data into this instance. Preview first to check what the archive contains.</span>
           </div>
@@ -70,11 +71,11 @@ export function PortabilityPanel() {
             <Button size="sm" onClick={runImport} disabled={busy !== null || !file}>
               {busy === 'import' ? <><Loader2 size={15} className="animate-spin" /> Importing…</> : <><Upload size={15} /> Import</>}
             </Button>
-            {msg && <span className="text-on-surface-low text-[0.78rem]">{msg}</span>}
+            {msg && <span className="text-on-surface-low text-[0.75rem]">{msg}</span>}
           </div>
           {manifest && (
-            <div className="mt-3 rounded-md bg-surface px-3 py-2 text-[0.78rem]">
-              <div className="text-on-surface" style={{ fontVariationSettings: '"wght" 550' }}>
+            <div className="mt-3 rounded-md bg-surface px-3 py-2 text-[0.75rem]">
+              <div className="text-on-surface" style={fvs(550)}>
                 Archive from {manifest.hostname} · {manifest.user} · {manifest.created_at}
               </div>
               <ul className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5 text-on-surface-low sm:grid-cols-3">

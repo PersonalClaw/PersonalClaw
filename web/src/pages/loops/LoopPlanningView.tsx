@@ -97,10 +97,10 @@ function ArtifactView({ kind, artifact, loopId, commentTarget }: { kind: string;
               <div key={i} className="rounded-md bg-surface p-2.5">
                 <div className="flex items-center gap-1.5">
                   <span className="text-on-surface">{i + 1}. {String(p.role || 'phase')}</span>
-                  {!!p.min_cycles && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.65rem]">≥{String(p.min_cycles)} cycles</span>}
+                  {!!p.min_cycles && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">≥{String(p.min_cycles)} cycles</span>}
                 </div>
                 {!!p.target && <div className="mt-0.5 text-on-surface-low text-[0.75rem]">{String(p.target)}</div>}
-                {!!p.phase_exit && <div className="mt-0.5 text-on-surface-low text-[0.7rem]">Advance when: {String(p.phase_exit)}</div>}
+                {!!p.phase_exit && <div className="mt-0.5 text-on-surface-low text-[0.75rem]">Advance when: {String(p.phase_exit)}</div>}
               </div>
             ))}
           </div>

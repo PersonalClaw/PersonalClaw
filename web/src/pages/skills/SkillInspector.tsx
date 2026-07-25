@@ -5,7 +5,7 @@ import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
 import { Skeleton } from '../../ui/ListScaffold'
 import { confirmDelete } from '../../ui/dialog'
-import { TextArea } from '../tasks/formControls'
+import { TextArea } from '../../ui/forms'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { api, type SkillItem, type SkillFile, type SkillIntegrity } from '../../lib/api'
 import { SOURCE_TONE } from './skillMeta'
@@ -58,7 +58,7 @@ export function SkillInspector({ skill, onDeleted, onSaved }: { skill: SkillItem
                 <button key={f.path} onClick={() => setOpenFile(f.path)} className="flex items-center gap-s rounded-md bg-surface-container px-m py-2 text-left hover:bg-surface-high transition-colors">
                   <FileText size={14} className="text-primary shrink-0" />
                   <span className="flex-1 truncate font-mono text-on-surface text-[0.8125rem]">{f.path}</span>
-                  <span className="shrink-0 text-on-surface-low text-[0.7rem] tabular-nums">{fmtSize(f.size)}</span>
+                  <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{fmtSize(f.size)}</span>
                   <ChevronRight size={14} className="text-on-surface-low shrink-0" />
                 </button>
               ))}
@@ -180,7 +180,7 @@ function Code({ text }: { text: string }) {
 }
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div><div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
+  return <div><div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
 }
 
 function fmtSize(b: number): string {

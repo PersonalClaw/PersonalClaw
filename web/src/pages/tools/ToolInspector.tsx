@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { ShieldAlert, Play, ChevronRight, Check, AlertTriangle, Loader2 } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
@@ -43,9 +44,9 @@ function ParamRow({ name, schema, required, depth = 0 }: { name: string; schema:
     <div className="rounded-md bg-surface-container px-m py-2" style={{ marginLeft: depth * 12 }}>
       <div className="flex items-center gap-s flex-wrap">
         <span className="font-mono text-on-surface text-[0.8125rem]">{name}</span>
-        <span className="text-on-surface-low text-[0.7rem]">{typeLabel(schema)}</span>
-        {required && <span className="text-danger text-[0.7rem]">required</span>}
-        {schema.enum && <span className="text-on-surface-low text-[0.7rem]">· {schema.enum.map(String).join(' | ').slice(0, 60)}</span>}
+        <span className="text-on-surface-low text-[0.75rem]">{typeLabel(schema)}</span>
+        {required && <span className="text-danger text-[0.75rem]">required</span>}
+        {schema.enum && <span className="text-on-surface-low text-[0.75rem]">· {schema.enum.map(String).join(' | ').slice(0, 60)}</span>}
       </div>
       {schema.description && <p className="mt-0.5 text-on-surface-var text-[0.8125rem] leading-snug">{schema.description}</p>}
       {nested.length > 0 && <div className="mt-1.5 flex flex-col gap-1.5">{nested.map(([n, s]) => <ParamRow key={n} name={n} schema={s} required={(schema.required ?? []).includes(n)} depth={depth + 1} />)}</div>}
@@ -78,7 +79,7 @@ function RunPanel({ tool }: { tool: ToolItem }) {
     <div className="rounded-lg border border-outline-variant/40">
       <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-s px-m py-2.5 text-left">
         <Play size={14} className="text-primary" />
-        <span className="flex-1 text-on-surface text-[0.875rem]" style={{ fontVariationSettings: '"wght" 500' }}>Try it</span>
+        <span className="flex-1 text-on-surface text-[0.8125rem]" style={fvs(500)}>Try it</span>
         <ChevronRight size={15} className={`text-on-surface-low transition-transform ${open ? 'rotate-90' : ''}`} />
       </button>
       {open && (
@@ -97,7 +98,7 @@ function RunPanel({ tool }: { tool: ToolItem }) {
             <Button size="sm" onClick={() => setConfirming(true)} disabled={running}><Play size={15} /> Run tool</Button>
           ) : (
             <div className="rounded-md px-m py-2.5" style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)' }}>
-              <div className="flex items-center gap-1.5 text-warn text-[0.8125rem] mb-2" style={{ fontVariationSettings: '"wght" 500' }}><AlertTriangle size={14} /> This runs <span className="font-mono">{tool.name}</span> for real.</div>
+              <div className="flex items-center gap-1.5 text-warn text-[0.8125rem] mb-2" style={fvs(500)}><AlertTriangle size={14} /> This runs <span className="font-mono">{tool.name}</span> for real.</div>
               <div className="flex gap-s">
                 <Button size="sm" onClick={run} disabled={running}>{running ? <><Loader2 size={15} className="animate-spin" /> Running…</> : <><Check size={15} /> Confirm & run</>}</Button>
                 <Button size="sm" variant="ghost" onClick={() => setConfirming(false)} disabled={running}>Cancel</Button>
@@ -124,7 +125,7 @@ function RunPanel({ tool }: { tool: ToolItem }) {
 }
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div><div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
+  return <div><div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
 }
 
 /** Risk pill for the inspector header (tool risk taxonomy). Unlike the list badge

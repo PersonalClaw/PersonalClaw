@@ -102,7 +102,7 @@ export function ProjectPicker({ value, onChange, disabled, emptyLabel, emptyHint
             <div className="px-2 py-2 text-on-surface-low text-[0.75rem]">No existing projects.</div>
           ) : (
             <>
-              <div className="mt-1 border-t border-outline-variant/40 px-2 pt-1.5 pb-0.5 text-[0.65rem] uppercase tracking-wide text-on-surface-low/70">Existing</div>
+              <div className="mt-1 border-t border-outline-variant/40 px-2 pt-1.5 pb-0.5 text-[0.75rem] uppercase tracking-wide text-on-surface-low/70">Existing</div>
               {selectable.map((p) => (
                 <button key={p.id} type="button" role="option" aria-selected={value === p.id}
                   onClick={() => { onChange(p.id); setOpen(false) }}
@@ -110,7 +110,7 @@ export function ProjectPicker({ value, onChange, disabled, emptyLabel, emptyHint
                   <FolderKanban size={14} className="shrink-0 text-on-surface-low" />
                   <span className="min-w-0 flex-1 truncate">{p.name}</span>
                   {/* only the currently-selected project can be archived + still listed */}
-                  {p.status === 'archived' && <span className="shrink-0 text-on-surface-low/60 text-[0.65rem]">archived</span>}
+                  {p.status === 'archived' && <span className="shrink-0 text-on-surface-low/60 text-[0.75rem]">archived</span>}
                   {value === p.id && <Check size={13} className="shrink-0 text-primary" />}
                 </button>
               ))}

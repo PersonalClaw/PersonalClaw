@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react'
+import { fvs } from '../../../design/fontWeight'
 import { Search } from 'lucide-react'
 import type { Artifact } from '../../../lib/api'
 import { ARTIFACT_KINDS, artifactKindMeta, relTime } from '../fileMeta'
+import { TextInput } from '../../../ui/forms'
 
 /** The artifacts rail — filterable list standing in for the file tree when the
  *  scope switch is on "Artifacts". */
@@ -28,11 +30,8 @@ export function ArtifactList({ artifacts, activeSlug, onSelect }: {
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-outline/40 p-m">
-        <div className="relative">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-low" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter artifacts…" aria-label="Filter artifacts"
-            className="h-8 w-full rounded-md bg-surface-high pl-8 pr-3 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-        </div>
+        <TextInput value={q} onChange={setQ} placeholder="Filter artifacts…" ariaLabel="Filter artifacts"
+          size="sm" surface="high" leadingIcon={<Search size={14} />} />
         {kindsPresent.length > 1 && (
           <div className="mt-2 flex flex-wrap gap-1">
             <FilterChip label="All" on={kind === ''} onClick={() => setKind('')} />
@@ -55,10 +54,10 @@ export function ArtifactList({ artifacts, activeSlug, onSelect }: {
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
-                  <span className="truncate text-on-surface text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 500' }}>{a.name}</span>
+                  <span className="truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>{a.name}</span>
                   {a.live_dirty && <span className="size-1.5 shrink-0 rounded-full" style={{ background: 'var(--color-warning)' }} title="Source file changed since last snapshot" />}
                 </div>
-                <div className="mt-0.5 flex items-center gap-x-2 text-on-surface-low text-[0.7rem]">
+                <div className="mt-0.5 flex items-center gap-x-2 text-on-surface-low text-[0.75rem]">
                   <span style={{ color: km.tone }}>{km.label}</span>
                   <span>v{a.version}</span>
                   {a.source_path && <span className="truncate" title={a.source_path}>· file-backed</span>}
@@ -76,7 +75,7 @@ export function ArtifactList({ artifacts, activeSlug, onSelect }: {
 function FilterChip({ label, tone, on, onClick }: { label: string; tone?: string; on: boolean; onClick: () => void }) {
   return (
     <button onClick={onClick} type="button"
-      className="rounded-pill px-2.5 h-6 text-[0.7rem] transition-colors"
+      className="rounded-pill px-2.5 h-6 text-[0.75rem] transition-colors"
       style={on
         ? { background: tone ? `color-mix(in srgb, ${tone} 22%, transparent)` : 'var(--color-surface-highest)', color: tone ?? 'var(--color-on-surface)' }
         : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>

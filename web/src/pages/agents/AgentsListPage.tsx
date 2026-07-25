@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { Plus, Star, Users, Lock, Cpu, Wrench, Sparkles, Zap, RefreshCw } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -167,9 +168,9 @@ function GroupSection({ title, icon: Icon, tone, subtitle, count, ready = true, 
     <section>
       <div className="mb-m flex items-center gap-s">
         <Icon size={16} style={{ color: tone }} />
-        <span className="text-on-surface text-[0.9375rem]" style={{ fontVariationSettings: '"wght" 600' }}>{title}</span>
+        <span className="text-on-surface text-[0.9375rem]" style={fvs(600)}>{title}</span>
         <span className="text-on-surface-low text-[0.75rem] tabular-nums">{count}</span>
-        {!ready && <span className="inline-flex items-center gap-1 text-on-surface-low text-[0.7rem]"><Lock size={11} /> unavailable</span>}
+        {!ready && <span className="inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]"><Lock size={11} /> unavailable</span>}
         <span className="ml-auto text-on-surface-low text-[0.75rem]">{subtitle}</span>
       </div>
       {children}
@@ -190,16 +191,16 @@ function NativeRow({ agent, index, isDefault, onClick }: { agent: SavedAgent; in
       <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)' }}><Users size={19} className="text-primary" /></span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-s">
-          <span className="truncate text-on-surface text-[0.9375rem] font-mono" style={{ fontVariationSettings: '"wght" 500' }}>{agent.name}</span>
-          {isDefault && <span className="shrink-0 inline-flex items-center gap-1 text-primary text-[0.7rem]"><Star size={11} fill="currentColor" /> default</span>}
-          {isReservedAgent(agent) && <span className="shrink-0 inline-flex items-center gap-1 text-on-surface-low text-[0.7rem]"><Lock size={10} /> built-in</span>}
+          <span className="truncate text-on-surface text-[0.9375rem] font-mono" style={fvs(500)}>{agent.name}</span>
+          {isDefault && <span className="shrink-0 inline-flex items-center gap-1 text-primary text-[0.75rem]"><Star size={11} fill="currentColor" /> default</span>}
+          {isReservedAgent(agent) && <span className="shrink-0 inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]"><Lock size={10} /> built-in</span>}
         </div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
           {agent.model && <span className="font-mono text-[0.75rem]">{agent.model}</span>}
           {agent.description && <span className="truncate">· {agent.description}</span>}
         </div>
       </div>
-      <div className="hidden sm:flex shrink-0 items-center gap-m text-on-surface-low text-[0.7rem]">
+      <div className="hidden sm:flex shrink-0 items-center gap-m text-on-surface-low text-[0.75rem]">
         {(agent.skills?.length ?? 0) > 0 && <span className="inline-flex items-center gap-1"><Sparkles size={11} /> {agent.skills!.length}</span>}
         {(agent.tools?.length ?? 0) > 0 && <span className="inline-flex items-center gap-1"><Wrench size={11} /> {agent.tools!.length}</span>}
         {(agent.triggers?.length ?? 0) > 0 && <span className="inline-flex items-center gap-1"><Zap size={11} /> {agent.triggers!.length}</span>}
@@ -221,7 +222,7 @@ function DiscoveredRow({ agent, index, tone, icon: Icon, onClick }: { agent: Dis
     <ListRow index={index} onClick={onClick}>
       <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${tone} 16%, transparent)` }}><Icon size={19} style={{ color: tone }} /></span>
       <div className="flex-1 min-w-0">
-        <span className="block truncate text-on-surface text-[0.9375rem]" style={{ fontVariationSettings: '"wght" 500' }}>{agent.name}</span>
+        <span className="block truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{agent.name}</span>
         {agent.description && <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{agent.description}</p>}
       </div>
       <Lock size={13} className="shrink-0 text-on-surface-low" />

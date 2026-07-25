@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
 import { Maximize2, Minimize2, ExternalLink, AlertTriangle } from 'lucide-react'
 import { useMode } from '../../app/theme'
 import { buildReactSrcdoc, readThemeVars } from './widgetSrcdoc'
+import { SquareIconButton } from '../SquareIconButton'
 
 const MIN_HEIGHT = 80
 const MAX_HEIGHT = 640
@@ -73,15 +75,15 @@ export function ReactWidgetFrame({ jsx, title = 'React widget' }: Props) {
         ? 'fixed inset-4 z-50 overflow-hidden rounded-xl border border-outline-variant/50 bg-surface shadow-2xl'
         : 'my-3 overflow-hidden rounded-lg border border-outline-variant/40 bg-surface-low'}>
       <div className="flex items-center gap-2 border-b border-outline-variant/40 bg-surface-container px-3 py-1.5">
-        <span className="truncate text-on-surface text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 500' }}>{title}</span>
+        <span className="truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>{title}</span>
         {error && (
-          <span className="inline-flex items-center gap-1 text-[0.7rem]" style={{ color: 'var(--color-danger)' }}>
+          <span className="inline-flex items-center gap-1 text-[0.75rem]" style={{ color: 'var(--color-danger)' }}>
             <AlertTriangle size={11} /> error
           </span>
         )}
         <div className="ml-auto flex items-center gap-0.5">
-          <IconBtn label="Open in new tab" onClick={openInNewTab}><ExternalLink size={13} /></IconBtn>
-          <IconBtn label={expanded ? 'Minimize' : 'Expand'} onClick={() => setExpanded((v) => !v)}>{expanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</IconBtn>
+          <SquareIconButton label="Open in new tab" onClick={openInNewTab}><ExternalLink size={13} /></SquareIconButton>
+          <SquareIconButton label={expanded ? 'Minimize' : 'Expand'} onClick={() => setExpanded((v) => !v)}>{expanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</SquareIconButton>
         </div>
       </div>
       {blobUrl && (
@@ -94,11 +96,3 @@ export function ReactWidgetFrame({ jsx, title = 'React widget' }: Props) {
   )
 }
 
-function IconBtn({ children, label, onClick }: { children: React.ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button type="button" onClick={onClick} title={label} aria-label={label}
-      className="grid size-7 place-items-center rounded-md text-on-surface-low transition-colors hover:text-on-surface">
-      {children}
-    </button>
-  )
-}

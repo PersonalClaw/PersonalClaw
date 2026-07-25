@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { Plus, Workflow as WorkflowIcon, ListOrdered, Eye, Pencil } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -67,8 +68,8 @@ export function WorkflowsListPage({ onCreate, query, setQuery }: { onCreate: () 
                   <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${sm.tone} 16%, transparent)` }}><WorkflowIcon size={19} style={{ color: sm.tone }} /></span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-s">
-                      <span className={`truncate text-[0.9375rem] ${w.enabled === false ? 'text-on-surface-var' : 'text-on-surface'}`} style={{ fontVariationSettings: '"wght" 500' }}>{w.name}</span>
-                      {w.enabled === false && <span className="shrink-0 text-on-surface-low text-[0.7rem]">· disabled</span>}
+                      <span className={`truncate text-[0.9375rem] ${w.enabled === false ? 'text-on-surface-var' : 'text-on-surface'}`} style={fvs(500)}>{w.name}</span>
+                      {w.enabled === false && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· disabled</span>}
                     </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
                       <span style={{ color: sm.tone }}>{sm.label}</span>
@@ -76,7 +77,7 @@ export function WorkflowsListPage({ onCreate, query, setQuery }: { onCreate: () 
                       {w.description && <span className="truncate">· {w.description}</span>}
                     </div>
                   </div>
-                  {(w.tags?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{w.tags!.slice(0, 2).map((t) => <span key={t} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.7rem]">{t}</span>)}</div>}
+                  {(w.tags?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{w.tags!.slice(0, 2).map((t) => <span key={t} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{t}</span>)}</div>}
                 </ListRow>
                 </ContextMenu>
               )

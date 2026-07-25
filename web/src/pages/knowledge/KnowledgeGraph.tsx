@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Plus, Minus, Maximize2 } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
+import { GraphZoomControls } from '../../ui/GraphZoomControls'
 
 interface GraphNode { id: string; name?: string; type?: string }
 interface GraphEdge { source: string; target: string; type?: string }
@@ -74,7 +75,7 @@ export function KnowledgeGraph({ selectedId, onSelect }: {
   const endDrag = () => { drag.current = null }
 
   if (!graph) return <div className="grid h-full place-items-center text-on-surface-low"><Loader2 size={20} className="animate-spin" /></div>
-  if (graph.nodes.length === 0) return <div className="grid h-full place-items-center text-on-surface-low text-[0.875rem]">No entities extracted yet. Add documents to build the graph.</div>
+  if (graph.nodes.length === 0) return <div className="grid h-full place-items-center text-on-surface-low text-[0.8125rem]">No entities extracted yet. Add documents to build the graph.</div>
 
   const degree = new Map<string, number>()
   for (const e of graph.edges) { degree.set(e.source, (degree.get(e.source) ?? 0) + 1); degree.set(e.target, (degree.get(e.target) ?? 0) + 1) }
@@ -125,15 +126,8 @@ export function KnowledgeGraph({ selectedId, onSelect }: {
       </svg>
 
       {/* Zoom controls */}
-      <div className="absolute bottom-3 right-3 flex flex-col gap-1 rounded-lg bg-surface-high/90 p-1 backdrop-blur">
-        <button type="button" onClick={() => zoomBy(1.25)} title="Zoom in" aria-label="Zoom in"
-          className="grid size-7 place-items-center rounded text-on-surface-var hover:bg-surface-container hover:text-on-surface"><Plus size={15} /></button>
-        <button type="button" onClick={() => zoomBy(1 / 1.25)} title="Zoom out" aria-label="Zoom out"
-          className="grid size-7 place-items-center rounded text-on-surface-var hover:bg-surface-container hover:text-on-surface"><Minus size={15} /></button>
-        <button type="button" onClick={reset} title="Reset view" aria-label="Reset view"
-          className="grid size-7 place-items-center rounded text-on-surface-var hover:bg-surface-container hover:text-on-surface"><Maximize2 size={14} /></button>
-      </div>
-      <div className="absolute bottom-3 left-3 rounded-pill bg-surface-high/80 px-2 py-0.5 text-on-surface-low text-[0.7rem] tabular-nums backdrop-blur">{Math.round(view.scale * 100)}%</div>
+      <GraphZoomControls onZoomIn={() => zoomBy(1.25)} onZoomOut={() => zoomBy(1 / 1.25)} onReset={reset} />
+      <div className="absolute bottom-3 left-3 rounded-pill bg-surface-high/80 px-2 py-0.5 text-on-surface-low text-[0.75rem] tabular-nums backdrop-blur">{Math.round(view.scale * 100)}%</div>
     </div>
   )
 }

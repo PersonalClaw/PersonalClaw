@@ -289,7 +289,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
                       onChange={(e) => { const fs = Array.from(e.target.files ?? []); if (fs.length) setDesignFiles((cur) => [...cur, ...fs]); e.currentTarget.value = '' }} />
                   </label>
                   {designFiles.map((f, i) => (
-                    <span key={i} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-7 text-on-surface-var text-[0.7rem]">
+                    <span key={i} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-7 text-on-surface-var text-[0.75rem]">
                       <span className="max-w-[140px] truncate">{f.name}</span>
                       <button type="button" disabled={busy} onClick={() => setDesignFiles((cur) => cur.filter((_, j) => j !== i))}
                         className="text-on-surface-low hover:text-on-surface" aria-label={`Remove ${f.name}`}><X size={12} /></button>
