@@ -89,6 +89,29 @@ def _probe_acp_agent(entry: object, label: str, issues: list[str]) -> None:
         issues.append(f"{label}: {status.state}")
 
 
+def _doctor_paths() -> None:
+    """Print the resolved install paths as machine-friendly ``key<TAB>path`` lines.
+
+    The ``doctor get install-dir`` pattern (PLATFORM-LEGIBILITY §3.1): an external
+    agent driving PersonalClaw locates the offline API reference — and the config,
+    skills, and install dirs — from the binary alone, without knowing whether this
+    is a wheel, an editable install, or a source checkout. Tab-separated so it
+    parses trivially; the ``reference`` path is the one an agent reads for exact
+    tool/route signatures (see ``reference/index.md``).
+    """
+    from personalclaw.manifest_reference import reference_dir
+    from personalclaw.skills.loader import skills_dir
+
+    paths: list[tuple[str, Path]] = [
+        ("reference", reference_dir()),
+        ("config", config_dir()),
+        ("skills", skills_dir()),
+        ("install", Path(__file__).resolve().parent),
+    ]
+    for label, path in paths:
+        print(f"{label}\t{path}")
+
+
 def _doctor() -> None:
     """Verify PersonalClaw setup — check dependencies, config, credentials, connectivity."""
 

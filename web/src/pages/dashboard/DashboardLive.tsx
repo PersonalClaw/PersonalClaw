@@ -4,7 +4,7 @@ import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { api } from '../../lib/api'
 import type {
   PendingApproval, DashboardStatus, InboxItem, SkillProposal,
-  Loop, TaskItem, ScheduleRun, NotificationItem, SystemInfo,
+  Loop, TaskItem, ScheduleRun, NotificationItem, SystemInfo, DiscoverResponse, DoctorReport,
 } from '../../lib/api'
 
 // ── Dashboard live feed ────────────────────────────────────────────────────
@@ -19,7 +19,6 @@ import type {
 // the polls keep slower-moving data (loops, tasks, schedule, status) fresh.
 
 export interface DashboardLiveData {
-  connected: boolean
   approvals: PendingApproval[]
   inbox: InboxItem[]
   proposals: SkillProposal[]
@@ -31,6 +30,15 @@ export interface DashboardLiveData {
   /** Live system metrics (cpu/mem/net/disk/load) from /api/system — P27. Polled on
    *  the fast, visibility-gated cadence so the SystemHealth widget shows live rates. */
   system: SystemInfo | null
+  /** The curated Discover tips for the dashboard section + hub, or an empty
+   *  feed when everything's been explored / the kill switch is off. Polled on SLOW_POLL. */
+  discover: DiscoverResponse | null
+  /** The doctor health rollup — cached 30s server-side, so
+   *  polled on SLOW_POLL. Powers the SystemHealth widget's one-line health signal. */
+  doctor: DoctorReport | null
+  /** Dismiss a Discover tip forever, then refetch the slice so it drops from the
+   *  feed (propose-don't-write: this hides, never enables). */
+  dismissDiscoverTip: (id: string) => void
   /** Force an immediate refetch of every slice (e.g. after an inline action). */
   refreshAll: () => void
 }
@@ -51,11 +59,6 @@ const FAST_POLL = 8000
 const SLOW_POLL = 20000
 
 export function DashboardLiveProvider({ children }: { children: ReactNode }) {
-  // `connected` tracks whether the gateway is REACHABLE — driven by a successful
-  // /api/status fetch (same signal the shell's green dot uses), NOT by the WebSocket
-  // link state. The WS can drop briefly during proxy hiccups / hot-reload without
-  // meaning the gateway is down; an HTTP poll is the reliable source of truth.
-  const [connected, setConnected] = useState(false)
   const [approvals, setApprovals] = useState<PendingApproval[]>([])
   const [inbox, setInbox] = useState<InboxItem[]>([])
   const [proposals, setProposals] = useState<SkillProposal[]>([])
@@ -65,6 +68,8 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<DashboardStatus | null>(null)
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [system, setSystem] = useState<SystemInfo | null>(null)
+  const [discover, setDiscover] = useState<DiscoverResponse | null>(null)
+  const [doctor, setDoctor] = useState<DoctorReport | null>(null)
 
   // Individual slice loaders — each swallows errors (a dead endpoint must not
   // blank the whole dashboard) and no-ops if the component has unmounted.
@@ -80,14 +85,22 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const loadLoops = useCallback(() => { api.uLoops().then(guard(setLoops)).catch(() => {}) }, [])
   const loadTasks = useCallback(() => { api.readyTasks().then(guard(setTasks)).catch(() => {}) }, [])
   const loadSchedule = useCallback(() => { api.triggersHistory(12).then((d) => guard(setSchedule)(d.runs ?? [])).catch(() => {}) }, [])
-  const loadStatus = useCallback(() => { api.status().then((d) => { guard(setStatus)(d); if (alive.current) setConnected(true) }).catch(() => { if (alive.current) setConnected(false) }) }, [])
+  const loadStatus = useCallback(() => { api.status().then(guard(setStatus)).catch(() => {}) }, [])
   const loadNotifications = useCallback(() => { api.notifications().then((d) => guard(setNotifications)(d.notifications ?? [])).catch(() => {}) }, [])
   const loadSystem = useCallback(() => { api.system().then(guard(setSystem)).catch(() => {}) }, [])
+  const loadDiscover = useCallback(() => { api.discover().then(guard(setDiscover)).catch(() => {}) }, [])
+  const loadDoctor = useCallback(() => { api.doctor().then(guard(setDoctor)).catch(() => {}) }, [])
+
+  // Dismiss persists server-side; on success refetch so the tip drops from the
+  // feed (or the "explored everything" empty state shows).
+  const dismissDiscoverTip = useCallback((id: string) => {
+    api.dismissDiscoverTip(id).then(() => loadDiscover()).catch(() => {})
+  }, [loadDiscover])
 
   const refreshAll = useCallback(() => {
     loadApprovals(); loadInbox(); loadProposals(); loadLoops()
-    loadTasks(); loadSchedule(); loadStatus(); loadNotifications(); loadSystem()
-  }, [loadApprovals, loadInbox, loadProposals, loadLoops, loadTasks, loadSchedule, loadStatus, loadNotifications, loadSystem])
+    loadTasks(); loadSchedule(); loadStatus(); loadNotifications(); loadSystem(); loadDiscover(); loadDoctor()
+  }, [loadApprovals, loadInbox, loadProposals, loadLoops, loadTasks, loadSchedule, loadStatus, loadNotifications, loadSystem, loadDiscover, loadDoctor])
 
   // Coalesce high-frequency work/status signals. `chat_status`/`sessions` fire on
   // every turn lifecycle change — during active streaming that's many events/sec —
@@ -119,18 +132,19 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   useChatSocket(
     onMessage,
     refreshAll,                              // reopened after a drop → catch up on everything
-    // NOTE: connection state is driven by HTTP polls (loadStatus), not the WS
-    // link, so we don't pass an onStatus callback here. The WS is used for
-    // push-signal routing only; its link state is not the truth for "connected".
+    // NOTE: no onStatus callback — the WS is used for push-signal routing only.
+    // Gateway connectivity is surfaced by the shell's SystemWidget dot (a live
+    // /api/system poll), so the dashboard feed doesn't track link state itself.
   )
 
   // Initial load once, then visibility-gated polls (pause when the tab is hidden).
   useEffect(() => { refreshAll() }, [refreshAll])
   useVisiblePoll(() => { loadApprovals(); loadInbox(); loadProposals(); loadLoops(); loadTasks(); loadSystem() }, FAST_POLL)
-  useVisiblePoll(() => { loadSchedule(); loadStatus(); loadNotifications() }, SLOW_POLL)
+  useVisiblePoll(() => { loadSchedule(); loadStatus(); loadNotifications(); loadDiscover(); loadDoctor() }, SLOW_POLL)
 
   const value: DashboardLiveData = {
-    connected, approvals, inbox, proposals, loops, tasks, schedule, status, notifications, system, refreshAll,
+    approvals, inbox, proposals, loops, tasks, schedule, status, notifications, system,
+    discover, doctor, dismissDiscoverTip, refreshAll,
   }
   return <DashboardLiveContext.Provider value={value}>{children}</DashboardLiveContext.Provider>
 }

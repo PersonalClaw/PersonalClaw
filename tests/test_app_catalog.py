@@ -83,8 +83,19 @@ def test_missing_native_app_resurfaces_as_available(tmp_path):
     assert entry.sourceKind == "native" and entry.icon == "Plug"
 
 
+def test_default_first_party_git_source_present():
+    """The published first-party apps repo ships as a Store default (so a plain
+    pip install surfaces first-party apps, uninstalled). It is not user-removable."""
+    defaults = catalog.list_git_sources()
+    assert "https://github.com/PersonalClaw/PersonalClawApps.git" in defaults
+    # A bundled default can't be removed via remove_git_source (it's not a user src).
+    catalog.remove_git_source("https://github.com/PersonalClaw/PersonalClawApps.git")
+    assert "https://github.com/PersonalClaw/PersonalClawApps.git" in catalog.list_git_sources()
+
+
 def test_git_sources_add_remove(tmp_path):
-    assert catalog.list_git_sources() == []
+    # Defaults are always present; user sources accumulate alongside them.
+    assert "https://github.com/acme/cool-app.git" not in catalog.list_git_sources()
     catalog.add_git_source("https://github.com/acme/cool-app.git")
     assert "https://github.com/acme/cool-app.git" in catalog.list_git_sources()
     # idempotent

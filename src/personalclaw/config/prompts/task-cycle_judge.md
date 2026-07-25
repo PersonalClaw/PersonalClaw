@@ -12,5 +12,5 @@ PRIOR CYCLES (digest):
 THIS CYCLE ({{cycle}}) — evidence the worker reported:
 {{evidence}}{{metric_line}}
 
-Respond with ONLY a JSON object, no prose:
-{"done": true|false, "done_reason": "...", "marginal_value": <0-5>, "quality_score": <0-5>, "regressed": true|false}
+Respond with ONLY a JSON object, no prose. Write your reasoning FIRST so the verdict follows from it rather than being asserted, then the verdict fields:
+{"reasoning": "<2-4 sentences weighing the evidence against the definition of done>", "done": true|false, "done_reason": "...", "marginal_value": <0-5>, "quality_score": <0-5>, "regressed": true|false}

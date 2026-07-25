@@ -13,4 +13,5 @@ Criteria: {{criteria}}
 User said: {{user_message}}
 Assistant responded: {{assistant_response}}
 
-Respond with ONLY a JSON object: {"score": <1-5>, "reason": "<brief explanation>"}
+Respond with ONLY a JSON object. Put your brief reasoning FIRST, then the score, so the score follows from the reasoning rather than being guessed:
+{"reasoning": "<1-3 sentences weighing the evidence>", "score": <1-5>, "reason": "<brief explanation>"}

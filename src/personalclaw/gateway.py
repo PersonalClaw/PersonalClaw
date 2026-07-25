@@ -790,6 +790,19 @@ class GatewayOrchestrator:
         else:
             timeout = 30
 
+        # Denylist gate: a scheduled action's config is
+        # checked BEFORE dispatch, so an app-contributed provider inherits the
+        # denylist. A blocked action never executes.
+        from personalclaw.guardrails.denylist import enforce_action
+
+        _deny = enforce_action(job.provider, config, ctx)
+        if _deny.blocked:
+            job.last_status = "error"
+            job.last_error = f"blocked by guardrails denylist: {_deny.reason}"
+            job.last_outcome = "skip"
+            self._maybe_autopause(job)
+            return None
+
         self._running_script_ids.add(job.id)
         logger.info(
             "Action cron '%s' dispatch via %s (dry_run=%s)",
@@ -807,8 +820,12 @@ class GatewayOrchestrator:
                 result.error,
             )
         except Exception as exc:
+            # Wrap a raising provider in the shared
+            # WHAT/WHY/FIX envelope so the run-record error is coded + actionable.
+            from personalclaw.action_providers import provider_failure
+
             job.last_status = "error"
-            job.last_error = str(exc)
+            job.last_error = provider_failure(job.provider, exc).render()
             self._maybe_autopause(job)
             logger.exception("Action cron job '%s' (%s) failed", job.name, job.provider)
             return None
@@ -829,7 +846,12 @@ class GatewayOrchestrator:
                 return None  # silent success
             return job.last_result or None
         job.last_status = "error"
-        job.last_error = result.error or result.stderr or f"exit {result.exit_code}"
+        # A provider that populated the envelope surfaces its WHAT/WHY/FIX text.
+        job.last_error = (
+            result.agent_error.render()
+            if result.agent_error is not None
+            else (result.error or result.stderr or f"exit {result.exit_code}")
+        )
         job.last_result = (result.stdout or "").strip()
         self._maybe_autopause(job)
         return None
@@ -845,16 +867,83 @@ class GatewayOrchestrator:
                 job.consecutive_failures,
             )
 
+    def _day_budget_exceeded(self, *, context: str) -> bool:
+        """True when the day-scope guardrail spend ceiling is already hit.
+
+        Used as a pre-dispatch gate for unattended LLM work (cron agent fires).
+        On the transition into exceeded, emits ONE needs-input notification so the
+        user learns their automation is paused for the day without a per-fire spam.
+        Fail-open (returns False) on any error — a broken budget read must never
+        wedge unattended work; the meter + breaker remain the hard controls.
+        """
+        try:
+            from personalclaw.guardrails.budgets import (
+                BudgetVerdict,
+                budget_from_config,
+                get_meter,
+            )
+
+            budget = budget_from_config()
+            if budget.is_unlimited:
+                return False
+            verdict, reason = get_meter().check_day(budget)
+            if verdict is not BudgetVerdict.EXCEEDED:
+                # Re-arm the one-shot notification: once the day rolls over (or the
+                # user raises the budget) and we're back under the ceiling, the next
+                # exceeded window notifies again.
+                self._budget_notified = False
+                return False
+            # One-shot notification per exceeded window (de-duped by the flag).
+            if not getattr(self, "_budget_notified", False):
+                self._budget_notified = True
+                if self.dashboard_state is not None:
+                    try:
+                        self.dashboard_state.notify(
+                            "warning",
+                            "Daily automation budget reached",
+                            f"{context} was skipped — {reason}. Unattended runs resume "
+                            f"tomorrow, or raise the budget in Settings → Guardrails.",
+                        )
+                    except Exception:
+                        logger.debug("budget notify failed", exc_info=True)
+            logger.info("%s skipped: %s", context, reason)
+            return True
+        except Exception:
+            logger.debug("day-budget check failed (fail-open)", exc_info=True)
+            return False
+
     async def _init_cron(self) -> None:
         """Initialize and start the cron service."""
 
         async def _cron_callback(job: ScheduleJob) -> str | None:
+            # ── Incident kill switch ──
+            # During an incident ALL unattended fires are suspended (interactive chat
+            # is untouched — that's a separate path). Checked first, before any
+            # action dispatch or session build.
+            from personalclaw.guardrails.incident import incident_active
+
+            if incident_active():
+                job.last_outcome = "skip"
+                job.last_result = "[incident] skipped — incident mode active"
+                logger.info("Cron '%s' skipped: incident mode active", job.name)
+                return None
+
             # ── Non-agent actions (no LLM, no ACP turn) ──
             # Every provider except invoke-agent dispatches through the action
             # registry and returns. This branch comes first so deterministic
             # bash/run-script actions never build a session.
             if job.provider and job.provider != "invoke-agent":
                 return await self._run_action_job(job)
+
+            # ── Day-budget guard ──
+            # An agent cron fire is unattended LLM work. If the day-scope spend
+            # ceiling is already exhausted, skip the fire + notify once (the job
+            # stays enabled and resumes automatically when the budget resets next
+            # day). Fail-open — a broken budget read must never wedge the cron loop.
+            if self._day_budget_exceeded(context=f"cron '{job.name}'"):
+                job.last_outcome = "skip"
+                job.last_result = "[budget] skipped — day spend ceiling reached"
+                return None
 
             # helper picks stable vs ephemeral session key and
             # decides whether to prepend last_result, based on job.persistent_session.
@@ -3044,6 +3133,47 @@ class GatewayOrchestrator:
 
         # ── Signal handlers ──
         loop = asyncio.get_running_loop()
+
+        # ── Structured crash capture ──
+        # An unhandled exception escaping a background task (a chat turn, a loop
+        # worker) reaches the loop's exception handler. Capture it as ONE structured,
+        # redacted artifact under ~/.personalclaw/crashes/ (best-effort, never masks
+        # the original) so a mid-stream death leaves a recoverable record, then chain
+        # to the default handler so logging is unchanged.
+        _default_exc_handler = loop.get_exception_handler()
+
+        def _crash_exc_handler(lp: "asyncio.AbstractEventLoop", context: dict) -> None:
+            try:
+                exc = context.get("exception")
+                if isinstance(exc, BaseException) and not isinstance(
+                    exc, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)
+                ):
+                    from personalclaw.resilience.crashes import record_crash
+
+                    key = ""
+                    task = context.get("task")
+                    if task is not None:
+                        key = str(getattr(task, "get_name", lambda: "")() or "")
+                    kind = "loop_worker" if "loop" in key.lower() else "turn"
+                    _ds = self.dashboard_state
+                    _start = float(getattr(_ds, "start_time", 0.0)) if _ds is not None else 0.0
+                    record_crash(
+                        kind,  # type: ignore[arg-type]
+                        exc,
+                        session_key=key,
+                        uptime_secs=time.time() - _start,
+                        now=time.time(),
+                    )
+            except Exception:
+                logger.debug("crash exception-handler hook failed", exc_info=True)
+            # Chain to the previously-installed handler (or the loop default).
+            if _default_exc_handler is not None:
+                _default_exc_handler(lp, context)
+            else:
+                loop.default_exception_handler(context)
+
+        loop.set_exception_handler(_crash_exc_handler)
+
         _shutting_down = False
 
         def _on_signal(*_args: object) -> None:

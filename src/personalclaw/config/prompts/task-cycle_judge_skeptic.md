@@ -14,5 +14,5 @@ PRIOR CYCLES (digest):
 THIS CYCLE ({{cycle}}) — evidence the worker reported:
 {{evidence}}{{metric_line}}
 
-Respond with ONLY a JSON object, no prose:
-{"done": true|false, "done_reason": "...", "marginal_value": <0-5>, "quality_score": <0-5>, "regressed": true|false}
+Respond with ONLY a JSON object, no prose. State your skeptical reasoning FIRST — what would have to be true for the completion claim to hold, and whether the evidence undeniably shows it — then the verdict fields:
+{"reasoning": "<2-4 sentences arguing whether the evidence undeniably meets the definition of done>", "done": true|false, "done_reason": "...", "marginal_value": <0-5>, "quality_score": <0-5>, "regressed": true|false}

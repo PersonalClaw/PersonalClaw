@@ -82,32 +82,36 @@ def resolve_hero_url(app_dir: Path, hero_rel: str) -> str:
         return ""
 
 
-# Git source URLs PersonalClaw ships as Store defaults. Empty for now (the OSS
-# package ships no first-party remote registry yet); user-added URLs accumulate
-# alongside these. Kept as a constant so a future release can seed defaults here
-# without a migration. When the first-party apps repo is published, its git URL
-# goes HERE (replacing the dev filesystem default below).
-_DEFAULT_GIT_SOURCES: tuple[str, ...] = ()
+# Git source URLs PersonalClaw ships as Store defaults. The published first-party
+# apps repo is a default source, so a shipped ``pip install`` surfaces every
+# first-party app in the Store WITHOUT the dev workspace tree — uninstalled, so the
+# per-app install-consent contract is preserved (nothing runs until the user opts
+# in). User-added URLs accumulate alongside these; a bundled default is not
+# user-removable. This is a Store-listing default only — it never auto-installs.
+_DEFAULT_GIT_SOURCES: tuple[str, ...] = ("https://github.com/PersonalClaw/PersonalClawApps.git",)
 
 
 def _first_party_source() -> Path | None:
-    """The always-present, read-only FIRST-PARTY app source.
+    """The always-present, read-only FIRST-PARTY app source — DEV filesystem path.
 
     First-party apps live in the workspace ``apps/`` dir (a sibling of the
-    ``PersonalClaw/`` core repo), destined for their own git repo. Until that repo
-    is published, this is a DEV filesystem default so those apps always appear in
-    the Store (uninstalled — the user opts in). Resolved relative to the package:
-    ``.../PersonalClaw/src/personalclaw/`` → ``.../PersonalClaw/`` → ``../apps``.
-    Returns None if it doesn't exist (a shipped install without the workspace tree),
-    so this is a no-op there. Not user-removable (it's not in the persisted list)."""
+    ``PersonalClaw/`` core repo). This is the DEV convenience source: when you're
+    working out of the workspace tree, the apps beside core surface in the Store
+    without network. A SHIPPED install has no workspace tree, so this returns None
+    there — the published apps repo in ``_DEFAULT_GIT_SOURCES`` is what makes
+    first-party apps appear on a plain ``pip install`` (uninstalled — the user opts
+    in). Resolved relative to the package: ``.../PersonalClaw/src/personalclaw/`` →
+    ``.../PersonalClaw/`` → ``../apps``. Not user-removable (not in the persisted
+    list)."""
     # catalog.py is at src/personalclaw/apps/catalog.py → parents: apps, personalclaw,
     # src, PersonalClaw, <workspace>. The workspace holds apps/ beside PersonalClaw/.
     workspace_apps = Path(__file__).resolve().parents[4] / "apps"
     return workspace_apps if workspace_apps.is_dir() else None
 
 
-# Env override so a packaged/relocated install can point at the first-party dir
-# (or, later, this becomes the published git URL in _DEFAULT_GIT_SOURCES).
+# Env override so a packaged/relocated install can point at a local first-party dir
+# (e.g. this workspace's PersonalClawApps clone) instead of the published git source
+# in _DEFAULT_GIT_SOURCES — used for offline dev + tests.
 import os as _os  # noqa: E402
 
 _FIRST_PARTY_ENV = "PERSONALCLAW_FIRST_PARTY_APPS_DIR"

@@ -74,6 +74,101 @@ export interface ThemeWrite {
 }
 // Live channel runtime: connection state + health (distinct from the Providers
 // enable/config surface — this is whether the transport is actually connected now).
+export interface ProviderHealth {
+  name: string
+  breaker_state: 'closed' | 'open' | 'half_open'
+  consecutive_failures: number
+  calls: number
+  passed: number
+  failed: number
+  pass_rate: number | null
+  p50_ms: number
+  p90_ms: number
+  p99_ms: number
+  failure_modes: Record<string, number>
+  degraded: boolean
+}
+
+// Doctor — the tiered read-only health report.
+export interface DoctorProbe {
+  id: string
+  capability: string
+  tier: number
+  title: string
+  ok: boolean
+  detail: string
+  evidence: Record<string, unknown>
+  fix_id?: string
+}
+export interface DoctorCapability {
+  ok: boolean
+  tier: number
+  probes: DoctorProbe[]
+}
+export interface DoctorReport {
+  ok: boolean
+  core_ok: boolean
+  worst: string
+  restart_suggested: boolean
+  capabilities: Record<string, DoctorCapability>
+  skipped_capabilities: string[]
+  generated_at: number
+}
+
+// No-model degraded mode.
+export interface DegradedSurface {
+  surface: string
+  available: boolean
+  floor: string
+  backlog: number
+  use_cases: string[]
+}
+export interface DegradedReport {
+  surfaces: DegradedSurface[]
+  degraded: string[]
+}
+
+// Confirm-gated fixes + surfacing simulator.
+export interface DoctorFix {
+  id: string
+  title: string
+  impact: string
+  preview: string
+}
+export interface SurfacingCandidate {
+  key: string
+  kw_score: number
+  sem_score: number
+  threshold_kw: number
+  threshold_sem: number
+  negated: boolean
+  included: boolean
+  reason: string
+}
+
+// Health-scored remediation engine.
+export interface RemediationJobRow {
+  id: string
+  status: string
+  cost: number
+  detail?: string
+  error?: string
+}
+export interface RemediationRun {
+  ts: number
+  score_before: number
+  score_after: number
+  jobs: RemediationJobRow[]
+  stopped_reason: string
+}
+export interface RemediationSnapshot {
+  score: number
+  target_score: number
+  deficits: { key: string; count: number; penalty: number; reachable: boolean }[]
+  plan: RemediationJobRow[]
+  recent_runs: RemediationRun[]
+}
+
 export interface ChannelHealth { state: string; detail?: string }
 export interface ChannelRuntime {
   name: string; display_name: string; connected: boolean
@@ -382,6 +477,20 @@ export interface SkillSearchResult { id: string; name: string; description: stri
 export interface SkillMarketplaceDetail { id: string; name: string; audit_status?: string; files: Array<{ path: string; binary?: boolean }>; frontmatter?: Record<string, unknown>; body?: string; marketplace?: string }
 export interface ToolItem { name: string; description: string; provider: string; parameters?: Record<string, unknown>; requires_approval?: boolean; risk_level?: 'safe' | 'caution' | 'destructive'; disabled?: boolean; locked?: boolean; providerDisabled?: boolean }
 export interface ToolLoadFailure { provider: string; error: string }
+// The generated self-description document served at GET /api/manifest — the same
+// shape an agent driving this instance reads (personalclaw/manifest.py).
+export interface ManifestToolExample { summary: string; args: Record<string, unknown> }
+export interface ManifestTool { name: string; provider: string; description: string; parameters?: Record<string, unknown>; requires_approval: boolean; risk_level: string; response_type: string; error_codes: string[]; examples: ManifestToolExample[] }
+export interface ManifestRoute { method: string; path: string; summary: string; agent_callable: boolean }
+export interface ManifestProvider { app: string; type: string; provider_type: string; capabilities: string[]; enabled: boolean; error?: string | null }
+export interface Manifest { apiVersion: number; tools: ManifestTool[]; routes: ManifestRoute[]; app_surfaces: unknown[]; providers: { types: string[]; registered: ManifestProvider[] } }
+// Discover: a curated, hand-authored tour of the system's user-facing areas.
+// `try_it` is a deep link into an existing page — a tip points, never enables. Tips
+// leave the feed by being dismissed or by auto-hiding once the area is engaged.
+export interface DiscoverTryIt { route: string; query: Record<string, string>; label: string }
+export interface DiscoverTip { id: string; area: string; title: string; lesson: string; try_it: DiscoverTryIt }
+export interface DiscoverArea { area: string; tips: DiscoverTip[] }
+export interface DiscoverResponse { enabled: boolean; areas: DiscoverArea[]; visible_count: number; total: number }
 export interface McpServer {
   name: string; command?: string; args?: string[]; status: string; tools: Array<string | { name: string; description?: string }>
   error?: string; source?: string; enabled?: boolean; presence?: Record<string, boolean>
@@ -638,7 +747,7 @@ export interface SystemAgentStats {
   total_turns: number; total_duration_ms: number
 }
 export interface SystemInfo {
-  hostname: string; os: string; platform: string; python: string; arch: string; pid: number; cpu_count: number; cwd: string
+  hostname: string; version?: string; os: string; platform: string; python: string; arch: string; pid: number; cpu_count: number; cwd: string
   mem_total_gb: number; proc_mem_mb: number; mem_free_gb: number; mem_used_gb: number
   load_1m: number; load_5m: number; load_15m: number; cpu_pct: number; proc_cpu_pct?: number; ip?: string
   disk_total_gb?: number; disk_free_gb?: number
@@ -1077,6 +1186,41 @@ export const api = {
   personalclawConfig: () => get<Record<string, any>>('/api/config/personalclaw'),
   patchConfig: (path: string, value: unknown) => patch<Record<string, any>>('/api/config/personalclaw', { path, value }),
 
+  // ── Guardrails: incident kill switch + derived provider health ──
+  incident: () => get<{ active: boolean; reason: string; started_at: string }>('/api/incident'),
+  incidentOn: (reason: string) =>
+    post<{ active: boolean; reason: string; started_at: string }>('/api/incident', { reason }),
+  incidentResume: () => post<{ active: boolean }>('/api/incident/resume', { confirm: true }),
+  modelsHealth: () =>
+    get<{ providers: ProviderHealth[]; generated_from: number }>('/api/models/health'),
+
+  // ── Doctor: tiered read-only health probes ──
+  doctor: () => get<DoctorReport>('/api/doctor'),
+  doctorCapability: (capability: string) =>
+    get<{ capability: string; ok: boolean; probes: DoctorProbe[]; unknown?: boolean }>(
+      `/api/doctor/${encodeURIComponent(capability)}`,
+    ),
+  // ── No-model degraded mode ──
+  degraded: () => get<DegradedReport>('/api/resilience/degraded'),
+  // ── Confirm-gated fixes + surfacing simulator ──
+  doctorFixes: () => get<{ fixes: DoctorFix[] }>('/api/doctor/fixes'),
+  doctorFixApply: (fixId: string) =>
+    post<{ ok: boolean; fix_id: string; result?: string; error?: string }>(
+      `/api/doctor/fix/${encodeURIComponent(fixId)}`, { confirm: true },
+    ),
+  doctorSimulateSurfacing: (text: string) =>
+    post<{ query: string; candidates: SurfacingCandidate[] }>(
+      '/api/doctor/simulate/surfacing', { text },
+    ),
+  doctorCrash: (filename: string) =>
+    get<Record<string, unknown>>(`/api/doctor/crash/${encodeURIComponent(filename)}`),
+  // ── Remediation engine ──
+  doctorRemediation: () => get<RemediationSnapshot>('/api/doctor/remediation'),
+  doctorRemediationRun: () =>
+    post<{ score_before: number; score_after: number; jobs: RemediationJobRow[]; stopped_reason: string }>(
+      '/api/doctor/remediation/run', { confirm: true },
+    ),
+
   // ── Memory Studio: health, observability, deep recall, promotion, lessons ──
   memoryGraph: () => get<MemoryGraphData>('/api/memory/graph'),
   memoryLint: () => get<MemoryLint>('/api/memory/lint'),
@@ -1141,6 +1285,11 @@ export const api = {
 
   // ── Contextual prompt starters (background-computed from memory + recent activity) ──
   suggestions: (force = false) => get<{ suggestions: string[]; generated_at: number; stale: boolean }>(`/api/suggestions${force ? '?force=1' : ''}`),
+
+  // ── Discover: a curated tour of the system, grouped by area. Tips only
+  // point (deep link), never enable; dismissals persist server-side per tip. ──
+  discover: () => get<DiscoverResponse>('/api/legibility/discover'),
+  dismissDiscoverTip: (id: string) => post<{ ok: boolean; dismissed: string[] }>('/api/legibility/discover/dismiss', { id }),
 
   // ── Desktop integration (OS-gated; server runs the subprocess) ──
   /** Reveal a path in Finder (action 'reveal') or open with the default app ('open'). */
@@ -1506,6 +1655,12 @@ export const api = {
   createProject: (body: { name: string; brief?: string; agent_instructions_template?: string; workspace_dir?: string; name_locked?: boolean }) => post<ProjectItem>('/api/projects', body),
   updateProject: (id: string, body: Record<string, unknown>) => put<ProjectItem>(`/api/projects/${encodeURIComponent(id)}`, body),
   deleteProject: (id: string, force = false) => del(`/api/projects/${encodeURIComponent(id)}${force ? '?force=true' : ''}`),
+  // Legibility §7 — render the marker-fenced PClaw context block into the project's
+  // bound workspace_dir adapter files (CLAUDE.md / AGENTS.md / .cursorrules), replace-
+  // in-place. Gated server-side on legibility.context_adapters + a bound workspace_dir.
+  regenerateContextAdapters: (id: string) =>
+    post<{ ok: boolean; written: string[]; errors: { file: string; error: string }[]; workspace_dir: string }>(
+      `/api/projects/${encodeURIComponent(id)}/context-adapters/regenerate`, {}),
   taskLists: (projectId?: string) => get<{ task_lists: TaskListItem[] }>(`/api/task-lists${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`).then((d) => d.task_lists),
   createTaskList: (body: Record<string, unknown>) => post<TaskListItem>('/api/task-lists', body),
   updateTaskList: (id: string, body: Record<string, unknown>) => put<TaskListItem>(`/api/task-lists/${encodeURIComponent(id)}`, body),
@@ -1596,6 +1751,8 @@ export const api = {
 
   // tools
   tools: () => get<{ tools: ToolItem[] }>('/api/tools').then((d) => d.tools),
+  // the generated self-description document (tools + routes + providers)
+  manifest: () => get<Manifest>('/api/manifest'),
   // full catalog envelope incl. operator-visible load failures (broken providers/sources)
   toolsIndex: () => get<{ tools: ToolItem[]; load_failures?: ToolLoadFailure[] }>('/api/tools'),
   invokeTool: (tool: string, args: Record<string, unknown>, provider?: string) =>

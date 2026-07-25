@@ -1,5 +1,17 @@
 import { useEffect, useRef } from 'react'
 import { runtime } from '../design/runtime'
+import { useAppearance } from '../app/appearance'
+import { TOKENS } from '../design/tokenRegistry'
+
+// The master backdrop switch (design/tokenRegistry '--bg-style'):
+//   'waves' — the animated 3D dot-wave surface (default)
+//   'still' — the same dot field, frozen (no breathing; one static frame)
+//   'glow'  — only the soft light hugging the composer, no dot lattice
+//   'none'  — off (a transparent, empty layer)
+// Resolved LIVE from the appearance store below so a change re-keys the render
+// loop (a runtime-bridge read couldn't restart a loop that 'still'/'none' stops).
+type BgStyle = 'waves' | 'still' | 'glow' | 'none'
+const BG_STYLE_TOKEN = TOKENS.find((t) => t.kind === 'select' && t.varName === '--bg-style')
 
 /** "dot glow" — an animated 3D halftone WAVE surface that
  *  reads as light cast by the composer onto a rippling surface behind it.
@@ -98,6 +110,10 @@ export function DotGlow({
    *  (measure the composer live, no easing) so the other surfaces don't change. */
   focusRef?: React.RefObject<HTMLElement | null>
 }) {
+  // Master backdrop mode, resolved live from the appearance store so a change
+  // re-keys the render effect below (tear down + rebuild the loop cleanly).
+  const { selectValue } = useAppearance()
+  const bgStyle = (BG_STYLE_TOKEN ? selectValue(BG_STYLE_TOKEN) : 'waves') as BgStyle
   const ref = useRef<HTMLCanvasElement>(null)
   const bloomRef = useRef<HTMLDivElement>(null)
   const bloom2Ref = useRef<HTMLDivElement>(null)  // bloom for the split-off traveling light
@@ -118,6 +134,21 @@ export function DotGlow({
     const g = ctx
 
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    // Backdrop mode → what the loop does:
+    //   drawDots — render the dot lattice ('waves' + 'still').
+    //   animate  — keep a live rAF loop ('waves' + 'glow', unless reduced-motion).
+    //              'still' draws exactly one frozen frame, like reduced-motion.
+    const drawDots = bgStyle === 'waves' || bgStyle === 'still'
+    const animate = (bgStyle === 'waves' || bgStyle === 'glow') && !reduce
+    // 'none' → a transparent, empty layer: clear the canvas, hide both blooms,
+    // never start the loop or observe resizes.
+    if (bgStyle === 'none') {
+      g.setTransform(1, 0, 0, 1, 0, 0)
+      g.clearRect(0, 0, cv.width, cv.height)
+      if (bloomRef.current) bloomRef.current.style.opacity = '0'
+      if (bloom2Ref.current) bloom2Ref.current.style.opacity = '0'
+      return
+    }
     let raf = 0
     let w = 0, h = 0, dpr = 1
 
@@ -133,7 +164,16 @@ export function DotGlow({
       g.setTransform(dpr, 0, 0, dpr, 0, 0)
     }
     resize()
-    const ro = new ResizeObserver(resize)
+    // A resize reassigns cv.width/height, which CLEARS the canvas. When the loop
+    // is live it repaints on the next rAF, but a non-animating mode ('still' /
+    // reduced-motion) paints only ONE frame — and rAF callbacks run before the
+    // ResizeObserver's within a frame, so the observer's initial fire would wipe
+    // that single frame and leave the field blank. Repaint once after any resize
+    // in those modes (guarded so the live loop is never double-scheduled).
+    const ro = new ResizeObserver(() => {
+      resize()
+      if (!animate) { cancelAnimationFrame(raf); raf = requestAnimationFrame(frame) }
+    })
     ro.observe(parent)
 
     let inten = targetI.current                // lerped glow intensity
@@ -268,7 +308,9 @@ export function DotGlow({
       const focalPx = FOCAL * h * 0.5
       const cxPx = w / 2
 
-      for (let j = ROWS - 1; j >= 0; j--) {
+      // 'glow' mode keeps the composer's soft light (the CSS blooms above) but
+      // skips the dot lattice entirely — the canvas stays clear behind them.
+      if (drawDots) for (let j = ROWS - 1; j >= 0; j--) {
         const dz = j / (ROWS - 1)
         const wz = NEAR_Z + (FAR_Z - NEAR_Z) * (dz * dz)   // ease → dense horizon
         // arrangement pattern → per-row lateral offset / skipping of the lattice
@@ -344,12 +386,12 @@ export function DotGlow({
         }
       }
 
-      if (!reduce) raf = requestAnimationFrame(frame)
+      if (animate) raf = requestAnimationFrame(frame)
     }
     raf = requestAnimationFrame(frame)
 
     return () => { cancelAnimationFrame(raf); ro.disconnect() }
-  }, [composerRef])
+  }, [composerRef, bgStyle])
 
   return (
     <div className={`pointer-events-none absolute inset-0 overflow-hidden ${className ?? ''}`} aria-hidden>

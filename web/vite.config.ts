@@ -1,8 +1,27 @@
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { fileURLToPath } from 'node:url'
+import { dirname } from 'node:path'
 
 const BACKEND = `http://127.0.0.1:${process.env.PERSONALCLAW_PORT || 10000}`
+const WEB_DIR = dirname(fileURLToPath(import.meta.url))
+
+// After Vite writes dist/, generate dist/ui-docs.json — the documentation-as-data
+// artifact for the ui/ kit that the gateway serves and UiDocsToolProvider reads
+// (Platform-Legibility §5). It fuses the hand-authored <Name>.doc.ts objects with
+// prop types derived from the TypeScript source; see scripts/buildUiDocs.mjs.
+function uiDocsPlugin(): Plugin {
+  return {
+    name: 'ui-docs',
+    apply: 'build',
+    async closeBundle() {
+      const { buildUiDocs } = await import('./scripts/buildUiDocs.mjs')
+      const { componentCount, path } = await buildUiDocs(WEB_DIR)
+      this.info?.(`ui-docs.json: ${componentCount} components → ${path}`)
+    },
+  }
+}
 
 // Replicate PersonalClaw's dev token handshake: when the browser hits the dev
 // server with /?token=xxx, forward to the backend, relay its Set-Cookie
@@ -32,7 +51,7 @@ function tokenProxyPlugin(): Plugin {
 // PersonalClaw web app.
 // Proxies API/WS to the existing backend so we reuse PersonalClaw's data layer.
 export default defineConfig({
-  plugins: [react(), tailwindcss(), tokenProxyPlugin()],
+  plugins: [react(), tailwindcss(), tokenProxyPlugin(), uiDocsPlugin()],
   server: {
     port: 3100,
     proxy: {

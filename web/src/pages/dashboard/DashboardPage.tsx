@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import {
   MessageSquare, History, type LucideIcon,
-  MessageSquarePlus, ListTodo, BookOpen, FolderKanban, FileCode2, TerminalSquare, Sparkles,
+  MessageSquarePlus, ListTodo, BookOpen, FolderKanban, FileCode2, TerminalSquare, Sparkles, Compass,
 } from 'lucide-react'
 import { DashboardLiveProvider } from './DashboardLive'
 import { HeroPulse } from './widgets/HeroPulse'
@@ -10,6 +10,7 @@ import { ActionCenter } from './widgets/ActionCenter'
 import { ActiveWork } from './widgets/ActiveWork'
 import { TasksWidget } from './widgets/TasksWidget'
 import { Suggestions } from './widgets/Suggestions'
+import { Discover } from './widgets/Discover'
 import { ScheduleWidget } from './widgets/ScheduleWidget'
 import { SystemHealth } from './widgets/SystemHealth'
 import { TopBar } from '../../ui/TopBar'
@@ -85,15 +86,37 @@ export function DashboardPage(route: RouteProps) {
               </Section>
             </div>
 
+            {/* Discover — a curated spotlight of the parts of PersonalClaw you
+                haven't tried yet, each a deep link. The full grouped list is the
+                dedicated Discover hub (the widget's "See all" jumps there). */}
+            <Section label="Discover" icon={Compass}>
+              <Discover {...route} />
+            </Section>
+
             <Section label="Recent activity" icon={History}>
               <ScheduleWidget {...route} />
             </Section>
-
-            {/* Footer — system health only (knowledge/memory stats removed). */}
-            <div className="flex items-center gap-l border-t border-outline-variant/40 pt-m">
-              <span data-type="label-m" className="text-on-surface-low">System</span>
-              <SystemHealth {...route} />
-            </div>
+          </div>
+        </div>
+        {/* System rail — docked to the dashboard's bottom edge, OUTSIDE the scroll
+            area above. A flex sibling with `shrink-0` pins it to the bottom while
+            the scroll area owns `flex-1`, so the live system indicators stay
+            visible however far the content above scrolls. The outer band is
+            transparent and just provides the gutter; the rail itself is a floating,
+            rounded, frosted ISLAND — the same shell-chrome language as the composer
+            and ShellCorners (token border + rest-shadow + backdrop blur) — instead
+            of a flat full-bleed strip, so it reads as a sleek docked control rather
+            than a boxy footer. */}
+        <div className="shrink-0 px-l pb-m pt-xs">
+          {/* `@container` makes the island the query context for the rail: its
+              width tracks --content-width (NOT the viewport), so the rail members
+              adapt to the space actually available (SystemHealth's `@…` variants),
+              staying on one line as long as they fit. */}
+          <div
+            className="@container mx-auto flex w-full items-center rounded-lg border border-outline-variant/50 bg-surface-low/70 px-l py-s shadow-rest backdrop-blur-md"
+            style={{ maxWidth: 'var(--content-width)' }}
+          >
+            <SystemHealth {...route} />
           </div>
         </div>
       </div>

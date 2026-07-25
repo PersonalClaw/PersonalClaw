@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Clock, Tag, Cpu, Zap, Users, ArrowUpCircle, ShieldAlert, Activity, MemoryStick, Network, HardDrive } from 'lucide-react'
+import { Clock, Tag, Cpu, Zap, Users, ArrowUpCircle, ShieldAlert, Activity, MemoryStick, Network, HardDrive, Stethoscope } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { api } from '../../../lib/api'
 import { confirm } from '../../../ui/dialog'
@@ -7,12 +7,18 @@ import { useDashboardLive } from '../DashboardLive'
 import { RowAction } from './kit'
 import type { RouteProps } from '../../../app/useQueryState'
 
+/** One rail metric — icon + value, with the word-label shed responsively. The
+ *  rail is a `@container` (DashboardPage), so the label hides below a container
+ *  width where the full-label strip would wrap (icon + value keep carrying the
+ *  reading; the full "value label" stays on the title tooltip so nothing is
+ *  lost). `shrink-0` keeps a metric from being squeezed mid-word before the
+ *  strip decides to wrap. */
 function Metric({ icon: Icon, value, label, tone }: { icon: LucideIcon; value: string | number; label: string; tone?: string }) {
   return (
-    <div className="flex items-center gap-s">
+    <div className="flex shrink-0 items-center gap-s" title={`${value} ${label}`}>
       <Icon size={15} className="shrink-0" style={{ color: tone ?? 'var(--color-on-surface-low)' }} />
       <span data-type="title-m" className="tabular-nums text-on-surface">{value}</span>
-      <span data-type="body-m" className="text-on-surface-low">{label}</span>
+      <span data-type="body-m" className="hidden text-on-surface-low @min-[1520px]:inline">{label}</span>
     </div>
   )
 }
@@ -36,6 +42,14 @@ function Spark({ samples, tone = 'var(--color-primary)', width = 56, height = 16
 
 const _SPARK_MAX = 30  // rolling window of samples (~30 × fast-poll ≈ a few minutes)
 
+/** Prettify a doctor capability slug for the rollup chip ("serving-fs" →
+ *  "Serving fs", "model-providers" → "Model providers"). Display only. */
+function capLabel(key: string): string {
+  if (!key) return ''
+  const s = key.replace(/[-/]/g, ' ')
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
 /** Format a kb/s rate compactly: MB/s over 1024, else KB/s (integer). */
 function fmtRate(kbs: number | undefined): string {
   const v = kbs ?? 0
@@ -47,7 +61,7 @@ function fmtRate(kbs: number | undefined): string {
  *  live rates come from /api/system (P27 — already computed server-side, surfaced
  *  here) with a rolling CPU sparkline; an inline Update action + a YOLO indicator. */
 export function SystemHealth({ navigate }: RouteProps) {
-  const { status, system } = useDashboardLive()
+  const { status, system, doctor } = useDashboardLive()
   // Client-side rolling buffer of CPU% samples for the sparkline (the backend
   // computes the instantaneous rate; history is cheap to keep here).
   const cpuHist = useRef<number[]>([])
@@ -83,15 +97,22 @@ export function SystemHealth({ navigate }: RouteProps) {
   const memTone = memPct >= 90 ? 'var(--color-warn)' : 'var(--color-info)'
 
   return (
-    <div className="flex h-full flex-wrap items-center gap-x-2xl gap-y-s pt-xs">
+    // `w-full` so the trailing `ml-auto` group can push "Details" to the rail's
+    // right edge (without it the strip is content-width and ml-auto has no slack).
+    // Gaps tighten as the container narrows, and word-labels/sparkline shed
+    // (see Metric + the Spark wrapper) so the strip stays one line as long as it
+    // fits — the container is the rail island, tracking --content-width. The
+    // island owns symmetric vertical padding now, so the strip just centers.
+    <div className="flex h-full w-full flex-wrap items-center gap-x-l gap-y-s @6xl:gap-x-xl">
       <Metric icon={Clock} value={status.uptime ?? '—'} label="uptime" />
       <Metric icon={Tag} value={`v${status.version ?? '?'}`} label={status.platform ?? ''} />
       {/* Live metrics from /api/system (P27) — render only when present. */}
       {system && (
         <>
-          <div className="flex items-center gap-s">
+          <div className="flex shrink-0 items-center gap-s">
             <Metric icon={Activity} value={`${Math.round(system.cpu_pct)}%`} label="cpu" tone={cpuTone} />
-            <Spark samples={cpuHist.current} tone={cpuTone} />
+            {/* Sparkline is decorative — first to go when the rail is tight. */}
+            <span className="hidden @3xl:inline-flex"><Spark samples={cpuHist.current} tone={cpuTone} /></span>
           </div>
           {system.mem_total_gb > 0 && (
             <Metric icon={MemoryStick} value={`${system.mem_used_gb.toFixed(1)}/${system.mem_total_gb}GB`} label="mem" tone={memTone} />
@@ -116,6 +137,14 @@ export function SystemHealth({ navigate }: RouteProps) {
         </span>
       )}
       <div className="ml-auto flex items-center gap-s">
+        {/* Doctor rollup — surfaces only when something needs attention; a healthy
+            system stays quiet (the strip is already dense). Links to the Doctor tab. */}
+        {doctor && !doctor.ok && (
+          <RowAction tone="danger" onClick={() => navigate('settings/doctor')}
+            title={doctor.core_ok ? `${capLabel(doctor.worst)} degraded — open Doctor` : 'Gateway core failing — open Doctor'}>
+            <Stethoscope size={14} /> {doctor.core_ok ? `${capLabel(doctor.worst)} degraded` : 'Core failing'}
+          </RowAction>
+        )}
         {status.update_available && (
           <RowAction tone="primary" onClick={runUpdate} title="Apply the available update">
             <ArrowUpCircle size={14} /> Update available

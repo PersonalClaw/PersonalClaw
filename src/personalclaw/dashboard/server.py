@@ -371,6 +371,23 @@ async def start_dashboard(
     app.router.add_get("/api/system", handlers.api_system)
     app.router.add_get("/api/auth-status", handlers.api_auth_status)
     app.router.add_get("/api/onboarding", handlers.api_onboarding)
+    # Doctor — tiered read-only health probes
+    app.router.add_get("/api/doctor", handlers.api_doctor)
+    # Specific GET sub-paths BEFORE the {capability} catch-all (aiohttp matches in
+    # registration order — otherwise "fixes"/"crash"/"remediation" bind as a capability).
+    app.router.add_get("/api/doctor/fixes", handlers.api_doctor_fixes)
+    app.router.add_get("/api/doctor/crash/{filename}", handlers.api_doctor_crash)
+    app.router.add_get("/api/doctor/remediation", handlers.api_doctor_remediation)
+    app.router.add_get("/api/doctor/{capability}", handlers.api_doctor_capability)
+    # No-model degraded-mode contract
+    app.router.add_get("/api/resilience/degraded", handlers.api_degraded)
+    # Confirm-gated fixes + trust simulators + selftest.
+    # POST routes don't collide with the {capability} GET; the two GETs above are
+    # ordered before it.
+    app.router.add_post("/api/doctor/fix/{fix_id}", handlers.api_doctor_fix_apply)
+    app.router.add_post("/api/doctor/simulate/surfacing", handlers.api_doctor_simulate_surfacing)
+    app.router.add_post("/api/model-providers/{name}/selftest", handlers.api_provider_selftest)
+    app.router.add_post("/api/doctor/remediation/run", handlers.api_doctor_remediation_run)
     # Skills marketplace
     from personalclaw.dashboard.handlers.skills import (
         api_ephemeral_skill_discard,
@@ -580,6 +597,10 @@ async def start_dashboard(
     app.router.add_get("/api/config/personalclaw", handlers.api_personalclaw_config)
     app.router.add_put("/api/config/personalclaw", handlers.api_personalclaw_config)
     app.router.add_patch("/api/config/personalclaw", handlers.api_personalclaw_config_patch)
+    app.router.add_get("/api/incident", handlers.api_incident)
+    app.router.add_post("/api/incident", handlers.api_incident)
+    app.router.add_post("/api/incident/resume", handlers.api_incident_resume)
+    app.router.add_get("/api/models/health", handlers.api_models_health)
     app.router.add_get("/api/dashboard/config", handlers.api_dashboard_config)
     app.router.add_put("/api/dashboard/config", handlers.api_dashboard_config)
 
@@ -807,6 +828,38 @@ async def start_dashboard(
     app.router.add_post("/api/tools/invoke", api_tool_invoke)
     app.router.add_post("/api/tools/toggle", api_tools_toggle)
     app.router.add_post("/api/tools/provider-toggle", api_providers_toggle)
+
+    # Manifest — the generated self-description (tools + routes + providers) an
+    # agent reads to drive this instance instead of guessing signatures.
+    from personalclaw.dashboard.handlers.manifest import api_manifest
+
+    app.router.add_get("/api/manifest", api_manifest)
+
+    # Legibility — the dashboard "Discover" section + hub: a curated tour of
+    # the parts of the system the user hasn't tried yet; dismissals persist and
+    # engaged areas auto-hide. Never writes or enables anything on the user's behalf.
+    from personalclaw.dashboard.handlers.legibility import (
+        api_discover,
+        api_discover_dismiss,
+    )
+
+    app.router.add_get("/api/legibility/discover", api_discover)
+    app.router.add_post("/api/legibility/discover/dismiss", api_discover_dismiss)
+
+    # Legibility — PClaw as a routed-context provider for external agents.
+    # GET /api/context backs the in-process get_context tool; the per-project
+    # regenerate endpoint renders marker-fenced adapters into a bound workspace_dir
+    # (opt-in via legibility.context_adapters, SEL-audited).
+    from personalclaw.dashboard.handlers.context import (
+        api_context_get,
+        api_project_context_regenerate,
+    )
+
+    app.router.add_get("/api/context", api_context_get)
+    app.router.add_post(
+        "/api/projects/{project_id}/context-adapters/regenerate",
+        api_project_context_regenerate,
+    )
 
     # Tasks — first-class entity with provider-based aggregation
     from personalclaw.tasks.handlers import register_task_routes

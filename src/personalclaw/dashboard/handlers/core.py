@@ -445,6 +445,24 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "agent.subagent_cwd_allowed_roots": {"type": "str_list", "max_items": 20},
     "security.denied_commands": {"type": "str_list", "max_items": 100, "each_regex": True},
     "security.egress": {"type": "egress"},
+    # The runtime-editable guardrail subset. Incident is
+    # NOT here — it's its own endpoint (a later session). Budgets/breaker/scan are
+    # plain scalars edited via Settings.
+    "guardrails.budgets.max_tokens_per_run": {"type": "int", "min": 0, "max": 100_000_000},
+    "guardrails.budgets.max_tokens_per_day": {"type": "int", "min": 0, "max": 1_000_000_000},
+    "guardrails.budgets.max_dollars_per_day": {"type": "float", "min": 0.0, "max": 100_000.0},
+    "guardrails.breaker.failure_threshold": {"type": "int", "min": 1, "max": 100},
+    "guardrails.breaker.recovery_secs": {"type": "float", "min": 0.0, "max": 3600.0},
+    "guardrails.scan_mode": {"type": "enum", "values": ["warn", "redact", "block"]},
+    "resilience.doctor_enabled": {"type": "bool"},
+    "resilience.degraded_indicator": {"type": "bool"},
+    "resilience.mid_turn_policy": {"type": "enum", "values": ["queue", "cancel_and_replace"]},
+    "resilience.cancel_replace_min_interval_secs": {"type": "float", "min": 0.0, "max": 60.0},
+    "resilience.remediation.enabled": {"type": "bool"},
+    "resilience.remediation.target_score": {"type": "int", "min": 0, "max": 100},
+    "resilience.remediation.max_cost_usd": {"type": "float", "min": 0.0, "max": 100.0},
+    "resilience.remediation.idle_minutes_healthy": {"type": "int", "min": 1, "max": 1440},
+    "resilience.remediation.tick_minutes_degraded": {"type": "int", "min": 1, "max": 1440},
     "tools.projection_rules": {"type": "projection_rules"},
     "agent.orchestrator_skill": {"type": "bool"},
     "agent.acp_concurrent_sessions": {"type": "bool"},
@@ -469,6 +487,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # Gates the poll-based message sources (filesystem/channel apps). The UI
     # toggle calls /api/inbox/restart after flipping so the service re-attaches.
     "inbox.enabled": {"type": "bool"},
+    # Platform-legibility toggles (§6 Discover tips, §7 context adapters).
+    # discover_tips gates the propose-don't-write Discover section + hub;
+    # context_adapters gates writing adapter files into opted-in project workspaces.
+    "legibility.discover_tips": {"type": "bool"},
+    "legibility.context_adapters": {"type": "bool"},
 }
 
 
@@ -706,6 +729,66 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
 
     cfg = AppConfig.load()
     return web.json_response(cfg.to_dict())
+
+
+# ── Incident kill switch ───────────────────────────────────────────────
+
+
+async def api_incident(request: web.Request) -> web.Response:
+    """GET /api/incident — current state; POST /api/incident — activate.
+
+    POST body: ``{reason?: str}``. Activation is SEL-audited and suspends all
+    unattended work within one poll interval; interactive chat is untouched.
+    """
+    from personalclaw.guardrails import incident as _incident
+
+    if request.method == "GET":
+        st = _incident.get_incident()
+        return web.json_response(
+            {"active": st.active, "reason": st.reason, "started_at": st.started_at}
+        )
+    # POST — activate.
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    reason = str(body.get("reason", "")) if isinstance(body, dict) else ""
+    st = _incident.activate(reason)
+    return web.json_response(
+        {"active": st.active, "reason": st.reason, "started_at": st.started_at}
+    )
+
+
+async def api_incident_resume(request: web.Request) -> web.Response:
+    """POST /api/incident/resume — turn incident mode OFF.
+
+    Resume is EXPLICIT: requires ``{confirm: true}`` so a stray request can't
+    silently re-enable unattended work. SEL-audited.
+    """
+    from personalclaw.guardrails import incident as _incident
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not (isinstance(body, dict) and body.get("confirm") is True):
+        return web.json_response({"error": 'resume requires {"confirm": true}'}, status=400)
+    st = _incident.resume()
+    return web.json_response({"active": st.active})
+
+
+# ── Provider health view ───────────────────────────────────────────────
+
+
+async def api_models_health(request: web.Request) -> web.Response:
+    """GET /api/models/health — derived per-provider health (breaker state, latency
+    percentiles, failure-mode distribution) from the model-call audit + breakers.
+
+    Derived, not collected: reads ``model_calls.jsonl`` + in-memory breaker state,
+    no telemetry infrastructure."""
+    from personalclaw.guardrails.health import provider_health
+
+    return web.json_response(await asyncio.to_thread(provider_health))
 
 
 # ── Local token bootstrap (Electron / local apps) ─────────────────────

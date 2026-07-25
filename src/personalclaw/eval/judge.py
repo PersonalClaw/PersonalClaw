@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 class JudgeVerdict:
     score: float
     reason: str
+    # A bounded chain-of-thought the judge writes BEFORE the score (AUTONOMY-
+    # GUARDRAILS §2.4): a structured-output constraint must not suppress the
+    # model's reasoning. Optional so an older/blank response still parses.
+    reasoning: str = ""
 
 
 class LLMJudge:
@@ -89,7 +93,11 @@ class LLMJudge:
             start = raw.index("{")
             end = raw.rindex("}") + 1
             data = json.loads(raw[start:end])
-            return JudgeVerdict(score=float(data["score"]), reason=data.get("reason", ""))
+            return JudgeVerdict(
+                score=float(data["score"]),
+                reason=data.get("reason", ""),
+                reasoning=str(data.get("reasoning", "")).strip(),
+            )
         except (ValueError, KeyError, json.JSONDecodeError):
             logger.warning("Judge returned unparseable response: %s", raw[:200])
             return JudgeVerdict(score=0, reason=f"parse_error: {raw[:100]}")

@@ -282,6 +282,29 @@ def _meta(label: str, help: str, **kwargs: object) -> dict:
     return {"label": label, "help": help, **kwargs}
 
 
+# Guard-flag spellings that DISABLE a guard; anything else (missing/unknown/typo)
+# stays ENABLED. Mirrors ``guardrails.flags.guard_flag`` but is defined locally to
+# keep the config loader free of a guardrails import (avoids an import cycle).
+_GUARD_FALSE = frozenset({"0", "false", "no", "off", "disable", "disabled", "n", "f"})
+
+
+def _guard_flag(value: object) -> bool:
+    """Parse a guard-class flag fail-safe: missing/unknown ⇒ ``True`` (enabled).
+
+    Only an explicit bool ``False``, ``0``, or a known falsy token disables. See the
+    §5 fail-safe tenet — a guard's ambiguity must fail ON.
+    """
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() not in _GUARD_FALSE
+    return True
+
+
 _BOT_NAME_MAX = 50
 _BOT_NAME_RE = _re.compile(r"[^a-zA-Z0-9 _\-.]")
 
@@ -448,6 +471,39 @@ class SessionConfig:
         metadata=_meta(
             "Warm Pool TTL",
             "Max age in seconds for pooled processes. Stale processes are discarded at claim time. 0 disables.",  # noqa: E501
+        ),
+    )
+
+
+@dataclass
+class LegibilityConfig:
+    """Platform-legibility features (Platform-Legibility §5-§7).
+
+    Two independent, user-facing toggles. ``discover_tips`` gates the dashboard
+    "Discover" section and the Discover hub (§6) — a curated, propose-don't-write
+    tour of the system that never enables anything on its own. ``context_adapters``
+    gates writing routed-context adapter files (CLAUDE.md/AGENTS.md/.cursorrules)
+    into an opted-in project's bound workspace (§7) — off by default because it
+    writes into user project dirs.
+    """
+
+    discover_tips: bool = field(
+        default=True,
+        metadata=_meta(
+            "Discover tips",
+            "Show the Discover section on the dashboard and the Discover hub — a "
+            "curated tour of the parts of PersonalClaw you haven't tried yet, each a "
+            "deep link into the feature. It only points; it never enables anything.",
+        ),
+    )
+    context_adapters: bool = field(
+        default=False,
+        metadata=_meta(
+            "Context Adapters",
+            "When on, PersonalClaw renders routed-context adapter files "
+            "(CLAUDE.md / AGENTS.md / .cursorrules) into each opted-in project's "
+            "bound workspace directory, fenced by PCLAW markers. Off by default — "
+            "it writes files into your project directories.",
         ),
     )
 
@@ -1023,6 +1079,216 @@ class EgressConfig:
 
 
 @dataclass
+class BudgetConfig:
+    """Default spend ceilings for unattended work (AUTONOMY-GUARDRAILS §1.1).
+
+    Zero means UNLIMITED for that dimension — the conservative default so an
+    existing user's unattended work is never suddenly capped on upgrade. A
+    ceiling bites the ``run`` scope (one goal-loop / cron fire) and the ``day``
+    scope (all unattended spend for a calendar day, per the ``spend.json`` meter).
+    Per-trigger overrides arrive with AUTOMATION-SUBSTRATE (Trigger.gates); until
+    then these globals apply to every unattended run.
+    """
+
+    max_tokens_per_run: int = field(
+        default=0,
+        metadata=_meta(
+            "Max Tokens / Run",
+            "Token ceiling for a single unattended run (goal-loop cycle, cron fire, "
+            "subagent). 0 = unlimited. At the ceiling the run pauses into needs-input.",
+        ),
+    )
+    max_tokens_per_day: int = field(
+        default=0,
+        metadata=_meta(
+            "Max Tokens / Day",
+            "Token ceiling for ALL unattended spend in a calendar day (across every "
+            "trigger). 0 = unlimited. At the ceiling further unattended runs are "
+            "skipped + paused until the next day.",
+        ),
+    )
+    max_dollars_per_day: float = field(
+        default=0.0,
+        metadata=_meta(
+            "Max Dollars / Day",
+            "Estimated-dollar ceiling for all unattended spend in a calendar day. "
+            "0 = unlimited. Estimates use provider-reported usage where available, "
+            "else a conservative heuristic.",
+        ),
+    )
+
+
+@dataclass
+class BreakerConfig:
+    """Per-provider circuit-breaker tuning (AUTONOMY-GUARDRAILS §2.3).
+
+    Consumed by the model-call chokepoint's breaker registry. Defaults match the
+    breaker module's built-ins; a value here overrides them for every provider.
+    """
+
+    failure_threshold: int = field(
+        default=5,
+        metadata=_meta(
+            "Breaker Failure Threshold",
+            "Consecutive failures before a provider's circuit breaker OPENs (fails "
+            "fast during an outage instead of stacking timeouts).",
+        ),
+    )
+    recovery_secs: float = field(
+        default=30.0,
+        metadata=_meta(
+            "Breaker Recovery Seconds",
+            "How long an OPEN breaker waits before allowing one HALF_OPEN probe.",
+        ),
+    )
+
+
+@dataclass
+class GuardrailsConfig:
+    """The personal safety-floor substrate (AUTONOMY-GUARDRAILS).
+
+    A *personal* safety floor — one user, one gateway, config plus one policy
+    check per seam. Session 1 shipped the model-call chokepoint (breaker + hard
+    timeout + audit + typed output); Session 2 adds spend metering + the outbound
+    scan mode. Later sessions add the denylist, incident kill switch, and named
+    safety profiles.
+    """
+
+    budgets: BudgetConfig = field(
+        default_factory=BudgetConfig,
+        metadata=_meta("Budgets", "Default spend ceilings for unattended work."),
+    )
+    breaker: BreakerConfig = field(
+        default_factory=BreakerConfig,
+        metadata=_meta("Circuit Breaker", "Per-provider model-call breaker tuning."),
+    )
+    scan_mode: str = field(
+        default="redact",
+        metadata=_meta(
+            "Outbound Scan Mode",
+            "How the model-call seam handles secrets/PII in an outbound prompt bound "
+            "for a REMOTE provider: 'warn' (log + proceed), 'redact' (substitute + "
+            "proceed), or 'block' (refuse the call). Local-only providers always warn "
+            "(the content never leaves the machine).",
+            enum=["warn", "redact", "block"],
+            # Guard-class: the default must never be the leaky 'warn' (which
+            # would send secrets to a remote provider). A config typo falls back to
+            # this default, so it must be SAFE. Enforced by test_guardrails_flags.py.
+            guard_class=True,
+            safe_values=["redact", "block"],
+        ),
+    )
+
+
+@dataclass
+class RemediationConfig:
+    """Health-scored self-remediation engine tuning (PLATFORM-RESILIENCE §4).
+
+    The engine runs as one heartbeat-driven maintenance job. ``enabled`` is guard-class
+    only in the sense that disabling it restores today's heartbeat maintenance (kept
+    callable), so it defaults ON but is a plain toggle. The caps are the stopping
+    conditions: reach ``target_score`` or spend ``max_cost_usd`` (per run), whichever
+    first. Cadence adapts: healthy → ``idle_minutes_healthy`` between runs, degraded →
+    ``tick_minutes_degraded``.
+    """
+
+    enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Remediation Engine",
+            "Run the health-scored maintenance engine (FTS/embedding re-index, orphan "
+            "prune, skill aging) as one background job. Disabling it falls back to the "
+            "legacy per-tick heartbeat maintenance.",
+        ),
+    )
+    target_score: int = field(
+        default=90,
+        metadata=_meta(
+            "Target Health Score",
+            "The engine stops a run once the health score reaches this (0-100).",
+        ),
+    )
+    max_cost_usd: float = field(
+        default=1.0,
+        metadata=_meta(
+            "Max Cost / Run",
+            "Dollar ceiling for judgment-lane (model-touching) remediation work in one "
+            "run. Deterministic jobs (re-index, prune) are free and never blocked.",
+        ),
+    )
+    idle_minutes_healthy: int = field(
+        default=60,
+        metadata=_meta("Idle Cadence (healthy)", "Minutes between runs when healthy (score ≥95)."),
+    )
+    tick_minutes_degraded: int = field(
+        default=5,
+        metadata=_meta("Tick Cadence (degraded)", "Minutes between runs when degraded."),
+    )
+
+
+@dataclass
+class ResilienceConfig:
+    """Platform-resilience knobs (PLATFORM-RESILIENCE §7).
+
+    Two guard-class switches: the Doctor health surface and the no-model
+    degraded-mode indicator. Both are **guard-class** — a missing or unknown value
+    parses as ENABLED (fail-safe, §5 tenet): a config typo must not silently hide the
+    Doctor or the degraded chip, which are the surfaces that make a degraded system
+    legible. Plus the platform default mid-turn message policy (§6). The
+    remediation-engine sub-config (target-score / max-cost / idle cadence) is a later
+    session's field.
+    """
+
+    doctor_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Doctor",
+            "Show the Doctor health surface (Settings → Doctor + GET /api/doctor). "
+            "Guard-class: a missing/unknown value keeps it ON.",
+            guard_class=True,
+            safe_values=[True],
+        ),
+    )
+    degraded_indicator: bool = field(
+        default=True,
+        metadata=_meta(
+            "Degraded-Mode Indicator",
+            "Show the no-model degraded-mode chip in the shell (and GET "
+            "/api/resilience/degraded) when a model-dependent surface is running on its "
+            "LLM-free floor. Guard-class: a missing/unknown value keeps it ON.",
+            guard_class=True,
+            safe_values=[True],
+        ),
+    )
+    mid_turn_policy: str = field(
+        default="queue",
+        metadata=_meta(
+            "Mid-Turn Message Policy",
+            "What happens to a follow-up message sent while a turn is still "
+            "generating: 'queue' (deliver it next turn — the default, safe behavior) "
+            "or 'cancel_and_replace' (cancel the in-flight answer and start fresh with "
+            "the new message). Applies to interactive turns only; unattended work "
+            "(loops, cron, subagents) always queues. A per-channel override wins over "
+            "this platform default.",
+            enum=["queue", "cancel_and_replace"],
+        ),
+    )
+    cancel_replace_min_interval_secs: float = field(
+        default=2.0,
+        metadata=_meta(
+            "Cancel-and-Replace Debounce",
+            "Minimum seconds between cancel-and-replace actions on one session, so a "
+            "burst of rapid follow-ups produces ONE cancel + the last message (the "
+            "intermediate ones coalesce) rather than N cancels.",
+        ),
+    )
+    remediation: RemediationConfig = field(
+        default_factory=RemediationConfig,
+        metadata=_meta("Remediation Engine", "Health-scored maintenance engine tuning."),
+    )
+
+
+@dataclass
 class SecurityConfig:
     """Security controls for the agent's shell access.
 
@@ -1046,6 +1312,17 @@ class SecurityConfig:
             "Egress Policy",
             "Operator overrides for the outbound network guard (allow/deny hosts, "
             "private-network opt-in).",
+        ),
+    )
+    autonomy_denylist: list[dict] = field(
+        default_factory=list,
+        metadata=_meta(
+            "Autonomy Denylist",
+            "Path/action deny rules for autonomous action-provider runs "
+            "(AUTONOMY-GUARDRAILS §1.2). Each rule is "
+            "{paths:[glob], actions:[class], verdict: block|needs_human}. Enforced at "
+            "every action-dispatch seam, so an app-contributed provider inherits it. "
+            "Composes with (never overrides) the always-on built-in denylists.",
         ),
     )
 
@@ -1453,6 +1730,14 @@ class AppConfig:
         default_factory=SecurityConfig,
         metadata=_meta("Security", "Shell-command security controls."),
     )
+    guardrails: GuardrailsConfig = field(
+        default_factory=GuardrailsConfig,
+        metadata=_meta("Guardrails", "Autonomy safety floor — budgets, breaker, scan."),
+    )
+    resilience: ResilienceConfig = field(
+        default_factory=ResilienceConfig,
+        metadata=_meta("Resilience", "Doctor health surface + no-model degraded indicator."),
+    )
     inbox: InboxConfig = field(
         default_factory=InboxConfig,
         metadata=_meta("Inbox", "Reads messages, drafts replies."),
@@ -1465,6 +1750,12 @@ class AppConfig:
     dashboard: DashboardConfig = field(
         default_factory=DashboardConfig,
         metadata=_meta("Dashboard", "Dashboard UI settings."),
+    )
+    legibility: LegibilityConfig = field(
+        default_factory=LegibilityConfig,
+        metadata=_meta(
+            "Legibility", "Platform-legibility features — Discover tips + context adapters."
+        ),
     )
     hooks: dict = field(
         default_factory=dict,
@@ -1554,6 +1845,9 @@ class AppConfig:
         dashboard_data = data.get("dashboard", {})
         if not isinstance(dashboard_data, dict):
             dashboard_data = {}
+        legibility_data = data.get("legibility", {})
+        if not isinstance(legibility_data, dict):
+            legibility_data = {}
         inbox_data = data.get("inbox", {})
         if not isinstance(inbox_data, dict):
             inbox_data = {}
@@ -1575,6 +1869,22 @@ class AppConfig:
         security_data = data.get("security", {})
         if not isinstance(security_data, dict):
             security_data = {}
+
+        guardrails_data = data.get("guardrails", {})
+        if not isinstance(guardrails_data, dict):
+            guardrails_data = {}
+        resilience_data = data.get("resilience", {})
+        if not isinstance(resilience_data, dict):
+            resilience_data = {}
+        _remediation_data = resilience_data.get("remediation", {})
+        if not isinstance(_remediation_data, dict):
+            _remediation_data = {}
+        budgets_data = guardrails_data.get("budgets", {})
+        if not isinstance(budgets_data, dict):
+            budgets_data = {}
+        breaker_data = guardrails_data.get("breaker", {})
+        if not isinstance(breaker_data, dict):
+            breaker_data = {}
 
         # Parse agents section into dict[str, AgentProfile]
         raw_agents = data.get("agents", {})
@@ -1719,6 +2029,10 @@ class AppConfig:
                 terminal=dashboard_data.get("terminal", {"enabled": True}),
                 dashboard_layout=dashboard_data.get("dashboard_layout", {}) or {},
             ),
+            legibility=LegibilityConfig(
+                discover_tips=bool(legibility_data.get("discover_tips", True)),
+                context_adapters=bool(legibility_data.get("context_adapters", False)),
+            ),
             hooks=data.get("hooks", {}),
             agents=agents,
             default_agent=default_agent_val,
@@ -1793,6 +2107,54 @@ class AppConfig:
                     ],
                     allow_private=bool(
                         (security_data.get("egress", {}) or {}).get("allow_private", False)
+                    ),
+                ),
+                autonomy_denylist=[
+                    d
+                    for d in (security_data.get("autonomy_denylist", []) or [])
+                    if isinstance(d, dict)
+                ],
+            ),
+            guardrails=GuardrailsConfig(
+                budgets=BudgetConfig(
+                    max_tokens_per_run=max(0, int(budgets_data.get("max_tokens_per_run", 0))),
+                    max_tokens_per_day=max(0, int(budgets_data.get("max_tokens_per_day", 0))),
+                    max_dollars_per_day=max(
+                        0.0, float(budgets_data.get("max_dollars_per_day", 0.0))
+                    ),
+                ),
+                breaker=BreakerConfig(
+                    failure_threshold=max(1, int(breaker_data.get("failure_threshold", 5))),
+                    recovery_secs=max(0.0, float(breaker_data.get("recovery_secs", 30.0))),
+                ),
+                scan_mode=(
+                    str(guardrails_data.get("scan_mode", "redact"))
+                    if guardrails_data.get("scan_mode", "redact") in ("warn", "redact", "block")
+                    else "redact"
+                ),
+            ),
+            resilience=ResilienceConfig(
+                # Guard-class: parse fail-safe — missing/unknown ⇒ enabled.
+                doctor_enabled=_guard_flag(resilience_data.get("doctor_enabled")),
+                degraded_indicator=_guard_flag(resilience_data.get("degraded_indicator")),
+                mid_turn_policy=(
+                    str(resilience_data.get("mid_turn_policy", "queue"))
+                    if resilience_data.get("mid_turn_policy", "queue")
+                    in ("queue", "cancel_and_replace")
+                    else "queue"
+                ),
+                cancel_replace_min_interval_secs=max(
+                    0.0, float(resilience_data.get("cancel_replace_min_interval_secs", 2.0))
+                ),
+                remediation=RemediationConfig(
+                    enabled=_guard_flag(_remediation_data.get("enabled")),
+                    target_score=max(0, min(100, int(_remediation_data.get("target_score", 90)))),
+                    max_cost_usd=max(0.0, float(_remediation_data.get("max_cost_usd", 1.0))),
+                    idle_minutes_healthy=max(
+                        1, int(_remediation_data.get("idle_minutes_healthy", 60))
+                    ),
+                    tick_minutes_degraded=max(
+                        1, int(_remediation_data.get("tick_minutes_degraded", 5))
                     ),
                 ),
             ),
@@ -1934,6 +2296,7 @@ class AppConfig:
             "session": asdict(self.session),
             "memory": asdict(self.memory),
             "dashboard": asdict(self.dashboard),
+            "legibility": asdict(self.legibility),
             "hooks": self.hooks,
             "agents": {name: asdict(agent_cfg) for name, agent_cfg in self.agents.items()},
             "default_agent": self.default_agent,
@@ -1945,6 +2308,8 @@ class AppConfig:
             "workflows": asdict(self.workflows),
             "learning": asdict(self.learning),
             "security": asdict(self.security),
+            "guardrails": asdict(self.guardrails),
+            "resilience": asdict(self.resilience),
             "timezone": self.timezone,
             "auto_update": self.auto_update,
             "snapshot_dir": self.snapshot_dir,

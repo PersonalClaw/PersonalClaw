@@ -274,13 +274,16 @@ def save_conversation_turn(
         )
 
 
-async def one_shot_completion(prompt: str, *, use_case: str = "background") -> str:
+async def one_shot_completion(
+    prompt: str, *, use_case: str = "background", output_type: type | None = None
+) -> str:
     """Send a single prompt to the system's configured LLM and return the response.
 
     Resolves the provider through the same use-case bridge the chat path uses —
     which reads the active model selection from ``active_models.json`` (Settings →
     Models) — then builds a temporary instance, streams the response, and returns
-    the collected text.
+    the collected text. The resolved provider is wrapped in the model-call guard
+    (circuit breaker + hard timeout + attempt audit) at the bridge seam.
 
     ``use_case`` is an INFORMAL label (``"background"``, ``"ingestion"``) — these
     are not model-axis use cases, so they map to ``"reasoning"``, a chat
@@ -288,6 +291,16 @@ async def one_shot_completion(prompt: str, *, use_case: str = "background") -> s
     ``"reasoning"`` rather than ``"chat"`` deliberately: ``chat``/``code_tools``
     route a native agent through the in-process agent runtime, but a one-shot
     completion wants a plain model provider, which the ``reasoning`` axis resolves.
+
+    ``output_type`` (AUTONOMY-GUARDRAILS §2.4) opts into typed structured output:
+    pass ``dict`` or ``list`` to require the response parse as that JSON shape.
+    On a parse miss the call is retried ONCE with a targeted correction note
+    injected (the dominant real-world cause is the schema not being visible), and
+    if it still fails an :class:`~personalclaw.guardrails.failure.OutputContractError`
+    is raised — replacing the silent ``None`` degrade that ``parse_llm_json``
+    returned at every call site. Returns the raw text unchanged when ``output_type``
+    is ``None`` (the response is still a ``str``; typed callers parse the returned
+    text, e.g. via ``json.loads``).
     """
     from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
     from personalclaw.providers.use_cases import VALID_USE_CASES
@@ -322,7 +335,21 @@ async def one_shot_completion(prompt: str, *, use_case: str = "background") -> s
 
     try:
         await provider.start()
-        return await stream_and_collect(provider, prompt)
+        text = await stream_and_collect(provider, prompt)
+        if output_type is None:
+            return text
+        # Typed path: parse; on a miss, ONE targeted correction-note retry.
+        if _parse_llm(text, output_type) is not None:
+            return text
+        from personalclaw.guardrails.failure import FailureMode, correction_note
+
+        retry_prompt = f"{prompt}\n\n{correction_note(FailureMode.SCHEMA_VIOLATION)}"
+        retry_text = await stream_and_collect(provider, retry_prompt)
+        if _parse_llm(retry_text, output_type) is not None:
+            return retry_text
+        from personalclaw.guardrails.failure import OutputContractError
+
+        raise OutputContractError(getattr(output_type, "__name__", str(output_type)), retry_text)
     finally:
         try:
             await provider.shutdown()

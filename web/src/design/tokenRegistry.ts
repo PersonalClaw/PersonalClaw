@@ -122,6 +122,12 @@ export const TOKENS: Token[] = [
   s('--radius-scale', 'Corner roundness', 'Shape', 1, 0, 2, 0.05),
 
   // ── 3D surface (the dot wave point-of-view + dots) ──
+  // Master backdrop switch, first in the group so it reads as the mode selector
+  // the rest of the 3D-surface controls tune. 'waves' = the animated breathing
+  // dot-wave surface (default); 'still' = the same field frozen (no breathing);
+  // 'glow' = only the soft light hugging the composer, no dot lattice; 'none' =
+  // off (plain canvas). DotGlow reads this live from the appearance store.
+  sel('--bg-style', 'Background', '3D surface', 'waves', ['waves', 'still', 'glow', 'none']),
   s('--surface-angle', 'View angle', '3D surface', 45, 0, 180, 1, '°', 'surfaceAngle'),
   s('--surface-distance', 'View distance', '3D surface', 1, 0.4, 2.2, 0.05, '', 'surfaceDistance'),
   s('--dot-size', 'Dot size', '3D surface', 1, 0.3, 9, 0.1, '', 'dotSize'),

@@ -223,6 +223,12 @@ class EventTriggerEngine:
 
     async def _fire(self, t: EventTrigger, *, event_type: str, key: str, value: str) -> None:
         try:
+            # Incident kill switch: suspend unattended event-trigger fires.
+            from personalclaw.guardrails.incident import incident_active
+
+            if incident_active():
+                return
+
             from personalclaw.action_providers import ActionContext, get_action_provider
 
             provider = get_action_provider(t.action_provider)
@@ -237,9 +243,22 @@ class EventTriggerEngine:
             ctx = ActionContext(
                 event=f"memory.{event_type}", context=f"{key}: {value[:200]}", payload=payload
             )
+            # Denylist gate: a blocked action never runs,
+            # so an app-contributed provider fired by a memory event inherits it.
+            from personalclaw.guardrails.denylist import enforce_action
+
+            if enforce_action(t.action_provider, t.action_config, ctx).blocked:
+                return
             await provider.execute(t.action_config, ctx)
-        except Exception:
-            logger.debug("event-trigger action failed for %s", t.id, exc_info=True)
+        except Exception as exc:
+            # This fire is background/fire-and-forget (no
+            # result surface), so the coded WHAT/WHY/FIX envelope becomes the log
+            # line — a raising app provider fails legibly here as at the other two
+            # dispatch seams, rather than as an opaque debug traceback.
+            from personalclaw.action_providers import provider_failure
+
+            envelope = provider_failure(t.action_provider, exc)
+            logger.warning("event-trigger action failed for %s — %s", t.id, envelope.render())
 
 
 def emit_memory_event(*, event_type: str, key: str, value: str | None, now: float) -> None:

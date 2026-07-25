@@ -570,7 +570,57 @@ async def run_script_hook(
         )
 
     ctx = ActionContext(event=hook.event, context=context, payload=hook_event)
-    result = await provider.execute(hook.provider_config, ctx, timeout=hook.timeout)
+    # Incident kill switch: a script hook's ACTION is an automated
+    # side-effect (bash/webhook/spawn), so it is suspended during an incident even
+    # if its triggering event occurred in an interactive turn — the chat STREAM
+    # keeps flowing (a separate path); only the automated action pauses.
+    from personalclaw.guardrails.incident import incident_active
+
+    if incident_active():
+        hook.last_run = time.time()
+        hook.last_status = "skipped_incident"
+        hook.run_count += 1
+        return ScriptHookResult(
+            hook_id=hook.id,
+            hook_name=hook.name,
+            event=hook.event,
+            error="skipped: incident mode active",
+        )
+    # Denylist gate: a hook's action config is checked
+    # BEFORE dispatch, so an app-contributed provider inherits the denylist. A
+    # blocked action returns a blocked result rather than executing.
+    from personalclaw.guardrails.denylist import enforce_action
+
+    _deny = enforce_action(hook.provider, hook.provider_config, ctx)
+    if _deny.blocked:
+        hook.last_run = time.time()
+        hook.last_status = "blocked"
+        hook.run_count += 1
+        return ScriptHookResult(
+            hook_id=hook.id,
+            hook_name=hook.name,
+            event=hook.event,
+            error=f"blocked by guardrails denylist: {_deny.reason}",
+        )
+    try:
+        result = await provider.execute(hook.provider_config, ctx, timeout=hook.timeout)
+    except Exception as exc:  # noqa: BLE001 - a misbehaving provider must not crash the seam
+        # A provider that RAISES (rather than returning a
+        # failed result) is wrapped in the shared WHAT/WHY/FIX envelope here, so
+        # app-contributed providers inherit it without knowing it exists.
+        from personalclaw.action_providers import provider_failure
+
+        logger.warning("Action provider %r raised for hook %s", hook.provider, hook.id)
+        hook.last_run = time.time()
+        hook.last_status = "error"
+        hook.run_count += 1
+        agent_error = provider_failure(hook.provider, exc)
+        return ScriptHookResult(
+            hook_id=hook.id,
+            hook_name=hook.name,
+            event=hook.event,
+            error=agent_error.render(),
+        )
 
     hook.last_run = time.time()
     if result.blocked:
@@ -587,6 +637,9 @@ async def run_script_hook(
         hook.last_status = "error"
     hook.run_count += 1
 
+    # A provider that populated the envelope on a failed result surfaces its
+    # WHAT/WHY/FIX text as the error (else the plain provider error string).
+    error_text = result.agent_error.render() if result.agent_error is not None else result.error
     return ScriptHookResult(
         hook_id=hook.id,
         hook_name=hook.name,
@@ -594,7 +647,7 @@ async def run_script_hook(
         stdout=result.stdout,
         stderr=result.stderr,
         exit_code=result.exit_code if result.exit_code is not None else -1,
-        error=result.error,
+        error=error_text,
         duration_ms=result.duration_ms,
     )
 

@@ -779,6 +779,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                 originalLength: d.original_length != null ? Number(d.original_length) : sg.originalLength,
                 recoveryHints: Array.isArray(d.recovery_hints) && d.recovery_hints.length
                   ? (d.recovery_hints as string[]) : sg.recoveryHints,
+                agentError: d.agent_error ? (d.agent_error as ToolSegment['agentError']) : sg.agentError,
                 ok: d.ok === false ? false : sg.ok }
             : sg))
         break
@@ -835,6 +836,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       case 'chat_done': {
         coalescer.flushNow()  // fully reveal any buffered tail before the turn closes
         breakText.current = true; markStreaming(false); setStatusText(''); setLatestActivity(null)
+        // Cancel-and-replace: this turn was superseded by a
+        // rapid follow-up. The replacement was queued server-side and the next turn
+        // auto-runs; surface a brief note so the truncated answer doesn't read as a
+        // silent failure. No ghost bubble — the turn closes cleanly here.
+        if (d.superseded) setStatusText('Superseded by your new message…')
         // Mid-stream messages are queued SERVER-side and the backend dispatches
         // the next one itself (streaming will flip back on via the next turn's
         // events). Nothing to drain client-side.
