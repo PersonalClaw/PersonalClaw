@@ -10,10 +10,11 @@ import { FormSkeleton } from '../../ui/ListScaffold'
 type LegibilityCfg = Record<string, unknown>
 
 /** Legibility — how PersonalClaw describes its own capabilities. Two switches:
- *  capability tips (the dashboard "Discover" power-up that proposes one untouched
- *  capability at a time) and context files (marker-fenced PClaw blocks written into
- *  opted-in projects' CLAUDE.md / AGENTS.md so external agents inherit your rules).
- *  Each control PATCHes a single allowlisted path via /api/config/personalclaw. */
+ *  Discover tips (the curated tour on the dashboard + the Discover hub that guides
+ *  you to the parts of the system you haven't tried yet) and context files
+ *  (marker-fenced PClaw blocks written into opted-in projects' CLAUDE.md / AGENTS.md
+ *  so external agents inherit your rules). Each control PATCHes a single allowlisted
+ *  path via /api/config/personalclaw. */
 export function LegibilityPanel() {
   const [cfg, setCfg] = useState<LegibilityCfg | null>(null)
 
@@ -43,10 +44,10 @@ export function LegibilityPanel() {
     <div>
       <PanelHeader title="Legibility" hint="How PersonalClaw describes its own capabilities — to you on the dashboard, and to the external agents you point at your projects. Both are proposals: nothing here is ever enabled on your behalf." />
 
-      <Section title="Capability discovery" hint="Surfaces one capability this instance has but you've never used, on the dashboard.">
+      <Section title="Discover" hint="A curated tour of the parts of PersonalClaw you haven't tried yet, on the dashboard and the Discover hub.">
         <div className="rounded-lg bg-surface-container px-4 py-1">
-          <ToggleRow label="Capability tips" cfg={cfg} field="power_ups" patch={patch}
-            hint="Show the dashboard “Discover” card — a two-sentence mini-lesson for one untouched capability at a time, with a deep link to try it. Dismiss hides a capability forever; nothing is auto-enabled." />
+          <ToggleRow label="Discover tips" cfg={cfg} field="discover_tips" patch={patch}
+            hint="Show the dashboard Discover section and the Discover hub — hand-picked tips that guide you to features like Chat, Tasks, Projects, Knowledge, and Automation, each a deep link to try it. A tip auto-hides once you've used that feature; dismiss hides one forever. Nothing is ever enabled on your behalf." />
         </div>
       </Section>
 

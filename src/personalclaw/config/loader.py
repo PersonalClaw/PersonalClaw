@@ -456,20 +456,21 @@ class SessionConfig:
 class LegibilityConfig:
     """Platform-legibility features (Platform-Legibility §5-§7).
 
-    Two independent, user-facing toggles. ``power_ups`` gates the dashboard
-    capability-discovery widget (§6) — a propose-don't-write nudge that never
-    enables anything on its own. ``context_adapters`` gates writing routed-context
-    adapter files (CLAUDE.md/AGENTS.md/.cursorrules) into an opted-in project's
-    bound workspace (§7) — off by default because it writes into user project dirs.
+    Two independent, user-facing toggles. ``discover_tips`` gates the dashboard
+    "Discover" section and the Discover hub (§6) — a curated, propose-don't-write
+    tour of the system that never enables anything on its own. ``context_adapters``
+    gates writing routed-context adapter files (CLAUDE.md/AGENTS.md/.cursorrules)
+    into an opted-in project's bound workspace (§7) — off by default because it
+    writes into user project dirs.
     """
 
-    power_ups: bool = field(
+    discover_tips: bool = field(
         default=True,
         metadata=_meta(
-            "Power-ups",
-            "Show the capability-discovery power-ups widget on the dashboard — "
-            "one untouched capability at a time with a two-sentence lesson and a "
-            "'try it' link. It only proposes; it never enables anything for you.",
+            "Discover tips",
+            "Show the Discover section on the dashboard and the Discover hub — a "
+            "curated tour of the parts of PersonalClaw you haven't tried yet, each a "
+            "deep link into the feature. It only points; it never enables anything.",
         ),
     )
     context_adapters: bool = field(
@@ -1501,7 +1502,7 @@ class AppConfig:
     legibility: LegibilityConfig = field(
         default_factory=LegibilityConfig,
         metadata=_meta(
-            "Legibility", "Platform-legibility features — power-ups + context adapters."
+            "Legibility", "Platform-legibility features — Discover tips + context adapters."
         ),
     )
     hooks: dict = field(
@@ -1761,7 +1762,7 @@ class AppConfig:
                 dashboard_layout=dashboard_data.get("dashboard_layout", {}) or {},
             ),
             legibility=LegibilityConfig(
-                power_ups=bool(legibility_data.get("power_ups", True)),
+                discover_tips=bool(legibility_data.get("discover_tips", True)),
                 context_adapters=bool(legibility_data.get("context_adapters", False)),
             ),
             hooks=data.get("hooks", {}),

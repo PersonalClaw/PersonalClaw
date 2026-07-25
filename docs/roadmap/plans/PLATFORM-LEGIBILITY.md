@@ -570,3 +570,54 @@ DoD gate before the commit. No E1–E6 blocker. Clean-break under the pre-1.0 ba
 opt-in derived artifacts in user project dirs, removable by hand — no migration-bearing state).
 Local branch `feature-platform-legibility-s5` (off S4's branch), unpushed. **Platform-Legibility
 Pack complete (S1–S5).**
+
+### 2026-07-25 — §6 reshaped: tool-derived power-ups → curated Discover hub — DEVIATION (owner-directed)
+
+**DEVIATION from §6 as written.** §6 shipped (S5c) a tool-usage-telemetry-driven "power-ups"
+widget: it cycled ONE untouched *tool* at a time, its lesson a deterministic template over
+`/api/manifest` entries, its denominator the manifest tool set minus used (`tool_usage.json`) minus
+dismissed. Owner feedback rejected the *source*: the tool surface is an implementation detail the
+user is never meant to drive by hand, so "you haven't called `knowledge_add` yet" is noise, not
+guidance. Owner locked three decisions: (1) tip source = a **hand-authored catalog** of user-facing
+*areas* (Chat, goal loops, automation, Tasks, Projects, Inbox, Knowledge, Memory, Skills, Apps),
+each a deep link into the page that owns it — the tool-derived generator DELETED outright (clean
+break); (2) hub form = a **dedicated Discover page** (`#/discover`, in the command palette) listing
+every tip grouped by area, dismissable, with the dashboard section a rotating spotlight linking in;
+(3) dismiss rule = **explicit dismiss (persists forever) AND auto-hide once the area is used**,
+"used" detected from state that already exists. The soul guardrail (propose-don't-write: points +
+hides, never enables) is preserved unchanged.
+
+**Clean break.** Deleted `legibility/power_ups.py`, `legibility/tool_usage.py`, `tests/test_power_ups.py`,
+`tests/test_tool_usage.py`, and the `ToolUsageStore().record_use(...)` call in
+`agents/native/runtime.py` (the counter had no remaining reader). New `legibility/discover.py`: a
+frozen-dataclass `CATALOG` of 10 tips, per-area cheap `_engaged_*` checks (one dir listing / JSON
+read / SQLite count each, isolated so a failure reads "not engaged"), `select_visible` (catalog
+minus dismissed minus engaged areas, catalog order preserved), `_group_by_area`, and
+`compute_discover` honoring the renamed kill switch. Config flag `legibility.power_ups` →
+`discover_tips` (dataclass `_meta`, `load()`, `_EDITABLE_CONFIG`, `api.ts`, both Settings surfaces).
+Endpoints `GET /api/legibility/power-ups` → `GET /api/legibility/discover` +
+`POST /api/legibility/discover/dismiss`; the standalone `/dismissed` GET dropped (the discover
+payload already excludes dismissed). Dismissal-persistence field
+`entity_settings/legibility.json:dismissed_power_ups` → `dismissed_discover_tips`. FE: `PowerUps.tsx`
+→ `Discover.tsx` (dashboard spotlight, `SPOTLIGHT=3` + "See all" → hub) + new
+`pages/discover/DiscoverPage.tsx` (WorkbenchLayout hub, all areas grouped, per-tip dismiss); wired
+into `App.tsx` (`ROUTABLE` + `renderPage` + palette; NO nav-rail tile — the dashboard spotlight is
+the persistent entry point, matching the owner's "links into the full hub" model). `routes.md` +
+`index.md` regenerated (430 total / 428 agent-callable; discover routes present, power-ups gone —
+`test_agent_reference.py` green).
+
+**Tests:** `tests/test_discover.py` (18 — catalog integrity: unique ids, every `engaged_key`
+registered, every tip has a deep link, `to_dict`/`try_it` shape is the FE contract; visible
+selection drops dismissed + auto-hides engaged + preserves catalog order; `_group_by_area`;
+engagement-check isolation on raise; dismissal persistence to `entity_settings/legibility.json`;
+`compute_discover` kill switch + grouped-visible + auto-hide). `test_context_router.py` stub updated
+`power_ups=True` → `discover_tips=True`.
+
+**Gate:** `web/` typecheck clean; `npm test` 231 passed (27 files — `primitiveAdoption`,
+`tokenLint`, `consistencyAudit`, `bento` ratchets green; the "See all" link adopted
+`Button variant="ghost" size="xs"` rather than raising the raw-`<button>` baseline); `npm run build`
++ `npm run smoke:render` (5 routes) green; `pytest tests/test_discover.py tests/test_context_router.py
+tests/test_config_roundtrip.py tests/test_agent_reference.py` 51 passed. `make lint` + full `make
+test` as the final DoD gate. No E1–E6 blocker. Clean break under the pre-1.0 banner (the renamed
+dismissal set is a re-derivable hide list — no migration-bearing state; the deleted `tool_usage.json`
+counter is regenerable and now unused). Local branch `feature-discover-hub`, unpushed.

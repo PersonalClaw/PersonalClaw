@@ -5,7 +5,7 @@ import {
   MessageSquare, Bell, ListChecks, Zap,
   Inbox, Files, BookOpen, Users, Wrench, Sparkles,
   Workflow, FileText, Settings, Terminal, Loader2, FolderKanban, Blocks,
-  LayoutDashboard,
+  LayoutDashboard, Compass,
 } from 'lucide-react'
 import { NavRail, type NavItem } from '../ui/NavRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
@@ -52,6 +52,7 @@ const AppsSection = lazy(() => import('../pages/apps/AppsSection').then((m) => (
 const AppHostPage = lazy(() => import('../pages/apps/AppHostPage').then((m) => ({ default: m.AppHostPage })))
 const TerminalPage = lazy(() => import('../pages/terminal/TerminalPage').then((m) => ({ default: m.TerminalPage })))
 const DashboardPage = lazy(() => import('../pages/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })))
+const DiscoverPage = lazy(() => import('../pages/discover/DiscoverPage').then((m) => ({ default: m.DiscoverPage })))
 
 const NAV: NavItem[] = [
   // Primary group (no section header): the Dashboard is the home, then Chat,
@@ -82,7 +83,7 @@ const NAV: NavItem[] = [
 // dedicated nav tile — loops are launched from within Projects (and surfaced as
 // chat-session widgets) — but its detail/history/planning sub-routes
 // (#/loop, #/loops/<id>, #/code/<id>, …) stay reachable.
-const ROUTABLE = new Set([...NAV.map((n) => n.id), 'notifications', 'loop', 'loops', 'code', 'app'])
+const ROUTABLE = new Set([...NAV.map((n) => n.id), 'notifications', 'discover', 'loop', 'loops', 'code', 'app'])
 
 function PageFallback() {
   return <div className="flex h-full items-center justify-center"><Loader2 size={22} className="animate-spin text-on-surface-low" /></div>
@@ -98,6 +99,7 @@ function renderPage(active: string, r: RouteProps) {
     case 'loops': return <LoopsSection {...r} />
     case 'code': return <CodeSection {...r} />
     case 'notifications': return <NotificationsPage {...r} />
+    case 'discover': return <DiscoverPage {...r} />
     case 'triggers': return <TriggersSection {...r} />
     case 'tasks': return <TasksSection {...r} />
     case 'projects': return <ProjectsSection {...r} />
@@ -341,6 +343,7 @@ function AppInner() {
     // pinned app tiles are nav destinations too — same "Go to" contract
     ...appNavItems.map((n) => ({ id: `go:${n.id}`, label: n.label, hint: 'Go to', icon: n.icon, keywords: 'app', run: () => navigate(n.id) })),
     { id: 'go:notifications', label: 'Notifications', hint: 'Go to', icon: Bell, keywords: 'alerts feed', run: () => navigate('notifications') },
+    { id: 'go:discover', label: 'Discover', hint: 'Go to', icon: Compass, keywords: 'tips tour learn features guide', run: () => navigate('discover') },
     { id: 'act:terminal-drawer', label: 'Toggle terminal drawer', hint: 'Action · ⌘`', icon: Terminal, keywords: 'shell pty console', run: () => setTermDrawer((v) => !v) },
     { id: 'act:settings', label: 'Open Settings', hint: 'Action', icon: Settings, run: () => navigate('settings') },
   ]

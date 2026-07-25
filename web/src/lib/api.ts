@@ -389,12 +389,13 @@ export interface ManifestTool { name: string; provider: string; description: str
 export interface ManifestRoute { method: string; path: string; summary: string; agent_callable: boolean }
 export interface ManifestProvider { app: string; type: string; provider_type: string; capabilities: string[]; enabled: boolean; error?: string | null }
 export interface Manifest { apiVersion: number; tools: ManifestTool[]; routes: ManifestRoute[]; app_surfaces: unknown[]; providers: { types: string[]; registered: ManifestProvider[] } }
-// Capability-discovery power-ups (§6): one untouched capability proposed at a time,
-// derived from the manifest (denominator) minus the tools the user has invoked.
-// `try_it` is a deep link into an existing page — the widget points, never enables.
-export interface PowerUpTryIt { route: string; query: Record<string, string>; label: string }
-export interface PowerUp { id: string; kind: string; name: string; title: string; provider: string; lesson: string; try_it: PowerUpTryIt }
-export interface PowerUpsResponse { enabled: boolean; power_up: PowerUp | null; untouched_count: number; total: number }
+// Discover (§6): a curated, hand-authored tour of the system's user-facing areas.
+// `try_it` is a deep link into an existing page — a tip points, never enables. Tips
+// leave the feed by being dismissed or by auto-hiding once the area is engaged.
+export interface DiscoverTryIt { route: string; query: Record<string, string>; label: string }
+export interface DiscoverTip { id: string; area: string; title: string; lesson: string; try_it: DiscoverTryIt }
+export interface DiscoverArea { area: string; tips: DiscoverTip[] }
+export interface DiscoverResponse { enabled: boolean; areas: DiscoverArea[]; visible_count: number; total: number }
 export interface McpServer {
   name: string; command?: string; args?: string[]; status: string; tools: Array<string | { name: string; description?: string }>
   error?: string; source?: string; enabled?: boolean; presence?: Record<string, boolean>
@@ -1155,10 +1156,10 @@ export const api = {
   // ── Contextual prompt starters (background-computed from memory + recent activity) ──
   suggestions: (force = false) => get<{ suggestions: string[]; generated_at: number; stale: boolean }>(`/api/suggestions${force ? '?force=1' : ''}`),
 
-  // ── Capability-discovery power-ups (§6): one untouched capability at a time,
-  // proposed never enabled. Dismissals persist server-side per capability. ──
-  powerUps: () => get<PowerUpsResponse>('/api/legibility/power-ups'),
-  dismissPowerUp: (id: string) => post<{ ok: boolean; dismissed: string[] }>('/api/legibility/power-ups/dismiss', { id }),
+  // ── Discover (§6): a curated tour of the system, grouped by area. Tips only
+  // point (deep link), never enable; dismissals persist server-side per tip. ──
+  discover: () => get<DiscoverResponse>('/api/legibility/discover'),
+  dismissDiscoverTip: (id: string) => post<{ ok: boolean; dismissed: string[] }>('/api/legibility/discover/dismiss', { id }),
 
   // ── Desktop integration (OS-gated; server runs the subprocess) ──
   /** Reveal a path in Finder (action 'reveal') or open with the default app ('open'). */
