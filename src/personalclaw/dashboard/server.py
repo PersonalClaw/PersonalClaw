@@ -808,6 +808,12 @@ async def start_dashboard(
     app.router.add_post("/api/tools/toggle", api_tools_toggle)
     app.router.add_post("/api/tools/provider-toggle", api_providers_toggle)
 
+    # Manifest — the generated self-description (tools + routes + providers) an
+    # agent reads to drive this instance instead of guessing signatures.
+    from personalclaw.dashboard.handlers.manifest import api_manifest
+
+    app.router.add_get("/api/manifest", api_manifest)
+
     # Tasks — first-class entity with provider-based aggregation
     from personalclaw.tasks.handlers import register_task_routes
 
