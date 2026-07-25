@@ -1,0 +1,437 @@
+# PersonalClaw HTTP Route Reference
+
+The gateway's HTTP surface. **Agent-callable routes** (`/api/*`, non-websocket) are the ones an agent drives directly; the rest are websocket / internal and listed after for completeness.
+
+After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to confirm the change took — the mandatory verify loop.
+
+## Agent-callable routes
+
+- `GET /api/action-providers` — the registered action providers + their
+- `GET /api/agent-hooks` — read-only view of agent hooks from personalclaw.json.
+- `GET /api/agent-marketplace/agents` — list agents from a marketplace.
+- `POST /api/agent-marketplace/agents` — create a new agent definition.
+- `DELETE /api/agent-marketplace/agents/{name}` — delete an agent definition.
+- `GET /api/agent-marketplace/agents/{name}` — get one agent definition.
+- `PUT /api/agent-marketplace/agents/{name}` — update agent fields (partial).
+- `POST /api/agent-marketplace/agents/{name}/activate` — _(no summary)_
+- `POST /api/agent-marketplace/agents/{name}/test` — _(no summary)_
+- `GET /api/agent-marketplace/marketplaces` — list registered marketplaces.
+- `DELETE /api/agent-metadata/{name}` — delete agent routing metadata.
+- `GET /api/agent-metadata/{name}` — read agent routing metadata.
+- `PUT /api/agent-metadata/{name}` — write agent routing metadata.
+- `GET /api/agent-providers` — the single list of agent runtimes + readiness.
+- `GET /api/agent-providers/{id}/agents` — list a runtime's discoverable agents.
+- `GET /api/agent/config` — read or write the installed agent config.
+- `PUT /api/agent/config` — read or write the installed agent config.
+- `GET /api/agents` — list all PersonalClaw agent definitions.
+- `POST /api/agents` — create a new PersonalClaw agent.
+- `DELETE /api/agents/detail/{name}` — view, delete, or update agent config.
+- `GET /api/agents/detail/{name}` — view, delete, or update agent config.
+- `PATCH /api/agents/detail/{name}` — view, delete, or update agent config.
+- `GET /api/agents/installed` — list installed agent provider names.
+- `POST /api/agents/sync` — auto-sync marketplace-installed agents into config.json.
+- `DELETE /api/agents/{name}` — delete a PersonalClaw agent.
+- `PUT /api/agents/{name}` — update a PersonalClaw agent.
+- `GET /api/approvals` — list pending tool approvals.
+- `POST /api/approvals/{id}/{action}` — approve or reject.
+- `GET /api/apps` — installed apps with manifest summary + runtime state.
+- `POST /api/apps` — install from ``{source, confirm?}``.
+- `GET /api/apps/catalog` — available-to-install apps (Store): bundled-but-not-
+- `DELETE /api/apps/local-sources` — remove a local app-source dir.
+- `GET /api/apps/local-sources` — the configured local app-source directories.
+- `POST /api/apps/local-sources` — add a local app-source dir ``{path}`` (a
+- `DELETE /api/apps/sources` — remove a user git source URL.
+- `GET /api/apps/sources` — the configured git source URLs (defaults + user).
+- `POST /api/apps/sources` — add a user git source URL ``{url}``.
+- `DELETE /api/apps/{name}` — uninstall = DEACTIVATE (keep files). Pass
+- `GET /api/apps/{name}` — full manifest + status + saved config.
+- `POST /api/apps/{name}/agent-run` — start a background agent task.
+- `GET /api/apps/{name}/agent-run/{run_id}` — poll a background agent task.
+- `GET /api/apps/{name}/config` — _(no summary)_
+- `PUT /api/apps/{name}/config` — _(no summary)_
+- `POST /api/apps/{name}/disable` — _(no summary)_
+- `POST /api/apps/{name}/enable` — _(no summary)_
+- `POST /api/apps/{name}/token` — mint an app-scoped identity token.
+- `GET /api/apps/{name}/uninstall-preview` — classify shared deps (A3).
+- `POST /api/apps/{name}/update` — atomic update from ``{source, confirm?}``.
+- `GET /api/attachment-extract` — the extracted text content for an
+- `GET /api/auth-status` — Auth configuration status — mode, bind_host, and session validity.
+- `GET /api/autonudge` — list all active loops.
+- `POST /api/autonudge` — start or replace a loop on a session.
+- `GET /api/autonudge/session/{session_name}` — loop bound to this session (or null).
+- `DELETE /api/autonudge/{loop_id}` — stop and remove a loop.
+- `PATCH /api/autonudge/{loop_id}` — update message / idle_secs / active.
+- `GET /api/browse-dirs` — list subdirectories for directory browser.
+- `GET /api/changelog` — read full CHANGELOG.md from project.
+- `POST /api/channel/profile` — read a channel user's profile.
+- `POST /api/channel/upload-file` — upload a file to the active channel (internal, called by notify_attachment).
+- `GET /api/channels` — all comms transports with info + health.
+- `GET /api/channels/reply-targets` — list channels the bot can reply in.
+- `GET /api/channels/{name}` — one transport's info + health.
+- `POST /api/channels/{name}/connect` — bring the transport online.
+- `POST /api/channels/{name}/disconnect` — take the transport offline.
+- `POST /api/channels/{name}/test` — active probe (e.g. Slack auth.test).
+- `POST /api/chat` — send message to a session, stream response via SSE.
+- `GET /api/chat/folders` — list all project folders.
+- `POST /api/chat/folders` — create a project folder.
+- `DELETE /api/chat/folders/{id}` — delete a folder, ungroup its sessions.
+- `PATCH /api/chat/folders/{id}` — rename or reorder a folder.
+- `POST /api/chat/mode` — set the tool APPROVAL mode (whether tools auto-approve).
+- `POST /api/chat/nav/resolve-links` — batch-summarize bare links.
+- `GET /api/chat/sessions` — list all chat sessions.
+- `POST /api/chat/sessions` — create a new chat session.
+- `POST /api/chat/sessions/cleanup` — bulk-archive inactive sessions to history.
+- `DELETE /api/chat/sessions/{session}` — stop and remove a UI session.
+- `GET /api/chat/sessions/{session}` — message history for a session.
+- `POST /api/chat/sessions/{session}/acp-agent` — bind a DISCOVERED ACP agent.
+- `POST /api/chat/sessions/{session}/agent` — set agent for a chat session.
+- `POST /api/chat/sessions/{session}/approve` — resolve a pending tool approval.
+- `POST /api/chat/sessions/{session}/channel-link` — link a dashboard session to a channel.
+- `PATCH /api/chat/sessions/{session}/color` — set session color.
+- `POST /api/chat/sessions/{session}/context` — inject silent background context.
+- `POST /api/chat/sessions/{session}/drop` — move a session into a column.
+- `POST /api/chat/sessions/{session}/edit-resend` — edit a user message and resend.
+- `PATCH /api/chat/sessions/{session}/folder` — assign session to a folder.
+- `POST /api/chat/sessions/{session}/fork` — fork session into a new tab.
+- `POST /api/chat/sessions/{session}/generate-title` — manually trigger title generation.
+- `POST /api/chat/sessions/{session}/handoff` — hand off session to channel DM thread.
+- `POST /api/chat/sessions/{session}/interrupt` — stop the turn, KEEP the queue.
+- `POST /api/chat/sessions/{session}/model` — set model for a chat session.
+- `PATCH /api/chat/sessions/{session}/pin` — toggle pinned state.
+- `DELETE /api/chat/sessions/{session}/queue/{queue_id}` — cancel a queued message.
+- `POST /api/chat/sessions/{session}/reasoning-effort` — set reasoning effort.
+- `POST /api/chat/sessions/{session}/regenerate` — regenerate the last assistant reply.
+- `POST /api/chat/sessions/{session}/resume` — load a history session into a session.
+- `POST /api/chat/sessions/{session}/side/close` — drop the buffer + destroy
+- `POST /api/chat/sessions/{session}/side/open` — open (or reset) the side buffer.
+- `POST /api/chat/sessions/{session}/side/turn` — ask one side question.
+- `POST /api/chat/sessions/{session}/stop` — cooperative stop with kill fallback.
+- `POST /api/chat/sessions/{session}/switch-variant` — switch which regenerated variant is active.
+- `PUT /api/chat/sessions/{session}/tags` — replace the session's tag list.
+- `PATCH /api/chat/sessions/{session}/title` — rename a chat session.
+- `GET /api/chat/sessions/{session}/tool-result/{rid}` — the FULL raw output of
+- `POST /api/chat/sessions/{session}/undo` — roll back the last N conversation turns.
+- `POST /api/chat/sessions/{session}/workspace-dir` — set the working directory.
+- `GET /api/chat/tag-columns` — list sidebar column layout.
+- `POST /api/chat/tag-columns` — append a new sidebar column.
+- `PUT /api/chat/tag-columns/order` — reorder columns by id list.
+- `DELETE /api/chat/tag-columns/{id}` — remove a column.
+- `PATCH /api/chat/tag-columns/{id}` — rename / retag / reorder.
+- `GET /api/chat/tags` — list all tag definitions.
+- `POST /api/chat/tags` — create a new tag.
+- `DELETE /api/chat/tags/{id}` — delete a tag; strip it from all sessions.
+- `PATCH /api/chat/tags/{id}` — rename / recolor / reorder.
+- `POST /api/chat/task-mode` — set the per-session TASK mode.
+- `GET /api/config-fs/stream` — SSE feed of out-of-band config-tree changes (#44).
+- `GET /api/config/default-agent` — read or set the default agent.
+- `PUT /api/config/default-agent` — read or set the default agent.
+- `GET /api/config/personalclaw` — read or update PersonalClaw config.
+- `PATCH /api/config/personalclaw` — update a single config field.
+- `PUT /api/config/personalclaw` — read or update PersonalClaw config.
+- `GET /api/config/schema` — return config schema entries.
+- `POST /api/create-dir` — create a new directory.
+- `GET /api/dashboard/config` — read or write dashboard settings.
+- `PUT /api/dashboard/config` — read or write dashboard settings.
+- `GET /api/design/tokens/default` — PersonalClaw's canonical
+- `GET /api/file-complete` — path autocomplete for the PathBar.
+- `GET /api/file-content-search` — recursive content search.
+- `POST /api/file-create` — create a new file or directory in the explorer.
+- `POST /api/file-delete` — delete a file or (recursively) a directory.
+- `GET /api/file-git-commit` — one commit's diff.
+- `GET /api/file-git-log` — recent commits for a repo.
+- `GET /api/file-git-original` — the committed (HEAD) contents of a
+- `GET /api/file-git-status` — git branch + per-file status.
+- `GET /api/file-list` — list a directory for the file explorer.
+- `POST /api/file-move` — rename or relocate a file/dir within the allowlist.
+- `GET /api/file-raw` — serve a file with its native content type (images, etc.).
+- `GET /api/file-read` — read file content for the markdown panel.
+- `GET /api/file-search` — fuzzy filename search for the @-mention file picker.
+- `POST /api/file-upload` — upload file(s) into an allowed directory.
+- `GET /api/file-watch` — SSE stream of file content changes.
+- `POST /api/file-write` — write file content from the markdown panel.
+- `GET /api/healthz` — Liveness probe — auth-exempt, returns 200 once gateway is serving HTTP.
+- `POST /api/hooks/agent` — run an agent turn from an external webhook.
+- `GET /api/inbox` — list all inbox items (recency, optionally engagement-weighted).
+- `GET /api/inbox/digest` — on-demand channel digest.
+- `POST /api/inbox/dismiss-all` — dismiss all pending items.
+- `GET /api/inbox/pending` — list pending items only (recency, optionally weighted).
+- `GET /api/inbox/providers` — list registered inbox message source providers.
+- `POST /api/inbox/restart` — stop and reinitialize the inbox service.
+- `POST /api/inbox/send` — send a reply to an inbox item.
+- `GET /api/inbox/status` — current config status.
+- `PUT /api/inbox/{id}` — update draft, status, etc.
+- `POST /api/inbox/{id}/draft` — generate draft reply on demand.
+- `POST /api/inbox/{id}/favorite` — {favorited: bool} — set the favorite flag + record a
+- `POST /api/inbox/{id}/open` — record that the user opened/read this item (a moderate
+- `POST /api/knowledge/embedding/generate` — - embed all unembedded items (or re-embed all).
+- `GET /api/knowledge/embedding/status` — - embedding config and progress.
+- `GET /api/knowledge/entities` — _(no summary)_
+- `GET /api/knowledge/entities/by-name/{name}/items` — - items that MENTION the entity.
+- `GET /api/knowledge/entities/by-name/{name}/related` — - entities directly connected
+- `GET /api/knowledge/entities/{id}/graph` — - D3-compatible subgraph.
+- `GET /api/knowledge/graph` — - full entity graph (top N by connections).
+- `POST /api/knowledge/ingest` — - multipart file upload. Each file becomes ONE
+- `GET /api/knowledge/intents` — - natural-language intents (Tier 3) + outcome counts.
+- `POST /api/knowledge/intents` — - create or update an intent.
+- `DELETE /api/knowledge/intents/{id}` — - removes the intent and its outcomes.
+- `POST /api/knowledge/intents/{id}/generate-skill` — - synthesize a reusable skill
+- `GET /api/knowledge/intents/{id}/outcomes` — - everything this intent has gathered,
+- `POST /api/knowledge/intents/{id}/run` — - retroactively run an intent against all
+- `GET /api/knowledge/items` — - list/search with pagination.
+- `POST /api/knowledge/items` — - author a typed item directly (note/gist/
+- `DELETE /api/knowledge/items/{id}` — _(no summary)_
+- `GET /api/knowledge/items/{id}` — - single item with its entities + relations.
+- `PATCH /api/knowledge/items/{id}` — - update fields.
+- `GET /api/knowledge/items/{id}/content` — - plain text for clipboard.
+- `GET /api/knowledge/items/{id}/extracted` — - the per-item extracted-content
+- `GET /api/knowledge/items/{id}/file` — - serve a media item's original bytes.
+- `POST /api/knowledge/items/{id}/generate-intelligence` — - (re)run the FULL
+- `GET /api/knowledge/items/{id}/graph` — - the ingestion node-graph SHAPE for this
+- `GET /api/knowledge/items/{id}/ingest/stream` — - per-item node-graph ingestion
+- `GET /api/knowledge/items/{id}/intents` — - the intents this item contributed to
+- `GET /api/knowledge/items/{id}/related` — - items sharing entities with given item.
+- `GET /api/knowledge/items/{id}/thumbnail` — - serve a generated thumbnail (image/webp).
+- `GET /api/knowledge/providers` — - registered knowledge providers (native
+- `POST /api/knowledge/regenerate-intelligence` — - re-run the full ingestion
+- `GET /api/knowledge/search-for-context` — _(no summary)_
+- `GET /api/knowledge/stats` — _(no summary)_
+- `GET /api/knowledge/tags` — - distinct tags (frequency-ordered) for autocomplete.
+- `DELETE /api/lessons` — remove lessons by substring.
+- `GET /api/lessons` — _(no summary)_
+- `POST /api/lessons` — add a lesson (vector store or JSONL fallback).
+- `POST /api/logout` — revoke all active dashboard sessions.
+- `GET /api/logs` — SSE stream of live log entries.
+- `GET /api/logs/level` — current backend logger level.
+- `POST /api/logs/level` — change the backend logger level at runtime.
+- `GET /api/loops` — loops (redacted), newest first.
+- `POST /api/loops` — {kind, task|goal, …} — create a READY loop of any kind.
+- `POST /api/loops/classify` — {kind, task|goal} — the kind-aware intake analyze
+- `POST /api/loops/validate` — deterministic pre-flight on a create payload
+- `DELETE /api/loops/{id}` — _(no summary)_
+- `GET /api/loops/{id}` — _(no summary)_
+- `PATCH /api/loops/{id}` — {action: start|pause|resume|stop}.
+- `PUT /api/loops/{id}` — edit a pre-launch spec, or a name-only rename in any
+- `POST /api/loops/{id}/autopilot` — {on: bool} — toggle the execution drive live.
+- `GET /api/loops/{id}/design/tokens` — the RESOLVED token tree
+- `POST /api/loops/{id}/grill-tree` — guided-decomposition intake (grill's ``tree``
+- `POST /api/loops/{id}/nudge` — {text, task_id?} — steer; resume if awaiting input.
+- `GET /api/loops/{id}/plan-session` — the stepwise planning walkthrough state.
+- `POST /api/loops/{id}/plan/approve` — {step_id} — approve a step + advance.
+- `POST /api/loops/{id}/plan/comment` — {step_id, text} — comment + re-draft.
+- `POST /api/loops/{id}/plan/edit` — {step_id, markdown} — the user directly edits a
+- `POST /api/loops/{id}/plan/retry` — clear a recorded design failure + re-run the
+- `POST /api/loops/{id}/plan/start` — begin (or resume) the walkthrough.
+- `POST /api/loops/{id}/queue` — {task_ids, action: queue|unqueue} — queue tasks for
+- `GET /api/loops/{id}/report` — the document deliverable + working log. ``report``
+- `GET /api/loops/{id}/stream` — per-loop live SSE; replays a snapshot on connect.
+- `GET /api/manifest` — the machine-readable self-description of this instance.
+- `GET /api/mcp` — list configured MCP servers with enabled state.
+- `GET /api/mcp/active` — return MCP servers for the current agent.
+- `POST /api/mcp/apply` — batched per-scope apply for MCP servers.
+- `GET /api/mcp/importable` — MCP servers configured in an external backend
+- `GET /api/mcp/pool-stats` — the in-process MCP connection-pool observability tile
+- `GET /api/mcp/probe` — return cached probe results (non-blocking).
+- `POST /api/mcp/probe` — probe all MCP servers and return live status.
+- `POST /api/mcp/probe/{name}` — reconnect (re-probe) a SINGLE MCP server.
+- `POST /api/mcp/remove` — uninstall an MCP server.
+- `DELETE /api/mcp/servers/{name}` — register or remove an MCP server.
+- `PUT /api/mcp/servers/{name}` — register or remove an MCP server.
+- `POST /api/mcp/sync` — apply MCP config changes and restart sessions.
+- `POST /api/mcp/toggle` — enable or disable an MCP server globally.
+- `POST /api/mcp/toggle-all` — enable or disable all MCP servers.
+- `POST /api/mcp/toggle-tool` — enable or disable a specific tool in an MCP server.
+- `POST /api/memory/activate-model` — switch the active embedding model.
+- `POST /api/memory/consolidate` — trigger immediate consolidation for testing.
+- `GET /api/memory/context-preview` — preview what gets injected into prompts.
+- `GET /api/memory/daily-digests` — the per-day rollup nodes (mem-tree),
+- `POST /api/memory/delete-model` — delete a downloaded embedding model.
+- `POST /api/memory/disable-embeddings` — clear the active embedding selection.
+- `GET /api/memory/embedding-models` — list local embedding models + download status.
+- `GET /api/memory/embedding-status` — embedding system status + setup progress.
+- `POST /api/memory/enable-embeddings` — build the FAISS vector store for the active native model.
+- `GET /api/memory/episodic` — paginated list of episodic memories.
+- `GET /api/memory/episodic/search` — search episodic memories.
+- `DELETE /api/memory/episodic/{id}` — tombstone an episodic memory.
+- `GET /api/memory/events` — paginated audit trail.
+- `POST /api/memory/events/{event_id}/undo` — reverse a logged memory mutation.
+- `GET /api/memory/graph` — return all memory as nodes + edges for graph visualization.
+- `GET /api/memory/history` — recent daily summaries.
+- `PUT /api/memory/history` — recent daily summaries.
+- `POST /api/memory/import` — import memory from JSON (export format).
+- `GET /api/memory/lint` — run the memory-health sweep, return its report.
+- `POST /api/memory/migrate` — migrate legacy markdown memory to vector store.
+- `GET /api/memory/observability` — memory health metrics and context preview.
+- `GET /api/memory/preferences` — _(no summary)_
+- `PUT /api/memory/preferences` — _(no summary)_
+- `GET /api/memory/projects` — _(no summary)_
+- `PUT /api/memory/projects` — _(no summary)_
+- `POST /api/memory/promote` — promote repeated episodic patterns to semantic facts.
+- `GET /api/memory/recall` — deep on-demand recall for the agent.
+- `GET /api/memory/semantic` — list all semantic memory entries.
+- `PUT /api/memory/semantic` — create/update a semantic entry.
+- `DELETE /api/memory/semantic/{key}` — tombstone a semantic entry.
+- `GET /api/memory/settings` — memory consolidation config.
+- `PUT /api/memory/settings` — memory consolidation config.
+- `GET /api/memory/stats` — memory system statistics.
+- `GET /api/memory/vault` — the markdown-vault mirror status (mem-fs-mirror).
+- `POST /api/memory/vault/sync` — reconcile the vault to the current records.
+- `GET /api/model-provider-types` — installable model-provider types.
+- `GET /api/model-providers` — list configured model-provider entries.
+- `POST /api/model-providers` — add a new model provider to config.
+- `DELETE /api/model-providers/{name}` — remove a provider from config.
+- `PUT /api/model-providers/{name}` — update a provider's model, endpoint, or options.
+- `GET /api/model-providers/{name}/models` — list available models for a provider entry.
+- `POST /api/model-providers/{name}/models/delete` — delete a local model.
+- `POST /api/model-providers/{name}/pull` — pull (download) a model.
+- `GET /api/model-providers/{name}/search` — search a provider's
+- `GET /api/model-providers/{name}/show` — rich model metadata.
+- `POST /api/model-providers/{name}/test` — test provider connectivity.
+- `GET /api/models/active` — active models per use-case.
+- `PUT /api/models/active/{use_case}` — set active model(s) for a use-case.
+- `GET /api/models/available` — discover models from all configured providers.
+- `GET /api/models/chat` — chat models for dropdowns (the one model list).
+- `GET /api/models/downloads` — live + recently-finished download jobs.
+- `POST /api/models/downloads` — start a download. Body: {provider, model}.
+- `DELETE /api/models/downloads/{id}` — cancel and detach a download job.
+- `GET /api/models/downloads/{id}/stream` — per-job progress SSE.
+- `GET /api/models/embedding/reindex` — live + recently-finished jobs.
+- `POST /api/models/embedding/reindex` — start a re-index of all embeddings.
+- `GET /api/models/embedding/reindex/{id}/stream` — per-job progress SSE.
+- `GET /api/models/local/{provider}/search` — search a searchable provider's
+- `DELETE /api/models/local/{provider}/{model}` — delete a downloaded local model.
+- `DELETE /api/notifications` — delete a single notification by timestamp.
+- `GET /api/notifications` — _(no summary)_
+- `POST /api/notifications/ack` — mark a single notification as read.
+- `POST /api/notifications/ack-all` — mark all notifications as read.
+- `POST /api/notifications/clear` — clear all notifications.
+- `POST /api/notifications/unack` — mark a single notification as unread.
+- `GET /api/onboarding` — First-run onboarding signal.
+- `POST /api/optimizer/optimize` — rewrite a prompt using session context.
+- `GET /api/outbox` — list files in the outbox.
+- `POST /api/outbox/notify` — agent sent a file, notify the user.
+- `GET /api/outbox/{filename}` — download a file from the outbox.
+- `GET /api/portability/export` — download PersonalClaw state as zip.
+- `POST /api/portability/import` — upload and apply a PersonalClaw export zip.
+- `POST /api/portability/preview` — validate and preview a zip without applying.
+- `GET /api/prompt-snippets` — list reusable snippets via the provider.
+- `POST /api/prompt-snippets` — create a snippet.
+- `DELETE /api/prompt-snippets/{name}` — remove a snippet.
+- `GET /api/prompt-snippets/{name}` — read a snippet (with redacted content).
+- `PUT /api/prompt-snippets/{name}` — update a snippet.
+- `POST /api/prompt-snippets/{name}/render` — preview a snippet standalone.
+- `GET /api/prompts` — list prompt templates via the provider.
+- `POST /api/prompts` — create a new prompt template via the registered provider.
+- `GET /api/prompts/bindings` — which prompt serves each runtime use-case.
+- `PUT /api/prompts/bindings` — set the prompt bound to one use-case.
+- `POST /api/prompts/preview` — render ARBITRARY (unsaved) template content
+- `GET /api/prompts/syntax` — the template-language reference the authoring UI
+- `DELETE /api/prompts/{name}` — remove a user prompt via the provider.
+- `GET /api/prompts/{name}` — read a prompt template via the PromptProvider.
+- `PUT /api/prompts/{name}` — update an existing prompt template.
+- `POST /api/prompts/{name}/launch` — {variables} — instantiate a RUNNABLE template
+- `POST /api/prompts/{name}/render` — render a prompt template with the
+- `GET /api/recent-projects` — list recently used project directories.
+- `POST /api/reveal` — reveal a file/folder in Finder or open with default app.
+- `POST /api/screenshot` — capture screen region and return file path.
+- `GET /api/search/active` — bound provider name per use-case.
+- `PUT /api/search/active/{use_case}` — bind a provider to a use-case.
+- `GET /api/search/providers` — registered providers + capabilities + availability.
+- `GET /api/security/denied-commands` — the bash denylist for the Security panel.
+- `GET /api/security/egress` — the operator's outbound-egress overrides for the
+- `GET /api/security/stats` — live security feature counts.
+- `GET /api/sel/events` — recent security events.
+- `POST /api/sel/rotate` — archive existing SEL log and start a fresh chain.
+- `GET /api/sel/verify` — verify HMAC chain integrity over the recent window.
+- `POST /api/send-message` — deliver a message to the messaging channel and/or dashboard.
+- `POST /api/session-keepalive` — refresh activity timestamp on the
+- `GET /api/session-tool-policy` — return managedToolPolicy for the
+- `GET /api/session/archive` — list archive files for a session key.
+- `GET /api/session/archive/{name}` — read a single archive file as JSONL text.
+- `DELETE /api/sessions` — permanently delete closed history sessions only.
+- `GET /api/sessions` — list conversation session files.
+- `GET /api/sessions/context` — context usage for all active sessions.
+- `GET /api/sessions/health` — sessions flagged as stalled from log scan.
+- `POST /api/sessions/restart` — reset all ACP agent sessions.
+- `GET /api/sessions/retag-all` — the current/last job (for UI hydration).
+- `POST /api/sessions/retag-all` — start (or return) the batch re-tag job.
+- `POST /api/sessions/retag-all/cancel` — cancel the in-flight job.
+- `GET /api/sessions/search` — content search over session JSONL files.
+- `GET /api/sessions/{id}/agents` — list sub-agent results for a session.
+- `GET /api/sessions/{id}/agents/{agent_id}` — read sub-agent result.
+- `GET /api/sessions/{id}/agents/{agent_id}/stream` — SSE stream of result file.
+- `DELETE /api/sessions/{key}` — permanently delete a history session.
+- `GET /api/sessions/{key}` — return messages for a session.
+- `GET /api/skills` — list locally installed skills from all discovery paths.
+- `POST /api/skills` — create a new skill.
+- `GET /api/skills/ephemeral/{session}` — the session-live drafts awaiting a
+- `POST /api/skills/ephemeral/{session}/promote` — promote ONE draft to a tier.
+- `DELETE /api/skills/ephemeral/{session}/{slug}` — forget one draft, or
+- `POST /api/skills/install` — install a skill from a marketplace.
+- `GET /api/skills/marketplace/detail` — _(no summary)_
+- `GET /api/skills/marketplaces` — list registered skill marketplaces.
+- `GET /api/skills/proposals` — the pending autonomous-synthesis proposals
+- `DELETE /api/skills/proposals/{id}` — drop a proposal (never installed).
+- `GET /api/skills/proposals/{id}` — full proposal incl. procedure + fenced source.
+- `POST /api/skills/proposals/{id}/accept` — install into the live auto/ tier
+- `GET /api/skills/search` — search across all registered skill providers.
+- `DELETE /api/skills/{name}` — remove a locally installed skill.
+- `GET /api/skills/{name}` — get or update a skill. (Listing is served by
+- `PUT /api/skills/{name}` — get or update a skill. (Listing is served by
+- `GET /api/skills/{name}/files` — provider-backed file browser.
+- `POST /api/skills/{name}/verify` — S6 integrity lint for one installed skill.
+- `GET /api/slash-commands` — the slash commands the composer "/" menu offers.
+- `DELETE /api/spawn` — clear all completed subagents.
+- `GET /api/spawn` — list all subagents.
+- `POST /api/spawn` — spawn a subagent.
+- `DELETE /api/spawn/{agent_id}` — cancel a running subagent or remove a finished one.
+- `GET /api/spawn/{agent_id}` — poll subagent status.
+- `GET /api/status` — _(no summary)_
+- `POST /api/stt/transcribe` — transcribe uploaded audio via the active STT model.
+- `GET /api/suggestions` — _(no summary)_
+- `GET /api/system` — System information endpoint with live CPU, memory, network metrics.
+- `POST /api/system/restart` — bounce the gateway to apply committed backend
+- `GET /api/terminal/sessions` — list active terminal sessions.
+- `POST /api/terminal/sessions` — create a new terminal session (returns session_id).
+- `DELETE /api/terminal/sessions/{session_id}` — kill a terminal session.
+- `GET /api/themes` — list all custom themes, sorted by creation date.
+- `POST /api/themes` — create a new custom theme.
+- `DELETE /api/themes/{slug}` — get, update, or delete a custom theme.
+- `GET /api/themes/{slug}` — get, update, or delete a custom theme.
+- `PUT /api/themes/{slug}` — get, update, or delete a custom theme.
+- `GET /api/token/local` — issue a token for local apps.
+- `GET /api/tools` — Return all tools from all active tool sources.
+- `POST /api/tools/invoke` — execute one tool through the Tool entity.
+- `POST /api/tools/provider-toggle` — enable/disable a whole NATIVE tool provider.
+- `POST /api/tools/toggle` — enable/disable a native-provider tool.
+- `GET /api/triggers` — every trigger, both kinds.
+- `POST /api/triggers` — create a schedule or lifecycle trigger.
+- `GET /api/triggers/history` — cross-trigger run index (schedule runs).
+- `GET /api/triggers/variables` — the ``$variables`` each trigger kind exposes.
+- `DELETE /api/triggers/{id}` — DELETE /api/triggers/{id}.
+- `PUT /api/triggers/{id}` — DELETE /api/triggers/{id}.
+- `POST /api/triggers/{id}/ack` — acknowledge a schedule trigger notification.
+- `GET /api/triggers/{id}/history` — per-trigger run records (schedule only).
+- `GET /api/triggers/{id}/history/{run_id}` — one full run record.
+- `POST /api/triggers/{id}/run` — fire now.
+- `POST /api/triggers/{id}/test` — execute a lifecycle trigger's action once.
+- `POST /api/triggers/{id}/to-chat` — open a schedule trigger as a chat session.
+- `POST /api/triggers/{id}/toggle` — enable/disable.
+- `POST /api/update` — git pull, reinstall, rebuild, restart gateway.
+- `POST /api/update/auto` — toggle auto-update on/off.
+- `POST /api/update/cancel` — dismiss a stuck/failed update overlay.
+- `GET /api/update/check` — kind-aware update check (contract C2).
+- `POST /api/update/dev-mode` — toggle git dev-mode (track commits vs tags).
+- `POST /api/update/simulate` — walk through update steps with delays.
+- `POST /api/upload` — open native file picker and return selected paths.
+- `POST /api/upload/file` — cross-platform multipart file upload.
+- `POST /api/uploads/init` — {filename, size, mime, target[, path]} → session.
+- `GET /api/uploads/limits` — per-category caps + the single-POST threshold, so
+- `GET /api/uploads/{id}` — which parts landed (drives client resume).
+- `POST /api/uploads/{id}/complete` — assemble + scan + hand off to the target.
+- `PUT /api/uploads/{id}/part` — stream one part to disk (idempotent).
+- `POST /api/voice/synthesize` — sentence-chunked Piper TTS.
+
+## Websocket / internal routes
+
+- `GET /api/ws` — single multiplexed WebSocket for all real-time events.
+- `GET /api/ws/terminal/{session_id}` — WebSocket PTY for the built-in CLI panel.
