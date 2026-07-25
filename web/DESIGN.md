@@ -22,29 +22,63 @@ colors:
   danger-red: "#f55e57"
   info-blue: "#4e8ff8"
 typography:
-  display:
+  # Machine-readable mirror of the tokens.css `data-type` ramp (src/design/
+  # tokens.css) — one entry per distinct size rung. The impeccable design hook
+  # parses these fontSize values as the blessed type scale (±0.5px). Keep this in
+  # lockstep with tokens.css; the prose "Hierarchy" below summarizes it.
+  display-l:
     fontFamily: "DM Sans, system-ui, sans-serif"
     fontSize: "2.625rem"
     fontWeight: 280
     lineHeight: 1.14
-  headline:
+  display-m:
+    fontFamily: "DM Sans, system-ui, sans-serif"
+    fontSize: "2.25rem"
+    fontWeight: 320
+    lineHeight: 1.22
+  display-s:
+    fontFamily: "DM Sans, system-ui, sans-serif"
+    fontSize: "2rem"
+    fontWeight: 360
+    lineHeight: 1.19
+  headline-l:
+    fontFamily: "DM Sans, system-ui, sans-serif"
+    fontSize: "1.75rem"
+    fontWeight: 350
+    lineHeight: 1.29
+  headline-m:
     fontFamily: "DM Sans, system-ui, sans-serif"
     fontSize: "1.5rem"
     fontWeight: 380
     lineHeight: 1.17
-  title:
+  title-l:
     fontFamily: "DM Sans, system-ui, sans-serif"
     fontSize: "1.25rem"
     fontWeight: 470
     lineHeight: 1.2
-  body:
+  body-l:
+    fontFamily: "DM Sans, system-ui, sans-serif"
+    fontSize: "1.0625rem"
+    fontWeight: 400
+    lineHeight: 1.41
+  body-m:
     fontFamily: "DM Sans, system-ui, sans-serif"
     fontSize: "0.9375rem"
     fontWeight: 400
     lineHeight: 1.33
-  label:
+  label-m:
     fontFamily: "DM Sans, system-ui, sans-serif"
     fontSize: "0.9375rem"
+    fontWeight: 470
+    lineHeight: 1.33
+  body-s:
+    fontFamily: "DM Sans, system-ui, sans-serif"
+    fontSize: "0.8125rem"
+    fontWeight: 400
+    lineHeight: 1.38
+  caption:
+    fontFamily: "DM Sans, system-ui, sans-serif"
+    fontSize: "0.75rem"
     fontWeight: 470
     lineHeight: 1.33
   mono:
@@ -154,12 +188,16 @@ A restrained dark neutral ramp with a single committed coral accent and a warm g
 **Character:** One warm rounded sans carries everything; the neural-expressive signature is *fractional variable weight* — big type gets lighter (display at `wght 280`), small type gets firmer (labels at `wght 470`), so hierarchy reads as confidence, not shouting.
 
 ### Hierarchy
-Applied via `data-type` roles, not per-component sizes:
+Applied via `data-type` roles, not per-component sizes. The discrete size rungs
+are `0.75 · 0.8125 · 0.9375 · 1.0625 · 1.25 · 1.5 · 1.75 · 2 · 2.25 · 2.625rem`
+(mirrored in the YAML frontmatter above and `tokens.css`); type sizes off these
+rungs are drift.
 - **Display** (wght 280–360, 2rem–2.625rem, ~1.14): page heroes and empty-state headlines only.
 - **Headline** (wght 350–470, 1.25rem–1.75rem): section and panel titles.
 - **Title** (wght 470–500, 0.9375rem–1.25rem): card titles, list-row leads.
 - **Body** (wght 400, 0.8125rem–1.0625rem, 65–75ch max for prose): default reading text at #e3e3e3.
 - **Label** (wght 470, 0.8125rem–1.0625rem): buttons, chips, form labels — the same size as body, one weight step firmer.
+- **Caption** (wght 470, 0.75rem): the smallest tier — dense chip/badge/timestamp micro-text below the body floor.
 - **Mono** (JetBrains Mono, 0.8125rem): code, terminal panes, IDs, and the `data-ui="cli"` density mode.
 
 ### Named Rules

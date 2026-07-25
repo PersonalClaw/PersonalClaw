@@ -1,6 +1,7 @@
 import { useState, type HTMLAttributes } from 'react'
 import { ChevronsRightLeft } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { fvs } from '../design/fontWeight'
 
 /** Shared column-collapse mechanism for kanban boards (chat-history tag board
  *  + Tasks status board). Empty columns AUTO-collapse to a slim vertical rail
@@ -86,9 +87,9 @@ export function CollapsedBoardColumn({ icon: Icon, label, count, tone, onExpand,
       role={onExpand ? 'button' : undefined}
       className={`flex min-h-0 flex-col items-center gap-1.5 rounded-xl px-1 py-2 transition-colors ${onExpand ? 'cursor-pointer hover:bg-surface-high' : ''}`}>
       <Icon size={13} style={{ color: tone || 'var(--color-on-surface-low)' }} />
-      <span className="text-on-surface-low tabular-nums text-[0.6875rem]">{count}</span>
+      <span className="text-on-surface-low tabular-nums text-[0.75rem]">{count}</span>
       <span className="min-h-0 flex-1 truncate text-on-surface-low text-[0.75rem]"
-        style={{ writingMode: 'vertical-rl', fontVariationSettings: '"wght" 550', color: tone || undefined }}>{label}</span>
+        style={{ writingMode: 'vertical-rl', ...fvs(550), color: tone || undefined }}>{label}</span>
     </div>
   )
 }

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { fvs, withWeight } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
 import { Sparkles, ChevronRight } from 'lucide-react'
 import { messageEnter, spring } from '../../design/motion'
@@ -23,16 +24,15 @@ export function MessageUser({ children, fromComposer = false, onFileClick, paste
     <motion.div variants={fromComposer ? travelEnter : messageEnter} initial="initial" animate="animate" className="flex justify-end">
       <div
         className="bg-surface-container text-on-surface [&_>div>*:first-child]:mt-0 [&_>div>*:last-child]:mb-0"
-        style={{
+        style={withWeight({
           borderRadius: 'calc(40px * var(--radius-scale))',
           padding: '20px 28px',
           // fits content, growing up to 80% of the column before wrapping (was a
           // hard 452px cap that truncated wide content like code/long lines).
           maxWidth: '80%',
-          fontSize: '16px',
+          fontSize: '1.0625rem',
           lineHeight: 1.5,
-          fontVariationSettings: '"wght" 400',
-        }}
+        }, 400)}
       >
         <MessageBody text={children} pastes={pastes} onFileClick={onFileClick} />
         {optimized && <OptimizedDisclosure optimized={optimized} onFileClick={onFileClick} />}
@@ -50,7 +50,7 @@ function OptimizedDisclosure({ optimized, onFileClick }: { optimized: string; on
     <div className="mt-2.5 border-t border-outline-variant/40 pt-2">
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
         className="flex items-center gap-1 text-[0.75rem] text-on-surface-low hover:text-on-surface-var transition-colors"
-        style={{ fontVariationSettings: '"wght" 500' }}>
+        style={fvs(500)}>
         <ChevronRight size={13} className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
         <Sparkles size={12} className="shrink-0" />
         {open ? 'Optimized prompt sent to the model' : 'Sent an optimized version'}

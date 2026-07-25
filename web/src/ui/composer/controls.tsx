@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
 import { Bot, Cpu, ShieldCheck, Gauge, ChevronDown, Plus, Search, Paperclip, BookText } from 'lucide-react'
 import { Popover, MenuRow } from '../Popover'
@@ -30,7 +31,7 @@ function PillButton({ icon, label, open, toggle }: { icon: React.ReactNode; labe
       whileTap={{ scale: 1 - expr(0.04, 0.3) }} transition={spring.spatialFast}
       className={cx('flex items-center gap-1.5 h-9 rounded-pill px-m transition-colors text-[0.8125rem] max-w-[160px]',
         open ? 'bg-surface-high text-on-surface' : 'text-on-surface-var hover:bg-surface-high')}
-      style={{ fontVariationSettings: '"wght" 470' }}
+      style={fvs(470)}
     >
       {icon}
       <span className="truncate">{label}</span>
@@ -80,7 +81,7 @@ export function AgentPill({ data, value, onSelect, openSignal }: { data?: Compos
             ))}
             {discovered.map(([rt, agents]) => (
               <div key={rt}>
-                <div className="px-m pt-m pb-1 text-[0.7rem] uppercase tracking-wide text-on-surface-low">{rt}</div>
+                <div className="px-m pt-m pb-1 text-[0.75rem] uppercase tracking-wide text-on-surface-low">{rt}</div>
                 {agents.map((d) => (
                   <MenuRow key={d.id} label={d.name} hint={cleanAgentHint(d.description)} selected={d.name === value} onClick={() => { onSelect(d.name); close() }} />
                 ))}

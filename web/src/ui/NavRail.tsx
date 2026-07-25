@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import { withWeight } from '../design/fontWeight'
 import type { LucideIcon } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cx } from './cx'
+import { fvs } from '../design/fontWeight'
 import { Wordmark, Spark } from './Spark'
 import { spring } from '../design/motion'
 
@@ -81,7 +83,7 @@ export function NavRail({
       <div key={item.id}>
         {showSection && (
           <div className="px-s pt-l pb-1 text-[0.8125rem] uppercase tracking-wide text-on-surface"
-            style={{ opacity: 0.55, fontVariationSettings: '"wght" 400' }}>
+            style={{ opacity: 0.65, ...fvs(400) }}>
             {item.section}
           </div>
         )}
@@ -93,7 +95,7 @@ export function NavRail({
             collapsed ? 'justify-center px-0' : 'px-s',
             active ? 'text-on-surface' : 'text-on-surface-var hover:bg-surface-low/60 hover:text-on-surface',
           )}
-          style={{ height: 32, fontVariationSettings: active ? '"wght" 470' : '"wght" 400' }}>
+          style={withWeight({ height: 32 }, active ? 470 : 400)}>
           {/* Springy active pill — a single shared-layout element that SLIDES from
               the previously-active item to this one (layoutId), instead of each
               item toggling its own background. Sits behind the icon/label. */}

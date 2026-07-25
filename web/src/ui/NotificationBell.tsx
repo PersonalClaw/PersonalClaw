@@ -5,7 +5,8 @@ import { spring, bounce, stagger, listItemEnter } from '../design/motion'
 import { api, type NotificationItem } from '../lib/api'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
-import { kindMeta, relTime, firstLine } from '../pages/notifications/notificationMeta'
+import { kindMeta, relTime, firstLine, unreadRail, toneChipBg } from '../pages/notifications/notificationMeta'
+import { fvs, withWeight } from '../design/fontWeight'
 
 const MAX_SHADE = 5
 
@@ -63,8 +64,8 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
             <motion.span key={unread}
               initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}
               transition={bounce.playful}
-              className="absolute -right-0.5 -top-0.5 grid min-w-[15px] h-[15px] place-items-center rounded-pill px-1 text-[0.625rem] leading-none"
-              style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)', fontVariationSettings: '"wght" 600' }}>
+              className="absolute -right-0.5 -top-0.5 grid min-w-[15px] h-[15px] place-items-center rounded-pill px-1 text-[0.75rem] leading-none"
+              style={withWeight({ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }, 600)}>
               {unread > 9 ? '9+' : unread}
             </motion.span>
           )}
@@ -81,7 +82,7 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
             <div className="flex items-center justify-between border-b border-outline-variant/40 px-m py-2.5">
               <span data-type="title-s" className="text-on-surface flex items-center gap-s">
                 Notifications
-                {unread > 0 && <span className="rounded-pill px-1.5 h-5 inline-flex items-center text-[0.7rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 20%, transparent)', color: 'var(--color-primary)' }}>{unread}</span>}
+                {unread > 0 && <span className="rounded-pill px-1.5 h-5 inline-flex items-center text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 20%, transparent)', color: 'var(--color-primary)' }}>{unread}</span>}
               </span>
               {unread > 0 && (
                 <button type="button" onClick={ackAll}
@@ -96,7 +97,7 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
               ) : recent.length === 0 ? (
                 <div className="grid place-items-center px-m py-2xl text-center">
                   <Bell size={22} className="mb-s text-on-surface-low" />
-                  <div className="text-[0.875rem] text-on-surface" style={{ fontVariationSettings: '"wght" 500' }}>You're all caught up</div>
+                  <div className="text-[0.8125rem] text-on-surface" style={fvs(500)}>You're all caught up</div>
                 </div>
               ) : (
                 <motion.div variants={{ animate: { transition: stagger(0.05) } }} initial="initial" animate="animate">
@@ -108,7 +109,7 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
             </div>
             <button type="button" onClick={() => { setOpen(false); navigate('notifications') }}
               className="block w-full border-t border-outline-variant/40 px-m py-2.5 text-center text-[0.8125rem] text-on-surface-var hover:bg-surface-high hover:text-on-surface transition-colors"
-              style={{ fontVariationSettings: '"wght" 500' }}>
+              style={fvs(500)}>
               View all notifications
             </button>
           </motion.div>
@@ -124,12 +125,12 @@ function ShadeRow({ n, now, onOpen, onAck, onDelete }: { n: NotificationItem; no
     <motion.div layout variants={listItemEnter}
       exit={{ opacity: 0, height: 0, marginTop: 0, transition: spring.spatialFast }}
       className="group relative flex items-start gap-s rounded-md px-2 py-2 cursor-pointer hover:bg-surface-high transition-colors"
-      style={n.acked ? undefined : { boxShadow: `inset 2px 0 0 0 ${km.tone}` }} onClick={onOpen}>
-      <span className="mt-0.5 shrink-0 inline-flex size-7 items-center justify-center rounded-md" style={{ background: `color-mix(in srgb, ${km.tone} 16%, transparent)` }}><km.icon size={14} style={{ color: km.tone }} /></span>
+      style={unreadRail(km.tone, n.acked)} onClick={onOpen}>
+      <span className="mt-0.5 shrink-0 inline-flex size-7 items-center justify-center rounded-md" style={{ background: toneChipBg(km.tone) }}><km.icon size={14} style={{ color: km.tone }} /></span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-s">
-          <span className={`truncate text-[0.8125rem] ${n.acked ? 'text-on-surface-var' : 'text-on-surface'}`} style={{ fontVariationSettings: '"wght" 500' }}>{n.title}</span>
-          <span className="shrink-0 text-on-surface-low text-[0.6875rem]">{relTime(n.ts, now)}</span>
+          <span className={`truncate text-[0.8125rem] ${n.acked ? 'text-on-surface-var' : 'text-on-surface'}`} style={fvs(500)}>{n.title}</span>
+          <span className="shrink-0 text-on-surface-low text-[0.75rem]">{relTime(n.ts, now)}</span>
         </div>
         <p className="mt-0.5 truncate text-on-surface-low text-[0.75rem]">{firstLine(n.body)}</p>
       </div>

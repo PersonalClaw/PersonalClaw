@@ -110,7 +110,7 @@ export function DialogShell({ request, onClose }: {
           )}
           <div className="min-w-0 flex-1">
             <div data-type="title-l" className="text-on-surface">{title}</div>
-            {body && <div className="mt-1.5 text-on-surface-var text-[0.875rem] whitespace-pre-line">{body}</div>}
+            {body && <div className="mt-1.5 text-on-surface-var text-[0.8125rem] whitespace-pre-line">{body}</div>}
           </div>
         </div>
 
@@ -133,13 +133,13 @@ export function DialogShell({ request, onClose }: {
         <div className="flex justify-end gap-2 px-l py-l">
           {showCancel && (
             <button type="button" onClick={cancel} autoFocus={danger}
-              className="rounded-pill px-4 h-9 text-[0.875rem] text-on-surface-var bg-surface-high hover:bg-surface-highest transition-colors">
+              className="rounded-pill px-4 h-9 text-[0.8125rem] text-on-surface-var bg-surface-high hover:bg-surface-highest transition-colors">
               {cancelLabel ?? 'Cancel'}
             </button>
           )}
           <button type="button" onClick={confirmAction} autoFocus={!danger && !isPrompt}
             disabled={isPrompt && !canSubmit}
-            className="rounded-pill px-4 h-9 text-[0.875rem] transition-colors disabled:opacity-40"
+            className="rounded-pill px-4 h-9 text-[0.8125rem] transition-colors disabled:opacity-40"
             style={danger
               ? { background: 'var(--color-danger)', color: 'var(--color-on-danger)' }
               : { background: 'var(--color-primary)', color: 'var(--color-on-primary)' }}>
