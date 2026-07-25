@@ -807,8 +807,12 @@ class GatewayOrchestrator:
                 result.error,
             )
         except Exception as exc:
+            # PLATFORM-LEGIBILITY §2: wrap a raising provider in the shared
+            # WHAT/WHY/FIX envelope so the run-record error is coded + actionable.
+            from personalclaw.action_providers import provider_failure
+
             job.last_status = "error"
-            job.last_error = str(exc)
+            job.last_error = provider_failure(job.provider, exc).render()
             self._maybe_autopause(job)
             logger.exception("Action cron job '%s' (%s) failed", job.name, job.provider)
             return None
@@ -829,7 +833,12 @@ class GatewayOrchestrator:
                 return None  # silent success
             return job.last_result or None
         job.last_status = "error"
-        job.last_error = result.error or result.stderr or f"exit {result.exit_code}"
+        # A provider that populated the §2 envelope surfaces its WHAT/WHY/FIX text.
+        job.last_error = (
+            result.agent_error.render()
+            if result.agent_error is not None
+            else (result.error or result.stderr or f"exit {result.exit_code}")
+        )
         job.last_result = (result.stdout or "").strip()
         self._maybe_autopause(job)
         return None

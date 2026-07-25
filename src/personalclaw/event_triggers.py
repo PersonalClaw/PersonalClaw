@@ -238,8 +238,15 @@ class EventTriggerEngine:
                 event=f"memory.{event_type}", context=f"{key}: {value[:200]}", payload=payload
             )
             await provider.execute(t.action_config, ctx)
-        except Exception:
-            logger.debug("event-trigger action failed for %s", t.id, exc_info=True)
+        except Exception as exc:
+            # PLATFORM-LEGIBILITY §2: this fire is background/fire-and-forget (no
+            # result surface), so the coded WHAT/WHY/FIX envelope becomes the log
+            # line — a raising app provider fails legibly here as at the other two
+            # dispatch seams, rather than as an opaque debug traceback.
+            from personalclaw.action_providers import provider_failure
+
+            envelope = provider_failure(t.action_provider, exc)
+            logger.warning("event-trigger action failed for %s — %s", t.id, envelope.render())
 
 
 def emit_memory_event(*, event_type: str, key: str, value: str | None, now: float) -> None:

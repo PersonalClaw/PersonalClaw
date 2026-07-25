@@ -171,7 +171,14 @@ def format_tool_result(result: ToolResult) -> str:
                 "chars; narrow the query or request the specific portion you need]"
             )
         return out
-    parts = [f"Error: {result.error}" if result.error else "Error: tool failed"]
+    # PLATFORM-LEGIBILITY §2: a WHAT/WHY/FIX envelope IS the failure message — its
+    # render() supplies the labeled lines the model recovers from. Recovery hints
+    # (the pre-envelope carrier) still append for results that don't carry one.
+    parts: list[str] = []
+    if result.agent_error is not None:
+        parts.append(result.agent_error.render())
+    else:
+        parts.append(f"Error: {result.error}" if result.error else "Error: tool failed")
     for hint in result.recovery_hints:
         parts.append(f"Hint: {hint}")
     return "\n".join(parts)

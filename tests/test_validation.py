@@ -117,8 +117,12 @@ class TestValidateField:
     def test_string_allowed(self):
         allowed = frozenset({"a", "b"})
         assert validate_field("a", FieldSpec("x", str, allowed=allowed)) == "a"
-        with pytest.raises(ValidationError, match="must be one of"):
+        # PLATFORM-LEGIBILITY §2: an out-of-set value now raises a WHAT/WHY/FIX
+        # envelope naming the value + the allowed set as did-you-mean suggestions.
+        with pytest.raises(ValidationError, match="not allowed") as ei:
             validate_field("c", FieldSpec("x", str, allowed=allowed))
+        assert ei.value.agent_error is not None
+        assert set(ei.value.agent_error.suggestions) == {"a", "b"}
 
     def test_string_pattern(self):
         import re
@@ -207,11 +211,15 @@ class TestValidateToolArgs:
         assert result["category"] == "knowledge"
 
     def test_learn_add_bad_category(self):
-        with pytest.raises(ValidationError, match="must be one of"):
+        # §2: the rejection is a coded envelope naming the bad value; its render()
+        # is the exception string, so match on the WHAT line's content.
+        with pytest.raises(ValidationError, match="not allowed") as ei:
             validate_tool_args(
                 {"rule": "x", "category": "invalid"},
                 LEARN_ADD_SCHEMA,
             )
+        assert ei.value.agent_error is not None
+        assert ei.value.agent_error.code == "ERR_TOOL_ARG_INVALID"
 
     def test_cron_add_valid(self):
         result = validate_tool_args(

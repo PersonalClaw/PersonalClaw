@@ -527,8 +527,12 @@ class TestBadInputsCaught:
                 "category": "evil_category",
             },
         )
+        # PLATFORM-LEGIBILITY §2: the MCP string boundary now surfaces the
+        # WHAT/WHY/FIX envelope — the bad value is named and a FIX line points at
+        # the allowed values (did-you-mean), instead of a bare "must be one of".
         assert "Error" in result
-        assert "must be one of" in result
+        assert "evil_category" in result
+        assert "WHAT:" in result and "FIX:" in result
 
     def test_cron_interval_too_small(self):
         result = self._cron_call(
