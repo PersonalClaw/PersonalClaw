@@ -19,3 +19,9 @@ src/lib/impeccable/ImpeccableLiveRoot.svelte
 src/lib/impeccable/__runtime.js
 src/lib/impeccable/[0-9a-f]*/
 # impeccable-live-ignore-end
+
+# Playwright visual/a11y harness — commit baselines (e2e/__screenshots__), ignore run artifacts
+/test-results/
+/playwright-report/
+/playwright/.cache/
+/e2e/.auth/

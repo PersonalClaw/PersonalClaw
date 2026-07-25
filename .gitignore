@@ -82,3 +82,5 @@ playwright-responses/
 
 # Bare local dev gateway home (make serve creates $(CURDIR)/.dev-home)
 /.dev-home/
+# e2e harness dev home (playwright.config.ts recipe)
+/.dev-home-e2e/
