@@ -154,6 +154,42 @@ def _list_tools() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "get_context",
+            "description": (
+                "Call at the START of every task to load this project's routed context. "
+                "Returns, in lost-in-the-middle order: hard RULES & directives (the "
+                "project brief + operating procedure) at the top; then scored mid-tier "
+                "content — how this user works (memory-derived lessons/preferences), the "
+                "skills available here, and titled pointers to reference material "
+                "(knowledge items — retrieve a body on demand, never inlined); and at the "
+                "bottom an L0 CATALOG of what was NOT loaded, each with the tool/route that "
+                "pulls it (memory_recall, skill_invoke, GET /api/knowledge/items). "
+                "Optionally pass a `query` to score the mid tier against the task at hand, "
+                "and a `project_id` to target a specific project (defaults to this "
+                "session's project). Read-only: never writes to memory or knowledge."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "What you're about to do — scores the mid-tier memory/"
+                            "knowledge content. Omit to score against the project itself."
+                        ),
+                    },
+                    "project_id": {
+                        "type": "string",
+                        "description": (
+                            "Target project id (e.g. 'p-1a2b3c4d'). Omit to use the "
+                            "current session's bound project, else the Personal default."
+                        ),
+                    },
+                },
+                "required": [],
+            },
+        },
+        {
             "name": "skill_remember",
             "description": (
                 'Capture a skill the USER just taught you ("from now on…", "always do X", '
@@ -587,6 +623,22 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             return "No skills matched. Try broader terms; or proceed without a skill."
         lines = [f"- {h['key']}: {h['description']}" for h in hits]
         return "Matching skills (call skill_invoke(name) to load full steps):\n" + "\n".join(lines)
+
+    if name == "get_context":
+        query = str(args.get("query") or "").strip()
+        project_id = str(args.get("project_id") or "").strip()
+        qs = []
+        if query:
+            qs.append("query=" + urllib.parse.quote(query))
+        if project_id:
+            qs.append("project_id=" + urllib.parse.quote(project_id))
+        path = "/api/context" + ("?" + "&".join(qs) if qs else "")
+        resp = _get(path)
+        if resp.get("error"):
+            return f"Error loading context: {resp['error']}"
+        # The endpoint already renders the tiered markdown body; return it verbatim so
+        # the agent reads the same block an adapter file would carry.
+        return resp.get("text") or "No context available for this project."
 
     if name == "wait":
         import time as _time

@@ -184,6 +184,33 @@ Generate a video from a text prompt, using the model bound to the 'video_gen' us
 
 ## personalclaw-core
 
+### `get_context`
+
+Call at the START of every task to load this project's routed context. Returns, in lost-in-the-middle order: hard RULES & directives (the project brief + operating procedure) at the top; then scored mid-tier content — how this user works (memory-derived lessons/preferences), the skills available here, and titled pointers to reference material (knowledge items — retrieve a body on demand, never inlined); and at the bottom an L0 CATALOG of what was NOT loaded, each with the tool/route that pulls it (memory_recall, skill_invoke, GET /api/knowledge/items). Optionally pass a `query` to score the mid tier against the task at hand, and a `project_id` to target a specific project (defaults to this session's project). Read-only: never writes to memory or knowledge.
+
+**Response type:** `context.routed.manifest`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `project_id` (string, optional) — Target project id (e.g. 'p-1a2b3c4d'). Omit to use the current session's bound project, else the Personal default.
+- `query` (string, optional) — What you're about to do — scores the mid-tier memory/knowledge content. Omit to score against the project itself.
+
+**Example — Load the current project's routed context at task start:**
+
+```json
+{}
+```
+
+**Example — Score the context against the task at hand:**
+
+```json
+{
+  "project_id": "p-1a2b3c4d",
+  "query": "add a settings toggle"
+}
+```
+
 ### `hook_register`
 
 Register a webhook listener so an external system can inject a message into a dedicated agent session later. Returns the webhook URL and session key. Use this when you need to hand off to an external process (e.g. submit a PR, then wait for CI to call back with results). The external system POSTs to the returned URL with the results.
@@ -1159,6 +1186,62 @@ Update a task. Args: id (str, required), and any of title, description, status (
 {
   "id": "tsk_abc123",
   "status": "done"
+}
+```
+
+## personalclaw-ui-docs
+
+### `ui_get`
+
+Get the full documentation for one ui/ component (props with types + whether required, best-practice Do/Don'ts, and the anatomy), or for a design token, or the whole token catalog (name='tokens'). Optionally narrow to one section.
+
+**Response type:** `ui.get.doc`
+
+**Parameters:**
+- `name` (string, required) — Component name (e.g. 'Button', 'SidePanel'), a design token var (e.g. '--color-primary'), or 'tokens' for the full token catalog.
+- `section` (string, optional) — Optional: restrict the component doc to one of 'props', 'bestPractices', 'anatomy', or 'description'.
+
+**Example — Read a component's full props + best practices:**
+
+```json
+{
+  "name": "SidePanel"
+}
+```
+
+**Example — Read just one section of a component's doc:**
+
+```json
+{
+  "name": "Button",
+  "section": "props"
+}
+```
+
+### `ui_search`
+
+Search the web/src/ui design-system kit (components + design tokens) by keyword. Returns brief hits — name, kind, one-line description — so you can find the right primitive to reach for instead of hand-rolling markup. Follow up with ui_get(name) for the full props + best-practices of any hit.
+
+**Response type:** `ui.search.results`
+
+**Parameters:**
+- `limit` (integer, optional) — Max hits to return (default 8, cap 25).
+- `query` (string, required) — Search terms, e.g. 'button', 'side panel', 'text input', or a token like 'primary color'.
+
+**Example — Find the design-system primitive for a labelled action:**
+
+```json
+{
+  "limit": 5,
+  "query": "button submit"
+}
+```
+
+**Example — Search for a design token:**
+
+```json
+{
+  "query": "primary color"
 }
 ```
 

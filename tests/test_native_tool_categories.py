@@ -43,7 +43,10 @@ _CATEGORY_PROVIDERS = {
 # The cross-cutting tools that stay in residual core (not a single entity category).
 # skill_invoke + skill_search + skill_remember are the skill-library-spanning trio
 # (load one / find any / capture one) — all live in core since they span the whole
-# skill library rather than one entity category.
+# skill library rather than one entity category. get_context is the routed-context
+# provider (PLATFORM-LEGIBILITY §7): it assembles a whole-project manifest spanning
+# rules + memory + knowledge + skills, so it too belongs in core rather than any one
+# entity category.
 _RESIDUAL_CORE_TOOLS = {
     "skill_invoke",
     "skill_search",
@@ -53,6 +56,7 @@ _RESIDUAL_CORE_TOOLS = {
     "notify",
     "notify_attachment",
     "loop_nudge_stop",
+    "get_context",
 }
 
 

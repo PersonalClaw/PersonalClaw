@@ -814,6 +814,34 @@ async def start_dashboard(
 
     app.router.add_get("/api/manifest", api_manifest)
 
+    # Legibility — the dashboard capability-discovery power-ups widget (§6):
+    # propose ONE untouched capability at a time; dismissals persist. Never writes
+    # or enables anything on the user's behalf.
+    from personalclaw.dashboard.handlers.legibility import (
+        api_power_ups,
+        api_power_ups_dismiss,
+        api_power_ups_dismissed,
+    )
+
+    app.router.add_get("/api/legibility/power-ups", api_power_ups)
+    app.router.add_get("/api/legibility/power-ups/dismissed", api_power_ups_dismissed)
+    app.router.add_post("/api/legibility/power-ups/dismiss", api_power_ups_dismiss)
+
+    # Legibility — PClaw as a routed-context provider for external agents (§7).
+    # GET /api/context backs the in-process get_context tool; the per-project
+    # regenerate endpoint renders marker-fenced adapters into a bound workspace_dir
+    # (opt-in via legibility.context_adapters, SEL-audited).
+    from personalclaw.dashboard.handlers.context import (
+        api_context_get,
+        api_project_context_regenerate,
+    )
+
+    app.router.add_get("/api/context", api_context_get)
+    app.router.add_post(
+        "/api/projects/{project_id}/context-adapters/regenerate",
+        api_project_context_regenerate,
+    )
+
     # Tasks — first-class entity with provider-based aggregation
     from personalclaw.tasks.handlers import register_task_routes
 

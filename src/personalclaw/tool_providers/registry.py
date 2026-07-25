@@ -102,6 +102,15 @@ def create_subagents_provider(config: dict[str, Any] | None = None) -> ToolProvi
     )
 
 
+def create_ui_docs_provider(config: dict[str, Any] | None = None) -> ToolProvider:
+    """Extension factory for the ``personalclaw-ui-docs`` tool surface — serves the
+    ``web/src/ui`` design-system kit as ``ui_search`` / ``ui_get`` documentation-as-
+    data (Platform-Legibility §5). Not an MCP module — reads the built ui-docs.json."""
+    from personalclaw.tool_providers.ui_docs import UiDocsToolProvider
+
+    return UiDocsToolProvider()
+
+
 _providers: dict[str, ToolProvider] = {}
 
 

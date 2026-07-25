@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import {
   MessageSquare, History, type LucideIcon,
-  MessageSquarePlus, ListTodo, BookOpen, FolderKanban, FileCode2, TerminalSquare, Sparkles,
+  MessageSquarePlus, ListTodo, BookOpen, FolderKanban, FileCode2, TerminalSquare, Sparkles, Compass,
 } from 'lucide-react'
 import { DashboardLiveProvider } from './DashboardLive'
 import { HeroPulse } from './widgets/HeroPulse'
@@ -10,6 +10,7 @@ import { ActionCenter } from './widgets/ActionCenter'
 import { ActiveWork } from './widgets/ActiveWork'
 import { TasksWidget } from './widgets/TasksWidget'
 import { Suggestions } from './widgets/Suggestions'
+import { PowerUps } from './widgets/PowerUps'
 import { ScheduleWidget } from './widgets/ScheduleWidget'
 import { SystemHealth } from './widgets/SystemHealth'
 import { TopBar } from '../../ui/TopBar'
@@ -84,6 +85,12 @@ export function DashboardPage(route: RouteProps) {
                 <Suggestions {...route} />
               </Section>
             </div>
+
+            {/* Capability discovery (§6) — surfaces one capability this instance
+                has but you've never used, as a mini-lesson with a deep link. */}
+            <Section label="Discover" icon={Compass}>
+              <PowerUps {...route} />
+            </Section>
 
             <Section label="Recent activity" icon={History}>
               <ScheduleWidget {...route} />

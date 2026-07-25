@@ -469,6 +469,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # Gates the poll-based message sources (filesystem/channel apps). The UI
     # toggle calls /api/inbox/restart after flipping so the service re-attaches.
     "inbox.enabled": {"type": "bool"},
+    # Platform-legibility toggles (§6 power-ups widget, §7 context adapters).
+    # power_ups gates a propose-don't-write dashboard widget; context_adapters
+    # gates writing adapter files into opted-in project workspaces.
+    "legibility.power_ups": {"type": "bool"},
+    "legibility.context_adapters": {"type": "bool"},
 }
 
 

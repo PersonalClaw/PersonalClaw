@@ -45,5 +45,6 @@ The extension-provider taxonomy (the capability types an app can contribute) and
 - **personalclaw-subagents** — type `tool` / `` (enabled); capabilities: subagents
 - **personalclaw-tasks-tools** — type `tool` / `` (enabled); capabilities: task
 - **personalclaw-tools** — type `tool` / `` (enabled); capabilities: skills, notification, system
+- **personalclaw-ui-docs** — type `tool` / `` (enabled); capabilities: ui_docs
 - **personalclaw-workflows** — type `tool` / `` (enabled); capabilities: workflows
 - **native-workflows** — type `workflow` / `` (enabled); capabilities: crud, scoped, semantic-match
