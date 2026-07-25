@@ -223,7 +223,12 @@ Examples:
     chat_parser.add_argument("--model", help="Model to use (default: from config)")
 
     # doctor
-    sub.add_parser("doctor", help="Verify PersonalClaw setup")
+    doctor_parser = sub.add_parser("doctor", help="Verify PersonalClaw setup")
+    doctor_parser.add_argument(
+        "--paths",
+        action="store_true",
+        help="Print resolved install paths (reference docs, config, skills, install dir) and exit",  # noqa: E501
+    )
 
     # gateway
     gw_parser = sub.add_parser(
@@ -791,7 +796,10 @@ Examples:
             only_app=getattr(args, "app", ""),
         )
     elif args.command == "doctor":
-        _doctor()
+        if getattr(args, "paths", False):
+            _doctor_paths()
+        else:
+            _doctor()
     elif args.command == "cron":
         _cron(args)
     elif args.command == "spawn":
@@ -867,7 +875,7 @@ from personalclaw.cli_commands import (  # noqa: E402
     _spawn,
 )
 from personalclaw.cli_config import _config_cmd  # noqa: E402
-from personalclaw.cli_doctor import _doctor  # noqa: E402
+from personalclaw.cli_doctor import _doctor, _doctor_paths  # noqa: E402
 from personalclaw.cli_server import (  # noqa: E402
     _consolidate_cmd,
     _gateway,

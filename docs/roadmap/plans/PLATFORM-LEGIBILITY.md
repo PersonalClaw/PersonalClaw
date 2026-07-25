@@ -348,3 +348,67 @@ shape change; the FE reads `meta.agent_error` defensively).
 targeted pytest (20, the two new suites) green; `make test` 7730 passed / 28 skipped / 13
 xfailed; web typecheck + test (225) + build all green. No E1–E6 blocker. Local branch
 `feature-platform-legibility-s2` (off S1's branch), unpushed.
+
+### 2026-07-25 — S3 (§3) `pclaw-api` skill + offline reference + eval gate — DONE
+
+Shipped the operator-facing half of legibility: the skill that teaches the driving
+methodology, the offline reference it points to, and the eval battery that proves the
+pair works — one source, two renderings from the S1 manifest generator.
+
+- **`src/personalclaw/manifest_reference.py`** (new) — the build-time renderer. Reuses the
+  S1 drift-test seam (clear `tool_reg._providers` + `prov_reg._registry`, register every
+  `BUNDLED_DIR` native manifest with a `.provider`, then `build_manifest(app=None)`) so
+  tools + providers render WITHOUT booting a gateway. Routes come from a static AST walk of
+  `dashboard/*.py` (the design rule `manifest.py` states — booting has security-critical
+  startup side effects: extension load, binding migration), with a global name→docstring
+  index resolving every handler reference (bare `api_x`, `handlers.api_x`, `_up.api_x` — the
+  callable's final identifier). `_ROUTE_SIG_PREFIX`/`_clean_summary` strip a docstring's
+  leading `GET /api/foo —` restatement (the markdown already prints method+path).
+  `render_reference()` → `{filename: markdown}` deterministic (sorted, no timestamps);
+  `reference_dir()` resolves via `importlib.resources` (wheel/editable/source);
+  `python -m personalclaw.manifest_reference` regenerates.
+- **`src/personalclaw/reference/`** (new subpackage) — the GENERATED `index.md` (orient-then-
+  drill map + repo gotchas + what-NOT-to-do), `tools.md` (57 tools / 10 providers, full input
+  schemas + worked JSON examples), `routes.md` (424 agent-callable routes of 426), `providers.md`
+  (taxonomy + 26 registered). Shipped via `pyproject.toml` package-data (`reference/*.md`).
+- **`src/personalclaw/skills/bundled/pclaw-api/SKILL.md`** (new) — the operator twin of
+  `pclaw-features`: orient-then-drill, never-guess-copy-it, the mandatory verify-after-mutate
+  loop (read the entity back; a silent miss is a failure), branch-on-`code` error-envelope
+  reading (the S2 deliverable), 5 worked patterns, and scope guardrails. Discoverable through
+  the native marketplace (audit=pass).
+- **`personalclaw doctor --paths`** (`cli.py` + `cli_doctor.py::_doctor_paths`) — prints
+  tab-separated `key<TAB>path` for reference / config / skills / install, so an external agent
+  locates the reference from the installed binary alone (the `doctor get install-dir` pattern).
+- **`tests/test_agent_reference.py`** (new, 7) — byte-compares the checked-in reference against
+  a fresh render (the drift guard — a tool/route added without its `TOOL_META`/route entry
+  reddens the build), asserts the four files, prefix-stripping, provider coverage, valid-JSON
+  examples, and the skill's cross-references + `doctor --paths` resolution.
+- **`tests/eval_pclaw_api_battery.py`** (new, 3 + `score_answers`) — the checked-in 5-task
+  regression harness the plan requires: the task prompts, the code-verified `ANSWER_KEY`, the
+  scorer (right tool/route + exact params + a verify step = correct; right action minus verify
+  = silent miss), and a test asserting the key still matches the LIVE manifest (a signature
+  change breaks THIS battery, forcing reference + key to regenerate together).
+
+**Eval gate PASSED (§3.2 / §9 Session 3 — the ship blocker).** Ran the with/without eval on
+fresh context-free subagents. The **with** arm (skill + reference in context, forbidden from
+grepping the repo) scored **5/5, 5/5, 5/5** first-try, 0 silent misses — bar cleared on all
+three. The **without** arm (one-paragraph description only) scored **2/5 and 1/5**, failing on
+exactly the invented signatures the reference exists to kill: `schedule_create`/`schedule`
+instead of `hook_register`; a fabricated `PUT /api/models/bindings/chat` + `{model, provider}`
+body instead of the real `PUT /api/models/active/{use_case}` + `{models:[...]}`; and
+`skill_create(name, description, content)` instead of `skill_remember(title, body)`. The
+1–2 → 5 lift is the measured value of the slice.
+
+**DEVIATION — reference ships as the `personalclaw.reference` subpackage, not the plan's
+literal `docs/agent-reference/`.** Repo-root `docs/` does not ship in a wheel, and §3.1's whole
+point is that an EXTERNALLY-installed agent reads exact signatures — so the docs must be
+package-data resolvable via `importlib.resources`, which `doctor --paths` surfaces from the
+installed binary. Same content, same generator, same drift discipline; only the on-disk home
+moved to where a `pip install` can find it. (Owner-approved during the session.)
+
+**Gate:** `make lint` clean (black/isort/flake8/mypy — 901 files, 459 source files); targeted
+pytest (18 — the eval battery + reference + S1 drift) green; `make test` 7737 passed / 28
+skipped / 13 xfailed; `web/` untouched (no frontend surface — the skill/reference are backend +
+CLI), so the web gate is N/A. CHANGELOG `Added` entry landed. No E1–E6 blocker. Clean-break
+under the pre-1.0 banner (the reference is generated build artifact, not persisted user state).
+Local branch `feature-platform-legibility-s3` (off S2's branch), unpushed.

@@ -170,6 +170,7 @@ personalclaw = [
     "skills/bundled/*/SKILL.md",
     "workflows/bundled/*/WORKFLOW.md",
     "apps/native/*/app.json",
+    "reference/*.md",
 ]
 
 # ── Tool configs ──────────────────────────────────────────────────────────────

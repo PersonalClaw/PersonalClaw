@@ -12,6 +12,17 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 
 ### Added
 
+- **Offline agent reference + `pclaw-api` skill** — an agent driving PersonalClaw
+  from outside a running gateway now reads exact tool/route signatures instead of
+  guessing them. The distribution ships a generated markdown reference
+  (`personalclaw/reference/`: every registered tool with its input schema +
+  examples, the agent-callable HTTP routes, and the provider taxonomy) rendered
+  from the same source as the live `GET /api/manifest`, plus a bundled `pclaw-api`
+  operator skill (the never-guess-copy-it + verify-after-mutate discipline). Locate
+  the files from the installed binary with the new `personalclaw doctor --paths`,
+  which prints the resolved reference / config / skills / install directories. A
+  drift test byte-compares the checked-in reference against a fresh render, so a
+  tool or route added without its metadata reddens the build.
 - **Render-smoke gate** (`npm run smoke:render`): the built SPA is now loaded
   in headless Chromium — key routes must mount real content with no uncaught
   errors — before any frontend-affecting push (repository-owned pre-push hook,
