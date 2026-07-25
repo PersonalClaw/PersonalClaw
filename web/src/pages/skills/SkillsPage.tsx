@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { Sparkles, Search, Zap, Store, Download, Loader2, Plus, ShieldCheck, ShieldAlert, Lightbulb } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -12,7 +13,7 @@ import { Modal } from '../../ui/Modal'
 import { EmptyState, ListRow, ListSkeleton } from '../../ui/ListScaffold'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { SidePanel } from '../../ui/SidePanel'
-import { TextInput, TextArea } from '../tasks/formControls'
+import { TextInput, TextArea } from '../../ui/forms'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { api, type SkillItem, type SkillSearchResult, type SkillMarketplace } from '../../lib/api'
 import { SOURCE_TONE, sourceLabel, fmtInstalls } from './skillMeta'
@@ -141,15 +142,15 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
                     <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${tone} 16%, transparent)` }}><Sparkles size={19} style={{ color: tone }} /></span>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-s">
-                        <span className="truncate text-on-surface text-[0.9375rem]" style={{ fontVariationSettings: '"wght" 500' }}>{s.name}</span>
-                        {s.always && <span className="shrink-0 inline-flex items-center gap-1 text-warn text-[0.7rem]" title="Always loaded"><Zap size={11} /> always</span>}
+                        <span className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{s.name}</span>
+                        {s.always && <span className="shrink-0 inline-flex items-center gap-1 text-warn text-[0.75rem]" title="Always loaded"><Zap size={11} /> always</span>}
                         {s.integrity === 'intact' && <ShieldCheck size={12} className="shrink-0 text-ok" aria-label="Integrity verified" role="img" />}
-                        {s.integrity === 'tampered' && <span className="shrink-0 inline-flex items-center gap-1 text-danger text-[0.7rem]" title="Integrity check failed — files changed since install"><ShieldAlert size={11} /> tampered</span>}
+                        {s.integrity === 'tampered' && <span className="shrink-0 inline-flex items-center gap-1 text-danger text-[0.75rem]" title="Integrity check failed — files changed since install"><ShieldAlert size={11} /> tampered</span>}
                       </div>
                       <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{s.description}</p>
                     </div>
-                    {s.source !== 'agent-local' && s.loaded_by_agents.length > 0 && <span className="shrink-0 text-on-surface-low text-[0.7rem]">{s.loaded_by_agents.length} agent{s.loaded_by_agents.length === 1 ? '' : 's'}</span>}
-                    <span className="shrink-0 rounded-pill px-2 h-6 inline-flex items-center text-[0.7rem]" style={{ background: `color-mix(in srgb, ${tone} 14%, transparent)`, color: tone }}>{sourceLabel(s.source, s.agent)}</span>
+                    {s.source !== 'agent-local' && s.loaded_by_agents.length > 0 && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{s.loaded_by_agents.length} agent{s.loaded_by_agents.length === 1 ? '' : 's'}</span>}
+                    <span className="shrink-0 rounded-pill px-2 h-6 inline-flex items-center text-[0.75rem]" style={{ background: `color-mix(in srgb, ${tone} 14%, transparent)`, color: tone }}>{sourceLabel(s.source, s.agent)}</span>
                   </ListRow>
                   </ContextMenu>
                 )
@@ -250,7 +251,7 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
       )}
     >
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
-        {loading ? <div className="flex items-center gap-2 text-on-surface-low text-[0.875rem]"><Loader2 size={15} className="animate-spin" /> Searching…</div>
+        {loading ? <div className="flex items-center gap-2 text-on-surface-low text-[0.8125rem]"><Loader2 size={15} className="animate-spin" /> Searching…</div>
           : results === null ? <EmptyState icon={Store} title="Browse skills" hint={`Search ${marketplace || 'all marketplaces'} for skills to install — the agent loads them when relevant.`} />
           : results.length === 0 ? <EmptyState icon={Search} title="No results" hint="Try a different search term or marketplace." />
           : (
@@ -267,7 +268,7 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
                   <ListRow index={i} onClick={() => setOpenId(r.id)}>
                     <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-warn) 14%, transparent)' }}><Sparkles size={19} className="text-warn" /></span>
                     <div className="flex-1 min-w-0">
-                      <span className="block truncate text-on-surface text-[0.9375rem]" style={{ fontVariationSettings: '"wght" 500' }}>{r.name || r.id}</span>
+                      <span className="block truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{r.name || r.id}</span>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-m text-on-surface-low text-[0.8125rem]">
                         <span>{r.source}</span>
                         {r.installs ? <span>· {fmtInstalls(r.installs)}</span> : null}

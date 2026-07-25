@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { Sun, Moon, Monitor, Check, Plus, Trash2, ChevronDown, RotateCcw, Sliders, Boxes, Layout as LayoutIcon, Type, Save } from 'lucide-react'
 import { Surface } from '../../ui/Surface'
+import { fvs } from '../../design/fontWeight'
 import { Button } from '../../ui/Button'
-import { Field, TextInput } from '../tasks/formControls'
+import { Field, TextInput } from '../../ui/forms'
 import { ColorControl, ScalarControl, SelectControl } from '../../ui/TokenControls'
 import { TOKENS, type ColorToken, type ScalarToken, type SelectToken } from '../../design/tokenRegistry'
 import { useAppearance } from '../../app/appearance'
@@ -32,7 +33,7 @@ export function DesignPanel() {
       <section>
         <div className="flex items-center justify-between mb-m">
           <div>
-            <h2 className="text-on-surface text-[1rem]" style={{ fontVariationSettings: '"wght" 600' }}>Color scheme</h2>
+            <h2 className="text-on-surface text-[1.0625rem]" style={fvs(600)}>Color scheme</h2>
             <p className="text-on-surface-low text-[0.8125rem] mt-0.5">A scheme is the system's color identity. Tuning the <strong className="text-on-surface-var">{mode}</strong> theme.</p>
           </div>
           <div className="inline-flex rounded-pill bg-surface-container p-1">
@@ -60,7 +61,7 @@ export function DesignPanel() {
 
         {/* fork → custom (colors only) */}
         <div className="mt-l">
-          <button onClick={() => setEditingColors((v) => !v)} className="flex items-center gap-s text-on-surface-var text-[0.875rem]">
+          <button onClick={() => setEditingColors((v) => !v)} className="flex items-center gap-s text-on-surface-var text-[0.8125rem]">
             <ChevronDown size={16} className={`transition-transform ${editingColors ? 'rotate-180' : ''}`} />
             <Sliders size={15} /> Edit colors &amp; save a custom theme
           </button>
@@ -73,7 +74,7 @@ export function DesignPanel() {
 
       {/* ── live preview ── */}
       <section>
-        <h2 className="text-on-surface-low text-[0.7rem] uppercase tracking-wide mb-s">Preview</h2>
+        <h2 className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-s">Preview</h2>
         <Preview />
       </section>
 
@@ -106,9 +107,9 @@ function SchemeTile({ scheme, dark, active, custom, onPick, onDelete }: { scheme
           {emoji && <span aria-hidden>{emoji}</span>}
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="text-on-surface text-[0.8125rem] truncate" style={{ fontVariationSettings: '"wght" 500' }}>{scheme.label}</span>
+          <span className="text-on-surface text-[0.8125rem] truncate" style={fvs(500)}>{scheme.label}</span>
           {active && <Check size={13} className="text-primary shrink-0" />}
-          {custom && <span className="ml-auto text-on-surface-low text-[0.6rem] uppercase tracking-wide rounded-pill bg-surface-high px-1.5 shrink-0">saved</span>}
+          {custom && <span className="ml-auto text-on-surface-low text-[0.75rem] uppercase tracking-wide rounded-pill bg-surface-high px-1.5 shrink-0">saved</span>}
         </div>
       </button>
       {onDelete && (
@@ -125,7 +126,7 @@ function Preview() {
       <div className="flex gap-m" style={{ minHeight: 150 }}>
         <div className="w-32 shrink-0 rounded-lg p-2 flex flex-col gap-1" style={{ background: 'var(--color-rail)' }}>
           {['Chat', 'Tasks', 'Triggers', 'Knowledge'].map((it, i) => (
-            <div key={it} className="flex items-center gap-1.5 rounded-md px-2 h-7 text-[0.7rem]" style={i === 0 ? { background: 'color-mix(in srgb, var(--color-primary) 18%, transparent)', color: 'var(--color-primary)' } : { color: 'var(--color-on-surface-low)' }}>
+            <div key={it} className="flex items-center gap-1.5 rounded-md px-2 h-7 text-[0.75rem]" style={i === 0 ? { background: 'color-mix(in srgb, var(--color-primary) 18%, transparent)', color: 'var(--color-primary)' } : { color: 'var(--color-on-surface-low)' }}>
               <span className="size-1.5 rounded-pill" style={{ background: i === 0 ? 'var(--color-primary)' : 'var(--color-outline)' }} />{it}
             </div>
           ))}
@@ -159,7 +160,7 @@ function ControlSection({ title, icon: Icon, subtitle, groups }: { title: string
       <div className="mb-m flex items-center gap-s">
         <Icon size={16} className="text-primary" />
         <div>
-          <h2 className="text-on-surface text-[1rem]" style={{ fontVariationSettings: '"wght" 600' }}>{title}</h2>
+          <h2 className="text-on-surface text-[1.0625rem]" style={fvs(600)}>{title}</h2>
           <p className="text-on-surface-low text-[0.8125rem]">{subtitle}</p>
         </div>
       </div>
@@ -220,7 +221,7 @@ function ColorEditor({ onSave, onUpdate, activeTheme }: {
           <div className="flex flex-wrap items-center gap-1.5 mb-s">
             {THEME_EMOJI_CHOICES.map((e) => (
               <button key={e} type="button" onClick={() => setEmoji(e)}
-                className="size-8 grid place-items-center rounded-lg text-[1.05rem] transition-colors"
+                className="size-8 grid place-items-center rounded-lg text-[1.0625rem] transition-colors"
                 style={emoji === e ? { background: 'color-mix(in srgb, var(--color-primary) 20%, transparent)', outline: '1.5px solid var(--color-primary)' } : { background: 'var(--color-surface-high)' }}>{e}</button>
             ))}
           </div>
@@ -236,7 +237,7 @@ function ColorEditor({ onSave, onUpdate, activeTheme }: {
         if (!tokens.length) return null
         return (
           <Surface key={group} tone="container" radius="lg" className="px-l py-m">
-            <h3 className="text-on-surface-var mb-1 uppercase tracking-wide text-[0.7rem]">{group}</h3>
+            <h3 className="text-on-surface-var mb-1 uppercase tracking-wide text-[0.75rem]">{group}</h3>
             <div className="divide-y divide-outline-variant/30">
               {tokens.map((t) => <ColorControl key={t.varName} token={t as ColorToken} />)}
             </div>

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Search, X, SearchX } from 'lucide-react'
+import { SearchX } from 'lucide-react'
+import { SearchField } from '../../ui/SearchField'
 import { SETTINGS_WIDGETS, type SettingsWidget } from './settingsWidgets'
 
 const COL_MIN = 320   // min column width before adding another column
@@ -45,24 +46,17 @@ export function SettingsHome({ go }: { go: (id: string) => void }) {
               of the scroll area (its own surface bg masks cards sliding under it),
               with a constant gap below so the first row never crowds it. */}
           <div className="sticky top-0 z-20 -mx-2xl bg-canvas px-2xl pt-2xl pb-l">
-            <div className="relative mx-auto w-full" style={{ maxWidth: 720 }}>
-              <Search size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-on-surface-low" />
-              <input value={query} onChange={(e) => setQuery(e.target.value)} type="search" autoFocus
+            <div className="mx-auto w-full" style={{ maxWidth: 720 }}>
+              <SearchField value={query} onChange={setQuery} autoFocus
                 placeholder="Search settings — name, description, or any value inside"
-                aria-label="Search settings"
-                onKeyDown={(e) => { if (e.key === 'Escape' && query) { e.preventDefault(); e.stopPropagation(); setQuery('') } }}
-                className="h-11 w-full rounded-pill bg-surface-high pl-10 pr-10 text-[0.95rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-              {query && (
-                <button type="button" onClick={() => setQuery('')} aria-label="Clear search"
-                  className="absolute right-3 top-1/2 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-full text-on-surface-low hover:bg-surface-highest hover:text-on-surface"><X size={15} /></button>
-              )}
+                ariaLabel="Search settings" />
             </div>
           </div>
 
           {!anyMatch && (
             <div className="flex flex-col items-center gap-2 py-2xl text-center text-on-surface-low">
               <SearchX size={28} className="opacity-50" />
-              <p className="text-[0.9rem]">No settings match “{q}”.</p>
+              <p className="text-[0.9375rem]">No settings match “{q}”.</p>
             </div>
           )}
 
@@ -169,7 +163,7 @@ function Group({ title, items, query, go, onMatch }: {
   }, [onMatch])
   return (
     <section style={anyVisible ? undefined : { display: 'none' }}>
-      <h2 className="mb-2 px-1 text-on-surface-low text-[0.72rem] uppercase tracking-wide">{title}</h2>
+      <h2 className="mb-2 px-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{title}</h2>
       <div className="flex flex-col" style={{ gap: COL_GAP }}>
         {items.map((w) => <Cell key={w.id} widget={w} query={query} go={go} onMatch={report} />)}
       </div>

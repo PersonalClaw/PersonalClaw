@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowLeft, ArrowRight, Play, Plus, X, Sparkles, HelpCircle, AlertTriangle, Check, Download, Sparkle, Workflow, ChevronUp, ChevronDown, Loader2, Eye } from 'lucide-react'
-import { Modal } from '../../ui/Modal'
-import { Markdown } from '../../ui/Markdown'
+import { ArrowLeft, ArrowRight, Play, Plus, X, Sparkles, HelpCircle, AlertTriangle, Check, Download, Sparkle, Workflow, ChevronUp, ChevronDown, Loader2 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
+import { SquareIconButton } from '../../ui/SquareIconButton'
+import { CapRow, CapabilityPeekModal } from '../../ui/CapabilityPicker'
 import { Button } from '../../ui/Button'
 import { Segmented } from '../../ui/Segmented'
 import { spring } from '../../design/motion'
@@ -260,7 +261,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
     }
   }
 
-  if (!loop) return <div className="flex h-full items-center justify-center text-on-surface-low text-[0.875rem]">Analyzing the plan…</div>
+  if (!loop) return <div className="flex h-full items-center justify-center text-on-surface-low text-[0.8125rem]">Analyzing the plan…</div>
 
   // Header: back + (editable) generated title + a compact step indicator.
   const header = (
@@ -274,7 +275,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
               className="h-8 min-w-[16rem] rounded-md bg-surface-high px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
           ) : (
             <button type="button" onClick={() => setEditingTitle(true)} title="Edit title"
-              className="truncate text-on-surface text-[0.9375rem] hover:text-on-surface-var" style={{ fontVariationSettings: '"wght" 500' }}>
+              className="truncate text-on-surface text-[0.9375rem] hover:text-on-surface-var" style={fvs(500)}>
               {title || 'Untitled loop'}
             </button>
           )}
@@ -395,10 +396,10 @@ function OverviewStep({ loop, goalType, setGoalType, rigor, subGoals, setSubGoal
       )}
       <div className="flex flex-col gap-s">
         <div className="flex flex-wrap items-center gap-s">
-          <span className="text-on-surface-low text-[0.875rem]">I read this as a</span>
+          <span className="text-on-surface-low text-[0.8125rem]">I read this as a</span>
           <Segmented ariaLabel="Goal type" value={goalType} onChange={(v) => setGoalType(v as GoalType)}
             options={GOAL_TYPES.map((t) => ({ key: t.id, label: t.label }))} />
-          <span className="text-on-surface-low text-[0.875rem]">goal · {rigor} depth</span>
+          <span className="text-on-surface-low text-[0.8125rem]">goal · {rigor} depth</span>
         </div>
         <p className="text-on-surface-var text-[0.9375rem]">{stopBehavior(loop, goalType)}</p>
       </div>
@@ -437,7 +438,7 @@ function OverviewStep({ loop, goalType, setGoalType, rigor, subGoals, setSubGoal
           <div className="flex flex-col gap-1.5">
             {loop.roster!.map((m, i) => (
               <div key={i} className="flex flex-col gap-0.5 rounded-lg bg-surface-container px-m py-2.5">
-                <span className="text-on-surface text-[0.875rem]" style={{ fontVariationSettings: '"wght" 550' }}>{m.role}</span>
+                <span className="text-on-surface text-[0.8125rem]" style={fvs(550)}>{m.role}</span>
                 {m.persona && <span className="text-on-surface-var text-[0.8125rem]">{m.persona}</span>}
                 {m.role_hint && <span className="text-on-surface-low text-[0.75rem] mt-0.5">↳ {m.role_hint}</span>}
               </div>
@@ -486,8 +487,8 @@ function GuidedDecomposition({ guided }: { guided: GuidedProps }) {
             {phases.map((ph, i) => (
               <div key={i} className="rounded-lg bg-surface-container px-m py-2.5">
                 <div className="flex items-baseline gap-2">
-                  <span className="shrink-0 text-[0.7rem] text-on-surface-low tabular-nums">Phase {i + 1}</span>
-                  <span className="text-on-surface text-[0.875rem]" style={{ fontVariationSettings: '"wght" 550' }}>{ph.title}</span>
+                  <span className="shrink-0 text-[0.75rem] text-on-surface-low tabular-nums">Phase {i + 1}</span>
+                  <span className="text-on-surface text-[0.8125rem]" style={fvs(550)}>{ph.title}</span>
                 </div>
                 {ph.description && <p className="mt-0.5 text-on-surface-low text-[0.75rem]">{ph.description}</p>}
                 <div className="mt-1 text-on-surface-var text-[0.75rem]">{ph.steps.length} question{ph.steps.length > 1 ? 's' : ''}</div>
@@ -505,39 +506,6 @@ function GuidedDecomposition({ guided }: { guided: GuidedProps }) {
         </div>
       )}
     </Section>
-  )
-}
-
-/** A selectable capability row (skill or workflow) with a checkbox + suggested chip. */
-function CapRow({ id, name, description, checked, suggested, onToggle, onPeek, icon }: {
-  id: string; name: string; description?: string; checked: boolean; suggested: boolean
-  onToggle: () => void; onPeek?: () => void; icon: React.ReactNode
-}) {
-  return (
-    <div key={id}
-      className={`group flex w-full items-start gap-s rounded-lg px-m py-2.5 transition-colors ${checked ? 'bg-surface-high ring-1 ring-primary/40' : 'bg-surface-container hover:bg-surface-high'}`}>
-      {/* the row body toggles selection; the peek button is separate (stopPropagation) */}
-      <button type="button" onClick={onToggle} className="flex flex-1 min-w-0 items-start gap-s text-left">
-        <span className="mt-0.5 shrink-0 inline-flex size-4 items-center justify-center rounded-sm border" style={{ borderColor: checked ? 'var(--color-primary)' : 'var(--color-outline-variant)', background: checked ? 'var(--color-primary)' : 'transparent' }}>
-          {checked && <Check size={11} className="text-on-primary" />}
-        </span>
-        <span className="shrink-0 mt-0.5 text-on-surface-low">{icon}</span>
-        <span className="flex-1 min-w-0">
-          <span className="flex items-center gap-1.5">
-            <span className="text-on-surface text-[0.875rem] truncate" style={{ fontVariationSettings: '"wght" 550' }}>{name}</span>
-            {suggested && <span className="shrink-0 rounded-pill px-1.5 h-4 inline-flex items-center text-[0.6rem] uppercase tracking-wide" style={{ background: 'color-mix(in srgb, var(--color-primary) 18%, transparent)', color: 'var(--color-primary)' }}>suggested</span>}
-          </span>
-          {description && <span className="block text-on-surface-low text-[0.75rem] truncate">{description}</span>}
-        </span>
-      </button>
-      {onPeek && (
-        <button type="button" onClick={(e) => { e.stopPropagation(); onPeek() }} title="Preview — read the full skill/workflow"
-          aria-label={`Preview ${name}`}
-          className="shrink-0 mt-0.5 rounded-md p-1 text-on-surface-low opacity-0 transition-opacity hover:bg-surface-highest hover:text-on-surface group-hover:opacity-100 focus:opacity-100">
-          <Eye size={14} />
-        </button>
-      )}
-    </div>
   )
 }
 
@@ -570,7 +538,7 @@ function CapabilitiesStep({ skills, workflows, skillIds, workflowIds, onToggleSk
     <div className="flex flex-col gap-l max-w-[680px] mx-auto py-l">
       <div className="flex flex-col gap-1">
         <h2 data-type="headline-s" className="text-on-surface">Capabilities for this goal</h2>
-        <p className="text-on-surface-var text-[0.875rem]">
+        <p className="text-on-surface-var text-[0.8125rem]">
           Pick the skills and workflows the loop should load <span className="text-on-surface">actively every cycle</span>. The planner pre-selected what looks relevant — adjust freely. {selectedCount > 0 ? `${selectedCount} selected.` : 'None selected — the agent will still trigger-match skills as it goes.'}
         </p>
       </div>
@@ -611,8 +579,8 @@ function CapabilitiesStep({ skills, workflows, skillIds, workflowIds, onToggleSk
                   <span className="shrink-0 mt-0.5 text-on-surface-low"><Sparkle size={14} /></span>
                   <span className="flex-1 min-w-0">
                     <span className="flex items-center gap-1.5">
-                      <span className="text-on-surface text-[0.875rem] truncate" style={{ fontVariationSettings: '"wght" 550' }}>{s.name}</span>
-                      {typeof s.installs === 'number' && s.installs > 0 && <span className="shrink-0 text-on-surface-low text-[0.7rem]">{s.installs.toLocaleString()} installs</span>}
+                      <span className="text-on-surface text-[0.8125rem] truncate" style={fvs(550)}>{s.name}</span>
+                      {typeof s.installs === 'number' && s.installs > 0 && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{s.installs.toLocaleString()} installs</span>}
                     </span>
                     {s.description && <span className="block text-on-surface-low text-[0.75rem] line-clamp-2">{s.description}</span>}
                   </span>
@@ -632,65 +600,6 @@ function CapabilitiesStep({ skills, workflows, skillIds, workflowIds, onToggleSk
   )
 }
 
-/** Preview the full content of a suggested skill or workflow, so the user can
- *  study it before committing it to the loop. Skills fetch their SKILL.md body;
- *  workflows render their steps from the in-hand item. */
-function CapabilityPeekModal({ peek, onClose }: {
-  peek: { kind: 'skill' | 'workflow'; skill?: SkillItem; workflow?: WorkflowItem }
-  onClose: () => void
-}) {
-  const [content, setContent] = useState<string | null>(null)
-  const [loading, setLoading] = useState(peek.kind === 'skill')
-  useEffect(() => {
-    if (peek.kind !== 'skill' || !peek.skill) return
-    let alive = true
-    setLoading(true)
-    api.skillContent(peek.skill.key)
-      .then((c) => { if (alive) setContent(c) })
-      .catch(() => { if (alive) setContent('') })
-      .finally(() => { if (alive) setLoading(false) })
-    return () => { alive = false }
-  }, [peek])
-
-  const title = peek.kind === 'skill' ? peek.skill?.name : peek.workflow?.name
-  const icon = peek.kind === 'skill' ? <Sparkle size={18} className="text-primary" /> : <Workflow size={18} className="text-primary" />
-  return (
-    <Modal title={title || 'Preview'} icon={icon} onClose={onClose}>
-      <div className="max-h-[60vh] overflow-y-auto">
-        {peek.kind === 'skill' ? (
-          loading ? (
-            <div className="flex items-center gap-2 text-on-surface-low text-[0.8125rem] py-4"><Loader2 size={14} className="animate-spin" /> Loading skill…</div>
-          ) : content ? (
-            <Markdown>{content}</Markdown>
-          ) : (
-            <p className="text-on-surface-low text-[0.8125rem]">{peek.skill?.description || 'No content available.'}</p>
-          )
-        ) : peek.workflow ? (
-          <div className="flex flex-col gap-3">
-            {peek.workflow.description && <p className="text-on-surface-var text-[0.875rem]">{peek.workflow.description}</p>}
-            <div className="flex flex-wrap gap-1.5 text-[0.7rem]">
-              {peek.workflow.scope && <span className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-low">scope: {peek.workflow.scope}</span>}
-              {(peek.workflow.tags ?? []).map((t) => <span key={t} className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-low">{t}</span>)}
-            </div>
-            <div className="flex flex-col gap-2">
-              <span className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">{peek.workflow.steps.length} step{peek.workflow.steps.length === 1 ? '' : 's'}</span>
-              {peek.workflow.steps.map((st, i) => (
-                <div key={st.id || i} className="rounded-lg bg-surface-container px-m py-2.5">
-                  <div className="flex items-center gap-2">
-                    <span className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill bg-surface-high text-on-surface-low text-[0.7rem] tabular-nums">{i + 1}</span>
-                    <span className="text-on-surface text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 550' }}>{st.title}</span>
-                  </div>
-                  {st.instruction && <p className="mt-1 pl-7 text-on-surface-var text-[0.8125rem] whitespace-pre-wrap">{st.instruction}</p>}
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
-      </div>
-    </Modal>
-  )
-}
-
 /** A compact multi-select dropdown of capability ids for a single phase. */
 function PhaseCapPicker({ label, options, selected, onChange }: {
   label: string; options: { id: string; name: string }[]; selected: string[]; onChange: (ids: string[]) => void
@@ -699,13 +608,13 @@ function PhaseCapPicker({ label, options, selected, onChange }: {
   const toggle = (id: string) => onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id])
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">{label}</span>
+      <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</span>
       <div className="flex flex-wrap gap-1">
         {options.map((o) => {
           const on = selected.includes(o.id)
           return (
             <button key={o.id} type="button" onClick={() => toggle(o.id)} title={o.id}
-              className={`inline-flex items-center gap-1 rounded-pill px-2 h-6 text-[0.7rem] transition-colors ${on ? 'text-on-primary' : 'text-on-surface-low hover:text-on-surface'}`}
+              className={`inline-flex items-center gap-1 rounded-pill px-2 h-6 text-[0.75rem] transition-colors ${on ? 'text-on-primary' : 'text-on-surface-low hover:text-on-surface'}`}
               style={{ background: on ? 'var(--color-primary)' : 'var(--color-surface-container)' }}>
               {on && <Check size={10} />}{o.name}
             </button>
@@ -732,14 +641,12 @@ function PhaseCard({ phase, index, total, skills, workflows, agentNames, onChang
             user must be able to fix ordering without delete-and-recreate. */}
         {total > 1 && (
           <div className="shrink-0 flex flex-col -my-1">
-            <button type="button" onClick={onMoveUp} disabled={index === 0} title="Move phase up"
-              className="text-on-surface-low hover:text-on-surface disabled:opacity-25 disabled:pointer-events-none"><ChevronUp size={14} /></button>
-            <button type="button" onClick={onMoveDown} disabled={index === total - 1} title="Move phase down"
-              className="text-on-surface-low hover:text-on-surface disabled:opacity-25 disabled:pointer-events-none"><ChevronDown size={14} /></button>
+            <SquareIconButton icon={ChevronUp} label="Move phase up" disabled={index === 0} onClick={onMoveUp} />
+            <SquareIconButton icon={ChevronDown} label="Move phase down" disabled={index === total - 1} onClick={onMoveDown} />
           </div>
         )}
         <input value={phase.role} onChange={(e) => set({ role: e.target.value })} placeholder="role (e.g. researcher)"
-          className="flex-1 min-w-0 h-8 rounded-md bg-surface-high px-2 text-on-surface text-[0.875rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" style={{ fontVariationSettings: '"wght" 550' }} />
+          className="flex-1 min-w-0 h-8 rounded-md bg-surface-high px-2 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" style={fvs(550)} />
         {/* Agent definition for this phase — a dropdown of saved agents (the
             planner's pick is pre-selected); "default worker" = empty = the loop
             worker does it inline. A pre-selected agent no longer installed is
@@ -750,12 +657,12 @@ function PhaseCard({ phase, index, total, skills, workflows, agentNames, onChang
           {phase.agent_name && !agentNames.includes(phase.agent_name) && <option value={phase.agent_name}>{phase.agent_name} (not installed)</option>}
           {agentNames.map((a) => <option key={a} value={a}>{a}</option>)}
         </select>
-        <label className="shrink-0 inline-flex items-center gap-1 text-on-surface-low text-[0.7rem]">
+        <label className="shrink-0 inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]">
           <span>min</span>
           <input type="number" min={1} value={phase.min_cycles} onChange={(e) => set({ min_cycles: Math.max(1, Number(e.target.value) || 1) })}
             className="w-12 h-8 rounded-md bg-surface-high px-1.5 text-on-surface text-[0.8125rem] text-center outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
         </label>
-        {total > 1 && <button type="button" onClick={onRemove} className="shrink-0 text-on-surface-low hover:text-danger" title="Remove phase"><X size={15} /></button>}
+        {total > 1 && <SquareIconButton icon={X} iconSize={15} tone="danger" label="Remove phase" onClick={onRemove} className="shrink-0" />}
       </div>
       <textarea value={phase.target} onChange={(e) => set({ target: e.target.value })} rows={2} placeholder="what this phase aims to accomplish"
         className="rounded-md bg-surface-high px-2 py-1.5 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary/50" />
@@ -787,7 +694,7 @@ function PlanStep({ phases, setPhases, skills, workflows, agentNames }: {
     <div className="flex flex-col gap-l max-w-[720px] mx-auto py-l">
       <div className="flex flex-col gap-1">
         <h2 data-type="headline-s" className="text-on-surface">Execution plan</h2>
-        <p className="text-on-surface-var text-[0.875rem]">
+        <p className="text-on-surface-var text-[0.8125rem]">
           The planner split this goal into phases. Each runs for at least its min cycles, then advances on its exit signal. Capabilities you set here load <span className="text-on-surface">only during that phase</span> — on top of the baseline you picked.
         </p>
       </div>
@@ -819,7 +726,7 @@ function QuestionStep({ q, index, total, value, onChange, onAdvance }: {
             question sits in the memory-checked question-tree. Flat walks omit it. */}
         {phased && (
           <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 rounded-pill px-2.5 h-6 text-[0.7rem]"
+            <span className="inline-flex items-center gap-1.5 rounded-pill px-2.5 h-6 text-[0.75rem]"
               style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)', color: 'var(--color-primary)' }}>
               <Sparkles size={12} /> Phase {q.phaseIndex! + 1} of {q.phaseCount} · {q.phase}
             </span>
@@ -835,7 +742,7 @@ function QuestionStep({ q, index, total, value, onChange, onAdvance }: {
         onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onAdvance() } }}
         placeholder="Your answer — or skip it and I'll investigate/assume during the run."
         className="rounded-lg bg-surface-container px-l py-m text-on-surface text-[0.9375rem] placeholder:text-on-surface-low outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-      <span className="text-on-surface-low text-[0.7rem]">⌘↵ for the next question</span>
+      <span className="text-on-surface-low text-[0.75rem]">⌘↵ for the next question</span>
     </div>
   )
 }
@@ -858,7 +765,7 @@ function LaunchStep({ loop, title, goalType, subGoals, verifyCommand, skillIds, 
       <h2 data-type="headline-s" className="text-on-surface">Ready to launch</h2>
       <p className="text-on-surface-var text-[0.9375rem]">{stopBehavior(loop, goalType)}</p>
 
-      <div className="flex flex-col gap-1.5 text-[0.875rem] text-on-surface-low">
+      <div className="flex flex-col gap-1.5 text-[0.8125rem] text-on-surface-low">
         <div>Title: <span className="text-on-surface-var">{title || loop.name}</span></div>
         <div>Type: <span className="text-on-surface-var">{typeLabel}</span> · Mode: <span className="text-on-surface-var">{loop.attended ? 'Attended' : 'Unattended'}</span> · Granularity: <span className="text-on-surface-var">{granularityLabel}</span></div>
         {goalType === 'verifiable' && verifyCommand.trim() && (
@@ -877,7 +784,7 @@ function LaunchStep({ loop, title, goalType, subGoals, verifyCommand, skillIds, 
         <Section label={`Sub-goals · ${subGoals.length} (become Tasks)`}>
           <ul className="flex flex-col gap-1.5">
             {subGoals.map((s, i) => (
-              <li key={i} className="flex items-start gap-s text-on-surface text-[0.875rem]">
+              <li key={i} className="flex items-start gap-s text-on-surface text-[0.8125rem]">
                 <span className="mt-2 size-1 shrink-0 rounded-pill bg-primary" />{s}
               </li>
             ))}
@@ -891,13 +798,13 @@ function LaunchStep({ loop, title, goalType, subGoals, verifyCommand, skillIds, 
             {phases.map((p, i) => (
               <div key={i} className="rounded-lg bg-surface-container px-m py-2 flex flex-col gap-0.5">
                 <div className="flex items-center gap-s">
-                  <span className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill bg-surface-high text-on-surface-low text-[0.65rem] tabular-nums">{i + 1}</span>
-                  <span className="text-on-surface text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 550' }}>{p.role || `Phase ${i + 1}`}</span>
-                  <span className="text-on-surface-low text-[0.7rem]">{p.agent_name || 'default worker'} · ≥{Math.max(1, p.min_cycles)} cycle{Math.max(1, p.min_cycles) !== 1 ? 's' : ''}</span>
+                  <span className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill bg-surface-high text-on-surface-low text-[0.75rem] tabular-nums">{i + 1}</span>
+                  <span className="text-on-surface text-[0.8125rem]" style={fvs(550)}>{p.role || `Phase ${i + 1}`}</span>
+                  <span className="text-on-surface-low text-[0.75rem]">{p.agent_name || 'default worker'} · ≥{Math.max(1, p.min_cycles)} cycle{Math.max(1, p.min_cycles) !== 1 ? 's' : ''}</span>
                 </div>
                 {p.target && <span className="pl-7 text-on-surface-var text-[0.8125rem]">{p.target}</span>}
                 {(p.skill_ids.length > 0 || p.workflow_ids.length > 0) && (
-                  <div className="pl-7 flex flex-wrap items-center gap-1 mt-0.5 text-[0.65rem]">
+                  <div className="pl-7 flex flex-wrap items-center gap-1 mt-0.5 text-[0.75rem]">
                     {p.skill_ids.map((s) => <span key={s} className="inline-flex items-center rounded-pill px-1.5 h-5 bg-surface-high text-on-surface-low">{skillName(s)}</span>)}
                     {p.workflow_ids.map((w) => <span key={w} className="inline-flex items-center rounded-pill px-1.5 h-5 bg-surface-high text-on-surface-low">{workflowName(w)}</span>)}
                   </div>
@@ -924,7 +831,7 @@ function Section({ label, children, action }: { label: string; children: React.R
   return (
     <div className="flex flex-col gap-s">
       <div className="flex items-center justify-between">
-        <div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">{label}</div>
+        <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</div>
         {action}
       </div>
       {children}
@@ -967,7 +874,7 @@ function SubGoalsEdit({ value, onChange }: { value: string[]; onChange: (v: stri
       {value.map((s, i) => (
         <div key={i} className="flex items-center gap-s rounded-lg bg-surface-container px-m py-2">
           <span className="mt-0.5 size-1 shrink-0 rounded-pill bg-primary" />
-          <span className="flex-1 min-w-0 text-on-surface text-[0.875rem]">{s}</span>
+          <span className="flex-1 min-w-0 text-on-surface text-[0.8125rem]">{s}</span>
           <button type="button" onClick={() => onChange(value.filter((_, j) => j !== i))} className="text-on-surface-low hover:text-on-surface"><X size={14} /></button>
         </div>
       ))}
@@ -975,7 +882,7 @@ function SubGoalsEdit({ value, onChange }: { value: string[]; onChange: (v: stri
         <input value={draft} onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && draft.trim()) { onChange([...value, draft.trim()]); setDraft('') } }}
           placeholder="Add a sub-goal…"
-          className="flex-1 h-9 rounded-lg bg-surface-container px-m text-on-surface text-[0.875rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+          className="flex-1 h-9 rounded-lg bg-surface-container px-m text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
         <IconButton icon={Plus} label="Add sub-goal" size={34} onClick={() => { if (draft.trim()) { onChange([...value, draft.trim()]); setDraft('') } }} />
       </div>
     </div>

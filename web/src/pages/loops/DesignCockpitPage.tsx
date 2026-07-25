@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { fvs, withWeight } from '../../design/fontWeight'
 import {
   ArrowLeft, Pause, Play, Square, MessageSquarePlus, MessageSquare, Trash2, Link2, Check,
   Palette, Type, Ruler, Box, Download, Upload, FolderKanban, Layers, RefreshCw, Contrast, GripVertical, Repeat,
@@ -196,7 +197,7 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
           <div className="flex items-center gap-s min-w-0">
             <IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} />
             <div className="min-w-0 flex flex-col">
-              <span className="truncate text-on-surface text-[0.9375rem] leading-tight" style={{ fontVariationSettings: '"wght" 600' }}>
+              <span className="truncate text-on-surface text-[0.9375rem] leading-tight" style={fvs(600)}>
                 {loop.name || loop.task}
               </span>
               <span className="text-on-surface-low text-[0.75rem]">Design loop</span>
@@ -226,7 +227,7 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
           <input autoFocus value={nudgeText} onChange={(e) => setNudgeText(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') sendNudge() }}
             placeholder="Nudge the design loop — e.g. 'make the brand color warmer'"
-            className="flex-1 h-9 rounded-md bg-surface-high px-3 text-on-surface text-[0.875rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+            className="flex-1 h-9 rounded-md bg-surface-high px-3 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
           <Button variant="primary" onClick={sendNudge}>Send</Button>
         </div>
       )}
@@ -242,18 +243,18 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
           cycle={loop.total_cycles || 0} active={active} complete={status === 'complete'} />
         <span className="text-on-surface-var text-[0.75rem] capitalize">{status}{loop.total_cycles ? ` · cycle ${loop.total_cycles}/${loop.max_cycles}` : ''}</span>
         {(loop.elapsed_seconds ?? 0) > 0 && (
-          <span className="inline-flex items-center gap-1 text-on-surface-low text-[0.7rem]" title="Elapsed (running time)">
+          <span className="inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]" title="Elapsed (running time)">
             <Clock size={11} />{fmtDesignElapsed(loop.elapsed_seconds ?? 0)}
           </span>
         )}
         {(loop.project_id || loop.tasks_project_id) && projName && (
           <button type="button" onClick={() => onOpenProject?.((loop.project_id || loop.tasks_project_id)!)} title={`Project: ${projName} — open`}
-            className="inline-flex items-center gap-1 rounded-pill px-2 h-5 text-[0.7rem] hover:brightness-110"
+            className="inline-flex items-center gap-1 rounded-pill px-2 h-5 text-[0.75rem] hover:brightness-110"
             style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }}>
             <FolderKanban size={11} /><span className="truncate max-w-[14rem]">{projName}</span>
           </button>
         )}
-        <div className="ml-auto inline-flex items-center rounded-md bg-surface-container p-0.5 text-[0.7rem]">
+        <div className="ml-auto inline-flex items-center rounded-md bg-surface-container p-0.5 text-[0.75rem]">
           {(['light', 'dark'] as Scheme[]).map((s) => (
             <button key={s} type="button" onClick={() => setScheme(s)}
               className={`px-2.5 h-5 rounded capitalize transition-colors ${scheme === s ? 'bg-surface-high text-on-surface' : 'text-on-surface-low'}`}>{s}</button>
@@ -269,7 +270,7 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
           <button key={t} type="button" onClick={() => setTab(t)}
             className={`inline-flex items-center gap-1.5 px-3 h-9 text-[0.8125rem] border-b-2 -mb-px transition-colors ${tab === t ? 'border-primary text-on-surface' : 'border-transparent text-on-surface-low hover:text-on-surface'}`}>
             <Icon size={14} />{label}
-            {t === 'canvas' && reactArtifacts.length > 0 && <span className="text-[0.65rem] text-on-surface-low">· {reactArtifacts.length}</span>}
+            {t === 'canvas' && reactArtifacts.length > 0 && <span className="text-[0.75rem] text-on-surface-low">· {reactArtifacts.length}</span>}
           </button>
         ))}
       </div>
@@ -320,7 +321,7 @@ function DesignPhaseTrail({ plan, phaseStatus, cycle, active, complete }: {
             <div key={i} className="flex items-center gap-1 shrink-0">
               {i > 0 && <span className="w-3 h-px bg-outline-variant/50" />}
               <span title={obj ? `${title} — ${obj}` : title}
-                className={`inline-flex items-center gap-1 rounded-pill px-2 h-6 text-[0.7rem] ${isActive ? 'bg-primary/15 text-primary' : done ? 'text-on-surface-low' : 'text-on-surface-low/70'}`}>
+                className={`inline-flex items-center gap-1 rounded-pill px-2 h-6 text-[0.75rem] ${isActive ? 'bg-primary/15 text-primary' : done ? 'text-on-surface-low' : 'text-on-surface-low/70'}`}>
                 <Icon size={12} className="shrink-0" style={isActive ? { color: 'var(--color-primary)' } : done ? { color: 'var(--color-ok)' } : undefined} />
                 <span className="truncate max-w-[10rem]">{title}</span>
               </span>
@@ -396,8 +397,8 @@ export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverrid
   return (
     <div className="flex flex-col gap-2xl max-w-[64rem]">
       <div className="flex items-center gap-2">
-        <span className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">{readOnly ? `PersonalClaw default design system · ${scheme}` : `Resolved design system · ${scheme}`}</span>
-        {!readOnly && (overrideCount ?? 0) > 0 && <span className="rounded-pill px-2 h-5 inline-flex items-center text-[0.65rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }}>{overrideCount} override group{(overrideCount ?? 0) > 1 ? 's' : ''}</span>}
+        <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{readOnly ? `PersonalClaw default design system · ${scheme}` : `Resolved design system · ${scheme}`}</span>
+        {!readOnly && (overrideCount ?? 0) > 0 && <span className="rounded-pill px-2 h-5 inline-flex items-center text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }}>{overrideCount} override group{(overrideCount ?? 0) > 1 ? 's' : ''}</span>}
         {!readOnly && onRefresh && <button type="button" onClick={onRefresh} className="ml-auto inline-flex items-center gap-1 text-on-surface-low hover:text-on-surface text-[0.75rem]"><RefreshCw size={12} /> Refresh</button>}
       </div>
 
@@ -407,8 +408,8 @@ export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverrid
             <div key={role} className="flex items-center gap-2 rounded-md bg-surface-container px-2 py-1.5">
               <span className="size-7 shrink-0 rounded border border-outline-variant/40" style={{ background: val }} />
               <div className="min-w-0">
-                <div className="truncate text-on-surface text-[0.7rem]">{role}</div>
-                <div className="truncate text-on-surface-low text-[0.65rem] font-mono">{val}</div>
+                <div className="truncate text-on-surface text-[0.75rem]">{role}</div>
+                <div className="truncate text-on-surface-low text-[0.75rem] font-mono">{val}</div>
               </div>
             </div>
           ))}
@@ -419,7 +420,7 @@ export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverrid
         <div className="flex flex-col gap-2">
           {Object.entries(primitives).map(([name, scale]) => (
             <div key={name} className="flex flex-col gap-1">
-              <span className="text-on-surface-low text-[0.7rem] capitalize">{name}</span>
+              <span className="text-on-surface-low text-[0.75rem] capitalize">{name}</span>
               <div className="flex rounded-md overflow-hidden border border-outline-variant/30">
                 {Object.entries(scale).map(([step, raw]) => {
                   // A scale value is usually a hex string ({50:'#…'}), but a worker can
@@ -442,7 +443,7 @@ export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverrid
         <div className="flex flex-col gap-1.5">
           {Object.entries(sizes).map(([k, v]) => (
             <div key={k} className="flex items-baseline gap-3">
-              <span className="w-10 shrink-0 text-on-surface-low text-[0.65rem] font-mono">{k}</span>
+              <span className="w-10 shrink-0 text-on-surface-low text-[0.75rem] font-mono">{k}</span>
               <span className="truncate text-on-surface" style={{ fontSize: v, lineHeight: 1.2 }}>Ag {v}</span>
             </div>
           ))}
@@ -454,22 +455,22 @@ export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverrid
           <div className="flex flex-col gap-1">
             {Object.entries(spacing).filter(([k]) => !['px', '0'].includes(k)).slice(0, 14).map(([k, v]) => (
               <div key={k} className="flex items-center gap-2">
-                <span className="w-8 shrink-0 text-on-surface-low text-[0.65rem] font-mono">{k}</span>
+                <span className="w-8 shrink-0 text-on-surface-low text-[0.75rem] font-mono">{k}</span>
                 <span className="h-3 rounded-sm bg-primary/60" style={{ width: v }} />
-                <span className="text-on-surface-low text-[0.65rem] font-mono">{v}</span>
+                <span className="text-on-surface-low text-[0.75rem] font-mono">{v}</span>
               </div>
             ))}
           </div>
         </Section>
         <Section icon={Box} title="Radius & elevation">
-          {!readOnly && <div className="text-on-surface-low text-[0.65rem] mb-1">Click a radius to override it.</div>}
+          {!readOnly && <div className="text-on-surface-low text-[0.75rem] mb-1">Click a radius to override it.</div>}
           <div className="flex flex-wrap gap-3">
             {Object.entries(radius).map(([k, v]) => (
               <button key={k} type="button" disabled={readOnly} title={readOnly ? `radius.${k} · ${v}` : `Override radius.${k} (now ${v})`}
                 onClick={readOnly ? undefined : async () => { const nv = await promptInput({ title: `Override radius.${k}`, label: `radius.${k} — new value (e.g. 0.5rem, 12px). Empty to reset to default.`, initial: String(v), required: false }); if (nv !== null) onOverride?.(`radius.${k}`, nv) }}
                 className="flex flex-col items-center gap-1 group">
                 <span className={`size-12 bg-surface-high border border-outline-variant/40 transition-colors ${readOnly ? '' : 'group-hover:border-primary'}`} style={{ borderRadius: v }} />
-                <span className={`text-on-surface-low text-[0.6rem] font-mono ${readOnly ? '' : 'group-hover:text-on-surface'}`}>{k}</span>
+                <span className={`text-on-surface-low text-[0.75rem] font-mono ${readOnly ? '' : 'group-hover:text-on-surface'}`}>{k}</span>
               </button>
             ))}
           </div>
@@ -477,7 +478,7 @@ export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverrid
             {['sm', 'md', 'lg', 'xl'].filter((k) => shadows[k]).map((k) => (
               <div key={k} className="flex flex-col items-center gap-1">
                 <span className="size-12 rounded-lg bg-surface" style={{ boxShadow: shadows[k] }} />
-                <span className="text-on-surface-low text-[0.6rem] font-mono">{k}</span>
+                <span className="text-on-surface-low text-[0.75rem] font-mono">{k}</span>
               </div>
             ))}
           </div>
@@ -486,20 +487,20 @@ export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverrid
 
       {(Object.keys(families).length > 0 || Object.keys(weights).length > 0) && (
         <Section icon={Type} title="Typography">
-          {!readOnly && <div className="text-on-surface-low text-[0.65rem]">Click a font family to override its stack.</div>}
+          {!readOnly && <div className="text-on-surface-low text-[0.75rem]">Click a font family to override its stack.</div>}
           <div className="flex flex-col gap-2">
             {Object.entries(families).map(([k, v]) => (
               <button key={k} type="button" disabled={readOnly} title={readOnly ? `typography.family.${k}` : `Override typography.family.${k}`}
                 onClick={readOnly ? undefined : async () => { const nv = await promptInput({ title: `Override typography.family.${k}`, label: `typography.family.${k} — new font stack (e.g. "Roboto, sans-serif"). Empty to reset.`, initial: String(v), required: false }); if (nv !== null) onOverride?.(`typography.family.${k}`, nv) }}
                 className="flex items-baseline gap-3 text-left group">
-                <span className={`w-16 shrink-0 text-on-surface-low text-[0.65rem] font-mono capitalize ${readOnly ? '' : 'group-hover:text-on-surface'}`}>{k}</span>
-                <span className={`truncate text-on-surface text-[0.95rem] ${readOnly ? '' : 'group-hover:text-primary'}`} style={{ fontFamily: String(v) }}>The quick brown fox</span>
+                <span className={`w-16 shrink-0 text-on-surface-low text-[0.75rem] font-mono capitalize ${readOnly ? '' : 'group-hover:text-on-surface'}`}>{k}</span>
+                <span className={`truncate text-on-surface text-[0.9375rem] ${readOnly ? '' : 'group-hover:text-primary'}`} style={{ fontFamily: String(v) }}>The quick brown fox</span>
               </button>
             ))}
             {Object.keys(weights).length > 0 && (
               <div className="flex flex-wrap gap-3 mt-1">
                 {Object.entries(weights).map(([k, v]) => (
-                  <span key={k} className="text-on-surface text-[0.95rem]" title={`${k} · ${v}`} style={{ fontWeight: Number(v) || undefined }}>{k}</span>
+                  <span key={k} className="text-on-surface text-[0.9375rem]" title={`${k} · ${v}`} style={{ fontWeight: Number(v) || undefined }}>{k}</span>
                 ))}
               </div>
             )}
@@ -513,7 +514,7 @@ export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverrid
             {Object.entries(gradients).map(([k, v]) => (
               <div key={k} className="flex flex-col gap-1">
                 <span className="h-12 rounded-md border border-outline-variant/30" style={{ background: String(v) }} />
-                <span className="text-on-surface-low text-[0.6rem] font-mono">{k}</span>
+                <span className="text-on-surface-low text-[0.75rem] font-mono">{k}</span>
               </div>
             ))}
           </div>
@@ -524,7 +525,7 @@ export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverrid
         <Section icon={Repeat} title="Motion">
           <div className="flex flex-col gap-1.5">
             {Object.entries(durations).map(([k, v]) => (
-              <div key={k} className="flex items-center gap-2 text-[0.7rem]">
+              <div key={k} className="flex items-center gap-2 text-[0.75rem]">
                 <span className="w-20 shrink-0 text-on-surface-low font-mono">{k}</span>
                 {/* a dot that animates across using this duration so the speed is felt */}
                 <span className="relative h-2 flex-1 max-w-[180px] rounded-pill bg-surface-high overflow-hidden">
@@ -534,7 +535,7 @@ export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverrid
               </div>
             ))}
             {Object.keys(easings).length > 0 && (
-              <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1 text-on-surface-low text-[0.65rem] font-mono">
+              <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1 text-on-surface-low text-[0.75rem] font-mono">
                 {Object.entries(easings).map(([k, v]) => <span key={k} title={String(v)}>{k}</span>)}
               </div>
             )}
@@ -550,7 +551,7 @@ export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverrid
               {Object.entries(opacity).map(([k, v]) => (
                 <div key={k} className="flex flex-col items-center gap-1">
                   <span className="size-9 rounded-md bg-primary" style={{ opacity: Number(v) }} />
-                  <span className="text-on-surface-low text-[0.6rem] font-mono">{k}</span>
+                  <span className="text-on-surface-low text-[0.75rem] font-mono">{k}</span>
                 </div>
               ))}
             </div>
@@ -564,7 +565,7 @@ export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverrid
                   <span className="size-9 rounded-md overflow-hidden relative bg-gradient-to-br from-primary to-accent">
                     <span className="absolute inset-0" style={{ backdropFilter: `blur(${v})`, WebkitBackdropFilter: `blur(${v})` }} />
                   </span>
-                  <span className="text-on-surface-low text-[0.6rem] font-mono">{k}</span>
+                  <span className="text-on-surface-low text-[0.75rem] font-mono">{k}</span>
                 </div>
               ))}
             </div>
@@ -575,7 +576,7 @@ export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverrid
       {(Object.keys(breakpoints).length > 0 || Object.keys(components).length > 0) && (
         <Section icon={Ruler} title="Breakpoints & components">
           {Object.keys(breakpoints).length > 0 && (
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[0.7rem]">
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[0.75rem]">
               {Object.entries(breakpoints).map(([k, v]) => (
                 <span key={k} className="font-mono text-on-surface-var">{k}<span className="text-on-surface-low"> {v}</span></span>
               ))}
@@ -584,7 +585,7 @@ export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverrid
           {Object.keys(components).length > 0 && (
             <div className="flex flex-wrap gap-1.5 mt-2">
               {Object.keys(components).map((k) => (
-                <span key={k} className="rounded-pill px-2 h-5 inline-flex items-center text-[0.65rem] bg-surface-container text-on-surface-var">{k}</span>
+                <span key={k} className="rounded-pill px-2 h-5 inline-flex items-center text-[0.75rem] bg-surface-container text-on-surface-var">{k}</span>
               ))}
             </div>
           )}
@@ -691,8 +692,8 @@ function CanvasComponent({ a, draggable, onDragStart, onDragEnd }: {
             <GripVertical size={14} />
           </span>
         )}
-        <span className="text-on-surface text-[0.875rem]" style={{ fontVariationSettings: '"wght" 600' }}>{a.name}</span>
-        <span className="text-on-surface-low text-[0.7rem]">v{a.version}</span>
+        <span className="text-on-surface text-[0.8125rem]" style={fvs(600)}>{a.name}</span>
+        <span className="text-on-surface-low text-[0.75rem]">v{a.version}</span>
       </div>
       {a.description && <p className="text-on-surface-low text-[0.75rem]">{a.description}</p>}
       {jsx === null ? <div className="text-on-surface-low text-xs">Loading…</div>
@@ -742,10 +743,10 @@ export function ContrastView({ tokens, scheme }: { tokens: ResolvedTokens | null
           <div key={r.label} className="flex items-center gap-3 rounded-md bg-surface-container px-3 py-2">
             {/* live swatch: fg text on the bg color */}
             <span className="grid place-items-center size-12 shrink-0 rounded-md border border-outline-variant/30 text-[0.8125rem]"
-              style={{ background: r.bg || 'transparent', color: r.fg || 'inherit', fontVariationSettings: '"wght" 600' }}>Ag</span>
+              style={withWeight({ background: r.bg || 'transparent', color: r.fg || 'inherit' }, 600)}>Ag</span>
             <div className="min-w-0">
               <div className="text-on-surface text-[0.8125rem]">{r.label}</div>
-              <div className="truncate text-on-surface-low text-[0.65rem] font-mono">{r.fgRole} on {r.bgRole}</div>
+              <div className="truncate text-on-surface-low text-[0.75rem] font-mono">{r.fgRole} on {r.bgRole}</div>
             </div>
             <div className="ml-auto flex items-center gap-2 shrink-0">
               <span className="font-mono text-on-surface text-[0.8125rem] tabular-nums">{r.ratio ? `${r.ratio.toFixed(2)}:1` : '—'}</span>
@@ -766,7 +767,7 @@ function ContrastBadges({ ratio }: { ratio: number }) {
   const warn = ratio >= 3 && ratio < 4.5
   const color = ok ? 'var(--color-success)' : warn ? 'var(--color-warning)' : 'var(--color-danger)'
   return (
-    <span className="inline-flex items-center rounded-pill px-2 h-5 text-[0.65rem]"
+    <span className="inline-flex items-center rounded-pill px-2 h-5 text-[0.75rem]"
       style={{ background: `color-mix(in srgb, ${color} 16%, transparent)`, color }}>{tier}</span>
   )
 }
@@ -815,7 +816,7 @@ function PaletteView({ onApply, readOnly }: { onApply: (scale: PaletteScale, hex
       {busy && <div className="text-on-surface-low text-sm">Extracting palette…</div>}
       {palette.length > 0 && (
         <div className="flex flex-col gap-2">
-          <span className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">Extracted palette</span>
+          <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Extracted palette</span>
           <div className="flex flex-col gap-2">
             {palette.map((hex) => (
               <div key={hex} className="flex items-center gap-3 rounded-md bg-surface-container px-3 py-2">
@@ -893,7 +894,7 @@ function ExportRow({ title, desc, onDownload, disabled }: { title: string; desc:
   return (
     <div className="flex items-center gap-3 rounded-lg bg-surface-container px-4 py-3">
       <div className="min-w-0">
-        <div className="text-on-surface text-[0.875rem]" style={{ fontVariationSettings: '"wght" 550' }}>{title}</div>
+        <div className="text-on-surface text-[0.8125rem]" style={fvs(550)}>{title}</div>
         <div className="text-on-surface-low text-[0.75rem]">{desc}</div>
       </div>
       <Button className="ml-auto shrink-0" variant="secondary" disabled={disabled} onClick={onDownload}><Download size={14} className="mr-1.5" />Download</Button>
@@ -904,7 +905,7 @@ function ExportRow({ title, desc, onDownload, disabled }: { title: string; desc:
 function Section({ icon: Icon, title, children }: { icon: any; title: string; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
-      <div className="flex items-center gap-1.5 text-on-surface-var text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 600' }}>
+      <div className="flex items-center gap-1.5 text-on-surface-var text-[0.8125rem]" style={fvs(600)}>
         <Icon size={14} />{title}
       </div>
       {children}

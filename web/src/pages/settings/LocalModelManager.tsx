@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { Download, Trash2, Check, HardDrive, AlertTriangle, X, Search, Lock } from 'lucide-react'
+import { Download, Trash2, Check, HardDrive, AlertTriangle, X, Lock } from 'lucide-react'
 import { api, type AvailableModel } from '../../lib/api'
+import { SearchField } from '../../ui/SearchField'
+import { SquareIconButton } from '../../ui/SquareIconButton'
 import { confirmDelete } from '../../ui/dialog'
 import { WavyProgress } from '../../ui/WavyProgress'
 import { useModelDownloads } from './useModelDownloads'
@@ -85,7 +87,7 @@ export function LocalModelManager({
               {m.downloaded && <Check size={11} style={{ color: 'var(--color-success)' }} />}
               {gatedUndownloaded && <Lock size={10} className="shrink-0 text-on-surface-low" aria-label="Requires a token / license" />}
             </div>
-            <div className="truncate text-on-surface-low text-[0.66rem]">
+            <div className="truncate text-on-surface-low text-[0.75rem]">
               {downloading
                 ? `${job.phase}${job.bytes ? ` · ${MB(job.bytes)}${sizeMb ? ` / ${sizeMb}` : ''} MB` : ''}`
                 : <>{m.description || (m.capabilities?.length ? m.capabilities.join(', ') : '')}{sizeMb ? ` · ${sizeMb} MB` : ''}</>}
@@ -93,23 +95,18 @@ export function LocalModelManager({
             {downloading && <div className="mt-1"><WavyProgress width={200} value={frac} /></div>}
           </div>
           {downloading ? (
-            <button type="button" onClick={() => cancel(m.name)}
-              aria-label={`Cancel ${m.name}`} title="Cancel"
-              className="grid size-7 shrink-0 place-items-center rounded-md text-on-surface-low transition-colors hover:text-on-surface">
-              <X size={13} />
-            </button>
+            <SquareIconButton icon={X} iconSize={13} label={`Cancel ${m.name}`} title="Cancel"
+              onClick={() => cancel(m.name)} className="shrink-0" />
           ) : (
-            <button type="button" onClick={() => (m.downloaded ? remove(m.name) : download(m.name))}
-              disabled={gatedUndownloaded}
-              aria-label={m.downloaded ? `Delete ${m.name}` : `Download ${m.name}`}
+            <SquareIconButton icon={m.downloaded ? Trash2 : Download} iconSize={13}
+              label={m.downloaded ? `Delete ${m.name}` : `Download ${m.name}`}
               title={gatedUndownloaded ? 'Requires a token / license (see provider settings)' : m.downloaded ? 'Delete' : 'Download'}
-              className="grid size-7 shrink-0 place-items-center rounded-md text-on-surface-low transition-colors hover:text-on-surface disabled:opacity-40 disabled:hover:text-on-surface-low">
-              {m.downloaded ? <Trash2 size={13} /> : <Download size={13} />}
-            </button>
+              disabled={gatedUndownloaded}
+              onClick={() => (m.downloaded ? remove(m.name) : download(m.name))} className="shrink-0" />
           )}
         </div>
         {err && (
-          <div className="mt-1 flex items-start gap-1 text-[0.66rem]" style={{ color: 'var(--color-danger)' }}>
+          <div className="mt-1 flex items-start gap-1 text-[0.75rem]" style={{ color: 'var(--color-danger)' }}>
             <AlertTriangle size={11} className="mt-0.5 shrink-0" /> <span className="min-w-0">{err}</span>
           </div>
         )}
@@ -119,24 +116,15 @@ export function LocalModelManager({
 
   return (
     <div>
-      <div className="mb-1.5 flex items-center gap-1 text-on-surface-low text-[0.68rem] uppercase tracking-wide">
+      <div className="mb-1.5 flex items-center gap-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">
         <HardDrive size={11} /> Models ({downloaded}/{models.length} downloaded)
       </div>
 
       {searchable && (
-        <div className="relative mb-1.5">
-          <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-low" />
-          <input
-            value={query} onChange={(e) => setQuery(e.target.value)}
+        <div className="mb-1.5">
+          <SearchField value={query} onChange={setQuery} size="sm"
             placeholder="Search the library to install a model…"
-            className="h-8 w-full rounded-md bg-surface-high pl-8 pr-8 text-[0.75rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50"
-          />
-          {query && (
-            <button type="button" onClick={() => setQuery('')} aria-label="Clear search"
-              className="absolute right-2 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-on-surface-low hover:text-on-surface">
-              <X size={12} />
-            </button>
-          )}
+            ariaLabel="Search the model library" />
         </div>
       )}
 

@@ -55,7 +55,7 @@ export function SyntaxReference({ onInsert }: { onInsert?: (snippet: string) => 
 
       {/* Functions — grouped by category, collapsible, click to insert fn(). */}
       <div className="flex flex-col gap-0.5 border-t border-outline-variant/40 pt-2">
-        <div className="px-2 pb-1 text-on-surface-low text-[0.7rem] uppercase tracking-wide">Functions</div>
+        <div className="px-2 pb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Functions</div>
         {cats.map((cat) => {
           const fns = fnsByCat[cat] ?? []
           const open = openCat === cat
@@ -65,7 +65,7 @@ export function SyntaxReference({ onInsert }: { onInsert?: (snippet: string) => 
                 className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left hover:bg-surface-high transition-colors">
                 <ChevronRight size={13} className={`shrink-0 text-on-surface-low transition-transform ${open ? 'rotate-90' : ''}`} />
                 <span className="capitalize text-on-surface-var">{cat}</span>
-                <span className="ml-auto rounded-pill bg-surface-high px-1.5 text-[0.7rem] text-on-surface-low">{fns.length}</span>
+                <span className="ml-auto rounded-pill bg-surface-high px-1.5 text-[0.75rem] text-on-surface-low">{fns.length}</span>
               </button>
               {open && (
                 <div className="flex flex-col gap-0.5 pb-1 pl-5">
@@ -75,7 +75,7 @@ export function SyntaxReference({ onInsert }: { onInsert?: (snippet: string) => 
                       className="group flex flex-col rounded-md px-2 py-1 text-left hover:bg-surface-high transition-colors disabled:cursor-default"
                       disabled={!onInsert}>
                       <code className="font-mono text-[0.75rem] text-primary">{f.signature}</code>
-                      <span className="text-on-surface-low text-[0.7rem]">{f.description}</span>
+                      <span className="text-on-surface-low text-[0.75rem]">{f.description}</span>
                     </button>
                   ))}
                 </div>

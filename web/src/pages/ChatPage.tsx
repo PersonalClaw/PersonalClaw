@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { fvs, withWeight } from '../design/fontWeight'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, type LucideIcon } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
+import { SquareIconButton } from '../ui/SquareIconButton'
+import { SearchField } from '../ui/SearchField'
 import { TopBar } from '../ui/TopBar'
 import { SidePanel } from '../ui/SidePanel'
 import { Button } from '../ui/Button'
+import { SelectionPill } from '../ui/SelectionPill'
+import { TextLink } from '../ui/TextLink'
 import { Segmented } from '../ui/Segmented'
 import { ContextMenu, type ContextMenuItem } from '../ui/motion'
 import { ProjectPicker } from '../ui/ProjectPicker'
@@ -21,6 +26,7 @@ import { MessageAssistant } from '../ui/chat/MessageAssistant'
 import { Spark } from '../ui/Spark'
 import { StreamingIndicator } from '../ui/chat/StreamingIndicator'
 import { Markdown } from '../ui/Markdown'
+import { InlineError } from '../ui/InlineError'
 import { ToolCard } from './chat/ToolCard'
 import { onToolResultFull } from './chat/toolResultBridge'
 import { SdlcProgressCard, sdlcRefFromTool } from './chat/SdlcProgressCard'
@@ -129,7 +135,7 @@ function SuggestionChips({ onPick }: { onPick: (s: string) => void }) {
       {items.map((s, i) => (
         <motion.button key={i} type="button" onClick={() => onPick(s)}
           initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: 0.04 * i }}
-          className="rounded-pill border border-outline-variant/60 bg-surface-container px-3.5 py-2 text-left text-[0.82rem] text-on-surface-var transition-colors hover:border-primary/40 hover:bg-surface-high hover:text-on-surface">
+          className="rounded-pill border border-outline-variant/60 bg-surface-container px-3.5 py-2 text-left text-[0.8125rem] text-on-surface-var transition-colors hover:border-primary/40 hover:bg-surface-high hover:text-on-surface">
           {s}
         </motion.button>
       ))}
@@ -176,8 +182,8 @@ function ChatHistorySidePanelBody({ navigate, onOpen }: { navigate: (p: string) 
               whileHover={{ x: expr(3, 0.3) }} transition={spring.spatialFast}
               className="group flex items-center gap-s rounded-md px-2 py-2 text-left transition-colors hover:bg-surface-high">
               <MessageSquare size={14} className="shrink-0 text-on-surface-low group-hover:text-primary transition-colors" />
-              <span className="min-w-0 flex-1 truncate text-on-surface-var text-[0.875rem] group-hover:text-on-surface">{s.title || 'Untitled chat'}</span>
-              <span className="shrink-0 text-on-surface-low text-[0.6875rem] tabular-nums">{relTimeShort(s.last_activity_ts || s.last_ts || s.created)}</span>
+              <span className="min-w-0 flex-1 truncate text-on-surface-var text-[0.8125rem] group-hover:text-on-surface">{s.title || 'Untitled chat'}</span>
+              <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{relTimeShort(s.last_activity_ts || s.last_ts || s.created)}</span>
             </motion.button>
           ))}
         </motion.div>
@@ -185,7 +191,7 @@ function ChatHistorySidePanelBody({ navigate, onOpen }: { navigate: (p: string) 
       {/* deep-link to the full, filterable/organizable chat-history page */}
       <button type="button" onClick={() => navigate('chat/history')}
         className="mt-1 flex items-center justify-center gap-1.5 rounded-md border border-outline-variant/40 px-2 py-2 text-on-surface-var text-[0.8125rem] transition-colors hover:bg-surface-high hover:text-on-surface"
-        style={{ fontVariationSettings: '"wght" 470' }}>
+        style={fvs(470)}>
         View all chats <ArrowRight size={13} className="shrink-0" />
       </button>
     </div>
@@ -254,18 +260,18 @@ function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; onOpen: (
         ) : shown.map((m, i) => (
           m.role === 'user' ? (
             <div key={i} className="ml-6 self-end rounded-lg bg-surface-high px-m py-s">
-              <p className="whitespace-pre-wrap break-words text-on-surface text-[0.875rem] leading-relaxed">{String(m.content || '').slice(0, 800)}</p>
+              <p className="whitespace-pre-wrap break-words text-on-surface text-[0.8125rem] leading-relaxed">{String(m.content || '').slice(0, 800)}</p>
             </div>
           ) : (
-            <div key={i} className="mr-2 min-w-0 text-[0.875rem]">
-              <Markdown className="[&_p]:text-[0.875rem]">{parseSwitchToAgent(parseOptions(String(m.content || '').slice(0, 2000)).body).body}</Markdown>
+            <div key={i} className="mr-2 min-w-0 text-[0.8125rem]">
+              <Markdown className="[&_p]:text-[0.8125rem]">{parseSwitchToAgent(parseOptions(String(m.content || '').slice(0, 2000)).body).body}</Markdown>
             </div>
           )
         ))}
         {/* the streaming reply, growing live */}
         {streamText && (
-          <div className="mr-2 min-w-0 text-[0.875rem]">
-            <Markdown className="[&_p]:text-[0.875rem]">{streamText}</Markdown>
+          <div className="mr-2 min-w-0 text-[0.8125rem]">
+            <Markdown className="[&_p]:text-[0.8125rem]">{streamText}</Markdown>
           </div>
         )}
         {busy && !streamText && (
@@ -288,7 +294,7 @@ function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; onOpen: (
           placeholder="Quick reply…"
           rows={2}
           aria-label="Quick reply"
-          className="w-full resize-none bg-transparent px-s py-xs text-on-surface text-[0.875rem] outline-none placeholder:text-on-surface-low"
+          className="w-full resize-none bg-transparent px-s py-xs text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low"
         />
         <div className="flex items-center gap-s">
           <button type="button" onClick={onOpen} title="Open the full chat UI"
@@ -1731,8 +1737,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           style={{ background: 'color-mix(in srgb, var(--color-danger) 12%, transparent)', color: 'var(--color-danger)' }}>
           <AlertTriangle size={13} className="mt-0.5 shrink-0" />
           <span className="min-w-0 flex-1 break-words">{attachError}</span>
-          <button type="button" onClick={() => setAttachError(null)} aria-label="Dismiss"
-            className="shrink-0 opacity-70 hover:opacity-100"><X size={12} /></button>
+          <IconButton icon={X} label="Dismiss" onClick={() => setAttachError(null)} size={20} iconSize={12}
+            className="shrink-0 opacity-70 hover:opacity-100" />
         </div>
       )}
       {/* Large-attachment upload progress (chunked/resumable). Small files POST in
@@ -1749,8 +1755,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                 <span className="block h-full rounded-full bg-primary transition-[width] duration-200" style={{ width: `${u.pct}%` }} />
               </span>
               <span className="shrink-0 tabular-nums text-on-surface-low">{u.pct}%</span>
-              <button type="button" onClick={() => uploadAbortRef.current?.abort()} aria-label="Cancel upload"
-                title="Cancel upload" className="shrink-0 rounded p-0.5 text-on-surface-low hover:text-danger"><X size={13} /></button>
+              <IconButton icon={X} label="Cancel upload" onClick={() => uploadAbortRef.current?.abort()} size={20} iconSize={13}
+                className="shrink-0 hover:text-danger" />
             </div>
           ))}
         </div>
@@ -1764,10 +1770,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       {/* revert-optimize: the optimize rewrite replaces the draft in place, so
           offer a one-click undo back to what the user originally typed. */}
       {preOptimize !== null && (
-        <button type="button" onClick={revertOptimize}
-          className="mb-2 inline-flex items-center gap-1.5 rounded-pill bg-surface-high px-2.5 py-1 text-[0.75rem] text-on-surface-var hover:bg-surface-highest transition-colors">
+        <Button variant="secondary" size="xs" onClick={revertOptimize}
+          className="mb-2 gap-1.5 px-2.5 text-[0.75rem] text-on-surface-var">
           <Repeat size={12} className="shrink-0" /> Optimized — revert to original
-        </button>
+        </Button>
       )}
       {/* Queued messages (typed mid-stream) — the backend sends them one-by-one as
           each turn finishes; each can be cancelled while still pending. */}
@@ -2077,9 +2083,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             ) : (
               <>
                 {resultBody.length > 0 && (
-                  <div className="text-on-surface-low text-[0.7rem]">{resultBody.length.toLocaleString()} chars</div>
+                  <div className="text-on-surface-low text-[0.75rem]">{resultBody.length.toLocaleString()} chars</div>
                 )}
-                <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap rounded-md bg-surface-low px-3 py-2 font-mono text-on-surface-var text-[0.72rem] leading-relaxed">{resultBody.content}</pre>
+                <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap rounded-md bg-surface-low px-3 py-2 font-mono text-on-surface-var text-[0.75rem] leading-relaxed">{resultBody.content}</pre>
               </>
             )}
           </div>
@@ -2140,12 +2146,12 @@ function AttachmentPeekModal({ path, name, onOpenFile, onClose }: { path: string
   return (
     <Modal title={name} icon={<Paperclip size={18} className="text-primary" />} onClose={onClose}>
       <div className="flex flex-col gap-3">
-        <button type="button" onClick={() => { onOpenFile(path); onClose() }}
-          className="self-start inline-flex items-center gap-1.5 rounded-pill border border-outline-variant/50 px-m h-8 text-[0.8125rem] text-primary hover:bg-surface-high transition-colors">
+        <Button variant="ghost" size="sm" onClick={() => { onOpenFile(path); onClose() }}
+          className="self-start border border-outline-variant/50 text-primary">
           <ExternalLink size={14} /> Open original file
-        </button>
+        </Button>
         <div>
-          <div className="mb-1 text-on-surface-low text-[0.7rem] uppercase tracking-wide">Extracted content (what the agent saw)</div>
+          <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Extracted content (what the agent saw)</div>
           {loading ? (
             <div className="flex items-center gap-2 text-on-surface-low text-[0.8125rem] py-3"><Loader2 size={14} className="animate-spin" /> Extracting…</div>
           ) : text ? (
@@ -2182,11 +2188,11 @@ function MentionChips({ paths, onRemove, onOpen }: { paths: string[]; onRemove: 
               {open ? <span className="break-all">{p}</span> : base(p)}
             </button>
             {open && (
-              <button type="button" onClick={() => onOpen(p)} title="Open file"
-                className="shrink-0 rounded px-1.5 text-primary text-[0.7rem] hover:bg-surface-high">Open</button>
+              <Button variant="ghost" size="xs" title="Open file" onClick={() => onOpen(p)}
+                className="shrink-0 h-6 px-1.5 text-[0.75rem] text-primary">Open</Button>
             )}
-            <button type="button" onClick={() => onRemove(p)} aria-label="Remove file"
-              className="shrink-0 rounded p-0.5 text-on-surface-low hover:text-danger"><X size={13} /></button>
+            <IconButton icon={X} label="Remove file" onClick={() => onRemove(p)} size={20} iconSize={13}
+              className="shrink-0 hover:text-danger" />
           </div>
         )
       })}
@@ -2225,14 +2231,12 @@ function KnowledgeContextPicker({ attached, onPick, onRemove, onClose }: {
   return (
     <Modal title="Add knowledge to prompt" icon={<BookText size={18} className="text-primary" />} onClose={onClose}>
       <div className="flex flex-col gap-m" style={{ minWidth: 420 }}>
-        <div className="relative">
-          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-low" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} autoFocus placeholder="Search your knowledge library…"
-            className="h-10 w-full rounded-lg bg-surface-high pl-9 pr-3 text-[0.9rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-        </div>
+        <SearchField value={q} onChange={setQ} autoFocus placeholder="Search your knowledge library…"
+          ariaLabel="Search your knowledge library"
+          trailingSlot={loading ? <Loader2 size={15} className="animate-spin text-on-surface-low" /> : undefined} />
         {attached.length > 0 && (
           <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between text-[0.72rem] text-on-surface-low">
+            <div className="flex items-center justify-between text-[0.75rem] text-on-surface-low">
               <span>{attached.length} attached{attachedTokens ? ` · ~${attachedTokens} tokens` : ''}</span>
               {attachedTokens > 0 && <span className="tabular-nums">{pct}% of {MAX}</span>}
             </div>
@@ -2245,8 +2249,8 @@ function KnowledgeContextPicker({ attached, onPick, onRemove, onClose }: {
         )}
         <div className="max-h-[46vh] overflow-y-auto flex flex-col gap-1.5">
           {loading && !res ? <div className="grid place-items-center py-6 text-on-surface-low"><Loader2 size={16} className="animate-spin" /></div>
-            : !q.trim() ? <p className="py-6 text-center text-on-surface-low text-[0.82rem]">Type to search notes, gists, bookmarks, docs…</p>
-            : (res?.results.length ?? 0) === 0 ? <p className="py-6 text-center text-on-surface-low text-[0.82rem]">No matches for “{q}”.</p>
+            : !q.trim() ? <p className="py-6 text-center text-on-surface-low text-[0.8125rem]">Type to search notes, gists, bookmarks, docs…</p>
+            : (res?.results.length ?? 0) === 0 ? <p className="py-6 text-center text-on-surface-low text-[0.8125rem]">No matches for “{q}”.</p>
             : res!.results.map((r) => {
               const on = attachedIds.has(r.id)
               return (
@@ -2257,8 +2261,8 @@ function KnowledgeContextPicker({ attached, onPick, onRemove, onClose }: {
                   <span className="mt-0.5 shrink-0 grid size-4 place-items-center rounded border" style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)', color: 'var(--color-on-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>{on && <Check size={11} />}</span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="min-w-0 truncate text-on-surface text-[0.85rem]" style={{ fontVariationSettings: '"wght" 500' }}>{r.title}</span>
-                      <span className="ml-auto shrink-0 tabular-nums text-on-surface-low text-[0.68rem]">~{r.tokens} tok</span>
+                      <span className="min-w-0 truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>{r.title}</span>
+                      <span className="ml-auto shrink-0 tabular-nums text-on-surface-low text-[0.75rem]">~{r.tokens} tok</span>
                     </div>
                     {r.summary && <div className="mt-0.5 line-clamp-2 text-on-surface-low text-[0.75rem]">{r.summary}</div>}
                   </div>
@@ -2284,8 +2288,8 @@ function KnowledgeChips({ items, onRemove }: { items: { id: string; name: string
           style={{ background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)' }}>
           <BookText size={13} className="shrink-0 text-primary" />
           <span className="min-w-0 truncate text-on-surface" title={k.name}>{k.name}</span>
-          <button type="button" onClick={() => onRemove(k.id)} aria-label="Remove knowledge reference"
-            className="shrink-0 rounded p-0.5 text-on-surface-low hover:text-danger"><X size={13} /></button>
+          <IconButton icon={X} label="Remove knowledge reference" onClick={() => onRemove(k.id)} size={20} iconSize={13}
+            className="shrink-0 hover:text-danger" />
         </div>
       ))}
     </div>
@@ -2324,7 +2328,7 @@ function QueueStack({ items, onCancel, onEdit }: {
 
   const header = (
     <button type="button" onClick={() => items.length > 1 && setExpanded((e) => !e)}
-      className={`flex items-center gap-1.5 px-1 text-[0.6875rem] uppercase tracking-wide text-on-surface-low ${items.length > 1 ? 'hover:text-on-surface-var' : 'cursor-default'}`}>
+      className={`flex items-center gap-1.5 px-1 text-[0.75rem] uppercase tracking-wide text-on-surface-low ${items.length > 1 ? 'hover:text-on-surface-var' : 'cursor-default'}`}>
       <Clock size={11} className="shrink-0" /> {items.length} queued · sent one at a time as each turn finishes
       {items.length > 1 && <ChevronDown size={11} className={`shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} />}
     </button>
@@ -2345,10 +2349,10 @@ function QueueStack({ items, onCancel, onEdit }: {
       {/* Actions only on the top card in stacked mode (deeper cards are non-interactive peeks). */}
       {(!stacked || depth === 0) && (
         <span className="flex shrink-0 items-center gap-0.5">
-          <button type="button" onClick={() => onEdit(q.id, q.content)} aria-label="Edit queued message"
-            className="rounded p-0.5 text-on-surface-low opacity-0 transition-opacity hover:text-primary group-hover/q:opacity-100"><Pencil size={12} /></button>
-          <button type="button" onClick={() => onCancel(q.id)} aria-label="Cancel queued message"
-            className="rounded p-0.5 text-on-surface-low hover:text-danger"><X size={13} /></button>
+          <IconButton icon={Pencil} label="Edit queued message" onClick={() => onEdit(q.id, q.content)} size={20} iconSize={12}
+            className="opacity-0 transition-opacity hover:text-primary group-hover/q:opacity-100" />
+          <IconButton icon={X} label="Cancel queued message" onClick={() => onCancel(q.id)} size={20} iconSize={13}
+            className="hover:text-danger" />
         </span>
       )}
     </motion.div>
@@ -2409,8 +2413,8 @@ function PasteCards({ blocks, onRemove }: { blocks: PasteBlock[]; onRemove: (seq
             <button type="button" onClick={() => setPreview(b)} className="text-left text-on-surface text-[0.8125rem] hover:underline">
               Paste #{b.seq} <span className="text-on-surface-low">· {b.lines} line{b.lines === 1 ? '' : 's'}</span>
             </button>
-            <button type="button" onClick={() => onRemove(b.seq)} aria-label={`Remove paste #${b.seq}`}
-              className="shrink-0 rounded p-0.5 text-on-surface-low hover:text-danger"><X size={13} /></button>
+            <IconButton icon={X} label={`Remove paste #${b.seq}`} onClick={() => onRemove(b.seq)} size={20} iconSize={13}
+              className="shrink-0 hover:text-danger" />
           </div>
         ))}
       </div>
@@ -2436,12 +2440,11 @@ function UserEditor({ initial, onSubmit, onCancel }: { initial: string; onSubmit
           if (e.key === 'Escape') { e.preventDefault(); onCancel() }
           else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSubmit(v) }
         }}
-        className="w-full resize-none rounded-2xl bg-surface-container px-5 py-4 text-on-surface text-[16px] leading-relaxed outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50"
+        className="w-full resize-none rounded-2xl bg-surface-container px-5 py-4 text-on-surface text-[1.0625rem] leading-relaxed outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50"
         style={{ maxWidth: 452 }} />
       <div className="flex items-center gap-2">
-        <button type="button" onClick={onCancel} className="rounded-pill px-3 h-8 text-on-surface-low text-[0.8125rem] hover:bg-surface-high hover:text-on-surface">Cancel</button>
-        <button type="button" onClick={() => onSubmit(v)} disabled={!v.trim()}
-          className="rounded-pill px-4 h-8 text-[0.8125rem] disabled:opacity-40" style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }}>Resend</button>
+        <Button variant="ghost" size="sm" onClick={onCancel} className="px-3 text-on-surface-low">Cancel</Button>
+        <Button size="sm" onClick={() => onSubmit(v)} disabled={!v.trim()} className="px-4">Resend</Button>
       </div>
     </div>
   )
@@ -2488,11 +2491,8 @@ function SelectionQuote({ scrollRef, onQuote }: { scrollRef: React.RefObject<HTM
   }, [scrollRef])
   if (!pos) return null
   return (
-    <button ref={btnRef} type="button" onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onQuote(pos.text); setPos(null); window.getSelection()?.removeAllRanges() }}
-      className="absolute z-30 -translate-x-1/2 -translate-y-full inline-flex items-center gap-1.5 rounded-pill bg-surface-highest px-3 h-8 text-on-surface text-[0.8125rem] shadow-lg ring-1 ring-outline-variant/50 hover:bg-surface-high"
-      style={{ left: pos.x, top: pos.y }}>
-      <Quote size={13} className="text-primary" /> Quote
-    </button>
+    <SelectionPill ref={btnRef} icon={Quote} label="Quote" x={pos.x} y={pos.y}
+      onPress={() => { onQuote(pos.text); setPos(null); window.getSelection()?.removeAllRanges() }} />
   )
 }
 
@@ -2543,7 +2543,7 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
       return <ToolCard key={seg.id || i} seg={t} />
     }
     if (seg.kind === 'activity') return <ActivityLine key={i} seg={seg as ActivitySegment} />
-    if (seg.kind === 'error') return <ErrorLine key={i} text={(seg as { text: string }).text} />
+    if (seg.kind === 'error') return <InlineError key={i} icon multiline className="my-1">{(seg as { text: string }).text}</InlineError>
     if (seg.kind === 'approval') {
       const ap = seg as ApprovalSegment
       return <ApprovalCard key={ap.id || i} seg={ap} onAct={onApprove} />
@@ -2629,18 +2629,6 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
   )
 }
 
-/** A turn-level error callout — a provider/model rejection (or any failed turn)
- *  rendered as a red note so the turn is never silently blank. */
-function ErrorLine({ text }: { text: string }) {
-  return (
-    <div className="my-1 flex items-start gap-2 rounded-lg px-3 py-2 text-[0.8125rem]"
-      style={{ background: 'color-mix(in srgb, var(--color-danger) 10%, transparent)', color: 'var(--color-danger)' }}>
-      <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-      <span className="min-w-0 whitespace-pre-wrap break-words">{text}</span>
-    </div>
-  )
-}
-
 /** The agent's intermediate work for a completed turn, folded into one compact
  *  disclosure so the FINAL ANSWER leads and the steps that produced it open only
  *  on demand. Summarizes as "Worked through N steps" + the distinct tools used.
@@ -2661,7 +2649,7 @@ function AgentWork({ stepCount, toolNames, children }: { stepCount: number; tool
           <ChevronRight size={12} />
         </motion.span>
         <Wrench size={12} className="shrink-0 opacity-70" />
-        <span className="shrink-0" style={{ fontVariationSettings: '"wght" 500' }}>
+        <span className="shrink-0" style={fvs(500)}>
           {open ? 'Hide work' : `Worked through ${stepCount} ${stepCount === 1 ? 'step' : 'steps'}`}
         </span>
         {!open && summary && <span className="min-w-0 truncate text-on-surface-low/60">· {summary}</span>}
@@ -2706,7 +2694,7 @@ function ContextLedger({ fed, learned, stats }: { fed?: string; learned?: string
   return (
     <div className="mt-2 mb-1">
       <button type="button" onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 rounded-pill text-on-surface-low/80 text-[0.7rem] transition-colors hover:text-on-surface-low"
+        className="flex items-center gap-1.5 rounded-pill text-on-surface-low/80 text-[0.75rem] transition-colors hover:text-on-surface-low"
         title={open ? 'Hide what fed this turn and what was learned' : 'What fed this turn · what was learned'}>
         <motion.span animate={{ rotate: open ? 90 : 0 }} transition={spring.spatialFast} className="shrink-0 opacity-60">
           <ChevronRight size={11} />
@@ -2719,7 +2707,7 @@ function ContextLedger({ fed, learned, stats }: { fed?: string; learned?: string
         {open && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
             transition={spring.spatialFast} className="overflow-hidden">
-            <div className="mt-1.5 ml-1.5 flex flex-col gap-1.5 border-l border-outline-variant/40 pl-3 text-[0.72rem] text-on-surface-low">
+            <div className="mt-1.5 ml-1.5 flex flex-col gap-1.5 border-l border-outline-variant/40 pl-3 text-[0.75rem] text-on-surface-low">
               {fed && (
                 <LedgerRow icon={Brain} label="Fed this turn">
                   Recalled relevant context{fedChars ? ` · ${fedChars} chars` : ''} — saved memories, learned lessons, earlier conversation, and episodic history, assembled and prepended to the prompt.
@@ -2728,7 +2716,7 @@ function ContextLedger({ fed, learned, stats }: { fed?: string; learned?: string
               {learned && (
                 <LedgerRow icon={Sparkles} label="Learned & saved">
                   <span className="text-on-surface-var">{learnedText || 'A preference was captured.'}</span>
-                  {' '}<a href="#/settings/memory" className="text-primary/90 hover:underline">Manage in Memory →</a>
+                  {' '}<TextLink href="#/settings/memory">Manage in Memory →</TextLink>
                 </LedgerRow>
               )}
               {stats && (
@@ -2994,7 +2982,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
         <MessageSquare size={17} className="text-primary" />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-on-surface text-[0.9375rem]" style={{ fontVariationSettings: '"wght" 500' }}>{s.title || s.key}</div>
+        <div className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{s.title || s.key}</div>
         <div className="flex items-center gap-1.5 flex-wrap text-on-surface-low text-[0.8125rem]">
           <span>{s.messages} message{s.messages === 1 ? '' : 's'}{s.running ? ' · running' : ''}{s.model ? ` · ${s.model}` : ''}</span>
           {/* Origin chip on worker chats — names the loop / code project and opens its
@@ -3008,7 +2996,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
               <button type="button" disabled={!canOpen}
                 onClick={(e) => { e.stopPropagation(); if (canOpen) navigate(`${s.origin === 'code' ? 'code' : 'loops'}/${s.source_id}`) }}
                 title={canOpen ? `From ${kind} “${label}” — open its cockpit` : `From a ${kind}`}
-                className={`inline-flex items-center gap-1 rounded-pill px-1.5 h-[18px] text-[0.6875rem] transition-colors ${canOpen ? 'hover:brightness-125 cursor-pointer' : 'cursor-default'}`}
+                className={`inline-flex items-center gap-1 rounded-pill px-1.5 h-[18px] text-[0.75rem] transition-colors ${canOpen ? 'hover:brightness-125 cursor-pointer' : 'cursor-default'}`}
                 style={{ background: 'color-mix(in srgb, var(--color-secondary) 18%, transparent)', color: 'var(--color-secondary)' }}>
                 {s.origin === 'code' ? <CodeIcon size={10} /> : <Target size={10} />}
                 {label}
@@ -3016,19 +3004,20 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
             )
           })()}
           {(s.tags ?? []).map((tid) => tagById[tid] && (
-            <span key={tid} className="inline-flex items-center rounded-pill px-1.5 h-[18px] text-[0.6875rem]"
+            <span key={tid} className="inline-flex items-center rounded-pill px-1.5 h-[18px] text-[0.75rem]"
               style={{ background: `color-mix(in srgb, ${tagById[tid].color || 'var(--color-primary)'} 18%, transparent)`, color: tagById[tid].color || 'var(--color-primary)' }}>{tagById[tid].name}</span>
           ))}
         </div>
       </div>
       {/* assign folder + tags */}
       <SessionOrgMenu s={s} folders={folders} tags={tags} onSetFolder={setFolder} onToggleTag={toggleTag} />
-      <button onClick={(e) => { e.stopPropagation(); togglePin(s.key, !s.pinned) }} aria-label={s.pinned ? 'Unpin chat' : 'Pin chat'} title={s.pinned ? 'Unpin' : 'Pin to top'}
-        className={`shrink-0 rounded-md p-1.5 transition-opacity hover:bg-surface-highest ${s.pinned ? 'text-primary opacity-100' : 'text-on-surface-low opacity-0 group-hover:opacity-100'}`}>
+      <SquareIconButton label={s.pinned ? 'Unpin chat' : 'Pin chat'} title={s.pinned ? 'Unpin' : 'Pin to top'} on={s.pinned}
+        onClick={(e) => { e.stopPropagation(); togglePin(s.key, !s.pinned) }}
+        className={`shrink-0 transition-opacity ${s.pinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
         <Pin size={14} className={s.pinned ? 'fill-current' : ''} />
-      </button>
-      <button onClick={(e) => { e.stopPropagation(); del(s) }} aria-label="Delete chat"
-        className="shrink-0 rounded-md p-1.5 text-on-surface-low opacity-0 transition-opacity hover:text-danger group-hover:opacity-100"><Trash2 size={14} /></button>
+      </SquareIconButton>
+      <IconButton icon={Trash2} label="Delete chat" onClick={(e) => { e.stopPropagation(); del(s) }} size={26} iconSize={14}
+        className="shrink-0 opacity-0 transition-opacity hover:text-danger group-hover:opacity-100" />
     </div>
     </ContextMenu>
     )
@@ -3086,18 +3075,9 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
                   ]} />
               </div>
             )}
-            <div className="relative mb-m">
-              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-low pointer-events-none" />
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search chats — title or anything said" aria-label="Search chats"
-                type="search" autoFocus
-                onKeyDown={(e) => { if (e.key === 'Escape' && q) { e.preventDefault(); e.stopPropagation(); setQ('') } }}
-                className="h-10 w-full rounded-pill bg-surface-high pl-9 pr-9 text-[0.9375rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-              {q && (
-                <button type="button" onClick={() => setQ('')} aria-label="Clear search"
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 inline-flex size-6 items-center justify-center rounded-full text-on-surface-low hover:bg-surface-highest hover:text-on-surface">
-                  <X size={14} />
-                </button>
-              )}
+            <div className="mb-m">
+              <SearchField value={q} onChange={setQ} placeholder="Search chats — title or anything said"
+                ariaLabel="Search chats" autoFocus />
             </div>
             {tags.length > 0 && (
               <div className="mb-m flex flex-wrap items-center gap-1.5">
@@ -3112,7 +3092,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
                     </button>
                   )
                 })}
-                {tagFilter.size > 0 && <button type="button" onClick={() => setTagFilter(new Set())} className="text-on-surface-low text-[0.75rem] hover:text-on-surface px-1">Clear</button>}
+                {tagFilter.size > 0 && <Button variant="ghost" size="xs" onClick={() => setTagFilter(new Set())} className="h-6 px-1 text-[0.75rem] text-on-surface-low">Clear</Button>}
               </div>
             )}
           </>)}
@@ -3146,7 +3126,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
                     onDrop={folderDragKey ? (e) => { e.preventDefault(); const k = e.dataTransfer.getData('text/plain') || folderDragKey; if (k) setFolder(k, g.folder?.id ?? null); setOverFolder(null); setFolderDragKey(null) } : undefined}
                     className={`rounded-xl transition-colors ${isOver ? 'bg-primary/10 outline-2 outline-dashed outline-primary/50' : ''}`}>
                     {g.folder && (
-                      <div className="mb-2 flex items-center gap-1.5 text-on-surface-var text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 500' }}>
+                      <div className="mb-2 flex items-center gap-1.5 text-on-surface-var text-[0.8125rem]" style={fvs(500)}>
                         <Folder size={14} /> {g.folder.name}
                         <span className="text-on-surface-low">({g.items.length})</span>
                       </div>
@@ -3194,19 +3174,17 @@ function SessionOrgMenu({ s, folders, tags, onSetFolder, onToggleTag }: {
           scroller) — inline absolute positioning gets CLIPPED at their edges;
           the body portal escapes them (and closes on scroll, see Popover). */}
       <Popover width={240} align="right" placement="bottom" portal trigger={(open, toggle) => (
-        <button type="button" onClick={toggle} aria-label="Organize chat" title="Folder & tags"
-          className={`shrink-0 rounded-md p-1.5 transition-opacity hover:bg-surface-highest ${open ? 'text-primary opacity-100' : 'text-on-surface-low opacity-0 group-hover:opacity-100'}`}>
-          <TagIcon size={14} />
-        </button>
+        <SquareIconButton icon={TagIcon} label="Organize chat" title="Folder & tags" on={open} onClick={toggle}
+          className={`shrink-0 transition-opacity ${open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} />
       )}>
         {() => (
           <div className="max-h-[320px] overflow-y-auto py-1">
-            {folders.length > 0 && <div className="px-m pt-1 pb-0.5 text-[0.7rem] uppercase tracking-wide text-on-surface-low">Folder</div>}
+            {folders.length > 0 && <div className="px-m pt-1 pb-0.5 text-[0.75rem] uppercase tracking-wide text-on-surface-low">Folder</div>}
             {folders.length > 0 && (
               <MenuRow label="— none —" selected={!s.folder_id} onClick={() => onSetFolder(s.key, null)} />
             )}
             {folders.map((f) => <MenuRow key={f.id} label={f.name} icon={<Folder size={14} />} selected={s.folder_id === f.id} onClick={() => onSetFolder(s.key, f.id)} />)}
-            {tags.length > 0 && <div className="px-m pt-2 pb-0.5 text-[0.7rem] uppercase tracking-wide text-on-surface-low">Tags</div>}
+            {tags.length > 0 && <div className="px-m pt-2 pb-0.5 text-[0.75rem] uppercase tracking-wide text-on-surface-low">Tags</div>}
             {tags.map((t) => (
               <MenuRow key={t.id} label={t.name} selected={(s.tags ?? []).includes(t.id)} onClick={() => onToggleTag(s.key, t.id)} />
             ))}
@@ -3282,7 +3260,7 @@ function TagBoard({ sessions, tags, card, onMove }: {
         }
         return (
           <div key={c.id} className="flex min-h-0 flex-col rounded-xl p-2 transition-colors" style={dropStyle} {...dropHandlers}>
-            <div className="mb-2 flex items-center gap-1.5 px-1 pt-1 shrink-0 text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 550', color: c.color || 'var(--color-on-surface)' }}>
+            <div className="mb-2 flex items-center gap-1.5 px-1 pt-1 shrink-0 text-[0.8125rem]" style={withWeight({ color: c.color || 'var(--color-on-surface)' }, 550)}>
               <TagIcon size={13} /> <span className="truncate flex-1">{c.label}</span> <span className="text-on-surface-low tabular-nums">{c.items.length}</span>
               <CollapseColumnButton onCollapse={() => collapse.toggle(c.id, c.items.length)} />
             </div>

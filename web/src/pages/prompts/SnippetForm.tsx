@@ -1,8 +1,10 @@
 import { useMemo, useRef, useEffect } from 'react'
-import { X, Plus, Wand2, Puzzle } from 'lucide-react'
+import { Plus, Wand2, Puzzle } from 'lucide-react'
 import type { PromptSnippet, PromptVariable, PromptVarType } from '../../lib/api'
-import { Field, TextInput, ChipInput } from '../tasks/formControls'
-import { VAR_TYPES, detectPlaceholders, detectIncludes, promptVars } from './promptMeta'
+import { Field, TextInput, ChipInput } from '../../ui/forms'
+import { AddItemButton } from '../../ui/AddItemButton'
+import { detectPlaceholders, detectIncludes, promptVars } from './promptMeta'
+import { VariableRow } from './VariableRow'
 
 export type SnippetDraft = { name: string; title: string; description: string; content: string; variables: PromptVariable[]; tags: string[]; source?: string }
 
@@ -98,9 +100,9 @@ export function SnippetForm({ draft, onChange, nameLocked, registerInsert }: { d
       <Field label="Variables" hint="Typed inputs — they merge into any prompt that includes this snippet.">
         <div className="flex flex-col gap-s">
           {draft.variables.map((v, i) => (
-            <VariableRow key={i} v={v} onChange={(patch) => updateVar(i, patch)} onRemove={() => removeVar(i)} />
+            <VariableRow key={i} v={v} onChange={(patch) => updateVar(i, patch)} onRemove={() => removeVar(i)} descriptionPlaceholder="Description" />
           ))}
-          <button type="button" onClick={() => addVar()} className="inline-flex items-center gap-1.5 self-start rounded-md bg-surface-container px-m h-9 text-on-surface-var text-[0.8125rem] hover:bg-surface-high transition-colors"><Plus size={14} /> Add variable</button>
+          <AddItemButton className="self-start" onClick={() => addVar()}><Plus size={14} /> Add variable</AddItemButton>
         </div>
       </Field>
 
@@ -109,29 +111,3 @@ export function SnippetForm({ draft, onChange, nameLocked, registerInsert }: { d
   )
 }
 
-function VariableRow({ v, onChange, onRemove }: { v: PromptVariable; onChange: (patch: Partial<PromptVariable>) => void; onRemove: () => void }) {
-  return (
-    <div className="rounded-md bg-surface-container p-2 flex flex-col gap-2">
-      <div className="flex items-center gap-s">
-        <input value={v.name} onChange={(e) => onChange({ name: e.target.value.replace(/[^a-zA-Z0-9_]/g, '_') })} placeholder="variable_name"
-          className="flex-1 h-8 rounded-md bg-surface px-m font-mono text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-        <select value={v.type} onChange={(e) => onChange({ type: e.target.value as PromptVarType })}
-          className="h-8 appearance-none rounded-md bg-surface pl-m pr-7 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]">
-          {VAR_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
-        </select>
-        <button type="button" onClick={() => onChange({ required: !v.required })} className="rounded-pill px-2 h-7 text-[0.7rem] transition-colors" style={v.required ? { background: 'color-mix(in srgb, var(--color-danger) 18%, transparent)', color: 'var(--color-danger)' } : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>{v.required ? 'required' : 'optional'}</button>
-        <button type="button" onClick={onRemove} className="text-on-surface-low hover:text-danger px-1"><X size={14} /></button>
-      </div>
-      <div className="flex items-center gap-s">
-        <input value={v.description ?? ''} onChange={(e) => onChange({ description: e.target.value })} placeholder="Description"
-          className="flex-1 h-8 rounded-md bg-surface px-m text-on-surface-var text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-        <input value={v.default == null ? '' : String(v.default)} onChange={(e) => onChange({ default: e.target.value })} placeholder="default"
-          className="w-28 h-8 rounded-md bg-surface px-m text-on-surface-var text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-      </div>
-      {v.type === 'select' && (
-        <input value={(v.options ?? []).join(', ')} onChange={(e) => onChange({ options: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })} placeholder="Choices, comma-separated"
-          className="h-8 rounded-md bg-surface px-m text-on-surface-var text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-      )}
-    </div>
-  )
-}

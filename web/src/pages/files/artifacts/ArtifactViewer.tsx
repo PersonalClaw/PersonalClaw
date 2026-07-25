@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
+import { fvs } from '../../../design/fontWeight'
 import {
   Clock, RotateCcw, Loader2, Trash2, FileSymlink, History, Tag, Download, ChevronUp, FileWarning,
 } from 'lucide-react'
 import { api, type Artifact, type ArtifactEvent } from '../../../lib/api'
 import { notify } from '../../../app/appSdk'
 import { confirmDelete } from '../../../ui/dialog'
+import { Button } from '../../../ui/Button'
+import { QuietButton } from '../../../ui/QuietButton'
 import { downloadText, safeFilename } from '../../../lib/download'
 import { artifactKindMeta, relTime } from '../fileMeta'
 import { ContentSurface } from '../../../ui/content/ContentSurface'
@@ -142,12 +145,9 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
       <div className="flex h-full items-center justify-center">
         <div className="flex flex-col items-center gap-2 text-on-surface-low">
           <FileWarning size={26} className="opacity-40" />
-          <p className="text-[0.875rem]">Couldn't open this artifact.</p>
+          <p className="text-[0.8125rem]">Couldn't open this artifact.</p>
           <p className="text-[0.75rem] text-on-surface-low/80">It may have been deleted. {loadError}</p>
-          <button type="button" onClick={() => reload()}
-            className="mt-1 inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[0.75rem] text-primary hover:bg-surface-high">
-            <RotateCcw size={13} /> Try again
-          </button>
+          <Button variant="ghost" size="xs" onClick={() => reload()} className="mt-1 text-primary"><RotateCcw size={13} /> Try again</Button>
         </div>
       </div>
     )
@@ -163,20 +163,18 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex items-center gap-s border-b border-outline/40 px-m py-2">
           <Icon size={15} style={{ color: km.tone }} className="shrink-0" />
-          <span className="truncate text-on-surface text-[0.875rem]" style={{ fontVariationSettings: '"wght" 500' }}>{art.name}</span>
-          <span className="truncate text-on-surface-low text-[0.7rem] font-mono">{art.slug} · {km.label}</span>
-          {art.live_dirty && <span className="shrink-0 rounded px-1.5 py-0.5 text-[0.65rem]" style={{ background: 'color-mix(in srgb, var(--color-warning) 18%, transparent)', color: 'var(--color-warning)' }}>source changed</span>}
+          <span className="truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>{art.name}</span>
+          <span className="truncate text-on-surface-low text-[0.75rem] font-mono">{art.slug} · {km.label}</span>
+          {art.live_dirty && <span className="shrink-0 rounded px-1.5 py-0.5 text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-warning) 18%, transparent)', color: 'var(--color-warning)' }}>source changed</span>}
           <div className="ml-auto flex items-center gap-1">
             {art.source_path && (
-              <button onClick={() => onOpenSourceFile(art.source_path)} type="button"
-                className="inline-flex items-center gap-1 rounded-md px-2 h-7 text-[0.75rem] text-on-surface-low hover:bg-surface-high hover:text-on-surface" title={`Open source file: ${art.source_path}`}>
+              <QuietButton onClick={() => onOpenSourceFile(art.source_path)} title={`Open source file: ${art.source_path}`}>
                 <FileSymlink size={13} /> Source file
-              </button>
+              </QuietButton>
             )}
-            <button onClick={download} type="button" title="Download this artifact"
-              className="inline-flex items-center gap-1 rounded-md px-2 h-7 text-[0.75rem] text-on-surface-low hover:bg-surface-high hover:text-on-surface">
+            <QuietButton onClick={download} title="Download this artifact">
               <Download size={13} /> Download
-            </button>
+            </QuietButton>
             <button onClick={del} type="button" aria-label="Delete artifact" title="Delete artifact" className="inline-flex items-center gap-1 rounded-md px-2 h-7 text-[0.75rem] hover:bg-surface-high" style={{ color: 'var(--color-error)' }}><Trash2 size={13} /></button>
           </div>
         </div>
@@ -185,7 +183,7 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
           <div className="flex items-center gap-2 border-b border-outline/40 px-m py-1.5 text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-warning) 10%, transparent)' }}>
             <Clock size={12} style={{ color: 'var(--color-warning)' }} />
             <span className="text-on-surface-low">Viewing historical v{selVersion} (read-only)</span>
-            <button onClick={revert} disabled={busy} type="button" className="ml-auto inline-flex items-center gap-1 rounded-md px-2 h-6 text-[0.7rem]" style={{ color: 'var(--color-warning)', border: '1px solid color-mix(in srgb, var(--color-warning) 35%, transparent)' }}>
+            <button onClick={revert} disabled={busy} type="button" className="ml-auto inline-flex items-center gap-1 rounded-md px-2 h-6 text-[0.75rem]" style={{ color: 'var(--color-warning)', border: '1px solid color-mix(in srgb, var(--color-warning) 35%, transparent)' }}>
               <RotateCcw size={11} /> Revert to v{selVersion}
             </button>
           </div>
@@ -218,8 +216,8 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
         <button type="button" onClick={() => setMetaOpen((v) => !v)}
           className="flex w-full items-center gap-2 px-m py-2 text-on-surface-low hover:text-on-surface transition-colors">
           <ChevronUp size={14} className={`transition-transform ${metaOpen ? '' : 'rotate-180'}`} />
-          <span className="text-[0.7rem] uppercase tracking-wide">Details</span>
-          <span className="text-on-surface-low text-[0.7rem]">· v{art.version}{art.tags.length ? ` · ${art.tags.length} tag${art.tags.length === 1 ? '' : 's'}` : ''} · {events.length} event{events.length === 1 ? '' : 's'}</span>
+          <span className="text-[0.75rem] uppercase tracking-wide">Details</span>
+          <span className="text-on-surface-low text-[0.75rem]">· v{art.version}{art.tags.length ? ` · ${art.tags.length} tag${art.tags.length === 1 ? '' : 's'}` : ''} · {events.length} event{events.length === 1 ? '' : 's'}</span>
         </button>
         {metaOpen && (
           <div className="grid max-h-[40vh] grid-cols-1 gap-l overflow-y-auto px-m pb-m sm:grid-cols-3">
@@ -235,7 +233,7 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
             <div>
               <Label icon={Tag}>Tags</Label>
               <div className="mt-1.5 flex flex-wrap gap-1">
-                {art.tags.length ? art.tags.map((t) => <span key={t} className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low text-[0.7rem]">{t}</span>)
+                {art.tags.length ? art.tags.map((t) => <span key={t} className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low text-[0.75rem]">{t}</span>)
                   : <span className="text-on-surface-low text-[0.75rem]">None</span>}
               </div>
             </div>
@@ -245,7 +243,7 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
               <div className="mt-2 flex flex-col gap-2.5">
                 {events.length === 0 && <span className="text-on-surface-low text-[0.75rem]">No events.</span>}
                 {events.slice().reverse().map((e, i) => (
-                  <div key={i} className="flex items-start gap-2 text-[0.7rem]">
+                  <div key={i} className="flex items-start gap-2 text-[0.75rem]">
                     <span className="mt-1 size-1.5 shrink-0 rounded-full" style={{ background: eventTone(e.type) }} />
                     <div className="min-w-0">
                       <div className="text-on-surface">
@@ -265,7 +263,7 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
 }
 
 function Label({ icon: Icon, children }: { icon: typeof Clock; children: React.ReactNode }) {
-  return <div className="flex items-center gap-1.5 text-on-surface-low text-[0.7rem] uppercase tracking-wide"><Icon size={11} /> {children}</div>
+  return <div className="flex items-center gap-1.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide"><Icon size={11} /> {children}</div>
 }
 
 function eventTone(type: string): string {

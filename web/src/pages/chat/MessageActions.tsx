@@ -49,7 +49,7 @@ function VariantSwitcher({ count, idx, onSwitch }: { count: number; idx: number;
         className="inline-flex h-8 w-6 items-center justify-center rounded-md transition-colors hover:bg-surface-high hover:text-on-surface disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-default">
         <ChevronLeft size={14} />
       </button>
-      <span className="min-w-[2.1rem] select-none text-center text-[0.7rem] tabular-nums" aria-live="polite">{idx + 1}/{count}</span>
+      <span className="min-w-[2.1rem] select-none text-center text-[0.75rem] tabular-nums" aria-live="polite">{idx + 1}/{count}</span>
       <button type="button" onClick={() => !atEnd && onSwitch(idx + 1)} disabled={atEnd}
         aria-label="Next answer" title="Next answer"
         className="inline-flex h-8 w-6 items-center justify-center rounded-md transition-colors hover:bg-surface-high hover:text-on-surface disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-default">

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { Inbox as InboxIcon, CheckCheck, RotateCcw, Circle, Reply, Settings as SettingsIcon, ScrollText, Loader2 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -128,7 +129,7 @@ export function InboxPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
                 )}>
                   {(close) => (
                     <div className="flex flex-col gap-0.5" style={{ minWidth: 220 }}>
-                      <div className="px-m pt-1 pb-1.5 text-[0.7rem] uppercase tracking-wide text-on-surface-low">Catch-up digest · last 4h</div>
+                      <div className="px-m pt-1 pb-1.5 text-[0.75rem] uppercase tracking-wide text-on-surface-low">Catch-up digest · last 4h</div>
                       {watched.map((ch) => (
                         <MenuRow key={ch.id} icon={<ScrollText size={15} />} label={ch.name || ch.id}
                           onClick={() => { close(); digest(ch.id) }} />
@@ -214,15 +215,15 @@ export function InboxPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
                   <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${cm.tone} 16%, transparent)` }}><cm.icon size={18} style={{ color: cm.tone }} /></span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-s">
-                      <span className={`truncate text-[0.9375rem] ${pending ? 'text-on-surface' : 'text-on-surface-var'}`} style={{ fontVariationSettings: '"wght" 500' }}>{it.sender_name || it.sender_id || 'Unknown'}</span>
+                      <span className={`truncate text-[0.9375rem] ${pending ? 'text-on-surface' : 'text-on-surface-var'}`} style={fvs(500)}>{it.sender_name || it.sender_id || 'Unknown'}</span>
                       {channelLabel(it) && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{channelLabel(it)}</span>}
-                      {it.draft && <span className="shrink-0 inline-flex items-center gap-1 text-ok text-[0.7rem]"><Reply size={11} /> draft</span>}
+                      {it.draft && <span className="shrink-0 inline-flex items-center gap-1 text-ok text-[0.75rem]"><Reply size={11} /> draft</span>}
                     </div>
                     <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{it.message}</p>
                   </div>
                   <div className="hidden sm:flex shrink-0 items-center gap-s">
-                    <span className="inline-flex items-center gap-1 text-[0.7rem]" style={{ color: cf.tone }} title={cf.label}><cf.icon size={12} /></span>
-                    {!pending ? <span className="inline-flex items-center gap-1 text-on-surface-low text-[0.7rem]"><sm.icon size={12} style={{ color: sm.tone }} /> {sm.label}</span> : it.created_at && <span className="text-on-surface-low text-[0.75rem]">{relPast(it.created_at)}</span>}
+                    <span className="inline-flex items-center gap-1 text-[0.75rem]" style={{ color: cf.tone }} title={cf.label}><cf.icon size={12} /></span>
+                    {!pending ? <span className="inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]"><sm.icon size={12} style={{ color: sm.tone }} /> {sm.label}</span> : it.created_at && <span className="text-on-surface-low text-[0.75rem]">{relPast(it.created_at)}</span>}
                     {pending && <Circle size={7} fill={cm.tone} stroke="none" />}
                   </div>
                 </ListRow>

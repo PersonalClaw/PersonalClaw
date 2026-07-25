@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { Plus, FileText, Puzzle, Maximize2, User, Cog } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -182,14 +183,14 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
                 <ListRow index={i} accent={sourceTone(r.source)} onClick={() => setQuery({ open: r.name, edit: null })}>
                   <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${sourceTone(r.source)} 16%, transparent)` }}><Icon size={19} style={{ color: sourceTone(r.source) }} /></span>
                   <div className="flex-1 min-w-0">
-                    <span className="truncate text-on-surface text-[0.9375rem] font-mono" style={{ fontVariationSettings: '"wght" 500' }}>{r.name}</span>
+                    <span className="truncate text-on-surface text-[0.9375rem] font-mono" style={fvs(500)}>{r.name}</span>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
                       <span>{sourceLabel(r.source)}</span>
                       {vars.length > 0 && <span>{vars.length} var{vars.length > 1 ? 's' : ''}</span>}
                       {r.description && <span className="truncate">· {r.description}</span>}
                     </div>
                   </div>
-                  {(r.tags?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{r.tags!.slice(0, 2).map((t) => <span key={t} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.7rem]">{t}</span>)}</div>}
+                  {(r.tags?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{r.tags!.slice(0, 2).map((t) => <span key={t} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{t}</span>)}</div>}
                 </ListRow>
                 </ContextMenu>
                 </Disintegrate>

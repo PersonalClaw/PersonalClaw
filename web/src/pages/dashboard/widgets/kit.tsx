@@ -4,12 +4,14 @@ import type { LucideIcon } from 'lucide-react'
 import { cx } from '../../../ui/cx'
 import { spring } from '../../../design/motion'
 
-/** Calm "all clear" empty state — a compact, top-aligned strip (icon + line +
- *  optional inline action). Deliberately NOT full-height-centered: dashboard
- *  sections sit side by side in grid rows, and a stretched empty widget next to
- *  a full sibling read as a conspicuous void. The dashed hairline marks the
- *  slot as intentionally empty without adding card chrome. */
-export function EmptyState({ icon: Icon, children, action }: { icon: LucideIcon; children: ReactNode; action?: ReactNode }) {
+/** Calm "all clear" dashboard-slot empty state — a compact, top-aligned strip
+ *  (icon + line + optional inline action). Deliberately NOT the full-height
+ *  centered `EmptyState` (ui/ListScaffold): dashboard sections sit side by side
+ *  in grid rows, and a stretched empty widget next to a full sibling reads as a
+ *  conspicuous void. The dashed hairline marks the slot as intentionally empty
+ *  without adding card chrome. See docs/design/patterns.md — the two empty-state
+ *  patterns are distinct on purpose (page-empty vs slot-empty). */
+export function SlotEmptyState({ icon: Icon, children, action }: { icon: LucideIcon; children: ReactNode; action?: ReactNode }) {
   return (
     <div className="flex items-center gap-s self-start rounded-lg border border-dashed border-outline-variant/50 px-m py-s">
       <Icon size={15} className="shrink-0 text-on-surface-low opacity-70" />

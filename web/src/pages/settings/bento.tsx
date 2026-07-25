@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { ArrowRight, Loader2, type LucideIcon } from 'lucide-react'
 import { Toggle } from '../../ui/Toggle'
 import { spring, expr } from '../../design/motion'
+import { fvs, withWeight } from '../../design/fontWeight'
 
 /** A coarse weight hint kept on each widget for future tuning. The home page lays
  *  cards out as a fixed-width masonry (each card sizes to its own content), so this
@@ -80,7 +81,7 @@ export function BentoCard({ icon: Icon, title, query, onClick, loading, accent, 
           <span className="grid size-7 shrink-0 place-items-center rounded-md" style={{ background: `color-mix(in srgb, ${tint} 16%, transparent)`, color: tint }}>
             <Icon size={15} />
           </span>
-          <span className="flex-1 truncate text-on-surface text-[0.9375rem]" style={{ fontVariationSettings: '"wght" 600' }}>
+          <span className="flex-1 truncate text-on-surface text-[0.9375rem]" style={fvs(600)}>
             {query ? <Highlight text={title} query={query} /> : title}
           </span>
           <ArrowRight size={14} className="shrink-0 text-on-surface-low transition-transform group-hover:translate-x-0.5" />
@@ -88,7 +89,7 @@ export function BentoCard({ icon: Icon, title, query, onClick, loading, accent, 
         {loading
           ? <CardSkeleton rows={rows ?? 2} />
           : <div className="flex min-h-0 flex-1 flex-col">{children}</div>}
-        {footer && <div className="mt-2 text-on-surface-low text-[0.72rem]">{footer}</div>}
+        {footer && <div className="mt-2 text-on-surface-low text-[0.75rem]">{footer}</div>}
       </div>
     </motion.div>
   )
@@ -124,8 +125,10 @@ export function Switch({ on, onToggle, label, disabled }: {
   // Sits inside the card's click-through content layer over a full-card nav overlay:
   // re-enable pointer events and stop the click from reaching the overlay. The shared
   // Toggle renders the track+knob; a spinner overlays it while the async save runs.
+  // Stop propagation in the BUBBLE phase (like SegToggle/InlineSelect): a capture-phase
+  // stop would preempt the inner switch button, so its onClick would never fire.
   return (
-    <span className="pointer-events-auto relative inline-flex" onClickCapture={(e) => e.stopPropagation()}>
+    <span className="pointer-events-auto relative inline-flex" onClick={(e) => e.stopPropagation()}>
       <Toggle on={on} onChange={run} label={label} disabled={disabled || busy} size="sm" />
       {busy && (
         <span className="pointer-events-none absolute inset-0 grid place-items-center">
@@ -151,7 +154,7 @@ export function SegToggle<T extends string>({ value, options, onPick }: {
     <div className="pointer-events-auto inline-flex rounded-pill bg-surface-high p-0.5" style={{ opacity: busy ? 0.7 : 1 }}>
       {options.map((o) => (
         <button key={o.key} type="button" onClick={(e) => pick(e, o.key)}
-          className="rounded-pill px-2 h-[22px] text-[0.7rem] transition-colors"
+          className="rounded-pill px-2 h-[22px] text-[0.75rem] transition-colors"
           style={o.key === value ? { background: 'var(--color-surface-highest)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>
           {o.label}
         </button>
@@ -179,8 +182,8 @@ export function InlineSelect({ value, options, onPick, ariaLabel }: {
 export function BigStat({ value, caption, tone }: { value: ReactNode; caption: ReactNode; tone?: string }) {
   return (
     <div className="flex items-baseline gap-1.5">
-      <span className="tabular-nums text-on-surface text-[1.75rem] leading-none" style={{ fontVariationSettings: '"wght" 600', color: tone }}>{value}</span>
-      <span className="text-on-surface-low text-[0.8rem]">{caption}</span>
+      <span className="tabular-nums text-on-surface text-[1.75rem] leading-none" style={withWeight({ color: tone }, 600)}>{value}</span>
+      <span className="text-on-surface-low text-[0.8125rem]">{caption}</span>
     </div>
   )
 }
@@ -191,9 +194,9 @@ export function KVList({ rows, query }: { rows: { k: string; v: ReactNode; vText
   return (
     <div className="flex flex-col gap-1.5">
       {rows.map((r, i) => (
-        <div key={i} className="flex min-h-[1.75rem] items-center justify-between gap-2 text-[0.8rem]">
+        <div key={i} className="flex min-h-[1.75rem] items-center justify-between gap-2 text-[0.8125rem]">
           <span className="shrink-0 text-on-surface-low">{query ? <Highlight text={r.k} query={query} /> : r.k}</span>
-          <span className={`min-w-0 text-right text-on-surface ${r.control ? 'shrink-0' : 'truncate'} ${r.mono ? 'font-mono text-[0.72rem]' : 'tabular-nums'}`}>
+          <span className={`min-w-0 text-right text-on-surface ${r.control ? 'shrink-0' : 'truncate'} ${r.mono ? 'font-mono text-[0.75rem]' : 'tabular-nums'}`}>
             {query && r.vText !== undefined ? <Highlight text={r.vText} query={query} /> : r.v}
           </span>
         </div>
@@ -211,7 +214,7 @@ export function StatusPill({ label, tone, query }: { label: string; tone?: 'ok' 
     muted: { bg: 'var(--color-surface-high)', fg: 'var(--color-on-surface-low)' },
   }[tone || 'muted']
   return (
-    <span className="inline-flex items-center gap-1 rounded-pill px-2 h-[22px] text-[0.72rem]" style={{ background: map.bg, color: map.fg }}>
+    <span className="inline-flex items-center gap-1 rounded-pill px-2 h-[22px] text-[0.75rem]" style={{ background: map.bg, color: map.fg }}>
       {query ? <Highlight text={label} query={query} /> : label}
     </span>
   )

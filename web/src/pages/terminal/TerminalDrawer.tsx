@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Terminal as TermIcon, Plus, X, ChevronDown, Maximize2, Loader2 } from 'lucide-react'
 import { spring } from '../../design/motion'
+import { SquareIconButton } from '../../ui/SquareIconButton'
 import { api } from '../../lib/api'
 import { TerminalView } from './TerminalView'
 import type { TermTab } from './TerminalPage'
@@ -91,15 +93,12 @@ export function TerminalDrawer({ open, onClose, onOpenFull }: {
                   </div>
                 )
               })}
-              <button type="button" onClick={() => newSession()} aria-label="New session" title="New session"
-                className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-on-surface-low hover:bg-surface-high hover:text-on-surface">
+              <SquareIconButton label="New session" onClick={() => newSession()} className="shrink-0">
                 {busy ? <Loader2 size={13} className="animate-spin" /> : <Plus size={14} />}
-              </button>
+              </SquareIconButton>
             </div>
-            <button type="button" onClick={onOpenFull} aria-label="Open full terminal" title="Open in full Terminal page"
-              className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-on-surface-low hover:bg-surface-high hover:text-on-surface"><Maximize2 size={13} /></button>
-            <button type="button" onClick={onClose} aria-label="Hide terminal (⌘`)" title="Hide (⌘`)"
-              className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-on-surface-low hover:bg-surface-high hover:text-on-surface"><ChevronDown size={15} /></button>
+            <SquareIconButton icon={Maximize2} iconSize={13} label="Open full terminal" onClick={onOpenFull} className="shrink-0" />
+            <SquareIconButton icon={ChevronDown} iconSize={15} label="Hide terminal (⌘`)" onClick={onClose} className="shrink-0" />
           </div>
 
           {/* body — keep each session mounted so scrollback + socket persist */}
@@ -107,7 +106,7 @@ export function TerminalDrawer({ open, onClose, onOpenFull }: {
             {tabs.length === 0 ? (
               error ? (
                 <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center">
-                  <div className="text-on-surface text-[0.875rem]" style={{ fontVariationSettings: '"wght" 500' }}>Couldn’t open a session</div>
+                  <div className="text-on-surface text-[0.8125rem]" style={fvs(500)}>Couldn’t open a session</div>
                   <div className="max-w-md text-on-surface-low text-[0.8125rem]">{error}</div>
                   <button type="button" onClick={() => newSession()} disabled={busy}
                     className="inline-flex items-center gap-1.5 rounded-pill px-4 h-9 text-[0.8125rem] disabled:opacity-50"

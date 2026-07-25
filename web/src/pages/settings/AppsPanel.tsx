@@ -4,8 +4,10 @@ import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader } from './settingsUI'
 import { Skeleton } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
+import { TextLink } from '../../ui/TextLink'
 import { AppConfigFields, useAppConfig } from '../apps/appConfigForm'
 import { AppIcon } from '../apps/appIcon'
+import { fvs } from '../../design/fontWeight'
 
 /** Settings > Apps — the home for non-provider app settings, mirroring how
  *  Settings > Providers hosts provider-app settings. Provider apps configure
@@ -32,9 +34,8 @@ export function AppsPanel({ navigate }: { navigate?: (p: string) => void }) {
       />
 
       {configurable.length === 0 ? (
-        <div className="rounded-lg bg-surface-container px-l py-xl text-center text-on-surface-low text-[0.875rem]">
-          No installed apps expose configurable settings. Browse the <button type="button"
-            className="text-primary hover:underline" onClick={() => navigate?.('apps')}>Store</button> to add some.
+        <div className="rounded-lg bg-surface-container px-l py-xl text-center text-on-surface-low text-[0.8125rem]">
+          No installed apps expose configurable settings. Browse the <TextLink onClick={() => navigate?.('apps')}>Store</TextLink> to add some.
         </div>
       ) : (
         configurable.map((app) => <AppSettingsCard key={app.name} app={app} navigate={navigate} />)
@@ -57,9 +58,9 @@ function AppSettingsCard({ app, navigate }: { app: AppSummary; navigate?: (p: st
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="truncate text-on-surface text-[0.9375rem]" style={{ fontVariationSettings: '"wght" 600' }}>{app.displayName}</span>
-            <span className="text-on-surface-low text-[0.7rem] tabular-nums">v{app.version}</span>
-            {!app.enabled && <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.65rem]">disabled</span>}
+            <span className="truncate text-on-surface text-[0.9375rem]" style={fvs(600)}>{app.displayName}</span>
+            <span className="text-on-surface-low text-[0.75rem] tabular-nums">v{app.version}</span>
+            {!app.enabled && <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">disabled</span>}
           </div>
           {app.description && <div className="truncate text-on-surface-low text-[0.75rem]">{app.description}</div>}
         </div>

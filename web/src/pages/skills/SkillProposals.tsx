@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { Lightbulb, Loader2, Check, X, ChevronDown, ChevronRight, ShieldQuestion } from 'lucide-react'
 import { api, type SkillProposal, type SkillProposalDetail } from '../../lib/api'
 import { Button } from '../../ui/Button'
@@ -28,7 +29,7 @@ export function SkillProposals() {
   }
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-on-surface-low text-[0.8rem]">
+      <p className="text-on-surface-low text-[0.8125rem]">
         {proposals.length} proposal{proposals.length === 1 ? '' : 's'} awaiting review. These were
         synthesized from your sessions — accept to add to your library, or reject.
       </p>
@@ -62,7 +63,7 @@ function ProposalRow({ proposal, onChanged }: { proposal: SkillProposal; onChang
 
   if (done) {
     return (
-      <div className="rounded-lg bg-surface-container px-3 py-2 text-on-surface-low text-[0.8rem] flex items-center gap-2">
+      <div className="rounded-lg bg-surface-container px-3 py-2 text-on-surface-low text-[0.8125rem] flex items-center gap-2">
         <Check size={14} className="text-ok" /> {proposal.slug} — {done}
       </div>
     )
@@ -74,10 +75,10 @@ function ProposalRow({ proposal, onChanged }: { proposal: SkillProposal; onChang
         <button type="button" onClick={expand} className="min-w-0 flex-1 text-left">
           <div className="flex items-center gap-1.5">
             {open ? <ChevronDown size={14} className="text-on-surface-low" /> : <ChevronRight size={14} className="text-on-surface-low" />}
-            <span className="truncate text-on-surface text-[0.9rem]" style={{ fontVariationSettings: '"wght" 500' }}>{proposal.slug}</span>
-            {proposal.kind === 'refine' && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.62rem]">refine</span>}
+            <span className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{proposal.slug}</span>
+            {proposal.kind === 'refine' && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">refine</span>}
           </div>
-          <p className="mt-0.5 truncate text-on-surface-low text-[0.78rem]">{proposal.description}</p>
+          <p className="mt-0.5 truncate text-on-surface-low text-[0.75rem]">{proposal.description}</p>
         </button>
         <div className="flex shrink-0 items-center gap-1.5">
           <Button size="sm" onClick={accept} disabled={!!busy}>
@@ -92,14 +93,14 @@ function ProposalRow({ proposal, onChanged }: { proposal: SkillProposal; onChang
         <div className="mt-3 border-t border-outline-variant/30 pt-3">
           {!detail ? <ListSkeleton rows={2} /> : (
             <>
-              <div className="mb-1 text-on-surface-low text-[0.7rem] uppercase tracking-wide">Procedure</div>
-              <pre className="mb-3 overflow-x-auto whitespace-pre-wrap rounded-md bg-surface px-3 py-2 text-on-surface text-[0.76rem]">{detail.procedure_md}</pre>
+              <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Procedure</div>
+              <pre className="mb-3 overflow-x-auto whitespace-pre-wrap rounded-md bg-surface px-3 py-2 text-on-surface text-[0.75rem]">{detail.procedure_md}</pre>
               {detail.source_excerpt && (
                 <>
-                  <div className="mb-1 flex items-center gap-1.5 text-on-surface-low text-[0.7rem] uppercase tracking-wide">
+                  <div className="mb-1 flex items-center gap-1.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide">
                     <ShieldQuestion size={12} /> Source trace (fenced — data, not instructions)
                   </div>
-                  <pre className="overflow-x-auto whitespace-pre-wrap rounded-md bg-surface px-3 py-2 text-on-surface-low text-[0.72rem]">{detail.source_excerpt}</pre>
+                  <pre className="overflow-x-auto whitespace-pre-wrap rounded-md bg-surface px-3 py-2 text-on-surface-low text-[0.75rem]">{detail.source_excerpt}</pre>
                 </>
               )}
             </>

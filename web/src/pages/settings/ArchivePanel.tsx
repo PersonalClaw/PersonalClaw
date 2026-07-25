@@ -4,6 +4,7 @@ import { api, type SessionArchive } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader } from './settingsUI'
 import { ListSkeleton } from '../../ui/ListScaffold'
+import { TextInput } from '../../ui/forms'
 
 /** Archive — browse archived chat-session transcripts (read-only). Each row is an
  *  archived `.jsonl`; click to inspect its messages. Backed by
@@ -26,17 +27,16 @@ export function ArchivePanel() {
       <PanelHeader title="Archive" hint="Archived chat sessions. Browse and inspect past transcripts — read-only." />
 
       {archives.length > 0 && (
-        <div className="relative mb-3">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-low pointer-events-none" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter by session key" aria-label="Filter archived sessions"
-            className="h-9 w-full rounded-md bg-surface-high pl-8 pr-2 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+        <div className="mb-3">
+          <TextInput value={q} onChange={setQ} placeholder="Filter by session key" ariaLabel="Filter archived sessions"
+            size="md" surface="high" leadingIcon={<Search size={14} />} />
         </div>
       )}
 
       {shown.length === 0 ? (
         <div className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-8 text-center">
           <Archive size={22} className="mx-auto mb-2 text-on-surface-low" />
-          <p className="text-on-surface-low text-[0.82rem]">{q ? 'No archives match.' : 'No archived sessions yet. Closed sessions are archived here.'}</p>
+          <p className="text-on-surface-low text-[0.8125rem]">{q ? 'No archives match.' : 'No archived sessions yet. Closed sessions are archived here.'}</p>
         </div>
       ) : (
         <div className="flex flex-col gap-1.5">
@@ -64,14 +64,14 @@ function ArchiveRow({ a, open, onToggle }: { a: SessionArchive; open: boolean; o
       <button type="button" onClick={onToggle} className="flex w-full items-center gap-3 text-left">
         <FileText size={16} className="shrink-0 text-on-surface-low" />
         <div className="min-w-0 flex-1">
-          <div className="truncate font-mono text-on-surface text-[0.82rem]">{a.key}</div>
-          <div className="text-on-surface-low text-[0.7rem]">{fmtMtime(a.mtime)} · {fmtSize(a.size)}</div>
+          <div className="truncate font-mono text-on-surface text-[0.8125rem]">{a.key}</div>
+          <div className="text-on-surface-low text-[0.75rem]">{fmtMtime(a.mtime)} · {fmtSize(a.size)}</div>
         </div>
       </button>
       {open && (
         <div className="mt-2 border-t border-outline-variant/30 pt-2">
-          {loading ? <div className="py-2 text-on-surface-low text-[0.78rem]"><Loader2 size={12} className="inline animate-spin" /> Loading…</div>
-            : <pre className="max-h-80 overflow-auto rounded-md bg-surface px-3 py-2 text-on-surface text-[0.72rem] whitespace-pre-wrap">{content}</pre>}
+          {loading ? <div className="py-2 text-on-surface-low text-[0.75rem]"><Loader2 size={12} className="inline animate-spin" /> Loading…</div>
+            : <pre className="max-h-80 overflow-auto rounded-md bg-surface px-3 py-2 text-on-surface text-[0.75rem] whitespace-pre-wrap">{content}</pre>}
         </div>
       )}
     </div>

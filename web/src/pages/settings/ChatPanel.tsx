@@ -5,6 +5,7 @@ import { useAgentCatalog, ensureBindableAgentName } from '../../lib/agents'
 import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Toggle, SegPills, SavedToast } from './settingsUI'
 import { Combobox } from '../../ui/Combobox'
+import { NumberField } from '../../ui/forms'
 import { FormSkeleton } from '../../ui/ListScaffold'
 
 const RESTORE_WINDOWS = [
@@ -134,7 +135,7 @@ function LifecycleSection({ session, setSession, agentOptions, discovered }: {
         <NumberRow label="Idle timeout" hint="Auto-close an idle session after this long. 0 = never." value={Number(session.timeout_secs ?? 0)} min={0} max={86400} step={60} suffix="s" onCommit={(n) => patch('timeout_secs', n)} saved={saved} />
 
         <Row label="Warm pool size" hint="Pre-started sessions kept ready for an instant first turn. 0 = off.">
-          <NumberInput value={poolSize} min={0} max={10} step={1} onCommit={(n) => patch('pool_size', n)} ariaLabel="Warm pool size" />
+          <NumberField value={poolSize} min={0} max={10} step={1} onChange={(n) => patch('pool_size', n)} ariaLabel="Warm pool size" />
         </Row>
         {poolSize > 0 && (
           <>
@@ -170,29 +171,9 @@ function NumberRow({ label, hint, value, min, max, step, suffix, onCommit, saved
     <Row label={label} hint={hint}>
       <div className="flex items-center gap-2">
         <SavedToast show={saved} />
-        <NumberInput value={value} min={min} max={max} step={step} onCommit={onCommit} ariaLabel={label} />
+        <NumberField value={value} min={min} max={max} step={step} onChange={onCommit} ariaLabel={label} />
         {suffix && <span className="w-6 text-on-surface-low text-[0.75rem]">{suffix}</span>}
       </div>
     </Row>
-  )
-}
-
-function NumberInput({ value, min, max, step, onCommit, ariaLabel }: {
-  value: number; min: number; max: number; step?: number; onCommit: (n: number) => void; ariaLabel?: string
-}) {
-  const [local, setLocal] = useState(String(value))
-  useEffect(() => { setLocal(String(value)) }, [value])
-  const commit = () => {
-    const n = Number(local)
-    if (local === '' || Number.isNaN(n)) { setLocal(String(value)); return }
-    const clamped = Math.min(max, Math.max(min, n))
-    setLocal(String(clamped))
-    if (clamped !== value) onCommit(clamped)
-  }
-  return (
-    <input type="number" aria-label={ariaLabel} value={local} min={min} max={max} step={step ?? 1}
-      onChange={(e) => setLocal(e.target.value)} onBlur={commit}
-      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-      className="h-8 w-24 rounded-md bg-surface-high px-2 text-right text-[0.8125rem] text-on-surface tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
   )
 }

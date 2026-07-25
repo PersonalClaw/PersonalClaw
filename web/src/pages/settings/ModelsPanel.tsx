@@ -1,13 +1,15 @@
 import { useMemo, useState } from 'react'
 import {
   ChevronRight, Check, MessageSquare, Boxes, Mic, Volume2, Eye, ImagePlus,
-  Ear, Music, ScanEye, Clapperboard, Search, X, Users, Download, type LucideIcon,
+  Ear, Music, ScanEye, Clapperboard, Users, Download, type LucideIcon,
 } from 'lucide-react'
 import { api, type AvailableModel } from '../../lib/api'
+import { SearchField } from '../../ui/SearchField'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { confirm } from '../../ui/dialog'
 import { PanelHeader, Section } from './settingsUI'
 import { ListSkeleton } from '../../ui/ListScaffold'
+import { fvs } from '../../design/fontWeight'
 
 // Canonical use-cases (matches the backend's USE_CASES + MULTI_ACTIVE set).
 // `multi`: several models can be active (routing pool); else single-select.
@@ -91,7 +93,7 @@ export function ModelsPanel() {
       <PanelHeader title="Models" hint="Assign discovered models to each use case. Chat and Image·Modality allow several active models; the rest take one. Modality means understanding that media as input; Generation means producing it." />
       <Section>
         {allModels.length === 0 && (
-          <div className="mb-3 rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low text-[0.82rem]">
+          <div className="mb-3 rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low text-[0.8125rem]">
             No models discovered. Add a backend in <span className="text-on-surface">Providers</span> and test its connection.
           </div>
         )}
@@ -101,7 +103,7 @@ export function ModelsPanel() {
           const showGroupHeader = meta?.group && meta.group !== prevGroup
           return (
             <div key={uc}>
-              {showGroupHeader && <div className="mb-1.5 mt-3 px-1 text-on-surface-low text-[0.7rem] uppercase tracking-wide">{meta.group}</div>}
+              {showGroupHeader && <div className="mb-1.5 mt-3 px-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{meta.group}</div>}
               <UseCaseRow useCase={uc} activeModels={active[uc] ?? []} allModels={allModels} onChanged={reloadActive} />
             </div>
           )
@@ -199,25 +201,25 @@ function UseCaseRow({ useCase, activeModels, allModels, onChanged }: {
           <meta.icon size={14} />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="text-on-surface text-[0.875rem]" style={{ fontVariationSettings: '"wght" 500' }}>{meta.label}</div>
+          <div className="text-on-surface text-[0.8125rem]" style={fvs(500)}>{meta.label}</div>
           <div className="mt-0.5 text-on-surface-low text-[0.75rem]">
             {activeModels.length > 0 ? `${activeModels.length} active` : <span className="italic">none configured</span>}
           </div>
         </div>
-        {capable.length > 0 && <span className="shrink-0 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low text-[0.68rem] tabular-nums">{capable.length} available</span>}
+        {capable.length > 0 && <span className="shrink-0 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low text-[0.75rem] tabular-nums">{capable.length} available</span>}
       </button>
 
       {open && (
         <div className="flex flex-col gap-3 border-t border-outline-variant/30 px-4 pb-4 pt-3">
-          <p className="text-on-surface-low text-[0.8rem]">{meta.description}</p>
-          <div className="inline-flex w-fit items-center gap-1.5 rounded-md px-2 py-1 text-[0.72rem]"
+          <p className="text-on-surface-low text-[0.8125rem]">{meta.description}</p>
+          <div className="inline-flex w-fit items-center gap-1.5 rounded-md px-2 py-1 text-[0.75rem]"
             style={meta.multi ? { background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)', color: 'var(--color-primary)' } : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
             <span className="size-1.5 rounded-pill" style={{ background: meta.multi ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
             {meta.multi ? 'Multi-select — several models can be active' : 'Single-select — one model per use case'}
           </div>
 
           {useCase === 'embedding' && reindex && (
-            <div className="rounded-md px-3 py-2 text-[0.78rem]"
+            <div className="rounded-md px-3 py-2 text-[0.75rem]"
               style={{ background: reindex.status === 'error' ? 'color-mix(in srgb, var(--color-danger) 10%, transparent)' : 'var(--color-surface-high)' }}>
               {reindex.status === 'error' ? (
                 <span style={{ color: 'var(--color-danger)' }}>Re-index not started: {reindex.error}</span>
@@ -235,7 +237,7 @@ function UseCaseRow({ useCase, activeModels, allModels, onChanged }: {
           )}
 
           {capable.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low text-[0.8rem] italic">
+            <div className="rounded-lg border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low text-[0.8125rem] italic">
               {meta.fallback ? (
                 <>Already uses your <span className="text-on-surface not-italic font-medium">{meta.fallback}</span> model by default — no dedicated {meta.label} model is required. Add a backend with a {meta.label}-capable model to override.</>
               ) : (
@@ -245,23 +247,12 @@ function UseCaseRow({ useCase, activeModels, allModels, onChanged }: {
           ) : (
             <>
               {capable.length > 8 && (
-                <div className="relative">
-                  <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-low" />
-                  <input
-                    value={query} onChange={(e) => setQuery(e.target.value)}
-                    placeholder={`Search ${capable.length} models — name or provider`}
-                    className="h-9 w-full rounded-md bg-surface-high pl-9 pr-9 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50"
-                  />
-                  {query && (
-                    <button type="button" onClick={() => setQuery('')} aria-label="Clear search"
-                      className="absolute right-2 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded text-on-surface-low hover:text-on-surface">
-                      <X size={13} />
-                    </button>
-                  )}
-                </div>
+                <SearchField value={query} onChange={setQuery} size="md"
+                  placeholder={`Search ${capable.length} models — name or provider`}
+                  ariaLabel="Search models" />
               )}
               {filtered.length === 0 ? (
-                <div className="rounded-md border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low text-[0.8rem] italic">
+                <div className="rounded-md border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low text-[0.8125rem] italic">
                   No models match “{query}”.
                 </div>
               ) : (
@@ -281,15 +272,15 @@ function UseCaseRow({ useCase, activeModels, allModels, onChanged }: {
                       style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>
                       {on && <Check size={10} strokeWidth={3} className="text-on-primary" />}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8rem] font-mono">{m.name}</span>
+                    <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem] font-mono">{m.name}</span>
                     {on && notDownloaded && (
-                      <span className="shrink-0 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-[0.62rem]"
+                      <span className="shrink-0 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-[0.75rem]"
                         style={{ background: 'color-mix(in srgb, var(--color-warning) 16%, transparent)', color: 'var(--color-warning)' }}
                         title="Bound but not downloaded — download it in Providers to activate.">
                         <Download size={9} /> not downloaded
                       </span>
                     )}
-                    <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.65rem]">{m.provider}</span>
+                    <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">{m.provider}</span>
                   </button>
                 )
                   })}

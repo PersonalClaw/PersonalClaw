@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { Pencil, Trash2, Check, X, ExternalLink, Sparkles, Layers, Loader2, Pin, Archive, Download, Target, Maximize2, Wand2, ChevronDown, WifiOff, RefreshCw } from 'lucide-react'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { Markdown } from '../../ui/Markdown'
-import { ChipInput } from '../tasks/formControls'
+import { ChipInput } from '../../ui/forms'
 import type { KnowledgeItem, IntentOutcome, IntentOutcomeField } from '../../lib/api'
 import { resolveType, insightRows, fmtBytes, relTime, GIST_LANGUAGES } from './knowledgeMeta'
 import { getKnowledge, updateKnowledge, deleteKnowledge } from './knowledgeStore'
@@ -263,7 +264,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
         )}
         {draft.item_type === 'gist' && (
           <div className="shrink-0 flex items-center gap-2">
-            <span className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">Language</span>
+            <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Language</span>
             <select value={draft.gist_language || ''} onChange={(e) => setDraft({ ...draft, gist_language: e.target.value })}
               className="h-8 appearance-none rounded-md bg-surface-container px-m text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]">
               <option value="">(none)</option>
@@ -296,7 +297,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
           <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-outline-variant/40 bg-surface-container">
             <textarea value={draft.content} onChange={(e) => setDraft({ ...draft, content: e.target.value })} readOnly={journalLocked}
               placeholder="Markdown supported…"
-              className={`h-full w-full resize-none bg-transparent px-m py-2 text-on-surface text-[0.875rem] leading-relaxed outline-none ${journalLocked ? 'opacity-60 cursor-not-allowed' : ''}`} />
+              className={`h-full w-full resize-none bg-transparent px-m py-2 text-on-surface text-[0.8125rem] leading-relaxed outline-none ${journalLocked ? 'opacity-60 cursor-not-allowed' : ''}`} />
           </div>
         ) : (
           <div className="relative flex min-h-0 flex-1 overflow-hidden">
@@ -321,8 +322,8 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
           status DAG floated to the right of the same row. */}
       <div className="flex shrink-0 items-start gap-x-m gap-y-1">
         <div className="flex flex-wrap items-center gap-x-m gap-y-1 text-on-surface-low text-[0.8125rem] min-w-0">
-          {full.provider && full.provider !== 'native' && <span className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.7rem]">{full.provider}</span>}
-          {full.mime_type && <span className="font-mono text-[0.7rem]">{full.mime_type}</span>}
+          {full.provider && full.provider !== 'native' && <span className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{full.provider}</span>}
+          {full.mime_type && <span className="font-mono text-[0.75rem]">{full.mime_type}</span>}
           {full.file_size != null && <span>{fmtBytes(full.file_size)}</span>}
           {full.file_metadata?.width && full.file_metadata?.height && <span>{full.file_metadata.width}×{full.file_metadata.height}</span>}
           {typeof full.file_metadata?.page_count === 'number' && <span>{full.file_metadata.page_count} pages</span>}
@@ -386,7 +387,7 @@ function Preview({ item, tm, fullscreen, prominent }: { item: KnowledgeItem; tm:
         <a href={item.url} target="_blank" rel="noreferrer" className="flex items-center gap-s px-m py-3 hover:bg-surface-high transition-colors">
           <tm.icon size={18} className="shrink-0" style={{ color: tm.tone }} />
           <div className="flex-1 min-w-0">
-            <div className="truncate text-on-surface text-[0.875rem]">{item.url_title || item.title || item.url}</div>
+            <div className="truncate text-on-surface text-[0.8125rem]">{item.url_title || item.title || item.url}</div>
             {item.url && <div className="truncate text-on-surface-low text-[0.75rem]">{item.url}</div>}
           </div>
           <ExternalLink size={14} className="shrink-0 text-on-surface-low" />
@@ -437,7 +438,7 @@ function Preview({ item, tm, fullscreen, prominent }: { item: KnowledgeItem; tm:
   if (item.content) {
     return (
       <div className={`${prominent ? fillFrame : baseFrame} px-m py-2 ${textMax}`}>
-        <div className="text-on-surface-var text-[0.875rem] leading-relaxed"><Markdown>{item.content}</Markdown></div>
+        <div className="text-on-surface-var text-[0.8125rem] leading-relaxed"><Markdown>{item.content}</Markdown></div>
       </div>
     )
   }
@@ -451,7 +452,7 @@ function FileRow({ item, tm }: { item: KnowledgeItem; tm: ReturnType<typeof reso
       className="flex items-center gap-s px-m py-2.5 hover:bg-surface-high transition-colors text-on-surface-var text-[0.8125rem] border-t border-outline-variant/30 first:border-t-0">
       <tm.icon size={16} style={{ color: tm.tone }} className="shrink-0" />
       <span className="flex-1 truncate">{item.title}</span>
-      {item.file_size != null && <span className="shrink-0 text-on-surface-low text-[0.7rem]">{fmtBytes(item.file_size)}</span>}
+      {item.file_size != null && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{fmtBytes(item.file_size)}</span>}
       <Download size={14} className="shrink-0 text-on-surface-low" />
     </a>
   )
@@ -532,7 +533,7 @@ function ProcessingStrip({ status, nodePhases, error, graph, onRetry, retrying }
   // hard failure, both of which a later attempt may clear.
   const retryBtn = onRetry && (unreachable || status === 'failed') ? (
     <button type="button" onClick={onRetry} disabled={retrying}
-      className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 text-[0.7rem] text-on-surface-var transition-colors hover:text-on-surface disabled:opacity-60">
+      className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 text-[0.75rem] text-on-surface-var transition-colors hover:text-on-surface disabled:opacity-60">
       <RefreshCw size={11} className={retrying ? 'animate-spin' : ''} /> {retrying ? 'Retrying…' : 'Retry'}
     </button>
   ) : null
@@ -619,7 +620,7 @@ function MiniDag({ graph, phases }: { graph: import('../../lib/api').KnowledgeIn
           {ph === 'done' && <Check size={8} strokeWidth={3} style={{ color: c }} />}
           {ph === 'failed' && <X size={8} style={{ color: c }} />}
         </span>
-        <span className="text-[0.7rem] whitespace-nowrap" style={{ color: ph === 'pending' ? 'var(--color-on-surface-low)' : c }}>
+        <span className="text-[0.75rem] whitespace-nowrap" style={{ color: ph === 'pending' ? 'var(--color-on-surface-low)' : c }}>
           {nodeLabel(nt)}{loop && <RefreshCw size={9} className="ml-0.5 inline-block align-[-1px]" style={{ color: 'var(--color-primary)' }} />}
         </span>
         <span className="sr-only">{stateWord}</span>
@@ -645,7 +646,7 @@ function MiniDag({ graph, phases }: { graph: import('../../lib/api').KnowledgeIn
 function Section({ label, icon: Icon, action, children }: { label: string; icon?: typeof Sparkles; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div>
-      <div className="mb-1.5 flex items-center gap-1.5 text-on-surface-low text-[0.7rem] uppercase tracking-wide">{Icon && <Icon size={12} />}{label}{action && <span className="ml-auto normal-case tracking-normal">{action}</span>}</div>
+      <div className="mb-1.5 flex items-center gap-1.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{Icon && <Icon size={12} />}{label}{action && <span className="ml-auto normal-case tracking-normal">{action}</span>}</div>
       {children}
     </div>
   )
@@ -683,9 +684,9 @@ function InsightsDock({ open, onToggle, summary, insights, intents, canGenerate,
           <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-primary/10">
             <Sparkles size={14} className={`text-primary ${genning || processing ? 'animate-pulse' : ''}`} />
           </span>
-          <span className="shrink-0 text-on-surface text-[0.875rem]" style={{ fontVariationSettings: '"wght" 500' }}>Insights</span>
+          <span className="shrink-0 text-on-surface text-[0.8125rem]" style={fvs(500)}>Insights</span>
           {hasMore && (
-            <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.7rem] tabular-nums">{insights.length + intents.length}</span>
+            <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem] tabular-nums">{insights.length + intents.length}</span>
           )}
           {/* Persistent flex-1 slot: a one-line summary preview when collapsed (so the bar
               is informative at a glance), empty when open (the body shows the full text). */}
@@ -709,13 +710,13 @@ function InsightsDock({ open, onToggle, summary, insights, intents, canGenerate,
 
         {open && (
           <div className="flex max-h-[45vh] flex-col gap-l overflow-y-auto border-t border-outline-variant/40 pb-m pt-m">
-            {summary && <p className="text-on-surface-var text-[0.875rem] leading-relaxed">{summary}</p>}
+            {summary && <p className="text-on-surface-var text-[0.8125rem] leading-relaxed">{summary}</p>}
             {insights.length > 0 && (
               <Section label="Highlights" icon={Sparkles}>
                 <div className="flex flex-col gap-1.5">
                   {insights.map((r) => (
                     <div key={r.label} className="rounded-md bg-surface-high px-m py-1.5">
-                      <div className="text-on-surface-low text-[0.65rem] uppercase tracking-wide">{r.label}</div>
+                      <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{r.label}</div>
                       <div className="text-on-surface-var text-[0.8125rem] mt-0.5">{r.value}</div>
                     </div>
                   ))}
@@ -761,7 +762,7 @@ function OutcomeFieldValue({ field }: { field: IntentOutcomeField }) {
   if (type === 'boolean') return <span className="text-on-surface">{value ? 'Yes' : 'No'}</span>
   if (type === 'number') return <span className="text-on-surface tabular-nums">{String(value)}</span>
   if (type === 'url') return <a href={String(value)} target="_blank" rel="noreferrer" className="text-primary underline decoration-primary/40 break-all">{String(value)}</a>
-  if (type === 'tags' && Array.isArray(value)) return <span className="flex flex-wrap gap-1">{value.map((t, i) => <span key={i} className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-var text-[0.7rem]">{String(t)}</span>)}</span>
+  if (type === 'tags' && Array.isArray(value)) return <span className="flex flex-wrap gap-1">{value.map((t, i) => <span key={i} className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-var text-[0.75rem]">{String(t)}</span>)}</span>
   return <span className="text-on-surface break-words">{String(value)}</span>
 }
 
@@ -778,7 +779,7 @@ function FullscreenModal({ title, onClose, children }: { title: string; onClose:
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-surface/95 backdrop-blur-sm" onClick={onClose}>
       <div className="flex items-center gap-s border-b border-outline-variant/40 px-l py-3">
-        <span className="flex-1 truncate text-on-surface text-[0.9375rem]" style={{ fontVariationSettings: '"wght" 500' }}>{title}</span>
+        <span className="flex-1 truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{title}</span>
         <button type="button" onClick={onClose} aria-label="Close fullscreen"
           className="grid size-8 place-items-center rounded-pill text-on-surface-low hover:bg-surface-high hover:text-on-surface"><X size={18} /></button>
       </div>

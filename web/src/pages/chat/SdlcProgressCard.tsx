@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { fvs, withWeight } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
 import { Loader2, ArrowUpRight, CircleDot, CheckCircle2, Circle, AlertTriangle, HelpCircle, Clock, Search, Pause, Play, Square, Trash2 } from 'lucide-react'
 import { api, type Loop } from '../../lib/api'
@@ -192,10 +193,10 @@ export function SdlcProgressCard({ refObj, controllable = false, onDeleted }: {
       {/* header */}
       <div className="flex items-center gap-2 px-3 py-2">
         <Icon size={15} className="shrink-0 text-primary" />
-        <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 600' }}>{title}</span>
-        {progress && <span className="shrink-0 text-on-surface-low text-[0.7rem]">{progress}</span>}
-        {typeof cycles === 'number' && cycles > 0 && <span className="shrink-0 text-on-surface-low/70 text-[0.7rem]">· {cycles} cycles</span>}
-        {elapsed > 0 && <span className="shrink-0 inline-flex items-center gap-0.5 text-on-surface-low/70 text-[0.7rem]" title="Elapsed (running time)"><Clock size={10} />{fmtE(elapsed)}</span>}
+        <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]" style={fvs(600)}>{title}</span>
+        {progress && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{progress}</span>}
+        {typeof cycles === 'number' && cycles > 0 && <span className="shrink-0 text-on-surface-low/70 text-[0.75rem]">· {cycles} cycles</span>}
+        {elapsed > 0 && <span className="shrink-0 inline-flex items-center gap-0.5 text-on-surface-low/70 text-[0.75rem]" title="Elapsed (running time)"><Clock size={10} />{fmtE(elapsed)}</span>}
         {/* lifecycle controls (hub only) — gated by the RAW status, same as the Loops
             list: pause a running loop, resume a parked one, stop any active run, delete
             a terminal one (two-step). */}
@@ -210,7 +211,7 @@ export function SdlcProgressCard({ refObj, controllable = false, onDeleted }: {
               className={confirmDel ? 'text-danger' : undefined} />}
           </span>
         )}
-        <span className="shrink-0 rounded-pill px-2 py-0.5 text-[0.7rem]" style={loopStatusTone(status)}>
+        <span className="shrink-0 rounded-pill px-2 py-0.5 text-[0.75rem]" style={loopStatusTone(status)}>
           {isPolling ? <Loader2 size={10} className="inline animate-spin" /> : loopStatusLabel(status)}
         </span>
       </div>
@@ -221,7 +222,7 @@ export function SdlcProgressCard({ refObj, controllable = false, onDeleted }: {
 
       {/* error / deleted */}
       {err && (
-        <div className="flex items-center gap-1.5 border-t border-outline-variant/30 px-3 py-1.5 text-on-surface-low text-[0.7rem]">
+        <div className="flex items-center gap-1.5 border-t border-outline-variant/30 px-3 py-1.5 text-on-surface-low text-[0.75rem]">
           <AlertTriangle size={11} className="text-warn" /> {err}
         </div>
       )}
@@ -229,12 +230,12 @@ export function SdlcProgressCard({ refObj, controllable = false, onDeleted }: {
       {/* attention banner — what the run needs from the user (question / block reason),
           so the user doesn't have to open the cockpit to find out why it parked. */}
       {attention && (
-        <div className="border-t border-outline-variant/30 px-3 py-2 text-[0.72rem]"
+        <div className="border-t border-outline-variant/30 px-3 py-2 text-[0.75rem]"
           style={{ background: attention.tone === 'info'
             ? 'color-mix(in srgb, var(--color-info) 9%, transparent)'
             : 'color-mix(in srgb, var(--color-warn) 9%, transparent)' }}>
-          <div className="mb-0.5 inline-flex items-center gap-1.5" style={{ fontVariationSettings: '"wght" 600',
-            color: attention.tone === 'info' ? 'var(--color-info)' : 'var(--color-warn)' }}>
+          <div className="mb-0.5 inline-flex items-center gap-1.5"
+            style={withWeight({ color: attention.tone === 'info' ? 'var(--color-info)' : 'var(--color-warn)' }, 600)}>
             {attention.tone === 'info' ? <HelpCircle size={11} /> : <AlertTriangle size={11} />} {attention.label}
           </div>
           <p className="whitespace-pre-wrap text-on-surface-var line-clamp-4">{attention.text}</p>
@@ -245,7 +246,7 @@ export function SdlcProgressCard({ refObj, controllable = false, onDeleted }: {
       {/* steps */}
       {steps.length > 0 && (
         <div className="border-t border-outline-variant/30 px-3 py-2">
-          <div className="mb-1 text-on-surface-low text-[0.6rem] uppercase tracking-wide">{dispKind === 'goal' ? 'Sub-goals' : 'Stages'}</div>
+          <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{dispKind === 'goal' ? 'Sub-goals' : 'Stages'}</div>
           <ul className="flex flex-col gap-0.5">
             {steps.map((s, i) => (
               <li key={i} className="flex items-center gap-1.5 text-[0.75rem]">
@@ -271,20 +272,20 @@ export function SdlcProgressCard({ refObj, controllable = false, onDeleted }: {
       {/* recent activity */}
       {recent.length > 0 && (
         <div className="border-t border-outline-variant/30 px-3 py-2">
-          <div className="mb-1 text-on-surface-low text-[0.6rem] uppercase tracking-wide">Recent activity</div>
+          <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Recent activity</div>
           <ul className="flex flex-col gap-1.5">
             {recent.map((f, i) => {
               const srcN = Array.isArray((f as { sources_checked?: string[] }).sources_checked) ? (f as { sources_checked?: string[] }).sources_checked!.length : 0
               const newN = typeof (f as { new_findings_count?: number }).new_findings_count === 'number' ? (f as { new_findings_count?: number }).new_findings_count! : null
               return (
-                <li key={i} className="flex flex-col gap-0.5 text-[0.72rem] text-on-surface-var">
+                <li key={i} className="flex flex-col gap-0.5 text-[0.75rem] text-on-surface-var">
                   <div className="flex gap-1.5">
                     <span className="shrink-0 text-on-surface-low/60">#{f.cycle}</span>
                     <span className="min-w-0 line-clamp-2">{f.summary || f.key_insight || '—'}</span>
                   </div>
                   {/* per-cycle signal chips — sources read + new findings (research/goal). */}
                   {(srcN > 0 || newN !== null) && (
-                    <div className="flex flex-wrap gap-1 pl-5 text-[0.65rem] text-on-surface-low/80">
+                    <div className="flex flex-wrap gap-1 pl-5 text-[0.75rem] text-on-surface-low/80">
                       {srcN > 0 && <span className="inline-flex items-center gap-0.5 rounded-pill bg-surface-container px-1.5 py-px"><Search size={9} />{srcN} source{srcN === 1 ? '' : 's'}</span>}
                       {newN !== null && newN > 0 && <span className="inline-flex items-center gap-0.5 rounded-pill bg-surface-container px-1.5 py-px">+{newN} new</span>}
                     </div>
@@ -297,7 +298,7 @@ export function SdlcProgressCard({ refObj, controllable = false, onDeleted }: {
       )}
 
       {/* cockpit link */}
-      <a href={href} className="flex items-center gap-1 border-t border-outline-variant/30 px-3 py-1.5 text-primary text-[0.72rem] transition-colors hover:bg-surface-low/70">
+      <a href={href} className="flex items-center gap-1 border-t border-outline-variant/30 px-3 py-1.5 text-primary text-[0.75rem] transition-colors hover:bg-surface-low/70">
         Open {dispKind === 'code' ? 'in Code' : `in ${meta.noun}`} <ArrowUpRight size={12} />
       </a>
     </motion.div>

@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { BookOpen, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
+import { fvs } from '../../design/fontWeight'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { Button } from '../../ui/Button'
 import { EmptyState, ListRow, ListSkeleton } from '../../ui/ListScaffold'
@@ -8,7 +9,7 @@ import { SidePanel } from '../../ui/SidePanel'
 import { ListControls } from '../../ui/ListControls'
 import { IconButton } from '../../ui/IconButton'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
-import { Segmented } from '../tasks/formControls'
+import { Segmented } from '../../ui/forms'
 import { api, type KnowledgeIntent, type IntentOutcome, type KnowledgeItem } from '../../lib/api'
 import { resolveType, relTime, fmtBytes, typeLabel } from './knowledgeMeta'
 import { listKnowledge, knowledgeStats, getKnowledge } from './knowledgeStore'
@@ -23,7 +24,7 @@ function StatChip({ icon: Icon, label, value }: { icon: typeof Database; label: 
   return (
     <div className="flex items-center gap-s rounded-lg bg-surface-container px-m py-2">
       <Icon size={15} className="text-primary shrink-0" />
-      <span className="text-on-surface text-[0.9375rem] tabular-nums" style={{ fontVariationSettings: '"wght" 500' }}>{value}</span>
+      <span className="text-on-surface text-[0.9375rem] tabular-nums" style={fvs(500)}>{value}</span>
       <span className="text-on-surface-low text-[0.75rem]">{label}</span>
     </div>
   )
@@ -52,7 +53,7 @@ function EmbeddingChip({ stats, busy, onBackfill }: { stats: import('../../lib/a
         title={`${stale} item${stale === 1 ? '' : 's'} embedded with a previous model — click to re-embed all with ${e.model} (semantic search ignores stale vectors until then)`}
         className="flex items-center gap-s rounded-lg bg-surface-container px-m py-2 transition-colors hover:bg-surface-high disabled:opacity-60">
         <Boxes size={15} className={`shrink-0 ${busy ? 'animate-pulse text-primary' : 'text-warning'}`} />
-        <span className="text-on-surface text-[0.9375rem] tabular-nums" style={{ fontVariationSettings: '"wght" 500' }}>{stale}</span>
+        <span className="text-on-surface text-[0.9375rem] tabular-nums" style={fvs(500)}>{stale}</span>
         <span className="text-on-surface-low text-[0.75rem]">{busy ? 'embedding…' : 'stale — re-embed'}</span>
       </button>
     )
@@ -63,7 +64,7 @@ function EmbeddingChip({ stats, busy, onBackfill }: { stats: import('../../lib/a
         title={`${behind} item${behind === 1 ? '' : 's'} not yet embedded — click to backfill (model: ${e.model})`}
         className="flex items-center gap-s rounded-lg bg-surface-container px-m py-2 transition-colors hover:bg-surface-high disabled:opacity-60">
         <Boxes size={15} className={`shrink-0 ${busy ? 'animate-pulse text-primary' : 'text-warning'}`} />
-        <span className="text-on-surface text-[0.9375rem] tabular-nums" style={{ fontVariationSettings: '"wght" 500' }}>{embedded}/{stats.items}</span>
+        <span className="text-on-surface text-[0.9375rem] tabular-nums" style={fvs(500)}>{embedded}/{stats.items}</span>
         <span className="text-on-surface-low text-[0.75rem]">{busy ? 'embedding…' : 'embed rest'}</span>
       </button>
     )
@@ -71,7 +72,7 @@ function EmbeddingChip({ stats, busy, onBackfill }: { stats: import('../../lib/a
   return (
     <div className="flex items-center gap-s rounded-lg bg-surface-container px-m py-2" title={`All items embedded for semantic search (model: ${e.model})`}>
       <Boxes size={15} className="text-primary shrink-0" />
-      <span className="text-on-surface text-[0.9375rem] tabular-nums" style={{ fontVariationSettings: '"wght" 500' }}>{embedded}</span>
+      <span className="text-on-surface text-[0.9375rem] tabular-nums" style={fvs(500)}>{embedded}</span>
       <span className="text-on-surface-low text-[0.75rem]">embedded</span>
     </div>
   )
@@ -322,35 +323,35 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-s">
                               {it.is_pinned && <Pin size={12} className="shrink-0 text-primary" style={{ fill: 'currentColor' }} />}
-                              <span className="truncate text-on-surface text-[0.9375rem]" style={{ fontVariationSettings: '"wght" 500' }}>{it.title || it.url_title || '(untitled)'}</span>
+                              <span className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{it.title || it.url_title || '(untitled)'}</span>
                               {(it.processing_status === 'queued' || it.processing_status === 'processing') && (
-                                <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-primary text-[0.65rem]"><Loader2 size={10} className="animate-spin" /> Enriching</span>
+                                <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-primary text-[0.75rem]"><Loader2 size={10} className="animate-spin" /> Enriching</span>
                               )}
                               {it.processing_status === 'failed' && (
-                                <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-danger text-[0.65rem]" title={it.processing_error || 'Enrichment failed'}><CircleAlert size={10} /> Failed</span>
+                                <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-danger text-[0.75rem]" title={it.processing_error || 'Enrichment failed'}><CircleAlert size={10} /> Failed</span>
                               )}
                               {/* Unreachable = the URL couldn't be fetched (network/DNS/timeout/HTTP error) —
                                   the link is saved; it's retryable, NOT an unexpected failure. */}
                               {it.processing_status === 'unreachable' && (
-                                <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-[0.65rem]" style={{ color: 'var(--color-warning)' }} title={`${it.processing_error || "Couldn't reach the site"} — open to retry`}><WifiOff size={10} /> Unreachable</span>
+                                <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-[0.75rem]" style={{ color: 'var(--color-warning)' }} title={`${it.processing_error || "Couldn't reach the site"} — open to retry`}><WifiOff size={10} /> Unreachable</span>
                               )}
                               {/* A genuine partial (e.g. insights model unavailable) is actionable — flag it
                                   so it's not mistaken for a fully-processed item. Benign skips (optional
                                   media steps with no model) are left unbadged. */}
                               {it.processing_status === 'partial' && !(it.processing_error || '').startsWith('Skipped (optional steps unavailable):') && (
-                                <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-[0.65rem]" style={{ color: 'var(--color-warning)' }} title={`${it.processing_error || 'Enrichment incomplete'} — open to regenerate`}><CircleAlert size={10} /> Incomplete</span>
+                                <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-[0.75rem]" style={{ color: 'var(--color-warning)' }} title={`${it.processing_error || 'Enrichment incomplete'} — open to regenerate`}><CircleAlert size={10} /> Incomplete</span>
                               )}
-                              {it.is_archived && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.65rem]">archived</span>}
-                              {it._match_type && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.65rem]">{it._match_type}</span>}
+                              {it.is_archived && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">archived</span>}
+                              {it._match_type && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">{it._match_type}</span>}
                             </div>
                             <div className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
                               <span style={{ color: tm.tone }}>{typeLabel(it)}</span>
-                              {it.provider && it.provider !== 'native' && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-var text-[0.65rem]">{it.provider}</span>}
+                              {it.provider && it.provider !== 'native' && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-var text-[0.75rem]">{it.provider}</span>}
                               {it.file_size != null && it.file_size > 0 && <span>· {fmtBytes(it.file_size)}</span>}
                               {(it.summary || it.content) && <span className="truncate">· {it.summary || it.content}</span>}
                             </div>
                           </div>
-                          {(it.tags?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{it.tags!.slice(0, 2).map((t) => <button key={t} type="button" onClick={(e) => { e.stopPropagation(); setTagFilter(t) }} title={`Filter by "${t}"`} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.7rem] transition-colors hover:bg-surface-container hover:text-primary">{t}</button>)}</div>}
+                          {(it.tags?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{it.tags!.slice(0, 2).map((t) => <button key={t} type="button" onClick={(e) => { e.stopPropagation(); setTagFilter(t) }} title={`Filter by "${t}"`} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem] transition-colors hover:bg-surface-container hover:text-primary">{t}</button>)}</div>}
                           {it.updated_at && <span className="hidden sm:block shrink-0 text-on-surface-low text-[0.75rem]">{relTime(it.updated_at)}</span>}
                         </ListRow>
                         </ContextMenu>
@@ -397,8 +398,8 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
               <span className="truncate text-on-surface text-[0.9375rem]">{it.goal || it.id}</span>
-              {!it.enabled && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.65rem]">off</span>}
-              {it.propose_skill && <span className="rounded-pill bg-surface-high px-1.5 text-primary/80 text-[0.65rem]">proposes skill</span>}
+              {!it.enabled && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">off</span>}
+              {it.propose_skill && <span className="rounded-pill bg-surface-high px-1.5 text-primary/80 text-[0.75rem]">proposes skill</span>}
             </div>
             <div className="truncate text-on-surface-low text-[0.75rem]">
               {(it.outcome_count ?? 0) > 0 ? `${it.outcome_count} gathered` : 'nothing gathered yet'}
@@ -421,14 +422,14 @@ function OutcomeFieldValue({ field }: { field: { type: string; value: unknown } 
   if (type === 'boolean') return <span className="text-on-surface">{value ? 'Yes' : 'No'}</span>
   if (type === 'number') return <span className="text-on-surface tabular-nums">{String(value)}</span>
   if (type === 'url') return <a href={String(value)} target="_blank" rel="noreferrer" className="text-primary underline decoration-primary/40 break-all">{String(value)}</a>
-  if (type === 'tags' && Array.isArray(value)) return <span className="flex flex-wrap gap-1">{value.map((t, i) => <span key={i} className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-var text-[0.7rem]">{String(t)}</span>)}</span>
+  if (type === 'tags' && Array.isArray(value)) return <span className="flex flex-wrap gap-1">{value.map((t, i) => <span key={i} className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-var text-[0.75rem]">{String(t)}</span>)}</span>
   return <span className="text-on-surface break-words">{String(value)}</span>
 }
 
 function OutcomeCard({ o, onOpenItem }: { o: IntentOutcome; onOpenItem: (id: string) => void }) {
   return (
     <div className="rounded-lg border border-outline-variant/40 bg-surface-container p-m flex flex-col gap-s">
-      {o.takeaway && <p className="text-on-surface text-[0.875rem]">{o.takeaway}</p>}
+      {o.takeaway && <p className="text-on-surface text-[0.8125rem]">{o.takeaway}</p>}
       {(o.fields?.length ?? 0) > 0 && (
         <div className="grid grid-cols-[auto_1fr] gap-x-m gap-y-1 text-[0.8125rem]">
           {o.fields!.map((f, i) => (
@@ -507,7 +508,7 @@ function IntentDetail({ intent, onChanged, onClose, onOpenItem }: {
         </span>
       </div>
       {note && <p className="text-on-surface-low text-[0.8125rem]">{note}</p>}
-      <div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">Gathered ({outcomes?.length ?? 0})</div>
+      <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Gathered ({outcomes?.length ?? 0})</div>
       {outcomes === null ? <ListSkeleton rows={3} />
         : outcomes.length === 0 ? <p className="text-on-surface-low text-[0.8125rem]">Nothing gathered yet. Save items relevant to this intent, or run it on what you already have.</p>
         : <div className="flex flex-col gap-s">{outcomes.map((o) => <OutcomeCard key={o.id} o={o} onOpenItem={onOpenItem} />)}</div>}
@@ -523,21 +524,21 @@ function EntityDetail({ name, onOpenItem, onSelectEntity }: { name: string; onOp
     <div className="flex flex-col gap-l p-l">
       {(related?.length ?? 0) > 0 && (
         <div className="flex flex-col gap-s">
-          <div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">Connected to</div>
+          <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Connected to</div>
           <div className="flex flex-col gap-1">
             {related!.map((r, i) => (
               <button key={i} type="button" onClick={() => onSelectEntity?.(r.name)}
                 className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-high">
                 <Network size={13} className="shrink-0 text-primary/70" />
                 <span className="truncate text-on-surface text-[0.8125rem]">{r.name}</span>
-                <span className="ml-auto shrink-0 text-on-surface-low text-[0.7rem]">{r.outgoing ? '' : '← '}{r.relation_type}{r.outgoing ? ' →' : ''}</span>
+                <span className="ml-auto shrink-0 text-on-surface-low text-[0.75rem]">{r.outgoing ? '' : '← '}{r.relation_type}{r.outgoing ? ' →' : ''}</span>
               </button>
             ))}
           </div>
         </div>
       )}
       <div className="flex flex-col gap-s">
-        <div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">Mentioned in</div>
+        <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Mentioned in</div>
         {items === undefined ? (loading ? <ListSkeleton rows={3} /> : null)
           : items.length === 0 ? <p className="text-on-surface-low text-[0.8125rem]">No items reference this entity.</p>
           : items.map((it, i) => {
@@ -546,7 +547,7 @@ function EntityDetail({ name, onOpenItem, onSelectEntity }: { name: string; onOp
                 <ListRow key={it.id} index={i} accent={tm.tone} onClick={() => onOpenItem(it.id)}>
                   <tm.icon size={16} style={{ color: tm.tone }} className="shrink-0" />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-on-surface text-[0.875rem]">{it.title || it.url_title || '(untitled)'}</div>
+                    <div className="truncate text-on-surface text-[0.8125rem]">{it.title || it.url_title || '(untitled)'}</div>
                     <div className="truncate text-on-surface-low text-[0.75rem]" style={{ color: tm.tone }}>{typeLabel(it)}</div>
                   </div>
                 </ListRow>
@@ -589,14 +590,14 @@ function IntentEditor({ intent, onClose, onSaved }: { intent: KnowledgeIntent; o
         <button type="button" onClick={onClose} className="text-on-surface-low hover:text-on-surface"><X size={16} /></button>
       </div>
       <div className="flex flex-col gap-1.5">
-        <label className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">What do you want to track?</label>
+        <label className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">What do you want to track?</label>
         <textarea aria-label="What do you want to track?" value={goal} onChange={(e) => setGoal(e.target.value)} rows={4} autoFocus
           placeholder={'e.g. "anything that could improve my homelab self-hosted setup"'}
-          className="rounded-md bg-surface p-3 text-[0.875rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 resize-none" />
+          className="rounded-md bg-surface p-3 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 resize-none" />
         <p className="text-on-surface-low text-[0.75rem]">Plain language. As items are saved, PersonalClaw decides what's relevant and pulls out the useful specifics for you — no need to define fields.</p>
       </div>
       <div className="flex flex-col gap-1.5">
-        <label className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">Limit to types (optional)</label>
+        <label className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Limit to types (optional)</label>
         <input aria-label="Limit to types (optional)" value={enabledFor} onChange={(e) => setEnabledFor(e.target.value)} placeholder="comma-separated, blank = all types"
           className="h-9 rounded-md bg-surface px-3 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
       </div>

@@ -4,7 +4,7 @@ import { Send, MessageCircleQuestion, Coffee } from 'lucide-react'
 import { api, type Loop } from '../../../lib/api'
 import { useDashboardLive } from '../DashboardLive'
 import { loopStatusMeta } from '../../loops/loopStatusMeta'
-import { EmptyState, RowAction, StatusDot } from './kit'
+import { SlotEmptyState, RowAction, StatusDot } from './kit'
 import { spring } from '../../../design/motion'
 import type { RouteProps } from '../../../app/useQueryState'
 
@@ -28,7 +28,7 @@ export function ActiveWork({ navigate }: RouteProps) {
     .sort((a, b) => (b.started_at ?? b.created_at) - (a.started_at ?? a.created_at))
 
   if (active.length === 0) {
-    return <EmptyState icon={Coffee}>No active work. Loops you launch appear here as they run.</EmptyState>
+    return <SlotEmptyState icon={Coffee}>No active work. Loops you launch appear here as they run.</SlotEmptyState>
   }
 
   return (

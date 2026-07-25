@@ -22,6 +22,24 @@ export function kindMeta(kind: string): KindMeta {
   return KINDS[kind] ?? { label: kind || 'Notification', icon: Bell, tone: 'var(--color-primary)' }
 }
 
+// ── shared visual helpers (consolidation, S2/T2.2) ──
+// The unread-item accent rail and the tinted icon-chip background were
+// duplicated verbatim across NotificationsPage (Row) and NotificationBell
+// (ShadeRow). Centralize the EXACT same values so the pattern has one home —
+// byte-identical output, zero visual change. `tone` is a kindMeta().tone
+// (already a CSS var / color token), so these stay token-routed.
+
+/** Inline style for an UNREAD notification's leading accent rail (hairline
+ *  inset in the kind's tone). Returns `undefined` when acked (no rail). */
+export function unreadRail(tone: string, acked: boolean): { boxShadow: string } | undefined {
+  return acked ? undefined : { boxShadow: `inset 2px 0 0 0 ${tone}` }
+}
+
+/** Tinted background for a kind's icon chip (16% of the tone over transparent). */
+export function toneChipBg(tone: string): string {
+  return `color-mix(in srgb, ${tone} 16%, transparent)`
+}
+
 /** Distinct kinds present in a list, for the filter row. */
 export function kindsPresent(items: NotificationItem[]): string[] {
   const seen = new Set<string>()
