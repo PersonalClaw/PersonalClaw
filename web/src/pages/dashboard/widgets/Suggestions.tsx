@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { Sparkles, RefreshCw, ArrowUpRight } from 'lucide-react'
 import { api } from '../../../lib/api'
-import { EmptyState } from './kit'
+import { SlotEmptyState } from './kit'
 import { spring } from '../../../design/motion'
 import type { RouteProps } from '../../../app/useQueryState'
 
@@ -31,7 +31,7 @@ export function Suggestions({ navigate }: RouteProps) {
     )
   }
   if (items.length === 0) {
-    return <EmptyState icon={Sparkles}>No suggestions yet — they build from your activity.</EmptyState>
+    return <SlotEmptyState icon={Sparkles}>No suggestions yet — they build from your activity.</SlotEmptyState>
   }
 
   return (

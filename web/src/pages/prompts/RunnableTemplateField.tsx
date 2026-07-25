@@ -48,7 +48,7 @@ export function RunnableTemplateField({ spec, onChange }: { spec?: LaunchSpec; o
                 className="h-8 rounded-md bg-surface px-2 font-mono text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
             </label>
           </div>
-          <p className="text-on-surface-low text-[0.7rem]">The variables above are filled at launch, rendered into the task, then this loop is created + started.</p>
+          <p className="text-on-surface-low text-[0.75rem]">The variables above are filled at launch, rendered into the task, then this loop is created + started.</p>
         </div>
       )}
     </div>

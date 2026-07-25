@@ -1,6 +1,7 @@
 import { memo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { bounce } from '../design/motion'
+import { fvs } from '../design/fontWeight'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -34,7 +35,7 @@ function DiffBlock({ code }: { code: string }) {
   return (
     <div className="group/code my-3 overflow-hidden rounded-lg bg-surface-low">
       <div className="flex items-center gap-2 px-m pt-2">
-        <span className="text-[0.7rem] uppercase tracking-wide text-on-surface-low">diff</span>
+        <span className="text-[0.75rem] uppercase tracking-wide text-on-surface-low">diff</span>
         <button type="button" onClick={copy} aria-label="Copy diff" title={copied ? 'Copied' : 'Copy'}
           className="ml-auto inline-flex size-6 items-center justify-center rounded text-on-surface-low opacity-0 transition-opacity hover:bg-surface-high hover:text-on-surface group-hover/code:opacity-100"
           style={copied ? { color: 'var(--color-success)' } : undefined}>
@@ -121,7 +122,7 @@ function InlineArtifactImage({ src, alt, chatSessionKey }: {
             <RefreshCw size={12} className={busy ? 'animate-spin' : ''} /> {busy ? 'Regenerating…' : 'Regenerate image'}
           </button>
         )}
-        {err && <span className="text-[0.72rem]" style={{ color: 'var(--color-danger)' }}>{err}</span>}
+        {err && <span className="text-[0.75rem]" style={{ color: 'var(--color-danger)' }}>{err}</span>}
       </div>
     )
   }
@@ -145,11 +146,11 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   return (
     <div className="group/code my-3 overflow-hidden rounded-lg bg-surface-low">
       <div className="flex items-center gap-2 px-m pt-2">
-        {lang && <span className="text-[0.7rem] uppercase tracking-wide text-on-surface-low">{lang}</span>}
+        {lang && <span className="text-[0.75rem] uppercase tracking-wide text-on-surface-low">{lang}</span>}
         <div className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover/code:opacity-100 focus-within:opacity-100">
           {runnable && (
             <button type="button" onClick={run} title="Run in terminal"
-              className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-[0.7rem] text-on-surface-low hover:bg-surface-high hover:text-primary">
+              className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-[0.75rem] text-on-surface-low hover:bg-surface-high hover:text-primary">
               <Play size={11} /> Run
             </button>
           )}
@@ -214,8 +215,8 @@ function renderCode({ className, children }: any) {
 const COMPONENTS: Record<string, React.ComponentType<any>> = {
   code: renderCode,
   pre({ children }: any) { return <>{children}</> },
-  table({ children }: any) { return <div className="my-3 overflow-x-auto"><table className="w-full border-collapse text-[0.875rem]">{children}</table></div> },
-  th({ children }: any) { return <th className="border-b border-outline-variant/50 bg-surface-high px-m py-2 text-left text-on-surface-var" style={{ fontVariationSettings: '"wght" 500' }}>{children}</th> },
+  table({ children }: any) { return <div className="my-3 overflow-x-auto"><table className="w-full border-collapse text-[0.8125rem]">{children}</table></div> },
+  th({ children }: any) { return <th className="border-b border-outline-variant/50 bg-surface-high px-m py-2 text-left text-on-surface-var" style={fvs(500)}>{children}</th> },
   td({ children }: any) { return <td className="border-b border-outline-variant/30 px-m py-2">{children}</td> },
   a({ href, children }: any) {
     const safe = safeHref(href)
@@ -239,14 +240,14 @@ const COMPONENTS: Record<string, React.ComponentType<any>> = {
   blockquote({ children }: any) { return <blockquote className="my-2 border-l-[3px] border-primary pl-m italic text-on-surface-var">{children}</blockquote> },
   hr() { return <hr className="my-4 border-outline-variant/40" /> },
   h1({ children }: any) { return <h1 className="mt-4 mb-2 text-on-surface" data-type="headline-s">{children}</h1> },
-  h2({ children }: any) { return <h2 className="mt-3 mb-2 text-on-surface text-[1.15rem]" style={{ fontVariationSettings: '"wght" 500' }}>{children}</h2> },
-  h3({ children }: any) { return <h3 className="mt-3 mb-1.5 text-on-surface text-[1rem]" style={{ fontVariationSettings: '"wght" 500' }}>{children}</h3> },
-  h4({ children }: any) { return <h4 className="mt-2 mb-1 text-on-surface text-[0.9375rem]" style={{ fontVariationSettings: '"wght" 500' }}>{children}</h4> },
+  h2({ children }: any) { return <h2 className="mt-3 mb-2 text-on-surface text-[1.0625rem]" style={fvs(500)}>{children}</h2> },
+  h3({ children }: any) { return <h3 className="mt-3 mb-1.5 text-on-surface text-[1.0625rem]" style={fvs(500)}>{children}</h3> },
+  h4({ children }: any) { return <h4 className="mt-2 mb-1 text-on-surface text-[0.9375rem]" style={fvs(500)}>{children}</h4> },
   ul({ children }: any) { return <ul className="my-2 list-disc space-y-1 pl-7 marker:text-on-surface-low">{children}</ul> },
   ol({ children }: any) { return <ol className="my-2 list-decimal space-y-1 pl-7 marker:text-on-surface-low">{children}</ol> },
   li({ children }: any) { return <li className="text-[0.9375rem] leading-relaxed">{children}</li> },
   p({ children }: any) { return <p className="my-1.5 leading-relaxed text-[0.9375rem]">{children}</p> },
-  strong({ children }: any) { return <strong className="text-on-surface" style={{ fontVariationSettings: '"wght" 600' }}>{children}</strong> },
+  strong({ children }: any) { return <strong className="text-on-surface" style={fvs(600)}>{children}</strong> },
   em({ children }: any) { return <em className="italic">{children}</em> },
 }
 

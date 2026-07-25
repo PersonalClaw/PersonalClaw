@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { Plus, Zap, Clock, CheckCircle2, XCircle, Circle, Rocket, Pencil } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -124,10 +125,10 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
                       <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${t.whenTone} 16%, transparent)` }}><t.whenIcon size={19} style={{ color: t.whenTone }} /></span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-s">
-                          <span className={`truncate text-[0.9375rem] ${t.enabled ? 'text-on-surface' : 'text-on-surface-var'}`} style={{ fontVariationSettings: '"wght" 500' }}>{t.name}</span>
-                          {!t.enabled && <span className="shrink-0 text-on-surface-low text-[0.7rem]">· disabled</span>}
-                          {t.kind === 'schedule' && t.schedule?.is_running && <span className="shrink-0 inline-flex items-center gap-1 text-primary text-[0.7rem]"><span className="relative flex size-1.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-pill bg-primary opacity-60" /><span className="relative inline-flex size-1.5 rounded-pill bg-primary" /></span>running</span>}
-                          {t.kind === 'lifecycle' && t.usedBy.length === 0 && <span className="shrink-0 text-on-surface-low text-[0.7rem]">· dormant</span>}
+                          <span className={`truncate text-[0.9375rem] ${t.enabled ? 'text-on-surface' : 'text-on-surface-var'}`} style={fvs(500)}>{t.name}</span>
+                          {!t.enabled && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· disabled</span>}
+                          {t.kind === 'schedule' && t.schedule?.is_running && <span className="shrink-0 inline-flex items-center gap-1 text-primary text-[0.75rem]"><span className="relative flex size-1.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-pill bg-primary opacity-60" /><span className="relative inline-flex size-1.5 rounded-pill bg-primary" /></span>running</span>}
+                          {t.kind === 'lifecycle' && t.usedBy.length === 0 && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· dormant</span>}
                         </div>
                         <div className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
                           <span className="inline-flex items-center gap-1" style={{ color: t.whenTone }}><t.whenIcon size={11} /> {t.whenLabel}</span>

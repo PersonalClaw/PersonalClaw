@@ -103,7 +103,7 @@ function ArtifactView({ kind, artifact, commentTarget }: { kind: string; artifac
                 <div key={i} className="rounded-md bg-surface p-2.5">
                   <div className="flex items-center gap-1.5">
                     <span className="text-on-surface">{i + 1}. {String(p.title || p.stage || 'Phase')}</span>
-                    {!!p.stage && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.65rem]">{String(p.stage)}</span>}
+                    {!!p.stage && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">{String(p.stage)}</span>}
                   </div>
                   {!!p.objective && <div className="mt-0.5 text-on-surface-low text-[0.75rem]">{String(p.objective)}</div>}
                   {tasks.length > 0 && (
@@ -111,11 +111,11 @@ function ArtifactView({ kind, artifact, commentTarget }: { kind: string; artifac
                       {tasks.map((t, j) => {
                         const deps = Array.isArray(t.depends_on) ? (t.depends_on as unknown[]).map((x) => Number(x) + 1).filter((n) => !Number.isNaN(n)) : []
                         return (
-                          <li key={j} className="flex items-start gap-1.5 text-on-surface-var text-[0.78rem]">
+                          <li key={j} className="flex items-start gap-1.5 text-on-surface-var text-[0.75rem]">
                             <span className="mt-0.5 shrink-0 text-on-surface-low">{i + 1}.{j + 1}</span>
                             <span>
                               {String(t.title || `Task ${j + 1}`)}
-                              {!!deps.length && <span className="ml-1 text-on-surface-low text-[0.68rem]">↳ after {deps.map((d) => `${i + 1}.${d}`).join(', ')}</span>}
+                              {!!deps.length && <span className="ml-1 text-on-surface-low text-[0.75rem]">↳ after {deps.map((d) => `${i + 1}.${d}`).join(', ')}</span>}
                             </span>
                           </li>
                         )
@@ -123,7 +123,7 @@ function ArtifactView({ kind, artifact, commentTarget }: { kind: string; artifac
                     </ol>
                   )}
                   {exit.length > 0 && (
-                    <div className="mt-1.5 text-on-surface-low text-[0.7rem]">Done when: {exit.join('; ')}</div>
+                    <div className="mt-1.5 text-on-surface-low text-[0.75rem]">Done when: {exit.join('; ')}</div>
                   )}
                 </div>
               )

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type InboxSettings } from '../../lib/api'
 import { Loading } from '../../ui/ListScaffold'
-import { ChipInput } from '../tasks/formControls'
+import { ChipInput } from '../../ui/forms'
 import { Row, Field, Toggle, SavedToast } from '../settings/settingsUI'
 
 /** Inbox settings → GET/PUT /api/inbox/settings (alert keywords, name-mention
@@ -87,6 +87,6 @@ export function InboxSettingsPanel() {
 function NumInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
   return (
     <input type="number" min={1} value={value} onChange={(e) => onChange(Number(e.target.value))}
-      className="h-9 w-28 rounded-md bg-surface-container px-2.5 text-on-surface text-[0.875rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]" />
+      className="h-9 w-28 rounded-md bg-surface-container px-2.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]" />
   )
 }

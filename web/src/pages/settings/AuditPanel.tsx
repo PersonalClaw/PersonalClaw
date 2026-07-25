@@ -6,6 +6,7 @@ import { confirm } from '../../ui/dialog'
 import { PanelHeader } from './settingsUI'
 import { Button } from '../../ui/Button'
 import { ListSkeleton } from '../../ui/ListScaffold'
+import { TextInput } from '../../ui/forms'
 
 const OUTCOME_TONE: Record<string, string> = {
   success: 'var(--color-success)', allowed: 'var(--color-success)',
@@ -59,10 +60,9 @@ export function AuditPanel() {
               style={f.key === filter ? { background: 'var(--color-surface-highest)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>{f.label}</button>
           ))}
         </div>
-        <div className="relative min-w-40 flex-1">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-low pointer-events-none" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter by operation, caller, resource" aria-label="Filter audit log"
-            className="h-9 w-full rounded-md bg-surface-high pl-8 pr-2 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+        <div className="min-w-40 flex-1">
+          <TextInput value={q} onChange={setQ} placeholder="Filter by operation, caller, resource" ariaLabel="Filter audit log"
+            size="md" surface="high" leadingIcon={<Search size={14} />} />
         </div>
         <Button variant="secondary" size="sm" onClick={reload} disabled={busy}>{busy ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={14} />}</Button>
         <Button variant="secondary" size="sm" onClick={runVerify}><ShieldCheck size={14} /> Verify</Button>
@@ -70,7 +70,7 @@ export function AuditPanel() {
       </div>
 
       {verify && (
-        <div className="mb-3 flex items-center gap-1.5 rounded-lg bg-surface-container px-3 py-2 text-[0.8rem]"
+        <div className="mb-3 flex items-center gap-1.5 rounded-lg bg-surface-container px-3 py-2 text-[0.8125rem]"
           style={{ color: verify.valid ? 'var(--color-success)' : 'var(--color-danger)' }}>
           {verify.valid ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
           {verify.valid ? `Chain intact${verify.count != null ? ` — ${verify.count} events verified` : ''}.` : `Chain broken${verify.broken_at ? ` at ${verify.broken_at}` : ''}${verify.error ? ` — ${verify.error}` : ''}.`}
@@ -78,7 +78,7 @@ export function AuditPanel() {
       )}
 
       {shown.length === 0 ? (
-        <p className="py-6 text-center text-on-surface-low text-[0.82rem]">No matching events.</p>
+        <p className="py-6 text-center text-on-surface-low text-[0.8125rem]">No matching events.</p>
       ) : (
         <div className="flex flex-col gap-1">
           {shown.map((e) => <EventRow key={e.event_id} ev={e} />)}
@@ -93,14 +93,14 @@ function EventRow({ ev }: { ev: SelEvent }) {
   const tone = OUTCOME_TONE[ev.outcome ?? ''] ?? 'var(--color-on-surface-low)'
   return (
     <div className="rounded-md bg-surface-container px-3 py-1.5">
-      <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-2 text-left text-[0.78rem]">
-        <span className="w-14 shrink-0 font-mono text-[0.68rem]" style={{ color: tone }}>{ev.outcome || '—'}</span>
-        <span className="shrink-0 rounded bg-surface-high px-1.5 text-on-surface-low text-[0.66rem]">{ev.event_type}</span>
+      <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-2 text-left text-[0.75rem]">
+        <span className="w-14 shrink-0 font-mono text-[0.75rem]" style={{ color: tone }}>{ev.outcome || '—'}</span>
+        <span className="shrink-0 rounded bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">{ev.event_type}</span>
         <span className="min-w-0 flex-1 truncate text-on-surface">{ev.operation || ev.resources || '—'}</span>
-        <span className="shrink-0 text-on-surface-low text-[0.66rem]">{fmtTime(ev.timestamp)}</span>
+        <span className="shrink-0 text-on-surface-low text-[0.75rem]">{fmtTime(ev.timestamp)}</span>
       </button>
       {open && (
-        <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5 border-t border-outline-variant/30 pt-1.5 text-[0.72rem]">
+        <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5 border-t border-outline-variant/30 pt-1.5 text-[0.75rem]">
           <Kv k="caller" v={ev.caller_identity} /><Kv k="agent" v={ev.agent} />
           <Kv k="source" v={ev.source} /><Kv k="tool kind" v={ev.tool_kind} />
           {ev.resources && <Kv k="resources" v={ev.resources} span />}

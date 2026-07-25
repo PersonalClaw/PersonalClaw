@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { api, type TaskItem, type ExitCriterion, type ActionPlanItem, type TaskNote, type ProjectItem, type TaskListItem } from '../../lib/api'
 import { getActiveProject } from '../../lib/activeProject'
 import { STATUSES, PRIORITIES } from './taskMeta'
 import { prereqIds } from './dag'
-import { Field, TextInput, TextArea, DateInput, Segmented, ChipInput, ChecklistEditor, DependencyEditor, Select, NotesEditor } from './formControls'
+import { Field, TextInput, TextArea, DateInput, Segmented, ChipInput, Select } from '../../ui/forms'
+import { Button } from '../../ui/Button'
+import { ChecklistEditor, DependencyEditor, NotesEditor } from './formControls'
 
 /** Editable task draft. `depends_on` is the working list of BLOCKS-prerequisite
  *  ids the DependencyEditor manipulates; it's serialized back to typed
@@ -154,10 +157,8 @@ function ProjectListPicker({ taskListId, onChange, onProjectChange }: { taskList
           <TextInput value={newName} onChange={setNewName} autoFocus
             placeholder={isProject ? 'Project name' : 'Task list name'}
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); isProject ? createProject() : createList() } }} />
-          <button type="button" disabled={busy || !newName.trim()} onClick={isProject ? createProject : createList}
-            className="shrink-0 rounded-md bg-primary px-3 h-9 text-on-primary text-[0.8125rem] disabled:opacity-40">{busy ? 'Adding…' : 'Add'}</button>
-          <button type="button" onClick={() => { setCreating(null); setNewName(''); setErr('') }}
-            className="shrink-0 rounded-md bg-surface-high px-3 h-9 text-on-surface-var text-[0.8125rem]">Cancel</button>
+          <Button variant="primary" size="md" disabled={busy || !newName.trim()} onClick={isProject ? createProject : createList}>{busy ? 'Adding…' : 'Add'}</Button>
+          <Button variant="ghost" size="md" onClick={() => { setCreating(null); setNewName(''); setErr('') }}>Cancel</Button>
         </div>
         {err && <p className="mt-1 text-danger text-[0.75rem]">{err}</p>}
       </Field>
@@ -192,7 +193,7 @@ function Section({ title, right, compact, children }: { title: string; right?: R
   return (
     <div className={`flex flex-col ${compact ? 'gap-m' : 'gap-l'}`}>
       <div className="flex items-center gap-s border-b border-outline-variant/30 pb-1.5">
-        <h3 className="text-on-surface text-[0.875rem]" style={{ fontVariationSettings: '"wght" 550' }}>{title}</h3>
+        <h3 className="text-on-surface text-[0.8125rem]" style={fvs(550)}>{title}</h3>
         {right}
       </div>
       {children}

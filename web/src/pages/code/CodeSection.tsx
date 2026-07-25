@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Code2, Plus, Loader2, Trash2, FolderOpen, AlertTriangle, X, RotateCcw } from 'lucide-react'
+import { Code2, Plus, Loader2, Trash2, FolderOpen, AlertTriangle, RotateCcw } from 'lucide-react'
 import type { CodeDraft } from './codeDraft'
 import { CodePlanReview } from './CodePlanReview'
 import { CodePlanningView } from './CodePlanningView'
@@ -7,9 +7,11 @@ import { CodeCockpitPage } from './CodeCockpitPage'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { Button } from '../../ui/Button'
+import { SquareIconButton } from '../../ui/SquareIconButton'
+import { InlineError } from '../../ui/InlineError'
 import { ListControls } from '../../ui/ListControls'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
-import { ListSkeleton } from '../../ui/ListScaffold'
+import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
 import { confirm } from '../../ui/dialog'
 import { WorkspacePicker } from './WorkspacePicker'
 import { api, sdlcStageLabel, type Loop, type LoopPhase } from '../../lib/api'
@@ -294,12 +296,7 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
       {/* Inline error for a failed list-level action (delete / workspace-pick) —
           dismissible; replaces the old silent .catch(){}. */}
       {actionErr && (
-        <div role="alert" className="mx-l mt-2 flex items-center gap-2 rounded-lg px-3 py-2 text-[0.8125rem]"
-          style={{ background: 'color-mix(in srgb, var(--color-danger) 10%, transparent)', color: 'var(--color-danger)' }}>
-          <AlertTriangle size={14} className="shrink-0" />
-          <span className="min-w-0 flex-1">{actionErr}</span>
-          <button type="button" onClick={() => setActionErr(null)} aria-label="Dismiss" className="shrink-0 hover:opacity-70"><X size={14} /></button>
-        </div>
+        <InlineError icon className="mx-l mt-2" onDismiss={() => setActionErr(null)}>{actionErr}</InlineError>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto px-l py-l">
         <div className="mx-auto w-full" style={{ maxWidth: 'var(--content-width)' }}>
@@ -317,14 +314,12 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
           ) : projects === undefined ? (
             <ListSkeleton rows={6} />
           ) : projects.length === 0 ? (
-            <div className="flex flex-col items-center gap-l py-2xl text-center">
-              <Code2 size={36} className="text-on-surface-low opacity-40" />
-              <div>
-                <h2 data-type="headline-s" className="text-on-surface">No code projects yet</h2>
-                <p className="mt-1 text-on-surface-low text-[0.9375rem] max-w-[400px]">Describe an SDLC task — an idea, a spec, a task list, or a bugfix — and an agent will detect its stage, plan the work, and execute it in a workspace.</p>
-              </div>
-              <Button size="sm" onClick={onCreate}><Plus size={15} /> Start a project</Button>
-            </div>
+            <EmptyState
+              icon={Code2}
+              title="No code projects yet"
+              hint="Describe an SDLC task — an idea, a spec, a task list, or a bugfix — and an agent will detect its stage, plan the work, and execute it in a workspace."
+              action={{ label: 'Start a project', onClick: onCreate, icon: Plus }}
+            />
           ) : (() => {
             const needle = q.trim().toLowerCase()
             const shown = projects
@@ -340,7 +335,7 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
               })
               .slice().sort(byAttention)
             if (shown.length === 0) return (
-              <div className="py-16 text-center text-on-surface-low text-[0.875rem]">
+              <div className="py-16 text-center text-on-surface-low text-[0.8125rem]">
                 {needle ? `No projects match “${q.trim()}”.` : 'No projects in this view.'}
               </div>
             )
@@ -363,7 +358,7 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
                       in place (opens the workspace picker) without entering the cockpit. */}
                   {needsWorkspace(p) && (
                     <button type="button" onClick={(e) => { e.stopPropagation(); setPickFor(p) }}
-                      className="shrink-0 inline-flex items-center gap-1 rounded-pill px-2 py-0.5 text-[0.7rem] transition-colors hover:brightness-110"
+                      className="shrink-0 inline-flex items-center gap-1 rounded-pill px-2 py-0.5 text-[0.75rem] transition-colors hover:brightness-110"
                       style={{ background: 'color-mix(in srgb, var(--color-warn) 16%, transparent)', color: 'var(--color-warn)' }}
                       title="Choose a workspace folder before this project can start">
                       <FolderOpen size={11} /> needs workspace
@@ -374,16 +369,15 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
                     // Show the reason on hover for ANY status that carries one — blocked
                     // (the stall-pause explanation), failed, and the synthetic ended_early
                     // — so the user can triage which project needs them without opening it.
-                    <span className="shrink-0 rounded-pill px-2 py-0.5 text-[0.7rem]" style={statusPill(es)}
+                    <span className="shrink-0 rounded-pill px-2 py-0.5 text-[0.75rem]" style={statusPill(es)}
                       title={p.error_message || undefined}>{loopStatusLabel(es)}</span>
                   ) })()}
                   {/* focus-visible:opacity-100 so a keyboard user who tabs to Delete can
                       actually see it — a hover-only reveal hid this destructive action
                       from keyboard + touch entirely (matches LoopPlanReview's pattern). */}
-                  <button type="button" onClick={(e) => { e.stopPropagation(); del(p) }} aria-label="Delete project"
-                    className="shrink-0 rounded-md p-1.5 text-on-surface-low opacity-0 transition-opacity hover:bg-surface-highest hover:text-danger group-hover:opacity-100 focus-visible:opacity-100">
-                    <Trash2 size={14} />
-                  </button>
+                  <SquareIconButton icon={Trash2} tone="danger" label="Delete project"
+                    onClick={(e) => { e.stopPropagation(); del(p) }}
+                    className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" />
                 </div>
               ))}
             </div>

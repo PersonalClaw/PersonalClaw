@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
-import { Code2, Plus, Trash2, X, Rocket, Hand, ChevronLeft, Loader2, ChevronUp, ChevronDown, FileText, Sparkle, Workflow, Check, FolderOpen, Gauge } from 'lucide-react'
+import { Code2, Plus, Trash2, X, Rocket, Hand, ChevronLeft, Loader2, ChevronUp, ChevronDown, FileText, Sparkle, Workflow, FolderOpen, Gauge } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { Button } from '../../ui/Button'
+import { SquareIconButton } from '../../ui/SquareIconButton'
+import { CapRow, CapabilityPeekModal } from '../../ui/CapabilityPicker'
 import { Markdown } from '../../ui/Markdown'
 import { spring } from '../../design/motion'
 import { api, SDLC_STAGES, sdlcStageLabel, type Loop, type CodeStage, type PlanStep, type SkillItem, type WorkflowItem, type SkillSearchResult } from '../../lib/api'
@@ -219,7 +222,7 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
 
               {/* the stage plan */}
               <div className="flex items-center justify-between">
-                <span className="text-on-surface-var text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 550' }}>Stages ahead ({stages.length})</span>
+                <span className="text-on-surface-var text-[0.8125rem]" style={fvs(550)}>Stages ahead ({stages.length})</span>
                 <button type="button" onClick={addStage} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.75rem] text-on-surface-low hover:text-on-surface hover:bg-surface-high"><Plus size={13} /> Add stage</button>
               </div>
 
@@ -253,14 +256,14 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
 
               {/* Drive mode — choose before launch how the phased tasks execute. */}
               <div className="flex flex-col gap-1.5 rounded-xl border border-outline-variant/50 bg-surface-container/60 p-3">
-                <span className="text-on-surface-var text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 550' }}>How should it run?</span>
+                <span className="text-on-surface-var text-[0.8125rem]" style={fvs(550)}>How should it run?</span>
                 <div className="flex gap-2">
                   <button type="button" onClick={() => setAutopilot(true)} aria-pressed={autopilot}
                     className={`flex flex-1 items-start gap-2 rounded-lg border p-2.5 text-left transition-colors ${autopilot ? 'border-primary/60 bg-primary/10' : 'border-outline-variant/50 hover:bg-surface-high'}`}>
                     <Rocket size={15} className={`mt-0.5 shrink-0 ${autopilot ? 'text-primary' : 'text-on-surface-low'}`} />
                     <span>
                       <span className="block text-on-surface text-[0.8125rem]">Autopilot</span>
-                      <span className="block text-on-surface-low text-[0.72rem]">The system queues + drives every phase to completion.</span>
+                      <span className="block text-on-surface-low text-[0.75rem]">The system queues + drives every phase to completion.</span>
                     </span>
                   </button>
                   <button type="button" onClick={() => setAutopilot(false)} aria-pressed={!autopilot}
@@ -268,7 +271,7 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
                     <Hand size={15} className={`mt-0.5 shrink-0 ${!autopilot ? 'text-primary' : 'text-on-surface-low'}`} />
                     <span>
                       <span className="block text-on-surface text-[0.8125rem]">One-by-one</span>
-                      <span className="block text-on-surface-low text-[0.72rem]">You queue tasks yourself, at your own pace.</span>
+                      <span className="block text-on-surface-low text-[0.75rem]">You queue tasks yourself, at your own pace.</span>
                     </span>
                   </button>
                 </div>
@@ -331,6 +334,10 @@ function PlanCapabilities({ skills, workflows, skillIds, workflowIds, onToggleSk
   marketplace: SkillSearchResult[]; installing: Record<string, boolean>; installed: Set<string>
   onInstall: (s: SkillSearchResult) => void
 }) {
+  // Peek: which capability the user is previewing before committing it (skill content
+  // fetched on open; workflow steps render from the in-hand item). Declared before the
+  // empty-state early return so the hook order stays stable.
+  const [peek, setPeek] = useState<{ kind: 'skill' | 'workflow'; skill?: SkillItem; workflow?: WorkflowItem } | null>(null)
   // Hide marketplace suggestions already on disk (installed this session OR present in
   // the installed catalog under a key/name that often differs from the marketplace id).
   const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, '')
@@ -344,7 +351,7 @@ function PlanCapabilities({ skills, workflows, skillIds, workflowIds, onToggleSk
   const selectedCount = skillIds.size + workflowIds.size
   return (
     <div className="rounded-xl border border-outline-variant/50 bg-surface-container/60 p-3.5">
-      <div className="mb-1 inline-flex items-center gap-1.5 text-on-surface-var text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 550' }}>
+      <div className="mb-1 inline-flex items-center gap-1.5 text-on-surface-var text-[0.8125rem]" style={fvs(550)}>
         <Sparkle size={14} className="text-primary" /> Capabilities loaded every cycle
       </div>
       <p className="mb-2 text-on-surface-low text-[0.75rem]">
@@ -352,53 +359,39 @@ function PlanCapabilities({ skills, workflows, skillIds, workflowIds, onToggleSk
         {selectedCount > 0 ? `${selectedCount} selected.` : 'None selected — the agent still trigger-matches skills as it goes.'}
       </p>
       {(!!orderedSkills.length || !!orderedWorkflows.length) && (
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-col gap-1.5">
           {orderedSkills.map((s) => (
-            <CapChip key={`s-${s.key}`} label={s.name || s.key} icon={<Sparkle size={11} />}
-              on={skillIds.has(s.key)} suggested={suggested.has(s.key)} onToggle={() => onToggleSkill(s.key)} title={s.description} />
+            <CapRow key={`s-${s.key}`} id={s.key} name={s.name || s.key} description={s.description}
+              checked={skillIds.has(s.key)} suggested={suggested.has(s.key)}
+              onToggle={() => onToggleSkill(s.key)} onPeek={() => setPeek({ kind: 'skill', skill: s })} icon={<Sparkle size={14} />} />
           ))}
           {orderedWorkflows.map((w) => (
-            <CapChip key={`w-${w.id}`} label={w.name || w.id} icon={<Workflow size={11} />}
-              on={workflowIds.has(w.id)} suggested={suggestedWf.has(w.id)} onToggle={() => onToggleWorkflow(w.id)} title={w.description} />
+            <CapRow key={`w-${w.id}`} id={w.id} name={w.name || w.id} description={w.description}
+              checked={workflowIds.has(w.id)} suggested={suggestedWf.has(w.id)}
+              onToggle={() => onToggleWorkflow(w.id)} onPeek={() => setPeek({ kind: 'workflow', workflow: w })} icon={<Workflow size={14} />} />
           ))}
         </div>
       )}
       {/* Planner-suggested marketplace skills not yet installed — install in place. */}
       {marketplaceToShow.length > 0 && (
         <div className="mt-2.5 flex flex-col gap-1.5 border-t border-outline-variant/40 pt-2.5">
-          <span className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">Suggested to install</span>
+          <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Suggested to install</span>
           {marketplaceToShow.map((m) => (
             <div key={m.id} className="flex items-center gap-2 rounded-md bg-surface-high/50 px-2.5 py-1.5 text-[0.8125rem]">
               <Sparkle size={12} className="shrink-0 text-primary" />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-on-surface-var">{m.name}</div>
-                {m.description && <div className="truncate text-on-surface-low text-[0.72rem]">{m.description}</div>}
+                {m.description && <div className="truncate text-on-surface-low text-[0.75rem]">{m.description}</div>}
               </div>
-              <button type="button" disabled={!!installing[m.id]} onClick={() => onInstall(m)}
-                className="shrink-0 inline-flex items-center gap-1 rounded-md bg-primary/15 px-2 py-0.5 text-[0.72rem] text-primary hover:bg-primary/25 disabled:opacity-50">
-                {installing[m.id] ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />} {installing[m.id] ? 'Installing…' : 'Install'}
-              </button>
+              <Button variant="tonal" size="xs" className="shrink-0 gap-1 px-2 text-[0.75rem]" loading={!!installing[m.id]} onClick={() => onInstall(m)}>
+                <Plus size={11} /> Install
+              </Button>
             </div>
           ))}
         </div>
       )}
+      {peek && <CapabilityPeekModal peek={peek} onClose={() => setPeek(null)} />}
     </div>
-  )
-}
-
-/** One toggleable capability chip — selected (primary fill + ✓) vs not; a small dot
- *  marks a planner suggestion so the user sees what was recommended even after toggling. */
-function CapChip({ label, icon, on, suggested, onToggle, title }: {
-  label: string; icon: React.ReactNode; on: boolean; suggested: boolean; onToggle: () => void; title?: string
-}) {
-  return (
-    <button type="button" onClick={onToggle} aria-pressed={on} title={title || label}
-      className={`inline-flex items-center gap-1 rounded-pill px-2 py-0.5 text-[0.75rem] transition-colors ${on
-        ? 'bg-primary/15 text-primary hover:bg-primary/25'
-        : 'bg-surface-high text-on-surface-low hover:bg-surface-highest hover:text-on-surface-var'}`}>
-      {on ? <Check size={11} /> : icon} <span className="truncate max-w-[180px]">{label}</span>
-      {suggested && !on && <span className="ml-0.5 size-1 rounded-full bg-primary/60" title="Planner-suggested" />}
-    </button>
   )
 }
 
@@ -411,10 +404,10 @@ function PlanArtifacts({ steps }: { steps: PlanStep[] }) {
     <div className="rounded-xl border border-outline-variant/50 bg-surface-container/60">
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
         aria-label={open ? 'Hide plan artifacts' : 'Show plan artifacts'}
-        className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-on-surface-var text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 550' }}>
+        className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-on-surface-var text-[0.8125rem]" style={fvs(550)}>
         <FileText size={14} className="text-primary" />
         Plan artifacts ({steps.length})
-        <span className="text-on-surface-low text-[0.7rem]">{steps.map((s) => s.kind.replace(/_/g, ' ')).join(' · ')}</span>
+        <span className="text-on-surface-low text-[0.75rem]">{steps.map((s) => s.kind.replace(/_/g, ' ')).join(' · ')}</span>
         {open ? <ChevronUp size={15} className="ml-auto text-on-surface-low" /> : <ChevronDown size={15} className="ml-auto text-on-surface-low" />}
       </button>
       {open && (
@@ -433,12 +426,12 @@ function PlanArtifacts({ steps }: { steps: PlanStep[] }) {
               <div key={s.id} className="flex flex-col gap-1">
                 <div className="flex items-center gap-1.5 text-on-surface text-[0.8125rem]">
                   {s.title}
-                  <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.65rem]">{s.kind.replace(/_/g, ' ')}</span>
+                  <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">{s.kind.replace(/_/g, ' ')}</span>
                 </div>
                 {md
                   ? <div className="text-on-surface-var text-[0.8125rem]"><Markdown>{md}</Markdown></div>
                   : structured
-                    ? <pre className="overflow-x-auto rounded-md bg-surface-high/60 p-2 text-on-surface-var text-[0.7rem] leading-snug whitespace-pre-wrap break-words">{structured}</pre>
+                    ? <pre className="overflow-x-auto rounded-md bg-surface-high/60 p-2 text-on-surface-var text-[0.75rem] leading-snug whitespace-pre-wrap break-words">{structured}</pre>
                     : <span className="text-on-surface-low text-[0.75rem]">No detail.</span>}
               </div>
             )
@@ -473,10 +466,10 @@ function StageQualityGate({ stage, onPatch }: { stage: CodeStage; onPatch: (p: P
   return (
     <div className="mt-2 flex flex-col gap-1">
       <button type="button" onClick={toggle} aria-pressed={on}
-        className="flex w-fit items-center gap-1.5 text-on-surface-low text-[0.7rem] uppercase tracking-wide hover:text-on-surface-var">
+        className="flex w-fit items-center gap-1.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide hover:text-on-surface-var">
         <Gauge size={12} className={on ? 'text-primary' : ''} />
         <span>Quality bar</span>
-        <span className={`rounded-pill px-1.5 py-0.5 text-[0.6rem] normal-case tracking-normal ${on ? 'bg-primary/15 text-primary' : 'bg-surface-high text-on-surface-low'}`}>
+        <span className={`rounded-pill px-1.5 py-0.5 text-[0.75rem] normal-case tracking-normal ${on ? 'bg-primary/15 text-primary' : 'bg-surface-high text-on-surface-low'}`}>
           {on ? 'on' : 'off'}
         </span>
       </button>
@@ -494,7 +487,7 @@ function StageQualityGate({ stage, onPatch }: { stage: CodeStage; onPatch: (p: P
               onChange={(e) => setHold(parseFloat(e.target.value))} aria-label="Quality hold floor"
               className="w-14 rounded bg-surface-high px-1.5 py-0.5 text-on-surface tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
           </label>
-          <span className="text-on-surface-low text-[0.7rem]">score 0–5 · below hold rolls back</span>
+          <span className="text-on-surface-low text-[0.75rem]">score 0–5 · below hold rolls back</span>
         </div>
       )}
     </div>
@@ -536,30 +529,30 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
     <div className="rounded-xl border border-outline-variant/50 bg-surface-container/60 p-3.5">
       <div className="flex items-start gap-2">
         <div className="mt-1 flex flex-col items-center gap-0.5 text-on-surface-low">
-          <button type="button" onClick={() => onMove(-1)} disabled={index === 0} aria-label="Move stage up" className="rounded hover:bg-surface-high hover:text-on-surface disabled:opacity-30"><ChevronUp size={14} /></button>
-          <span className="text-[0.7rem] tabular-nums">{index + 1}</span>
-          <button type="button" onClick={() => onMove(1)} disabled={index === count - 1} aria-label="Move stage down" className="rounded hover:bg-surface-high hover:text-on-surface disabled:opacity-30"><ChevronDown size={14} /></button>
+          <SquareIconButton icon={ChevronUp} label="Move stage up" disabled={index === 0} onClick={() => onMove(-1)} />
+          <span className="text-[0.75rem] tabular-nums">{index + 1}</span>
+          <SquareIconButton icon={ChevronDown} label="Move stage down" disabled={index === count - 1} onClick={() => onMove(1)} />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <input value={stage.title} onChange={(e) => onPatch({ title: e.target.value })} placeholder="Stage title"
-              className="min-w-0 flex-1 rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface text-[0.875rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+              className="min-w-0 flex-1 rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
             {/* Stage type — the canonical SDLC id (drives capabilities + gate
                 tracking). Editable so a user can re-type a stage or fix an added
                 one; the SDLC ladder is the only valid set. */}
             <select value={SDLC_STAGES.includes(stage.stage as typeof SDLC_STAGES[number]) ? stage.stage : ''}
               onChange={(e) => onPatch({ stage: e.target.value })} aria-label="Stage type"
-              className="shrink-0 rounded-md bg-surface-high px-2 py-1.5 text-[0.7rem] text-on-surface-var outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50">
+              className="shrink-0 rounded-md bg-surface-high px-2 py-1.5 text-[0.75rem] text-on-surface-var outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50">
               {!SDLC_STAGES.includes(stage.stage as typeof SDLC_STAGES[number]) && <option value="">— type —</option>}
               {SDLC_STAGES.map((sg) => <option key={sg} value={sg}>{sg}</option>)}
             </select>
-            <button type="button" onClick={onRemove} aria-label="Remove stage" className="shrink-0 rounded-md p-1.5 text-on-surface-low hover:bg-surface-highest hover:text-danger"><Trash2 size={13} /></button>
+            <SquareIconButton icon={Trash2} iconSize={13} tone="danger" label="Remove stage" onClick={onRemove} className="shrink-0" />
           </div>
           <textarea value={stage.objective} onChange={(e) => onPatch({ objective: e.target.value })} rows={2} placeholder="What this stage accomplishes…"
             className="mt-2 w-full resize-none rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface-var text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
           {/* exit criteria */}
           <div className="mt-2 flex flex-col gap-1">
-            <span className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">Done when</span>
+            <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Done when</span>
             {(stage.exit_criteria ?? []).map((c, ci) => (
               <div key={ci} className="flex items-center gap-1.5 rounded-md bg-surface-high/60 px-2 py-1 text-[0.8125rem] text-on-surface-var">
                 <span className="min-w-0 flex-1">{c}</span>
@@ -584,7 +577,7 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
               at launch. Editable: rename, remove, or add the work items the worker
               executes one by one. */}
           <div className="mt-2 flex flex-col gap-1">
-            <span className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">Tasks{(stage.tasks ?? []).length ? ` (${stage.tasks!.length})` : ''}</span>
+            <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Tasks{(stage.tasks ?? []).length ? ` (${stage.tasks!.length})` : ''}</span>
             {(stage.tasks ?? []).map((t, ti) => (
               <div key={ti} className="flex items-start gap-1.5 rounded-md bg-surface-high/60 px-2 py-1 text-[0.8125rem]">
                 <span className="mt-1.5 size-3 shrink-0 rounded-full border border-outline-variant/60" />

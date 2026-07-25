@@ -1,6 +1,7 @@
 import { useId, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { spring, bounce } from '../../design/motion'
+import { fvs } from '../../design/fontWeight'
 
 /** Shared settings-subpage primitives for consistent layout across panels. */
 
@@ -8,7 +9,7 @@ export function PanelHeader({ title, hint }: { title: string; hint?: string }) {
   return (
     <div className="mb-l">
       <h2 className="text-on-surface" data-type="title-l">{title}</h2>
-      {hint && <p className="mt-1 text-on-surface-low text-[0.875rem]">{hint}</p>}
+      {hint && <p className="mt-1 text-on-surface-low text-[0.8125rem]">{hint}</p>}
     </div>
   )
 }
@@ -16,7 +17,7 @@ export function PanelHeader({ title, hint }: { title: string; hint?: string }) {
 export function Section({ title, hint, children }: { title?: string; hint?: string; children: ReactNode }) {
   return (
     <section className="mb-2xl">
-      {title && <h3 className="mb-s text-on-surface text-[0.9375rem]" style={{ fontVariationSettings: '"wght" 600' }}>{title}</h3>}
+      {title && <h3 className="mb-s text-on-surface text-[0.9375rem]" style={fvs(600)}>{title}</h3>}
       {hint && <p className="mb-m text-on-surface-low text-[0.8125rem]">{hint}</p>}
       {children}
     </section>
@@ -28,7 +29,7 @@ export function Row({ label, hint, children }: { label: string; hint?: string; c
   return (
     <div className="flex items-center justify-between gap-l border-b border-outline-variant/30 py-3 last:border-0">
       <div className="min-w-0">
-        <div className="text-on-surface text-[0.875rem]">{label}</div>
+        <div className="text-on-surface text-[0.8125rem]">{label}</div>
         {hint && <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">{hint}</div>}
       </div>
       <div className="shrink-0">{children}</div>
@@ -40,7 +41,7 @@ export function Row({ label, hint, children }: { label: string; hint?: string; c
 export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <div className="border-b border-outline-variant/30 py-3 last:border-0">
-      <div className="text-on-surface text-[0.875rem]">{label}</div>
+      <div className="text-on-surface text-[0.8125rem]">{label}</div>
       {hint && <div className="mt-0.5 mb-2 text-on-surface-low text-[0.8125rem]">{hint}</div>}
       <div className="mt-2">{children}</div>
     </div>

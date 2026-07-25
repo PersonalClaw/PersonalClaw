@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { Sparkles, Send, Check, XCircle, BellOff, Loader2, Star } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
-import { TextArea, Segmented } from '../tasks/formControls'
+import { TextArea, Segmented } from '../../ui/forms'
 import { api, type InboxItem, type InboxClassification } from '../../lib/api'
 import { classMeta, confMeta, statusMeta, channelLabel, sourceLabel, relPast, CLASSIFICATIONS } from './inboxMeta'
 
@@ -55,9 +56,9 @@ export function InboxDetail({ item, onChanged }: { item: InboxItem; onChanged: (
 
       {/* sender + channel + source */}
       <div className="flex flex-wrap items-center gap-x-m gap-y-1 text-on-surface-low text-[0.8125rem]">
-        <span className="text-on-surface" style={{ fontVariationSettings: '"wght" 600' }}>{item.sender_name || item.sender_id}</span>
+        <span className="text-on-surface" style={fvs(600)}>{item.sender_name || item.sender_id}</span>
         {channelLabel(item) && <span>{channelLabel(item)}</span>}
-        <span className="inline-flex items-center rounded-pill bg-surface-high px-2 h-5 text-[0.7rem] text-on-surface-var">via {sourceLabel(item.source)}</span>
+        <span className="inline-flex items-center rounded-pill bg-surface-high px-2 h-5 text-[0.75rem] text-on-surface-var">via {sourceLabel(item.source)}</span>
         {item.created_at && <span>{relPast(item.created_at)}</span>}
       </div>
 
@@ -70,7 +71,7 @@ export function InboxDetail({ item, onChanged }: { item: InboxItem; onChanged: (
           <div className="flex flex-col gap-2">
             {item.thread_context!.map((t, i) => (
               <div key={i} className="rounded-md bg-surface-container/60 px-m py-1.5">
-                <div className="text-on-surface-var text-[0.75rem] mb-0.5" style={{ fontVariationSettings: '"wght" 600' }}>{t.sender_name || 'Unknown'}</div>
+                <div className="text-on-surface-var text-[0.75rem] mb-0.5" style={fvs(600)}>{t.sender_name || 'Unknown'}</div>
                 <div className="text-on-surface-low text-[0.8125rem] leading-relaxed">{t.text}</div>
               </div>
             ))}
@@ -127,7 +128,7 @@ function Section({ label, right, children }: { label: string; right?: React.Reac
   return (
     <div>
       <div className="mb-1.5 flex items-center gap-s">
-        <span className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">{label}</span>
+        <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</span>
         {right}
       </div>
       {children}

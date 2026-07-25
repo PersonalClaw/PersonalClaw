@@ -203,12 +203,12 @@ export function DagView({
               <foreignObject x={0} y={n.h} width={n.w} height={34}>
                 <div className="flex items-center gap-1.5 pt-1.5">
                   <button type="button" onClick={(ev) => { ev.stopPropagation(); onApprove(n.id) }}
-                    className="inline-flex h-6 items-center gap-1 rounded-pill px-2 text-[0.7rem]"
+                    className="inline-flex h-6 items-center gap-1 rounded-pill px-2 text-[0.75rem]"
                     style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }}>
                     Approve
                   </button>
                   <button type="button" onClick={(ev) => { ev.stopPropagation(); onDeny(n.id) }}
-                    className="inline-flex h-6 items-center gap-1 rounded-pill px-2 text-[0.7rem]"
+                    className="inline-flex h-6 items-center gap-1 rounded-pill px-2 text-[0.75rem]"
                     style={{ background: 'color-mix(in srgb, var(--color-danger) 16%, transparent)', color: 'var(--color-danger)' }}>
                     Deny
                   </button>

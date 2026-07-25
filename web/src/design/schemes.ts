@@ -59,16 +59,19 @@ export const SCHEMES: Scheme[] = [
   // DEFAULT — PersonalClaw coral/terracotta. Warm, energetic, off-Gemini; the
   // ownable accent. Neutral surfaces stay from tokens.css; this drives only the
   // accent identity (primary/focus/loaders/glow), so the whole app re-tints warm.
+  // Light primary/emphasis/info mirror tokenRegistry's AA-verified shades
+  // (≥4.5:1 as white-text button fill AND as text on white) — keep in sync.
+  // Glow/gradient stay on the brighter coral: decorative, not text-bearing.
   scheme('coral', 'Coral', {
-    primary: ['#ff6b5b', '#e85a3f'], primaryEmphasis: ['#ff9a86', '#c8452e'],
+    primary: ['#ff6b5b', '#c8452e'], primaryEmphasis: ['#ff9a86', '#a33922'],
     onPrimary: ['#3f1008', '#ffffff'], primaryContainer: ['#5a1d12', '#ffe0d6'],
-    secondary: ['#ffb454', '#cf7a23'], info: ['#4e9ff8', '#1668d8'],
+    secondary: ['#ffb454', '#cf7a23'], info: ['#5e99f9', '#145cbf'],
     gradient: ['#c85a48', '#ff6b5b', '#ff9a7a', '#ffb454'],
     glowA: ['#ff6b5b', '#e85a3f'], glowB: ['#ff9a7a', '#e07a54'],
   }),
   // Honey — warm like coral but golden/muted; cozy, understated.
   scheme('honey', 'Honey', {
-    primary: ['#f2a93b', '#c17d18'], primaryEmphasis: ['#ffca7a', '#a96812'],
+    primary: ['#f2a93b', '#9d6614'], primaryEmphasis: ['#ffca7a', '#985e10'],
     onPrimary: ['#3a2504', '#ffffff'], primaryContainer: ['#523611', '#ffe9c2'],
     secondary: ['#e8785a', '#c2503a'], info: ['#4e9ff8', '#1668d8'],
     gradient: ['#b0832f', '#f2a93b', '#ffca7a', '#e8785a'],
@@ -76,7 +79,7 @@ export const SCHEMES: Scheme[] = [
   }),
   // Jade — calm, professional, cool-but-not-blue; the grounded counterpart.
   scheme('jade', 'Jade', {
-    primary: ['#2dd4bf', '#0d9488'], primaryEmphasis: ['#7fe8da', '#0a7268'],
+    primary: ['#2dd4bf', '#0b7f75'], primaryEmphasis: ['#7fe8da', '#0a7268'],
     onPrimary: ['#04231f', '#ffffff'], primaryContainer: ['#0c3b35', '#cbf5ee'],
     secondary: ['#4e9ff8', '#1668d8'], info: ['#4e9ff8', '#1668d8'],
     gradient: ['#2a9e90', '#2dd4bf', '#7fe8da', '#4e9ff8'],
@@ -84,7 +87,7 @@ export const SCHEMES: Scheme[] = [
   }),
   // Ember — near-monochrome + a single warm spark (max restraint, ChatGPT-quiet).
   scheme('ember', 'Ember (mono + spark)', {
-    primary: ['#ff7a5c', '#d1543a'], primaryEmphasis: ['#ffa98f', '#b0432c'],
+    primary: ['#ff7a5c', '#c5482e'], primaryEmphasis: ['#ffa98f', '#b0432c'],
     onPrimary: ['#2a0f08', '#ffffff'], primaryContainer: ['#3a2018', '#f0ddd6'],
     secondary: ['#9a9a96', '#5a5a56'], info: ['#8a9098', '#565c64'],
     gradient: ['#6a6560', '#ff7a5c', '#b09a92', '#8a8580'],
@@ -106,23 +109,23 @@ export const SCHEMES: Scheme[] = [
     glowA: ['#4aa8ff', '#1668d8'], glowB: ['#7fd0ff', '#3a92c8'],
   }),
   scheme('forest', 'Forest', {
-    primary: ['#4fc97f', '#1f9b58'], primaryEmphasis: ['#86e0a6', '#157a44'],
+    primary: ['#4fc97f', '#1a824a'], primaryEmphasis: ['#86e0a6', '#157a44'],
     onPrimary: ['#06280f', '#ffffff'], primaryContainer: ['#0f3a22', '#d6f3e0'],
-    secondary: ['#9bcf3a', '#5f8f15'], info: ['#3ab0a0', '#0a8f80'],
+    secondary: ['#9bcf3a', '#5f8f15'], info: ['#3ab0a0', '#098073'],
     gradient: ['#3a8f5e', '#4fc97f', '#9bdf6f', '#d8c24a'],
     glowA: ['#4fc97f', '#1f9b58'], glowB: ['#9bdf6f', '#5f9f3a'],
   }),
   scheme('rose', 'Rose', {
-    primary: ['#ff7eb0', '#d8407e'], primaryEmphasis: ['#ffb0cf', '#bf2f6a'],
+    primary: ['#ff7eb0', '#d22b6f'], primaryEmphasis: ['#ffb0cf', '#bf2f6a'],
     onPrimary: ['#3f0a22', '#ffffff'], primaryContainer: ['#5a1638', '#ffdcec'],
     secondary: ['#c597ff', '#8b5cd8'], info: ['#7e8fff', '#5060d8'],
     gradient: ['#b0567e', '#ff7eb0', '#ffb0cf', '#c597ff'],
     glowA: ['#ff7eb0', '#d8407e'], glowB: ['#ffa6c8', '#c2607e'],
   }),
   scheme('amber', 'Amber', {
-    primary: ['#ffb454', '#cf7a23'], primaryEmphasis: ['#ffd08a', '#b8651a'],
+    primary: ['#ffb454', '#a5611c'], primaryEmphasis: ['#ffd08a', '#a15817'],
     onPrimary: ['#3f2404', '#ffffff'], primaryContainer: ['#5a3810', '#ffe8c8'],
-    secondary: ['#f55e57', '#c8362f'], info: ['#ffb454', '#cf7a23'],
+    secondary: ['#f55e57', '#c8362f'], info: ['#ffb454', '#a5611c'],
     gradient: ['#b07a3a', '#ffb454', '#ffd08a', '#f55e57'],
     glowA: ['#ffb454', '#cf7a23'], glowB: ['#ffce7f', '#d89a4a'],
   }),

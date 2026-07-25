@@ -7,8 +7,10 @@ import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { SidePanel } from '../../ui/SidePanel'
 import { EmptyState, Loading } from '../../ui/ListScaffold'
 import { Modal } from '../../ui/Modal'
-import { Segmented, TextInput } from '../tasks/formControls'
+import { SearchField } from '../../ui/SearchField'
+import { Segmented, TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
+import { InlineError } from '../../ui/InlineError'
 import { api, type Artifact, type FsEntry, type ContentMatch } from '../../lib/api'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { confirm } from '../../ui/dialog'
@@ -319,13 +321,8 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
             <SidePanel title="Explorer" icon={<FilesIcon size={18} />} storeKey="files-explorer-w" fillHeight onClose={() => setExplorerOpen(false)}>
             <div className="flex h-full flex-col">
               <div className="flex flex-col gap-2 border-b border-outline/40 p-m">
-                <div className="relative">
-                  <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-low" />
-                  <input ref={searchRef} value={grep} onChange={(e) => setGrep(e.target.value)} placeholder="Search contents…  ⌘F"
-                    type="search" name="workspace-grep" aria-label="Search file contents"
-                    className="h-8 w-full rounded-md bg-surface-high pl-8 pr-7 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-                  {grep && <button onClick={() => setGrep('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-on-surface-low hover:text-on-surface"><X size={13} /></button>}
-                </div>
+                <SearchField inputRef={searchRef} value={grep} onChange={setGrep} size="sm"
+                  placeholder="Search contents…  ⌘F" name="workspace-grep" ariaLabel="Search file contents" />
                 {showResults && (
                   <input value={include} onChange={(e) => setInclude(e.target.value)} placeholder="include glob e.g. *.py"
                     name="workspace-grep-include" aria-label="Restrict search to files matching glob"
@@ -344,7 +341,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
                   </>
                 )}
                 {(branch || searchEngine) && (
-                  <div className="flex items-center gap-2 text-on-surface-low text-[0.7rem]">
+                  <div className="flex items-center gap-2 text-on-surface-low text-[0.75rem]">
                     {showResults
                       ? <span>{searchBusy ? 'searching…' : `${results.length} match${results.length === 1 ? '' : 'es'}`}{searchEngine && ` · ${searchEngine === 'rg' ? 'ripgrep' : 'python'}`}</span>
                       : branch && <span className="inline-flex items-center gap-1"><GitBranch size={11} /> {branch}</span>}
@@ -353,11 +350,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
               </div>
 
               {fileErr && (
-                <div role="alert" className="mx-m mt-2 flex items-start gap-1.5 rounded-md px-2.5 py-1.5 text-[0.75rem]"
-                  style={{ background: 'color-mix(in srgb, var(--color-danger) 14%, transparent)', color: 'var(--color-danger)' }}>
-                  <span className="min-w-0 flex-1 break-words">{fileErr}</span>
-                  <button onClick={() => setFileErr(null)} aria-label="Dismiss" className="shrink-0 opacity-70 hover:opacity-100"><X size={12} /></button>
-                </div>
+                <InlineError className="mx-m mt-2" onDismiss={() => setFileErr(null)}>{fileErr}</InlineError>
               )}
               {uploadRows.length > 0 && (
                 <div className="mx-m mt-2 flex flex-col gap-1 rounded-lg bg-surface-container/60 px-3 py-2">
@@ -452,7 +445,7 @@ function SearchResults({ results, busy, onOpen }: { results: ContentMatch[]; bus
       {results.map((m, i) => (
         <button key={i} onClick={() => onOpen(m)} type="button" className="flex w-full flex-col items-start gap-0.5 rounded-md px-m py-1.5 text-left transition-colors hover:bg-surface-high">
           <span className="flex items-center gap-1 text-on-surface text-[0.8125rem] font-mono"><CornerDownRight size={11} className="text-on-surface-low" /> {baseName(m.file)}<span className="text-on-surface-low">:{m.line}</span></span>
-          <span className="w-full truncate font-mono text-on-surface-low text-[0.7rem]">{m.preview}</span>
+          <span className="w-full truncate font-mono text-on-surface-low text-[0.75rem]">{m.preview}</span>
         </button>
       ))}
     </div>

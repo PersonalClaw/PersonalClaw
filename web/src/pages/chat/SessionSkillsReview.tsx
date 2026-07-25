@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { GraduationCap, Loader2, Check, X, Pencil } from 'lucide-react'
 import { api, type EphemeralDraft } from '../../lib/api'
 import { Button } from '../../ui/Button'
@@ -64,9 +65,9 @@ function SessionSkillsModal({ sessionKey, agent, drafts, onClose, onChanged }: {
       <div className="w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-2xl bg-surface p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="mb-1 flex items-center gap-2">
           <GraduationCap size={18} style={{ color: 'var(--color-primary)' }} />
-          <h2 className="text-on-surface text-[1.05rem]" style={{ fontVariationSettings: '"wght" 600' }}>Skills taught this session</h2>
+          <h2 className="text-on-surface text-[1.0625rem]" style={fvs(600)}>Skills taught this session</h2>
         </div>
-        <p className="mb-4 text-on-surface-low text-[0.82rem]">
+        <p className="mb-4 text-on-surface-low text-[0.8125rem]">
           Keep any of these for later? Save to just this agent, to all agents, or forget it.
         </p>
         <div className="flex flex-col gap-3">
@@ -118,7 +119,7 @@ function DraftCard({ sessionKey, agent, draft, onChanged }: {
 
   if (done) {
     return (
-      <div className="rounded-lg bg-surface-container px-3 py-2 text-on-surface-low text-[0.8rem] flex items-center gap-2">
+      <div className="rounded-lg bg-surface-container px-3 py-2 text-on-surface-low text-[0.8125rem] flex items-center gap-2">
         <Check size={14} className="text-ok" /> {title} — {done}
       </div>
     )
@@ -129,17 +130,17 @@ function DraftCard({ sessionKey, agent, draft, onChanged }: {
       {editing ? (
         <>
           <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Skill title"
-            className="mb-2 h-8 w-full rounded-md bg-surface-high px-2.5 text-[0.85rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+            className="mb-2 h-8 w-full rounded-md bg-surface-high px-2.5 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
           <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={4} aria-label="Skill body"
-            className="mb-2 w-full rounded-md bg-surface-high px-2.5 py-1.5 text-[0.8rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+            className="mb-2 w-full rounded-md bg-surface-high px-2.5 py-1.5 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
         </>
       ) : (
         <div className="mb-2">
           <div className="flex items-center gap-1.5">
-            <span className="text-on-surface text-[0.9rem]" style={{ fontVariationSettings: '"wght" 500' }}>{title}</span>
+            <span className="text-on-surface text-[0.9375rem]" style={fvs(500)}>{title}</span>
             <button type="button" onClick={() => setEditing(true)} className="text-on-surface-low hover:text-on-surface" title="Edit"><Pencil size={12} /></button>
           </div>
-          <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap text-on-surface-low text-[0.78rem]">{body}</p>
+          <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap text-on-surface-low text-[0.75rem]">{body}</p>
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">

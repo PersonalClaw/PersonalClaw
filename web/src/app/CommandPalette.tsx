@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Search, CornerDownLeft, ArrowRight } from 'lucide-react'
+import { CornerDownLeft, ArrowRight } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { spring } from '../design/motion'
+import { SearchField } from '../ui/SearchField'
 
 export interface Command {
   id: string
@@ -83,16 +84,15 @@ export function CommandPalette({ commands }: { commands: Command[] }) {
             onClick={(e) => e.stopPropagation()}>
             {/* search row */}
             <div className="flex items-center gap-s border-b border-outline-variant/40 px-l h-14">
-              <Search size={17} className="shrink-0 text-on-surface-low" />
-              <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onKeyDown}
-                placeholder="Search pages and actions…"
-                className="min-w-0 flex-1 bg-transparent text-on-surface text-[0.9375rem] placeholder:text-on-surface-low outline-none" />
-              <kbd className="rounded-md bg-surface-high px-1.5 py-0.5 font-mono text-on-surface-low text-[0.7rem]">esc</kbd>
+              <SearchField variant="inline" inlineIconSize={17} clearable={false}
+                inputRef={inputRef} value={q} onChange={setQ} onKeyDown={onKeyDown}
+                placeholder="Search pages and actions…" ariaLabel="Search pages and actions"
+                trailingSlot={<kbd className="rounded-md bg-surface-high px-1.5 py-0.5 font-mono text-on-surface-low text-[0.75rem]">esc</kbd>} />
             </div>
             {/* results */}
             <div ref={listRef} className="max-h-[50vh] overflow-y-auto py-1.5">
               {results.length === 0 ? (
-                <div className="px-l py-6 text-center text-on-surface-low text-[0.875rem]">No matches for “{q}”.</div>
+                <div className="px-l py-6 text-center text-on-surface-low text-[0.8125rem]">No matches for “{q}”.</div>
               ) : results.map((c, i) => {
                 const on = i === active
                 const Icon = c.icon
@@ -101,15 +101,15 @@ export function CommandPalette({ commands }: { commands: Command[] }) {
                     className="flex w-full items-center gap-3 px-l py-2.5 text-left"
                     style={{ background: on ? 'var(--color-surface-high)' : undefined }}>
                     <Icon size={16} className="shrink-0" style={{ color: on ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
-                    <span className="flex-1 truncate text-on-surface text-[0.875rem]">{c.label}</span>
-                    {c.hint && <span className="shrink-0 text-on-surface-low text-[0.7rem]">{c.hint}</span>}
+                    <span className="flex-1 truncate text-on-surface text-[0.8125rem]">{c.label}</span>
+                    {c.hint && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{c.hint}</span>}
                     {on && <CornerDownLeft size={13} className="shrink-0 text-on-surface-low" />}
                   </button>
                 )
               })}
             </div>
             {/* footer hint */}
-            <div className="flex items-center gap-3 border-t border-outline-variant/40 px-l py-2 text-on-surface-low text-[0.7rem]">
+            <div className="flex items-center gap-3 border-t border-outline-variant/40 px-l py-2 text-on-surface-low text-[0.75rem]">
               <span className="inline-flex items-center gap-1"><ArrowRight size={11} className="rotate-90" /> navigate</span>
               <span className="inline-flex items-center gap-1"><CornerDownLeft size={11} /> select</span>
               <span className="ml-auto inline-flex items-center gap-1"><kbd className="rounded bg-surface-high px-1 font-mono">⌘K</kbd> toggle</span>

@@ -3,18 +3,25 @@ import { AnimatePresence, motion, useMotionValue, useMotionTemplate, useReducedM
 import { Loader2 } from 'lucide-react'
 import { cx } from './cx'
 import { spring, bounce, expr, exprHeavy } from '../design/motion'
+import { fvs } from '../design/fontWeight'
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
-type Size = 'sm' | 'md' | 'lg'
+type Variant = 'primary' | 'tonal' | 'secondary' | 'ghost' | 'danger'
+type Size = 'xs' | 'sm' | 'md' | 'lg'
 
 const variants: Record<Variant, string> = {
   primary: 'bg-primary text-on-primary hover:bg-primary-emphasis',
+  // tonal: the primary-tinted chip CTA (Material's tonal button) — the pattern
+  // pages kept hand-rolling as `bg-primary/15 text-primary hover:bg-primary/25`.
+  tonal: 'bg-primary/15 text-primary hover:bg-primary/25',
   secondary: 'bg-surface-high text-on-surface hover:bg-surface-highest',
   ghost: 'bg-transparent text-on-surface hover:bg-surface-high',
   danger: 'bg-danger text-on-danger hover:opacity-90',
 }
 
 const sizes: Record<Size, string> = {
+  // xs: dense in-panel chrome (cockpit banners, error retries, inline strips) —
+  // the tier whose absence made pages hand-roll <button>s.
+  xs: 'h-7 px-m text-[0.8125rem]',
   sm: 'h-8 px-l text-[0.8125rem]',
   md: 'h-10 px-xl text-[0.9375rem]',
   lg: 'h-12 px-2xl text-[1.0625rem]',
@@ -34,7 +41,7 @@ const sizes: Record<Size, string> = {
  *  hardcoded colors/px — all via tokens. */
 export function Button({
   children, variant = 'primary', size = 'md', shape = 'pill',
-  loading = false, className, onClick, disabled, type = 'button',
+  loading = false, className, onClick, disabled, type = 'button', title,
 }: {
   children: ReactNode
   variant?: Variant
@@ -42,9 +49,10 @@ export function Button({
   shape?: 'pill' | 'squircle'
   loading?: boolean
   className?: string
-  onClick?: () => void
+  onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void
   disabled?: boolean
   type?: 'button' | 'submit'
+  title?: string
 }) {
   const reduce = useReducedMotion()
   const ref = useRef<HTMLButtonElement>(null)
@@ -75,13 +83,14 @@ export function Button({
     <motion.button
       ref={ref}
       type={type}
+      title={title}
       onClick={onClick}
       disabled={off}
       onPointerMove={onMove}
       onPointerLeave={onLeave}
       whileTap={off ? undefined : { scale: pressScale, transition: spring.spatialFast }}
       whileHover={off ? undefined : { scale: hoverScale, transition: bounce.subtle }}
-      style={{ fontVariationSettings: '"wght" 470' }}
+      style={fvs(470)}
       className={cx(
         // whitespace-nowrap + shrink-0: a labelled pill must never wrap its text
         // or be squeezed below its content in a tight flex row.

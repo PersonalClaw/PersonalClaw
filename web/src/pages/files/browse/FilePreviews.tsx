@@ -67,7 +67,7 @@ export const CsvPreview = memo(function CsvPreview({ content, name }: { content:
       <table className="w-full border-collapse font-mono text-[0.8125rem]">
         <thead className="sticky top-0" style={{ background: 'var(--color-surface-high)' }}>
           <tr>{header.map((h, i) => (
-            <th key={i} className="whitespace-nowrap border-b border-outline/40 px-3 py-2 text-left text-on-surface-low text-[0.7rem] uppercase tracking-wide">{h}</th>
+            <th key={i} className="whitespace-nowrap border-b border-outline/40 px-3 py-2 text-left text-on-surface-low text-[0.75rem] uppercase tracking-wide">{h}</th>
           ))}</tr>
         </thead>
         <tbody>
@@ -78,7 +78,7 @@ export const CsvPreview = memo(function CsvPreview({ content, name }: { content:
           ))}
         </tbody>
       </table>
-      {body.length > 500 && <div className="border-t border-outline/25 py-2.5 text-center text-on-surface-low text-[0.7rem]">Showing 500 of {body.length} rows</div>}
+      {body.length > 500 && <div className="border-t border-outline/25 py-2.5 text-center text-on-surface-low text-[0.75rem]">Showing 500 of {body.length} rows</div>}
     </div>
   )
 })

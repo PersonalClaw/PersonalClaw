@@ -67,7 +67,7 @@ export function FileTree({ dirs, rootPath, activePath, gitStatuses, onOpenFile, 
   let shown = hideNames?.size ? entries.filter((e) => !hideNames.has(e.name)) : entries
   if (hidePrefixes?.size) shown = shown.filter((e) => ![...hidePrefixes].some((p) => e.name.startsWith(p)))
   if (hideNamesDeep?.size) shown = shown.filter((e) => !hideNamesDeep.has(e.name))
-  if (shown.length === 0) return <div className="px-m py-s text-on-surface-low text-[0.875rem]">{emptyLabel}</div>
+  if (shown.length === 0) return <div className="px-m py-s text-on-surface-low text-[0.8125rem]">{emptyLabel}</div>
   return (
     <div>
       {shown.map((e) => (
@@ -233,14 +233,14 @@ function TreeNode({ entry, depth, dirs, activePath, gitStatuses, onOpenFile, art
               ? (open ? <ChevronDown size={15} className="shrink-0 text-on-surface-low" /> : <ChevronRight size={15} className="shrink-0 text-on-surface-low" />)
               : <span className="w-[15px] shrink-0" />}
             <Icon size={16} className="shrink-0" style={{ color: entry.is_dir ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
-            <span className="truncate text-[0.875rem]" style={{ color: isActive ? 'var(--color-on-surface)' : undefined }}>{entry.name}</span>
+            <span className="truncate text-[0.8125rem]" style={{ color: isActive ? 'var(--color-on-surface)' : undefined }}>{entry.name}</span>
             {!entry.is_dir && artifactPaths.has(entry.path) && (
               <span className="ml-1 size-1.5 shrink-0 rounded-full" style={{ background: 'var(--color-primary)' }} title="Saved as an artifact" />
             )}
             {badge && (
               // On row hover/focus the "⋯" actions button overlays the right edge —
               // shift the git badge left so it stays visible instead of being covered.
-              <span className="ml-auto shrink-0 rounded px-1 text-[0.625rem] font-semibold leading-tight transition-[margin] group-hover/row:mr-5 group-focus-within/row:mr-5"
+              <span className="ml-auto shrink-0 rounded px-1 text-[0.75rem] font-semibold leading-tight transition-[margin] group-hover/row:mr-5 group-focus-within/row:mr-5"
                 style={{ color: badge.tone, border: `1px solid color-mix(in srgb, ${badge.tone} 40%, transparent)` }} title={gitStatusTitle(gitStatuses[entry.path])}>
                 {badge.label}
               </span>

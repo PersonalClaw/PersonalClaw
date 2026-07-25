@@ -80,7 +80,7 @@ export function ListRow({ index = 0, onClick, children, accent }: {
 }
 
 export function Loading() {
-  return <div className="text-on-surface-low text-[0.875rem]">Loading…</div>
+  return <div className="text-on-surface-low text-[0.8125rem]">Loading…</div>
 }
 
 /** A single shimmering placeholder block. Use to render the SHAPE of content while

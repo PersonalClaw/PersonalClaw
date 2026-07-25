@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, type ActionProvider, type PromptItem, type PromptVariable, type WorkflowItem } from '../../lib/api'
 import { Combobox } from '../../ui/Combobox'
-import { Field, TextArea } from '../tasks/formControls'
+import { Field, TextArea } from '../../ui/forms'
 import { schemaProps, SchemaField, type WidgetMap } from '../tools/schema'
 import { actionIcon } from './triggerMeta'
 
@@ -63,10 +63,10 @@ export function ActionConfig({ providers, provider, config, onProvider, onConfig
         <>
           {vars.length > 0 && (
             <div className="rounded-md bg-surface-container/60 px-m py-2">
-              <div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide mb-1.5">Available variables</div>
+              <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">Available variables</div>
               <div className="flex flex-wrap gap-1.5">
                 {vars.map((v) => (
-                  <span key={v} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center font-mono text-on-surface-var text-[0.7rem]" title="Use this in any template field below">{v}</span>
+                  <span key={v} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center font-mono text-on-surface-var text-[0.75rem]" title="Use this in any template field below">{v}</span>
                 ))}
               </div>
             </div>
@@ -134,7 +134,7 @@ function PromptVarsFields({ prompts, promptId, vars, onVars }: {
 
   return (
     <div className="rounded-md border border-outline-variant/40 bg-surface-container/40 px-m py-3 flex flex-col gap-m">
-      <div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">
+      <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">
         {selected?.name} variables
       </div>
       {declared.map((v) => (
@@ -142,7 +142,7 @@ function PromptVarsFields({ prompts, promptId, vars, onVars }: {
           {v.type === 'select' && v.options && v.options.length > 0 ? (
             <select
               value={valOf(v)} onChange={(e) => setVar(v.name, e.target.value)}
-              className="w-full rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface text-[0.875rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]">
+              className="w-full rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]">
               {!v.required && <option value="">—</option>}
               {v.options.map((o) => <option key={o} value={o}>{o}</option>)}
             </select>
@@ -151,7 +151,7 @@ function PromptVarsFields({ prompts, promptId, vars, onVars }: {
           ) : (
             <input
               value={valOf(v)} onChange={(e) => setVar(v.name, e.target.value)} aria-label={v.name}
-              className="w-full rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface text-[0.875rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+              className="w-full rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
           )}
         </Field>
       ))}

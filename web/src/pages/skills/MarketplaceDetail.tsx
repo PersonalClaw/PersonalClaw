@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { withWeight } from '../../design/fontWeight'
 import { Download, Check, Loader2, FileText, FileDigit, ShieldAlert, ShieldX } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
@@ -59,7 +60,7 @@ export function MarketplaceDetail({ result, installed, onInstalled }: {
       {blocked && (
         <div role="alert" className="rounded-lg px-m py-3 flex flex-col gap-2"
           style={{ background: `color-mix(in srgb, var(--color-${blocked.needsConsent ? 'warning' : 'danger'}) 12%, transparent)` }}>
-          <div className="flex items-center gap-2 text-[0.875rem]" style={{ color: `var(--color-${blocked.needsConsent ? 'warning' : 'danger'})`, fontVariationSettings: '"wght" 600' }}>
+          <div className="flex items-center gap-2 text-[0.8125rem]" style={withWeight({ color: `var(--color-${blocked.needsConsent ? 'warning' : 'danger'})` }, 600)}>
             {blocked.needsConsent ? <ShieldAlert size={16} /> : <ShieldX size={16} />}
             {blocked.needsConsent
               ? `Security scan flagged ${blocked.scan?.findings?.length ?? 0} warning(s)`
@@ -104,7 +105,7 @@ export function MarketplaceDetail({ result, installed, onInstalled }: {
                       ? <FileDigit size={13} className="text-on-surface-low shrink-0" aria-label="binary file" />
                       : <FileText size={13} className="text-on-surface-low shrink-0" />}
                     <span className="flex-1 truncate font-mono text-on-surface-var text-[0.75rem]">{f.path}</span>
-                    {f.binary && <span className="shrink-0 rounded bg-surface-high px-1.5 text-on-surface-low text-[0.6rem] uppercase tracking-wide">binary</span>}
+                    {f.binary && <span className="shrink-0 rounded bg-surface-high px-1.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide">binary</span>}
                   </div>
                 ))}
               </div>
@@ -117,5 +118,5 @@ export function MarketplaceDetail({ result, installed, onInstalled }: {
 }
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div><div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
+  return <div><div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
 }

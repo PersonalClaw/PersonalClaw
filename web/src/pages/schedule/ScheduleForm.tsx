@@ -4,7 +4,7 @@ import type { ScheduleJob, ScheduleKind, ScheduleExecMode } from '../../lib/api'
 import { useAgentCatalog, useModelCatalog } from '../../lib/agents'
 import { Combobox, type ComboOption } from '../../ui/Combobox'
 import { Toggle } from '../../ui/Toggle'
-import { Field, TextInput, TextArea, Segmented, ChipInput } from '../tasks/formControls'
+import { Field, TextInput, TextArea, Segmented, ChipInput } from '../../ui/forms'
 import { SoonTag } from '../tasks/taskMeta'
 import {
   KINDS, EXEC_MODES, deriveKind, deriveMode, kindMeta, modeMeta,
@@ -211,7 +211,7 @@ function CheckRow({ label, hint, checked, onChange }: { label: string; hint: str
         <Toggle on={checked} onChange={onChange} label={label} size="sm" />
       </span>
       <span>
-        <span className="block text-on-surface text-[0.875rem]">{label}</span>
+        <span className="block text-on-surface text-[0.8125rem]">{label}</span>
         <span className="block text-on-surface-low text-[0.75rem]">{hint}</span>
       </span>
     </label>
@@ -237,7 +237,7 @@ function CronField({ value, onChange }: { value: string; onChange: (v: string) =
     <div className="flex flex-col gap-s">
       <input value={value} onChange={(e) => onChange(e.target.value)} placeholder="0 9 * * *"
         name="cron-expression" aria-label="Cron expression (minute hour day-of-month month day-of-week)"
-        className={`w-full h-10 rounded-md bg-surface-container px-m font-mono text-on-surface text-[0.875rem] outline-none focus:ring-2 ${valid ? 'focus:ring-primary/40' : 'ring-1 ring-danger/50'}`} />
+        className={`w-full h-10 rounded-md bg-surface-container px-m font-mono text-on-surface text-[0.8125rem] outline-none focus:ring-2 ${valid ? 'focus:ring-primary/40' : 'ring-1 ring-danger/50'}`} />
       <div className="flex flex-wrap gap-1.5">
         {CRON_PRESETS.map((p) => (
           <button key={p.expr} type="button" onClick={() => onChange(p.expr)}

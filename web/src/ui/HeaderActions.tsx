@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Check, ChevronDown, MoreHorizontal, type LucideIcon } from 'lucide-react'
 import { cx } from './cx'
 import { spring } from '../design/motion'
+import { fvs, withWeight } from '../design/fontWeight'
 import { Popover, MenuRow } from './Popover'
 import { Segmented, type SegOption } from './Segmented'
 
@@ -111,6 +112,15 @@ export function HeaderActions({ children, className }: { children: ReactNode; cl
 
   const [tier, setTier] = useState<Tier>('full')
   const [visibleIds, setVisibleIds] = useState<Set<number> | null>(null)
+
+  // The probes are measurement-only chrome: aria-hidden alone still leaves
+  // their real <button> children in the tab order (axe: aria-hidden-focus —
+  // a keyboard user could focus an invisible control). `inert` removes the
+  // whole subtree from focus/AT without affecting layout, so scrollWidth
+  // stays truthful. Imperative because React 18 has no boolean `inert` prop.
+  useEffect(() => {
+    for (const p of [probeFull, probeText, probeIcon]) p.current?.setAttribute('inert', '')
+  }, [])
   // Width cap for the rare over-full row: the TopBar right slot is `shrink-0`, so without
   // a cap the rail grows PAST the header's content box (under the floating shell corner)
   // when even the always-visible controls + `…` don't fit. null = fits (no cap, right-
@@ -397,7 +407,7 @@ export function HeaderControl({
         active ? variants.secondary : variants[eff],
         className,
       )}
-      style={{ fontVariationSettings: '"wght" 470' }}
+      style={fvs(470)}
     >
       {showIcon && <Icon size={16} />}
       {showLabel && <span className="whitespace-nowrap">{label}</span>}
@@ -528,7 +538,7 @@ export function HeaderModePill({ options, value, onChange, ariaLabel, disabled }
           iconOnly ? 'size-10' : 'h-10 px-l',
           open ? 'bg-surface-highest text-on-surface' : 'bg-surface-high text-on-surface hover:bg-surface-highest',
         )}
-        style={{ fontVariationSettings: '"wght" 470' }}>
+        style={fvs(470)}>
         {ActiveIcon && <ActiveIcon size={16} className="shrink-0" />}
         {!iconOnly && <span className="whitespace-nowrap">{label}</span>}
         {!iconOnly && <ChevronDown size={13} className="shrink-0 -mr-1 text-on-surface-low transition-transform" style={{ transform: open ? 'rotate(180deg)' : 'none' }} />}
@@ -564,7 +574,7 @@ export function HeaderModePill({ options, value, onChange, ariaLabel, disabled }
                       title={o.title ?? o.label}
                       className="flex items-center gap-s w-full rounded-md px-m h-9 text-left text-[0.8125rem] transition-colors"
                       style={on
-                        ? { background: 'var(--color-primary)', color: 'var(--color-on-primary)', fontVariationSettings: '"wght" 550' }
+                        ? withWeight({ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }, 550)
                         : { color: 'var(--color-on-surface)' }}
                       onMouseEnter={(e) => { if (!on) e.currentTarget.style.background = 'var(--color-surface-high)' }}
                       onMouseLeave={(e) => { if (!on) e.currentTarget.style.background = 'transparent' }}>

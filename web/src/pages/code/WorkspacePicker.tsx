@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Folder, FolderPlus, CornerLeftUp, Loader2, Check, GitBranch, Search, X } from 'lucide-react'
+import { Folder, FolderPlus, CornerLeftUp, Loader2, Check, GitBranch } from 'lucide-react'
 import { Modal } from '../../ui/Modal'
+import { SearchField } from '../../ui/SearchField'
 import { Button } from '../../ui/Button'
 import { api } from '../../lib/api'
 
@@ -132,8 +133,7 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
         {/* in-dir filter — only worth showing once the list is long enough to scan */}
         {!loading && dirs.length > 8 && (
           <div className="flex items-center gap-2 rounded-md bg-surface-high px-2.5 py-1.5">
-            <Search size={14} className="shrink-0 text-on-surface-low" />
-            <input value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter folders"
+            <SearchField variant="inline" size="md" value={filter} onChange={setFilter} ariaLabel="Filter folders"
               placeholder={`Filter ${dirs.length} folders…`} spellCheck={false} autoCapitalize="off" autoCorrect="off"
               onKeyDown={(e) => {
                 // Enter opens (navigates into) the first matching folder — the natural
@@ -141,12 +141,7 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
                 // own Enter-to-jump). Escape clears the filter.
                 if (e.key === 'Enter' && shownDirs.length > 0) { e.preventDefault(); void browse(shownDirs[0].path) }
                 else if (e.key === 'Escape' && filter) { e.preventDefault(); setFilter('') }
-              }}
-              className="min-w-0 flex-1 bg-transparent text-[0.8125rem] text-on-surface outline-none placeholder:text-on-surface-low" />
-            {filter && (
-              <button type="button" onClick={() => setFilter('')} aria-label="Clear filter"
-                className="shrink-0 text-on-surface-low hover:text-on-surface"><X size={13} /></button>
-            )}
+              }} />
           </div>
         )}
 
@@ -170,7 +165,7 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
                     <Folder size={15} className="shrink-0 text-on-surface-low" />
                     <span className="truncate">{d.name}</span>
                     {d.is_repo && (
-                      <span className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[0.65rem] font-medium"
+                      <span className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[0.75rem] font-medium"
                         style={{ color: 'var(--color-primary)', border: '1px solid color-mix(in srgb, var(--color-primary) 40%, transparent)' }}
                         title="This folder is a git repository">
                         <GitBranch size={10} /> repo
@@ -182,7 +177,7 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
                       action from touch users entirely (no hover, no easy focus), leaving
                       the footer "Use this folder" as their only path. */}
                   <button type="button" onClick={() => onPick(d.path)}
-                    className="shrink-0 rounded px-1.5 py-0.5 text-[0.7rem] text-on-surface-low opacity-50 transition-opacity hover:bg-surface-highest hover:text-primary hover:opacity-100 focus-visible:opacity-100 group-hover/row:opacity-100"
+                    className="shrink-0 rounded px-1.5 py-0.5 text-[0.75rem] text-on-surface-low opacity-50 transition-opacity hover:bg-surface-highest hover:text-primary hover:opacity-100 focus-visible:opacity-100 group-hover/row:opacity-100"
                     title={mode === 'brownfield' ? `Use ${d.name} as the codebase` : `Use ${d.name} as the project home`}>
                     Use
                   </button>

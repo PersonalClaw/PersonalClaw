@@ -149,6 +149,13 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
           liveMarkdown,
           liveMarkdownTheme,
           EditorView.lineWrapping,
+          // The accessible name belongs on CM's contenteditable (role=textbox)
+          // itself — on the host div (role-less) aria-label is a prohibited
+          // attribute and the textbox stays nameless (axe: aria-prohibited-attr
+          // + aria-input-field-name). Static label, not the placeholder: the
+          // placeholder is compartment-swapped at runtime but extensions here
+          // build once.
+          EditorView.contentAttributes.of({ 'aria-label': 'Message input' }),
           placeholderComp.current.of(cmPlaceholder(placeholder ?? '')),
           sendKeys,
           updateListener,
@@ -270,7 +277,7 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
 
   return (
     <div className="relative w-full">
-      <div ref={hostRef} className="w-full overflow-y-auto px-s pt-1" aria-label="Message input" />
+      <div ref={hostRef} className="w-full overflow-y-auto px-s pt-1" />
       {(onMentionFile || onMentionKnowledge) && (
         <MentionMenu query={mention?.query ?? ''} anchorRef={hostRef} open={!!mention} project={mentionProject}
           leading={mention?.at === 0}

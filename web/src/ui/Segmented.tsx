@@ -1,8 +1,10 @@
 import { useId, useLayoutEffect, useRef, useState } from 'react'
+import { withWeight } from '../design/fontWeight'
 import { motion, useReducedMotion } from 'framer-motion'
 import { ChevronDown } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { spring, bounce, expr } from '../design/motion'
+import { fvs } from '../design/fontWeight'
 import { Popover, MenuRow } from './Popover'
 
 export interface SegOption { key: string; label?: string; tone?: string; icon?: LucideIcon; title?: string }
@@ -122,8 +124,8 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
             whileTap={disabled ? undefined : { scale: pressScale }}
             transition={spring.spatialFast}
             onClick={() => onChange(o.key)} title={o.title ?? o.label}
-            className={`relative inline-flex items-center justify-center gap-1.5 rounded-pill transition-colors whitespace-nowrap ${iconOnly ? (sm ? 'size-6' : 'size-8') : (sm ? 'h-6 px-2.5 text-[0.6875rem]' : 'h-8 px-m text-[0.8125rem]')}`}
-            style={{ color: fg, fontVariationSettings: on ? '"wght" 550' : undefined }}>
+            className={`relative inline-flex items-center justify-center gap-1.5 rounded-pill transition-colors whitespace-nowrap ${iconOnly ? (sm ? 'size-6' : 'size-8') : (sm ? 'h-6 px-2.5 text-[0.75rem]' : 'h-8 px-m text-[0.8125rem]')}`}
+            style={on ? withWeight({ color: fg }, 550) : { color: fg }}>
             {on && (
               <motion.span
                 layoutId={`seg-${groupId}`}
@@ -180,8 +182,8 @@ function CollapsedSegmented({ options, value, onChange, sm, disabled, ariaLabel 
       placement="bottom"
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} disabled={disabled} aria-label={ariaLabel} aria-expanded={open}
-          className={`inline-flex items-center gap-1.5 rounded-pill bg-surface-container text-on-surface transition-colors hover:bg-surface-high ${disabled ? 'opacity-50 pointer-events-none' : ''} ${sm ? 'h-6 px-2.5 text-[0.6875rem]' : 'h-8 px-m text-[0.8125rem]'}`}
-          style={{ fontVariationSettings: '"wght" 550' }}>
+          className={`inline-flex items-center gap-1.5 rounded-pill bg-surface-container text-on-surface transition-colors hover:bg-surface-high ${disabled ? 'opacity-50 pointer-events-none' : ''} ${sm ? 'h-6 px-2.5 text-[0.75rem]' : 'h-8 px-m text-[0.8125rem]'}`}
+          style={fvs(550)}>
           {ActiveIcon && <ActiveIcon size={sm ? 12 : 15} className="shrink-0" />}
           <span className="truncate">{active?.label ?? active?.key}</span>
           <ChevronDown size={sm ? 12 : 14} className="shrink-0 text-on-surface-low" />

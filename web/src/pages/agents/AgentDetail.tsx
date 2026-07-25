@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { Pencil, Trash2, Check, X, Star, Lock, Cpu, ShieldCheck, ChevronDown } from 'lucide-react'
 import { Button } from '../../ui/Button'
+import { TextArea } from '../../ui/forms'
+import { FormFooter } from '../../ui/FormFooter'
 import { Combobox } from '../../ui/Combobox'
 import { Markdown } from '../../ui/Markdown'
 import { confirmDelete } from '../../ui/dialog'
@@ -48,10 +51,10 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
       <div className="flex flex-col gap-l">
         <AgentForm draft={draft} onChange={setDraft} nameLocked compact />
         {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
-        <div className="sticky bottom-0 -mx-l px-l py-3 bg-surface/95 border-t border-outline-variant/40 flex justify-end gap-s">
+        <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(agent)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} disabled={saving}><Check size={15} /> {saving ? 'Saving…' : 'Save'}</Button>
-        </div>
+        </FormFooter>
       </div>
     )
   }
@@ -85,7 +88,7 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
       {agent.description && <p className="text-on-surface text-[0.9375rem] leading-relaxed">{agent.description}</p>}
 
       {agent.system_prompt && (
-        <Section label="System prompt"><div className="rounded-md bg-surface-container px-m py-2 max-h-72 overflow-y-auto text-on-surface-var text-[0.875rem] leading-relaxed"><Markdown>{agent.system_prompt}</Markdown></div></Section>
+        <Section label="System prompt"><div className="rounded-md bg-surface-container px-m py-2 max-h-72 overflow-y-auto text-on-surface-var text-[0.8125rem] leading-relaxed"><Markdown>{agent.system_prompt}</Markdown></div></Section>
       )}
 
       <Caps label="Skills" items={agent.skills} />
@@ -143,12 +146,11 @@ function RoutingNotesEditor({ agentName }: { agentName: string }) {
   }
   return (
     <Section label="Routing notes">
-      <p className="mb-1.5 text-on-surface-low text-[0.78rem]">A short "when to use this agent" note the auto-router reads to pick between agents.</p>
+      <p className="mb-1.5 text-on-surface-low text-[0.75rem]">A short "when to use this agent" note the auto-router reads to pick between agents.</p>
       {content === null ? <Skeleton className="h-16 w-full rounded-md" /> : (
         <div className="flex flex-col gap-2">
-          <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={3} aria-label="Routing notes"
-            placeholder="e.g. Use for deep code reviews and multi-file refactors; prefers a thorough, direct style."
-            className="w-full resize-y rounded-md bg-surface-container px-3 py-2 text-[0.85rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+          <TextArea value={draft} onChange={setDraft} rows={3} size="sm" ariaLabel="Routing notes"
+            placeholder="e.g. Use for deep code reviews and multi-file refactors; prefers a thorough, direct style." />
           <div className="flex items-center gap-2">
             <Button size="sm" onClick={save} disabled={!dirty || busy}><Check size={14} /> {busy ? 'Saving…' : 'Save notes'}</Button>
             {saved && <span className="text-ok text-[0.75rem]">Saved ✓</span>}
@@ -165,10 +167,10 @@ function AgentMcpView({ agentName }: { agentName: string }) {
   if (servers === undefined) return <Section label="MCP servers"><Skeleton className="h-6 w-40 rounded-pill" /></Section>
   return (
     <Section label={`MCP servers · ${servers.length}`}>
-      {servers.length === 0 ? <p className="text-on-surface-low text-[0.8rem] italic">No MCP servers scoped to this agent.</p> : (
+      {servers.length === 0 ? <p className="text-on-surface-low text-[0.8125rem] italic">No MCP servers scoped to this agent.</p> : (
         <div className="flex flex-wrap gap-1.5">
           {servers.map((s) => (
-            <span key={s.name} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-6 text-[0.72rem]" style={{ color: s.enabled ? 'var(--color-on-surface-var)' : 'var(--color-on-surface-low)' }}>
+            <span key={s.name} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-6 text-[0.75rem]" style={{ color: s.enabled ? 'var(--color-on-surface-var)' : 'var(--color-on-surface-low)' }}>
               <span className="size-1.5 rounded-pill" style={{ background: s.enabled ? 'var(--color-ok)' : 'var(--color-outline)' }} />{s.name}
             </span>
           ))}
@@ -185,13 +187,13 @@ function AgentHooksView() {
   const events = Object.entries(hooks).filter(([, hs]) => hs.length > 0)
   return (
     <Section label="Lifecycle hooks">
-      {events.length === 0 ? <p className="text-on-surface-low text-[0.8rem] italic">No lifecycle hooks configured.</p> : (
+      {events.length === 0 ? <p className="text-on-surface-low text-[0.8125rem] italic">No lifecycle hooks configured.</p> : (
         <div className="flex flex-col gap-2">
           {events.map(([event, hs]) => (
             <div key={event}>
-              <div className="mb-0.5 text-on-surface-var text-[0.72rem]" style={{ fontVariationSettings: '"wght" 600' }}>{event}</div>
+              <div className="mb-0.5 text-on-surface-var text-[0.75rem]" style={fvs(600)}>{event}</div>
               {hs.map((h, i) => (
-                <div key={i} className="rounded-md bg-surface-container px-2.5 py-1.5 font-mono text-[0.72rem] text-on-surface-low overflow-x-auto" style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
+                <div key={i} className="rounded-md bg-surface-container px-2.5 py-1.5 font-mono text-[0.75rem] text-on-surface-low overflow-x-auto" style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
                   {h.matcher && <span className="text-primary">[{h.matcher}] </span>}{h.command}{h.source && <span className="text-on-surface-low/60"> · {h.source}</span>}
                 </div>
               ))}
@@ -222,7 +224,7 @@ function ReservedModelEditor({ agent, onSaved }: { agent: SavedAgent; onSaved: (
 
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">Model</div>
+      <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Model</div>
       <div className="flex items-center gap-s">
         <div className="min-w-0 flex-1"><Combobox options={opts} value={model} onChange={setModel} placeholder="Auto — use chat binding" emptyText="No active chat models" /></div>
         {dirty && <Button size="sm" onClick={save} disabled={saving}><Check size={14} /> {saving ? 'Saving…' : 'Save'}</Button>}
@@ -268,5 +270,5 @@ function Caps({ label, items }: { label: string; items?: string[] }) {
   )
 }
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div><div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
+  return <div><div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
 }

@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
 import { ListTree, FileText, Link2, MessageSquare, ExternalLink, MessagesSquare, ArrowUp, Loader2, Bot, Check, AlertTriangle } from 'lucide-react'
 import { Markdown } from '../../ui/Markdown'
 import { spring } from '../../design/motion'
+import { SlotEmptyState } from '../dashboard/widgets/kit'
 import type { ChatActivity, SubagentCard } from './chatTypes'
 
 type Tab = 'index' | 'files' | 'links' | 'subagents' | 'side'
@@ -74,10 +76,10 @@ export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = 
                   ? 'bg-surface text-on-surface shadow-[0_1px_3px_rgb(0_0_0/0.08)]'
                   : 'bg-transparent text-on-surface-low'
               }`}
-              style={{ fontVariationSettings: '"wght" 470' }}>
+              style={fvs(470)}>
               <t.icon size={13} /> {t.label}
               {t.count > 0 && (
-                <span className={`rounded-pill px-[5px] text-[0.65rem] tabular-nums ${
+                <span className={`rounded-pill px-[5px] text-[0.75rem] tabular-nums ${
                   tab === t.key ? 'bg-primary/14 text-primary' : 'bg-surface-highest'
                 }`}>{t.count}</span>
               )}
@@ -116,7 +118,7 @@ export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = 
                     <FileText size={14} className="shrink-0 text-on-surface-low" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-mono text-on-surface text-[0.8125rem]">{f.name}</span>
-                      <span className="block truncate text-on-surface-low text-[0.7rem]">{f.path}</span>
+                      <span className="block truncate text-on-surface-low text-[0.75rem]">{f.path}</span>
                     </span>
                   </motion.button>
                 ))}
@@ -133,7 +135,7 @@ export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = 
                     <Link2 size={14} className="shrink-0 text-on-surface-low" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-on-surface text-[0.8125rem]">{l.label}</span>
-                      <span className="block truncate text-on-surface-low text-[0.7rem]">{l.url}</span>
+                      <span className="block truncate text-on-surface-low text-[0.75rem]">{l.url}</span>
                     </span>
                     <ExternalLink size={12} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100" />
                   </motion.a>
@@ -156,11 +158,12 @@ export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = 
 // active tab shows its label; inactive tabs are icon-only (with a tooltip) so all
 // four + the close button fit comfortably in the ~300px header. A real role="tab"
 
+/** Panel-slot empty — the canonical SlotEmptyState (patterns.md: slot-empty, not
+ *  page-empty), centered in the tab panel's space. */
 function Empty({ icon: Icon, text }: { icon: typeof ListTree; text: string }) {
   return (
-    <div className="flex flex-col items-center gap-2 px-4 py-10 text-center text-on-surface-low">
-      <Icon size={20} className="opacity-40" />
-      <span className="text-[0.8125rem]">{text}</span>
+    <div className="flex justify-center px-4 py-10">
+      <SlotEmptyState icon={Icon}>{text}</SlotEmptyState>
     </div>
   )
 }
@@ -182,8 +185,8 @@ function SubagentRow({ sub, index = 0 }: { sub: SubagentCard; index?: number }) 
           {status === 'running' ? <Loader2 size={14} className="animate-spin" /> : failed ? <AlertTriangle size={14} /> : <Check size={14} />}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-on-surface text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 500' }} title={sub.task}>{sub.task || '(task)'}</span>
-          <span className="block truncate text-on-surface-low text-[0.7rem]">
+          <span className="block truncate text-on-surface text-[0.8125rem]" style={fvs(500)} title={sub.task}>{sub.task || '(task)'}</span>
+          <span className="block truncate text-on-surface-low text-[0.75rem]">
             {sub.agent || 'subagent'}
             {status === 'running' && sub.lastTool ? ` · ${sub.lastTool}` : ''}
             {sub.done && sub.elapsed !== undefined ? ` · ${sub.elapsed.toFixed(1)}s` : ''}
@@ -191,11 +194,11 @@ function SubagentRow({ sub, index = 0 }: { sub: SubagentCard; index?: number }) 
           </span>
         </span>
       </div>
-      {failed && <div className="mt-1.5 text-[0.7rem] text-danger">{sub.error}</div>}
+      {failed && <div className="mt-1.5 text-[0.75rem] text-danger">{sub.error}</div>}
       {sub.done && !failed && sub.result && (
         <div className="mt-1.5">
           <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
-            className="text-[0.7rem] text-on-surface-low hover:text-on-surface-var transition-colors">
+            className="text-[0.75rem] text-on-surface-low hover:text-on-surface-var transition-colors">
             {open ? 'Hide result' : 'Show result'}
           </button>
           {open && (

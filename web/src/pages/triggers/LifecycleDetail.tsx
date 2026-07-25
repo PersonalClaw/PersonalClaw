@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Pencil, Trash2, Check, X, FlaskConical, Loader2 } from 'lucide-react'
 import { Button } from '../../ui/Button'
+import { FormFooter } from '../../ui/FormFooter'
 import { confirmDelete } from '../../ui/dialog'
 import { api, type HookItem, type ActionProvider } from '../../lib/api'
-import { Field, TextInput } from '../tasks/formControls'
+import { Field, TextInput } from '../../ui/forms'
 import { Combobox } from '../../ui/Combobox'
 import { Toggle } from '../../ui/Toggle'
 import { ActionConfig, seedActionConfig } from './ActionConfig'
@@ -76,10 +77,10 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
         </Field>
         <ActionConfig providers={providers} provider={provider} config={config} onProvider={pickProvider} onConfig={setConfig} vars={em.vars} />
         {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
-        <div className="sticky bottom-0 -mx-l px-l py-3 bg-surface/95 border-t border-outline-variant/40 flex justify-end gap-s">
+        <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} disabled={saving || !name.trim()}><Check size={15} /> {saving ? 'Saving…' : 'Save'}</Button>
-        </div>
+        </FormFooter>
       </div>
     )
   }
@@ -111,7 +112,7 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
       </Section>
 
       <Section label="Stats">
-        <span className="text-on-surface-var text-[0.875rem]">Ran {hook.run_count}× · last {relPast(hook.last_run)}{hook.last_status ? ` · ${hook.last_status}` : ''} · timeout {hook.timeout}s</span>
+        <span className="text-on-surface-var text-[0.8125rem]">Ran {hook.run_count}× · last {relPast(hook.last_run)}{hook.last_status ? ` · ${hook.last_status}` : ''} · timeout {hook.timeout}s</span>
       </Section>
 
       <Section label="Used by">
@@ -124,5 +125,5 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
 }
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div><div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
+  return <div><div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
 }

@@ -6,6 +6,7 @@ import { PanelHeader, Section, Row, Toggle, SavedToast } from './settingsUI'
 import { FormSkeleton } from '../../ui/ListScaffold'
 import { Markdown } from '../../ui/Markdown'
 import { confirm } from '../../ui/dialog'
+import { fvs } from '../../design/fontWeight'
 
 /** Updates — current version, available updates, auto-update toggle, and the
  *  rendered changelog. Backed by /api/update/check + /api/changelog + POST
@@ -76,30 +77,30 @@ export function UpdatesPanel() {
             <div className="min-w-0 flex-1">
               {info.available ? (
                 <>
-                  <div className="text-on-surface text-[0.9rem]" style={{ fontVariationSettings: '"wght" 550' }}>Update available{info.latest ? ` — ${info.latest}` : ''}</div>
-                  <div className="text-on-surface-low text-[0.78rem]">
+                  <div className="text-on-surface text-[0.9375rem]" style={fvs(550)}>Update available{info.latest ? ` — ${info.latest}` : ''}</div>
+                  <div className="text-on-surface-low text-[0.75rem]">
                     {info.changes || 'A new version is ready to install.'}
                     {isGit && typeof info.commits_behind === 'number' && info.commits_behind > 0 ? ` (${info.commits_behind} commit${info.commits_behind === 1 ? '' : 's'} behind)` : ''}
                   </div>
                 </>
               ) : (
-                <div className="flex items-center gap-1.5 text-[0.9rem]" style={{ color: 'var(--color-success)' }}>
+                <div className="flex items-center gap-1.5 text-[0.9375rem]" style={{ color: 'var(--color-success)' }}>
                   <CheckCircle2 size={15} /> <span className="text-on-surface">{info.checked ? 'Up to date' : 'No update check yet'}</span>
                 </div>
               )}
-              <div className="text-on-surface-low mt-0.5 text-[0.7rem]">Install type: {kindLabel}{info.current ? ` · v${info.current}` : ''}</div>
+              <div className="text-on-surface-low mt-0.5 text-[0.75rem]">Install type: {kindLabel}{info.current ? ` · v${info.current}` : ''}</div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <Button busy={checking} onClick={check} label="Check"><RefreshCw size={14} /> Check</Button>
               {info.available && canApplyInApp && <Button busy={applying} primary onClick={apply} label="Update"><DownloadCloud size={14} /> Update</Button>}
             </div>
           </div>
-          {msg && <div className="mt-2 text-on-surface-low text-[0.78rem]">{msg}</div>}
+          {msg && <div className="mt-2 text-on-surface-low text-[0.75rem]">{msg}</div>}
 
           {/* Container: no in-place apply — show the exact pull+recreate commands. */}
           {isContainer && info.available && (
             <div className="mt-3 rounded-md bg-surface-high px-3 py-2">
-              <div className="text-on-surface-low mb-1 text-[0.72rem]">Update this container install by pulling the new image and recreating:</div>
+              <div className="text-on-surface-low mb-1 text-[0.75rem]">Update this container install by pulling the new image and recreating:</div>
               <pre className="overflow-auto text-[0.75rem] leading-relaxed text-on-surface"><code>{(info.instructions?.length ? info.instructions : ['docker compose -f deploy/compose/compose.yaml pull', 'docker compose -f deploy/compose/compose.yaml up -d']).join('\n')}</code></pre>
             </div>
           )}
@@ -130,7 +131,7 @@ export function UpdatesPanel() {
           ? <div className="max-h-96 overflow-auto rounded-lg bg-surface-container px-4 py-3 text-[0.8125rem]">
               <Markdown>{changelog}</Markdown>
             </div>
-          : <p className="text-on-surface-low text-[0.8rem] italic">No changelog available.</p>}
+          : <p className="text-on-surface-low text-[0.8125rem] italic">No changelog available.</p>}
       </Section>
     </div>
   )

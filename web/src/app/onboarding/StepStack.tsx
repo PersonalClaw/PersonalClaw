@@ -1,4 +1,5 @@
 import { forwardRef } from 'react'
+import { withWeight } from '../../design/fontWeight'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Check } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -59,12 +60,12 @@ export const StepRow = forwardRef<HTMLDivElement, {
         {/* title / summary */}
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-s">
-            <span className="text-on-surface" style={{ fontVariationSettings: '"wght" 600', fontSize: active ? '1.0625rem' : '0.9375rem' }}>{title}</span>
+            <span className="text-on-surface" style={withWeight({ fontSize: active ? '1.0625rem' : '0.9375rem' }, 600)}>{title}</span>
             {!active && <span className="text-on-surface-low text-[0.75rem]">Step {index + 1}</span>}
           </div>
           <AnimatePresence initial={false} mode="wait">
             {active && subtitle
-              ? <motion.p key="sub" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mt-0.5 text-on-surface-low text-[0.875rem]">{subtitle}</motion.p>
+              ? <motion.p key="sub" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mt-0.5 text-on-surface-low text-[0.8125rem]">{subtitle}</motion.p>
               : done && doneSummary
                 ? <motion.p key="done" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-0.5 text-[0.8125rem]" style={{ color: green }}>{doneSummary}</motion.p>
                 : null}

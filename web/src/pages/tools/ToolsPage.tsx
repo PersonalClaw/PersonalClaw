@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { withWeight } from '../../design/fontWeight'
 import { Wrench, ShieldAlert, Server, Cpu, Plug, Circle, RefreshCw, Loader2, Plus, Trash2, Download, ChevronRight } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -9,6 +10,8 @@ import { SidePanel } from '../../ui/SidePanel'
 import { Modal } from '../../ui/Modal'
 import { Button } from '../../ui/Button'
 import { Segmented } from '../../ui/Segmented'
+import { TextInput } from '../../ui/forms'
+import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Toggle as SharedToggle } from '../../ui/Toggle'
 import { confirm } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
@@ -210,7 +213,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
           />
         : undefined}
       panel={open && (
-        <SidePanel key={open.name} fillHeight storeKey="tool-panel-w" icon={<Wrench size={18} className="text-primary" />} title={<span className="font-mono text-[1rem]">{open.name}</span>} onClose={() => setOpenName("")}>
+        <SidePanel key={open.name} fillHeight storeKey="tool-panel-w" icon={<Wrench size={18} className="text-primary" />} title={<span className="font-mono text-[1.0625rem]">{open.name}</span>} onClose={() => setOpenName("")}>
           <ToolInspector tool={open} serverStatus={openServer ? serverHealth(openServer) : undefined} />
         </SidePanel>
       )}
@@ -253,14 +256,14 @@ function McpPoolTile({ stats }: { stats: McpPoolStats | null }) {
     <div>
       <div className="mb-s flex items-center gap-s">
         <Server size={14} className="text-on-surface-low" />
-        <span className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">MCP connection pool</span>
+        <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">MCP connection pool</span>
       </div>
       <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))' }}>
         {cells.map((c) => (
           <div key={c.label} title={c.hint}
             className="rounded-lg border border-outline-variant/40 bg-surface-container/50 px-3 py-2">
             <div className="text-on-surface text-[1.25rem] tabular-nums leading-tight">{c.value ?? 0}</div>
-            <div className="text-on-surface-low text-[0.7rem]">{c.label}</div>
+            <div className="text-on-surface-low text-[0.75rem]">{c.label}</div>
           </div>
         ))}
       </div>
@@ -276,20 +279,19 @@ function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, o
     <div className={g.providerDisabled ? 'opacity-55' : ''}>
       <div className="mb-s flex items-center gap-s">
         {g.kind === 'mcp' ? <Server size={14} className="text-on-surface-low" /> : <Cpu size={14} className="text-on-surface-low" />}
-        <span className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">{g.label}</span>
+        <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{g.label}</span>
         {g.kind === 'native'
-          ? <span className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-low text-[0.65rem]">{g.providerLocked ? 'platform' : 'built-in'}</span>
-          : health && <span className="inline-flex items-center gap-1 text-[0.7rem]" style={{ color: health.tone }} title={health.detail}><Circle size={7} fill="currentColor" stroke="none" /> {health.state}</span>}
-        <span className="text-on-surface-low text-[0.7rem]">· {g.tools.length}</span>
+          ? <span className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-low text-[0.75rem]">{g.providerLocked ? 'platform' : 'built-in'}</span>
+          : health && <span className="inline-flex items-center gap-1 text-[0.75rem]" style={{ color: health.tone }} title={health.detail}><Circle size={7} fill="currentColor" stroke="none" /> {health.state}</span>}
+        <span className="text-on-surface-low text-[0.75rem]">· {g.tools.length}</span>
         {g.server && (
           <div className="ml-auto flex items-center gap-1">
             {/* Reconnect just THIS server (re-probe) — recover a timed-out/errored
                 provider without re-probing all. Spins while in flight. */}
-            <button onClick={() => onReconnect(g.server!)} disabled={reconnecting === g.server.name}
-              title="Reconnect this server" aria-label={`Reconnect ${g.server.name}`}
-              className="grid size-7 place-items-center rounded-md text-on-surface-low transition-colors hover:text-on-surface disabled:opacity-50">
+            <SquareIconButton label={`Reconnect ${g.server.name}`} title="Reconnect this server"
+              disabled={reconnecting === g.server.name} onClick={() => onReconnect(g.server!)}>
               <RefreshCw size={13} className={reconnecting === g.server.name ? 'animate-spin' : ''} />
-            </button>
+            </SquareIconButton>
             <button onClick={() => onToggleServer(g.server!)} title={g.server.enabled ? 'Disable server' : 'Enable server'}
               aria-label={`${g.server.enabled ? 'Disable' : 'Enable'} server ${g.server.name}`}>
               <Toggle on={!!g.server.enabled} />
@@ -299,12 +301,10 @@ function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, o
                 deletable here. Show a "via app" marker (delete = uninstall the app)
                 instead of a Trash button that would 409 + look broken. */}
             {g.server.name.includes(':') ? (
-              <span className="text-on-surface-low text-[0.65rem]" title={`Provided by the '${g.server.name.split(':')[0]}' app — uninstall it from the Store to remove this server.`}>via app</span>
+              <span className="text-on-surface-low text-[0.75rem]" title={`Provided by the '${g.server.name.split(':')[0]}' app — uninstall it from the Store to remove this server.`}>via app</span>
             ) : (
-              <button onClick={() => onRemoveServer(g.server!)} title="Remove server" aria-label={`Remove ${g.server.name}`}
-                className="grid size-7 place-items-center rounded-md text-on-surface-low transition-colors hover:text-danger">
-                <Trash2 size={13} />
-              </button>
+              <SquareIconButton icon={Trash2} iconSize={13} tone="danger"
+                label={`Remove ${g.server.name}`} title="Remove server" onClick={() => onRemoveServer(g.server!)} />
             )}
           </div>
         )}
@@ -317,7 +317,7 @@ function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, o
           </div>
         )}
         {g.providerLocked && (
-          <span className="ml-auto text-on-surface-low text-[0.65rem]" title="Required by platform features — can't be disabled">required</span>
+          <span className="ml-auto text-on-surface-low text-[0.75rem]" title="Required by platform features — can't be disabled">required</span>
         )}
       </div>
       {g.kind === 'mcp' && g.tools.length === 0 ? (
@@ -340,10 +340,10 @@ function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, o
                       <span className="truncate font-mono text-on-surface text-[0.8125rem]">{t.name}</span>
                       {t.requires_approval && <ShieldAlert size={12} className="text-warn shrink-0" />}
                       <RiskBadge risk={t.risk_level} />
-                      {off && <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.6rem]">disabled</span>}
+                      {off && <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">disabled</span>}
                     </div>
                     <p className="mt-0.5 line-clamp-2 text-on-surface-low text-[0.75rem] leading-snug">{t.description}</p>
-                    {props.length > 0 && <div className="mt-1 text-on-surface-low text-[0.65rem]">{props.length} param{props.length === 1 ? '' : 's'}</div>}
+                    {props.length > 0 && <div className="mt-1 text-on-surface-low text-[0.75rem]">{props.length} param{props.length === 1 ? '' : 's'}</div>}
                   </div>
                 </button>
                 {/* per-tool enable/disable. Locked tools show a disabled switch with
@@ -373,8 +373,8 @@ function RiskBadge({ risk }: { risk?: 'safe' | 'caution' | 'destructive' }) {
   const color = risk === 'destructive' ? 'var(--color-danger)' : 'var(--color-warn)'
   const label = risk === 'destructive' ? 'Destructive' : 'Caution'
   return (
-    <span className="rounded-pill px-1.5 py-0.5 text-[0.6rem] shrink-0" title={`Risk: ${label}`}
-      style={{ background: `color-mix(in srgb, ${color} 16%, transparent)`, color, fontVariationSettings: '"wght" 600' }}>
+    <span className="rounded-pill px-1.5 py-0.5 text-[0.75rem] shrink-0" title={`Risk: ${label}`}
+      style={withWeight({ background: `color-mix(in srgb, ${color} 16%, transparent)`, color }, 600)}>
       {label}
     </span>
   )
@@ -392,7 +392,7 @@ function LoadFailures({ failures }: { failures: ToolLoadFailure[] }) {
       </div>
       <div className="flex flex-col gap-1.5">
         {failures.map((f) => (
-          <div key={f.provider} className="text-[0.78rem] leading-snug">
+          <div key={f.provider} className="text-[0.75rem] leading-snug">
             <span className="font-mono text-on-surface">{f.provider}</span>
             <span className="text-on-surface-low"> — {f.error}</span>
           </div>
@@ -428,7 +428,7 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
       <button onClick={() => setOpen((v) => !v)} className="mb-s flex items-center gap-s text-on-surface-low hover:text-on-surface transition-colors">
         <ChevronRight size={14} style={{ transform: open ? 'rotate(90deg)' : 'none' }} />
         <Download size={14} />
-        <span className="text-[0.7rem] uppercase tracking-wide">Discovered in other tools ({servers.length})</span>
+        <span className="text-[0.75rem] uppercase tracking-wide">Discovered in other tools ({servers.length})</span>
       </button>
       {open && (
         <>
@@ -442,10 +442,10 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
                 <Server size={15} className="shrink-0 text-on-surface-low" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="truncate font-mono text-on-surface text-[0.84rem]">{s.name}</span>
-                    <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.62rem]">{s.backend}</span>
+                    <span className="truncate font-mono text-on-surface text-[0.8125rem]">{s.name}</span>
+                    <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">{s.backend}</span>
                   </div>
-                  <p className="mt-0.5 truncate font-mono text-on-surface-low text-[0.7rem]">{s.url || [s.command, ...(s.args ?? [])].join(' ')}</p>
+                  <p className="mt-0.5 truncate font-mono text-on-surface-low text-[0.75rem]">{s.url || [s.command, ...(s.args ?? [])].join(' ')}</p>
                 </div>
                 <Button variant="secondary" size="sm" onClick={() => importOne(s)} disabled={busy === s.name}>
                   {busy === s.name ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />} Import
@@ -533,36 +533,36 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
 
         {kind === 'mcp' ? (<>
           <Field label="Name" hint="A unique handle (letters, digits, dashes, underscores).">
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="filesystem-mcp" className={mcpInputCls} />
+            <TextInput value={name} onChange={setName} placeholder="filesystem-mcp" size="md" surface="high" />
           </Field>
           <Field label="Command" hint="The executable that starts the server over stdio.">
-            <input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="npx" className={mcpInputCls + ' font-mono'} />
+            <TextInput value={command} onChange={setCommand} placeholder="npx" size="md" surface="high" mono />
           </Field>
           <Field label="Arguments" hint="Space-separated args passed to the command (optional).">
-            <input value={args} onChange={(e) => setArgs(e.target.value)} placeholder="-y @modelcontextprotocol/server-filesystem /path" className={mcpInputCls + ' font-mono'} />
+            <TextInput value={args} onChange={setArgs} placeholder="-y @modelcontextprotocol/server-filesystem /path" size="md" surface="high" mono />
           </Field>
           <Field label="Environment" hint="One KEY=value per line (optional).">
             <textarea value={env} onChange={(e) => setEnv(e.target.value)} rows={2} placeholder="API_KEY=sk-…" className={mcpInputCls.replace('h-9', 'min-h-16 py-2') + ' font-mono'} />
           </Field>
         </>) : (<>
           <Field label="Name" hint="A label for this tool server (optional — defaults to the endpoint).">
-            <input value={oaName} onChange={(e) => setOaName(e.target.value)} placeholder="my-tools" className={mcpInputCls} />
+            <TextInput value={oaName} onChange={setOaName} placeholder="my-tools" size="md" surface="high" />
           </Field>
           <Field label="Endpoint URL" hint="Base URL of an OpenAI-compatible tool server (GET /tools, POST /tools/{name}).">
-            <input value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="https://tools.example.com" className={mcpInputCls + ' font-mono'} />
+            <TextInput value={endpoint} onChange={setEndpoint} placeholder="https://tools.example.com" size="md" surface="high" mono />
           </Field>
           <Field label="API Key" hint="Optional bearer token for authentication.">
-            <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" className={mcpInputCls + ' font-mono'} />
+            <TextInput value={apiKey} onChange={setApiKey} placeholder="sk-…" type="password" size="md" surface="high" mono />
           </Field>
           <Field label="Tool filter" hint="Comma-separated tool names to expose. Empty = all.">
-            <input value={toolFilter} onChange={(e) => setToolFilter(e.target.value)} placeholder="search, fetch" className={mcpInputCls + ' font-mono'} />
+            <TextInput value={toolFilter} onChange={setToolFilter} placeholder="search, fetch" size="md" surface="high" mono />
           </Field>
         </>)}
 
         <div className="flex items-center gap-2">
           <Button size="sm" onClick={kind === 'mcp' ? submitMcp : submitOpenai} disabled={saving || !canSubmit}>{saving ? 'Adding…' : 'Add server'}</Button>
           <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
-          {err && <span className="text-[0.78rem]" style={{ color: 'var(--color-danger)' }}>{err}</span>}
+          {err && <span className="text-[0.75rem]" style={{ color: 'var(--color-danger)' }}>{err}</span>}
         </div>
       </div>
     </Modal>
@@ -572,8 +572,8 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-on-surface text-[0.82rem]">{label}</div>
-      {hint && <div className="mb-1.5 mt-0.5 text-on-surface-low text-[0.72rem]">{hint}</div>}
+      <div className="text-on-surface text-[0.8125rem]">{label}</div>
+      {hint && <div className="mb-1.5 mt-0.5 text-on-surface-low text-[0.75rem]">{hint}</div>}
       {children}
     </div>
   )

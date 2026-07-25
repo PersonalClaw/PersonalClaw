@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { fvs, withWeight } from '../../design/fontWeight'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Code2, Play, Pause, Square, Trash2, Loader2, ListChecks, FolderTree,
   TerminalSquare, X, Send, CircleDot, CheckCircle2, Circle, Wrench, Activity, GitBranch,
   ChevronDown, ChevronRight, ChevronLeft, Target, FileCode, HelpCircle, Folder, Repeat, Clock, XCircle, AlertTriangle,
-  PanelLeftClose, PanelRightClose, PanelLeftOpen, PanelRightOpen, FilePlus2, FolderPlus, Rocket, Hand, Plus, RotateCcw, FolderKanban, CirclePlay, Search,
+  PanelLeftClose, PanelRightClose, PanelLeftOpen, PanelRightOpen, FilePlus2, FolderPlus, Rocket, Hand, Plus, RotateCcw, FolderKanban, CirclePlay,
 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { Button } from '../../ui/Button'
+import { TextLink } from '../../ui/TextLink'
+import { IconButton } from '../../ui/IconButton'
+import { Centered } from '../../ui/Centered'
 import { confirm } from '../../ui/dialog'
 import { api, type CodeProject, type CodeStage, type CodeFinding, type FsEntry, type TaskItem, type Loop } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
@@ -18,6 +22,7 @@ import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { cleanSay, toolDetail } from '../../lib/agentFeed'
 import { useRunStream } from '../loops/useRunStream'
 import { foldReducer, emptyRunFlags, type RunFlags } from '../loops/runFold'
+import { SearchField } from '../../ui/SearchField'
 import { DiffView } from './DiffView'
 import { WorkspacePicker } from './WorkspacePicker'
 import { FileTree } from '../files/browse/FileTree'
@@ -591,11 +596,9 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
               (tasks_project_id is the provisioned container; project_id a pre-launch scope).
               Only shown when the loop is actually bound to a project AND we can open it. */}
           {onOpenProject && (p.tasks_project_id || p.project_id) && (
-            <button type="button" onClick={() => onOpenProject((p.tasks_project_id || p.project_id) as string)}
-              title="Back to project" aria-label="Back to the project this loop belongs to"
-              className="shrink-0 grid place-items-center size-7 rounded-md text-on-surface-low hover:text-on-surface hover:bg-surface-high transition-colors">
-              <ChevronLeft size={18} />
-            </button>
+            <IconButton icon={ChevronLeft} label="Back to the project this loop belongs to"
+              onClick={() => onOpenProject((p.tasks_project_id || p.project_id) as string)}
+              size={28} iconSize={18} className="shrink-0" />
           )}
           <Code2 size={18} className="shrink-0 text-primary" />
           {editingTitle ? (
@@ -654,7 +657,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
           className="flex shrink-0 items-center justify-between gap-2 border-b border-outline-variant/40 bg-warn/10 px-l py-2 text-[0.8125rem]"
           style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)', color: 'var(--color-warn)' }}>
           <span>This brownfield project needs a workspace directory before it can start.</span>
-          <button type="button" onClick={() => setPickWs(true)} className="shrink-0 rounded-md px-2 py-1 font-medium hover:bg-surface-high">Choose folder</button>
+          <Button variant="ghost" size="xs" onClick={() => setPickWs(true)} className="shrink-0">Choose folder</Button>
         </motion.div>
       )}
       {/* Bound workspace went missing on disk (moved/deleted after binding). A PRE-RUN
@@ -671,7 +674,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
             className="flex shrink-0 items-center justify-between gap-2 border-b border-outline-variant/40 px-l py-2 text-[0.8125rem]"
             style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)', color: 'var(--color-warn)' }}>
             <span>The workspace folder <span className="font-mono">{ws.split('/').slice(-1)[0]}</span> no longer exists — re-pick it to continue.</span>
-            <button type="button" onClick={() => setPickWs(true)} className="shrink-0 rounded-md px-2 py-1 font-medium hover:bg-surface-high">Re-pick folder</button>
+            <Button variant="ghost" size="xs" onClick={() => setPickWs(true)} className="shrink-0">Re-pick folder</Button>
           </motion.div>
         ) : (
           <motion.div variants={messageEnter} initial="initial" animate="animate"
@@ -741,18 +744,19 @@ function CodeToast({ kind, text, onDismiss, onRespond }: {
       <div className="flex items-start gap-2.5">
         <Icon size={18} className="mt-0.5 shrink-0" style={{ color: tone }} />
         <div className="min-w-0 flex-1">
-          <p className="text-on-surface text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 600' }}>
+          <p className="text-on-surface text-[0.8125rem]" style={fvs(600)}>
             {kind === 'error' ? "That didn't work" : kind === 'conflict' ? 'Merge conflict — needs you' : kind === 'ok' ? 'Done' : 'The worker needs your input'}
           </p>
-          <p className="mt-0.5 text-on-surface-var text-[0.78rem] leading-snug">{text}</p>
+          <p className="mt-0.5 text-on-surface-var text-[0.75rem] leading-snug">{text}</p>
           <div className="mt-2 flex items-center gap-2">
+            {/* Respond keeps its per-kind tone background (error/conflict/input) —
+                a dynamic solid fill the Button variants deliberately don't cover. */}
             {onRespond && <button type="button" onClick={onRespond}
               className="rounded-md px-2.5 py-1 text-[0.75rem]" style={{ background: tone, color: 'var(--color-on-primary)' }}>Respond</button>}
-            <button type="button" onClick={onDismiss}
-              className="rounded-md px-2 py-1 text-on-surface-low text-[0.75rem] hover:bg-surface-high">Dismiss</button>
+            <Button variant="ghost" size="xs" onClick={onDismiss}>Dismiss</Button>
           </div>
         </div>
-        <button type="button" onClick={onDismiss} aria-label="Dismiss" className="shrink-0 text-on-surface-low hover:text-on-surface"><X size={14} /></button>
+        <IconButton icon={X} label="Dismiss" onClick={onDismiss} size={24} iconSize={14} className="shrink-0" />
       </div>
     </motion.div>,
     document.body,
@@ -806,7 +810,7 @@ function StageTrail({ project }: { project: CodeProject }) {
             <span key={i} className="inline-flex min-w-0 items-center gap-1" title={`${s.title || s.stage} — ${st}`}>
               {i > 0 && <span className="shrink-0 text-on-surface-low/40">›</span>}
               <Icon size={12} className={`shrink-0 ${activeRunning ? 'animate-spin' : ''}`} style={{ color }} />
-              <span className="max-w-[7rem] truncate text-[0.7rem]" style={{ color }}>{s.title || s.stage}</span>
+              <span className="max-w-[7rem] truncate text-[0.75rem]" style={{ color }}>{s.title || s.stage}</span>
             </span>
           )
         })}
@@ -814,7 +818,7 @@ function StageTrail({ project }: { project: CodeProject }) {
       {/* compact "stage N/M · title" — always visible (incl. narrow screens where
           the full trail is hidden), so stage context is never lost. Pre-launch it
           shows the plan size as upcoming rather than a misleading "stage 1 active". */}
-      <span className="ml-1 inline-flex items-center gap-1 text-[0.7rem] md:hidden"
+      <span className="ml-1 inline-flex items-center gap-1 text-[0.75rem] md:hidden"
         style={{ color: allDone ? 'var(--color-ok)' : halted ? 'var(--color-warn)' : started ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }}>
         {!started
           ? <><Circle size={12} /> {plan.length} stage{plan.length === 1 ? '' : 's'} planned</>
@@ -881,7 +885,7 @@ function CockpitMeta({ project: p, onOpenProject }: { project: CodeProject; onOp
   // pre-run draft with no stages/workspace/cycles/project there's nothing worth a bar.
   if (!wsBase && !showProj && !cyclesText && !elapsedText) return null
   return (
-    <div className="flex shrink-0 items-center gap-3 border-b border-outline-variant/40 bg-surface-low/30 px-l py-1 text-[0.7rem] text-on-surface-low">
+    <div className="flex shrink-0 items-center gap-3 border-b border-outline-variant/40 bg-surface-low/30 px-l py-1 text-[0.75rem] text-on-surface-low">
       {/* Elapsed leads at the far LEFT — "how long has this been running" is the first
           thing to read on the strip. */}
       {elapsedText && (
@@ -985,13 +989,11 @@ function CollapsiblePanel({ side, panelKey, def, min, max, icon: Icon, label, ch
   return (
     <div className={`relative flex shrink-0 flex-col ${borderSide} border-outline-variant/40 bg-surface-low/40`} style={{ width }}>
       <div className="flex shrink-0 items-center justify-between gap-1 border-b border-outline-variant/40 px-2 py-1.5">
-        <span className="inline-flex items-center gap-1.5 text-on-surface-var text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 550' }}>
+        <span className="inline-flex items-center gap-1.5 text-on-surface-var text-[0.8125rem]" style={fvs(550)}>
           <Icon size={14} /> {label}
         </span>
-        <button type="button" onClick={() => setCollapsed(true)} aria-label={`Collapse ${label}`} title={`Collapse ${label}`}
-          className="grid size-6 place-items-center rounded-md text-on-surface-low hover:bg-surface-high hover:text-on-surface">
-          {side === 'left' ? <PanelLeftClose size={14} /> : <PanelRightClose size={14} />}
-        </button>
+        <IconButton icon={side === 'left' ? PanelLeftClose : PanelRightClose} label={`Collapse ${label}`}
+          onClick={() => setCollapsed(true)} size={24} iconSize={14} />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
       {handle}
@@ -1113,17 +1115,17 @@ function FileFinder({ ws }: { ws: string }) {
   return (
     <div ref={rootRef} className="relative shrink-0 border-b border-outline-variant/40 px-2 py-1.5">
       <div className="flex items-center gap-1.5 rounded-md bg-surface-high px-2 py-1">
-        <Search size={13} className="shrink-0 text-on-surface-low" />
-        <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} onFocus={() => results.length && setOpen(true)}
+        <SearchField variant="inline" inlineIconSize={13} size="md" inputRef={inputRef} value={q}
+          onChange={(v) => { setQ(v); if (!v) { setResults([]); setOpen(false) } }}
+          onFocus={() => results.length && setOpen(true)}
           onKeyDown={(e) => {
             if (e.key === 'ArrowDown' && results.length) { e.preventDefault(); setOpen(true); setHi((i) => Math.min(results.length - 1, i + 1)) }
             else if (e.key === 'ArrowUp' && results.length) { e.preventDefault(); setHi((i) => Math.max(0, i - 1)) }
             else if (e.key === 'Enter' && results.length) { e.preventDefault(); openFile(results[Math.min(hi, results.length - 1)]) }
-            else if (e.key === 'Escape') { setQ(''); setResults([]); setOpen(false) }
+            else if (e.key === 'Escape') { e.preventDefault(); setQ(''); setResults([]); setOpen(false) }
           }}
           placeholder="Find file by name…  ⌘P" spellCheck={false} autoCapitalize="off" autoCorrect="off"
-          className="min-w-0 flex-1 bg-transparent text-[0.78rem] text-on-surface outline-none placeholder:text-on-surface-low" />
-        {q && <button type="button" onClick={() => { setQ(''); setResults([]); setOpen(false) }} aria-label="Clear" className="shrink-0 text-on-surface-low hover:text-on-surface"><X size={12} /></button>}
+          ariaLabel="Find file by name" />
       </div>
       {open && q.trim().length >= 2 && (
         <div className="absolute inset-x-2 z-20 mt-1 max-h-[40vh] overflow-y-auto rounded-md border border-outline-variant/50 bg-surface-container shadow-lg">
@@ -1148,7 +1150,7 @@ function FileFinder({ ws }: { ws: string }) {
             return (
               <button key={r.path} type="button" onClick={() => openFile(r)} onMouseEnter={() => setHi(i)}
                 ref={(el) => { if (i === hi && open) el?.scrollIntoView({ block: 'nearest' }) }}
-                className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[0.78rem] ${i === hi ? 'bg-surface-high' : 'hover:bg-surface-high'}`}>
+                className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[0.75rem] ${i === hi ? 'bg-surface-high' : 'hover:bg-surface-high'}`}>
                 <FileCode size={11} className="shrink-0 text-on-surface-low" />
                 <span className="min-w-0 truncate text-on-surface-var" title={rel}>{rel}</span>
               </button>
@@ -1330,7 +1332,7 @@ function RightPanel({ project, onTasksChanged, tasksNonce, activityBySession, ga
           style={{ background: 'color-mix(in srgb, var(--color-warn) 12%, transparent)', color: 'var(--color-warn)' }}>
           <AlertTriangle size={12} className="shrink-0" />
           <span className="min-w-0 flex-1">Couldn't refresh some tasks — showing the last known list.</span>
-          <button type="button" onClick={refresh} className="shrink-0 inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-warn/15"><RotateCcw size={11} /> Retry</button>
+          <Button variant="ghost" size="xs" onClick={refresh} className="shrink-0 gap-1 px-1.5 text-[0.75rem] text-warn hover:bg-warn/15"><RotateCcw size={11} /> Retry</Button>
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -1353,7 +1355,7 @@ function RailTab({ icon: Icon, label, on, onClick, badge }: { icon: typeof ListC
       {/* Pending-change count — lets the user see review-worthy changes are waiting
           while they're on another tab (a worker editing files updates this live). */}
       {!!badge && badge > 0 && (
-        <span className="ml-0.5 inline-flex min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[0.65rem] tabular-nums"
+        <span className="ml-0.5 inline-flex min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[0.75rem] tabular-nums"
           style={{ background: on ? 'var(--color-primary)' : 'color-mix(in srgb, var(--color-primary) 22%, transparent)', color: on ? 'var(--color-on-primary)' : 'var(--color-primary)' }}>
           {badge > 99 ? '99+' : badge}
         </span>
@@ -1450,11 +1452,11 @@ function StageTasks({ project, onTasksChanged, loading, tasksByList, onSelect, a
         <div className="flex flex-col gap-2 p-3">
           <p className="text-on-surface-low text-[0.75rem]">No task breakdown for this run — the worker is operating directly from the brief.</p>
           <div className="rounded-lg border border-primary/30 bg-primary/5 p-2.5">
-            <div className="mb-1.5 inline-flex items-center gap-1.5 text-[0.7rem] text-primary"><Loader2 size={11} className="animate-spin" /> working now</div>
+            <div className="mb-1.5 inline-flex items-center gap-1.5 text-[0.75rem] text-primary"><Loader2 size={11} className="animate-spin" /> working now</div>
             <div className="flex flex-col gap-1">
               {mainActivity.map((it, i) => (
                 it.kind === 'say'
-                  ? <p key={i} className="whitespace-pre-wrap text-[0.78rem] leading-snug text-on-surface-var">{it.label}</p>
+                  ? <p key={i} className="whitespace-pre-wrap text-[0.75rem] leading-snug text-on-surface-var">{it.label}</p>
                   : <div key={i} className="flex items-start gap-1.5 text-[0.75rem] text-on-surface-low">
                       {it.kind === 'tool' ? <Wrench size={11} className="mt-0.5 shrink-0" /> : <Activity size={11} className="mt-0.5 shrink-0" />}
                       <span className="min-w-0"><span className="text-on-surface-var">{it.label}</span>{it.detail && <span className="text-on-surface-low/70"> · {it.detail.slice(0, 60)}</span>}</span>
@@ -1476,7 +1478,7 @@ function StageTasks({ project, onTasksChanged, loading, tasksByList, onSelect, a
     <div className="flex flex-col gap-1 p-2">
       {!noLists && (
         <div className="flex items-center justify-between gap-2 px-2 pb-1">
-          <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.7rem]">
+          <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.75rem]">
             {runningCount > 0 && (
               <span className="inline-flex items-center gap-1 text-primary" title="Tasks running in parallel worktrees">
                 <Loader2 size={10} className="animate-spin" />{runningCount} running
@@ -1491,21 +1493,21 @@ function StageTasks({ project, onTasksChanged, loading, tasksByList, onSelect, a
                 the user. Toggle is live (any non-terminal state). */}
             <button type="button" disabled={busy} onClick={toggleAutopilot} aria-pressed={autopilot} aria-label="Autopilot"
               title={autopilot ? 'Autopilot on — the system queues + drives the phased tasks. Click for one-by-one.' : 'One-by-one — you queue tasks yourself. Click to let the system drive.'}
-              className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.7rem] transition-colors disabled:opacity-50 ${autopilot ? 'bg-primary/15 text-primary hover:bg-primary/25' : 'text-on-surface-low hover:bg-surface-high'}`}>
+              className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.75rem] transition-colors disabled:opacity-50 ${autopilot ? 'bg-primary/15 text-primary hover:bg-primary/25' : 'text-on-surface-low hover:bg-surface-high'}`}>
               {autopilot ? <Rocket size={11} /> : <Hand size={11} />} {autopilot ? 'Autopilot' : 'One-by-one'}
             </button>
             {/* Manual Queue all only matters in one-by-one mode (autopilot auto-queues). */}
             {!autopilot && queueable.length > 0 && (
-              <button type="button" disabled={busy} onClick={() => queue(queueable.map((t) => t.id))}
-                className="inline-flex items-center gap-1 rounded-md bg-primary/15 px-2 py-1 text-[0.7rem] text-primary hover:bg-primary/25 disabled:opacity-50">
+              <Button variant="tonal" size="xs" disabled={busy} onClick={() => queue(queueable.map((t) => t.id))}
+                className="gap-1 px-2 text-[0.75rem]">
                 <Play size={11} /> Queue all
-              </button>
+              </Button>
             )}
           </div>
         </div>
       )}
       {noLists && isPreLaunch && (
-        <p className="px-2 pb-1 text-on-surface-low text-[0.7rem]">Planned — provisioned when you launch.</p>
+        <p className="px-2 pb-1 text-on-surface-low text-[0.75rem]">Planned — provisioned when you launch.</p>
       )}
       {stages.map((s, si) => {
         const key = stageKey(s)
@@ -1594,10 +1596,10 @@ function StageGroup({ stage: s, status: st, tasks, preview, doneIds, queuedSet, 
           </button>
         }>
           <div className="mb-1 ml-4 flex flex-col gap-1.5 border-l border-outline-variant/40 pl-2.5">
-            {objective && <p className="text-on-surface-var text-[0.78rem] leading-snug normal-case">{objective}</p>}
+            {objective && <p className="text-on-surface-var text-[0.75rem] leading-snug normal-case">{objective}</p>}
             {criteria.length > 0 && (
               <div className="flex flex-col gap-0.5">
-                <span className="text-on-surface-low/70 text-[0.62rem] uppercase tracking-wide">Done when</span>
+                <span className="text-on-surface-low/70 text-[0.75rem] uppercase tracking-wide">Done when</span>
                 {criteria.map((c, i) => (
                   <div key={i} className="flex items-start gap-1.5 text-on-surface-low text-[0.75rem] leading-snug normal-case">
                     <Target size={9} className="mt-[3px] shrink-0 opacity-60" /><span>{c}</span>
@@ -1678,14 +1680,14 @@ function TaskRow({ task, state, preview, active, onSelect }: {
       <span className={`min-w-0 flex-1 truncate ${done ? 'text-on-surface-low line-through' : 'text-on-surface-var'}`}>{task.title}</span>
       {/* a live pulse when THIS task's worker is actively emitting events right now */}
       {active && <span className="reveal-caret size-1.5 shrink-0 rounded-full" style={{ background: 'var(--color-primary)' }} title="Active now" />}
-      {state === 'cancelled' && <span className="shrink-0 text-[0.7rem] text-on-surface-low/70">cancelled</span>}
-      {state === 'running' && <span className="shrink-0 text-[0.7rem] text-primary">running</span>}
-      {state === 'queued' && <span className="shrink-0 text-[0.7rem] text-primary">queued</span>}
-      {state === 'blocked' && <span className="shrink-0 text-[0.7rem] text-on-surface-low/70">blocked</span>}
-      {state === 'waiting' && <span className="shrink-0 text-[0.7rem] text-on-surface-low/70" title="Waiting for its stage to start">waiting</span>}
+      {state === 'cancelled' && <span className="shrink-0 text-[0.75rem] text-on-surface-low/70">cancelled</span>}
+      {state === 'running' && <span className="shrink-0 text-[0.75rem] text-primary">running</span>}
+      {state === 'queued' && <span className="shrink-0 text-[0.75rem] text-primary">queued</span>}
+      {state === 'blocked' && <span className="shrink-0 text-[0.75rem] text-on-surface-low/70">blocked</span>}
+      {state === 'waiting' && <span className="shrink-0 text-[0.75rem] text-on-surface-low/70" title="Waiting for its stage to start">waiting</span>}
       {/* `ready` is the actionable state — a quiet chip (matches the others' pattern)
           so it reads as available-to-queue, not just an unlabeled inert row. */}
-      {state === 'ready' && <span className="shrink-0 text-[0.7rem] text-on-surface-low/70" title="Ready to queue">ready</span>}
+      {state === 'ready' && <span className="shrink-0 text-[0.75rem] text-on-surface-low/70" title="Ready to queue">ready</span>}
       <ChevronRight size={13} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100" />
     </button>
   )
@@ -1800,22 +1802,21 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
     <div className="flex h-full flex-col">
       {/* header: back + status */}
       <div className="flex shrink-0 items-center gap-1.5 border-b border-outline-variant/40 px-2 py-1.5">
-        <button type="button" onClick={onBack} aria-label="Back to tasks"
-          className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[0.75rem] text-on-surface-low hover:bg-surface-high hover:text-on-surface">
+        <Button variant="ghost" size="xs" onClick={onBack} className="gap-1 px-1.5 text-[0.75rem] text-on-surface-low">
           <ChevronLeft size={14} /> Tasks
-        </button>
-        <span className="ml-auto inline-flex items-center gap-1 text-[0.7rem]" style={{ color: running ? 'var(--color-primary)' : done ? 'var(--color-ok)' : 'var(--color-on-surface-low)' }}>
+        </Button>
+        <span className="ml-auto inline-flex items-center gap-1 text-[0.75rem]" style={{ color: running ? 'var(--color-primary)' : done ? 'var(--color-ok)' : 'var(--color-on-surface-low)' }}>
           {running && <Loader2 size={10} className="animate-spin" />}{running ? 'running' : queued ? 'queued' : done ? 'done' : task.status}
         </span>
       </div>
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-3">
-        <h3 className="text-on-surface text-[0.9rem]" style={{ fontVariationSettings: '"wght" 600' }}>{task.title}</h3>
+        <h3 className="text-on-surface text-[0.9375rem]" style={fvs(600)}>{task.title}</h3>
         {task.description && <p className="mt-1 text-on-surface-var text-[0.8125rem] leading-snug">{task.description}</p>}
 
         {/* attended question for THIS task — answer in the steer box below */}
         {project.status === 'needs_input' && project.pending_question?.question && (
           <div className="mt-3 rounded-lg p-2.5 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
-            <div className="mb-1 inline-flex items-center gap-1.5" style={{ color: 'var(--color-info)', fontVariationSettings: '"wght" 550' }}>
+            <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-info)' }, 550)}>
               <HelpCircle size={14} /> Needs your input
             </div>
             <p className="whitespace-pre-wrap text-on-surface">{project.pending_question.question}</p>
@@ -1823,25 +1824,24 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
               <p className="mt-1 whitespace-pre-wrap text-on-surface-low text-[0.75rem]">{project.pending_question.why}</p>
             )}
             <div className="mt-2 flex items-center gap-2">
-              <p className="flex-1 text-on-surface-low text-[0.7rem]">Answer in the box below to resume.</p>
+              <p className="flex-1 text-on-surface-low text-[0.75rem]">Answer in the box below to resume.</p>
               {/* One-click unblock — matches the project-level footer's affordance so a
                   user steering from the task scope isn't forced to type a full answer. */}
-              <button type="button" disabled={busy}
+              <Button variant="ghost" size="xs" disabled={busy}
                 onClick={() => steer('Proceed with your best judgment / the sensible default you proposed. Record the assumption in your finding and continue.')}
-                className="shrink-0 rounded-md px-2 py-1 text-[0.7rem] transition-colors hover:bg-info/10 disabled:opacity-50"
-                style={{ color: 'var(--color-info)' }}>
+                className="shrink-0 px-2 text-[0.75rem] text-info hover:bg-info/10">
                 Use your best judgment
-              </button>
+              </Button>
             </div>
           </div>
         )}
 
         {plan.length > 0 && (
           <div className="mt-3">
-            <p className="text-on-surface-low text-[0.65rem] uppercase tracking-wide">Action plan</p>
+            <p className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Action plan</p>
             <ol className="mt-1 flex flex-col gap-0.5">
               {plan.map((a, i) => (
-                <li key={i} className={`flex items-start gap-1.5 text-[0.78rem] leading-snug ${a.completed ? 'text-on-surface-low line-through' : 'text-on-surface-var'}`}>
+                <li key={i} className={`flex items-start gap-1.5 text-[0.75rem] leading-snug ${a.completed ? 'text-on-surface-low line-through' : 'text-on-surface-var'}`}>
                   <span className="mt-[1px] shrink-0 tabular-nums opacity-50">{i + 1}.</span><span>{a.content}</span>
                 </li>
               ))}
@@ -1850,10 +1850,10 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
         )}
         {crit.length > 0 && (
           <div className="mt-3">
-            <p className="text-on-surface-low text-[0.65rem] uppercase tracking-wide">Done when</p>
+            <p className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Done when</p>
             <ul className="mt-1 flex flex-col gap-0.5">
               {crit.map((c, i) => (
-                <li key={i} className="flex items-start gap-1.5 text-on-surface-low text-[0.78rem] leading-snug">
+                <li key={i} className="flex items-start gap-1.5 text-on-surface-low text-[0.75rem] leading-snug">
                   <Target size={9} className="mt-[4px] shrink-0 opacity-60" /><span className={c.met ? 'line-through opacity-70' : ''}>{c.description}</span>
                 </li>
               ))}
@@ -1863,7 +1863,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
 
         {/* agent loop events for THIS task: completed cycles + the in-flight one */}
         <div className="mt-3">
-          <p className="text-on-surface-low text-[0.65rem] uppercase tracking-wide">Agent activity{findings.length ? ` · ${findings.length} ${findings.length === 1 ? 'cycle' : 'cycles'}` : ''}</p>
+          <p className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Agent activity{findings.length ? ` · ${findings.length} ${findings.length === 1 ? 'cycle' : 'cycles'}` : ''}</p>
           {findings.length === 0 && live.length === 0 && (
             <p className="mt-1 text-on-surface-low/70 text-[0.75rem]">{running ? 'Working…' : queued ? 'Queued — will run when ready.' : 'No activity yet.'}</p>
           )}
@@ -1879,7 +1879,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
                 <>
                   {hidden > 0 && (
                     <button type="button" onClick={() => setShowAllFindings(true)}
-                      className="self-start rounded px-1.5 py-0.5 text-[0.7rem] text-on-surface-low/80 hover:text-primary"
+                      className="self-start rounded px-1.5 py-0.5 text-[0.75rem] text-on-surface-low/80 hover:text-primary"
                       title={`Show ${hidden} earlier cycle${hidden === 1 ? '' : 's'}`}>↑ {hidden} earlier cycle{hidden === 1 ? '' : 's'}</button>
                   )}
                   {shown.map((f) => <FindingCard key={f.cycle ?? `${f.summary}`} finding={f} ws={ws} />)}
@@ -1889,11 +1889,11 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
           </div>
           {live.length > 0 && (
             <div className="mt-2 rounded-lg border border-primary/30 bg-primary/5 p-2.5">
-              <div className="mb-1.5 inline-flex items-center gap-1.5 text-[0.7rem] text-primary"><Loader2 size={11} className="animate-spin" /> working now</div>
+              <div className="mb-1.5 inline-flex items-center gap-1.5 text-[0.75rem] text-primary"><Loader2 size={11} className="animate-spin" /> working now</div>
               <div className="flex flex-col gap-1">
                 {live.map((it, i) => (
                   it.kind === 'say'
-                    ? <p key={i} className="whitespace-pre-wrap text-[0.78rem] leading-snug text-on-surface-var">{it.label}</p>
+                    ? <p key={i} className="whitespace-pre-wrap text-[0.75rem] leading-snug text-on-surface-var">{it.label}</p>
                     : <div key={i} className="flex items-start gap-1.5 text-[0.75rem] text-on-surface-low">
                         {it.kind === 'tool' ? <Wrench size={11} className="mt-0.5 shrink-0" /> : <Activity size={11} className="mt-0.5 shrink-0" />}
                         <span className="min-w-0"><span className="text-on-surface-var">{it.label}</span>{it.detail && <span className="text-on-surface-low/70"> · {it.detail.slice(0, 60)}</span>}</span>
@@ -1912,7 +1912,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
         {autopilot ? (
           !terminal && (
             <>
-              <p className="mb-2 inline-flex items-center gap-1 text-[0.7rem] text-on-surface-low">
+              <p className="mb-2 inline-flex items-center gap-1 text-[0.75rem] text-on-surface-low">
                 <Rocket size={11} className="text-primary" />
                 {running ? 'Running on autopilot.'
                   : state === 'blocked' ? 'Autopilot will run it once its dependencies finish.'
@@ -1920,7 +1920,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
                   : 'Queued by autopilot.'}
               </p>
               {state === 'blocked' && blockers.length > 0 && (
-                <div className="mb-2 text-[0.7rem] text-on-surface-low">
+                <div className="mb-2 text-[0.75rem] text-on-surface-low">
                   <span>Waiting on:</span>
                   <BlockerList blockers={blockers} onOpenTask={onOpenTask} />
                 </div>
@@ -1932,27 +1932,25 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
             {/* queueable: ready now, or waiting-for-its-stage (queue it for when the
                 stage opens). Blocked tasks can't be queued usefully (deps not done). */}
             {(state === 'ready' || (state === 'waiting' && !queued)) && (
-              <button type="button" disabled={busy} onClick={() => queue('queue')}
-                className="mb-2 inline-flex items-center gap-1 rounded-md bg-primary/15 px-2 py-1 text-[0.7rem] text-primary hover:bg-primary/25 disabled:opacity-50">
+              <Button variant="tonal" size="xs" disabled={busy} onClick={() => queue('queue')}
+                className="mb-2 gap-1 px-2 text-[0.75rem]">
                 <Play size={11} /> Queue this task{state === 'waiting' ? ' (runs when its stage starts)' : ''}
-              </button>
+              </Button>
             )}
             {state === 'waiting' && queued && (
-              <p className="mb-2 text-[0.7rem] text-on-surface-low">Queued · waiting for its stage to start.</p>
+              <p className="mb-2 text-[0.75rem] text-on-surface-low">Queued · waiting for its stage to start.</p>
             )}
             {state === 'blocked' && (
-              <div className="mb-2 text-[0.7rem] text-on-surface-low">
+              <div className="mb-2 text-[0.75rem] text-on-surface-low">
                 <span>Blocked — waiting on{queued ? ' (queued; will run when they finish)' : ''}:</span>
                 <BlockerList blockers={blockers} onOpenTask={onOpenTask} />
               </div>
             )}
             {queued && !running && (state === 'queued') && (
-              <button type="button" disabled={busy} onClick={() => queue('unqueue')}
-                className="mb-2 text-[0.7rem] text-primary hover:underline disabled:opacity-50">Remove from queue</button>
+              <TextLink disabled={busy} onClick={() => queue('unqueue')} size="xs" className="mb-2">Remove from queue</TextLink>
             )}
             {queued && !running && (state === 'blocked' || state === 'waiting') && (
-              <button type="button" disabled={busy} onClick={() => queue('unqueue')}
-                className="mb-2 ml-2 text-[0.7rem] text-primary hover:underline disabled:opacity-50">Remove from queue</button>
+              <TextLink disabled={busy} onClick={() => queue('unqueue')} size="xs" className="mb-2 ml-2">Remove from queue</TextLink>
             )}
           </>
         )}
@@ -1977,7 +1975,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
             {lastSteer && (
               <div className="mb-2 self-end rounded-xl bg-primary/15 px-2.5 py-1.5 text-[0.8125rem] text-on-surface-var">
                 {lastSteer.text}
-                {lastSteer.failed && <span className="ml-1.5 text-[0.7rem] text-danger">· failed to send</span>}
+                {lastSteer.failed && <span className="ml-1.5 text-[0.75rem] text-danger">· failed to send</span>}
               </div>
             )}
             <div className="flex items-end gap-1.5 rounded-xl bg-surface-container px-2.5 py-1.5">
@@ -1985,11 +1983,9 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
                 placeholder={project.status === 'needs_input' ? 'Answer for this task…' : `Steer “${task.title.slice(0, 24)}${task.title.length > 24 ? '…' : ''}”…`}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); steer() } }}
                 className="max-h-24 min-h-0 flex-1 resize-none overflow-y-auto bg-transparent text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low" />
-              <button type="button" onClick={() => steer()} disabled={!text.trim() || busy} aria-label="Send steer"
-                className="grid size-7 shrink-0 place-items-center rounded-full disabled:opacity-40"
-                style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }}>
-                {busy ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
-              </button>
+              <IconButton icon={busy ? Loader2 : Send} label="Send steer" filled size={28} iconSize={13}
+                disabled={!text.trim() || busy} onClick={() => steer()}
+                className={busy ? 'shrink-0 [&_svg]:animate-spin' : 'shrink-0'} />
             </div>
           </>
         )}
@@ -2168,22 +2164,22 @@ function WorkspaceTree({ ws, running, isProjectDir }: { ws: string; running: boo
               className={`h-7 min-w-0 flex-1 rounded-md bg-surface-high px-2 text-[0.8125rem] text-on-surface outline-none focus:ring-2 placeholder:text-on-surface-low ${createErr ? 'focus:ring-danger/50 ring-2 ring-danger/40' : 'focus:ring-primary/40'}`} />
           ) : (
             <>
-              <button type="button" onClick={() => { setCreating('file'); setNewName('') }} title="New file" aria-label="New file"
-                className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[0.7rem] text-on-surface-low hover:bg-surface-high hover:text-on-surface"><FilePlus2 size={13} /> File</button>
-              <button type="button" onClick={() => { setCreating('dir'); setNewName('') }} title="New folder" aria-label="New folder"
-                className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[0.7rem] text-on-surface-low hover:bg-surface-high hover:text-on-surface"><FolderPlus size={13} /> Folder</button>
+              <Button variant="ghost" size="xs" title="New file" onClick={() => { setCreating('file'); setNewName('') }}
+                className="gap-1 px-1.5 text-[0.75rem] text-on-surface-low"><FilePlus2 size={13} /> File</Button>
+              <Button variant="ghost" size="xs" title="New folder" onClick={() => { setCreating('dir'); setNewName('') }}
+                className="gap-1 px-1.5 text-[0.75rem] text-on-surface-low"><FolderPlus size={13} /> Folder</Button>
             </>
           )}
          </div>
-         {createErr && <span role="alert" className="px-0.5 text-[0.7rem] text-danger">{createErr}</span>}
+         {createErr && <span role="alert" className="px-0.5 text-[0.75rem] text-danger">{createErr}</span>}
         </div>
       )}
       {/* rename/delete failure — dismissable, sits above the tree (works in both
           bound-workspace and project-dir modes, where the create row is hidden). */}
       {treeErr && (
-        <div role="alert" className="mx-1.5 mb-1 flex items-start gap-1.5 px-0.5 text-[0.7rem] text-danger">
+        <div role="alert" className="mx-1.5 mb-1 flex items-start gap-1.5 px-0.5 text-[0.75rem] text-danger">
           <span className="min-w-0 flex-1">{treeErr}</span>
-          <button type="button" onClick={() => setTreeErr('')} aria-label="Dismiss" className="shrink-0 hover:text-on-surface"><X size={11} /></button>
+          <IconButton icon={X} label="Dismiss" onClick={() => setTreeErr('')} size={18} iconSize={11} className="shrink-0" />
         </div>
       )}
       <FileTree dirs={dirs} rootPath={ws} activePath={activePath} gitStatuses={statuses}
@@ -2340,7 +2336,7 @@ function ChangesPanel({ ws, running, isProjectDir = false }: { ws: string; runni
           <GitBranch size={12} className="shrink-0" />
           <span className="truncate text-on-surface-var">{branch || (state === 'loaded' ? '(no branch)' : '…')}</span>
         </span>
-        <button type="button" onClick={() => setNonce((n) => n + 1)} className="shrink-0 rounded px-1.5 py-0.5 hover:bg-surface-high hover:text-on-surface">refresh</button>
+        <Button variant="ghost" size="xs" onClick={() => setNonce((n) => n + 1)} className="shrink-0 px-1.5 text-[0.75rem] text-on-surface-low">refresh</Button>
       </div>
       {entries.length === 0 ? (
         // Distinguish the three empty-map states: a failed/in-flight fetch must NOT
@@ -2350,7 +2346,7 @@ function ChangesPanel({ ws, running, isProjectDir = false }: { ws: string; runni
         ) : state === 'error' ? (
           <div className="flex flex-col items-center gap-2 px-3 py-6 text-center text-[0.8125rem]">
             <span style={{ color: 'var(--color-warn)' }}>Couldn't read git status for this workspace.</span>
-            <button type="button" onClick={() => setNonce((n) => n + 1)} className="rounded-md px-2 py-1 text-on-surface-low hover:bg-surface-high hover:text-on-surface">Retry</button>
+            <Button variant="ghost" size="xs" onClick={() => setNonce((n) => n + 1)}>Retry</Button>
           </div>
         ) : (
           <p className="px-3 py-6 text-center text-on-surface-low text-[0.8125rem]">No uncommitted changes — the working tree is clean.</p>
@@ -2359,7 +2355,7 @@ function ChangesPanel({ ws, running, isProjectDir = false }: { ws: string; runni
         <div className="flex flex-col">
           {/* count label — at-a-glance magnitude + parity with the "History" label
               below, and it distinguishes working changes from the commit list. */}
-          <div className="px-3 pt-1 pb-1 text-[0.7rem] uppercase tracking-wide text-on-surface-low">
+          <div className="px-3 pt-1 pb-1 text-[0.75rem] uppercase tracking-wide text-on-surface-low">
             Changes ({entries.length})
           </div>
           {entries.map(([path, code]) => {
@@ -2367,7 +2363,7 @@ function ChangesPanel({ ws, running, isProjectDir = false }: { ws: string; runni
             return (
               <button key={path} type="button" onClick={() => open(path, code)}
                 className="flex items-center gap-2 px-3 py-1.5 text-left text-[0.8125rem] transition-colors hover:bg-surface-high">
-                <span className="w-[58px] shrink-0 text-[0.7rem]" style={{ color: l.color }}>{l.text}</span>
+                <span className="w-[58px] shrink-0 text-[0.75rem]" style={{ color: l.color }}>{l.text}</span>
                 <span className="min-w-0 truncate font-mono text-on-surface-var" title={path}>{rel(path)}</span>
               </button>
             )
@@ -2379,19 +2375,19 @@ function ChangesPanel({ ws, running, isProjectDir = false }: { ws: string; runni
       {commits.length > 0 && (
         <div className="mt-1 border-t border-outline-variant/40">
           <div className="flex items-baseline justify-between gap-2 px-3 pt-2 pb-1">
-            <span className="text-[0.7rem] uppercase tracking-wide text-on-surface-low">History</span>
+            <span className="text-[0.75rem] uppercase tracking-wide text-on-surface-low">History</span>
             {/* The log is capped server-side (20); when we get a full page back there
                 are almost certainly older commits not shown — say so rather than let
                 the list read as the repo's entire history. */}
-            {commits.length >= 20 && <span className="text-[0.65rem] text-on-surface-low/70">latest 20</span>}
+            {commits.length >= 20 && <span className="text-[0.75rem] text-on-surface-low/70">latest 20</span>}
           </div>
           {commits.map((c) => (
             <button key={c.hash} type="button"
               onClick={() => window.dispatchEvent(new CustomEvent('ne:code-open-commit', { detail: { hash: c.hash, subject: c.subject, path: ws } }))}
               className="flex w-full items-baseline gap-2 px-3 py-1 text-left text-[0.8125rem] transition-colors hover:bg-surface-high">
-              <span className="shrink-0 font-mono text-[0.7rem] text-on-surface-low">{c.hash}</span>
+              <span className="shrink-0 font-mono text-[0.75rem] text-on-surface-low">{c.hash}</span>
               <span className="min-w-0 flex-1 truncate text-on-surface-var" title={c.subject}>{c.subject}</span>
-              <span className="shrink-0 text-[0.65rem] text-on-surface-low">{c.relative}</span>
+              <span className="shrink-0 text-[0.75rem] text-on-surface-low">{c.relative}</span>
             </button>
           ))}
         </div>
@@ -2817,7 +2813,7 @@ function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd }: { ws: stri
           <div className="flex h-full flex-col">
             <div className="flex shrink-0 items-center justify-between border-b border-outline-variant/40 bg-surface-low/40 px-2 py-1">
               <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.75rem]"><GitBranch size={12} /> Diff — {diff.name}</span>
-              <button type="button" onClick={() => setDiff(null)} aria-label="Close diff" className="rounded-md p-1 text-on-surface-low hover:bg-surface-high hover:text-on-surface"><X size={13} /></button>
+              <IconButton icon={X} label="Close diff" onClick={() => setDiff(null)} size={24} iconSize={13} />
             </div>
             <div className="min-h-0 flex-1"><DiffView path={diff.path} name={diff.name} ws={ws} deleted={diff.deleted} /></div>
           </div>
@@ -2830,7 +2826,7 @@ function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd }: { ws: stri
           <Centered>
             <div className="flex flex-col items-center gap-2 text-on-surface-low">
               <Code2 size={26} className="opacity-40" />
-              <p className="text-[0.875rem]">Open a file from the tree to view + edit it.</p>
+              <p className="text-[0.8125rem]">Open a file from the tree to view + edit it.</p>
               {/* Re-engage "follow the worker" — auto-open whatever it edits next. Only
                   while a worker is actually RUNNING; on a terminal/idle project there's
                   nothing to follow, so the button would be a dead no-op. */}
@@ -2895,7 +2891,7 @@ function CommitView({ ws, hash, subject, onClose }: { ws: string; hash: string; 
         <span className="inline-flex min-w-0 items-center gap-1.5 text-on-surface-low text-[0.75rem]">
           <GitBranch size={12} className="shrink-0" /> <span className="font-mono">{hash}</span> <span className="truncate text-on-surface-var">{subject}</span>
         </span>
-        <button type="button" onClick={onClose} aria-label="Close commit" className="shrink-0 rounded-md p-1 text-on-surface-low hover:bg-surface-high hover:text-on-surface"><X size={13} /></button>
+        <IconButton icon={X} label="Close commit" onClick={onClose} size={24} iconSize={13} className="shrink-0" />
       </div>
       <div className="min-h-0 flex-1 overflow-auto bg-surface p-2">
         {diff === null ? (
@@ -2904,7 +2900,7 @@ function CommitView({ ws, hash, subject, onClose }: { ws: string; hash: string; 
           <Centered>
             <div className="flex flex-col items-center gap-2 px-4 text-center text-[0.8125rem]">
               <span style={{ color: 'var(--color-danger)' }}>Couldn't load this commit.</span>
-              <button type="button" onClick={() => setAttempt((n) => n + 1)} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-primary hover:bg-surface-high"><RotateCcw size={13} /> Try again</button>
+              <Button variant="ghost" size="xs" onClick={() => setAttempt((n) => n + 1)} className="text-primary"><RotateCcw size={13} /> Try again</Button>
             </div>
           </Centered>
         ) : notFound ? (
@@ -2913,11 +2909,11 @@ function CommitView({ ws, hash, subject, onClose }: { ws: string; hash: string; 
           <Centered><p className="px-4 text-center text-on-surface-low text-[0.8125rem]">This commit has no textual changes (e.g. a merge or an empty checkpoint).</p></Centered>
         ) : (
           <>
-            <pre className="font-mono text-[0.72rem] leading-snug">
+            <pre className="font-mono text-[0.75rem] leading-snug">
               {diff.split('\n').map((l, i) => <div key={i} style={{ color: lineColor(l) }}>{l || ' '}</div>)}
             </pre>
             {truncated && (
-              <p className="mt-2 px-1 text-on-surface-low/80 text-[0.7rem]">
+              <p className="mt-2 px-1 text-on-surface-low/80 text-[0.75rem]">
                 Diff truncated — this commit is large; only the first part is shown. Use the workspace terminal (<span className="font-mono">git show {hash}</span>) for the full patch.
               </p>
             )}
@@ -2990,15 +2986,15 @@ function BottomTerminal({ ws, hidden, onClose, runCmd }: { ws: string; hidden?: 
       </div>
       <div className="flex shrink-0 items-center justify-between border-b border-outline-variant/40 bg-surface-low/40 px-3 py-1">
         <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.75rem]"><TerminalSquare size={12} /> Terminal · {ws.split('/').slice(-1)[0]}</span>
-        <button type="button" onClick={onClose} aria-label="Hide terminal" className="rounded-md p-1 text-on-surface-low hover:bg-surface-high hover:text-on-surface"><X size={13} /></button>
+        <IconButton icon={X} label="Hide terminal" onClick={onClose} size={24} iconSize={13} />
       </div>
       <div className="min-h-0 flex-1">
         {err ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-[0.8125rem]">
             <span style={{ color: 'var(--color-danger)' }}>{err}</span>
             <div className="flex items-center gap-2">
-              <button type="button" onClick={() => setAttempt((n) => n + 1)} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-primary hover:bg-surface-high"><RotateCcw size={13} /> Try again</button>
-              <button type="button" onClick={onClose} className="rounded-md px-2 py-1 text-on-surface-low hover:bg-surface-high hover:text-on-surface">Close</button>
+              <Button variant="ghost" size="xs" onClick={() => setAttempt((n) => n + 1)} className="text-primary"><RotateCcw size={13} /> Try again</Button>
+              <Button variant="ghost" size="xs" onClick={onClose}>Close</Button>
             </div>
           </div>
         ) : tab ? <TerminalView tab={tab} onExited={() => {}} onClose={onClose}
@@ -3065,11 +3061,11 @@ function OutcomeBanner({ project: p, findings }: { project: CodeProject; finding
   return (
     <div className="mb-3 rounded-lg p-2.5 text-[0.8125rem]"
       style={{ background: `color-mix(in srgb, ${meta.tone} 12%, transparent)` }}>
-      <div className="inline-flex items-center gap-1.5" style={{ color: meta.tone, fontVariationSettings: '"wght" 550' }}>
+      <div className="inline-flex items-center gap-1.5" style={withWeight({ color: meta.tone }, 550)}>
         <Icon size={14} /> {meta.label}
       </div>
       {bits.length > 0 && <p className="mt-1 text-on-surface-var text-[0.75rem]">{bits.join(' · ')}</p>}
-      {!meta.ok && p.error_message && <p className="mt-1 text-on-surface-low text-[0.7rem]">{p.error_message}</p>}
+      {!meta.ok && p.error_message && <p className="mt-1 text-on-surface-low text-[0.75rem]">{p.error_message}</p>}
       {/* Surface the files the worker produced as clickable chips — the payoff of the
           run is "open + read what was built". Shown for ANY terminal outcome that
           produced files: a genuine complete, an incomplete (budget-exhausted) finish,
@@ -3080,7 +3076,7 @@ function OutcomeBanner({ project: p, findings }: { project: CodeProject; finding
         <div className="mt-1.5">
           {/* FilesTouched now owns the cap + "+N more" reveal (max=12 here), so no
               external slice / static "showing 12" note — the toggle is self-describing. */}
-          <p className="text-on-surface-low text-[0.7rem]">What was built — click to open:</p>
+          <p className="text-on-surface-low text-[0.75rem]">What was built — click to open:</p>
           <FilesTouched files={[...files]} ws={ws} max={12} />
         </div>
       )}
@@ -3110,7 +3106,7 @@ function FindingCard({ finding: f, ws }: { finding: CodeFinding; ws: string }) {
   const evidence = evidenceToText(f.evidence)
   return (
     <div className="rounded-lg border border-outline-variant/40 bg-surface-container/50 p-2.5">
-      <div className="mb-1 flex items-center gap-1.5 text-[0.7rem] text-on-surface-low">
+      <div className="mb-1 flex items-center gap-1.5 text-[0.75rem] text-on-surface-low">
         <span className="rounded-pill bg-surface-high px-1.5 tabular-nums">cycle {f.cycle}</span>
         {f.stage && <span className="rounded-pill bg-surface-high px-1.5">{f.stage}</span>}
       </div>
@@ -3121,11 +3117,11 @@ function FindingCard({ finding: f, ws }: { finding: CodeFinding; ws: string }) {
         <div className="mt-1.5">
           <button type="button" onClick={() => setShowEvidence((v) => !v)} aria-expanded={showEvidence}
             aria-label={showEvidence ? 'Hide evidence' : 'Show evidence'}
-            className="inline-flex items-center gap-1 text-[0.7rem] text-on-surface-low hover:text-on-surface">
+            className="inline-flex items-center gap-1 text-[0.75rem] text-on-surface-low hover:text-on-surface">
             {showEvidence ? <ChevronDown size={11} /> : <ChevronRight size={11} />} evidence
           </button>
           {showEvidence && (
-            <pre className="mt-1 max-h-48 overflow-auto rounded-md bg-surface-high/60 p-2 text-[0.7rem] leading-snug text-on-surface-var whitespace-pre-wrap break-words">{evidence}</pre>
+            <pre className="mt-1 max-h-48 overflow-auto rounded-md bg-surface-high/60 p-2 text-[0.75rem] leading-snug text-on-surface-var whitespace-pre-wrap break-words">{evidence}</pre>
           )}
         </div>
       )}
@@ -3194,7 +3190,7 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
         {project.status === 'needs_input' && project.pending_question?.question && (
           <div role="alert" className="mb-2 rounded-lg p-2.5 text-[0.8125rem]"
             style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
-            <div className="mb-1 inline-flex items-center gap-1.5" style={{ color: 'var(--color-info)', fontVariationSettings: '"wght" 550' }}>
+            <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-info)' }, 550)}>
               <HelpCircle size={14} /> The worker needs your input
             </div>
             <p className="whitespace-pre-wrap text-on-surface">{project.pending_question.question}</p>
@@ -3204,13 +3200,12 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
               <p className="mt-1 whitespace-pre-wrap text-on-surface-low text-[0.75rem]">{project.pending_question.why}</p>
             )}
             <div className="mt-2 flex items-center gap-2">
-              <p className="flex-1 text-on-surface-low text-[0.7rem]">Answer below to resume the build.</p>
-              <button type="button" disabled={sending}
+              <p className="flex-1 text-on-surface-low text-[0.75rem]">Answer below to resume the build.</p>
+              <Button variant="ghost" size="xs" disabled={sending}
                 onClick={() => steer('Proceed with your best judgment / the sensible default you proposed. Record the assumption in your finding and continue.')}
-                className="shrink-0 rounded-md px-2 py-1 text-[0.7rem] transition-colors hover:bg-info/10 disabled:opacity-50"
-                style={{ color: 'var(--color-info)' }}>
+                className="shrink-0 px-2 text-[0.75rem] text-info hover:bg-info/10">
                 Use your best judgment
-              </button>
+              </Button>
             </div>
           </div>
         )}
@@ -3221,17 +3216,16 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
         {project.status === 'needs_input' && !project.pending_question?.question && (
           <div role="alert" className="mb-2 rounded-lg p-2.5 text-[0.8125rem]"
             style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
-            <div className="mb-1 inline-flex items-center gap-1.5" style={{ color: 'var(--color-info)', fontVariationSettings: '"wght" 550' }}>
+            <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-info)' }, 550)}>
               <HelpCircle size={14} /> The worker is waiting on you
             </div>
             <p className="text-on-surface-var text-[0.75rem]">It paused for input but didn't leave a specific question. Steer it below with direction (or tell it to use its best judgment), then it resumes.</p>
             <div className="mt-2 flex justify-end">
-              <button type="button" disabled={sending}
+              <Button variant="ghost" size="xs" disabled={sending}
                 onClick={() => steer('Proceed with your best judgment / the sensible default. Record any assumption in your finding and continue.')}
-                className="shrink-0 rounded-md px-2 py-1 text-[0.7rem] transition-colors hover:bg-info/10 disabled:opacity-50"
-                style={{ color: 'var(--color-info)' }}>
+                className="shrink-0 px-2 text-[0.75rem] text-info hover:bg-info/10">
                 Use your best judgment
-              </button>
+              </Button>
             </div>
           </div>
         )}
@@ -3244,22 +3238,22 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
         {project.status === 'blocked' && project.error_message && (
           <div className="mb-2 rounded-lg p-2.5 text-[0.8125rem]"
             style={{ background: 'color-mix(in srgb, var(--color-warn) 12%, transparent)' }}>
-            <div className="mb-1 inline-flex items-center gap-1.5" style={{ color: 'var(--color-warn)', fontVariationSettings: '"wght" 550' }}>
+            <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-warn)' }, 550)}>
               <AlertTriangle size={14} /> Paused — needs you
             </div>
             <p className="whitespace-pre-wrap text-on-surface-var">{project.error_message}</p>
-            <p className="mt-1 text-on-surface-low text-[0.7rem]">Steer it below (or relax a stage criterion), then Resume.</p>
+            <p className="mt-1 text-on-surface-low text-[0.75rem]">Steer it below (or relax a stage criterion), then Resume.</p>
           </div>
         )}
         {gateFail && project.status === 'running' && (
           <div role="alert" className="mb-2 rounded-lg p-2.5 text-[0.8125rem]"
             style={{ background: 'color-mix(in srgb, var(--color-warn) 12%, transparent)' }}>
-            <div className="mb-1 inline-flex items-center gap-1.5" style={{ color: 'var(--color-warn)', fontVariationSettings: '"wght" 550' }}>
+            <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-warn)' }, 550)}>
               <XCircle size={14} /> Supervisor {gateFail.label} check failed — stage held
             </div>
-            {gateFail.command && <p className="font-mono text-on-surface-low text-[0.7rem]">{gateFail.command}</p>}
+            {gateFail.command && <p className="font-mono text-on-surface-low text-[0.75rem]">{gateFail.command}</p>}
             {gateFail.output && (
-              <pre className="mt-1 max-h-40 overflow-auto rounded-md bg-surface-high/60 p-2 text-[0.7rem] leading-snug text-on-surface-var whitespace-pre-wrap break-words">{gateFail.output}</pre>
+              <pre className="mt-1 max-h-40 overflow-auto rounded-md bg-surface-high/60 p-2 text-[0.75rem] leading-snug text-on-surface-var whitespace-pre-wrap break-words">{gateFail.output}</pre>
             )}
           </div>
         )}
@@ -3270,10 +3264,10 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
         {stalled && !gateFail && (project.status === 'running' || project.status === 'blocked') && (
           <div role="status" className="mb-2 rounded-lg p-2.5 text-[0.8125rem]"
             style={{ background: 'color-mix(in srgb, var(--color-warn) 12%, transparent)' }}>
-            <div className="mb-1 inline-flex items-center gap-1.5" style={{ color: 'var(--color-warn)', fontVariationSettings: '"wght" 550' }}>
+            <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-warn)' }, 550)}>
               <AlertTriangle size={14} /> “{stalled.title}” {project.status === 'blocked' ? 'is stuck — paused for you' : 'seems stuck'}
             </div>
-            <p className="text-on-surface-var text-[0.7rem]">{stalled.findings} cycles in and the gate still hasn't passed — steer it or relax a criterion{project.status === 'blocked' ? ', then Resume' : ''}.</p>
+            <p className="text-on-surface-var text-[0.75rem]">{stalled.findings} cycles in and the gate still hasn't passed — steer it or relax a criterion{project.status === 'blocked' ? ', then Resume' : ''}.</p>
           </div>
         )}
         {/* the most recent steer, so the user sees their message landed */}
@@ -3281,9 +3275,9 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
           <div className="mb-2 self-end rounded-xl bg-primary/15 px-2.5 py-1.5 text-[0.8125rem] text-on-surface-var">
             {lastSteer.text}
             {'applied_cycle' in lastSteer && (lastSteer as { applied_cycle?: number }).applied_cycle != null && (
-              <span className="ml-1.5 text-[0.65rem] text-on-surface-low">· applied cycle {(lastSteer as { applied_cycle?: number }).applied_cycle}</span>
+              <span className="ml-1.5 text-[0.75rem] text-on-surface-low">· applied cycle {(lastSteer as { applied_cycle?: number }).applied_cycle}</span>
             )}
-            {'failed' in lastSteer && (lastSteer as { failed?: boolean }).failed && <span className="ml-1.5 text-[0.7rem] text-danger">· failed to send</span>}
+            {'failed' in lastSteer && (lastSteer as { failed?: boolean }).failed && <span className="ml-1.5 text-[0.75rem] text-danger">· failed to send</span>}
           </div>
         )}
       </div>
@@ -3295,11 +3289,9 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
               placeholder={project.status === 'needs_input' ? 'Answer the worker…' : 'Steer the worker…'}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); steer() } }}
               className="max-h-24 min-h-0 flex-1 resize-none overflow-y-auto bg-transparent text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low" />
-            <button type="button" onClick={() => steer()} disabled={!text.trim() || sending} aria-label="Send steer"
-              className="grid size-7 shrink-0 place-items-center rounded-full disabled:opacity-40"
-              style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }}>
-              {sending ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
-            </button>
+            <IconButton icon={sending ? Loader2 : Send} label="Send steer" filled size={28} iconSize={13}
+              disabled={!text.trim() || sending} onClick={() => steer()}
+              className={sending ? 'shrink-0 [&_svg]:animate-spin' : 'shrink-0'} />
           </div>
         ) : project.status === 'ready' || project.status === 'review' ? (
           <p className="px-1.5 py-1 text-center text-on-surface-low text-[0.75rem]">Press Start to launch — steer the worker once it's running.</p>
@@ -3309,10 +3301,9 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
           // out were buried in the overflow menu). Navigates to the new-project composer.
           <div className="flex flex-col items-center gap-1.5 px-1.5 py-1 text-center">
             <p className="text-on-surface-low text-[0.75rem]">This project has finished.</p>
-            <button type="button" onClick={() => onStartNew?.()}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-1.5 text-[0.75rem] text-primary transition-colors hover:bg-primary/25">
+            <Button variant="tonal" size="xs" onClick={() => onStartNew?.()} className="gap-1.5 px-3 text-[0.75rem]">
               <Plus size={13} /> Start a new project
-            </button>
+            </Button>
           </div>
         )}
       </div>
@@ -3351,7 +3342,7 @@ function FilesTouched({ files, ws, max = 8 }: { files?: string[]; ws: string; ma
       {shown.map(({ abs: p, rel }) => {
         return (
           <button key={p} type="button" onClick={() => open(p)} title={rel}
-            className="inline-flex max-w-full items-center gap-1 rounded bg-surface-high px-1.5 py-0.5 text-[0.7rem] text-on-surface-low transition-colors hover:text-primary">
+            className="inline-flex max-w-full items-center gap-1 rounded bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low transition-colors hover:text-primary">
             <FileCode size={10} className="shrink-0" />
             <span className="truncate">{rel}</span>
           </button>
@@ -3359,7 +3350,7 @@ function FilesTouched({ files, ws, max = 8 }: { files?: string[]; ws: string; ma
       })}
       {hidden > 0 && (
         <button type="button" onClick={() => setExpanded(true)}
-          className="rounded px-1.5 py-0.5 text-[0.7rem] text-on-surface-low/80 hover:text-primary"
+          className="rounded px-1.5 py-0.5 text-[0.75rem] text-on-surface-low/80 hover:text-primary"
           title={`Show ${hidden} more file${hidden === 1 ? '' : 's'}`}>+{hidden} more</button>
       )}
     </div>
@@ -3376,10 +3367,6 @@ function Shell({ title, onBack, children }: { title: string; onBack: () => void;
       <div className="min-h-0 flex-1">{children}</div>
     </div>
   )
-}
-
-function Centered({ children }: { children: React.ReactNode }) {
-  return <div className="flex h-full items-center justify-center">{children}</div>
 }
 
 // re-export for the section's type usage

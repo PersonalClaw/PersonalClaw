@@ -29,6 +29,7 @@ import { ProjectionRulesPanel } from './ProjectionRulesPanel'
 import { AppsPanel } from './AppsPanel'
 import { SettingsHome } from './SettingsHome'
 import type { RouteProps } from '../../app/useQueryState'
+import { fvs } from '../../design/fontWeight'
 
 // A subpage panel's render context: `go` navigates between subpages, `navigate` is
 // the raw router (for cross-section links), and `query`/`setQuery` let a panel put
@@ -106,9 +107,9 @@ export function SettingsPage({ sub, navigate, query, setQuery }: RouteProps) {
           <div className="flex items-center gap-1 min-w-0">
             <IconButton icon={ArrowLeft} label="Back to Settings" size={36} onClick={() => go('')} />
             <button type="button" onClick={() => go('')}
-              className="text-on-surface-low text-[1.0625rem] transition-colors hover:text-on-surface" style={{ fontVariationSettings: '"wght" 470' }}>Settings</button>
+              className="text-on-surface-low text-[1.0625rem] transition-colors hover:text-on-surface" style={fvs(470)}>Settings</button>
             <ChevronRight size={16} className="shrink-0 text-on-surface-low/60" />
-            <span className="flex items-center gap-1.5 min-w-0 text-on-surface text-[1.0625rem]" style={{ fontVariationSettings: '"wght" 470' }}>
+            <span className="flex items-center gap-1.5 min-w-0 text-on-surface text-[1.0625rem]" style={fvs(470)}>
               <current.icon size={16} className="shrink-0 text-on-surface-low" />
               <span className="truncate">{current.label}</span>
             </span>

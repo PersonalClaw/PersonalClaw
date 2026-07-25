@@ -14,6 +14,7 @@ import { MultiInstanceCard } from './MultiInstanceCard'
 import { RemoteModelProviders } from './ModelBackends'
 import { LocalModelManager } from './LocalModelManager'
 import type { ProviderModels } from '../../lib/api'
+import { fvs } from '../../design/fontWeight'
 
 // One section per provider ENTITY (VISION §"The entities"). Order is intentional:
 // the entities a user touches most (what backs a chat, what models are available)
@@ -217,8 +218,8 @@ function EntitySection({ icon: Icon, label, hint, count, children }: {
     <section className="mb-2xl">
       <div className="mb-1 flex items-center gap-2">
         <Icon size={16} className="text-on-surface-low" />
-        <h3 className="text-on-surface text-[0.9375rem]" style={{ fontVariationSettings: '"wght" 600' }}>{label}</h3>
-        <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.65rem] tabular-nums">{count}</span>
+        <h3 className="text-on-surface text-[0.9375rem]" style={fvs(600)}>{label}</h3>
+        <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem] tabular-nums">{count}</span>
       </div>
       {hint && <p className="mb-m text-on-surface-low text-[0.8125rem]">{hint}</p>}
       <div className="flex flex-col gap-2">{children}</div>
@@ -249,7 +250,7 @@ function ModelEntitySection({ exts, availableByProvider, openProvider, openCfg, 
     <div className="flex flex-col gap-4">
       {(localCards.length > 0 || otherNative.length > 0) && (
         <div>
-          <div className="mb-2 text-on-surface-low text-[0.7rem] uppercase tracking-wide">Native (bundled)</div>
+          <div className="mb-2 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Native (bundled)</div>
           <div className="flex flex-col gap-2">
             {localCards.map((av) => {
               const ext = extByName.get(av.name)
@@ -258,7 +259,7 @@ function ModelEntitySection({ exts, availableByProvider, openProvider, openCfg, 
                 <div key={av.name}>
                   {ext
                     ? <ProviderCard ext={ext} open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={onChanged} />
-                    : <div className="text-on-surface text-[0.875rem]" style={{ fontVariationSettings: '"wght" 600' }}>{av.displayName || av.name}</div>}
+                    : <div className="text-on-surface text-[0.8125rem]" style={fvs(600)}>{av.displayName || av.name}</div>}
                   {enabled && (
                     <div className={ext ? 'mt-2 pl-4' : 'mt-2'}>
                       <LocalModelManager provider={av.name} models={av.models ?? []} searchable={av.searchable} onChanged={onChanged} />
@@ -272,7 +273,7 @@ function ModelEntitySection({ exts, availableByProvider, openProvider, openCfg, 
         </div>
       )}
       <div>
-        <div className="mb-2 text-on-surface-low text-[0.7rem] uppercase tracking-wide">Remote (multi-instance)</div>
+        <div className="mb-2 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Remote (multi-instance)</div>
         <RemoteModelProviders />
       </div>
     </div>
@@ -292,7 +293,7 @@ function ActionGroups({ exts, openProvider, openCfg, onChanged }: { exts: Settin
     <div className="flex flex-col gap-4">
       {ordered.map((entity) => (
         <div key={entity}>
-          <div className="mb-2 text-on-surface-low text-[0.7rem] uppercase tracking-wide">{ACTION_ENTITY_LABELS[entity] ?? 'Other actions'}</div>
+          <div className="mb-2 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{ACTION_ENTITY_LABELS[entity] ?? 'Other actions'}</div>
           <div className="flex flex-col gap-2">
             {(byEntity.get(entity) ?? []).map((ext) => <ProviderCard key={ext.name} ext={ext} open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={onChanged} />)}
           </div>

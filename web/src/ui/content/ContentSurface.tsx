@@ -2,6 +2,8 @@ import { lazy, Suspense, useEffect, useId, useImperativeHandle, useRef, useState
 import { motion } from 'framer-motion'
 import { Save, RotateCcw, Eye, Code2, Columns2, WrapText, Copy, Check, Loader2, FileWarning, Download, type LucideIcon } from 'lucide-react'
 import { spring } from '../../design/motion'
+import { SquareIconButton } from '../SquareIconButton'
+import { Centered } from '../Centered'
 import { useMode } from '../../app/theme'
 import { CommentLayer } from '../../pages/files/comments/CommentLayer'
 import type { CommentTarget } from './commentTarget'
@@ -219,7 +221,7 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
       {showToolbar && (
         <div className={`flex items-center gap-s border-b border-outline/40 px-m py-1.5 ${compact ? 'flex-wrap' : ''}`}>
           {headerLeft}
-          {truncated && <span className="shrink-0 rounded px-1.5 py-0.5 text-[0.65rem] text-on-surface-low" style={{ background: 'var(--color-surface-high)' }} title="Only the first part of this large file was loaded — read-only so a save can't truncate the rest.">truncated · read-only</span>}
+          {truncated && <span className="shrink-0 rounded px-1.5 py-0.5 text-[0.75rem] text-on-surface-low" style={{ background: 'var(--color-surface-high)' }} title="Only the first part of this large file was loaded — read-only so a save can't truncate the rest.">truncated · read-only</span>}
           {dirty && <span className="size-1.5 shrink-0 rounded-full" style={{ background: 'var(--color-primary)' }} title="Unsaved changes" />}
           <div className="ml-auto flex items-center gap-1">
             {/* view toggle — shown for any editable+previewable type so there's
@@ -233,14 +235,14 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
             )}
             {view !== 'preview' && editable && (
               <>
-                <IconBtn icon={WrapText} label="Toggle word wrap" active={wrap} onClick={() => setWrap((w) => !w)} />
-                <IconBtn icon={copied ? Check : Copy} label="Copy contents" onClick={copy} />
+                <SquareIconButton icon={WrapText} label="Toggle word wrap" on={wrap} iconSize={13} onClick={() => setWrap((w) => !w)} />
+                <SquareIconButton icon={copied ? Check : Copy} label="Copy contents" iconSize={13} onClick={copy} />
               </>
             )}
             {headerExtras}
             {exports.length > 0 && (
               <div className="relative">
-                <IconBtn icon={Download} label="Export" onClick={() => setExportOpen((v) => !v)} />
+                <SquareIconButton icon={Download} label="Export" iconSize={13} onClick={() => setExportOpen((v) => !v)} />
                 {exportOpen && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setExportOpen(false)} />
@@ -248,7 +250,7 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
                       {exports.map((ex) => (
                         <button key={ex.id} type="button"
                           onClick={() => { setExportOpen(false); void ex.run(draft, title) }}
-                          className="block w-full px-3 py-1.5 text-left text-[0.78rem] text-on-surface hover:bg-surface-high">{ex.label}</button>
+                          className="block w-full px-3 py-1.5 text-left text-[0.75rem] text-on-surface hover:bg-surface-high">{ex.label}</button>
                       ))}
                     </div>
                   </>
@@ -306,7 +308,7 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
 function ToggleBtn({ icon: Icon, label, on, onClick, compact, indicatorId }: { icon: typeof Eye; label: string; on: boolean; onClick: () => void; compact?: boolean; indicatorId: string }) {
   return (
     <button onClick={onClick} type="button" title={compact ? label : undefined} aria-label={label}
-      className={`relative inline-flex items-center gap-1 rounded-pill h-6 text-[0.7rem] transition-colors ${compact ? 'px-2' : 'px-2.5'}`}
+      className={`relative inline-flex items-center gap-1 rounded-pill h-6 text-[0.75rem] transition-colors ${compact ? 'px-2' : 'px-2.5'}`}
       style={{ color: on ? 'var(--color-on-surface)' : 'var(--color-on-surface-low)' }}>
       {/* liquid active pill — slides between Preview/Split/Edit via layoutId (the
           Segmented pattern) instead of the highlight blink-jumping. */}
@@ -315,19 +317,6 @@ function ToggleBtn({ icon: Icon, label, on, onClick, compact, indicatorId }: { i
       <Icon size={12} className="relative" /> {!compact && <span className="relative">{label}</span>}
     </button>
   )
-}
-
-function IconBtn({ icon: Icon, label, active, onClick }: { icon: typeof Copy; label: string; active?: boolean; onClick: () => void }) {
-  return (
-    <motion.button onClick={onClick} type="button" title={label} aria-label={label}
-      whileTap={{ scale: 0.9 }} transition={spring.spatialFast}
-      className="inline-flex size-7 items-center justify-center rounded-md hover:bg-surface-high"
-      style={{ color: active ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }}><Icon size={13} /></motion.button>
-  )
-}
-
-function Centered({ children }: { children: React.ReactNode }) {
-  return <div className="flex h-full items-center justify-center">{children}</div>
 }
 
 // FileWarning is imported for parity with the donor shell's error affordances,

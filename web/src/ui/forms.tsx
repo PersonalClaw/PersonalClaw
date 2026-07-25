@@ -1,0 +1,264 @@
+import { createContext, useContext, useEffect, useId, useState, type ReactNode } from 'react'
+import { X } from 'lucide-react'
+import { cx } from './cx'
+
+// ── Shared form-field family (design-system consistency, plan S2/Owner task 2) ─
+// The canonical form primitives, extracted from pages/tasks/formControls.tsx so
+// they live under ui/ alongside the other primitives (Button, Modal, Segmented).
+// This is the SAME shape the app already uses — a byte-identical relocation, not
+// a redesign — now with a single home. The task-specific editors that were once
+// co-located (DependencyEditor/ChecklistEditor/NotesEditor) stay in
+// pages/tasks/formControls.tsx because they depend on task domain code (dag,
+// taskMeta, TaskNote); a ui/ → pages/ dependency would be backwards.
+//
+// A Field publishes the id of its (visible, uppercase) label so the single
+// control it wraps can point back to it with aria-labelledby — turning the
+// sighted-only label into a real accessible name for screen readers, with zero
+// call-site changes. Controls fall back to this when they have no id/name of
+// their own. Only the FIRST control in a Field should claim it (multi-control
+// Fields like Variables keep their own per-input aria-labels).
+const FieldLabelCtx = createContext<string | undefined>(undefined)
+export function useFieldLabelId() { return useContext(FieldLabelCtx) }
+
+/** Field wrapper — label row (optional right slot for a SoonTag) + control.
+ *  The label carries a stable id and is exposed via context so the wrapped
+ *  control associates with it for accessibility. */
+export function Field({ label, hint, right, children }: { label: string; hint?: string; right?: ReactNode; children: ReactNode }) {
+  const labelId = useId()
+  return (
+    <FieldLabelCtx.Provider value={labelId}>
+      <div>
+        <div className="mb-1.5 flex items-center gap-s">
+          <span id={labelId} className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</span>
+          {right}
+        </div>
+        {children}
+        {hint && <p className="mt-1 text-on-surface-low text-[0.75rem]">{hint}</p>}
+      </div>
+    </FieldLabelCtx.Provider>
+  )
+}
+
+// ── The standard-field size/surface scale ──────────────────────────────────
+// The single canonical shape for a labeled standard field, expressed as a small
+// principled scale rather than the h-7…h-11 / four-surface / 15-text-size spread
+// that pages hand-rolled. This is *codification, not redesign*: every step below
+// is a shape the app already ships, and every size uses a DESIGN.md-blessed type
+// step (0.8125rem / 0.9375rem — 0.875rem/14px is 1px off the ramp and is drift we
+// normalize onto `sm`/`md`, never a tier we bless).
+//
+//  • size   sm → h-8  (dense in-panel fields)      — pairs with Button/Segmented sm
+//           md → h-9  (default rows, side panels)
+//           lg → h-10 (page forms; the DESIGN.md canonical Input)   ← DEFAULT
+//  • surface container (sits in a panel)            ← DEFAULT
+//           high      (sits on a panel / toolbar)
+//           base      (sits on the raw surface)
+//
+// Defaults are lg/container so the fields already adopting this family stay
+// byte-identical. `INPUT_BASE` is TextInput's invariant chrome; the size/surface
+// tables are the only axes that vary. TextArea/DateInput/Select will join this
+// scale as adopters need them. Locked by forms.test.tsx.
+type FieldSize = 'sm' | 'md' | 'lg'
+type FieldSurface = 'container' | 'high' | 'base'
+
+const FIELD_SIZE: Record<FieldSize, string> = {
+  sm: 'h-8 text-[0.8125rem]',
+  md: 'h-9 text-[0.8125rem]',
+  lg: 'h-10 text-[0.9375rem]',
+}
+const FIELD_SURFACE: Record<FieldSurface, string> = {
+  container: 'bg-surface-container',
+  high: 'bg-surface-high',
+  base: 'bg-surface',
+}
+// Shared invariant chrome. Rounding, focus ring, text/placeholder tone, no
+// outline — everything a standard field has regardless of size or surface.
+// Inline padding is NOT baked in here: it is `px-m` normally, or `pl-9 pr-m`
+// when a leadingIcon is present (pl-9 clears the fixed left-3 icon; pr-m keeps
+// the canonical right pad). Applied conditionally so px-m and pl-9 never both
+// emit — a `padding-inline` + `padding-left` cascade race — the same split the
+// prior leading-icon primitive used.
+const INPUT_BASE = 'w-full rounded-md text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
+
+/** The one standard text field. Chrome is fixed; the only axes are `size`
+ *  (sm/md/lg) and `surface` (container/high/base) — the family variants the app's
+ *  height/fill spread collapses onto. Defaults reproduce the prior fixed h-10 /
+ *  container / 0.9375rem field exactly, so every existing call-site is byte-
+ *  identical. Behavioral/structural props (type, mono, leadingIcon, …) are grown
+ *  in lockstep with the first real adopter — never ahead of one. */
+export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, name, ariaLabel, size = 'lg', surface = 'container', type, mono, leadingIcon }: {
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  autoFocus?: boolean
+  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void
+  name?: string
+  ariaLabel?: string
+  size?: FieldSize
+  surface?: FieldSurface
+  /** Masks a secret (API keys, tokens). Defaults to a plain text field. */
+  type?: 'text' | 'password'
+  /** Monospace — technical values (commands, endpoints, keys). Mirrors TextArea's. */
+  mono?: boolean
+  /** A leading glyph (typically a search icon) pinned inside the left edge. Adds
+   *  the canonical left inset (pl-9) that clears the fixed left-3 icon; the caller
+   *  passes the raw icon (e.g. `<Search size={14} />`) and it inherits the muted
+   *  tone from the icon span. */
+  leadingIcon?: ReactNode
+}) {
+  const labelId = useFieldLabelId()
+  const autoId = useId()
+  // Accessible name: a labelless, name-less control that sits in a Field claims
+  // that Field's published label via aria-labelledby. Otherwise (a control with
+  // its own name — a multi-control Field member or an autofill-suppressed picker —
+  // or one outside any Field) an explicit ariaLabel provides the name. A `name`
+  // attribute is NOT an accessible name, so it must never suppress ariaLabel.
+  const claimsFieldLabel = !!labelId && !name
+  const input = (
+    <input value={value} type={type} autoFocus={autoFocus} name={name} id={name || autoId}
+      aria-labelledby={claimsFieldLabel ? labelId : undefined} aria-label={claimsFieldLabel ? undefined : ariaLabel}
+      onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} placeholder={placeholder}
+      className={cx(INPUT_BASE, FIELD_SIZE[size], FIELD_SURFACE[surface], leadingIcon ? 'pl-9 pr-m' : 'px-m', mono && 'font-mono')} />
+  )
+  if (!leadingIcon) return input
+  // The canonical leading-icon geometry (icon at left-3, input pl-9) — the shape
+  // the prior form primitive defined; the app's leading-icon search fields
+  // converge onto it.
+  return (
+    <div className="relative w-full">
+      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-low">{leadingIcon}</span>
+      {input}
+    </div>
+  )
+}
+
+// DateInput / Select keep the prior fixed chrome. They will adopt the shared
+// size/surface scale above when — and only when — a real migration needs a
+// non-default variant (grown in lockstep with the adopter, never ahead of one).
+
+// TextArea's typographic size axis — the same on-ramp type steps as FIELD_SIZE,
+// minus the height rung (a textarea's height comes from `rows`, not a fixed h-*).
+// sm/md share the dense 0.8125rem (matching TextInput, where those tiers differ
+// only in height); lg is the page-form 0.9375rem. Default lg keeps every prior
+// call-site — and the mono branch below — byte-identical; a real adopter that
+// needs the dense size opts into `sm`.
+const TEXTAREA_TEXT: Record<FieldSize, string> = {
+  sm: 'text-[0.8125rem]',
+  md: 'text-[0.8125rem]',
+  lg: 'text-[0.9375rem]',
+}
+
+export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLabel, autoFocus, size = 'lg' }: { value: string; onChange: (v: string) => void; placeholder?: string; rows?: number; mono?: boolean; ariaLabel?: string; autoFocus?: boolean; size?: FieldSize }) {
+  const labelId = useFieldLabelId()
+  const autoId = useId()
+  // Prefer a Field's published label (aria-labelledby); else an explicit ariaLabel
+  // for call-sites that wrap the control in their own (non-Field) section label.
+  // The mono branch is unchanged — it still appends `font-mono text-[0.8125rem]`
+  // after the size text, so every existing (default-size) mono adopter renders
+  // byte-for-byte as before.
+  return (
+    <textarea value={value} rows={rows} autoFocus={autoFocus} id={autoId} aria-labelledby={labelId} aria-label={!labelId ? ariaLabel : undefined} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+      className={`w-full rounded-md bg-surface-container px-m py-2 text-on-surface ${TEXTAREA_TEXT[size]} placeholder:text-on-surface-low outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary/50 ${mono ? 'font-mono text-[0.8125rem]' : ''}`} />
+  )
+}
+
+// ── The canonical numeric stepper ─────────────────────────────────────────────
+// A small right-aligned <input type="number"> with clamp-on-commit: the settings
+// panels hand-rolled this THREE times verbatim (ChatPanel, AgentDefaultsPanel,
+// InboxSettingsPanel) — the SAME chrome AND the same fiddly behavior (local string
+// state so a half-typed value isn't clobbered mid-edit; on blur/Enter, parse →
+// clamp to [min,max] → commit only if changed; revert an empty/NaN entry to the
+// last good value). This is the one home for that role. It is deliberately NOT the
+// standard TextInput scale: a stepper is a distinct role (fixed-width, right-
+// aligned, tabular-nums) that must not be forced onto the full-width text field.
+//
+// `width` is the only visual axis (the panels ship w-20/w-24); the rest of the
+// chrome is invariant. Defaults reproduce the prior hand-rolled field exactly, so
+// every migrated call-site is byte-identical.
+export function NumberField({ value, onChange, min, max, step, width = 'w-24', ariaLabel }: {
+  value: number
+  onChange: (n: number) => void
+  min?: number
+  max?: number
+  step?: number
+  /** Tailwind width class — the one axis the steppers vary (w-20/w-24). */
+  width?: string
+  ariaLabel?: string
+}) {
+  const labelId = useFieldLabelId()
+  const [local, setLocal] = useState(String(value))
+  // Re-sync when the committed value changes out from under us (external patch,
+  // clamp, another editor) — but never mid-edit, since we only read `value`.
+  useEffect(() => { setLocal(String(value)) }, [value])
+  const commit = () => {
+    const n = Number(local)
+    if (local === '' || Number.isNaN(n)) { setLocal(String(value)); return }
+    const clamped = Math.min(max ?? Infinity, Math.max(min ?? -Infinity, n))
+    setLocal(String(clamped))
+    if (clamped !== value) onChange(clamped)
+  }
+  return (
+    <input type="number" value={local} min={min} max={max} step={step ?? 1}
+      aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={ariaLabel}
+      onChange={(e) => setLocal(e.target.value)} onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+      className={cx('h-8 rounded-md bg-surface-high px-2 text-right text-[0.8125rem] text-on-surface tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50', width)} />
+  )
+}
+
+export function DateInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const labelId = useFieldLabelId()
+  const autoId = useId()
+  return (
+    <input type="date" value={value} id={autoId} aria-labelledby={labelId} onChange={(e) => onChange(e.target.value)}
+      className="h-10 rounded-md bg-surface-container px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]" />
+  )
+}
+
+/** Styled native select — matches the TextInput chrome. */
+export function Select({ value, onChange, options, disabled, name }: { value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; disabled?: boolean; name?: string }) {
+  const labelId = useFieldLabelId()
+  const autoId = useId()
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} name={name} id={name || autoId} aria-labelledby={!name && labelId ? labelId : undefined}
+      className="w-full h-10 appearance-none rounded-md bg-surface-container pl-m pr-8 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 disabled:opacity-50 [color-scheme:dark]">
+      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  )
+}
+
+// The canonical Segmented lives in ui/Segmented.tsx; re-exported here so the
+// existing form call-sites (status/priority pickers) keep a single form-family
+// import path.
+export { Segmented, type SegOption } from './Segmented'
+
+/** Tag / chip input — type + Enter (or comma) to add, × to remove. */
+export function ChipInput({ values, onChange, placeholder, max, suggestions }: { values: string[]; onChange: (v: string[]) => void; placeholder?: string; max?: number; suggestions?: string[] }) {
+  const [draft, setDraft] = useState('')
+  const listId = useId()
+  const labelId = useFieldLabelId()
+  const add = () => {
+    const v = draft.trim().replace(/,$/, '')
+    if (v && !values.includes(v) && (!max || values.length < max)) onChange([...values, v])
+    setDraft('')
+  }
+  // Suggest existing values the user hasn't already added (autocomplete to avoid
+  // near-duplicate fragments like "Kubernetes" vs "kubernetes").
+  const remaining = suggestions?.filter((s) => !values.includes(s)) ?? []
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 rounded-md bg-surface-container px-2 py-2 min-h-10 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50">
+      {values.map((v) => (
+        <span key={v} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-7 text-on-surface-var text-[0.8125rem]">
+          {v}
+          <button type="button" onClick={() => onChange(values.filter((x) => x !== v))} className="text-on-surface-low hover:text-on-surface"><X size={12} /></button>
+        </span>
+      ))}
+      <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={values.length ? '' : placeholder}
+        list={remaining.length ? listId : undefined} name={`chip-${listId}`} aria-labelledby={labelId} aria-label={labelId ? undefined : 'Add a tag'}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add() } else if (e.key === 'Backspace' && !draft && values.length) onChange(values.slice(0, -1)) }}
+        onBlur={add}
+        className="flex-1 min-w-[80px] bg-transparent text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none" />
+      {remaining.length > 0 && <datalist id={listId}>{remaining.map((s) => <option key={s} value={s} />)}</datalist>}
+    </div>
+  )
+}

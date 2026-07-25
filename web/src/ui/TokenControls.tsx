@@ -42,7 +42,7 @@ export function ColorControl({ token }: { token: ColorToken }) {
           />
         </span>
       </label>
-      <span className="flex-1 text-on-surface text-[0.875rem]">{token.label}</span>
+      <span className="flex-1 text-on-surface text-[0.8125rem]">{token.label}</span>
       <input
         value={val}
         onChange={(e) => { const v = e.target.value; if (/^#[0-9a-fA-F]{6}$/.test(v)) setColor(token.varName, mode, v) }}
@@ -61,7 +61,7 @@ export function SelectControl({ token }: { token: SelectToken }) {
   const indicatorId = `tokensel-${useId()}`
   return (
     <div className="flex items-center gap-m py-2">
-      <span className="flex-1 min-w-0 text-on-surface text-[0.875rem]">{token.label}</span>
+      <span className="flex-1 min-w-0 text-on-surface text-[0.8125rem]">{token.label}</span>
       {/* the pill group hugs its content (was flex-1 → the tinted track stretched
           across the whole row); label takes the slack, group sits right, pills fit. */}
       <div className="flex shrink-0 flex-wrap justify-end gap-1 rounded-2xl bg-surface-high p-1">
@@ -101,7 +101,7 @@ export function ScalarControl({ token }: { token: ScalarToken }) {
       : `${val.toFixed(2)}×`
   return (
     <div className="flex items-center gap-m py-2">
-      <span className="flex-1 text-on-surface text-[0.875rem]">{token.label}</span>
+      <span className="flex-1 text-on-surface text-[0.8125rem]">{token.label}</span>
       <span className="w-[56px] text-right text-on-surface-low text-[0.8125rem] font-mono tabular-nums">{display}</span>
       <input
         type="range"

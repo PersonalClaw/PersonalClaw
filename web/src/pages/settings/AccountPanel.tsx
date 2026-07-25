@@ -5,7 +5,7 @@ import { confirm } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
 import { api } from '../../lib/api'
 import { PanelHeader, Section, Field, Row } from './settingsUI'
-import { TextInput } from '../tasks/formControls'
+import { TextInput } from '../../ui/forms'
 
 /** Account / identity settings. Self-hosted single-user → the two identities are
  *  the operator's name (SERVER-side DashboardConfig.user_name, follows the user

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { Mic, Square, Pause, Play, Trash2 } from 'lucide-react'
 
 type RecState = 'idle' | 'recording' | 'paused' | 'done'
@@ -147,22 +148,22 @@ export function AudioRecorder({ onRecorded, onClear }: { onRecorded: (file: File
             </span>
           </div>
 
-          <div className="text-on-surface text-[1.25rem] tabular-nums" style={{ fontVariationSettings: '"wght" 500' }}>{fmtDuration(duration)}</div>
+          <div className="text-on-surface text-[1.25rem] tabular-nums" style={fvs(500)}>{fmtDuration(duration)}</div>
 
           <div className="flex items-center gap-2">
             {state === 'idle' && (
-              <button type="button" onClick={start} className="inline-flex items-center gap-2 rounded-pill bg-primary text-on-primary px-5 h-10 text-[0.875rem] hover:bg-primary-emphasis transition-colors"><Mic size={16} /> Start recording</button>
+              <button type="button" onClick={start} className="inline-flex items-center gap-2 rounded-pill bg-primary text-on-primary px-5 h-10 text-[0.8125rem] hover:bg-primary-emphasis transition-colors"><Mic size={16} /> Start recording</button>
             )}
             {state === 'recording' && (
               <>
-                <button type="button" onClick={pause} aria-label="Pause" className="inline-flex items-center gap-1.5 rounded-pill bg-surface-high px-4 h-10 text-on-surface text-[0.875rem] hover:bg-surface-highest transition-colors"><Pause size={16} /> Pause</button>
-                <button type="button" onClick={stop} aria-label="Stop" className="inline-flex items-center gap-1.5 rounded-pill bg-primary text-on-primary px-4 h-10 text-[0.875rem] hover:bg-primary-emphasis transition-colors"><Square size={15} /> Stop</button>
+                <button type="button" onClick={pause} aria-label="Pause" className="inline-flex items-center gap-1.5 rounded-pill bg-surface-high px-4 h-10 text-on-surface text-[0.8125rem] hover:bg-surface-highest transition-colors"><Pause size={16} /> Pause</button>
+                <button type="button" onClick={stop} aria-label="Stop" className="inline-flex items-center gap-1.5 rounded-pill bg-primary text-on-primary px-4 h-10 text-[0.8125rem] hover:bg-primary-emphasis transition-colors"><Square size={15} /> Stop</button>
               </>
             )}
             {state === 'paused' && (
               <>
-                <button type="button" onClick={resume} aria-label="Resume" className="inline-flex items-center gap-1.5 rounded-pill bg-surface-high px-4 h-10 text-on-surface text-[0.875rem] hover:bg-surface-highest transition-colors"><Play size={16} /> Resume</button>
-                <button type="button" onClick={stop} aria-label="Stop" className="inline-flex items-center gap-1.5 rounded-pill bg-primary text-on-primary px-4 h-10 text-[0.875rem] hover:bg-primary-emphasis transition-colors"><Square size={15} /> Stop</button>
+                <button type="button" onClick={resume} aria-label="Resume" className="inline-flex items-center gap-1.5 rounded-pill bg-surface-high px-4 h-10 text-on-surface text-[0.8125rem] hover:bg-surface-highest transition-colors"><Play size={16} /> Resume</button>
+                <button type="button" onClick={stop} aria-label="Stop" className="inline-flex items-center gap-1.5 rounded-pill bg-primary text-on-primary px-4 h-10 text-[0.8125rem] hover:bg-primary-emphasis transition-colors"><Square size={15} /> Stop</button>
               </>
             )}
           </div>

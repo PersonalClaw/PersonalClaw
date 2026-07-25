@@ -110,7 +110,7 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
             <div className="max-h-64 overflow-y-auto pb-1">
               {filtered.length === 0 ? <div className="px-3 py-3 text-on-surface-low text-[0.8125rem]">{emptyText}</div> : groups.map(([group, opts]) => (
                 <div key={group}>
-                  {group && <div className="px-3 pt-2 pb-1 text-on-surface-low text-[0.65rem] uppercase tracking-wide">{group}</div>}
+                  {group && <div className="px-3 pt-2 pb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{group}</div>}
                   {opts.map((o) => {
                     flatIdx++
                     const idx = flatIdx
@@ -128,8 +128,8 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
                             className="absolute inset-x-1 inset-y-0.5 rounded-md bg-primary/15" />
                         )}
                         <span className="relative flex-1 min-w-0">
-                          <span className="block truncate text-on-surface text-[0.875rem]">{o.label}</span>
-                          {o.description && <span className="block truncate text-on-surface-low text-[0.7rem]">{o.description}</span>}
+                          <span className="block truncate text-on-surface text-[0.8125rem]">{o.label}</span>
+                          {o.description && <span className="block truncate text-on-surface-low text-[0.75rem]">{o.description}</span>}
                         </span>
                         {sel && <Check size={14} className="relative shrink-0 text-primary" />}
                       </button>

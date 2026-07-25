@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Search, ChevronLeft, FileText, CornerDownLeft } from 'lucide-react'
 import { Modal } from '../../ui/Modal'
+import { SearchField } from '../../ui/SearchField'
 import { Button } from '../../ui/Button'
 import { Toggle } from '../../ui/Toggle'
 import { api, type PromptItem, type PromptVariable } from '../../lib/api'
@@ -61,16 +62,15 @@ export function PromptPalette({ onInsert, onSend, onClose }: {
       ) : (
         <div className="flex min-h-[320px] flex-col gap-3">
           <div className="flex items-center gap-2 rounded-md bg-surface-high px-2.5 py-1.5">
-            <Search size={14} className="shrink-0 text-on-surface-low" />
-            <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search your prompts…" aria-label="Search prompts"
+            <SearchField variant="inline" size="md" clearable={false} autoFocus
+              value={q} onChange={setQ} placeholder="Search your prompts…" ariaLabel="Search prompts"
               onKeyDown={(e) => {
                 // Enter picks the first match — the common search → Enter flow (mirrors
                 // the composer's @-mention menu), so a user need not reach for the mouse.
                 if (e.key === 'Enter' && filtered && filtered.length > 0 && !loadingDetail) { e.preventDefault(); void pick(filtered[0]) }
                 else if (e.key === 'Escape' && q) { e.preventDefault(); setQ('') }
               }}
-              className="min-w-0 flex-1 bg-transparent text-[0.875rem] text-on-surface outline-none placeholder:text-on-surface-low" />
-            {loadingDetail && <Loader2 size={14} className="animate-spin text-on-surface-low" />}
+              trailingSlot={loadingDetail ? <Loader2 size={14} className="shrink-0 animate-spin text-on-surface-low" /> : null} />
           </div>
           {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
           <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-outline-variant/40">
@@ -87,10 +87,10 @@ export function PromptPalette({ onInsert, onSend, onClose }: {
                     className="flex items-start gap-2.5 px-3 py-2 text-left transition-colors hover:bg-surface-high">
                     <FileText size={15} className="mt-0.5 shrink-0 text-on-surface-low" />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-on-surface text-[0.875rem]">{p.title || p.name}</span>
+                      <span className="block truncate text-on-surface text-[0.8125rem]">{p.title || p.name}</span>
                       {p.description && <span className="block truncate text-on-surface-low text-[0.75rem]">{p.description}</span>}
                     </span>
-                    {(p.variables?.length ?? 0) > 0 && <span className="shrink-0 rounded-pill bg-surface-highest px-1.5 py-0.5 text-on-surface-low text-[0.65rem]">{p.variables!.length} var{p.variables!.length > 1 ? 's' : ''}</span>}
+                    {(p.variables?.length ?? 0) > 0 && <span className="shrink-0 rounded-pill bg-surface-highest px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">{p.variables!.length} var{p.variables!.length > 1 ? 's' : ''}</span>}
                   </button>
                 ))}
               </div>
@@ -166,7 +166,7 @@ function FillIn({ prompt, onBack, onInsert, onSend }: {
       </div>
 
       <div>
-        <div className="mb-1 text-on-surface-low text-[0.7rem] uppercase tracking-wide">Preview</div>
+        <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Preview</div>
         <pre className="max-h-44 overflow-y-auto rounded-md bg-surface-container px-3 py-2 text-on-surface-var text-[0.8125rem] whitespace-pre-wrap break-words">{preview || '…'}</pre>
       </div>
 
@@ -182,7 +182,7 @@ function FillIn({ prompt, onBack, onInsert, onSend }: {
 }
 
 function VarInput({ v, value, onChange }: { v: PromptVariable; value: unknown; onChange: (v: unknown) => void }) {
-  const base = 'w-full rounded-md bg-surface-container px-2.5 py-1.5 text-on-surface text-[0.875rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
+  const base = 'w-full rounded-md bg-surface-container px-2.5 py-1.5 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
   if (v.type === 'boolean') {
     return <Toggle on={!!value} onChange={(val) => onChange(val)} size="sm" />
   }

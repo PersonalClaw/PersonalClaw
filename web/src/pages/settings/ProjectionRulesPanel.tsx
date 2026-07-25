@@ -57,7 +57,7 @@ export function ProjectionRulesPanel() {
             </div>
           )}
           <AddRule disabled={busy} onAdd={(r) => save([...list, r])} />
-          {err && <div className="flex items-center gap-1.5 text-error text-[0.8125rem]"><AlertTriangle size={13} /> {err}</div>}
+          {err && <div className="flex items-center gap-1.5 text-danger text-[0.8125rem]"><AlertTriangle size={13} /> {err}</div>}
         </div>
       </Section>
     </div>

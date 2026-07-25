@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { createPortal } from 'react-dom'
 import { FileText, BookText, ScrollText, Loader2 } from 'lucide-react'
 import { api } from '../../lib/api'
@@ -178,10 +179,10 @@ export function MentionMenu({ query, anchorRef, open, project, leading, onSelect
             style={i === sel ? { background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' } : undefined}>
             <Icon size={13} className={`shrink-0 ${i === sel ? 'text-primary' : 'text-on-surface-low'}`} />
             <span className="min-w-0 flex-1">
-              <span className="block truncate font-mono text-on-surface text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 500' }}>{r.name}</span>
-              <span className="block truncate text-on-surface-low text-[0.7rem]">{r.kind === 'knowledge' ? `knowledge · ${r.sub}` : r.kind === 'prompt' ? `prompt · ${r.sub}` : r.sub}</span>
+              <span className="block truncate font-mono text-on-surface text-[0.8125rem]" style={fvs(500)}>{r.name}</span>
+              <span className="block truncate text-on-surface-low text-[0.75rem]">{r.kind === 'knowledge' ? `knowledge · ${r.sub}` : r.kind === 'prompt' ? `prompt · ${r.sub}` : r.sub}</span>
             </span>
-            {r.size !== undefined && <span className="shrink-0 font-mono text-on-surface-low text-[0.65rem] tabular-nums">{fmtSize(r.size)}</span>}
+            {r.size !== undefined && <span className="shrink-0 font-mono text-on-surface-low text-[0.75rem] tabular-nums">{fmtSize(r.size)}</span>}
           </button>
         )
       })}

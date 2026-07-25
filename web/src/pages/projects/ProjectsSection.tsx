@@ -3,17 +3,20 @@ import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring } from '../../design/motion'
+import { fvs } from '../../design/fontWeight'
 import { FolderKanban, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, Lock, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CheckCircle2, CircleDot, Circle, AlertTriangle, Square, type LucideIcon } from 'lucide-react'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { IconButton } from '../../ui/IconButton'
+import { SquareIconButton } from '../../ui/SquareIconButton'
 import { ListControls } from '../../ui/ListControls'
 import { ListSkeleton, EmptyState } from '../../ui/ListScaffold'
 import { confirm } from '../../ui/dialog'
 import { Modal } from '../../ui/Modal'
 import { SidePanel } from '../../ui/SidePanel'
 import { Button } from '../../ui/Button'
+import { InlineError } from '../../ui/InlineError'
 import { WorkspacePicker } from '../code/WorkspacePicker'
 import { SdlcProgressCard } from '../chat/SdlcProgressCard'
 import { api, ApiError, type ProjectItem, type TaskListItem, type LoopKind, type TaskItem, type FsEntry } from '../../lib/api'
@@ -120,11 +123,7 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
       )}
 
       {err && (
-        <div role="alert" className="mx-l mt-2 flex items-center gap-2 rounded-lg px-3 py-2 text-[0.8125rem]"
-          style={{ background: 'color-mix(in srgb, var(--color-danger) 10%, transparent)', color: 'var(--color-danger)' }}>
-          <span className="min-w-0 flex-1">{err}</span>
-          <button type="button" onClick={() => setErr(null)} aria-label="Dismiss" className="shrink-0 hover:opacity-70"><X size={14} /></button>
-        </div>
+        <InlineError className="mx-l mt-2" onDismiss={() => setErr(null)}>{err}</InlineError>
       )}
 
       {creating && (
@@ -165,8 +164,8 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
                     <div className="flex items-center gap-1.5">
                       {p.id === activeId && <Star size={12} className="shrink-0 text-primary" style={{ fill: 'var(--color-primary)' }} aria-label="Active project" />}
                       <span className="truncate text-on-surface text-[0.9375rem]">{p.name}</span>
-                      {p.is_default && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.65rem] text-on-surface-low">default</span>}
-                      {p.status === 'archived' && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.65rem] text-on-surface-low">archived</span>}
+                      {p.is_default && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low">default</span>}
+                      {p.status === 'archived' && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low">archived</span>}
                     </div>
                     <div className="truncate text-on-surface-low text-[0.75rem]">
                       {p.workspace_dir ? p.workspace_dir.split('/').slice(-2).join('/') : 'no workspace'}
@@ -174,10 +173,9 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
                     </div>
                   </div>
                   {!p.is_default && (
-                    <button type="button" onClick={(e) => { e.stopPropagation(); del(p) }} aria-label="Delete project"
-                      className="shrink-0 rounded-md p-1.5 text-on-surface-low opacity-0 transition-opacity hover:bg-surface-highest hover:text-danger group-hover:opacity-100 focus-visible:opacity-100">
-                      <Trash2 size={14} />
-                    </button>
+                    <SquareIconButton icon={Trash2} tone="danger" label="Delete project"
+                      onClick={(e) => { e.stopPropagation(); del(p) }}
+                      className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" />
                   )}
                   <ChevronRight size={15} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100" />
                 </motion.div>
@@ -229,7 +227,7 @@ function ProjectPeekBody({ id, project, onOpen }: { id: string; project: Project
 
   const Section = ({ label, children }: { label: string; children: React.ReactNode }) => (
     <div>
-      <div className="mb-1.5 text-on-surface-low text-[0.75rem]" style={{ fontVariationSettings: '"wght" 500' }}>{label}</div>
+      <div className="mb-1.5 text-on-surface-low text-[0.75rem]" style={fvs(500)}>{label}</div>
       {children}
     </div>
   )
@@ -238,7 +236,7 @@ function ProjectPeekBody({ id, project, onOpen }: { id: string; project: Project
       <div className="flex min-h-0 flex-1 flex-col gap-l overflow-y-auto">
         {project?.brief && (
           <Section label="Brief">
-            <p className="whitespace-pre-wrap text-on-surface-var text-[0.875rem] leading-relaxed">{project.brief}</p>
+            <p className="whitespace-pre-wrap text-on-surface-var text-[0.8125rem] leading-relaxed">{project.brief}</p>
           </Section>
         )}
         <Section label="Workspace">
@@ -280,7 +278,7 @@ function ProjectPeekBody({ id, project, onOpen }: { id: string; project: Project
                     <div key={w.id} className="flex items-center gap-2 rounded-md bg-surface-container px-m py-1.5">
                       <CircleDot size={13} className="shrink-0" style={{ color: statusTone(w.status) }} />
                       <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{w.name}</span>
-                      <span className="shrink-0 text-[0.7rem]" style={{ color: statusTone(w.status) }}>{w.status}</span>
+                      <span className="shrink-0 text-[0.75rem]" style={{ color: statusTone(w.status) }}>{w.status}</span>
                     </div>
                   ))}
                 </div>
@@ -293,7 +291,7 @@ function ProjectPeekBody({ id, project, onOpen }: { id: string; project: Project
                     <div key={c.key} className="flex items-center gap-2 rounded-md bg-surface-container px-m py-1.5">
                       <MessageSquare size={13} className="shrink-0 text-on-surface-low" />
                       <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{c.title || c.key}</span>
-                      {c.running && <span className="shrink-0 text-primary text-[0.7rem]">running</span>}
+                      {c.running && <span className="shrink-0 text-primary text-[0.75rem]">running</span>}
                     </div>
                   ))}
                 </div>
@@ -306,7 +304,7 @@ function ProjectPeekBody({ id, project, onOpen }: { id: string; project: Project
                     <div key={a.slug} className="flex items-center gap-2 rounded-md bg-surface-container px-m py-1.5">
                       <FileBox size={13} className="shrink-0 text-on-surface-low" />
                       <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{a.name}</span>
-                      <span className="shrink-0 text-on-surface-low text-[0.7rem]">{a.kind}</span>
+                      <span className="shrink-0 text-on-surface-low text-[0.75rem]">{a.kind}</span>
                     </div>
                   ))}
                 </div>
@@ -317,7 +315,7 @@ function ProjectPeekBody({ id, project, onOpen }: { id: string; project: Project
       </div>
       <button type="button" onClick={onOpen}
         className="flex shrink-0 items-center justify-center gap-1.5 rounded-pill bg-primary px-4 h-9 text-on-primary text-[0.8125rem] transition-colors hover:bg-primary-emphasis"
-        style={{ fontVariationSettings: '"wght" 470' }}>
+        style={fvs(470)}>
         Open project <ChevronRight size={13} className="shrink-0" />
       </button>
     </div>
@@ -350,7 +348,7 @@ function NewProjectModal({ busy, onClose, onCreate }: {
         <Field label="Brief" hint="The goal, scope, and background — shared as context with every agent working on this project's sessions and loops.">
           <textarea value={brief} onChange={(e) => setBrief(e.target.value)} rows={4}
             placeholder="What is this project for? What does success look like?"
-            className="w-full resize-y rounded-md bg-surface-high px-3 py-2 text-[0.875rem] leading-relaxed text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 placeholder:text-on-surface-low" />
+            className="w-full resize-y rounded-md bg-surface-high px-3 py-2 text-[0.8125rem] leading-relaxed text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 placeholder:text-on-surface-low" />
         </Field>
         <Field label="Workspace" hint="Optional — the directory loops + code work in. You can bind or change it later.">
           <div className="flex items-center gap-2">
@@ -363,7 +361,7 @@ function NewProjectModal({ busy, onClose, onCreate }: {
             {workspaceDir && <IconButton icon={X} label="Clear workspace" size={32} onClick={() => setWorkspaceDir('')} />}
           </div>
         </Field>
-        <label className="flex items-center gap-2 text-[0.875rem] text-on-surface-var cursor-pointer">
+        <label className="flex items-center gap-2 text-[0.8125rem] text-on-surface-var cursor-pointer">
           <input type="checkbox" checked={setActive} onChange={(e) => setSetActive(e.target.checked)} className="size-4 accent-primary" />
           Make this the active project (new work defaults here)
         </label>
@@ -386,7 +384,7 @@ function NewProjectModal({ busy, onClose, onCreate }: {
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <span className="text-on-surface text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 600' }}>{label}</span>
+      <span className="text-on-surface text-[0.8125rem]" style={fvs(600)}>{label}</span>
       {hint && <span className="text-on-surface-low text-[0.75rem] leading-snug">{hint}</span>}
       {children}
     </div>
@@ -507,13 +505,13 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
     <>
       <button type="button" onClick={() => { const next = active ? '' : id; setActiveProject(next); setActive(!active) }}
         title={active ? 'Active project — new work defaults here' : 'Make this the active project'}
-        className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.78rem] ${active ? 'text-primary' : 'text-on-surface-low hover:bg-surface-high hover:text-on-surface'}`}>
+        className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.75rem] ${active ? 'text-primary' : 'text-on-surface-low hover:bg-surface-high hover:text-on-surface'}`}>
         <Star size={14} style={active ? { fill: 'var(--color-primary)' } : undefined} /> {active ? 'Active' : 'Set active'}
       </button>
       <Popover align="right" width={220} placement="bottom"
         trigger={(open, toggle) => (
           <button type="button" onClick={toggle} aria-expanded={open} title="Launch new work scoped under this project"
-            className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[0.78rem] ${open ? 'bg-primary text-on-primary' : 'bg-primary/90 text-on-primary hover:bg-primary'}`}>
+            className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[0.75rem] text-on-primary ${open ? 'bg-primary' : 'bg-primary hover:bg-primary-emphasis'}`}>
             <Plus size={14} /> New <ChevronDown size={11} />
           </button>
         )}>
@@ -548,18 +546,14 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
         {/* ── slim band: brief + workspace/context directory bar ── */}
         <div className="shrink-0 border-b border-outline-variant/30 px-l py-2.5 flex flex-col gap-2">
           {err && (
-            <div role="alert" className="flex items-center gap-2 rounded-lg px-3 py-2 text-[0.8125rem]"
-              style={{ background: 'color-mix(in srgb, var(--color-danger) 10%, transparent)', color: 'var(--color-danger)' }}>
-              <span className="min-w-0 flex-1">{err}</span>
-              <button type="button" onClick={() => setErr(null)} aria-label="Dismiss" className="shrink-0 hover:opacity-70"><X size={14} /></button>
-            </div>
+            <InlineError onDismiss={() => setErr(null)}>{err}</InlineError>
           )}
           {/* project brief — the goal/scope shared with every agent; editable inline. */}
           <BriefRow brief={project.brief ?? ''} onSave={(b) => patch({ brief: b })} />
           {/* ── workspace + context directory: a slim horizontal bar (moved out of the
               grid so Work + Tasks own the screen). Clicking the path opens the dir tree
               in the side panel; an arrow jumps to the full Files page. ── */}
-          <div className="flex flex-wrap items-center gap-2 text-[0.72rem]">
+          <div className="flex flex-wrap items-center gap-2 text-[0.75rem]">
             <FolderChip label="Workspace" icon={project.workspace_dir ? FolderOpen : Folder}
               path={project.workspace_dir}
               onPeek={project.workspace_dir ? () => setPanel({ kind: 'dir', label: 'Workspace', path: project.workspace_dir! }) : undefined}
@@ -611,7 +605,7 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
                         className="group flex items-center gap-2 rounded-md bg-surface-high/60 px-2.5 py-1.5 text-left text-[0.8125rem] text-on-surface-var hover:bg-surface-high">
                         <FileBox size={13} className="shrink-0 text-primary" />
                         <span className="min-w-0 flex-1 truncate">{a.name}</span>
-                        <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.65rem] text-on-surface-low">{a.kind}</span>
+                        <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low">{a.kind}</span>
                       </button>
                     ))}
                   </div>
@@ -649,7 +643,7 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
 function HubColumn({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="min-h-0 flex flex-col bg-surface">
-      <div className="shrink-0 px-l pt-3 pb-1.5 text-on-surface-low text-[0.68rem] uppercase tracking-wide">{title}</div>
+      <div className="shrink-0 px-l pt-3 pb-1.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{title}</div>
       <div className="min-h-0 flex-1 overflow-y-auto px-l pb-l">{children}</div>
     </div>
   )
@@ -658,7 +652,7 @@ function HubColumn({ title, children }: { title: string; children: React.ReactNo
 /** A sub-group label inside the Work column (Ongoing / Completed / Artifacts). */
 function WorkGroupLabel({ text, count, tone }: { text: string; count: number; tone: 'ok' | 'muted' }) {
   return (
-    <div className="flex items-center gap-1.5 text-[0.62rem] uppercase tracking-wide">
+    <div className="flex items-center gap-1.5 text-[0.75rem] uppercase tracking-wide">
       {tone === 'ok' && <span className="size-1.5 rounded-full" style={{ background: 'var(--color-ok)' }} />}
       <span className="text-on-surface-low">{text}</span>
       <span className="text-on-surface-low/60">· {count}</span>
@@ -690,7 +684,7 @@ function ChatRow({ c, onOpen, onChanged }: {
       className="group flex cursor-pointer items-center gap-2 rounded-md bg-surface-high/60 px-2.5 py-1.5 text-left text-[0.8125rem] text-on-surface-var hover:bg-surface-high">
       <MessageSquare size={13} className="shrink-0 text-primary" />
       <span className="min-w-0 flex-1 truncate">{c.title}</span>
-      {c.running && <span className="shrink-0 rounded-pill px-1.5 py-0.5 text-[0.65rem]" style={{ background: 'color-mix(in srgb, var(--color-ok) 18%, transparent)', color: 'var(--color-ok)' }}>running</span>}
+      {c.running && <span className="shrink-0 rounded-pill px-1.5 py-0.5 text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-ok) 18%, transparent)', color: 'var(--color-ok)' }}>running</span>}
       <span className="shrink-0 inline-flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100" style={confirmDel ? { opacity: 1 } : undefined}>
         {busy && <Loader2 size={11} className="animate-spin text-on-surface-low" />}
         {c.running && <IconButton icon={Square} label="Stop" size={28} onClick={stop} />}
@@ -711,7 +705,7 @@ function FolderChip({ label, icon: Icon, path, emptyText, title, onPeek, onBrows
   return (
     <div className="inline-flex min-w-0 items-center gap-1.5 rounded-md bg-surface-high/50 px-2 py-1" title={title}>
       <Icon size={12} className="shrink-0 text-on-surface-low" />
-      <span className="shrink-0 text-on-surface-low uppercase tracking-wide text-[0.62rem]">{label}</span>
+      <span className="shrink-0 text-on-surface-low uppercase tracking-wide text-[0.75rem]">{label}</span>
       {path ? (
         onPeek
           ? <button type="button" onClick={onPeek} title={`${path} — view contents`}
@@ -741,7 +735,7 @@ function TaskListRow({ list, active, onOpen }: { list: TaskListItem; active: boo
       className={`group flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[0.8125rem] transition-colors ${active ? 'bg-surface-high text-on-surface ring-1 ring-primary/40' : 'bg-surface-high/60 text-on-surface-var hover:bg-surface-high hover:text-on-surface'}`}>
       <ListChecks size={13} className="shrink-0 text-on-surface-low" />
       <span className="min-w-0 flex-1 truncate">{list.name}</span>
-      {typeof count === 'number' && <span className="shrink-0 text-on-surface-low/70 text-[0.68rem] tabular-nums">{count}</span>}
+      {typeof count === 'number' && <span className="shrink-0 text-on-surface-low/70 text-[0.75rem] tabular-nums">{count}</span>}
       <ChevronRight size={13} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100" />
     </button>
   )
@@ -759,7 +753,7 @@ function TaskListPanel({ list, onOpenTask }: { list: TaskListItem; onOpenTask: (
       {tasks.map((t) => (
         <li key={t.id}>
           <button type="button" onClick={() => onOpenTask(t.id)}
-            className="group flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-[0.875rem] hover:bg-surface-high">
+            className="group flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-[0.8125rem] hover:bg-surface-high">
             {t.status === 'done' ? <CheckCircle2 size={14} className="mt-0.5 shrink-0" style={{ color: 'var(--color-ok)' }} />
               : t.status === 'in_progress' ? <CircleDot size={14} className="mt-0.5 shrink-0 text-primary" />
               : t.status === 'blocked' ? <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warn" />
@@ -799,7 +793,7 @@ function DirTreePanel({ path, onOpenInFiles }: { path: string; onOpenInFiles: ()
     <div className="flex flex-col gap-2">
       <Button size="sm" variant="ghost" onClick={onOpenInFiles}><FolderOpen size={14} /> Open in Files</Button>
       {/* breadcrumb — root + drilled-into subfolders; click to pop back */}
-      <div className="flex flex-wrap items-center gap-0.5 text-[0.72rem] text-on-surface-low">
+      <div className="flex flex-wrap items-center gap-0.5 text-[0.75rem] text-on-surface-low">
         <button type="button" onClick={() => setCur(path)} className={`truncate rounded px-1 py-0.5 hover:bg-surface-high ${cur === path ? 'text-on-surface' : 'hover:text-on-surface'}`}>{path.split('/').pop() || path}</button>
         {crumbs.map((seg, i) => (
           <span key={i} className="inline-flex items-center gap-0.5">
@@ -827,7 +821,7 @@ function DirEntryRow({ entry, onClick }: { entry: FsEntry; onClick: () => void }
   return (
     <li>
       <button type="button" onClick={onClick}
-        className="group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[0.875rem] text-on-surface-var hover:bg-surface-high hover:text-on-surface">
+        className="group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[0.8125rem] text-on-surface-var hover:bg-surface-high hover:text-on-surface">
         {entry.is_dir ? <Folder size={14} className="shrink-0 text-primary" /> : <FileIcon size={14} className="shrink-0 text-on-surface-low" />}
         <span className="min-w-0 flex-1 truncate">{entry.name}</span>
         {entry.is_dir && <ChevronRight size={14} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100" />}
@@ -850,7 +844,7 @@ function BriefRow({ brief, onSave }: { brief: string; onSave: (b: string) => voi
           className="resize-y rounded-md bg-surface-high px-2.5 py-1.5 text-[0.8125rem] leading-relaxed text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
         <div className="flex items-center gap-1.5">
           <Button size="sm" onClick={() => { onSave(draft.trim()); setEditing(false) }}><Check size={13} /> Save brief</Button>
-          <button type="button" onClick={() => { setDraft(brief); setEditing(false) }} className="rounded-md px-2 py-1 text-[0.78rem] text-on-surface-low hover:text-on-surface">Cancel</button>
+          <button type="button" onClick={() => { setDraft(brief); setEditing(false) }} className="rounded-md px-2 py-1 text-[0.75rem] text-on-surface-low hover:text-on-surface">Cancel</button>
         </div>
       </div>
     )

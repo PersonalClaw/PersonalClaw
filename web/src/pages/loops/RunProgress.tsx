@@ -29,7 +29,7 @@ export function RunProgress({ vm }: { vm: RunSnapshotViewModel }) {
       {showRoi && (
         <div className="flex items-center gap-2 border-t border-outline-variant/30 px-3 py-1.5">
           {vm.bestScore !== null && (
-            <span className="shrink-0 inline-flex items-center gap-1 text-[0.68rem] text-on-surface-var" title="Best rubric score (monotonic ratchet)">
+            <span className="shrink-0 inline-flex items-center gap-1 text-[0.75rem] text-on-surface-var" title="Best rubric score (monotonic ratchet)">
               <BarChart3 size={11} className="text-primary" /> best {vm.bestScore.toFixed(1)}
               {vm.lastScore !== null && vm.lastScore !== vm.bestScore && <span className="text-on-surface-low/70">· last {vm.lastScore.toFixed(1)}</span>}
             </span>

@@ -10,7 +10,12 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "e2e": "playwright test",
+    "e2e:visual": "playwright test e2e/visual.spec.ts",
+    "e2e:a11y": "playwright test e2e/a11y.spec.ts",
+    "e2e:update": "playwright test --update-snapshots",
+    "e2e:report": "playwright show-report"
   },
   "dependencies": {
     "@antv/infographic": "^0.2.19",
@@ -39,6 +44,8 @@
     "remark-math": "^6.0.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/vite": "^4.0.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Pause, Play, Trash2, Search, X, ArrowDownToLine } from 'lucide-react'
+import { Pause, Play, Trash2, ArrowDownToLine } from 'lucide-react'
 import { Surface } from '../../ui/Surface'
+import { SearchField } from '../../ui/SearchField'
+import { fvs, withWeight } from '../../design/fontWeight'
 import { api } from '../../lib/api'
 
 /** A single streamed log entry (backend emits {level, msg} JSON per SSE frame,
@@ -89,7 +91,7 @@ export function DiagnosticsPanel() {
     <div className="flex flex-col gap-l">
       {/* ── Runtime log level ── */}
       <section>
-        <h2 className="text-on-surface text-[1rem] mb-1" style={{ fontVariationSettings: '"wght" 600' }}>Backend log level</h2>
+        <h2 className="text-on-surface text-[1.0625rem] mb-1" style={fvs(600)}>Backend log level</h2>
         <p className="text-on-surface-low text-[0.8125rem] mb-m">
           Change how verbose the gateway logs are, live. Persists across restarts.
         </p>
@@ -107,7 +109,7 @@ export function DiagnosticsPanel() {
                 )
               })}
             </div>
-            {level && <span className="text-on-surface-low text-[0.78rem]">Current: <strong className="text-on-surface-var">{level}</strong></span>}
+            {level && <span className="text-on-surface-low text-[0.75rem]">Current: <strong className="text-on-surface-var">{level}</strong></span>}
           </div>
         </Surface>
       </section>
@@ -116,7 +118,7 @@ export function DiagnosticsPanel() {
       <section>
         <div className="flex items-center justify-between mb-m gap-s flex-wrap">
           <div>
-            <h2 className="text-on-surface text-[1rem]" style={{ fontVariationSettings: '"wght" 600' }}>Live logs</h2>
+            <h2 className="text-on-surface text-[1.0625rem]" style={fvs(600)}>Live logs</h2>
             <p className="text-on-surface-low text-[0.8125rem] mt-0.5 flex items-center gap-1.5">
               <span className="inline-block size-1.5 rounded-pill" style={{ background: connected ? 'var(--color-ok)' : 'var(--color-on-surface-low)' }} />
               {connected ? 'Streaming' : 'Connecting…'} · {visible.length} shown{entries.length !== visible.length ? ` of ${entries.length}` : ''}
@@ -129,7 +131,7 @@ export function DiagnosticsPanel() {
                 const on = minLevel === l
                 return (
                   <button key={l} onClick={() => setMinLevel(l)} title={`Show ${l} and above`}
-                    className="rounded-pill px-2.5 h-7 text-[0.72rem] transition-colors"
+                    className="rounded-pill px-2.5 h-7 text-[0.75rem] transition-colors"
                     style={on ? { background: 'var(--color-surface-highest)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>
                     {l}
                   </button>
@@ -153,27 +155,22 @@ export function DiagnosticsPanel() {
         </div>
 
         {/* search within the tail */}
-        <div className="relative mb-s">
-          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-low" />
-          <input value={filter} onChange={(e) => setFilter(e.target.value)} type="search" placeholder="Filter log lines…"
-            className="h-9 w-full rounded-lg bg-surface-high pl-9 pr-9 text-[0.85rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-          {filter && (
-            <button type="button" onClick={() => setFilter('')} aria-label="Clear filter"
-              className="absolute right-2.5 top-1/2 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-full text-on-surface-low hover:bg-surface-highest hover:text-on-surface"><X size={14} /></button>
-          )}
+        <div className="mb-s">
+          <SearchField value={filter} onChange={setFilter} size="md" placeholder="Filter log lines…"
+            ariaLabel="Filter log lines" />
         </div>
 
         <Surface tone="container" radius="lg" className="p-0 overflow-hidden">
           <div ref={scrollRef} className="max-h-[60vh] min-h-[240px] overflow-y-auto p-3 font-mono text-[0.75rem] leading-relaxed"
             style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
             {visible.length === 0 ? (
-              <div className="py-8 text-center text-on-surface-low text-[0.8rem]" style={{ fontFamily: 'var(--font-sans)' }}>
+              <div className="py-8 text-center text-on-surface-low text-[0.8125rem]" style={{ fontFamily: 'var(--font-sans)' }}>
                 {paused ? 'Paused — resume to see live logs.' : entries.length === 0 ? 'Waiting for log entries…' : 'No lines match the current filter.'}
               </div>
             ) : (
               visible.map((e) => (
                 <div key={e.key} className="whitespace-pre-wrap break-words border-b border-outline-variant/20 py-0.5">
-                  <span style={{ color: LEVEL_TONE[e.level] ?? 'var(--color-on-surface-low)', fontVariationSettings: '"wght" 600' }}>{e.level.padEnd(7)}</span>
+                  <span style={withWeight({ color: LEVEL_TONE[e.level] ?? 'var(--color-on-surface-low)' }, 600)}>{e.level.padEnd(7)}</span>
                   <span className="text-on-surface-var"> {e.msg}</span>
                 </div>
               ))

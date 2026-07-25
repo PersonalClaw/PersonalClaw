@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Pencil, Trash2, Check, X, Play, Loader2, Lock } from 'lucide-react'
 import { Button } from '../../ui/Button'
+import { FormFooter } from '../../ui/FormFooter'
 import { Markdown } from '../../ui/Markdown'
-import { Field } from '../tasks/formControls'
+import { Field } from '../../ui/forms'
 import { confirmDelete } from '../../ui/dialog'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { api, type PromptSnippet, type PromptVariable } from '../../lib/api'
@@ -57,10 +58,10 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
         </div>
         {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
         <SnippetForm draft={draft} onChange={setDraft} nameLocked />
-        <div className="sticky bottom-0 -mx-l px-l py-3 bg-surface/95 border-t border-outline-variant/40 flex justify-end gap-s">
+        <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { if (full) setDraft(toSnippetDraft(full)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} disabled={saving || !draft.name.trim()}><Check size={15} /> {saving ? 'Saving…' : 'Save'}</Button>
-        </div>
+        </FormFooter>
       </div>
     )
   }
@@ -83,7 +84,7 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
             <Button size="sm" variant="ghost" onClick={del}><Trash2 size={14} /> Delete</Button>
           </>
         )}
-        <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.7rem]" style={{ background: `color-mix(in srgb, ${sourceTone(snippet.source)} 16%, transparent)`, color: sourceTone(snippet.source) }}>{sourceLabel(snippet.source)}</span>
+        <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${sourceTone(snippet.source)} 16%, transparent)`, color: sourceTone(snippet.source) }}>{sourceLabel(snippet.source)}</span>
       </div>
       {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
 
@@ -114,8 +115,8 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
               <div key={v.name} className="rounded-md bg-surface-container px-m py-1.5">
                 <div className="flex items-center gap-s">
                   <span className="font-mono text-on-surface text-[0.8125rem]">{v.name}</span>
-                  <span className="text-on-surface-low text-[0.7rem]">{v.type}</span>
-                  {v.required && <span className="text-danger text-[0.7rem]">required</span>}
+                  <span className="text-on-surface-low text-[0.75rem]">{v.type}</span>
+                  {v.required && <span className="text-danger text-[0.75rem]">required</span>}
                 </div>
                 {v.description && <p className="mt-0.5 text-on-surface-var text-[0.8125rem]">{v.description}</p>}
               </div>
@@ -125,7 +126,7 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
       )}
 
       <div>
-        <div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide mb-1.5">Content</div>
+        <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">Content</div>
         <pre className="rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] font-mono overflow-x-auto whitespace-pre-wrap break-words">{full.content || '—'}</pre>
       </div>
 
@@ -154,7 +155,7 @@ function SnippetRenderPanel({ name, vars }: { name: string; vars: PromptVariable
         {vars.map((v) => (
           <Field key={v.name} label={`${v.name}${v.required ? ' *' : ''}`}>
             <input value={String(values[v.name] ?? '')} onChange={(e) => setValues((s) => ({ ...s, [v.name]: e.target.value }))} placeholder={v.description}
-              className="w-full rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.875rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+              className="w-full rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
           </Field>
         ))}
         <Button size="sm" onClick={render} disabled={loading} className="self-start">{loading ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />} Render</Button>
@@ -168,5 +169,5 @@ function SnippetRenderPanel({ name, vars }: { name: string; vars: PromptVariable
 }
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div><div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
+  return <div><div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
 }

@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { Pencil, Trash2, Check, X, ExternalLink, Lock, CornerDownRight, Send, AlertTriangle, FolderKanban } from 'lucide-react'
 import { Button } from '../../ui/Button'
+import { FormFooter } from '../../ui/FormFooter'
+import { TextLink } from '../../ui/TextLink'
 import { Markdown } from '../../ui/Markdown'
 import { confirm } from '../../ui/dialog'
 import { api, type TaskItem, type TaskComment, type TaskNote } from '../../lib/api'
@@ -70,10 +73,10 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
       <div className="flex flex-col gap-l">
         <TaskForm draft={draft} onChange={setDraft} compact allTasks={allTasks} />
         {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
-        <div className="sticky bottom-0 -mx-l px-l py-3 bg-surface/95 border-t border-outline-variant/40 flex justify-end gap-s">
+        <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(task)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} disabled={saving || !draft.title.trim()}><Check size={15} /> {saving ? 'Saving…' : 'Save'}</Button>
-        </div>
+        </FormFooter>
       </div>
     )
   }
@@ -96,7 +99,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
             <Button size="sm" variant="ghost" onClick={del}><Trash2 size={14} /> Delete</Button>
           </>
         )}
-        {task.url && <a href={task.url} target="_blank" rel="noopener noreferrer" className="ml-auto inline-flex items-center gap-1 text-primary text-[0.8125rem] hover:underline"><ExternalLink size={13} /> Open</a>}
+        {task.url && <TextLink href={task.url} external icon={ExternalLink} size="sm" className="ml-auto">Open</TextLink>}
       </div>
 
       {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
@@ -118,7 +121,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
 
       {task.block_reason?.is_blocked && (
         <div className="rounded-md px-m py-2 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-warn) 12%, transparent)' }}>
-          <div className="flex items-center gap-1.5 text-warn mb-1" style={{ fontVariationSettings: '"wght" 500' }}><AlertTriangle size={14} /> Blocked</div>
+          <div className="flex items-center gap-1.5 text-warn mb-1" style={fvs(500)}><AlertTriangle size={14} /> Blocked</div>
           <div className="text-on-surface">{task.block_reason.message || `Waiting on ${task.block_reason.blocking_task_titles?.join(', ')}`}</div>
         </div>
       )}
@@ -129,7 +132,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
         <SectionLabel label={`Exit criteria · ${exitDone}/${exit.length}`}>
           <div className="mb-2 h-1.5 rounded-pill bg-surface-high overflow-hidden"><div className="h-full rounded-pill" style={{ width: `${exit.length ? (exitDone / exit.length) * 100 : 0}%`, background: 'var(--color-ok)' }} /></div>
           <ul className="flex flex-col gap-1">
-            {exit.map((e, i) => { const m = isExitComplete(e); return <li key={i} className="flex items-start gap-s text-[0.875rem]">
+            {exit.map((e, i) => { const m = isExitComplete(e); return <li key={i} className="flex items-start gap-s text-[0.8125rem]">
               <button type="button" disabled={readOnly} onClick={() => toggleExit(i)} aria-label={m ? 'Mark criterion incomplete' : 'Mark criterion complete'}
                 className="mt-0.5 shrink-0 inline-flex size-4 items-center justify-center rounded-sm enabled:hover:ring-2 enabled:hover:ring-ok/40 disabled:cursor-default transition-shadow" style={{ background: m ? 'var(--color-ok)' : 'var(--color-surface-high)' }}>{m && <Check size={11} className="text-white" />}</button>
               <span className={m ? 'text-on-surface-low line-through' : 'text-on-surface'}>{e.description}</span></li> })}
@@ -140,9 +143,9 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
       {(task.action_plan?.length ?? 0) > 0 && (
         <SectionLabel label="Action plan">
           <ol className="flex flex-col gap-1">
-            {task.action_plan!.map((a, i) => <li key={i} className="flex items-start gap-s text-[0.875rem]">
+            {task.action_plan!.map((a, i) => <li key={i} className="flex items-start gap-s text-[0.8125rem]">
               <button type="button" disabled={readOnly} onClick={() => toggleStep(i)} aria-label={a.completed ? 'Mark step incomplete' : 'Mark step done'}
-                className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill text-[0.7rem] tabular-nums enabled:hover:ring-2 enabled:hover:ring-primary/40 disabled:cursor-default transition-shadow"
+                className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill text-[0.75rem] tabular-nums enabled:hover:ring-2 enabled:hover:ring-primary/40 disabled:cursor-default transition-shadow"
                 style={{ background: a.completed ? 'var(--color-ok)' : 'color-mix(in srgb, var(--color-primary) 18%, transparent)' }}>{a.completed ? <Check size={11} className="text-white" /> : i + 1}</button>
               <span className={a.completed ? 'text-on-surface-low line-through' : 'text-on-surface'}>{a.content ?? a.description}</span></li>)}
           </ol>
@@ -162,8 +165,8 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
                 <button key={d} type="button" disabled={!dep || !onOpenTask} onClick={() => dep && onOpenTask?.(d)}
                   className="flex items-center gap-s rounded-md bg-surface-container px-2 py-1.5 text-left enabled:hover:bg-surface-high transition-colors disabled:cursor-default">
                   <dsm.icon size={14} className="shrink-0" style={{ color: dsm.tone }} />
-                  <span className={`flex-1 truncate text-[0.875rem] ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`}>{dep?.title ?? d}</span>
-                  {dep && !done && <span className="shrink-0 text-on-surface-low text-[0.7rem]">{dsm.label}</span>}
+                  <span className={`flex-1 truncate text-[0.8125rem] ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`}>{dep?.title ?? d}</span>
+                  {dep && !done && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{dsm.label}</span>}
                 </button>
               )
             })}
@@ -190,8 +193,8 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
                   <button key={dep.id} type="button" disabled={!onOpenTask} onClick={() => onOpenTask?.(dep.id)}
                     className="flex items-center gap-s rounded-md bg-surface-container px-2 py-1.5 text-left enabled:hover:bg-surface-high transition-colors disabled:cursor-default">
                     <dsm.icon size={14} className="shrink-0" style={{ color: dsm.tone }} />
-                    <span className={`flex-1 truncate text-[0.875rem] ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`}>{dep.title}</span>
-                    {!done && <span className="shrink-0 text-on-surface-low text-[0.7rem]">{dsm.label}</span>}
+                    <span className={`flex-1 truncate text-[0.8125rem] ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`}>{dep.title}</span>
+                    {!done && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{dsm.label}</span>}
                   </button>
                 )
               })}
@@ -212,7 +215,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
 
       <Comments taskId={task.id} provider={task.provider} />
 
-      <div className="text-on-surface-low text-[0.7rem]">
+      <div className="text-on-surface-low text-[0.75rem]">
         {task.created_at && <>Created {relTime(task.created_at)}</>}{task.updated_at && task.updated_at !== task.created_at && <> · updated {relTime(task.updated_at)}</>}
       </div>
     </div>
@@ -229,9 +232,9 @@ function NoteChannel({ label, notes }: { label: string; notes?: TaskNote[] }) {
       <ul className="flex flex-col gap-1.5">
         {items.map((n, i) => (
           <li key={i} className="rounded-md bg-surface-container px-m py-2">
-            <p className="text-on-surface text-[0.875rem] whitespace-pre-wrap">{n.content}</p>
+            <p className="text-on-surface text-[0.8125rem] whitespace-pre-wrap">{n.content}</p>
             {(n.timestamp || n.created_at) && (
-              <div className="mt-0.5 text-on-surface-low text-[0.7rem]">{relTime(n.timestamp || n.created_at)}</div>
+              <div className="mt-0.5 text-on-surface-low text-[0.75rem]">{relTime(n.timestamp || n.created_at)}</div>
             )}
           </li>
         ))}
@@ -241,7 +244,7 @@ function NoteChannel({ label, notes }: { label: string; notes?: TaskNote[] }) {
 }
 
 function SectionLabel({ label, right, children }: { label: string; right?: React.ReactNode; children: React.ReactNode }) {
-  return <div><div className="mb-1.5 flex items-center gap-s"><span className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">{label}</span>{right}</div>{children}</div>
+  return <div><div className="mb-1.5 flex items-center gap-s"><span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</span>{right}</div>{children}</div>
 }
 
 function Comments({ taskId, provider }: { taskId: string; provider?: string }) {
@@ -265,15 +268,15 @@ function Comments({ taskId, provider }: { taskId: string; provider?: string }) {
           <div key={c.id} className="flex gap-s">
             <CornerDownRight size={14} className="text-on-surface-low shrink-0 mt-1" />
             <div className="flex-1 rounded-md bg-surface-container px-m py-2">
-              <div className="flex items-center gap-s text-[0.7rem] text-on-surface-low mb-0.5"><span className="text-on-surface-var">{c.author || 'you'}</span><span>{relTime(c.created_at)}</span></div>
-              <p className="text-on-surface text-[0.875rem] whitespace-pre-wrap">{c.body}</p>
+              <div className="flex items-center gap-s text-[0.75rem] text-on-surface-low mb-0.5"><span className="text-on-surface-var">{c.author || 'you'}</span><span>{relTime(c.created_at)}</span></div>
+              <p className="text-on-surface text-[0.8125rem] whitespace-pre-wrap">{c.body}</p>
             </div>
           </div>
         ))}
         <div className="flex items-end gap-s">
           <textarea value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Add a comment…" rows={1}
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send() } }}
-            className="flex-1 rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.875rem] placeholder:text-on-surface-low outline-none resize-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+            className="flex-1 rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none resize-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
           <button type="button" onClick={send} disabled={sending || !draft.trim()} className="shrink-0 inline-flex size-9 items-center justify-center rounded-pill bg-primary text-on-primary disabled:opacity-40"><Send size={15} /></button>
         </div>
       </div>

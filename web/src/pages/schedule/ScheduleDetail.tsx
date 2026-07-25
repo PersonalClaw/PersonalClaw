@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Pencil, Trash2, Check, X, PlayCircle, Loader2, MessagesSquare, ChevronRight, AlertTriangle, FlaskConical } from 'lucide-react'
 import { Button } from '../../ui/Button'
+import { FormFooter } from '../../ui/FormFooter'
+import { TextLink } from '../../ui/TextLink'
 import { Toggle } from '../../ui/Toggle'
 import { Markdown } from '../../ui/Markdown'
 import { confirmDelete } from '../../ui/dialog'
@@ -133,10 +135,10 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
       <div className="flex flex-col gap-l">
         <ScheduleForm draft={draft} onChange={setDraft} compact />
         {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
-        <div className="sticky bottom-0 -mx-l px-l py-3 bg-surface/95 border-t border-outline-variant/40 flex justify-end gap-s">
+        <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(job)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} disabled={saving || !draft.name.trim()}><Check size={15} /> {saving ? 'Saving…' : 'Save'}</Button>
-        </div>
+        </FormFooter>
       </div>
     )
   }
@@ -185,19 +187,19 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
       {/* what runs — provider-aware: show the action's defining field(s) */}
       {provider === 'run-prompt' ? (
         <Section label="Prompt">
-          <div className="rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.875rem] font-mono break-words">
+          <div className="rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] font-mono break-words">
             {String(cfg.prompt_id || '') || <span className="text-on-surface-low">loop.md (default recurring prompt)</span>}
           </div>
         </Section>
       ) : provider === 'run-workflow' ? (
         <Section label="Workflow">
-          <div className="rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.875rem] font-mono break-words">
+          <div className="rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] font-mono break-words">
             {String(cfg.workflow_id || '—')}
           </div>
         </Section>
       ) : (
         <Section label={mm.key === 'agent' ? 'Prompt' : mm.key === 'script' ? 'Script' : 'Command'}>
-          <div className="rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.875rem] leading-relaxed whitespace-pre-wrap break-words font-mono">
+          <div className="rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] leading-relaxed whitespace-pre-wrap break-words font-mono">
             {mm.key === 'agent' ? (job.message || '—') : mm.key === 'script' ? job.script : job.command}
           </div>
           {mm.key === 'agent' && (job.agent || job.model) && (
@@ -222,7 +224,7 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
 
       {/* last outcome */}
       <Section label="Last run">
-        <div className="flex items-center gap-2 text-[0.875rem]">
+        <div className="flex items-center gap-2 text-[0.8125rem]">
           <ss.icon size={15} style={{ color: ss.tone }} />
           <span className="text-on-surface-var">{job.last_run_ts ? `${ss.label} · ${relPast(job.last_run_ts)}` : 'never run'}</span>
         </div>
@@ -269,8 +271,8 @@ function RunHistory({ jobId, reloadKey = 0 }: { jobId: string; reloadKey?: numbe
                 <ChevronRight size={14} className={`shrink-0 text-on-surface-low transition-transform ${expanded ? 'rotate-90' : ''}`} />
                 <sm.icon size={14} style={{ color: sm.tone }} className="shrink-0" />
                 <span className="flex-1 truncate text-on-surface text-[0.8125rem]">{mdToPlain(r.summary || r.error) || sm.label}</span>
-                {r.trigger === 'manual' && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.65rem]">manual</span>}
-                {r.trigger === 'replay' && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-info text-[0.65rem]">dry run</span>}
+                {r.trigger === 'manual' && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">manual</span>}
+                {r.trigger === 'replay' && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-info text-[0.75rem]">dry run</span>}
                 <span className="shrink-0 text-on-surface-low text-[0.75rem]">{relPast(r.started_at ?? r.finished_at)}</span>
               </button>
               {expanded && <RunTrace jobId={jobId} runId={id} preview={r} />}
@@ -279,7 +281,7 @@ function RunHistory({ jobId, reloadKey = 0 }: { jobId: string; reloadKey?: numbe
         })}
       </div>
       {runs.length < total && (
-        <button type="button" onClick={() => setLimit((l) => l + 10)} className="mt-1.5 text-primary text-[0.8125rem] hover:underline">Show more ({total - runs.length} more)</button>
+        <TextLink onClick={() => setLimit((l) => l + 10)} size="sm" className="mt-1.5">Show more ({total - runs.length} more)</TextLink>
       )}
     </Section>
   )
@@ -311,5 +313,5 @@ function RunTrace({ jobId, runId, preview }: { jobId: string; runId: string; pre
 }
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div><div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
+  return <div><div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
 }

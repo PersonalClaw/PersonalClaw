@@ -9,7 +9,7 @@ import { spring, bounce, expr, exprHeavy } from '../design/motion'
  *  and success `bloom` moments. Yields to reduced-motion; halo drops below the
  *  heavy-effect threshold. */
 export function IconButton({
-  icon: Icon, label, onClick, active, filled, size = 40, className, disabled, iconKey, bloom,
+  icon: Icon, label, onClick, active, filled, size = 40, iconSize = 20, className, disabled, iconKey, bloom,
 }: {
   icon: LucideIcon
   label: string
@@ -17,6 +17,10 @@ export function IconButton({
   active?: boolean
   filled?: boolean
   size?: number
+  /** Glyph size within the hit area (default 20). Dense toolbars/inline chrome
+   *  use smaller glyphs (12–16) in a compact hit area — the prop lets those
+   *  sites adopt the primitive instead of hand-rolling a <button>. */
+  iconSize?: number
   className?: string
   // Dim + block the button (no hover, not-allowed cursor) when its action is
   // currently unavailable — so a gated icon button reads as inert instead of a
@@ -78,11 +82,11 @@ export function IconButton({
             transition={bounce.subtle}
             className="relative inline-flex"
           >
-            <Icon size={20} strokeWidth={2} absoluteStrokeWidth />
+            <Icon size={iconSize} strokeWidth={2} absoluteStrokeWidth />
           </motion.span>
         </AnimatePresence>
       ) : (
-        <Icon size={20} strokeWidth={2} absoluteStrokeWidth className="relative" />
+        <Icon size={iconSize} strokeWidth={2} absoluteStrokeWidth className="relative" />
       )}
     </motion.button>
   )

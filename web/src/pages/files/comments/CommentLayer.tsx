@@ -3,8 +3,11 @@ import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { MessageSquarePlus, X, Pencil, Check, Send, MessagesSquare, ChevronUp, ChevronDown } from 'lucide-react'
 import { Button } from '../../../ui/Button'
+import { TextArea } from '../../../ui/forms'
+import { fvs } from '../../../design/fontWeight'
 import { IconButton } from '../../../ui/IconButton'
 import { Modal } from '../../../ui/Modal'
+import { SelectionPill } from '../../../ui/SelectionPill'
 import { spring } from '../../../design/motion'
 import { commentStore, useComments, findCoords, captureContext, formatCommentsMessage, type DocComment } from './commentStore'
 
@@ -88,12 +91,7 @@ export function CommentLayer({ scrollRef, docId, docLabel, docPath, content, onS
     <>
       {/* floating "Comment" affordance at the selection */}
       {sel && (
-        <button ref={btnRef} type="button"
-          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); openComposer() }}
-          className="absolute z-30 -translate-x-1/2 -translate-y-full inline-flex items-center gap-1.5 rounded-pill bg-surface-highest px-3 h-8 text-on-surface text-[0.8125rem] shadow-lg ring-1 ring-outline-variant/50 hover:bg-surface-high"
-          style={{ left: sel.x, top: sel.y }}>
-          <MessageSquarePlus size={13} className="text-primary" /> Comment
-        </button>
+        <SelectionPill ref={btnRef} icon={MessageSquarePlus} label="Comment" x={sel.x} y={sel.y} onPress={openComposer} />
       )}
 
       {/* inline composer popover anchored at the selection */}
@@ -171,7 +169,7 @@ function CommentDeck({ comments, activeDocId, onSubmit }: {
             style={{ maxHeight: '50%' }}>
             <div className="flex shrink-0 items-center gap-2 border-b border-outline-variant/40 px-l py-2">
               <MessagesSquare size={15} className="text-primary" />
-              <span className="text-on-surface text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 500' }}>
+              <span className="text-on-surface text-[0.8125rem]" style={fvs(500)}>
                 {comments.length} comment{comments.length === 1 ? '' : 's'}
               </span>
               <span className="text-on-surface-low text-[0.75rem]">across {new Set(comments.map((c) => c.docId)).size} document{new Set(comments.map((c) => c.docId)).size === 1 ? '' : 's'}</span>
@@ -204,22 +202,22 @@ function CommentDeck({ comments, activeDocId, onSubmit }: {
             <div className="relative z-10 rounded-t-xl border border-b-0 border-outline-variant/50 bg-surface/95 shadow-xl ring-1 ring-black/5 backdrop-blur-md">
               <div className="flex items-center gap-2 px-l pt-2.5">
                 <MessagesSquare size={14} className="text-primary" />
-                <span className="text-on-surface text-[0.75rem]" style={{ fontVariationSettings: '"wght" 500' }}>{comments.length} comment{comments.length === 1 ? '' : 's'}</span>
-                <span className="min-w-0 flex-1 truncate text-on-surface-low text-[0.7rem]" title={ordered[0].docLabel}>· {ordered[0].docLabel}</span>
+                <span className="text-on-surface text-[0.75rem]" style={fvs(500)}>{comments.length} comment{comments.length === 1 ? '' : 's'}</span>
+                <span className="min-w-0 flex-1 truncate text-on-surface-low text-[0.75rem]" title={ordered[0].docLabel}>· {ordered[0].docLabel}</span>
                 {/* Submit straight from the collapsed stack — no need to expand
                     first. role=button (not <button>) since the deck itself is a
                     button; stopPropagation so it submits instead of expanding. */}
                 <span role="button" tabIndex={0}
                   onClick={(e) => { e.stopPropagation(); setSubmitting(true) }}
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); setSubmitting(true) } }}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-primary px-2.5 h-6 text-[0.7rem] text-on-primary transition-opacity hover:opacity-90"
-                  style={{ fontVariationSettings: '"wght" 500' }}>
+                  className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-primary px-2.5 h-6 text-[0.75rem] text-on-primary transition-opacity hover:opacity-90"
+                  style={fvs(500)}>
                   <Send size={11} /> Submit to AI
                 </span>
                 <ChevronUp size={14} className="text-on-surface-low" />
               </div>
               <div className="px-l pb-2.5 pt-1">
-                <div className="mb-1 truncate text-on-surface-var text-[0.7rem] italic">“{ordered[0].quote}”</div>
+                <div className="mb-1 truncate text-on-surface-var text-[0.75rem] italic">“{ordered[0].quote}”</div>
                 <div className="line-clamp-1 text-on-surface text-[0.8125rem]">{ordered[0].comment}</div>
               </div>
             </div>
@@ -250,7 +248,7 @@ function CommentCard({ c, muted }: { c: DocComment; muted: boolean }) {
   return (
     <div className={`flex w-full shrink-0 flex-col rounded-lg border border-outline-variant/50 bg-surface-container p-3 ${muted ? 'opacity-65' : ''}`}>
       <div className="mb-1.5 flex items-center gap-1.5">
-        <span className="min-w-0 flex-1 truncate text-on-surface-low text-[0.7rem]" title={c.docLabel}>{c.docLabel}</span>
+        <span className="min-w-0 flex-1 truncate text-on-surface-low text-[0.75rem]" title={c.docLabel}>{c.docLabel}</span>
         {!editing && <IconButton icon={Pencil} label="Edit comment" size={26} onClick={() => { setVal(c.comment); setEditing(true) }} />}
         <IconButton icon={X} label="Remove comment" size={26} onClick={() => commentStore.remove(c.id)} />
       </div>
@@ -279,14 +277,14 @@ function SubmitModal({ count, instructions, setInstructions, onCancel, onConfirm
   return (
     <Modal title="Submit comments to AI" icon={<Send size={18} className="text-primary" />} onClose={onCancel}>
       <div className="flex flex-col gap-m p-l" style={{ minWidth: 420 }}>
-        <p className="text-on-surface-var text-[0.875rem]">
+        <p className="text-on-surface-var text-[0.8125rem]">
           Hand {count} comment{count === 1 ? '' : 's'} to a new AI chat with the referenced document{count === 1 ? '' : 's'} in context, so the agent can address them.
         </p>
         <div className="flex flex-col gap-1.5">
-          <label className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">Additional instructions (optional)</label>
-          <textarea autoFocus value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={4}
-            placeholder="e.g. Apply these edits directly, or just propose changes for me to review first…"
-            className="w-full resize-y rounded-md bg-surface-container px-3 py-2 text-on-surface text-[0.875rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+          <label className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Additional instructions (optional)</label>
+          <TextArea autoFocus value={instructions} onChange={setInstructions} rows={4} size="sm"
+            ariaLabel="Additional instructions (optional)"
+            placeholder="e.g. Apply these edits directly, or just propose changes for me to review first…" />
         </div>
         <div className="flex justify-end gap-s">
           <Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>

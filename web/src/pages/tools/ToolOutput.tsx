@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { ChevronRight } from 'lucide-react'
 import { Markdown } from '../../ui/Markdown'
 
@@ -14,7 +15,7 @@ export function ToolOutput({ text }: { text: string }) {
   const json = tryParseJson(trimmed)
   if (json !== undefined) return <JsonValue value={json} top />
 
-  if (looksMarkdown(trimmed)) return <div className="text-[0.875rem]"><Markdown>{trimmed}</Markdown></div>
+  if (looksMarkdown(trimmed)) return <div className="text-[0.8125rem]"><Markdown>{trimmed}</Markdown></div>
 
   return <pre className="text-on-surface-var text-[0.8125rem] font-mono whitespace-pre-wrap break-words">{trimmed}</pre>
 }
@@ -96,7 +97,7 @@ function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
     <div className="overflow-x-auto rounded-md border border-outline-variant/30">
       <table className="w-full border-collapse text-[0.75rem]">
         <thead>
-          <tr>{shown.map((c) => <th key={c} className="border-b border-outline-variant/40 bg-surface-high px-2 py-1.5 text-left font-mono text-on-surface-var" style={{ fontVariationSettings: '"wght" 500' }}>{c}</th>)}</tr>
+          <tr>{shown.map((c) => <th key={c} className="border-b border-outline-variant/40 bg-surface-high px-2 py-1.5 text-left font-mono text-on-surface-var" style={fvs(500)}>{c}</th>)}</tr>
         </thead>
         <tbody>
           {rows.map((r, i) => (

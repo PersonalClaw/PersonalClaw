@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion'
+import { fvs, withWeight } from '../../design/fontWeight'
 import { ShieldQuestion, Check, Ban, Clock, ShieldCheck, ShieldAlert, AlertTriangle } from 'lucide-react'
 import { messageEnter } from '../../design/motion'
 import type { ApprovalSegment } from './chatTypes'
@@ -18,9 +19,9 @@ function RiskChip({ risk }: { risk: NonNullable<ApprovalSegment['risk']> }) {
   if (!m) return null
   const Icon = m.icon
   return (
-    <span className="inline-flex items-center gap-1 rounded-pill px-1.5 h-[18px] text-[0.65rem] shrink-0"
+    <span className="inline-flex items-center gap-1 rounded-pill px-1.5 h-[18px] text-[0.75rem] shrink-0"
       title={`Risk: ${m.label}`} aria-label={`Risk level: ${m.label}`}
-      style={{ background: `color-mix(in srgb, ${m.color} 16%, transparent)`, color: m.color, fontVariationSettings: '"wght" 600' }}>
+      style={withWeight({ background: `color-mix(in srgb, ${m.color} 16%, transparent)`, color: m.color }, 600)}>
       <Icon size={11} aria-hidden /> {m.label}
     </span>
   )
@@ -58,11 +59,11 @@ export function ApprovalCard({ seg, onAct }: { seg: ApprovalSegment; onAct: (id:
         <ShieldQuestion size={15} className="mt-0.5 shrink-0" aria-hidden style={{ color: 'var(--color-warn)' }} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <div role="alert" className="text-on-surface text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 500' }}>Permission needed</div>
+            <div role="alert" className="text-on-surface text-[0.8125rem]" style={fvs(500)}>Permission needed</div>
             {seg.risk && <RiskChip risk={seg.risk} />}
           </div>
           <div className="mt-0.5 truncate font-mono text-on-surface-var text-[0.75rem]">{seg.tool}{seg.input ? `(${seg.input.replace(/\s+/g, ' ').slice(0, 60)})` : ''}</div>
-          {seg.purpose && <p className="mt-1 text-on-surface-low text-[0.7rem]">{seg.purpose}</p>}
+          {seg.purpose && <p className="mt-1 text-on-surface-low text-[0.75rem]">{seg.purpose}</p>}
         </div>
       </div>
       {/* Scope picker: allow-once is the primary (least-privilege default); the two

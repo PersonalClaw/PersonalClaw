@@ -1,12 +1,15 @@
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { AnimatePresence, motion } from 'framer-motion'
-import { X, Plus, Workflow as WorkflowIcon, AlertTriangle, Search } from 'lucide-react'
+import { X, Plus, Workflow as WorkflowIcon, AlertTriangle, Search, ChevronUp, ChevronDown } from 'lucide-react'
 import type { WorkflowItem, WorkflowStep, WorkflowScope } from '../../lib/api'
 import { useAgentCatalog } from '../../lib/agents'
 import { Combobox } from '../../ui/Combobox'
+import { AddItemButton } from '../../ui/AddItemButton'
+import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Bud } from '../../ui/motion'
 import { spring } from '../../design/motion'
-import { Field, TextInput, TextArea, Segmented, ChipInput } from '../tasks/formControls'
+import { Field, TextInput, TextArea, Segmented, ChipInput } from '../../ui/forms'
 import { SCOPES, scopeNeedsRef, scopeMeta } from './workflowMeta'
 import { refMap, wouldCycle } from './workflowDag'
 
@@ -76,16 +79,16 @@ function StepEditor({ steps, onChange, selfId, allWorkflows }: { steps: Workflow
           transition={spring.spatialDefault}
           style={{ originY: 0, outline: '1px solid color-mix(in srgb, var(--color-primary) 30%, transparent)' }}
           className="group flex items-center gap-s rounded-md bg-surface-container p-2" >
-          <span className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill text-[0.7rem] tabular-nums" style={{ background: 'color-mix(in srgb, var(--color-primary) 18%, transparent)' }}>{i + 1}</span>
+          <span className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill text-[0.75rem] tabular-nums" style={{ background: 'color-mix(in srgb, var(--color-primary) 18%, transparent)' }}>{i + 1}</span>
           <WorkflowIcon size={14} className="text-primary shrink-0" />
-          <span className="flex-1 truncate text-on-surface text-[0.875rem]">
-            Run workflow <span style={{ fontVariationSettings: '"wght" 600' }}>{byId.get(s.ref)?.name ?? s.ref}</span>
-            {!byId.has(s.ref) && <span className="text-danger text-[0.7rem] ml-1">(missing)</span>}
+          <span className="flex-1 truncate text-on-surface text-[0.8125rem]">
+            Run workflow <span style={fvs(600)}>{byId.get(s.ref)?.name ?? s.ref}</span>
+            {!byId.has(s.ref) && <span className="text-danger text-[0.75rem] ml-1">(missing)</span>}
           </span>
           <div className="flex shrink-0 items-center opacity-0 group-hover:opacity-100 transition-opacity">
-            <button type="button" onClick={() => move(i, -1)} disabled={i === 0} className="text-on-surface-low hover:text-on-surface disabled:opacity-30 px-1">↑</button>
-            <button type="button" onClick={() => move(i, 1)} disabled={i === steps.length - 1} className="text-on-surface-low hover:text-on-surface disabled:opacity-30 px-1">↓</button>
-            <button type="button" onClick={() => remove(i)} className="text-on-surface-low hover:text-danger px-1"><X size={14} /></button>
+            <SquareIconButton icon={ChevronUp} label="Move step up" disabled={i === 0} onClick={() => move(i, -1)} />
+            <SquareIconButton icon={ChevronDown} label="Move step down" disabled={i === steps.length - 1} onClick={() => move(i, 1)} />
+            <SquareIconButton icon={X} tone="danger" label="Remove step" onClick={() => remove(i)} />
           </div>
         </motion.div>
       ) : (
@@ -97,13 +100,13 @@ function StepEditor({ steps, onChange, selfId, allWorkflows }: { steps: Workflow
           style={{ originY: 0 }}
           className="group rounded-md bg-surface-container p-2">
           <div className="flex items-center gap-s mb-1.5">
-            <span className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill text-[0.7rem] tabular-nums" style={{ background: 'color-mix(in srgb, var(--color-primary) 18%, transparent)' }}>{i + 1}</span>
+            <span className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill text-[0.75rem] tabular-nums" style={{ background: 'color-mix(in srgb, var(--color-primary) 18%, transparent)' }}>{i + 1}</span>
             <input value={s.title} onChange={(e) => update(i, { title: e.target.value })} placeholder="Step title (imperative)"
-              className="flex-1 h-8 rounded-md bg-surface px-m text-on-surface text-[0.875rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+              className="flex-1 h-8 rounded-md bg-surface px-m text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
             <div className="flex shrink-0 items-center opacity-0 group-hover:opacity-100 transition-opacity">
-              <button type="button" onClick={() => move(i, -1)} disabled={i === 0} className="text-on-surface-low hover:text-on-surface disabled:opacity-30 px-1">↑</button>
-              <button type="button" onClick={() => move(i, 1)} disabled={i === steps.length - 1} className="text-on-surface-low hover:text-on-surface disabled:opacity-30 px-1">↓</button>
-              <button type="button" onClick={() => remove(i)} className="text-on-surface-low hover:text-danger px-1"><X size={14} /></button>
+              <SquareIconButton icon={ChevronUp} label="Move step up" disabled={i === 0} onClick={() => move(i, -1)} />
+              <SquareIconButton icon={ChevronDown} label="Move step down" disabled={i === steps.length - 1} onClick={() => move(i, 1)} />
+              <SquareIconButton icon={X} tone="danger" label="Remove step" onClick={() => remove(i)} />
             </div>
           </div>
           <textarea value={s.instruction} onChange={(e) => update(i, { instruction: e.target.value })} rows={2} placeholder="Optional: how-to detail injected with this step (markdown)"
@@ -125,8 +128,8 @@ function StepEditor({ steps, onChange, selfId, allWorkflows }: { steps: Workflow
         ) : (
           <motion.div key="addbtns" className="flex items-center gap-s"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={spring.effects}>
-            <button type="button" onClick={() => onChange([...steps, { title: '', instruction: '' }])} className="inline-flex items-center gap-1.5 rounded-md bg-surface-container px-m h-9 text-on-surface-var text-[0.8125rem] hover:bg-surface-high transition-colors"><Plus size={14} /> Add step</button>
-            <button type="button" onClick={() => setPicking(true)} className="inline-flex items-center gap-1.5 rounded-md bg-surface-container px-m h-9 text-on-surface-var text-[0.8125rem] hover:bg-surface-high transition-colors"><WorkflowIcon size={14} /> Add a workflow</button>
+            <AddItemButton onClick={() => onChange([...steps, { title: '', instruction: '' }])}><Plus size={14} /> Add step</AddItemButton>
+            <AddItemButton onClick={() => setPicking(true)}><WorkflowIcon size={14} /> Add a workflow</AddItemButton>
           </motion.div>
         )}
       </AnimatePresence>
@@ -140,6 +143,7 @@ function WorkflowRefPicker({ selfId, all, currentRefs, onPick, onCancel }: {
   selfId?: string; all: WorkflowItem[]; currentRefs: string[]; onPick: (id: string) => void; onCancel: () => void
 }) {
   const [q, setQ] = useState('')
+  const searchId = useId()
   const m = useMemo(() => refMap(all, selfId, currentRefs), [all, selfId, currentRefs])
   const candidates = useMemo(() => {
     const n = q.trim().toLowerCase()
@@ -152,9 +156,13 @@ function WorkflowRefPicker({ selfId, all, currentRefs, onPick, onCancel }: {
 
   return (
     <div className="rounded-md bg-surface-container p-2">
-      <div className="relative mb-1.5">
-        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-low pointer-events-none" />
-        <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a workflow to add" className="w-full h-8 rounded-md bg-surface pl-8 pr-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+      <div className="mb-1.5">
+        {/* A random `name` (a) defeats browser autofill on this transient picker
+            and (b) makes the field keep its own ariaLabel rather than inheriting
+            the enclosing "Steps" Field label — this is a multi-control Field, so
+            the picker must carry its own accessible name (mirrors DependencyEditor). */}
+        <TextInput autoFocus value={q} onChange={setQ} placeholder="Find a workflow to add" ariaLabel="Find a workflow to add"
+          name={`wf-ref-search-${searchId}`} size="sm" surface="base" leadingIcon={<Search size={14} />} />
       </div>
       <div className="max-h-52 overflow-y-auto flex flex-col gap-0.5">
         {candidates.length === 0 ? <div className="px-2 py-3 text-on-surface-low text-[0.8125rem]">No workflows to reference.</div> : candidates.map(({ w, cyclic }) => (
@@ -162,7 +170,7 @@ function WorkflowRefPicker({ selfId, all, currentRefs, onPick, onCancel }: {
             className="flex items-center gap-s rounded-md px-2 py-1.5 text-left transition-colors enabled:hover:bg-surface-high disabled:opacity-45 disabled:cursor-not-allowed">
             <WorkflowIcon size={14} className="text-primary shrink-0" />
             <span className="flex-1 truncate text-on-surface text-[0.8125rem]">{w.name}</span>
-            {cyclic && <span className="shrink-0 inline-flex items-center gap-1 text-warn text-[0.7rem]" title="Would create a reference cycle"><AlertTriangle size={11} /> cycle</span>}
+            {cyclic && <span className="shrink-0 inline-flex items-center gap-1 text-warn text-[0.75rem]" title="Would create a reference cycle"><AlertTriangle size={11} /> cycle</span>}
           </button>
         ))}
       </div>

@@ -17,6 +17,7 @@ import {
   BentoCard, BigStat, KVList, StatusPill, ChipRow, Highlight,
   Switch, SegToggle, InlineSelect, type BentoSize,
 } from './bento'
+import { fvs } from '../../design/fontWeight'
 
 /** A settings widget: surfaces its subpage's most essential info on a bento card,
  *  deep-links into the subpage on click, contributes its data to the search index
@@ -97,8 +98,8 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       const { name } = useIdentity()
       return (
         <BentoCard icon={User} title="Account" query={query} onClick={() => go('account')}>
-          <div className="truncate text-on-surface text-[1.05rem]" style={{ fontVariationSettings: '"wght" 550' }}>{name || 'PersonalClaw'}</div>
-          <div className="text-on-surface-low text-[0.78rem]">Display name &amp; onboarding</div>
+          <div className="truncate text-on-surface text-[1.0625rem]" style={fvs(550)}>{name || 'PersonalClaw'}</div>
+          <div className="text-on-surface-low text-[0.75rem]">Display name &amp; onboarding</div>
         </BentoCard>
       )
     },
@@ -124,7 +125,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
                 <span key={i} className="size-4 rounded-full border border-outline-variant/40" style={{ background: c }} />
               ))}
             </div>
-            <span className="truncate text-on-surface text-[0.85rem]">{query ? <Highlight text={label} query={query} /> : label}</span>
+            <span className="truncate text-on-surface text-[0.8125rem]">{query ? <Highlight text={label} query={query} /> : label}</span>
           </div>
           {/* Mode is an inline choice; full theme/token editing lives in the subpage. */}
           <div className="mt-2.5 flex items-center justify-between gap-2">
@@ -226,7 +227,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={Search} title="Search" query={query} onClick={() => go('search')} loading={data === undefined}>
           {data && (data.providers.length === 0
-            ? <div className="text-on-surface-low text-[0.8rem]">DuckDuckGo (keyless) is the default; add a provider in Providers to upgrade.</div>
+            ? <div className="text-on-surface-low text-[0.8125rem]">DuckDuckGo (keyless) is the default; add a provider in Providers to upgrade.</div>
             : <KVList query={query} rows={USE_CASES.map(([uc, label]) => {
                 const bound = (active?.[uc] ?? [])[0]
                 return { k: label, mono: false, vText: bound ?? 'General', v: bound
@@ -253,7 +254,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       })
       return (
         <BentoCard icon={FileText} title="Prompts" query={query} onClick={() => go('prompts')} loading={b === undefined}>
-          {b && (rows.length ? <KVList query={query} rows={rows} /> : <div className="text-on-surface-low text-[0.8rem]">All contexts use the default prompt.</div>)}
+          {b && (rows.length ? <KVList query={query} rows={rows} /> : <div className="text-on-surface-low text-[0.8125rem]">All contexts use the default prompt.</div>)}
         </BentoCard>
       )
     },
@@ -383,7 +384,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
         <BentoCard icon={Blocks} title="Apps" query={query} onClick={() => go('apps')} loading={data === undefined}>
           {data && <>
             <BigStat value={nonProvider.length} caption={nonProvider.length === 1 ? 'installed app' : 'installed apps'} />
-            <div className="mt-1.5 text-on-surface-low text-[0.78rem]">
+            <div className="mt-1.5 text-on-surface-low text-[0.75rem]">
               {configurable > 0 ? `${configurable} configurable` : 'No configurable settings'}
             </div>
           </>}
@@ -421,7 +422,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={ScrollText} title="Audit log" query={query} onClick={() => go('audit')} loading={v === undefined}>
           {v && (v.valid
-            ? <><StatusPill label="Chain intact" tone="ok" />{typeof v.count === 'number' && <div className="mt-1.5 text-on-surface-low text-[0.78rem]">{v.count} events verified</div>}</>
+            ? <><StatusPill label="Chain intact" tone="ok" />{typeof v.count === 'number' && <div className="mt-1.5 text-on-surface-low text-[0.75rem]">{v.count} events verified</div>}</>
             : <><StatusPill label="Chain broken" tone="warn" />{v.error && <div className="mt-1.5 text-on-surface-low text-[0.75rem]">{v.error}</div>}</>)}
         </BentoCard>
       )
@@ -435,8 +436,8 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       const level = useLogLevel()
       return (
         <BentoCard icon={Activity} title="Diagnostics" query={query} onClick={() => go('diagnostics')}>
-          <div className="text-on-surface text-[0.9rem]" style={{ fontVariationSettings: '"wght" 550' }}>Live log stream</div>
-          <div className="mt-1 text-on-surface-low text-[0.78rem]">Level: <Highlight text={level ?? '—'} query={query} /></div>
+          <div className="text-on-surface text-[0.9375rem]" style={fvs(550)}>Live log stream</div>
+          <div className="mt-1 text-on-surface-low text-[0.75rem]">Level: <Highlight text={level ?? '—'} query={query} /></div>
         </BentoCard>
       )
     },
@@ -461,8 +462,8 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     render(query, go) {
       return (
         <BentoCard icon={FolderSync} title="Import / Export" query={query} onClick={() => go('portability')}>
-          <div className="text-on-surface-var text-[0.85rem]">Back up or migrate this instance.</div>
-          <div className="mt-1.5 text-on-surface-low text-[0.78rem]">Export a portable archive · import from another instance</div>
+          <div className="text-on-surface-var text-[0.8125rem]">Back up or migrate this instance.</div>
+          <div className="mt-1.5 text-on-surface-low text-[0.75rem]">Export a portable archive · import from another instance</div>
         </BentoCard>
       )
     },
@@ -476,7 +477,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={DownloadCloud} title="Updates" query={query} onClick={() => go('updates')} loading={u === undefined} rows={2}>
           {u && <>
-            <div className="text-on-surface text-[0.95rem] font-mono">{u.version || '—'}</div>
+            <div className="text-on-surface text-[0.9375rem] font-mono">{u.version || '—'}</div>
             <div className="mt-1.5">
               {u.available
                 ? <StatusPill query={query} label={`Update available${u.latest ? ` — ${u.latest}` : ''}`} tone="primary" />

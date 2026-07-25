@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { Palette } from 'lucide-react'
 import { Segmented } from '../../ui/Segmented'
 import { api } from '../../lib/api'
@@ -77,7 +78,7 @@ export function DesignStepPreview({ loopId, stepKind, overrides }: {
     <div className="rounded-lg border border-outline-variant/40 bg-surface-low/40 p-2.5">
       <div className="mb-2 flex items-center gap-2">
         <Palette size={13} className="text-primary" />
-        <span className="text-on-surface text-[0.75rem]" style={{ fontVariationSettings: '"wght" 600' }}>
+        <span className="text-on-surface text-[0.75rem]" style={fvs(600)}>
           Live design system — net effect of every choice so far
         </span>
         <div className="ml-auto flex items-center gap-1.5">
@@ -87,7 +88,7 @@ export function DesignStepPreview({ loopId, stepKind, overrides }: {
             options={[{ key: 'light', label: 'Light' }, { key: 'dark', label: 'Dark' }]} />
         </div>
       </div>
-      <p className="mb-2 text-on-surface-low text-[0.7rem]">
+      <p className="mb-2 text-on-surface-low text-[0.75rem]">
         {stepKind === 'palette' ? 'The extracted palette is applied below.' : stepKind === 'typography' ? 'The extracted type + spacing are applied below.' : 'The extracted foundation tokens are applied below.'} Click a swatch / value to edit it — changes apply to the whole system instantly and carry into the cockpit.
       </p>
       {err

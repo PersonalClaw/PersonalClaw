@@ -103,7 +103,7 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
           max-width (the toggle), then mx-auto centers any remainder. */}
       <div className="mx-auto flex h-full min-h-0 w-full flex-col px-l pt-l" style={{ maxWidth: 'var(--content-width)' }}>
         {missing ? (
-          <div className="grid h-full place-items-center text-on-surface-low text-[0.875rem]">This knowledge item no longer exists.</div>
+          <div className="grid h-full place-items-center text-on-surface-low text-[0.8125rem]">This knowledge item no longer exists.</div>
         ) : item ? (
           <KnowledgeDetail
             item={item}
@@ -116,7 +116,7 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
             onTagClick={() => onBack()}
           />
         ) : (
-          <div className="grid h-40 place-items-center text-on-surface-low text-[0.875rem]">Loading…</div>
+          <div className="grid h-40 place-items-center text-on-surface-low text-[0.8125rem]">Loading…</div>
         )}
       </div>
     </WorkbenchLayout>
@@ -144,9 +144,9 @@ function KnowledgeExtras({ item, pool, related, onOpenItem }: {
             {pool.map((ec) => (
               <details key={ec.id} className="rounded-md bg-surface-container px-m py-1.5">
                 <summary className="flex items-center gap-2 cursor-pointer text-[0.8125rem] text-on-surface-var">
-                  <span className="font-mono text-[0.7rem] text-on-surface-low">{ec.node_type}</span>
-                  {ec.backend && <span className="text-on-surface-low text-[0.65rem]">· {ec.backend}</span>}
-                  <span className="ml-auto text-on-surface-low text-[0.65rem]">{(ec.text || '').length} chars</span>
+                  <span className="font-mono text-[0.75rem] text-on-surface-low">{ec.node_type}</span>
+                  {ec.backend && <span className="text-on-surface-low text-[0.75rem]">· {ec.backend}</span>}
+                  <span className="ml-auto text-on-surface-low text-[0.75rem]">{(ec.text || '').length} chars</span>
                 </summary>
                 {ec.text && <div className="mt-1.5 max-h-72 overflow-y-auto text-on-surface-var text-[0.8125rem] leading-relaxed"><Markdown>{ec.text}</Markdown></div>}
               </details>
@@ -179,7 +179,7 @@ function KnowledgeExtras({ item, pool, related, onOpenItem }: {
               <button key={r.id} type="button" onClick={() => onOpenItem(r.id)}
                 className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-high">
                 <span className="truncate text-on-surface text-[0.8125rem]">{r.title || '(untitled)'}</span>
-                {typeof r.shared_entities === 'number' && <span className="ml-auto shrink-0 text-on-surface-low text-[0.7rem]">{r.shared_entities} shared</span>}
+                {typeof r.shared_entities === 'number' && <span className="ml-auto shrink-0 text-on-surface-low text-[0.75rem]">{r.shared_entities} shared</span>}
               </button>
             ))}
           </div>
@@ -192,7 +192,7 @@ function KnowledgeExtras({ item, pool, related, onOpenItem }: {
 function Section({ label, icon: Icon, children }: { label: string; icon?: typeof Network; children: React.ReactNode }) {
   return (
     <div>
-      <div className="mb-1.5 flex items-center gap-1.5 text-on-surface-low text-[0.7rem] uppercase tracking-wide">{Icon && <Icon size={12} />}{label}</div>
+      <div className="mb-1.5 flex items-center gap-1.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{Icon && <Icon size={12} />}{label}</div>
       {children}
     </div>
   )

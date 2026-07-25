@@ -1,9 +1,11 @@
 import { useRef, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { ArrowLeft, Check, Loader2, Upload, X, Link2, FileText, Mic } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
+import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Button } from '../../ui/Button'
-import { ChipInput } from '../tasks/formControls'
+import { ChipInput } from '../../ui/forms'
 import { api, type KnowledgeType } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
 import { TYPES, typeMeta, createKind, ACCEPTED_MIMES, GIST_LANGUAGES, fmtBytes } from './knowledgeMeta'
@@ -32,7 +34,7 @@ export function KnowledgeCreatePage({ onBack, onCreated }: { onBack: () => void;
                 <button key={t.key} type="button" onClick={() => setType(t.key)}
                   className="group flex flex-col items-center gap-2 rounded-xl bg-surface-container p-l hover:bg-surface-high transition-colors">
                   <span className="inline-flex size-12 items-center justify-center rounded-xl" style={{ background: `color-mix(in srgb, ${t.tone} 16%, transparent)` }}><t.icon size={22} style={{ color: t.tone }} /></span>
-                  <span className="text-on-surface text-[0.875rem]" style={{ fontVariationSettings: '"wght" 500' }}>{t.label}</span>
+                  <span className="text-on-surface text-[0.8125rem]" style={fvs(500)}>{t.label}</span>
                 </button>
               ))}
             </div>
@@ -161,7 +163,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
           {/* Gist language selector — inline label + select, same as the edit shell. */}
           {kind === 'gist' && (
             <div className="shrink-0 flex items-center gap-2">
-              <span className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">Language</span>
+              <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Language</span>
               <select value={language} onChange={(e) => setLanguage(e.target.value)} aria-label="Gist language"
                 className="h-8 appearance-none rounded-md bg-surface-container px-m text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]">
                 {GIST_LANGUAGES.map((l) => <option key={l} value={l}>{l}</option>)}
@@ -183,7 +185,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
               {/* Focus the body when there's no title field (fleeting/journal) — it's the
                   primary input, so the cursor should land here rather than nowhere. */}
               <textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="Markdown supported…" autoFocus={!titleEditable} aria-label="Note content"
-                className="h-full w-full resize-none bg-transparent px-m py-2 text-on-surface text-[0.875rem] leading-relaxed outline-none" />
+                className="h-full w-full resize-none bg-transparent px-m py-2 text-on-surface text-[0.8125rem] leading-relaxed outline-none" />
             </div>
           )}
           {kind === 'file' && (
@@ -212,11 +214,11 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
                     {file ? (
                       <div className="flex items-center gap-m px-m">
                         {preview ? <img src={preview} alt="" className="size-16 rounded-md object-cover" /> : <tm.icon size={28} style={{ color: tm.tone }} />}
-                        <div className="min-w-0"><div className="truncate text-on-surface text-[0.875rem]">{file.name}</div><div className="text-on-surface-low text-[0.75rem]">{fmtBytes(file.size)}</div></div>
-                        <button type="button" onClick={(e) => { e.stopPropagation(); setFile(null); setPreview(null); setFileTooBig(false); setErr('') }} className="text-on-surface-low hover:text-danger"><X size={16} /></button>
+                        <div className="min-w-0"><div className="truncate text-on-surface text-[0.8125rem]">{file.name}</div><div className="text-on-surface-low text-[0.75rem]">{fmtBytes(file.size)}</div></div>
+                        <SquareIconButton icon={X} iconSize={16} tone="danger" label="Remove file" onClick={(e) => { e.stopPropagation(); setFile(null); setPreview(null); setFileTooBig(false); setErr('') }} />
                       </div>
                     ) : (
-                      <><Upload size={22} className="text-on-surface-low" /><span className="text-on-surface-low text-[0.875rem]">Drop a {tm.label.toLowerCase()} file or click to choose</span></>
+                      <><Upload size={22} className="text-on-surface-low" /><span className="text-on-surface-low text-[0.8125rem]">Drop a {tm.label.toLowerCase()} file or click to choose</span></>
                     )}
                   </div>
                 </>

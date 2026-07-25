@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Pencil, Trash2, Check, X, Play, Loader2, Lock, Code2, Eye, Puzzle, Rocket } from 'lucide-react'
 import { Button } from '../../ui/Button'
+import { FormFooter } from '../../ui/FormFooter'
 import { Toggle } from '../../ui/Toggle'
 import { Markdown } from '../../ui/Markdown'
 import { Skeleton } from '../../ui/ListScaffold'
 import { confirmDelete } from '../../ui/dialog'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { api, type PromptItem, type PromptVariable } from '../../lib/api'
-import { Field } from '../tasks/formControls'
+import { Field } from '../../ui/forms'
 import { isReadOnly, sourceTone, sourceLabel, promptVars, seedRenderValues } from './promptMeta'
 import { toDraft, draftToPayload, type PromptDraft } from './PromptForm'
 import { PromptEditFields } from './PromptEditFields'
@@ -75,14 +76,14 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
       <div className="flex flex-col gap-l">
         <div className="flex items-center gap-s">
           <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.8125rem]"><Pencil size={13} /> Editing</span>
-          <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.7rem]" style={{ background: `color-mix(in srgb, ${sourceTone(prompt.source)} 16%, transparent)`, color: sourceTone(prompt.source) }}>{sourceLabel(prompt.source)}</span>
+          <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${sourceTone(prompt.source)} 16%, transparent)`, color: sourceTone(prompt.source) }}>{sourceLabel(prompt.source)}</span>
         </div>
         {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
         <PromptEditFields draft={draft} onChange={setDraft} Section={Section} />
-        <div className="sticky bottom-0 -mx-l px-l py-3 bg-surface/95 border-t border-outline-variant/40 flex justify-end gap-s">
+        <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { if (full) setDraft(toDraft(full)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} disabled={saving || !draft.name.trim()}><Check size={15} /> {saving ? 'Saving…' : 'Save'}</Button>
-        </div>
+        </FormFooter>
       </div>
     )
   }
@@ -114,11 +115,11 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
             <Button size="sm" variant="ghost" onClick={del}><Trash2 size={14} /> Delete</Button>
           </>
         )}
-        {full.kind && <span className="inline-flex items-center rounded-pill px-m h-6 text-[0.7rem]" style={{ background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>{full.kind} prompt</span>}
+        {full.kind && <span className="inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={{ background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>{full.kind} prompt</span>}
         {full.launch_spec && Object.keys(full.launch_spec).length > 0 && (
-          <span className="inline-flex items-center gap-1 rounded-pill px-m h-6 text-[0.7rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }}><Rocket size={11} /> runnable</span>
+          <span className="inline-flex items-center gap-1 rounded-pill px-m h-6 text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }}><Rocket size={11} /> runnable</span>
         )}
-        <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.7rem]" style={{ background: `color-mix(in srgb, ${sourceTone(prompt.source)} 16%, transparent)`, color: sourceTone(prompt.source) }}>{sourceLabel(prompt.source)}</span>
+        <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${sourceTone(prompt.source)} 16%, transparent)`, color: sourceTone(prompt.source) }}>{sourceLabel(prompt.source)}</span>
       </div>
       {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
 
@@ -146,9 +147,9 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
               <div key={v.name} className="rounded-md bg-surface-container px-m py-1.5">
                 <div className="flex items-center gap-s">
                   <span className="font-mono text-on-surface text-[0.8125rem]">{v.name}</span>
-                  <span className="text-on-surface-low text-[0.7rem]">{v.type}</span>
-                  {v.required && <span className="text-danger text-[0.7rem]">required</span>}
-                  {v.default != null && v.default !== '' && <span className="text-on-surface-low text-[0.7rem]">default: {String(v.default)}</span>}
+                  <span className="text-on-surface-low text-[0.75rem]">{v.type}</span>
+                  {v.required && <span className="text-danger text-[0.75rem]">required</span>}
+                  {v.default != null && v.default !== '' && <span className="text-on-surface-low text-[0.75rem]">default: {String(v.default)}</span>}
                 </div>
                 {v.description && <p className="mt-0.5 text-on-surface-var text-[0.8125rem]">{v.description}</p>}
               </div>
@@ -225,7 +226,7 @@ function RenderPanel({ name, vars, launchable, launchKind, onNavigate }: { name:
 }
 
 function RenderInput({ v, value, onChange }: { v: PromptVariable; value: unknown; onChange: (v: unknown) => void }) {
-  const base = 'w-full rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.875rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
+  const base = 'w-full rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
   // Stable id/name per variable so each Try-it field is identifiable to screen
   // readers + browser autofill (fixes the "form field should have an id or name"
   // a11y advisory).
@@ -258,11 +259,11 @@ function TemplateSection({ content, vars }: { content: string; vars: PromptVaria
   return (
     <div>
       <div className="mb-1.5 flex items-center gap-s">
-        <div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">Template</div>
+        <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Template</div>
         <button
           type="button"
           onClick={() => setRaw((r) => !r)}
-          className="ml-auto inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-6 text-on-surface-low text-[0.7rem] hover:text-on-surface transition-colors"
+          className="ml-auto inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-6 text-on-surface-low text-[0.75rem] hover:text-on-surface transition-colors"
           title={raw ? 'Show rendered' : 'Show raw template'}
         >
           {raw ? <><Eye size={12} /> Rendered</> : <><Code2 size={12} /> Raw</>}
@@ -271,7 +272,7 @@ function TemplateSection({ content, vars }: { content: string; vars: PromptVaria
       {raw ? (
         <pre className="rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] font-mono overflow-x-auto whitespace-pre-wrap break-words">{content || '—'}</pre>
       ) : (
-        <div className="rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.875rem] leading-relaxed">
+        <div className="rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem] leading-relaxed">
           <Markdown>{rendered || '—'}</Markdown>
         </div>
       )}
@@ -280,5 +281,5 @@ function TemplateSection({ content, vars }: { content: string; vars: PromptVaria
 }
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div><div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
+  return <div><div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
 }

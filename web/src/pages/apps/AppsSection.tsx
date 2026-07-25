@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
 import {
   Blocks, Plus, Download, Loader2, Power, Trash2, Settings2, FolderOpen,
@@ -11,13 +12,15 @@ import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { Button } from '../../ui/Button'
+import { TextLink } from '../../ui/TextLink'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { ListControls } from '../../ui/ListControls'
 import { FilterMenu, type FilterSectionDef, type FilterOption } from '../../ui/FilterMenu'
 import { Modal } from '../../ui/Modal'
 import { SidePanel } from '../../ui/SidePanel'
 import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
-import { TextInput } from '../tasks/formControls'
+import { TextInput } from '../../ui/forms'
+import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Segmented } from '../../ui/Segmented'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
@@ -116,8 +119,8 @@ function groupBySource(items: StoreItem[], localSources: string[] = []): { key: 
 function SourceDivider({ label, count }: { label: string; count: number }) {
   return (
     <div className="mb-2 flex items-center gap-2">
-      <span className="text-on-surface-low text-[0.7rem] uppercase tracking-wide">{label}</span>
-      <span className="text-on-surface-low text-[0.7rem] tabular-nums opacity-70">{count}</span>
+      <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</span>
+      <span className="text-on-surface-low text-[0.75rem] tabular-nums opacity-70">{count}</span>
       <span className="ml-1 h-px flex-1 bg-outline-variant/30" />
     </div>
   )
@@ -645,10 +648,10 @@ function StoreView({ catalog, result, totalKnown, installedCount, onInstalled, r
       )}
 
       {totalKnown === 0 ? (
-        <div className="rounded-lg bg-surface-container px-l py-l text-on-surface-low text-[0.85rem]">
+        <div className="rounded-lg bg-surface-container px-l py-l text-on-surface-low text-[0.8125rem]">
           {installedCount > 0
-            ? <>All available apps are installed — find them in the <strong className="text-on-surface">Library</strong> tab. <button type="button" className="text-primary hover:underline" onClick={onOpenSources}>Manage Sources</button> to discover more.</>
-            : <>No apps found. <button type="button" className="text-primary hover:underline" onClick={onOpenSources}>Manage Sources</button> to add a git or local source and discover apps.</>}
+            ? <>All available apps are installed — find them in the <strong className="text-on-surface">Library</strong> tab. <TextLink onClick={onOpenSources}>Manage Sources</TextLink> to discover more.</>
+            : <>No apps found. <TextLink onClick={onOpenSources}>Manage Sources</TextLink> to add a git or local source and discover apps.</>}
         </div>
       ) : result.length === 0 ? (
         <EmptyState icon={Blocks} title="No matching apps"
@@ -744,7 +747,7 @@ function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
       )}
 
       <section>
-        <div className="mb-2 text-on-surface-low text-[0.7rem] uppercase tracking-wide">Git sources</div>
+        <div className="mb-2 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Git sources</div>
         <div className="mb-2 flex items-center gap-2">
           <TextInput value={newSource} onChange={setNewSource} name="app-git-source"
             placeholder="https://github.com/owner/app.git" />
@@ -763,8 +766,8 @@ function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
                 <Button variant="ghost" size="sm" disabled={busy === url} onClick={() => installFrom(url, url)}>
                   {busy === url ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} Install
                 </Button>
-                <button type="button" aria-label="Remove source" onClick={async () => { await api.removeAppSource(url); reloadCatalog() }}
-                  className="grid size-7 shrink-0 place-items-center rounded-md text-on-surface-low hover:text-danger"><Trash2 size={14} /></button>
+                <SquareIconButton icon={Trash2} tone="danger" label="Remove source" className="shrink-0"
+                  onClick={async () => { await api.removeAppSource(url); reloadCatalog() }} />
               </div>
             ))}
           </div>
@@ -775,7 +778,7 @@ function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
       </section>
 
       <section>
-        <div className="mb-2 text-on-surface-low text-[0.7rem] uppercase tracking-wide">Local sources</div>
+        <div className="mb-2 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Local sources</div>
         <div className="mb-2 flex items-center gap-2">
           <TextInput value={newLocal} onChange={setNewLocal} name="app-local-source"
             placeholder="/path/to/apps  (a directory of app subdirs)" />
@@ -792,12 +795,12 @@ function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
               return (
               <div key={path} className="flex items-center gap-3 rounded-lg bg-surface-container px-l py-m">
                 <FolderOpen size={15} className="shrink-0 text-on-surface-low" />
-                <span className="min-w-0 flex-1 truncate font-mono text-on-surface text-[0.78rem]">{path}</span>
+                <span className="min-w-0 flex-1 truncate font-mono text-on-surface text-[0.75rem]">{path}</span>
                 {isFirstParty ? (
-                  <span className="shrink-0 rounded-pill bg-surface-highest px-2 py-0.5 text-on-surface-low text-[0.7rem]">First-party</span>
+                  <span className="shrink-0 rounded-pill bg-surface-highest px-2 py-0.5 text-on-surface-low text-[0.75rem]">First-party</span>
                 ) : (
-                  <button type="button" aria-label="Remove local source" onClick={async () => { await api.removeLocalAppSource(path); reloadCatalog() }}
-                    className="grid size-7 shrink-0 place-items-center rounded-md text-on-surface-low hover:text-danger"><Trash2 size={14} /></button>
+                  <SquareIconButton icon={Trash2} tone="danger" label="Remove local source" className="shrink-0"
+                    onClick={async () => { await api.removeLocalAppSource(path); reloadCatalog() }} />
                 )}
               </div>
             )})}
@@ -893,7 +896,7 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
           {iconTile}
           <div className={`min-w-0 flex-1 ${hero && hasIcon ? 'pt-6' : ''}`}>
             <div className="flex items-center gap-1.5">
-              <span data-type="body-l" className="truncate text-on-surface transition-colors group-hover:text-primary" style={{ fontVariationSettings: '"wght" 550' }}>{item.displayName}</span>
+              <span data-type="body-l" className="truncate text-on-surface transition-colors group-hover:text-primary" style={fvs(550)}>{item.displayName}</span>
               {item.version && <span data-type="label-s" className="shrink-0 text-on-surface-low">v{item.version}</span>}
             </div>
             {providerLabel && (
@@ -916,7 +919,7 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
         <div className="flex items-center gap-2">
           <div className="flex min-w-0 flex-1 flex-wrap gap-1">
             {(item.tags ?? []).slice(0, 3).map((t) => (
-              <span key={t} className="inline-flex h-6 items-center rounded-pill bg-surface-high px-2 text-on-surface-var text-[0.7rem]">{t}</span>
+              <span key={t} className="inline-flex h-6 items-center rounded-pill bg-surface-high px-2 text-on-surface-var text-[0.75rem]">{t}</span>
             ))}
           </div>
           {item.installed ? (
@@ -1114,11 +1117,10 @@ function ClientInstallCommand({ label, cmd }: { label: string; cmd: string }) {
     <div>
       <div data-type="label-s" className="mb-1 text-on-surface-low uppercase tracking-wide">{label}</div>
       <div className="flex items-center gap-2 rounded-lg bg-surface-container px-3 py-2">
-        <code className="min-w-0 flex-1 overflow-x-auto whitespace-pre font-mono text-[0.78rem] text-on-surface">{cmd}</code>
-        <button type="button" onClick={copy} aria-label="Copy command" title={copied ? 'Copied' : 'Copy'}
-          className="grid size-7 shrink-0 place-items-center rounded-md text-on-surface-low hover:text-on-surface">
+        <code className="min-w-0 flex-1 overflow-x-auto whitespace-pre font-mono text-[0.75rem] text-on-surface">{cmd}</code>
+        <SquareIconButton label="Copy command" title={copied ? 'Copied' : 'Copy'} onClick={copy} className="shrink-0">
           {copied ? <Check size={14} /> : <Copy size={14} />}
-        </button>
+        </SquareIconButton>
       </div>
     </div>
   )
@@ -1285,7 +1287,7 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
       {(item.tags ?? []).length > 0 && (
         <div className="flex flex-wrap gap-1">
           {(item.tags ?? []).map((t) => (
-            <span key={t} className="inline-flex h-6 items-center rounded-pill bg-surface-high px-2 text-on-surface-var text-[0.7rem]">{t}</span>
+            <span key={t} className="inline-flex h-6 items-center rounded-pill bg-surface-high px-2 text-on-surface-var text-[0.75rem]">{t}</span>
           ))}
         </div>
       )}

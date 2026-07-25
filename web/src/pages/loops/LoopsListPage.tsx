@@ -1,12 +1,14 @@
 import { useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
 import { Plus, Pause, Play, Square, Trash2, ExternalLink } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Button } from '../../ui/Button'
+import { TextLink } from '../../ui/TextLink'
 import { IconButton } from '../../ui/IconButton'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { ListControls } from '../../ui/ListControls'
-import { ListSkeleton } from '../../ui/ListScaffold'
+import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
 import { SidePanel } from '../../ui/SidePanel'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { Markdown } from '../../ui/Markdown'
@@ -152,14 +154,11 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
           {loops === undefined ? (
             <ListSkeleton rows={6} />
           ) : loops.length === 0 ? (
-            <div className="flex flex-col items-center gap-l py-2xl text-center">
-              <Spark size={36} />
-              <div>
-                <h2 data-type="headline-s" className="text-on-surface">No loops yet</h2>
-                <p className="mt-1 text-on-surface-low text-[0.9375rem] max-w-[400px]">Describe a task and let an agent classify, plan, and pursue it autonomously.</p>
-              </div>
-              <Button onClick={onCreate}><Plus size={16} /> Start a loop</Button>
-            </div>
+            <EmptyState
+              title="No loops yet"
+              hint="Describe a task and let an agent classify, plan, and pursue it autonomously."
+              action={{ label: 'Start a loop', onClick: onCreate, icon: Plus }}
+            />
           ) : loops.filter(matches).length === 0 ? (
             // Loops exist, but none match the active filter — say so instead of
             // rendering a blank page (e.g. all loops done while on 'Active').
@@ -171,8 +170,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                   : filter === 'done' ? 'No finished loops yet.'
                   : 'No loops match this filter.'}
               </p>
-              <button type="button" onClick={() => setFilter('all')}
-                className="text-primary text-[0.8125rem] hover:underline">View all loops</button>
+              <TextLink onClick={() => setFilter('all')} size="sm">View all loops</TextLink>
             </div>
           ) : (
             <div className="flex flex-col gap-s">
@@ -224,12 +222,12 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-s">
                         <span className="size-1.5 rounded-pill shrink-0" style={{ background: st.tone }} />
-                        <span className="truncate text-on-surface text-[0.9375rem]" style={{ fontVariationSettings: '"wght" 500' }}>{c.name || c.goal.slice(0, 70)}</span>
+                        <span className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{c.name || c.goal.slice(0, 70)}</span>
                         {/* kind chip: goal shows its goal-type glyph; general/design show the kind. */}
                         {(() => { const k = (c as { kind?: string }).kind
                           const label = k === 'design' ? 'design' : k === 'general' ? 'loop' : (GOAL_GLYPH[c.goal_type] ?? c.goal_type)
                           const title = k === 'design' ? 'design loop' : k === 'general' ? 'general loop' : `${c.goal_type} goal`
-                          return <span className="shrink-0 rounded-pill px-1.5 h-4 inline-flex items-center text-[0.65rem] uppercase tracking-wide bg-surface-high text-on-surface-low" title={title}>{label}</span> })()}
+                          return <span className="shrink-0 rounded-pill px-1.5 h-4 inline-flex items-center text-[0.75rem] uppercase tracking-wide bg-surface-high text-on-surface-low" title={title}>{label}</span> })()}
                         <span className="shrink-0 text-on-surface-low text-[0.75rem]">· {st.label}{(running || c.status === 'paused') && (c.max_cycles === 0 ? ` · ongoing · cycle ${shownCycle}` : ` · cycle ${shownCycle}/${c.max_cycles}`)}</span>
                       </div>
                       <p className="mt-1 text-on-surface-low text-[0.8125rem] truncate">
@@ -295,17 +293,17 @@ function LoopPeek({ loop, onOpenFull }: { loop: GoalLoop; onOpenFull: () => void
       </div>
 
       <div>
-        <div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide mb-1.5">{kind === 'design' || kind === 'general' ? 'Task' : 'Goal'}</div>
+        <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">{kind === 'design' || kind === 'general' ? 'Task' : 'Goal'}</div>
         <div className="text-on-surface text-[0.9375rem]"><Markdown>{loop.goal}</Markdown></div>
         {loop.success_criteria && <p className="mt-2 text-on-surface-low text-[0.8125rem]"><span className="text-on-surface-var">Done when:</span> {loop.success_criteria}</p>}
       </div>
 
       {(loop.sub_goals?.length ?? 0) > 0 && (
         <div>
-          <div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide mb-1.5">Sub-goals · {loop.sub_goals.length}</div>
+          <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">Sub-goals · {loop.sub_goals.length}</div>
           <ul className="flex flex-col gap-1.5">
             {loop.sub_goals.map((s, i) => (
-              <li key={i} className="flex items-start gap-s text-on-surface-var text-[0.875rem]">
+              <li key={i} className="flex items-start gap-s text-on-surface-var text-[0.8125rem]">
                 <span className="mt-1.5 size-1 shrink-0 rounded-pill bg-primary" />{typeof s === 'string' ? s : JSON.stringify(s)}
               </li>
             ))}
@@ -322,7 +320,7 @@ function LoopPeek({ loop, onOpenFull }: { loop: GoalLoop; onOpenFull: () => void
         const cyclesIn = (i: number) => fnd.filter((f) => phaseForCycle(f.cycle, plan) === i).length
         return (
           <div>
-            <div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide mb-1.5">Execution plan · {plan.length} phases</div>
+            <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">Execution plan · {plan.length} phases</div>
             <ol className="flex flex-col gap-1">
               {plan.map((p, i) => {
                 const role = String(p.role || '').trim()
@@ -333,15 +331,15 @@ function LoopPeek({ loop, onOpenFull }: { loop: GoalLoop; onOpenFull: () => void
                 const count = done === 0 ? '' : done >= minC ? `${done} ${done === 1 ? 'cycle' : 'cycles'}` : `${done}/${minC}`
                 return (
                   <li key={i} className={`flex items-start gap-s text-[0.8125rem] rounded-md px-2 py-1 -mx-2 ${isActive(i) ? 'bg-surface-high' : ''}`}>
-                    <span className="shrink-0 mt-0.5 inline-flex size-4 items-center justify-center rounded-pill bg-surface-high text-on-surface-low text-[0.65rem] tabular-nums">{i + 1}</span>
+                    <span className="shrink-0 mt-0.5 inline-flex size-4 items-center justify-center rounded-pill bg-surface-high text-on-surface-low text-[0.75rem] tabular-nums">{i + 1}</span>
                     <span className="flex-1 min-w-0 text-on-surface-var">
-                      {role && <span className="text-on-surface" style={{ fontVariationSettings: '"wght" 550' }}>{role}</span>}
+                      {role && <span className="text-on-surface" style={fvs(550)}>{role}</span>}
                       {/* the agent definition backing the role this phase */}
                       <span className="text-on-surface-low"> · {agent || 'default worker'}</span>
                       <span>: {target || '(phase)'}</span>
-                      {isActive(i) && <span className="ml-1.5 text-primary text-[0.6rem] uppercase tracking-wide">● active</span>}
+                      {isActive(i) && <span className="ml-1.5 text-primary text-[0.75rem] uppercase tracking-wide">● active</span>}
                     </span>
-                    {count && <span className="shrink-0 mt-0.5 text-on-surface-low text-[0.65rem] tabular-nums">{count}</span>}
+                    {count && <span className="shrink-0 mt-0.5 text-on-surface-low text-[0.75rem] tabular-nums">{count}</span>}
                   </li>
                 )
               })}
@@ -352,8 +350,8 @@ function LoopPeek({ loop, onOpenFull }: { loop: GoalLoop; onOpenFull: () => void
 
       {latestText && (
         <div>
-          <div className="text-on-surface-low text-[0.7rem] uppercase tracking-wide mb-1.5">Latest finding · {loop.findings?.length ?? 0} total</div>
-          <p className="text-on-surface-var text-[0.875rem]">{latestText}</p>
+          <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">Latest finding · {loop.findings?.length ?? 0} total</div>
+          <p className="text-on-surface-var text-[0.8125rem]">{latestText}</p>
         </div>
       )}
     </div>

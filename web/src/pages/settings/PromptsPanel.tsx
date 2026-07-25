@@ -47,7 +47,7 @@ export function PromptsPanel() {
               return (
                 <div key={b.use_case} className="flex items-center gap-3 rounded-lg bg-surface-container px-4 py-3">
                   <div className="min-w-0 flex-1">
-                    <div className="text-on-surface text-[0.875rem]">{meta.title}</div>
+                    <div className="text-on-surface text-[0.8125rem]">{meta.title}</div>
                     {meta.hint && <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">{meta.hint}</div>}
                   </div>
                   <select

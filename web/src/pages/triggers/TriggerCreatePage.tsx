@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { ArrowLeft, Check, Zap, Settings2 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
 import { Button } from '../../ui/Button'
 import { api, type ActionProvider } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
-import { Field, TextInput, Segmented } from '../tasks/formControls'
+import { Field, TextInput, Segmented } from '../../ui/forms'
 import { Combobox } from '../../ui/Combobox'
 import { ScheduleForm, emptyDraft as emptySchedule, type ScheduleDraft } from '../schedule/ScheduleForm'
 import { intervalToSecs } from '../schedule/scheduleMeta'
@@ -140,7 +141,7 @@ function SectionHeader({ icon: Icon, title, subtitle }: { icon: typeof Zap; titl
   return (
     <div className="flex items-center gap-s border-b border-outline-variant/40 pb-2">
       <Icon size={16} className="text-primary" />
-      <span className="text-on-surface text-[0.9375rem]" style={{ fontVariationSettings: '"wght" 600' }}>{title}</span>
+      <span className="text-on-surface text-[0.9375rem]" style={fvs(600)}>{title}</span>
       <span className="text-on-surface-low text-[0.8125rem]">· {subtitle}</span>
     </div>
   )

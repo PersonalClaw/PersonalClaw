@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
+import { fvs } from '../../design/fontWeight'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Maximize2, Minimize2, ExternalLink, Download, Bookmark } from 'lucide-react'
 import { useMode } from '../../app/theme'
@@ -6,6 +7,7 @@ import { api } from '../../lib/api'
 import { buildSrcdoc, readThemeVars } from './widgetSrcdoc'
 import { effectiveWidgetSlug } from './widgetSlug'
 import { BlueprintSkeleton } from './BlueprintSkeleton'
+import { SquareIconButton } from '../SquareIconButton'
 import { spring } from '../../design/motion'
 
 const MIN_HEIGHT = 80
@@ -167,12 +169,12 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
 
   const actionCluster = (
     <>
-      <IconBtn label={saved ? 'Saved — click to remove' : 'Save as artifact'} onClick={toggleSave} disabled={savePending} on={saved}>
+      <SquareIconButton label={saved ? 'Saved — click to remove' : 'Save as artifact'} onClick={toggleSave} disabled={savePending} on={saved}>
         <Bookmark size={13} fill={saved ? 'currentColor' : 'none'} />
-      </IconBtn>
-      <IconBtn label="Download as HTML" onClick={download}><Download size={13} /></IconBtn>
-      <IconBtn label="Open in new tab" onClick={openInNewTab}><ExternalLink size={13} /></IconBtn>
-      <IconBtn label={expanded ? 'Minimize' : 'Expand'} onClick={() => setExpanded((v) => !v)}>{expanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</IconBtn>
+      </SquareIconButton>
+      <SquareIconButton label="Download as HTML" onClick={download}><Download size={13} /></SquareIconButton>
+      <SquareIconButton label="Open in new tab" onClick={openInNewTab}><ExternalLink size={13} /></SquareIconButton>
+      <SquareIconButton label={expanded ? 'Minimize' : 'Expand'} onClick={() => setExpanded((v) => !v)}>{expanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</SquareIconButton>
     </>
   )
 
@@ -189,7 +191,7 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
       style={!expanded ? computeWidgetLayout(naturalW, hostW) : undefined}>
       {expanded && (
         <div className="flex items-center gap-2 border-b border-outline-variant/40 bg-surface-container px-3 py-1.5">
-          <span className="truncate text-on-surface text-[0.8125rem]" style={{ fontVariationSettings: '"wght" 500' }}>{title}</span>
+          <span className="truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>{title}</span>
           {!streaming && <div className="ml-auto flex items-center gap-0.5">{actionCluster}</div>}
         </div>
       )}
@@ -220,12 +222,3 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
   )
 }
 
-function IconBtn({ children, label, onClick, disabled, on }: { children: React.ReactNode; label: string; onClick: () => void; disabled?: boolean; on?: boolean }) {
-  return (
-    <button type="button" onClick={onClick} disabled={disabled} title={label} aria-label={label}
-      className="grid size-7 place-items-center rounded-md text-on-surface-low transition-colors hover:text-on-surface disabled:opacity-50"
-      style={on ? { color: 'var(--color-primary)' } : undefined}>
-      {children}
-    </button>
-  )
-}

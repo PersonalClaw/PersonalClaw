@@ -6,6 +6,8 @@ import { useAgentCatalog, ensureBindableAgentName, type AgentOption } from '../.
 import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Field, Toggle, SegPills, SavedToast } from './settingsUI'
 import { Combobox } from '../../ui/Combobox'
+import { NumberField } from '../../ui/forms'
+import { SquareIconButton } from '../../ui/SquareIconButton'
 import { FormSkeleton } from '../../ui/ListScaffold'
 
 // The editable agent.* fields mirror the backend _EDITABLE_CONFIG allowlist
@@ -177,23 +179,14 @@ function NumberRow({ label, hint, cfg, field, patch, min, max, step, suffix }: {
   min?: number; max?: number; step?: number; suffix?: string
 }) {
   const [saved, flash] = useSavedFlash()
-  const [local, setLocal] = useState(String(cfg[field] ?? ''))
-  useEffect(() => { setLocal(String(cfg[field] ?? '')) }, [cfg, field])
-  const commit = () => {
-    const n = Number(local)
-    if (local === '' || Number.isNaN(n)) { setLocal(String(cfg[field] ?? '')); return }
-    const clamped = Math.min(max ?? Infinity, Math.max(min ?? -Infinity, n))
-    setLocal(String(clamped))
-    if (clamped !== Number(cfg[field])) patch(field, clamped, flash)
-  }
+  // Every agent.* field is always serialized by the backend (asdict), so cfg[field]
+  // is present — the `?? min ?? 0` fallback only guards a transient empty snapshot.
   return (
     <Row label={label} hint={hint}>
       <div className="flex items-center gap-2">
         <SavedToast show={saved} />
-        <input type="number" value={local} min={min} max={max} step={step ?? 1}
-          onChange={(e) => setLocal(e.target.value)} onBlur={commit}
-          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-          className="h-8 w-24 rounded-md bg-surface-high px-2 text-right text-[0.8125rem] text-on-surface tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+        <NumberField value={Number(cfg[field] ?? min ?? 0)} min={min} max={max} step={step}
+          onChange={(n) => patch(field, n, flash)} ariaLabel={label} />
         {suffix && <span className="w-6 text-on-surface-low text-[0.75rem]">{suffix}</span>}
       </div>
     </Row>
@@ -211,16 +204,16 @@ function StrListField({ label, hint, cfg, field, patch }: {
     <Field label={label} hint={hint}>
       <div className="flex flex-wrap items-center gap-1.5">
         {list.map((v) => (
-          <span key={v} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2.5 py-1 text-on-surface text-[0.78rem] font-mono">
+          <span key={v} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2.5 py-1 text-on-surface text-[0.75rem] font-mono">
             {v}
             <button type="button" onClick={() => commit(list.filter((x) => x !== v))} aria-label={`Remove ${v}`} className="text-on-surface-low hover:text-on-surface"><X size={12} /></button>
           </span>
         ))}
         <input value={adding} onChange={(e) => setAdding(e.target.value)} placeholder="Add path…"
           onKeyDown={(e) => { if (e.key === 'Enter' && adding.trim()) { commit([...list, adding.trim()]); setAdding('') } }}
-          className="h-8 w-40 rounded-md bg-surface-high px-2 text-[0.78rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+          className="h-8 w-40 rounded-md bg-surface-high px-2 text-[0.75rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
         {adding.trim() && (
-          <button type="button" onClick={() => { commit([...list, adding.trim()]); setAdding('') }} className="grid size-7 place-items-center rounded-md text-primary"><Plus size={15} /></button>
+          <SquareIconButton icon={Plus} iconSize={15} label={`Add ${label.toLowerCase()}`} onClick={() => { commit([...list, adding.trim()]); setAdding('') }} />
         )}
         <SavedToast show={saved} />
       </div>

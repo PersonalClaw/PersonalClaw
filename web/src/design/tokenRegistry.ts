@@ -58,8 +58,12 @@ const sel = (varName: string, label: string, group: string, value: string, optio
 
 export const TOKENS: Token[] = [
   // ── Brand ──
-  c('--color-primary', 'Primary (coral)', 'Brand', '#ff6b5b', '#e85a3f'),
-  c('--color-primary-emphasis', 'Primary emphasis', 'Brand', '#ff9a86', '#c8452e'),
+  // Light primary is the old emphasis shade: #e85a3f under 13px white button
+  // text was 3.52:1 (axe serious on every list page's New-X button); #c8452e
+  // is 4.83:1 and stays unmistakably coral. Emphasis (hover) steps darker in
+  // kind. Dark mode was already AA and is untouched.
+  c('--color-primary', 'Primary (coral)', 'Brand', '#ff6b5b', '#c8452e'),
+  c('--color-primary-emphasis', 'Primary emphasis', 'Brand', '#ff9a86', '#a33922'),
   c('--color-on-primary', 'On primary', 'Brand', '#3f1008', '#ffffff'),
   c('--color-primary-container', 'Primary container', 'Brand', '#5a1d12', '#ffe0d6'),
   c('--color-secondary', 'Secondary (amber)', 'Brand', '#ffb454', '#cf7a23'),
@@ -81,10 +85,14 @@ export const TOKENS: Token[] = [
   c('--color-outline-variant', 'Outline subtle', 'Content', '#444746', '#e1e3e1'),
 
   // ── Semantic ──
-  c('--color-ok', 'Success', 'Semantic', '#0ebc5f', '#0a9b4e'),
-  c('--color-warn', 'Warning', 'Semantic', '#ff8d41', '#cf6a23'),
-  c('--color-danger', 'Danger', 'Semantic', '#f55e57', '#c8362f'),
-  c('--color-info', 'Info', 'Semantic', '#4e8ff8', '#1668d8'),
+  // Light values sit at ≥4.5:1 (WCAG AA small text) BOTH as text on white and
+  // as text on their own 14–16% color-mix tint — the two ways every status
+  // chip/badge renders them. Verified numerically; don't lighten without
+  // re-checking both (e2e/a11y.spec.ts enforces).
+  c('--color-ok', 'Success', 'Semantic', '#0ebc5f', '#076e37'),
+  c('--color-warn', 'Warning', 'Semantic', '#ff8d41', '#954c19'),
+  c('--color-danger', 'Danger', 'Semantic', '#f66c66', '#af2f29'),
+  c('--color-info', 'Info', 'Semantic', '#5e99f9', '#145cbf'),
 
   // ── Glow & gradient (the wave surface + spark + ring) ──
   c('--grad-1', 'Gradient 1', 'Glow & gradient', '#c85a48', '#c85a48'),
