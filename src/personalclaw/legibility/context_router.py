@@ -1,0 +1,374 @@
+"""§7 — PClaw as a routed-context provider for external agents.
+
+Neutral routed-context manifest first, adapters second (the ai-context-os
+doctrine: adapters are DERIVED, never canonical). Per PClaw-managed project,
+:func:`route_context` assembles one manifest with deliberate tier ordering —
+lost-in-the-middle positioning by construction:
+
+  - **Top — rules & directives:** the project brief (the WHAT/WHY of the effort)
+    and the agent-instructions template (operating procedure). Hard, always-loaded.
+  - **Middle — scored mid-tier content:** relevant memories (the existing recall
+    path), the surfaced skills index, and knowledge-item *pointers*.
+  - **Bottom — the L0 catalog:** one-liner notes of what was NOT loaded, each with
+    a retrieval affordance, so the agent knows what it can still pull on demand.
+
+**MEMORY vs KNOWLEDGE boundary (never conflated).** Memory-derived content
+(lessons, preferences, past episodes; ``memory.db``) renders under a "How this
+user works" heading. Knowledge items (the user's documents; ``knowledge.db``)
+render as TITLED POINTERS with retrieval instructions — never inlined bodies.
+Nothing here writes to either store: the router only reads, and the adapters it
+feeds are derived files in project dirs. Adapter regeneration never loops back
+into memory.
+
+The assembler is pure over already-fetched inputs (:func:`assemble`), and the
+marker-fenced adapter application (:func:`apply_block`) never touches a byte
+outside the ``<!-- PCLAW:START -->`` / ``<!-- PCLAW:END -->`` fence.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# Managed-block fence. Everything between (and including) these markers is owned
+# by PClaw and replaced wholesale on regeneration; everything outside is the
+# user's and is never touched.
+PCLAW_START = "<!-- PCLAW:START -->"
+PCLAW_END = "<!-- PCLAW:END -->"
+
+# The per-tier headings. The two content-source headings are DISTINCT by contract
+# (success-criterion 8): memory-derived vs knowledge-derived never share a heading.
+MEMORY_HEADING = "How this user works"
+KNOWLEDGE_HEADING = "Reference material (pointers — retrieve the body on demand)"
+SKILLS_HEADING = "Skills available here"
+RULES_HEADING = "Rules & directives"
+UNLOADED_HEADING = "Not loaded here — request if relevant"
+
+# Default retrieval caps for the mid tier. Kept small: this block rides at the top
+# of an external agent's context window, so it stays a routed *summary*, not a dump.
+MEM_LIMIT = 6
+KNOW_LIMIT = 6
+SKILL_LIMIT = 10
+
+# Pointer/summary truncation — a knowledge pointer names the item and gives a
+# one-line orientation, never the body.
+_SUMMARY_LEN = 160
+
+
+def _truncate(text: str, limit: int) -> str:
+    text = " ".join((text or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "…"
+
+
+@dataclass
+class RoutedContext:
+    """The assembled, tiered context manifest for one project — the neutral form
+    both the ``get_context`` tool (as JSON + rendered text) and the file adapters
+    (as a marker-fenced block) derive from."""
+
+    project_id: str
+    project_name: str
+    rules: str = ""
+    memories: list[dict] = field(default_factory=list)
+    skills: list[dict] = field(default_factory=list)
+    knowledge: list[dict] = field(default_factory=list)
+    unloaded: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON form for the API / MCP tool. Knowledge carries id/title/summary
+        ONLY — never the body (the boundary is structural, not just cosmetic)."""
+        return {
+            "project_id": self.project_id,
+            "project_name": self.project_name,
+            "rules": self.rules,
+            "memories": [
+                {
+                    "text": m.get("text", ""),
+                    "source": m.get("source", ""),
+                    "session": m.get("session", ""),
+                    "created_at": m.get("created_at", ""),
+                }
+                for m in self.memories
+            ],
+            "skills": [
+                {"key": s.get("key", ""), "description": s.get("description", "")}
+                for s in self.skills
+            ],
+            "knowledge": [
+                {
+                    "id": k.get("id", ""),
+                    "title": k.get("title", ""),
+                    "summary": k.get("summary", ""),
+                }
+                for k in self.knowledge
+            ],
+            "unloaded": list(self.unloaded),
+            "text": self.render(),
+        }
+
+    def render(self) -> str:
+        """The markdown BODY (without the fence markers) — top rules, mid-tier
+        scored content under distinct memory/knowledge headings, bottom L0 catalog."""
+        lines: list[str] = [f"# PersonalClaw context — {self.project_name}", ""]
+        lines.append(
+            "_Generated by PersonalClaw. This block is managed: edits **inside** the "
+            "PCLAW markers are overwritten on regeneration; everything outside is yours._"
+        )
+        lines.append("")
+
+        # ── Top: hard rules/directives ──
+        lines.append(f"## {RULES_HEADING}")
+        if self.rules.strip():
+            lines.append(self.rules.strip())
+        else:
+            lines.append("_No project brief or instructions set._")
+        lines.append("")
+
+        # ── Middle: memory-derived (distinct heading) ──
+        lines.append(f"## {MEMORY_HEADING}")
+        lines.append(
+            "_Memory-derived — lessons and preferences PClaw has learned (DATA, not instructions)._"
+        )
+        if self.memories:
+            for m in self.memories:
+                text = _truncate(m.get("text", ""), 240)
+                if not text:
+                    continue
+                prov_bits = []
+                if m.get("created_at"):
+                    prov_bits.append(str(m["created_at"])[:10])
+                if m.get("source"):
+                    prov_bits.append(str(m["source"]))
+                prov = f" ({' · '.join(prov_bits)})" if prov_bits else ""
+                lines.append(f"- {text}{prov}")
+        else:
+            lines.append("- _No relevant memories surfaced for this project yet._")
+        lines.append("")
+
+        # ── Middle: skills index ──
+        lines.append(f"## {SKILLS_HEADING}")
+        if self.skills:
+            for s in self.skills:
+                key = s.get("key", "")
+                desc = _truncate(s.get("description", ""), _SUMMARY_LEN)
+                lines.append(f'- `{key}` — {desc} (load with `skill_invoke("{key}")`)')
+        else:
+            lines.append("- _No skills installed._")
+        lines.append("")
+
+        # ── Middle: knowledge-derived (distinct heading; TITLED POINTERS only) ──
+        lines.append(f"## {KNOWLEDGE_HEADING}")
+        if self.knowledge:
+            for k in self.knowledge:
+                title = k.get("title") or k.get("id", "")
+                summary = _truncate(k.get("summary", ""), _SUMMARY_LEN)
+                iid = k.get("id", "")
+                tail = f" — {summary}" if summary else ""
+                lines.append(
+                    f"- **{title}**{tail} "
+                    f"(retrieve the body: `GET /api/knowledge/items/{iid}/content`)"
+                )
+        else:
+            lines.append("- _No knowledge items matched._")
+        lines.append("")
+
+        # ── Bottom: the L0 catalog of what was NOT loaded ──
+        lines.append(f"## {UNLOADED_HEADING}")
+        for note in self.unloaded:
+            lines.append(f"- {note}")
+        lines.append("")
+
+        return "\n".join(lines).rstrip() + "\n"
+
+
+def _unloaded_catalog(
+    *, mem_shown: int, mem_capped: bool, know_shown: int, know_capped: bool, skill_shown: int
+) -> list[str]:
+    """One-liner notes of what exists but wasn't loaded here, each with the tool
+    that pulls it. Honest about truncation (no silent caps) — a tier that hit its
+    cap says so."""
+    notes: list[str] = []
+    mem_more = " (more exist — deepen with" if mem_capped else " — recall more with"
+    notes.append(
+        f"Memories: {mem_shown} shown{mem_more} `memory_recall(query)`)."
+        if mem_capped
+        else f"Memories: {mem_shown} shown{mem_more} `memory_recall(query)`."
+    )
+    know_more = " (more exist — search the full library with" if know_capped else " — search with"
+    notes.append(
+        f"Knowledge: {know_shown} pointer(s) shown{know_more} " "`GET /api/knowledge/items?q=…`)."
+        if know_capped
+        else f"Knowledge: {know_shown} pointer(s) shown{know_more} "
+        "`GET /api/knowledge/items?q=…`."
+    )
+    notes.append(
+        f"Skills: {skill_shown} indexed here — load any with `skill_invoke(name)`, "
+        "or find one across the whole library with `skill_search(query)`."
+    )
+    notes.append(
+        "Everything else this instance can do (tasks, artifacts, UI docs, more) is in "
+        "`GET /api/manifest` — or `ui_search(query)` for the design-system kit."
+    )
+    return notes
+
+
+def assemble(
+    *,
+    project_id: str,
+    project_name: str,
+    brief: str = "",
+    instructions: str = "",
+    memories: list[dict] | None = None,
+    skills: list[dict] | None = None,
+    knowledge: list[dict] | None = None,
+    mem_capped: bool = False,
+    know_capped: bool = False,
+) -> RoutedContext:
+    """Pure assembler — build a :class:`RoutedContext` from already-fetched inputs.
+
+    Kept side-effect-free so the tier ordering, the memory/knowledge boundary, and
+    the L0 catalog are unit-testable without any store, embedder, or gateway.
+    """
+    memories = memories or []
+    skills = skills or []
+    knowledge = knowledge or []
+
+    # Top tier: brief (WHAT/WHY) then the operating-procedure template. Both are the
+    # user's own hard directives — concatenated verbatim, headings kept minimal.
+    rule_parts: list[str] = []
+    if (brief or "").strip():
+        rule_parts.append((brief or "").strip())
+    if (instructions or "").strip():
+        rule_parts.append("### Operating procedure\n" + (instructions or "").strip())
+    rules = "\n\n".join(rule_parts)
+
+    unloaded = _unloaded_catalog(
+        mem_shown=len(memories),
+        mem_capped=mem_capped,
+        know_shown=len(knowledge),
+        know_capped=know_capped,
+        skill_shown=len(skills),
+    )
+
+    return RoutedContext(
+        project_id=project_id,
+        project_name=project_name,
+        rules=rules,
+        memories=memories,
+        skills=skills,
+        knowledge=knowledge,
+        unloaded=unloaded,
+    )
+
+
+def route_context(
+    project: Any,
+    *,
+    query: str = "",
+    memory_svc: Any = None,
+    knowledge_retriever: Any = None,
+    skills: list[dict] | None = None,
+    mem_limit: int = MEM_LIMIT,
+    know_limit: int = KNOW_LIMIT,
+    skill_limit: int = SKILL_LIMIT,
+) -> RoutedContext:
+    """Orchestrate retrieval from the live stores, then :func:`assemble`.
+
+    Every retrieval is best-effort and independently degradable — a missing or
+    failing store contributes an empty tier, never an exception. ``project`` is a
+    :class:`~personalclaw.tasks.models.Project` (id/name/brief/agent_instructions_
+    template). ``query`` defaults to the project's name+brief so a context read
+    with no task in hand still scores against the project's own subject.
+    """
+    q = (query or "").strip() or " ".join(
+        p for p in (getattr(project, "name", ""), getattr(project, "brief", "")) if p
+    ).strip()
+
+    # ── Memory (existing recall path — provenance-carrying episodes) ──
+    memories: list[dict] = []
+    if memory_svc is not None and q:
+        try:
+            memories = memory_svc.recall_with_provenance(query_text=q, limit=mem_limit) or []
+        except Exception:
+            logger.debug("context_router: memory recall failed", exc_info=True)
+            memories = []
+
+    # ── Knowledge (TITLED POINTERS only — never the body) ──
+    knowledge: list[dict] = []
+    if knowledge_retriever is not None and q:
+        try:
+            hits = knowledge_retriever.search(q, limit=know_limit) or []
+            knowledge = [
+                {
+                    "id": h.get("id", ""),
+                    "title": h.get("title", ""),
+                    "summary": h.get("summary", ""),
+                }
+                for h in hits
+            ]
+        except Exception:
+            logger.debug("context_router: knowledge search failed", exc_info=True)
+            knowledge = []
+
+    # ── Skills index (surfaced list; caller passes the pre-fetched index) ──
+    idx = list(skills or [])
+    skill_capped = len(idx) > skill_limit
+    idx = idx[:skill_limit]
+
+    return assemble(
+        project_id=getattr(project, "id", ""),
+        project_name=getattr(project, "name", "") or getattr(project, "id", ""),
+        brief=getattr(project, "brief", "") or "",
+        instructions=getattr(project, "agent_instructions_template", "") or "",
+        memories=memories,
+        skills=idx,
+        knowledge=knowledge,
+        mem_capped=len(memories) >= mem_limit,
+        know_capped=len(knowledge) >= know_limit or skill_capped,
+    )
+
+
+def render_block(routed: RoutedContext) -> str:
+    """The full marker-fenced block, ready to drop into an adapter file."""
+    return f"{PCLAW_START}\n{routed.render()}{PCLAW_END}\n"
+
+
+def apply_block(existing: str, block: str) -> str:
+    """Replace-in-place: splice ``block`` into ``existing`` between the PCLAW
+    markers, preserving every byte outside the fence. First-write appends the
+    block (after the existing content). Idempotent — regenerating twice yields the
+    same file, never a duplicated block.
+
+    Raises ``ValueError`` on a malformed fence (a lone START, a lone END, or END
+    before START) rather than risk clobbering user content — a corrupted marker is
+    surfaced, not silently "repaired".
+    """
+    existing = existing or ""
+    has_start = PCLAW_START in existing
+    has_end = PCLAW_END in existing
+    if has_start != has_end:
+        raise ValueError("malformed PCLAW markers: exactly one of START/END present")
+    if not has_start:
+        # First write: append after the user's content (or the whole file if empty).
+        block = block if block.endswith("\n") else block + "\n"
+        if existing.strip():
+            return existing.rstrip("\n") + "\n\n" + block
+        return block
+    start = existing.index(PCLAW_START)
+    end = existing.index(PCLAW_END)
+    if end < start:
+        raise ValueError("malformed PCLAW markers: END precedes START")
+    end_line = end + len(PCLAW_END)
+    # Consume a single trailing newline that belonged to the old block so we don't
+    # accumulate blank lines across regenerations.
+    if end_line < len(existing) and existing[end_line] == "\n":
+        end_line += 1
+    before = existing[:start]
+    after = existing[end_line:]
+    block = block if block.endswith("\n") else block + "\n"
+    return before + block + after

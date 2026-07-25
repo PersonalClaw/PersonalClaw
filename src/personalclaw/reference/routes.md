@@ -129,6 +129,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PATCH /api/config/personalclaw` — update a single config field.
 - `PUT /api/config/personalclaw` — read or update PersonalClaw config.
 - `GET /api/config/schema` — return config schema entries.
+- `GET /api/context` — the routed-context manifest.
 - `POST /api/create-dir` — create a new directory.
 - `GET /api/dashboard/config` — read or write dashboard settings.
 - `PUT /api/dashboard/config` — read or write dashboard settings.
@@ -196,6 +197,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/knowledge/search-for-context` — _(no summary)_
 - `GET /api/knowledge/stats` — _(no summary)_
 - `GET /api/knowledge/tags` — - distinct tags (frequency-ordered) for autocomplete.
+- `GET /api/legibility/power-ups` — the next untouched-capability proposal.
+- `POST /api/legibility/power-ups/dismiss` — hide a capability forever.
+- `GET /api/legibility/power-ups/dismissed` — the set of dismissed ids.
 - `DELETE /api/lessons` — remove lessons by substring.
 - `GET /api/lessons` — _(no summary)_
 - `POST /api/lessons` — add a lesson (vector store or JSONL fallback).
@@ -313,6 +317,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/portability/export` — download PersonalClaw state as zip.
 - `POST /api/portability/import` — upload and apply a PersonalClaw export zip.
 - `POST /api/portability/preview` — validate and preview a zip without applying.
+- `POST /api/projects/{project_id}/context-adapters/regenerate` — _(no summary)_
 - `GET /api/prompt-snippets` — list reusable snippets via the provider.
 - `POST /api/prompt-snippets` — create a snippet.
 - `DELETE /api/prompt-snippets/{name}` — remove a snippet.

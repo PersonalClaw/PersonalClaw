@@ -102,6 +102,20 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "get_context": {
+        "response_type": "context.routed.manifest",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Load the current project's routed context at task start",
+                "args": {},
+            },
+            {
+                "summary": "Score the context against the task at hand",
+                "args": {"query": "add a settings toggle", "project_id": "p-1a2b3c4d"},
+            },
+        ],
+    },
     "skill_remember": {
         "response_type": "skill.remember.result",
         "error_codes": [],
@@ -571,6 +585,35 @@ TOOL_META: dict[str, dict[str, Any]] = {
                 "summary": "Create a task list inside a project",
                 "args": {"name": "Backlog", "project_name": "Launch"},
             }
+        ],
+    },
+    # ── personalclaw-ui-docs ─────────────────────────────────────────────────
+    "ui_search": {
+        "response_type": "ui.search.results",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Find the design-system primitive for a labelled action",
+                "args": {"query": "button submit", "limit": 5},
+            },
+            {
+                "summary": "Search for a design token",
+                "args": {"query": "primary color"},
+            },
+        ],
+    },
+    "ui_get": {
+        "response_type": "ui.get.doc",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Read a component's full props + best practices",
+                "args": {"name": "SidePanel"},
+            },
+            {
+                "summary": "Read just one section of a component's doc",
+                "args": {"name": "Button", "section": "props"},
+            },
         ],
     },
 }

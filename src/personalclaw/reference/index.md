@@ -6,16 +6,16 @@ Offline API/tool reference for PersonalClaw (manifest apiVersion 1). Generated f
 
 1. Read this index to locate the surface you need — don't read every file.
 2. Drill into the one relevant section:
-   - **[tools.md](tools.md)** — 57 registered tools across 10 providers, with exact input schemas + examples.
-   - **[routes.md](routes.md)** — 424 agent-callable HTTP routes (of 426 total), with summaries.
-   - **[providers.md](providers.md)** — the provider-type taxonomy + 26 registered providers.
+   - **[tools.md](tools.md)** — 60 registered tools across 11 providers, with exact input schemas + examples.
+   - **[routes.md](routes.md)** — 429 agent-callable HTTP routes (of 431 total), with summaries.
+   - **[providers.md](providers.md)** — the provider-type taxonomy + 27 registered providers.
 3. Copy the exact signature — never guess a parameter name.
 4. After a mutating call, read the entity back to confirm it took.
 
 ## Tool providers at a glance
 
 - `personalclaw-artifacts` — 8 tools
-- `personalclaw-core` — 8 tools
+- `personalclaw-core` — 9 tools
 - `personalclaw-inbox-tools` — 1 tools
 - `personalclaw-knowledge-tools` — 5 tools
 - `personalclaw-memory` — 4 tools
@@ -23,6 +23,7 @@ Offline API/tool reference for PersonalClaw (manifest apiVersion 1). Generated f
 - `personalclaw-schedule` — 9 tools
 - `personalclaw-subagents` — 3 tools
 - `personalclaw-tasks-tools` — 9 tools
+- `personalclaw-ui-docs` — 2 tools
 - `personalclaw-workflows` — 6 tools
 
 ## Repo gotchas that keep resurfacing

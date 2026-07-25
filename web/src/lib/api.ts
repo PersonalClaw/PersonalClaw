@@ -389,6 +389,12 @@ export interface ManifestTool { name: string; provider: string; description: str
 export interface ManifestRoute { method: string; path: string; summary: string; agent_callable: boolean }
 export interface ManifestProvider { app: string; type: string; provider_type: string; capabilities: string[]; enabled: boolean; error?: string | null }
 export interface Manifest { apiVersion: number; tools: ManifestTool[]; routes: ManifestRoute[]; app_surfaces: unknown[]; providers: { types: string[]; registered: ManifestProvider[] } }
+// Capability-discovery power-ups (§6): one untouched capability proposed at a time,
+// derived from the manifest (denominator) minus the tools the user has invoked.
+// `try_it` is a deep link into an existing page — the widget points, never enables.
+export interface PowerUpTryIt { route: string; query: Record<string, string>; label: string }
+export interface PowerUp { id: string; kind: string; name: string; title: string; provider: string; lesson: string; try_it: PowerUpTryIt }
+export interface PowerUpsResponse { enabled: boolean; power_up: PowerUp | null; untouched_count: number; total: number }
 export interface McpServer {
   name: string; command?: string; args?: string[]; status: string; tools: Array<string | { name: string; description?: string }>
   error?: string; source?: string; enabled?: boolean; presence?: Record<string, boolean>
@@ -1149,6 +1155,11 @@ export const api = {
   // ── Contextual prompt starters (background-computed from memory + recent activity) ──
   suggestions: (force = false) => get<{ suggestions: string[]; generated_at: number; stale: boolean }>(`/api/suggestions${force ? '?force=1' : ''}`),
 
+  // ── Capability-discovery power-ups (§6): one untouched capability at a time,
+  // proposed never enabled. Dismissals persist server-side per capability. ──
+  powerUps: () => get<PowerUpsResponse>('/api/legibility/power-ups'),
+  dismissPowerUp: (id: string) => post<{ ok: boolean; dismissed: string[] }>('/api/legibility/power-ups/dismiss', { id }),
+
   // ── Desktop integration (OS-gated; server runs the subprocess) ──
   /** Reveal a path in Finder (action 'reveal') or open with the default app ('open'). */
   revealPath: (path: string, action: 'reveal' | 'open' = 'reveal') =>
@@ -1513,6 +1524,12 @@ export const api = {
   createProject: (body: { name: string; brief?: string; agent_instructions_template?: string; workspace_dir?: string; name_locked?: boolean }) => post<ProjectItem>('/api/projects', body),
   updateProject: (id: string, body: Record<string, unknown>) => put<ProjectItem>(`/api/projects/${encodeURIComponent(id)}`, body),
   deleteProject: (id: string, force = false) => del(`/api/projects/${encodeURIComponent(id)}${force ? '?force=true' : ''}`),
+  // Legibility §7 — render the marker-fenced PClaw context block into the project's
+  // bound workspace_dir adapter files (CLAUDE.md / AGENTS.md / .cursorrules), replace-
+  // in-place. Gated server-side on legibility.context_adapters + a bound workspace_dir.
+  regenerateContextAdapters: (id: string) =>
+    post<{ ok: boolean; written: string[]; errors: { file: string; error: string }[]; workspace_dir: string }>(
+      `/api/projects/${encodeURIComponent(id)}/context-adapters/regenerate`, {}),
   taskLists: (projectId?: string) => get<{ task_lists: TaskListItem[] }>(`/api/task-lists${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`).then((d) => d.task_lists),
   createTaskList: (body: Record<string, unknown>) => post<TaskListItem>('/api/task-lists', body),
   updateTaskList: (id: string, body: Record<string, unknown>) => put<TaskListItem>(`/api/task-lists/${encodeURIComponent(id)}`, body),

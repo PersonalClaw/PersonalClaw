@@ -485,3 +485,88 @@ CHANGELOG `Added` entry landed. No E1–E6 blocker. Clean-break under the pre-1.
 `skills` seed writes provenance-locked user-tree state, removable on disable; route tools are
 read-through, no persisted state). Local branch `feature-platform-legibility-s4` (off S3's
 branch), unpushed.
+
+### 2026-07-25 — S5 (§5–§7) UI docs + power-ups + context provider — DONE
+
+The final slice, landing three legibility surfaces as ONE conceptual commit (S5a config
+plumbing, S5b UI docs, S5c power-ups, S5d context provider). Each is propose-don't-write and
+reads without executing anything it describes — the soul guardrail for a single user's machine.
+
+**S5a — config through the four wiring points (the round-trip contract).** New `legibility`
+section: `power_ups: bool = True` + `context_adapters: bool = False`, each wired through
+(a) `LegibilityConfig` dataclass fields with `_meta(label, help)` (`config/loader.py`),
+(b) `AppConfig.load()`'s explicit field-by-field mapping, (c) `to_dict()`, and
+(d) `_EDITABLE_CONFIG`'s PATCH allowlist (`dashboard/handlers/core.py`) + `api.ts` +
+a Settings › Legibility toggle panel (`web/src/pages/settings/LegibilityPanel.tsx`).
+`test_config_roundtrip.py` proves no silent drop.
+
+**S5b — the `ui/` kit describes itself (§5).** Each primitive ships a colocated `.doc.ts`
+object (purpose / props / a best-practice tenet); `web/scripts/buildUiDocs.mjs` compiles them
++ TS-extracted prop types into `web/dist/ui-docs.json` as a Vite build step (70 components).
+- **`src/personalclaw/tool_providers/ui_docs.py`** (new) — `UiDocsToolProvider` serves
+  `ui_search(query)` (a budgeted keyword brief over names/keywords/descriptions, with a
+  `ui_get` follow-up hint) and `ui_get(name, section?)` (full props + `bestPractices`), reading
+  the built JSON. Registered as a native `ToolProvider` via `tool_providers/registry.py`.
+- **`src/personalclaw/apps/native/personalclaw-ui-docs/app.json`** (new) — the provider's
+  bundled home. **`web/src/ui/uiDocs.drift.test.ts`** — a doc object per `ui/` export + props
+  parity; a primitive shipping without its doc reddens the FE build.
+
+**S5c — capability-discovery power-ups (§6).** `src/personalclaw/legibility/tool_usage.py`
+(new) — a `<config>/tool_usage.json` counter (`used_names()`); the untouched-capability
+denominator is the `/api/manifest` tool set minus used minus dismissed. `power_ups.py` (new,
+pure selection + `entity_settings/legibility.json` dismissal persistence) backs
+`GET /api/legibility/power-ups` (`dashboard/handlers/legibility.py`) on the `DashboardLive`
+SLOW_POLL feed. Widget `web/src/pages/dashboard/widgets/PowerUps.tsx` (one card, deep-link +
+dismiss, hard-imported into `DashboardPage.tsx` — no widget registry exists). Kill switch:
+`legibility.power_ups`. Deterministic templates — no LLM call on the default path.
+
+**S5d — PClaw as routed-context provider (§7).** The neutral manifest first, adapters second
+(adapters are DERIVED, never canonical).
+- **`src/personalclaw/legibility/context_router.py`** (new) — the pure, store-free assembler.
+  `assemble()` builds a `RoutedContext` with deliberate tier ordering: **top** = hard rules
+  (project `brief` + `agent_instructions_template`), **middle** = scored memories + skills index
+  + knowledge *pointers*, **bottom** = the L0 catalog of what was NOT loaded, each with the tool
+  that pulls it — lost-in-the-middle by construction. `render()`/`to_dict()` keep the MEMORY vs
+  KNOWLEDGE boundary structural: memory-derived content under "How this user works", knowledge
+  items as titled pointers under a distinct heading with a `GET /api/knowledge/items/{id}/content`
+  affordance — **never an inlined body** (knowledge has no MCP tool; it is HTTP-only).
+  `route_context()` orchestrates live retrieval, every store best-effort/degradable (a failing
+  store contributes an empty tier, never an exception). `apply_block()` is the marker-fenced
+  replace-in-place splice — idempotent, first-write-appends, and it RAISES on a malformed fence
+  rather than risk clobbering user content.
+- **`src/personalclaw/dashboard/handlers/context.py`** (new) — the only place the router touches
+  live stores. `GET /api/context` (project resolution: explicit `project_id` → the session's
+  bound project → the Personal default) returns the manifest; `POST /api/projects/{id}/context-
+  adapters/regenerate` renders the block into `workspace_dir`'s `CLAUDE.md`/`AGENTS.md`/
+  `.cursorrules`, gated 403 when `legibility.context_adapters` is off and 400 with no bound
+  workspace — every write SEL-audited.
+- **`src/personalclaw/mcp_core.py`** — `get_context` registered in-process (`_list_tools` def +
+  `_call_tool_inner` dispatch), description embedding the protocol ("call at the START of every
+  task…"). **Recon-honored:** `mcp_core` is in-process only; external exposure waits on NEW-10's
+  fail-closed MCP server. **`manifest_meta.py`** — its `TOOL_META` entry (drift test requires one).
+- **FE:** `api.regenerateContextAdapters(id)` + a "Refresh context files" `Button` on the project
+  hub's workspace bar, shown only when adapters are enabled AND a workspace is bound.
+
+**DEVIATION — the three new raw `<button>`s adopted the `Button`/`IconButton` primitives instead
+of raising the primitive-adoption ratchet.** S5c's PowerUps widget (dismiss + "try it" CTA) and
+S5d's refresh button pushed the live raw-`<button>` count to 281 > the committed baseline of 278,
+reddening `primitiveAdoption.test.ts`. Per the S2 ratchet doctrine (the baseline may only shrink,
+never grow), converted all three to the shell primitives (dismiss → `IconButton`, CTA + refresh →
+`Button variant="tonal"/"ghost" size="xs"`); the live count returned to 278 and the ratchet is
+green without touching the baseline. No new bespoke chrome shipped.
+
+**Tests:** `tests/test_context_router.py` (21 — assembler tier ordering, the distinct
+memory/knowledge headings + pointer-not-body boundary, honest no-silent-cap unloaded notes,
+`route_context` store degradation + skill cap, `apply_block` idempotency/first-write/malformed-
+fence, and the endpoint consent gate: 403 adapters-off / 400 no-workspace / a write that preserves
+user content outside the fence + SEL audit). `tests/test_power_ups.py` (S5c selection + dismissal +
+kill switch) and `tests/test_tool_usage.py` green. `web/src/ui/uiDocs.drift.test.ts` (6) green.
+
+**Gate:** targeted `pytest tests/test_context_router.py` 21 passed + `test_api_manifest_drift.py`
+8 passed; `web/` typecheck clean, `npm test` 231 passed (27 files, ratchet green), `npm run build`
+built the SPA + `ui-docs.json` (70 components). `make lint` + full `make test` run as the final
+DoD gate before the commit. No E1–E6 blocker. Clean-break under the pre-1.0 banner
+(`tool_usage.json` + `entity_settings/legibility.json` are re-derivable counters; adapter files are
+opt-in derived artifacts in user project dirs, removable by hand — no migration-bearing state).
+Local branch `feature-platform-legibility-s5` (off S4's branch), unpushed. **Platform-Legibility
+Pack complete (S1–S5).**

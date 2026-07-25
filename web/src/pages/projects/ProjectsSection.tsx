@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
-import { FolderKanban, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, Lock, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CheckCircle2, CircleDot, Circle, AlertTriangle, Square, type LucideIcon } from 'lucide-react'
+import { FolderKanban, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, Lock, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CheckCircle2, CircleDot, Circle, AlertTriangle, Square, RefreshCw, type LucideIcon } from 'lucide-react'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -22,6 +22,7 @@ import { SdlcProgressCard } from '../chat/SdlcProgressCard'
 import { api, ApiError, type ProjectItem, type TaskListItem, type LoopKind, type TaskItem, type FsEntry } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { getActiveProject, setActiveProject } from '../../lib/activeProject'
+import { notify } from '../../app/appSdk'
 
 /** Projects navigation — the first-class work unit tying Goal Loops, Code projects,
  *  and Tasks together under one context-continuous container.
@@ -395,9 +396,15 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
   const { data: project, loading, refresh } = useCachedData(`projects:detail:${id}`, () => api.project(id))
   const { data: lists } = useCachedData(`projects:lists:${id}`, () => api.taskLists(id))
   const { data: linked } = useCachedData(`projects:linked:${id}`, () => api.projectLinked(id))
+  // Legibility §7 — whether context adapters are enabled (Settings › Legibility). The
+  // "Refresh context files" action only makes sense when this is on AND a workspace is
+  // bound, so the button appears only then (server still re-checks + 403s if stale).
+  const { data: pcfg } = useCachedData('config:personalclaw', () => api.personalclawConfig())
+  const adaptersEnabled = Boolean((pcfg as { legibility?: { context_adapters?: boolean } } | undefined)?.legibility?.context_adapters)
   const [renaming, setRenaming] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
   const [pickWs, setPickWs] = useState(false)
+  const [regenerating, setRegenerating] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   // The right-docked SidePanel content: a task list's tasks, or a directory tree for
   // the workspace/context dir. One panel at a time; null = closed. URL-backed via
@@ -438,6 +445,22 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
     setErr(null)
     try { await api.updateProject(id, body); invalidateCache(`projects:detail:${id}`); invalidateCache('projects:list'); refresh() }
     catch (e) { setErr((e as Error).message || 'Could not update the project') }
+  }
+
+  // Legibility §7 — (re)render the marker-fenced PClaw context block into the project's
+  // workspace_dir adapter files (CLAUDE.md / AGENTS.md / .cursorrules), replace-in-place.
+  async function regenerateContext() {
+    setErr(null)
+    setRegenerating(true)
+    try {
+      const r = await api.regenerateContextAdapters(id)
+      if (r.errors.length) notify(`Wrote ${r.written.length}, ${r.errors.length} failed — see ${r.errors[0].file}`, 'error')
+      else notify(`Context files refreshed (${r.written.length}) in ${r.workspace_dir}`, 'success')
+    } catch (e) {
+      setErr((e as Error).message || 'Could not refresh context files')
+    } finally {
+      setRegenerating(false)
+    }
   }
 
   if (loading && !project) {
@@ -565,6 +588,15 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
               onPeek={project.context_dir ? () => setPanel({ kind: 'dir', label: 'Context', path: project.context_dir! }) : undefined}
               onBrowse={project.context_dir ? () => navigate(`files?dir=${encodeURIComponent(project.context_dir!)}`) : undefined}
               emptyText="—" title="System-managed — shared context across this project's loops + chats" />
+            {/* Legibility §7 — refresh the marker-fenced context block into the bound
+                workspace's adapter files. Only when adapters are enabled AND a workspace
+                is bound (writing into a user's project dir is consent-gated). */}
+            {adaptersEnabled && project.workspace_dir && (
+              <Button variant="ghost" size="xs" onClick={regenerateContext} loading={regenerating}
+                title="Rewrite the PClaw context block into this workspace's CLAUDE.md / AGENTS.md / .cursorrules">
+                <RefreshCw size={12} /> Refresh context files
+              </Button>
+            )}
           </div>
         </div>
 

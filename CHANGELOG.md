@@ -12,6 +12,28 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 
 ### Added
 
+- **PersonalClaw describes its own UI kit, proposes capabilities you haven't
+  tried, and hands external agents a routed project context.** Three legibility
+  surfaces land together. (1) The `ui/` component kit is now self-documenting: each
+  primitive ships a `.doc.ts` object (purpose, props, best-practice tenet) compiled
+  into `ui-docs.json` at build time, and two agent tools — `ui_search(query)` for a
+  budgeted brief and `ui_get(name)` for machine-readable props — let an app-building
+  agent find the right primitive instead of hand-rolling chrome; a drift test fails
+  the build if a primitive ships without its doc. (2) A dashboard **power-ups**
+  widget surfaces ONE capability you've never used at a time — a two-sentence lesson
+  plus a "try it" deep link — computed against your tool-usage history; it only
+  points and hides (dismissals persist per capability), never enables anything, and
+  the whole widget is behind the `legibility.power_ups` config flag. (3) PersonalClaw
+  can act as a **routed-context provider** for external coding agents: per project it
+  assembles a tiered manifest — hard rules/brief at the top, scored memories + skills
+  + knowledge *pointers* in the middle, and an L0 catalog of what was NOT loaded (with
+  the tool to pull each) at the bottom — exposed as the in-process `get_context` MCP
+  tool and, opt-in per project (`legibility.context_adapters`, default off), rendered
+  into the project's `CLAUDE.md` / `AGENTS.md` / `.cursorrules` inside a
+  `<!-- PCLAW:START -->` fence that regenerates in place and never touches your own
+  content outside the markers. Memory-derived and knowledge-derived content stay under
+  distinct headings, and knowledge items render as titled pointers — never inlined
+  bodies. A "Refresh context files" action on the project page (re)writes the block.
 - **Apps surface their skills and backend routes to the agent (declared, not
   discovered).** An app now declares two legible surfaces in `app.json`, both
   readable without executing app code. `skills[]` names SKILL.md directories the

@@ -1,6 +1,6 @@
 import {
   User, Palette, MessageSquare, Plug, Cpu, FileText, Database, Bot, AudioLines,
-  Inbox, Bell, Shield, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity,
+  Inbox, Bell, Shield, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import {
@@ -70,6 +70,8 @@ const useVoice = () => useCachedData('settings:voice', async () => {
   ])
   return { active, stt, tts }
 }, { persist: true })
+const useLegibility = () => useCachedData('settings:legibility', () =>
+  api.personalclawConfig().then((c) => (c.legibility ?? {}) as Record<string, unknown>).catch(() => ({} as Record<string, unknown>)), { persist: true })
 const useAgentDefaults = () => useCachedData('settings:agent-defaults', async () => {
   const [cfg, agents] = await Promise.all([
     api.personalclawConfig().then((c) => (c.agent ?? {}) as Record<string, unknown>).catch(() => ({} as Record<string, unknown>)),
@@ -438,6 +440,25 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
         <BentoCard icon={Activity} title="Diagnostics" query={query} onClick={() => go('diagnostics')}>
           <div className="text-on-surface text-[0.9375rem]" style={fvs(550)}>Live log stream</div>
           <div className="mt-1 text-on-surface-low text-[0.75rem]">Level: <Highlight text={level ?? '—'} query={query} /></div>
+        </BentoCard>
+      )
+    },
+  },
+  {
+    id: 'legibility', group: 'System', label: 'Legibility', icon: Compass, size: 'md',
+    description: 'How PersonalClaw describes its capabilities — dashboard tips + project context files.',
+    useSearchText() { const { data: c } = useLegibility(); return `legibility capability discovery power-ups tips context adapters claude.md agents.md cursorrules ${c ? `tips ${!!c.power_ups} context ${!!c.context_adapters}` : ''}` },
+    render(query, go) {
+      const { data: c, refresh } = useLegibility()
+      const save = (key: string, value: boolean) => mutate(
+        () => api.patchConfig(`legibility.${key}`, value).then(refresh), 'settings:legibility',
+      )
+      return (
+        <BentoCard icon={Compass} title="Legibility" query={query} onClick={() => go('legibility')} loading={c === undefined} rows={2}>
+          {c && <KVList query={query} rows={[
+            { k: 'Capability tips', control: true, v: <Switch on={!!c.power_ups} label="Capability tips" onToggle={(v) => save('power_ups', v)} /> },
+            { k: 'Context files', control: true, v: <Switch on={!!c.context_adapters} label="Context files" onToggle={(v) => save('context_adapters', v)} /> },
+          ]} />}
         </BentoCard>
       )
     },

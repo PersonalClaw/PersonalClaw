@@ -453,6 +453,38 @@ class SessionConfig:
 
 
 @dataclass
+class LegibilityConfig:
+    """Platform-legibility features (Platform-Legibility §5-§7).
+
+    Two independent, user-facing toggles. ``power_ups`` gates the dashboard
+    capability-discovery widget (§6) — a propose-don't-write nudge that never
+    enables anything on its own. ``context_adapters`` gates writing routed-context
+    adapter files (CLAUDE.md/AGENTS.md/.cursorrules) into an opted-in project's
+    bound workspace (§7) — off by default because it writes into user project dirs.
+    """
+
+    power_ups: bool = field(
+        default=True,
+        metadata=_meta(
+            "Power-ups",
+            "Show the capability-discovery power-ups widget on the dashboard — "
+            "one untouched capability at a time with a two-sentence lesson and a "
+            "'try it' link. It only proposes; it never enables anything for you.",
+        ),
+    )
+    context_adapters: bool = field(
+        default=False,
+        metadata=_meta(
+            "Context Adapters",
+            "When on, PersonalClaw renders routed-context adapter files "
+            "(CLAUDE.md / AGENTS.md / .cursorrules) into each opted-in project's "
+            "bound workspace directory, fenced by PCLAW markers. Off by default — "
+            "it writes files into your project directories.",
+        ),
+    )
+
+
+@dataclass
 class LoopsConfig:
     """Settings for autonomous goal loops (the unified autonomous goal engine)."""
 
@@ -1466,6 +1498,12 @@ class AppConfig:
         default_factory=DashboardConfig,
         metadata=_meta("Dashboard", "Dashboard UI settings."),
     )
+    legibility: LegibilityConfig = field(
+        default_factory=LegibilityConfig,
+        metadata=_meta(
+            "Legibility", "Platform-legibility features — power-ups + context adapters."
+        ),
+    )
     hooks: dict = field(
         default_factory=dict,
         metadata=_meta("Hooks", "Script hook definitions keyed by hook ID."),
@@ -1554,6 +1592,9 @@ class AppConfig:
         dashboard_data = data.get("dashboard", {})
         if not isinstance(dashboard_data, dict):
             dashboard_data = {}
+        legibility_data = data.get("legibility", {})
+        if not isinstance(legibility_data, dict):
+            legibility_data = {}
         inbox_data = data.get("inbox", {})
         if not isinstance(inbox_data, dict):
             inbox_data = {}
@@ -1718,6 +1759,10 @@ class AppConfig:
                 update_dev_mode=dashboard_data.get("update_dev_mode", False),
                 terminal=dashboard_data.get("terminal", {"enabled": True}),
                 dashboard_layout=dashboard_data.get("dashboard_layout", {}) or {},
+            ),
+            legibility=LegibilityConfig(
+                power_ups=bool(legibility_data.get("power_ups", True)),
+                context_adapters=bool(legibility_data.get("context_adapters", False)),
             ),
             hooks=data.get("hooks", {}),
             agents=agents,
@@ -1934,6 +1979,7 @@ class AppConfig:
             "session": asdict(self.session),
             "memory": asdict(self.memory),
             "dashboard": asdict(self.dashboard),
+            "legibility": asdict(self.legibility),
             "hooks": self.hooks,
             "agents": {name: asdict(agent_cfg) for name, agent_cfg in self.agents.items()},
             "default_agent": self.default_agent,
