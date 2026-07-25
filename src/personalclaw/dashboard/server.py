@@ -814,18 +814,16 @@ async def start_dashboard(
 
     app.router.add_get("/api/manifest", api_manifest)
 
-    # Legibility — the dashboard capability-discovery power-ups widget (§6):
-    # propose ONE untouched capability at a time; dismissals persist. Never writes
-    # or enables anything on the user's behalf.
+    # Legibility — the dashboard "Discover" section + hub (§6): a curated tour of
+    # the parts of the system the user hasn't tried yet; dismissals persist and
+    # engaged areas auto-hide. Never writes or enables anything on the user's behalf.
     from personalclaw.dashboard.handlers.legibility import (
-        api_power_ups,
-        api_power_ups_dismiss,
-        api_power_ups_dismissed,
+        api_discover,
+        api_discover_dismiss,
     )
 
-    app.router.add_get("/api/legibility/power-ups", api_power_ups)
-    app.router.add_get("/api/legibility/power-ups/dismissed", api_power_ups_dismissed)
-    app.router.add_post("/api/legibility/power-ups/dismiss", api_power_ups_dismiss)
+    app.router.add_get("/api/legibility/discover", api_discover)
+    app.router.add_post("/api/legibility/discover/dismiss", api_discover_dismiss)
 
     # Legibility — PClaw as a routed-context provider for external agents (§7).
     # GET /api/context backs the in-process get_context tool; the per-project

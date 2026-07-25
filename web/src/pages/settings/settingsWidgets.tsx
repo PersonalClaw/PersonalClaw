@@ -447,7 +447,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   {
     id: 'legibility', group: 'System', label: 'Legibility', icon: Compass, size: 'md',
     description: 'How PersonalClaw describes its capabilities — dashboard tips + project context files.',
-    useSearchText() { const { data: c } = useLegibility(); return `legibility capability discovery power-ups tips context adapters claude.md agents.md cursorrules ${c ? `tips ${!!c.power_ups} context ${!!c.context_adapters}` : ''}` },
+    useSearchText() { const { data: c } = useLegibility(); return `legibility discover tips tour features context adapters claude.md agents.md cursorrules ${c ? `tips ${!!c.discover_tips} context ${!!c.context_adapters}` : ''}` },
     render(query, go) {
       const { data: c, refresh } = useLegibility()
       const save = (key: string, value: boolean) => mutate(
@@ -456,7 +456,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={Compass} title="Legibility" query={query} onClick={() => go('legibility')} loading={c === undefined} rows={2}>
           {c && <KVList query={query} rows={[
-            { k: 'Capability tips', control: true, v: <Switch on={!!c.power_ups} label="Capability tips" onToggle={(v) => save('power_ups', v)} /> },
+            { k: 'Discover tips', control: true, v: <Switch on={!!c.discover_tips} label="Discover tips" onToggle={(v) => save('discover_tips', v)} /> },
             { k: 'Context files', control: true, v: <Switch on={!!c.context_adapters} label="Context files" onToggle={(v) => save('context_adapters', v)} /> },
           ]} />}
         </BentoCard>

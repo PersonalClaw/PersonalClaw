@@ -10,7 +10,7 @@ import { ActionCenter } from './widgets/ActionCenter'
 import { ActiveWork } from './widgets/ActiveWork'
 import { TasksWidget } from './widgets/TasksWidget'
 import { Suggestions } from './widgets/Suggestions'
-import { PowerUps } from './widgets/PowerUps'
+import { Discover } from './widgets/Discover'
 import { ScheduleWidget } from './widgets/ScheduleWidget'
 import { SystemHealth } from './widgets/SystemHealth'
 import { TopBar } from '../../ui/TopBar'
@@ -86,10 +86,11 @@ export function DashboardPage(route: RouteProps) {
               </Section>
             </div>
 
-            {/* Capability discovery (§6) — surfaces one capability this instance
-                has but you've never used, as a mini-lesson with a deep link. */}
+            {/* Discover (§6) — a curated spotlight of the parts of PersonalClaw you
+                haven't tried yet, each a deep link. The full grouped list is the
+                dedicated Discover hub (the widget's "See all" jumps there). */}
             <Section label="Discover" icon={Compass}>
-              <PowerUps {...route} />
+              <Discover {...route} />
             </Section>
 
             <Section label="Recent activity" icon={History}>

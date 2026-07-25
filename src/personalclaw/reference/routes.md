@@ -197,9 +197,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/knowledge/search-for-context` — _(no summary)_
 - `GET /api/knowledge/stats` — _(no summary)_
 - `GET /api/knowledge/tags` — - distinct tags (frequency-ordered) for autocomplete.
-- `GET /api/legibility/power-ups` — the next untouched-capability proposal.
-- `POST /api/legibility/power-ups/dismiss` — hide a capability forever.
-- `GET /api/legibility/power-ups/dismissed` — the set of dismissed ids.
+- `GET /api/legibility/discover` — the curated Discover tips still worth showing.
+- `POST /api/legibility/discover/dismiss` — hide a Discover tip forever.
 - `DELETE /api/lessons` — remove lessons by substring.
 - `GET /api/lessons` — _(no summary)_
 - `POST /api/lessons` — add a lesson (vector store or JSONL fallback).

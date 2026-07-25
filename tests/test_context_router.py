@@ -224,7 +224,7 @@ class _Cfg:
     """A stub AppConfig with a togglable adapters gate."""
 
     def __init__(self, adapters: bool):
-        self.legibility = SimpleNamespace(context_adapters=adapters, power_ups=True)
+        self.legibility = SimpleNamespace(context_adapters=adapters, discover_tips=True)
 
 
 @pytest.fixture

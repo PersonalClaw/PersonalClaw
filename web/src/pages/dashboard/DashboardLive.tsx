@@ -4,7 +4,7 @@ import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { api } from '../../lib/api'
 import type {
   PendingApproval, DashboardStatus, InboxItem, SkillProposal,
-  Loop, TaskItem, ScheduleRun, NotificationItem, SystemInfo, PowerUpsResponse,
+  Loop, TaskItem, ScheduleRun, NotificationItem, SystemInfo, DiscoverResponse,
 } from '../../lib/api'
 
 // ── Dashboard live feed ────────────────────────────────────────────────────
@@ -30,12 +30,12 @@ export interface DashboardLiveData {
   /** Live system metrics (cpu/mem/net/disk/load) from /api/system — P27. Polled on
    *  the fast, visibility-gated cadence so the SystemHealth widget shows live rates. */
   system: SystemInfo | null
-  /** The next untouched-capability proposal for the PowerUps widget (§6), or null
-   *  when everything's been explored / the kill switch is off. Polled on SLOW_POLL. */
-  powerUps: PowerUpsResponse | null
-  /** Dismiss a power-up capability forever, then refetch the slice so the next
-   *  untouched capability surfaces (propose-don't-write: this hides, never enables). */
-  dismissPowerUp: (id: string) => void
+  /** The curated Discover tips for the dashboard section + hub (§6), or an empty
+   *  feed when everything's been explored / the kill switch is off. Polled on SLOW_POLL. */
+  discover: DiscoverResponse | null
+  /** Dismiss a Discover tip forever, then refetch the slice so it drops from the
+   *  feed (propose-don't-write: this hides, never enables). */
+  dismissDiscoverTip: (id: string) => void
   /** Force an immediate refetch of every slice (e.g. after an inline action). */
   refreshAll: () => void
 }
@@ -65,7 +65,7 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<DashboardStatus | null>(null)
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [system, setSystem] = useState<SystemInfo | null>(null)
-  const [powerUps, setPowerUps] = useState<PowerUpsResponse | null>(null)
+  const [discover, setDiscover] = useState<DiscoverResponse | null>(null)
 
   // Individual slice loaders — each swallows errors (a dead endpoint must not
   // blank the whole dashboard) and no-ops if the component has unmounted.
@@ -84,18 +84,18 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const loadStatus = useCallback(() => { api.status().then(guard(setStatus)).catch(() => {}) }, [])
   const loadNotifications = useCallback(() => { api.notifications().then((d) => guard(setNotifications)(d.notifications ?? [])).catch(() => {}) }, [])
   const loadSystem = useCallback(() => { api.system().then(guard(setSystem)).catch(() => {}) }, [])
-  const loadPowerUps = useCallback(() => { api.powerUps().then(guard(setPowerUps)).catch(() => {}) }, [])
+  const loadDiscover = useCallback(() => { api.discover().then(guard(setDiscover)).catch(() => {}) }, [])
 
-  // Dismiss persists server-side; on success refetch so the next untouched
-  // capability takes its place (or the "explored everything" empty state shows).
-  const dismissPowerUp = useCallback((id: string) => {
-    api.dismissPowerUp(id).then(() => loadPowerUps()).catch(() => {})
-  }, [loadPowerUps])
+  // Dismiss persists server-side; on success refetch so the tip drops from the
+  // feed (or the "explored everything" empty state shows).
+  const dismissDiscoverTip = useCallback((id: string) => {
+    api.dismissDiscoverTip(id).then(() => loadDiscover()).catch(() => {})
+  }, [loadDiscover])
 
   const refreshAll = useCallback(() => {
     loadApprovals(); loadInbox(); loadProposals(); loadLoops()
-    loadTasks(); loadSchedule(); loadStatus(); loadNotifications(); loadSystem(); loadPowerUps()
-  }, [loadApprovals, loadInbox, loadProposals, loadLoops, loadTasks, loadSchedule, loadStatus, loadNotifications, loadSystem, loadPowerUps])
+    loadTasks(); loadSchedule(); loadStatus(); loadNotifications(); loadSystem(); loadDiscover()
+  }, [loadApprovals, loadInbox, loadProposals, loadLoops, loadTasks, loadSchedule, loadStatus, loadNotifications, loadSystem, loadDiscover])
 
   // Coalesce high-frequency work/status signals. `chat_status`/`sessions` fire on
   // every turn lifecycle change — during active streaming that's many events/sec —
@@ -135,11 +135,11 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   // Initial load once, then visibility-gated polls (pause when the tab is hidden).
   useEffect(() => { refreshAll() }, [refreshAll])
   useVisiblePoll(() => { loadApprovals(); loadInbox(); loadProposals(); loadLoops(); loadTasks(); loadSystem() }, FAST_POLL)
-  useVisiblePoll(() => { loadSchedule(); loadStatus(); loadNotifications(); loadPowerUps() }, SLOW_POLL)
+  useVisiblePoll(() => { loadSchedule(); loadStatus(); loadNotifications(); loadDiscover() }, SLOW_POLL)
 
   const value: DashboardLiveData = {
     approvals, inbox, proposals, loops, tasks, schedule, status, notifications, system,
-    powerUps, dismissPowerUp, refreshAll,
+    discover, dismissDiscoverTip, refreshAll,
   }
   return <DashboardLiveContext.Provider value={value}>{children}</DashboardLiveContext.Provider>
 }

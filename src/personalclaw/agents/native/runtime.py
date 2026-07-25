@@ -929,15 +929,6 @@ class NativeAgentRuntime(AgentProvider):
             mcp_core.reset_current_session_key(token)
             mcp_core.reset_current_agent_id(agent_token)
             _bt.reset_tool_context(ctx_tokens)
-        # PLATFORM-LEGIBILITY §6: record that this capability was touched, so the
-        # dashboard power-ups widget can surface an UNtouched one. Best-effort and
-        # advisory (the skill-usage contract) — a failed write never affects the turn.
-        try:
-            from personalclaw.legibility.tool_usage import ToolUsageStore
-
-            ToolUsageStore().record_use(tool_name)
-        except Exception:  # noqa: BLE001 - advisory counter, never break a turn
-            logger.debug("tool usage record failed for %s", tool_name, exc_info=True)
         # Capture the result's typed metadata (content_type / raw_ref / truncated)
         # for the TOOL_RESULT event — the string return loses it otherwise. Single
         # slot, read+cleared at the emit site keyed to this dispatch.

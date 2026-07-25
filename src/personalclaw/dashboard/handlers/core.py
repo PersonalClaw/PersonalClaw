@@ -469,10 +469,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # Gates the poll-based message sources (filesystem/channel apps). The UI
     # toggle calls /api/inbox/restart after flipping so the service re-attaches.
     "inbox.enabled": {"type": "bool"},
-    # Platform-legibility toggles (§6 power-ups widget, §7 context adapters).
-    # power_ups gates a propose-don't-write dashboard widget; context_adapters
-    # gates writing adapter files into opted-in project workspaces.
-    "legibility.power_ups": {"type": "bool"},
+    # Platform-legibility toggles (§6 Discover tips, §7 context adapters).
+    # discover_tips gates the propose-don't-write Discover section + hub;
+    # context_adapters gates writing adapter files into opted-in project workspaces.
+    "legibility.discover_tips": {"type": "bool"},
     "legibility.context_adapters": {"type": "bool"},
 }
 
