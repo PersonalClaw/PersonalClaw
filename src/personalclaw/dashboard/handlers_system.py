@@ -146,6 +146,9 @@ def _get_static_system_info() -> dict[str, object]:
 
     info: dict[str, object] = {
         "hostname": platform.node(),
+        # Gateway version travels with the system payload so the shell's system
+        # card can show it — the dashboard no longer carries a separate version pill.
+        "version": personalclaw.__version__,
         "os": f"{platform.system()} {platform.release()}",
         # Raw platform token (sys.platform: darwin / linux / win32) so the frontend
         # can gate OS-specific affordances (e.g. Finder reveal, screencapture) on the

@@ -7,12 +7,18 @@ import { useDashboardLive } from '../DashboardLive'
 import { RowAction } from './kit'
 import type { RouteProps } from '../../../app/useQueryState'
 
+/** One rail metric — icon + value, with the word-label shed responsively. The
+ *  rail is a `@container` (DashboardPage), so the label hides below a container
+ *  width where the full-label strip would wrap (icon + value keep carrying the
+ *  reading; the full "value label" stays on the title tooltip so nothing is
+ *  lost). `shrink-0` keeps a metric from being squeezed mid-word before the
+ *  strip decides to wrap. */
 function Metric({ icon: Icon, value, label, tone }: { icon: LucideIcon; value: string | number; label: string; tone?: string }) {
   return (
-    <div className="flex items-center gap-s">
+    <div className="flex shrink-0 items-center gap-s" title={`${value} ${label}`}>
       <Icon size={15} className="shrink-0" style={{ color: tone ?? 'var(--color-on-surface-low)' }} />
       <span data-type="title-m" className="tabular-nums text-on-surface">{value}</span>
-      <span data-type="body-m" className="text-on-surface-low">{label}</span>
+      <span data-type="body-m" className="hidden text-on-surface-low @min-[1520px]:inline">{label}</span>
     </div>
   )
 }
@@ -83,15 +89,21 @@ export function SystemHealth({ navigate }: RouteProps) {
   const memTone = memPct >= 90 ? 'var(--color-warn)' : 'var(--color-info)'
 
   return (
-    <div className="flex h-full flex-wrap items-center gap-x-2xl gap-y-s pt-xs">
+    // `w-full` so the trailing `ml-auto` group can push "Details" to the rail's
+    // right edge (without it the strip is content-width and ml-auto has no slack).
+    // Gaps tighten as the container narrows, and word-labels/sparkline shed
+    // (see Metric + the Spark wrapper) so the strip stays one line as long as it
+    // fits — the container is the rail wrapper, tracking --content-width.
+    <div className="flex h-full w-full flex-wrap items-center gap-x-l gap-y-s pt-xs @6xl:gap-x-xl">
       <Metric icon={Clock} value={status.uptime ?? '—'} label="uptime" />
       <Metric icon={Tag} value={`v${status.version ?? '?'}`} label={status.platform ?? ''} />
       {/* Live metrics from /api/system (P27) — render only when present. */}
       {system && (
         <>
-          <div className="flex items-center gap-s">
+          <div className="flex shrink-0 items-center gap-s">
             <Metric icon={Activity} value={`${Math.round(system.cpu_pct)}%`} label="cpu" tone={cpuTone} />
-            <Spark samples={cpuHist.current} tone={cpuTone} />
+            {/* Sparkline is decorative — first to go when the rail is tight. */}
+            <span className="hidden @3xl:inline-flex"><Spark samples={cpuHist.current} tone={cpuTone} /></span>
           </div>
           {system.mem_total_gb > 0 && (
             <Metric icon={MemoryStick} value={`${system.mem_used_gb.toFixed(1)}/${system.mem_total_gb}GB`} label="mem" tone={memTone} />

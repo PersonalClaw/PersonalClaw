@@ -71,6 +71,24 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
   tests, and the production build all passed without ever rendering the
   artifact in a browser.
 
+### Changed
+
+- **The dashboard's system indicators are now a docked bottom rail.** The System
+  strip (uptime, version, CPU/memory/network/disk/load, triggers, subagents, and
+  the update action) was the last item in the scrolling column; it's now a
+  shell-like rail pinned to the bottom edge, so the live indicators stay visible
+  while the rest of the dashboard scrolls. The dashboard header's at-a-glance
+  pulse strip sheds two now-redundant indicators: the gateway connectivity pill
+  ("Live/Offline") and the gateway-version pill. The app shell's top-right corner
+  already carries a live connectivity dot on every page, and its expanded system
+  card now shows the gateway version (sourced from `/api/system`) — so the header
+  strip is just the live count pills. The rail itself is width-responsive (a CSS
+  container query, keyed to the content-width preset + sidebar, not the viewport):
+  it sheds the decorative CPU sparkline and the metric word-labels — icon + value
+  keep carrying the reading, with the full text on hover — to stay on one line as
+  the available width tightens, and the "Details →" action stays anchored to the
+  right edge.
+
 ## [0.1.1] — 2026-07-22
 
 ### Fixed

@@ -95,12 +95,21 @@ export function DashboardPage(route: RouteProps) {
             <Section label="Recent activity" icon={History}>
               <ScheduleWidget {...route} />
             </Section>
-
-            {/* Footer — system health only (knowledge/memory stats removed). */}
-            <div className="flex items-center gap-l border-t border-outline-variant/40 pt-m">
-              <span data-type="label-m" className="text-on-surface-low">System</span>
-              <SystemHealth {...route} />
-            </div>
+          </div>
+        </div>
+        {/* System rail — docked to the dashboard's bottom edge as shell-like
+            chrome (top hairline + frosted rail tint, matching the shell corners),
+            OUTSIDE the scroll area above. A flex sibling with `shrink-0` pins it to
+            the bottom while the scroll area owns `flex-1`, so the live system
+            indicators stay visible however far the content above scrolls. Its inner
+            column tracks the same --content-width as the scrolling body. */}
+        <div className="shrink-0 border-t border-outline-variant/40 bg-surface-low/80 backdrop-blur-sm">
+          {/* `@container` makes this wrapper the query context for the rail: its
+              width tracks --content-width + the sidebar (NOT the viewport), so the
+              rail members adapt to the space actually available (SystemHealth's
+              `@…` variants), staying on one line as long as they fit. */}
+          <div className="@container mx-auto flex w-full items-center px-l py-m" style={{ maxWidth: 'var(--content-width)' }}>
+            <SystemHealth {...route} />
           </div>
         </div>
       </div>

@@ -101,7 +101,9 @@ export function SystemWidget() {
                 <div className="mb-3 flex items-center gap-2">
                   <Server size={14} className="text-on-surface-low" />
                   <span className="flex-1 truncate text-on-surface text-[0.8125rem]" style={fvs(600)}>{sys.hostname}</span>
-                  <span className="text-on-surface-low text-[0.75rem]">{sys.os.split(' ')[0]} · {sys.arch?.split(' ')[0]}</span>
+                  {/* Gateway version lives here (not on the dashboard) — the shell's
+                      connectivity card is the single home for gateway identity. */}
+                  <span className="text-on-surface-low text-[0.75rem]">{sys.os.split(' ')[0]} · {sys.arch?.split(' ')[0]}{sys.version ? ` · v${sys.version}` : ''}</span>
                 </div>
 
                 <Bar icon={Cpu} label="CPU" pct={cpu} detail={`${sys.cpu_count} cores · load ${sys.load_1m.toFixed(1)}`} />
