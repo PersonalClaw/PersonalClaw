@@ -12,6 +12,14 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 
 ### Added
 
+- **The animated dot-wave backdrop is now a choosable background style.** A new
+  **Background** control in Settings → Design → Backdrop & motion switches the
+  surface behind chat, the new-chat composer, and onboarding between four modes:
+  `waves` (the animated breathing dot-wave surface, default), `still` (the same
+  dot field frozen — the lattice without the motion), `glow` (only the soft light
+  hugging the composer, no dots), and `none` (a plain, empty canvas). The choice
+  persists in your appearance settings and applies live with no reload. Motion
+  modes still honor `prefers-reduced-motion` (they render one static frame).
 - **PersonalClaw describes its own UI kit, guides you to the parts of itself you
   haven't tried, and hands external agents a routed project context.** Three
   legibility surfaces land together. (1) The `ui/` component kit is now
