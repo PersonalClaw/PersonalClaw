@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { Scissors, Plus, X, AlertTriangle } from 'lucide-react'
-import { api, type ProjectionRule, type ProjectionStrategy } from '../../lib/api'
+import { Scissors, Plus, X, AlertTriangle, Gauge } from 'lucide-react'
+import { api, type ProjectionRule, type ProjectionStrategy, type ToolsSavings } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader, Section } from './settingsUI'
 
@@ -43,6 +43,8 @@ export function ProjectionRulesPanel() {
       <PanelHeader title="Tool-output projection"
         hint="Teach PersonalClaw how to keep the salient slice of a large tool output — so a verbose result costs a preview, not the whole context window, while the full raw stays recoverable on demand." />
 
+      <SavingsCard />
+
       <Section title="Custom rules"
         hint="A rule maps a content marker (regex, matched against the start of the output) to a projection strategy. Use it for a tool whose big output the builtin sniffer treats as generic (a blunt head/tail cut) — e.g. a domain-specific log or dump. Rules are checked before the builtin sniff.">
         <div className="flex flex-col gap-2">
@@ -60,6 +62,33 @@ export function ProjectionRulesPanel() {
           {err && <div className="flex items-center gap-1.5 text-danger text-[0.8125rem]"><AlertTriangle size={13} /> {err}</div>}
         </div>
       </Section>
+    </div>
+  )
+}
+
+/** Read-only TokenJuice savings card (§1.3) — estimated tokens saved by output
+ *  projection this month + the top compressor. Renders nothing until there's a saving
+ *  (a fresh install has no data; showing "0 saved" would be noise). Tokens are estimated
+ *  (chars/4) — this is the counterfactual savings ledger, not authoritative spend. */
+function SavingsCard() {
+  const { data } = useCachedData<ToolsSavings>(
+    'settings:tools-savings', () => api.toolsSavings(), { persist: true },
+  )
+  if (!data || data.saved_chars <= 0) return null
+  const fmt = (n: number) => n.toLocaleString()
+  return (
+    <div className="mb-4 flex items-start gap-3 rounded-lg bg-surface-container px-3 py-3">
+      <Gauge size={16} className="mt-0.5 shrink-0 text-primary" />
+      <div className="min-w-0 text-[0.8125rem]">
+        <div className="text-on-surface">
+          TokenJuice saved <span className="font-medium">~{fmt(data.saved_tokens_estimated)}</span> tokens
+          {' '}across {fmt(data.projection_count)} projected result{data.projection_count === 1 ? '' : 's'}
+          {data.top_compressor ? <> — top compressor: <span className="font-mono">{data.top_compressor}</span></> : null}.
+        </div>
+        <div className="mt-0.5 text-on-surface-low">
+          Estimated ({fmt(data.saved_chars)} chars, ~4 chars/token). The full raw of every projected result stays recoverable via <span className="font-mono">tool_result_get</span>.
+        </div>
+      </div>
     </div>
   )
 }

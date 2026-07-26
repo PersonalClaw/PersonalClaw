@@ -16,6 +16,7 @@ which is for user-facing content).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 _DIRNAME = "tool_results"
 _MAX_PER_SESSION = 200  # oldest evicted beyond this (bounded growth)
 _ID_PREFIX = "r_"
+_HASH_LEN = 12  # sha256 hex prefix length for content-addressed ids
 
 
 def _store_dir(session_id: str) -> Path:
@@ -37,17 +39,20 @@ def _store_dir(session_id: str) -> Path:
     return d
 
 
-def _next_id(store: Path) -> str:
-    """A short monotonic-ish id unique within the session store.
+def _content_id(raw: str) -> str:
+    """A content-addressed id: ``r_<sha256(raw)[:12]>``.
 
-    ``Math.random``/``time`` are fine here (server runtime, not a workflow
-    script). Sequence by existing-file count + a low-entropy suffix so ids stay
-    short + human-quotable in a preview ("…full result: tool_result_get r_004a").
+    Content addressing (Context Economy §1.1) gives three wins over the old
+    count-based ``r_{n:03d}{suffix}``: (1) **idempotent storage** — the same large
+    output stored twice in a session (retries, re-runs) dedupes to one file;
+    (2) **marker stability** — the recovery hint appended to a preview becomes a pure
+    function of the content, so replayed/compacted transcripts stay byte-identical
+    (the KV-cache prefix-stability contract, §3); (3) **unguessability** — a hash id
+    can't be enumerated by a prompt-injected instruction fishing for other results
+    (defense-in-depth; ``get_result`` already rejects path-traversal ids).
     """
-    n = sum(1 for _ in store.glob(f"{_ID_PREFIX}*.json"))
-    # nanosecond tail keeps it unique even if two land in the same count window
-    suffix = f"{int(time.time_ns()) & 0xFFFF:04x}"
-    return f"{_ID_PREFIX}{n:03d}{suffix}"
+    digest = hashlib.sha256(raw.encode("utf-8", "surrogatepass")).hexdigest()[:_HASH_LEN]
+    return f"{_ID_PREFIX}{digest}"
 
 
 def store_result(
@@ -55,13 +60,21 @@ def store_result(
 ) -> str:
     """Persist a raw tool output; return its ``result_id``.
 
-    Evicts the oldest entries beyond :data:`_MAX_PER_SESSION` so the store stays
-    bounded. Returns the id the projection preview cites + ``tool_result_get``
-    reads. Never raises into the caller (a store failure must not break the tool
-    call — returns ``""`` and the result simply isn't retrievable)."""
+    The id is content-addressed (:func:`_content_id`), so storing the identical raw
+    twice in a session writes ONE file (idempotent) — a re-run/retry doesn't grow the
+    store or churn the recovery marker. Evicts the oldest entries beyond
+    :data:`_MAX_PER_SESSION` so the store stays bounded. Never raises into the caller
+    (a store failure must not break the tool call — returns ``""`` and the result
+    simply isn't retrievable)."""
     try:
         store = _store_dir(session_id)
-        rid = _next_id(store)
+        rid = _content_id(raw)
+        dest = store / f"{rid}.json"
+        if dest.is_file():
+            # Idempotent: identical content already stored. Touch mtime so eviction
+            # treats a re-referenced result as fresh (LRU-ish), then return the id.
+            dest.touch()
+            return rid
         payload = {
             "id": rid,
             "tool": tool,
@@ -70,7 +83,7 @@ def store_result(
             "created": time.time_ns(),
             "raw": raw,
         }
-        atomic_write(store / f"{rid}.json", json.dumps(payload, ensure_ascii=False))
+        atomic_write(dest, json.dumps(payload, ensure_ascii=False))
         _evict_overflow(store)
         return rid
     except Exception:
@@ -124,14 +137,20 @@ def fetch_slice(
     *,
     start: int = 0,
     end: int | None = None,
+    line_start: int | None = None,
+    line_end: int | None = None,
     grep: str | None = None,
     max_chars: int = 8000,
 ) -> dict:
     """Pull a slice or grep of a stored raw result — backs ``tool_result_get``.
 
-    Returns ``{ok, error?, content, length, shown, mode}``. ``grep`` returns the
-    matching lines (with a bound); else a ``[start:end]`` char range. The whole
-    point is recovering the *specific* dropped slice, not re-dumping the blob.
+    Returns ``{ok, error?, content, length, shown, mode}``. Access modes, in
+    precedence order: ``grep`` (matching lines, bounded); ``line_start``/``line_end``
+    (1-indexed inclusive line range — the natural way to recover "lines 40-80 of that
+    file"); else a ``[start:end]`` char range. Line and char ranges are mutually
+    exclusive — passing a line range routes to line mode and ignores char ``start``/
+    ``end``. The whole point is recovering the *specific* dropped slice, not re-dumping
+    the blob.
     """
     rec = get_result(session_id, result_id)
     if rec is None:
@@ -172,6 +191,36 @@ def fetch_slice(
             "matches": len(hits),
             "truncated": truncated,
             "mode": "grep",
+            "content_type": ctype,
+        }
+    # Line range (1-indexed, inclusive) — mutually exclusive with the char range.
+    if line_start is not None or line_end is not None:
+        lines = raw.splitlines()
+        n_lines = len(lines)
+        ls = max(1, line_start if line_start is not None else 1)
+        le = min(n_lines, line_end if line_end is not None else n_lines)
+        if ls > n_lines:
+            return {
+                "ok": False,
+                "error": f"line_start={ls} is past the result ({n_lines} lines)",
+                "content": "",
+                "length": total,
+                "shown": 0,
+                "mode": "lines",
+                "content_type": ctype,
+            }
+        body = "\n".join(lines[ls - 1 : le]) if le >= ls else ""
+        truncated = len(body) > max_chars
+        return {
+            "ok": True,
+            "content": body[:max_chars],
+            "length": total,
+            "shown": min(len(body), max_chars),
+            "line_start": ls,
+            "line_end": le,
+            "total_lines": n_lines,
+            "truncated": truncated,
+            "mode": "lines",
             "content_type": ctype,
         }
     # char range. A start past the end is a caller error, not an empty success —

@@ -149,3 +149,41 @@ async def test_handler_no_failures_when_all_load(monkeypatch):
 
     payload = json.loads(resp.body.decode())
     assert payload.get("load_failures") == []
+
+
+# ── GET /api/tools/savings (Context Economy §1.3) ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_savings_endpoint_returns_summary(tmp_path, monkeypatch):
+    import json
+
+    import personalclaw.config.loader as cfg
+    import personalclaw.tool_providers.savings as sv
+
+    monkeypatch.setattr(cfg, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(sv, "config_dir", lambda: tmp_path)
+    sv.record_saving(
+        month="2026-07", model="unknown", compressor="log", chars_in=4000, chars_out=400
+    )
+
+    resp = await tools_mod.api_tools_savings(_DummyRequest())
+    payload = json.loads(resp.body.decode())
+    assert payload["saved_chars"] == 3600
+    assert payload["top_compressor"] == "log"
+    assert payload["estimated"] is True
+
+
+@pytest.mark.asyncio
+async def test_savings_endpoint_empty_is_safe(tmp_path, monkeypatch):
+    import json
+
+    import personalclaw.config.loader as cfg
+    import personalclaw.tool_providers.savings as sv
+
+    monkeypatch.setattr(cfg, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(sv, "config_dir", lambda: tmp_path)
+
+    resp = await tools_mod.api_tools_savings(_DummyRequest())
+    payload = json.loads(resp.body.decode())
+    assert payload["saved_chars"] == 0 and payload["top_compressor"] is None

@@ -342,6 +342,32 @@ def project_output(
     )
 
 
+def _record_savings(compressor: str, chars_in: int, chars_out: int) -> None:
+    """Record a projection's counterfactual savings (§1.3). Best-effort, never raises.
+
+    Model hint is ``"unknown"`` here — ``project_and_retain`` is a dispatch-time seam with
+    no resolved-model in scope, and the plan explicitly allows ``"unknown"`` rather than
+    threading a model through (accounting must never block/slow dispatch). The savings
+    store cross-references the guardrails' real token counts once that lands."""
+    if chars_in <= 0 or chars_out >= chars_in:
+        return
+    try:
+        from datetime import datetime
+
+        from personalclaw.tool_providers import savings
+
+        month = datetime.now().strftime("%Y-%m")
+        savings.record_saving(
+            month=month,
+            model="unknown",
+            compressor=compressor,
+            chars_in=chars_in,
+            chars_out=chars_out,
+        )
+    except Exception:  # noqa: BLE001 — metering must never break a tool call
+        logger.debug("savings accounting failed", exc_info=True)
+
+
 def project_and_retain(
     text: str,
     *,
@@ -375,8 +401,15 @@ def project_and_retain(
     if not raw_ref:
         return proj.text, meta
     meta["raw_ref"] = raw_ref
+    # Name all three recovery access modes so the model can pull the dropped slice the
+    # way that fits: a char range, a 1-indexed line range, or a grep (§1.2).
     out = proj.text + (
         f"\n\n[projected {proj.content_type} output: showing {len(proj.text)} of "
-        f'{proj.original_length} chars — full result: tool_result_get(result_id="{raw_ref}")]'
+        f"{proj.original_length} chars — full result: "
+        f'tool_result_get(result_id="{raw_ref}", line_start=…, line_end=…) '
+        f"or grep=…]"
     )
+    # Savings accounting (§1.3): record the counterfactual bytes this projection saved.
+    # Best-effort + never on the failure path of the tool call.
+    _record_savings(proj.content_type, proj.original_length or 0, len(proj.text))
     return out, meta

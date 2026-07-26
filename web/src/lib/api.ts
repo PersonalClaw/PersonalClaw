@@ -738,6 +738,15 @@ export interface EgressPolicyConfig { allow_hosts: string[]; deny_hosts: string[
 // match_regex is projected with `strategy` (a builtin content type).
 export type ProjectionStrategy = 'log' | 'diff' | 'json' | 'test' | 'csv'
 export interface ProjectionRule { name: string; match_regex: string; strategy: ProjectionStrategy }
+export interface ToolsSavings {
+  saved_chars: number
+  saved_tokens_estimated: number
+  estimated: boolean
+  projection_count: number
+  top_compressor: string | null
+  by_compressor: Record<string, number>
+  rows: unknown[]
+}
 
 export interface SystemAgentStats {
   messages_received: number; messages_success: number; messages_failed: number
@@ -1999,6 +2008,9 @@ export const api = {
   projectionRules: () => get<Record<string, any>>('/api/config/personalclaw').then(
     (c) => ((c?.tools?.projection_rules ?? []) as ProjectionRule[])),
   setProjectionRules: (rules: ProjectionRule[]) => patch<Record<string, any>>('/api/config/personalclaw', { path: 'tools.projection_rules', value: rules }),
+  // TokenJuice savings (counterfactual) summary — estimated tokens saved by output
+  // projection this month, top compressor, per-compressor breakdown (§1.3).
+  toolsSavings: () => get<ToolsSavings>('/api/tools/savings'),
 
   // upload (multipart — no JSON headers)
   // Extracted text content for an uploaded attachment (what the agent saw) — used
