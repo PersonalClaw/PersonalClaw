@@ -607,6 +607,18 @@ def resolve_provider_for_use_case(
     # registered entry (else it's a bare id that happens to contain a colon, e.g.
     # "gpt-oss:20b").
     capability = parent_capability(use_case)
+    # Model-call guard (AUTONOMY-GUARDRAILS §2): the non-interactive text axis
+    # (``reasoning`` — backs one_shot_completion, loop judges/gates, web-extract)
+    # routes every resolved provider through ModelCallGuard (per-provider circuit
+    # breaker + hard wall-clock timeout + attempt-level JSONL audit). The interactive
+    # chat/code_tools stream is explicitly OUT OF SCOPE for v1: it returns above via
+    # _build_native_runtime (native) or resolves an ACP CLI — both human-watched — and
+    # the native runtime's INNER model resolves with use_case="chat" + _force_model_axis,
+    # never "reasoning". Thread the flag through kwargs so all four resolution attempts
+    # below wrap identically; _resolve_from_config_registry pops it (never reaches the
+    # build factory) and wraps at the single point where the entry name + model are known.
+    if use_case == "reasoning":
+        kwargs["_guard_use_case"] = use_case
     # A colon-qualified "Provider:model" ref is tried FIRST (below) because its
     # model_id can itself contain a slash (e.g. "nvidia:meta/llama-3.1-8b"); the
     # slash-form resolver would otherwise mis-split it. The config registry returns
@@ -818,6 +830,11 @@ def _resolve_from_config_registry(
     # AgentProvider axis (stream/turn), not ModelProvider.complete(). Pop the
     # sentinel so it never leaks into provider config below.
     model_axis_only = bool(kwargs.pop("_model_axis_only", False))
+    # The non-interactive-text guard flag (set by resolve_provider_for_use_case for
+    # the ``reasoning`` axis). Pop it unconditionally so it never leaks into the
+    # build kwargs / factory; when set, the built provider is wrapped in a
+    # ModelCallGuard just before return (§2 chokepoint).
+    guard_use_case = str(kwargs.pop("_guard_use_case", "") or "")
 
     registry = get_default_registry()
     entries = list(registry.list_entries())
@@ -928,7 +945,7 @@ def _resolve_from_config_registry(
             )
             build_kwargs["_inline_credential"] = _synth
     try:
-        return registry.build(
+        built = registry.build(
             candidate.name, session_key=session_key, cwd=cwd, agent=agent, **build_kwargs
         )
     except Exception:
@@ -938,6 +955,42 @@ def _resolve_from_config_registry(
             use_case,
         )
         return None
+
+    # §2 chokepoint: wrap the resolved provider for the non-interactive text axis
+    # (breaker + hard timeout + audit + day-budget + outbound scan). Config-derived
+    # tuning is read fail-open — a broken config must never wedge resolution.
+    if guard_use_case:
+        from personalclaw.guardrails import wrap_model_call_guard
+        from personalclaw.guardrails.breaker import get_breaker
+        from personalclaw.guardrails.budgets import budget_from_config
+
+        scan_mode = "warn"
+        breaker = None
+        budget = None
+        try:
+            from personalclaw.config.loader import AppConfig
+
+            gr = AppConfig.load().guardrails
+            scan_mode = gr.scan_mode
+            breaker = get_breaker(
+                candidate.name,
+                threshold=gr.breaker.failure_threshold,
+                recovery_secs=gr.breaker.recovery_secs,
+            )
+            budget = budget_from_config()
+        except Exception:
+            logger.debug("guardrails config read failed; using safe defaults", exc_info=True)
+
+        return wrap_model_call_guard(
+            built,
+            use_case=guard_use_case,
+            provider_name=candidate.name,
+            model=str(config.get("model") or candidate.model or ""),
+            budget=budget,
+            scan_mode=scan_mode,
+            breaker=breaker,
+        )
+    return built
 
 
 def create_provider_factory(default_use_case: str = "chat") -> ProviderFactory:

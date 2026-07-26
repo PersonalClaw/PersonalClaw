@@ -580,6 +580,10 @@ async def start_dashboard(
     app.router.add_get("/api/config/personalclaw", handlers.api_personalclaw_config)
     app.router.add_put("/api/config/personalclaw", handlers.api_personalclaw_config)
     app.router.add_patch("/api/config/personalclaw", handlers.api_personalclaw_config_patch)
+    app.router.add_get("/api/incident", handlers.api_incident)
+    app.router.add_post("/api/incident", handlers.api_incident)
+    app.router.add_post("/api/incident/resume", handlers.api_incident_resume)
+    app.router.add_get("/api/models/health", handlers.api_models_health)
     app.router.add_get("/api/dashboard/config", handlers.api_dashboard_config)
     app.router.add_put("/api/dashboard/config", handlers.api_dashboard_config)
 

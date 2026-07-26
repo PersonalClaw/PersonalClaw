@@ -69,6 +69,29 @@ def _reset_trust_mode():
 
 
 @pytest.fixture(autouse=True)
+def _reset_model_call_breakers():
+    """Reset the process-global model-call circuit breakers around every test.
+
+    ``guardrails.breaker`` keeps one breaker per provider name for the gateway's
+    lifetime (in-process by design — a restart resetting it is acceptable for a
+    single-user gateway). Under pytest-xdist a breaker tripped OPEN by one test
+    would otherwise refuse calls in a later test in the same worker, so clear the
+    registry before + after each test — the same discipline as the SEL singleton.
+    """
+    from personalclaw.guardrails.breaker import reset_breakers
+    from personalclaw.guardrails.budgets import reset_meter
+    from personalclaw.guardrails.incident import reset_incident_mirror
+
+    reset_breakers()
+    reset_meter()
+    reset_incident_mirror()
+    yield
+    reset_breakers()
+    reset_meter()
+    reset_incident_mirror()
+
+
+@pytest.fixture(autouse=True)
 def _reset_sel_singleton():
     """Reset the process-global Security Event Log singleton around every test.
 
@@ -108,6 +131,20 @@ def _isolate_single_flight_locks(tmp_path_factory, monkeypatch):
     dir itself still overrides this (last wins)."""
     locks_home = tmp_path_factory.mktemp("pclaw-locks")
     monkeypatch.setattr("personalclaw.concurrency._locks_dir", lambda: locks_home)
+
+
+@pytest.fixture(autouse=True)
+def _disable_live_writes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Auto-set PERSONALCLAW_DISABLE_LIVE_WRITES for the whole suite (§1.4).
+
+    Live, hard-to-reverse writes (deleting a downloaded model, a non-GET egress to
+    a non-loopback host) are refused with a typed error under this flag. PClaw was
+    already bitten by exactly this: a destructive test with no models-dir
+    monkeypatch deleted the user's real bound local model. A test that GENUINELY
+    exercises a live-write path opts out explicitly
+    (``monkeypatch.delenv('PERSONALCLAW_DISABLE_LIVE_WRITES', raising=False)``) —
+    making the intent to write real state visible, never accidental."""
+    monkeypatch.setenv("PERSONALCLAW_DISABLE_LIVE_WRITES", "1")
 
 
 @pytest.fixture(autouse=True)

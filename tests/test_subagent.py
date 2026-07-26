@@ -89,6 +89,32 @@ class TestSpawnWithoutApprovalCallback:
         assert info.error == "spawn rejected: no approval mechanism configured"
 
     @pytest.mark.asyncio
+    async def test_spawn_refused_when_day_budget_exceeded(self, tmp_path, monkeypatch) -> None:
+        """A subagent spawn is refused when the day-scope guardrail budget is hit
+        (AUTONOMY-GUARDRAILS §1.1) — before consuming a session or approval."""
+        monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+        # A configured day-token budget, already exceeded on the meter.
+        from personalclaw.guardrails.budgets import Budget, SpendMeter
+
+        meter = SpendMeter(config_dir=tmp_path)
+        meter.charge(10_000, 0.0)
+        monkeypatch.setattr("personalclaw.guardrails.budgets.get_meter", lambda: meter)
+        monkeypatch.setattr(
+            "personalclaw.guardrails.budgets.budget_from_config",
+            lambda: Budget(max_tokens=500),
+        )
+        manager = SubagentManager(
+            sessions=_mock_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            is_yolo=lambda: True,  # would otherwise auto-approve; budget guard precedes it
+        )
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            info = manager.spawn("expensive unattended task")
+        assert info is not None
+        assert info.done is True
+        assert "budget" in info.error.lower()
+
+    @pytest.mark.asyncio
     async def test_spawn_auto_approved_with_flag(self) -> None:
         """Spawn is auto-approved when auto_approve_subagent_spawn is True."""
         manager = SubagentManager(

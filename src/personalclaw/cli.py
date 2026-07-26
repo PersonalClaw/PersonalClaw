@@ -574,6 +574,18 @@ Examples:
         help="Dashboard port (default: resolved from PERSONALCLAW_PORT env or dashboard.url config)",  # noqa: E501
     )
 
+    # incident — the kill switch (AUTONOMY-GUARDRAILS §1.3). Operates on the flag
+    # file directly; a running gateway picks up the change via mtime within one
+    # poll interval. Interactive chat is never suspended.
+    incident_parser = sub.add_parser(
+        "incident", help="Suspend/resume all unattended work (the kill switch)"
+    )
+    incident_sub = incident_parser.add_subparsers(dest="incident_action")
+    inc_on = incident_sub.add_parser("on", help="Activate incident mode (suspend automation)")
+    inc_on.add_argument("--reason", default="", help="Why the incident was declared")
+    incident_sub.add_parser("off", help="Resume — re-enable unattended work")
+    incident_sub.add_parser("status", help="Show incident state")
+
     # mcp-schedule (MCP server — spawned by ACP agent, not user-facing)
     sub.add_parser("mcp-schedule", help=argparse.SUPPRESS)
 
@@ -838,6 +850,8 @@ Examples:
         _logout(resolve_client_port(args.port))
     elif args.command == "status":
         _status(args)
+    elif args.command == "incident":
+        _incident_cmd(args)
     elif args.command == "config":
         _config_cmd(args)
     elif args.command == "snapshot":
@@ -1025,3 +1039,32 @@ def _handle_skills(args) -> None:  # noqa: ANN001
         return
 
     print("Usage: personalclaw skills [list|search|install|remove|curate|verify]")
+
+
+def _incident_cmd(args) -> None:  # noqa: ANN001
+    """Dispatch ``personalclaw incident on|off|status`` (the kill switch, §1.3).
+
+    Operates on ``~/.personalclaw/incident.json`` directly — works with or without
+    a running gateway; a live gateway picks up the change via the file's mtime
+    within one poll interval. Interactive chat is never suspended.
+    """
+    from personalclaw.guardrails import incident as _inc
+
+    action = getattr(args, "incident_action", None)
+    if action == "on":
+        st = _inc.activate(getattr(args, "reason", "") or "")
+        print(
+            f"⛔ Incident mode ON — unattended work suspended.\n   reason: {st.reason or '(none)'}"
+        )
+        print("   Resume with: personalclaw incident off")
+    elif action == "off":
+        _inc.resume()
+        print("✓ Incident mode OFF — unattended work re-enabled.")
+    else:  # status (default)
+        st = _inc.get_incident()
+        if st.active:
+            print(
+                f"⛔ Incident mode ACTIVE since {st.started_at}\n   reason: {st.reason or '(none)'}"
+            )
+        else:
+            print("✓ No incident — automation running normally.")

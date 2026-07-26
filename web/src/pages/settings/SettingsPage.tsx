@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import {
-  Palette, Plug, Bell, Cpu, Shield, Database, User, MessageSquare, Bot, Inbox,
+  Palette, Plug, Bell, Cpu, Shield, ShieldAlert, Database, User, MessageSquare, Bot, Inbox,
   FolderSync, ScrollText, Archive, AudioLines, DownloadCloud, FileText, ChevronRight, Search, Blocks, Activity, Scissors, Compass,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -27,6 +27,7 @@ import { UpdatesPanel } from './UpdatesPanel'
 import { DiagnosticsPanel } from './DiagnosticsPanel'
 import { ProjectionRulesPanel } from './ProjectionRulesPanel'
 import { LegibilityPanel } from './LegibilityPanel'
+import { GuardrailsPanel } from './GuardrailsPanel'
 import { AppsPanel } from './AppsPanel'
 import { SettingsHome } from './SettingsHome'
 import type { RouteProps } from '../../app/useQueryState'
@@ -63,6 +64,7 @@ const SUBPAGES: SubPage[] = [
   { id: 'inbox', label: 'Inbox', icon: Inbox, render: () => <InboxSettingsPanel /> },
   { id: 'notifications', label: 'Notifications', icon: Bell, render: () => <NotificationsPanel /> },
   { id: 'security', label: 'Security', icon: Shield, render: () => <SecurityPanel /> },
+  { id: 'guardrails', label: 'Guardrails', icon: ShieldAlert, render: () => <GuardrailsPanel /> },
   { id: 'audit', label: 'Audit log', icon: ScrollText, render: () => <AuditPanel /> },
   { id: 'diagnostics', label: 'Diagnostics', icon: Activity, render: () => <DiagnosticsPanel /> },
   { id: 'tool-output', label: 'Tool output', icon: Scissors, render: () => <ProjectionRulesPanel /> },

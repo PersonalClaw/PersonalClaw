@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { NavRail, type NavItem } from '../ui/NavRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
+import { IncidentBanner } from './IncidentBanner'
 import { ChatPage } from '../pages/ChatPage'
 import { useIdentity } from './identity'
 import { Onboarding } from './Onboarding'
@@ -355,6 +356,9 @@ function AppInner() {
         {/* App-shell corner regions — float above page content, not a header row */}
         <ShellCornerLeft collapsed={railCollapsed} onToggle={toggleNav} />
         <ShellCornerRight terminalOpen={termDrawer} onToggleTerminal={() => setTermDrawer((v) => !v)} navigate={navigate} />
+        {/* Guardrails incident banner — spans the content area on every page while
+            incident mode is active (§1.3). Renders nothing otherwise. */}
+        <IncidentBanner />
         <ErrorBoundary resetKey={rendered}>
           <Suspense fallback={<PageFallback />}>
             {/* Route cross-fade (Slice 5 global choreography): the new page fades+

@@ -790,6 +790,19 @@ class GatewayOrchestrator:
         else:
             timeout = 30
 
+        # Denylist gate (AUTONOMY-GUARDRAILS §1.2): a scheduled action's config is
+        # checked BEFORE dispatch, so an app-contributed provider inherits the
+        # denylist. A blocked action never executes.
+        from personalclaw.guardrails.denylist import enforce_action
+
+        _deny = enforce_action(job.provider, config, ctx)
+        if _deny.blocked:
+            job.last_status = "error"
+            job.last_error = f"blocked by guardrails denylist: {_deny.reason}"
+            job.last_outcome = "skip"
+            self._maybe_autopause(job)
+            return None
+
         self._running_script_ids.add(job.id)
         logger.info(
             "Action cron '%s' dispatch via %s (dry_run=%s)",
@@ -854,16 +867,83 @@ class GatewayOrchestrator:
                 job.consecutive_failures,
             )
 
+    def _day_budget_exceeded(self, *, context: str) -> bool:
+        """True when the day-scope guardrail spend ceiling is already hit.
+
+        Used as a pre-dispatch gate for unattended LLM work (cron agent fires).
+        On the transition into exceeded, emits ONE needs-input notification so the
+        user learns their automation is paused for the day without a per-fire spam.
+        Fail-open (returns False) on any error — a broken budget read must never
+        wedge unattended work; the meter + breaker remain the hard controls.
+        """
+        try:
+            from personalclaw.guardrails.budgets import (
+                BudgetVerdict,
+                budget_from_config,
+                get_meter,
+            )
+
+            budget = budget_from_config()
+            if budget.is_unlimited:
+                return False
+            verdict, reason = get_meter().check_day(budget)
+            if verdict is not BudgetVerdict.EXCEEDED:
+                # Re-arm the one-shot notification: once the day rolls over (or the
+                # user raises the budget) and we're back under the ceiling, the next
+                # exceeded window notifies again.
+                self._budget_notified = False
+                return False
+            # One-shot notification per exceeded window (de-duped by the flag).
+            if not getattr(self, "_budget_notified", False):
+                self._budget_notified = True
+                if self.dashboard_state is not None:
+                    try:
+                        self.dashboard_state.notify(
+                            "warning",
+                            "Daily automation budget reached",
+                            f"{context} was skipped — {reason}. Unattended runs resume "
+                            f"tomorrow, or raise the budget in Settings → Guardrails.",
+                        )
+                    except Exception:
+                        logger.debug("budget notify failed", exc_info=True)
+            logger.info("%s skipped: %s", context, reason)
+            return True
+        except Exception:
+            logger.debug("day-budget check failed (fail-open)", exc_info=True)
+            return False
+
     async def _init_cron(self) -> None:
         """Initialize and start the cron service."""
 
         async def _cron_callback(job: ScheduleJob) -> str | None:
+            # ── Incident kill switch (AUTONOMY-GUARDRAILS §1.3) ──
+            # During an incident ALL unattended fires are suspended (interactive chat
+            # is untouched — that's a separate path). Checked first, before any
+            # action dispatch or session build.
+            from personalclaw.guardrails.incident import incident_active
+
+            if incident_active():
+                job.last_outcome = "skip"
+                job.last_result = "[incident] skipped — incident mode active"
+                logger.info("Cron '%s' skipped: incident mode active", job.name)
+                return None
+
             # ── Non-agent actions (no LLM, no ACP turn) ──
             # Every provider except invoke-agent dispatches through the action
             # registry and returns. This branch comes first so deterministic
             # bash/run-script actions never build a session.
             if job.provider and job.provider != "invoke-agent":
                 return await self._run_action_job(job)
+
+            # ── Day-budget guard (AUTONOMY-GUARDRAILS §1.1) ──
+            # An agent cron fire is unattended LLM work. If the day-scope spend
+            # ceiling is already exhausted, skip the fire + notify once (the job
+            # stays enabled and resumes automatically when the budget resets next
+            # day). Fail-open — a broken budget read must never wedge the cron loop.
+            if self._day_budget_exceeded(context=f"cron '{job.name}'"):
+                job.last_outcome = "skip"
+                job.last_result = "[budget] skipped — day spend ceiling reached"
+                return None
 
             # helper picks stable vs ephemeral session key and
             # decides whether to prepend last_result, based on job.persistent_session.

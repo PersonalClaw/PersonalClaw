@@ -291,8 +291,15 @@ class InboxService:
             )
             or ""
         )
+        from personalclaw.guardrails.failure import OutputContractError
+
         try:
-            raw = await one_shot_completion(prompt, use_case="background")
+            # output_type=dict adds one targeted-retry attempt (§2.4). A parse miss
+            # that survives the retry still safe-defaults to needs_reply/needs_review
+            # (the error carries the retry text) — never a silent drop.
+            raw = await one_shot_completion(prompt, use_case="background", output_type=dict)
+        except OutputContractError as exc:
+            raw = exc.raw
         except Exception:
             logger.warning("inbox classify failed for %s", item_id, exc_info=True)
             return None

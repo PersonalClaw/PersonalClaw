@@ -164,6 +164,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/inbox/{id}/draft` — generate draft reply on demand.
 - `POST /api/inbox/{id}/favorite` — {favorited: bool} — set the favorite flag + record a
 - `POST /api/inbox/{id}/open` — record that the user opened/read this item (a moderate
+- `GET /api/incident` — current state; POST /api/incident — activate.
+- `POST /api/incident` — current state; POST /api/incident — activate.
+- `POST /api/incident/resume` — turn incident mode OFF.
 - `POST /api/knowledge/embedding/generate` — - embed all unembedded items (or re-embed all).
 - `GET /api/knowledge/embedding/status` — - embedding config and progress.
 - `GET /api/knowledge/entities` — _(no summary)_
@@ -300,6 +303,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/models/embedding/reindex` — live + recently-finished jobs.
 - `POST /api/models/embedding/reindex` — start a re-index of all embeddings.
 - `GET /api/models/embedding/reindex/{id}/stream` — per-job progress SSE.
+- `GET /api/models/health` — derived per-provider health (breaker state, latency
 - `GET /api/models/local/{provider}/search` — search a searchable provider's
 - `DELETE /api/models/local/{provider}/{model}` — delete a downloaded local model.
 - `DELETE /api/notifications` — delete a single notification by timestamp.

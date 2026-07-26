@@ -36,6 +36,11 @@ class CycleVerdict:
     marginal_value: float = 0.0  # 0-5: how much THIS cycle advanced beyond prior cycles
     quality_score: float = 0.0  # 0-5: absolute quality of the work (ratchet guardrail)
     regressed: bool = False
+    # A bounded chain-of-thought written BEFORE the verdict fields (AUTONOMY-
+    # GUARDRAILS §2.4): a structured-output constraint must not suppress the
+    # judge's reasoning, which is exactly the value of a third-party assessor.
+    # Optional so an older/blank response still parses.
+    reasoning: str = ""
     # P4 observability: whether an adversarial skeptic cross-checked this (high-stakes)
     # verdict, and the calibrated returns-band the exhaustion check used this cycle.
     # Both optional — absent/False on ordinary cycles — so the cockpit can show "this
@@ -51,6 +56,8 @@ class CycleVerdict:
             "quality_score": self.quality_score,
             "regressed": self.regressed,
         }
+        if self.reasoning:
+            d["reasoning"] = self.reasoning
         if self.adversarial:
             d["adversarial"] = True
         if self.band_used is not None:
@@ -419,4 +426,5 @@ def _parse_verdict(raw: str) -> CycleVerdict | None:
         marginal_value=_clamp(float(data.get("marginal_value", 0) or 0)),
         quality_score=_clamp(float(data.get("quality_score", 0) or 0)),
         regressed=bool(data.get("regressed") is True),
+        reasoning=str(data.get("reasoning", "")).strip()[:1000],
     )

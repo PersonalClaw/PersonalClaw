@@ -179,6 +179,14 @@ class _ManagerBackedLocalProvider(LocalModelProvider):
             return False
 
     async def delete_model(self, model_name: str) -> bool:
+        # DISABLE_LIVE_WRITES (§1.4): deleting a downloaded model is a live,
+        # hard-to-reverse write — refuse (loud, typed) when writes are disabled.
+        # This is the exact bug class §1.4 closes: a destructive test with no
+        # models-dir monkeypatch deleting the user's real bound model.
+        from personalclaw.guardrails.writes import LiveWriteDisabled, live_writes_disabled
+
+        if live_writes_disabled():
+            raise LiveWriteDisabled(f"delete_model {self._name}/{model_name}")
         try:
             await self._mgr.delete_model(model_name)
             return True

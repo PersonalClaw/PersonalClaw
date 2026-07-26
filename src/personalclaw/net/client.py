@@ -123,6 +123,22 @@ async def fetch(
     guard without real DNS."""
     import aiohttp
 
+    # DISABLE_LIVE_WRITES (§1.4): refuse a non-GET/HEAD (write) method to a
+    # non-loopback host when live writes are disabled. A loopback target is the
+    # local gateway itself (not an outward write), so it is exempt. Typed refusal —
+    # never a silent no-op — so a test asserting a write fails loudly.
+    if method.upper() not in ("GET", "HEAD"):
+        from personalclaw.guardrails.writes import live_writes_disabled
+
+        if live_writes_disabled():
+            host = (urlparse(url).hostname or "").lower()
+            _loopback_hosts = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+            is_loopback = host in _loopback_hosts or host.endswith(".localhost")
+            if not is_loopback:
+                from personalclaw.guardrails.writes import LiveWriteDisabled
+
+                raise LiveWriteDisabled(f"{method} {url}")
+
     guard_kw = {"resolver": resolver} if resolver is not None else {}
     decision = evaluate(url, policy, **guard_kw)
     if not decision.allow:

@@ -74,6 +74,21 @@ export interface ThemeWrite {
 }
 // Live channel runtime: connection state + health (distinct from the Providers
 // enable/config surface — this is whether the transport is actually connected now).
+export interface ProviderHealth {
+  name: string
+  breaker_state: 'closed' | 'open' | 'half_open'
+  consecutive_failures: number
+  calls: number
+  passed: number
+  failed: number
+  pass_rate: number | null
+  p50_ms: number
+  p90_ms: number
+  p99_ms: number
+  failure_modes: Record<string, number>
+  degraded: boolean
+}
+
 export interface ChannelHealth { state: string; detail?: string }
 export interface ChannelRuntime {
   name: string; display_name: string; connected: boolean
@@ -1090,6 +1105,14 @@ export const api = {
   // single-field PATCH (allowlisted dotted paths — see _EDITABLE_CONFIG).
   personalclawConfig: () => get<Record<string, any>>('/api/config/personalclaw'),
   patchConfig: (path: string, value: unknown) => patch<Record<string, any>>('/api/config/personalclaw', { path, value }),
+
+  // ── Guardrails: incident kill switch + derived provider health (§1.3, §2.5) ──
+  incident: () => get<{ active: boolean; reason: string; started_at: string }>('/api/incident'),
+  incidentOn: (reason: string) =>
+    post<{ active: boolean; reason: string; started_at: string }>('/api/incident', { reason }),
+  incidentResume: () => post<{ active: boolean }>('/api/incident/resume', { confirm: true }),
+  modelsHealth: () =>
+    get<{ providers: ProviderHealth[]; generated_from: number }>('/api/models/health'),
 
   // ── Memory Studio: health, observability, deep recall, promotion, lessons ──
   memoryGraph: () => get<MemoryGraphData>('/api/memory/graph'),
