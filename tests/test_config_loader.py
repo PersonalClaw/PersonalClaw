@@ -45,23 +45,22 @@ _ENUM_FIELDS: list[tuple[str, str, list[str]]] = [
     ("agent", "log_level", ["DEBUG", "INFO", "WARNING", "ERROR"]),
 ]
 
-# Top-level keys recognised by the schema
-_KNOWN_TOP_KEYS = {
-    "agent",
-    "session",
-    "memory",
-    "slack",
-    "dashboard",
-    "hooks",
-    "agents",
-    "default_agent",
-    "memory_stores",
-    "auto_update",
-    # direct-read top-level sections the loader allowlists (not AppConfig fields) —
-    # the unrecognized-keys property must NOT generate these (they don't warn).
-    "providers",
-    "meta",
-}
+# Top-level keys the loader recognises. Derived from the SAME authoritative sources the
+# loader uses (`_detect_unrecognized_keys`): the SCHEMA_REGISTRY top-level paths (generated
+# from the AppConfig dataclass) plus the direct-read allowlist. A hand-maintained copy of
+# this set drifted — it omitted real sections like `learning`/`legibility`/`loops`, so the
+# unrecognized-keys property test spuriously expected an "unrecognized" warning for a key
+# the loader actually knows. Deriving it keeps the two in lockstep forever.
+try:
+    from personalclaw.config.schema import SCHEMA_REGISTRY as _SCHEMA_REGISTRY
+
+    _SCHEMA_TOP_KEYS = {e.path for e in _SCHEMA_REGISTRY if "." not in e.path and e.path != "*"}
+except ImportError:  # jsonschema-free env: the property test that uses this is skipped anyway
+    _SCHEMA_TOP_KEYS = set()
+# Direct-read sections the loader allowlists (not AppConfig fields) — must match
+# loader._DIRECT_READ_TOP_KEYS. The unrecognized-keys property must NOT generate these.
+_DIRECT_READ_TOP_KEYS = {"providers", "meta", "slack"}
+_KNOWN_TOP_KEYS = _SCHEMA_TOP_KEYS | _DIRECT_READ_TOP_KEYS
 
 # Skip marker for tests that require jsonschema validation
 _requires_jsonschema = pytest.mark.skipif(
