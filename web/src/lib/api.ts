@@ -115,6 +115,19 @@ export interface DoctorReport {
   generated_at: number
 }
 
+// No-model degraded mode (PLATFORM-RESILIENCE §5).
+export interface DegradedSurface {
+  surface: string
+  available: boolean
+  floor: string
+  backlog: number
+  use_cases: string[]
+}
+export interface DegradedReport {
+  surfaces: DegradedSurface[]
+  degraded: string[]
+}
+
 export interface ChannelHealth { state: string; detail?: string }
 export interface ChannelRuntime {
   name: string; display_name: string; connected: boolean
@@ -1146,6 +1159,8 @@ export const api = {
     get<{ capability: string; ok: boolean; probes: DoctorProbe[]; unknown?: boolean }>(
       `/api/doctor/${encodeURIComponent(capability)}`,
     ),
+  // ── No-model degraded mode (PLATFORM-RESILIENCE §5) ──
+  degraded: () => get<DegradedReport>('/api/resilience/degraded'),
 
   // ── Memory Studio: health, observability, deep recall, promotion, lessons ──
   memoryGraph: () => get<MemoryGraphData>('/api/memory/graph'),

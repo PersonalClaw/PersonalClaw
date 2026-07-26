@@ -374,6 +374,8 @@ async def start_dashboard(
     # Doctor — tiered read-only health probes (PLATFORM-RESILIENCE §1)
     app.router.add_get("/api/doctor", handlers.api_doctor)
     app.router.add_get("/api/doctor/{capability}", handlers.api_doctor_capability)
+    # No-model degraded-mode contract (PLATFORM-RESILIENCE §5)
+    app.router.add_get("/api/resilience/degraded", handlers.api_degraded)
     # Skills marketplace
     from personalclaw.dashboard.handlers.skills import (
         api_ephemeral_skill_discard,

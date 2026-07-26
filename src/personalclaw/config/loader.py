@@ -282,6 +282,29 @@ def _meta(label: str, help: str, **kwargs: object) -> dict:
     return {"label": label, "help": help, **kwargs}
 
 
+# Guard-flag spellings that DISABLE a guard; anything else (missing/unknown/typo)
+# stays ENABLED. Mirrors ``guardrails.flags.guard_flag`` but is defined locally to
+# keep the config loader free of a guardrails import (avoids an import cycle).
+_GUARD_FALSE = frozenset({"0", "false", "no", "off", "disable", "disabled", "n", "f"})
+
+
+def _guard_flag(value: object) -> bool:
+    """Parse a guard-class flag fail-safe: missing/unknown ⇒ ``True`` (enabled).
+
+    Only an explicit bool ``False``, ``0``, or a known falsy token disables. See the
+    §5 fail-safe tenet — a guard's ambiguity must fail ON.
+    """
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() not in _GUARD_FALSE
+    return True
+
+
 _BOT_NAME_MAX = 50
 _BOT_NAME_RE = _re.compile(r"[^a-zA-Z0-9 _\-.]")
 
@@ -1158,6 +1181,41 @@ class GuardrailsConfig:
 
 
 @dataclass
+class ResilienceConfig:
+    """Platform-resilience knobs (PLATFORM-RESILIENCE §7).
+
+    Two guard-class switches so far: the Doctor health surface and the no-model
+    degraded-mode indicator. Both are **guard-class** — a missing or unknown value
+    parses as ENABLED (fail-safe, §5 tenet): a config typo must not silently hide the
+    Doctor or the degraded chip, which are the surfaces that make a degraded system
+    legible. Later sessions add the remediation-engine (target-score / max-cost / idle
+    cadence) and mid-turn-policy fields.
+    """
+
+    doctor_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Doctor",
+            "Show the Doctor health surface (Settings → Doctor + GET /api/doctor). "
+            "Guard-class: a missing/unknown value keeps it ON.",
+            guard_class=True,
+            safe_values=[True],
+        ),
+    )
+    degraded_indicator: bool = field(
+        default=True,
+        metadata=_meta(
+            "Degraded-Mode Indicator",
+            "Show the no-model degraded-mode chip in the shell (and GET "
+            "/api/resilience/degraded) when a model-dependent surface is running on its "
+            "LLM-free floor. Guard-class: a missing/unknown value keeps it ON.",
+            guard_class=True,
+            safe_values=[True],
+        ),
+    )
+
+
+@dataclass
 class SecurityConfig:
     """Security controls for the agent's shell access.
 
@@ -1603,6 +1661,10 @@ class AppConfig:
         default_factory=GuardrailsConfig,
         metadata=_meta("Guardrails", "Autonomy safety floor — budgets, breaker, scan."),
     )
+    resilience: ResilienceConfig = field(
+        default_factory=ResilienceConfig,
+        metadata=_meta("Resilience", "Doctor health surface + no-model degraded indicator."),
+    )
     inbox: InboxConfig = field(
         default_factory=InboxConfig,
         metadata=_meta("Inbox", "Reads messages, drafts replies."),
@@ -1738,6 +1800,9 @@ class AppConfig:
         guardrails_data = data.get("guardrails", {})
         if not isinstance(guardrails_data, dict):
             guardrails_data = {}
+        resilience_data = data.get("resilience", {})
+        if not isinstance(resilience_data, dict):
+            resilience_data = {}
         budgets_data = guardrails_data.get("budgets", {})
         if not isinstance(budgets_data, dict):
             budgets_data = {}
@@ -1992,6 +2057,11 @@ class AppConfig:
                     else "redact"
                 ),
             ),
+            resilience=ResilienceConfig(
+                # Guard-class (§5): parse fail-safe — missing/unknown ⇒ enabled.
+                doctor_enabled=_guard_flag(resilience_data.get("doctor_enabled")),
+                degraded_indicator=_guard_flag(resilience_data.get("degraded_indicator")),
+            ),
             observe_max_messages=max(1, int(data.get("observe_max_messages", 200))),
             observe_ttl_hours=max(0.0, float(data.get("observe_ttl_hours", 168.0))),
         )
@@ -2143,6 +2213,7 @@ class AppConfig:
             "learning": asdict(self.learning),
             "security": asdict(self.security),
             "guardrails": asdict(self.guardrails),
+            "resilience": asdict(self.resilience),
             "timezone": self.timezone,
             "auto_update": self.auto_update,
             "snapshot_dir": self.snapshot_dir,

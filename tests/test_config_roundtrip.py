@@ -83,6 +83,7 @@ _SECTIONS = [
     "learning",
     "security",
     "guardrails",
+    "resilience",
 ]
 
 # Values for fields the generic flip/append rules can't produce: enum members,

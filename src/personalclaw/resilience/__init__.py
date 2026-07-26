@@ -13,12 +13,26 @@ Session 1 (this slice) ships the Doctor core:
   never core failure" doctrine. Probes are read-only by contract: an exception
   becomes an ``ok=False`` result, never a 500.
 
-Later sessions add confirm-gated auto-fixes, the trust/debug simulators, the
-platform-wide no-model degraded contract, mid-turn message handling, and the
-health-scored self-remediation engine (see
+Session 2 adds the platform-wide no-model degraded contract:
+
+* :mod:`personalclaw.resilience.degraded` — a ``DegradedContract`` registry (one per
+  model-dependent surface, declaring its LLM-free floor + a read-only backlog probe),
+  ``evaluate()`` deriving each surface's availability from ``can_resolve_use_case``,
+  and down/recovery transition notifications.
+
+Later sessions add confirm-gated auto-fixes, the trust/debug simulators, mid-turn
+message handling, and the health-scored self-remediation engine (see
 ``docs/roadmap/plans/PLATFORM-RESILIENCE.md``).
 """
 
+from personalclaw.resilience.degraded import (
+    DegradedContract,
+    all_contracts,
+    degraded_surfaces,
+    evaluate,
+    get_contract,
+    register_contract,
+)
 from personalclaw.resilience.doctor import (
     Probe,
     ProbeResult,
@@ -37,4 +51,10 @@ __all__ = [
     "register_probe",
     "run_capability",
     "run_doctor",
+    "DegradedContract",
+    "all_contracts",
+    "degraded_surfaces",
+    "evaluate",
+    "get_contract",
+    "register_contract",
 ]

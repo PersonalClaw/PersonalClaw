@@ -454,6 +454,8 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "guardrails.breaker.failure_threshold": {"type": "int", "min": 1, "max": 100},
     "guardrails.breaker.recovery_secs": {"type": "float", "min": 0.0, "max": 3600.0},
     "guardrails.scan_mode": {"type": "enum", "values": ["warn", "redact", "block"]},
+    "resilience.doctor_enabled": {"type": "bool"},
+    "resilience.degraded_indicator": {"type": "bool"},
     "tools.projection_rules": {"type": "projection_rules"},
     "agent.orchestrator_skill": {"type": "bool"},
     "agent.acp_concurrent_sessions": {"type": "bool"},

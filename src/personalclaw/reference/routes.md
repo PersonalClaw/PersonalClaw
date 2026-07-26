@@ -341,6 +341,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/prompts/{name}/launch` — {variables} — instantiate a RUNNABLE template
 - `POST /api/prompts/{name}/render` — render a prompt template with the
 - `GET /api/recent-projects` — list recently used project directories.
+- `GET /api/resilience/degraded` — per-surface no-model floor + availability.
 - `POST /api/reveal` — reveal a file/folder in Finder or open with default app.
 - `POST /api/screenshot` — capture screen region and return file path.
 - `GET /api/search/active` — bound provider name per use-case.

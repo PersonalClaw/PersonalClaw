@@ -1,6 +1,6 @@
 # Plan: Platform Resilience — Doctor, No-Model Degraded Mode, Mid-Turn Message Handling
 
-**Status:** IN PROGRESS — Session 1 (Doctor core, §1) DONE 2026-07-25; Sessions 2-5 (degraded contract, mid-turn, fixes+simulators+crash-capture, remediation engine) remain. Created 2026-07-13 from research synthesis, promoted from backlog.
+**Status:** IN PROGRESS — Session 1 (Doctor core, §1) DONE 2026-07-25; Session 2 (no-model degraded contract, §5) DONE 2026-07-25; Sessions 3-5 (mid-turn, fixes+simulators+crash-capture, remediation engine) remain. Created 2026-07-13 from research synthesis, promoted from backlog.
 **Created:** 2026-07-13
 **Wave:** split — §1-§3 (doctor probes + read-only surface) and §5 (degraded contract) are Wave 0/1 invariants (every existing surface touches models; offline behavior must be designed before the engine multiplies unattended runs); §6 (mid-turn handling) is Wave 1, independent; §4 (remediation engine) is Wave 3 — it consumes AUTONOMY-GUARDRAILS budgets (SpendMeter, §1.1 there) and should land after them.
 **Depends on:** nothing for §1-§3/§5/§6 (Wave-0-compatible). §4 depends on AUTONOMY-GUARDRAILS (SpendMeter + model-call audit for cost caps) and prefers AUTOMATION-SUBSTRATE (runs as an adaptive-cadence trigger once triggers.json exists; hangs off the heartbeat until then).
@@ -392,3 +392,53 @@ Sessions 1-4 each ship independently; Session 1 alone is a Wave-0 win (the symli
   aiohttp `{capability}` path param can't match an embedded slash, so `GET /api/doctor/serving/fs`
   was unreachable. The plan's "serving/fs" is treated as a display label (the FE prettifies the
   slug); every capability is now addressable via the per-capability route. Validated live.
+
+- [2026-07-25][S2] DONE: No-model degraded contract (§5). New `resilience/degraded.py` —
+  `DegradedContract{surface, use_cases, floor, backlog_probe, drain}` frozen dataclass +
+  a module registry (`register_contract`/`all_contracts`/`get_contract`), `evaluate()`
+  deriving each surface's availability from `all(can_resolve_use_case(uc))` (cheap,
+  no-instantiate) with read-only fail-safe backlog probes, and one-notification-per-
+  transition (silent baseline on first sight → `warning` on down → `info` on recovery,
+  via the live `DashboardState.notify` gate). Seven contracts registered for the floors
+  that EXIST today — chat (honestly unavailable), inbox_enrichment (real backlog =
+  un-classified pending items), memory_extraction, knowledge_ingest, search_ranking (real
+  backlog = `count_items_missing_embedding`), transcription, assistant_reasoning
+  (catch-all for the reasoning axis behind `one_shot_completion`). `GET /api/resilience/
+  degraded` (handler folded into `dashboard/handlers/doctor.py`). `ResilienceConfig` wired
+  5-point (dataclass + `_meta`, `AppConfig` field, `load()` via a local fail-safe
+  `_guard_flag`, `to_dict()`, `_EDITABLE_CONFIG`) with two guard-class switches
+  (`doctor_enabled`, `degraded_indicator`, default True); the S1 Doctor endpoints are now
+  gated on `doctor_enabled`. FE: a self-polling shell chip `web/src/ui/DegradedChip.tsx`
+  (+ `.doc.ts`) mounted in `ShellCornerRight` beside SystemWidget — warn-toned pill +
+  popover (surface / floor / backlog); `api.degraded()` + `DegradedReport`/`DegradedSurface`
+  types. Tests: `test_resilience_degraded.py` (14 — registry, availability-all-must-resolve,
+  probe-fault-fails-available, backlog-fail-safe, transition warning→info, silent baseline)
+  + `test_resilience_degraded_lint.py` (3 — the honesty ratchet: every `one_shot_completion`
+  call-site file maps to a registered contract surface, no stale/unmapped entries) +
+  `resilience` added to `test_config_roundtrip._SECTIONS`. DoD green: `make lint`,
+  `make test` (7925 passed / 0 failed), web typecheck + vitest 231 (ratchet held —
+  DegradedChip lives in exempt `ui/`, documented per the ui-docs drift guard) + build.
+  Reference regenerated. Clean break under the pre-1.0 banner — the only durable state is
+  two config booleans (round-trip-tested); the degraded registry is derived/recomputable,
+  never persisted (§7). Validated live on the (binding-less) dev instance: all 7 surfaces
+  report degraded with floors, both config gates flip the surface on/off, Doctor unregressed.
+- [2026-07-25][S2] DEVIATION: §5.3 says the degraded chip rides "the same poll slice
+  DashboardLive already runs." Verified FALSE for a shell element — `DashboardLiveProvider`
+  wraps only `DashboardPage`, not the app shell, and `useDashboardLive()` throws outside it.
+  The chip instead SELF-POLLS via `useVisiblePoll(20s)`, matching the established
+  `IncidentBanner`/`SystemWidget` shell-element pattern. (A `DashboardLive` `degraded` slice
+  would still be correct for a dashboard-page widget, but the shell chip can't use it.)
+- [2026-07-25][S2] DISCOVERY (deferred to owning plans — floors that do NOT exist in code
+  today, so their contracts describe the CURRENT floor with backlog=0 rather than the plan's
+  future floor): LEARN-R19's memory-staging log, KNOW-R17's heuristic knowledge extractor,
+  and the synthesis-watcher `append_evidence` mode are all unbuilt Workflows-v2 infra. Per
+  E6 they were NOT built here — memory_extraction/knowledge_ingest register their *real*
+  present-day skip-and-continue floors, the synthesis surface is not registered at all
+  (nothing to declare against), and every contract's `drain` is `None` (drains are §4
+  remediation-engine jobs). The lint ratchet will force each future surface to declare a
+  contract as it lands.
+- [2026-07-25][S2] DISCOVERY (plan citation drift, non-blocking): `evaluate_alert` is at
+  `inbox.py:266` (plan says :270); `can_resolve_use_case` at `provider_bridge.py:730` (plan
+  says :672); the diarization floor comment is `use_cases.py:49-52` (plan says :47);
+  `DashboardState.notify` is at `state.py:1061` (plan says ~:1027). Seams all exist; only the
+  line numbers moved.

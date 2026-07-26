@@ -12,6 +12,22 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 
 ### Added
 
+- **No-model degraded mode: the assistant stays useful, and honest, with no model bound.**
+  Every model-dependent surface now declares its **LLM-free floor** explicitly, so an
+  offline laptop (dead ollama, wiped cache, no API key) degrades by design instead of
+  error-walling: search drops from hybrid to keyword (FTS) + graph + recency ranking;
+  the inbox keeps raising keyword/name-mention alerts (only auto-classify/draft/digest
+  pause); knowledge still captures documents (only entity/insight extraction is skipped,
+  marking the item partial); memory keeps its deterministic preference-facet capture;
+  speech features turn visibly off rather than erroring; and chat says so plainly rather
+  than faking a reply. A compact **degraded chip** appears in the shell (with a popover
+  listing each degraded surface, its floor, and any pending-enrichment backlog) whenever a
+  surface is running on its floor, and a notification fires on the transition down
+  (`warning`) and on recovery (`info`). A lint test asserts every non-interactive
+  model-call site maps to a registered contract, so a future surface can't ship without
+  declaring its floor. New `GET /api/resilience/degraded`; two guard-class config switches
+  (`resilience.doctor_enabled`, `resilience.degraded_indicator` — a missing/unknown value
+  keeps the surface visible).
 - **A Doctor tab now diagnoses every subsystem from one read-only view.** Settings →
   Doctor runs **tiered health probes** — process → socket → cheap-RPC → per-capability
   — across memory (db + faiss consistency), channels, local models (availability +

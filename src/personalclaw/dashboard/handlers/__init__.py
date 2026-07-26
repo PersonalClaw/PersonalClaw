@@ -106,8 +106,9 @@ from personalclaw.dashboard.handlers.core import (  # noqa: E402, F401
     index,
 )
 
-# ── Doctor (handlers/doctor.py) ──
+# ── Doctor + degraded mode (handlers/doctor.py) ──
 from personalclaw.dashboard.handlers.doctor import (  # noqa: E402, F401
+    api_degraded,
     api_doctor,
     api_doctor_capability,
 )
