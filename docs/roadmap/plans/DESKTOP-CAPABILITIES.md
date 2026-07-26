@@ -3,7 +3,14 @@
 **Status:** DESIGNED — deepened 2026-07-18 with code recon (initial PROPOSED 2026-07-18; owner GO: live audio + OS capabilities for the platform *and* apps via the Electron app)
 **Created:** 2026-07-18
 **Wave:** 2/3. Not launch-gating — DISTRIBUTION carries the launch; the desktop ships when it is *better* than a browser tab.
-**Depends on:** CI-RELEASE-ENGINEERING (build/signing in the pipeline), DISTRIBUTION (release artifacts + install-kind detection: the shell sets `PERSONALCLAW_INSTALL_KIND=desktop`). Coordinates with MULTIMODAL-IO (voice capture lands on this bridge; screen-context is its flagship consumer), AMBIENT-SURFACES (menu-bar companion rides the tray), INBOX-NOTIFICATIONS-UNIFICATION (native notifications as a rules target).
+**Depends on:** CI-RELEASE-ENGINEERING (build/signing in the pipeline), DISTRIBUTION (release artifacts + install-kind detection: the shell sets `PERSONALCLAW_INSTALL_KIND=desktop`). Coordinates with MULTIMODAL-IO (voice capture lands on this bridge; screen-context is its flagship consumer), AMBIENT-SURFACES (menu-bar companion rides the tray), INBOX-NOTIFICATIONS-UNIFICATION (native notifications as a rules target), **COMPANION-APPS (plan 54 — its "connect to a gateway you did not spawn: LAN or remote" mode is added here in that plan's S4/T4.1, consuming plan 54's client contract; the spawn-local default is unchanged)**.
+
+> **Rev-11 note (2026-07-26):** a code audit confirmed the desktop shell is **already Electron**
+> (`desktop/main.js`, Electron ^43) — there is **no Tauri anywhere in the repo**, so the
+> "Tauri→Electron migration" some backlog framing implied is a no-op: this plan (committed to
+> Electron, "no forked frontend, no second API") stands as-is. The real host-capability gap the
+> owner cares about — **mic/live audio capture** — is this plan's **Session 3** (unbuilt), not a
+> re-platform.
 **Scope:** complete the Electron app and make it the **OS-capability surface**: live/system audio capture, global hotkeys, native notifications, tray/menu-bar presence, consent-gated screen capture, login-item lifecycle — exposed to core and, permission-gated, to apps. **Soul guardrail:** the desktop hosts the same SPA and the same gateway — no forked frontend, no second API. OS capabilities enter through ONE typed bridge with per-capability consent mirroring the app-platform's permission voice; nothing is silently granted; **no always-on/ambient capture ships in this plan.**
 
 ---

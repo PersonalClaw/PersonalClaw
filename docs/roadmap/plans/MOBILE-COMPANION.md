@@ -3,7 +3,7 @@
 **Status:** DESIGNED — deepened 2026-07-18 with code recon (initial PROPOSED 2026-07-18; owner scope: monitor states + track ongoing tasks; investigation sharpening: **approvals are the killer feature** — approval latency caps autonomy)
 **Created:** 2026-07-18
 **Wave:** 2 (S1-3: remote-access story + PWA tier) + 3 (S4-6: wrapper + platform push). Stage gate: the PWA must prove the surface before any store app wraps it.
-**Depends on:** INBOX-NOTIFICATIONS-UNIFICATION (rules decide what reaches the phone; the `push` target activates here), CHANNEL-EXPANSION (channels are chat-on-phone; this is the *control surface*, not a chat app), EXTERNAL-ACCESS (future hardened non-VPN access — until then, **VPN-overlay only**).
+**Depends on:** INBOX-NOTIFICATIONS-UNIFICATION (rules decide what reaches the phone; the `push` target activates here), CHANNEL-EXPANSION (channels are chat-on-phone; this is the *control surface*, not a chat app), EXTERNAL-ACCESS (future hardened non-VPN access — until then, **VPN-overlay only**), **COMPANION-APPS (plan 54 — owns device sessions + unified pairing + endpoint switching; this plan consumes them, see C1/C4 reconciliation) + REMOTE-USER-AUTH (plan 53 — the durable session store device sessions live in)**.
 **Scope:** a phone surface for pending approvals, running loops (pause/nudge/stop), tasks/inbox, and notifications. **Soul guardrail:** the phone talks to the user's own gateway — **no cloud middle tier holding state or credentials**. The only permissible hosted component is an opt-in dumb push relay carrying content-free wake-up pings (item ids, never content); self-hosted push (ntfy/UnifiedPush) is the first-class path. The companion view is a phone-shaped subset — not a 20-surface dashboard shrink.
 
 ---
@@ -23,8 +23,16 @@
 
 ## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md))
 
-### C1 — Device token (EXTENDS `token_auth.py::generate_token(user_id, ttl_seconds=3600, *, app="")`, verified `:257`)
-Add a `device: str = ""` claim. **The `bind_ip` behavior (verified `:362`) is the design pivot** — T2.3 reads it first and chooses: device tokens are minted **without IP binding** (roaming phones) OR with rebind-on-mismatch. Whichever, it is the **minimal** change consistent with the model (E4 if it needs weakening an auth invariant). Default TTL 30d; SEL on mint/revoke (`log_api_access(caller="device:<name>", operation="device_token_mint|revoke", …)`). Devices registry `~/.personalclaw/entity_settings/devices.json`: `{"<device_id>": {"name","minted_at","last_seen_at","token_nonce"}}`.
+### C1 — Device token — **SUPERSEDED by COMPANION-APPS §C1/C2 (plan 54) + REMOTE-USER-AUTH §C1 (plan 53)**
+> **Rev-11 reconciliation (2026-07-26):** device sessions and pairing are now **owned once** by
+> COMPANION-APPS (the connectivity contract) on REMOTE-USER-AUTH's durable session store. A
+> "device token" is a `sessions.json` row with `device`/`issuer` set — this plan **consumes**
+> that contract instead of extending `generate_token` itself. The original design below is kept
+> for historical context; when this plan reaches execution, its device-auth tasks reference
+> plan 54 §C1/C2 rather than touching `token_auth.py`. This plan still owns the **phone UI +
+> push**, not the token/pairing mechanism.
+
+Original design (superseded): EXTENDS `token_auth.py::generate_token(user_id, ttl_seconds=3600, *, app="")` (verified `:257`) — add a `device: str = ""` claim. **The `bind_ip` behavior (verified `:362`) is the design pivot** — T2.3 reads it first and chooses: device tokens are minted **without IP binding** (roaming phones) OR with rebind-on-mismatch. Whichever, it is the **minimal** change consistent with the model (E4 if it needs weakening an auth invariant). Default TTL 30d; SEL on mint/revoke (`log_api_access(caller="device:<name>", operation="device_token_mint|revoke", …)`). Devices registry `~/.personalclaw/entity_settings/devices.json`: `{"<device_id>": {"name","minted_at","last_seen_at","token_nonce"}}`.
 
 ### C2 — Companion route API map (all EXISTING endpoints — the companion view is a client, adds no backend except push)
 
@@ -48,8 +56,13 @@ def send_push(device_id: str, payload: dict) -> None: ...        # payload = {"k
 ```
 Plan 42 rules-engine `push` target calls `send_push` with `{kind, item_id}` only — the app fetches details over the VPN link on tap. ntfy/UnifiedPush alternative: POST content-free ping to a user-configured topic URL. Config (5-point, §2.1): `mobile.push_backend: "webpush"|"ntfy"|"none"`, `mobile.ntfy_topic_url: str`.
 
-### C4 — QR pairing (wrapper tier)
-`POST /api/devices/pair/start` → `{pairing_url, code}` (code single-use, TTL 300s, SEL-logged); app scans → `POST /api/devices/pair/complete {code}` → device token (C1). Errors use §2.2 envelope.
+### C4 — QR pairing (wrapper tier) — **SUPERSEDED by COMPANION-APPS §C2 (plan 54)**
+> **Rev-11 reconciliation (2026-07-26):** the `POST /api/devices/pair/start|complete` routes are
+> now owned by COMPANION-APPS §C2 (unified pairing). This plan's QR screen **renders** those
+> routes; it does not define them. The shape below matches the owner contract and is retained
+> for reference.
+
+`POST /api/devices/pair/start` → `{pairing_url, code}` (code single-use, TTL 300s, SEL-logged); app scans → `POST /api/devices/pair/complete {code}` → device session (COMPANION-APPS §C1). Errors use §2.2 envelope.
 
 ### Integration points
 - **Calls:** `generate_token`/token registry (§C1), the existing approval/loop/inbox/notification endpoints (§C2), plan-42 rules engine (`push` target registration), `save_credential` (VAPID), `sel()`.

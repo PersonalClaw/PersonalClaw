@@ -2,8 +2,9 @@
 
 Active and planned feature work. Each entry links to a detailed plan document in `plans/`.
 
-**Last updated:** 2026-07-19 · **rev 10** — 52 plans / 6 pillars / ~285 sessions.
+**Last updated:** 2026-07-26 · **rev 11** — 54 plans / 6 pillars / ~294 sessions.
 
+- **rev 11** — two cross-cutting infrastructure plans added from the owner's remote-access ask: **53 Remote-User-Auth** (Pillar B — human login that mints the existing session token for internet-exposed self-hosting, on a durable-session foundation; the prerequisite for remote companion clients) and **54 Companion-Apps** (Pillar D — the connectivity contract native clients use to reach a local-or-remote gateway: discovery, unified pairing, endpoint switching, auth; MOBILE-COMPANION + DESKTOP-CAPABILITIES consume it). Note verified in the same pass: the desktop shell is **already Electron** — there is no Tauri anywhere, so no migration plan was created; the mic/audio gap is DESKTOP-CAPABILITIES S3 (unbuilt), not a re-platform. v0.1.2 shipped Design-System-Consistency, Platform-Legibility, Autonomy-Guardrails, and Platform-Resilience.
 - **rev 10** — Pillar F "Product Depth & Craft" added (48 App-Platform-Evolution, 49 Knowledge-Library, 50 Session-Management, 51 Design-System-Consistency, 52 Fluid-Motion), from the owner's product-depth ask.
 - **rev 9** — pre-launch alignment: 17 plans (31-47) added from the pre-launch investigation & owner review under new Pillar E (Launch, Reach & Ecosystem) + additions to B/C/D; PUBLICATION amended (repos under the `PersonalClaw` GitHub org, personalclaw.dev primary domain, force-push/SOURCE_REV retired → feature-branches-to-`main`); EXTERNAL-ACCESS §3 read-only MCP extracted to plan 41. Deepened plans carry Contracts & Interfaces + executor task tables; see the three companion docs below.
 - **rev 4-8** (earlier) — ACP Agent Parity (4), TEAM-SHARED-ENTITIES (5), Multi-Tenant rescope (6), grok-build learnings folded into CONTEXT-ECONOMY/EXTERNAL-ACCESS/PLATFORM-RESILIENCE (7), HARNESS-CRAFT (8).
@@ -12,7 +13,7 @@ Active and planned feature work. Each entry links to a detailed plan document in
 
 ## Program Structure
 
-52 plans across 6 conceptual pillars. Plans interleave via execution waves; the engine carries embedded acceptance criteria from downstream plans. The research corpus lives at `docs/research/learnings/` (14 source-agnostic topic files, ~320 mechanisms) — feed a topic file to any implementation session for mechanism-level grounding.
+54 plans across 6 conceptual pillars. Plans interleave via execution waves; the engine carries embedded acceptance criteria from downstream plans. The research corpus lives at `docs/research/learnings/` (14 source-agnostic topic files, ~320 mechanisms) — feed a topic file to any implementation session for mechanism-level grounding.
 
 **Every implementation session executes under [plans/EXECUTION-PROTOCOL.md](plans/EXECUTION-PROTOCOL.md)** — the standing ground rules (scope discipline, definition of done, validation-as-a-user, deviation ledger, escalation triggers) that let plan tasks be delegated to any session, including smaller models, without eroding standards. Deepened plans carry executor-ready task tables (ID / task / files / done-when); a session that can't tell what "done" means for a task treats that as a defect in the task, not license to improvise.
 
@@ -63,6 +64,7 @@ Cross-cutting floors everything else depends on.
 | 31 | Lifecycle Doctrine & API Stability — Post-PoC Change Discipline | [LIFECYCLE-DOCTRINE](plans/LIFECYCLE-DOCTRINE.md) | ~3 | 0 (first) |
 | 32 | Provider-Boundary Completion — Retire the Slack Residue | [PROVIDER-BOUNDARY-COMPLETION](plans/PROVIDER-BOUNDARY-COMPLETION.md) | ~2 | 0 |
 | 47 | Security Hardening — Keychain, Signed Manifests, Gate Fuzzing, SEL Surface | [SECURITY-HARDENING](plans/SECURITY-HARDENING.md) | ~4 | 4 |
+| 53 | Remote User Authentication — Log In From the Internet Without Being Home | [REMOTE-USER-AUTH](plans/REMOTE-USER-AUTH.md) | ~4 | 1 |
 
 ### Pillar C — Intelligence & Memory
 
@@ -99,6 +101,7 @@ What the user sees and how the platform interoperates.
 | 43 | Onboarding UX — Guided First Run + Progressive Disclosure | [ONBOARDING-UX](plans/ONBOARDING-UX.md) | ~4 | 1+2 |
 | 44 | Mobile Companion — Monitor + Approve From the Phone | [MOBILE-COMPANION](plans/MOBILE-COMPANION.md) | ~6 | 2+3 |
 | 45 | Desktop Capabilities — Electron as the OS-Capability Surface | [DESKTOP-CAPABILITIES](plans/DESKTOP-CAPABILITIES.md) | ~4 | 2/3 |
+| 54 | Companion Apps — Native Clients Over a Local or Remote Gateway | [COMPANION-APPS](plans/COMPANION-APPS.md) | ~4 | 2 |
 
 ### Pillar E — Launch, Reach & Ecosystem (new in rev 9)
 
@@ -126,7 +129,7 @@ The product getting richer and more polished: platform/app evolution, knowledge-
 | 51 | Design-System Consistency — One Coherent Surface | [DESIGN-SYSTEM-CONSISTENCY](plans/DESIGN-SYSTEM-CONSISTENCY.md) | ~3 | 2 |
 | 52 | Fluid Motion — Liquid Morphing & Motion Physics | [FLUID-MOTION](plans/FLUID-MOTION.md) | ~3 | 3 |
 
-**Total estimated effort:** ~285 sessions across 52 plans.
+**Total estimated effort:** ~294 sessions across 54 plans.
 
 ---
 
@@ -159,6 +162,7 @@ The product getting richer and more polished: platform/app evolution, knowledge-
 **Wave 1 — The engine + first reach track (engine unchanged; reach runs alongside):**
 - WORKFLOWS-V2 Slices 0-5 (data model + frontier scheduler, engine-owned completion, effect ledger, mutations + checkpoints/fork, chat tools + HTTP/FE + live widget; Self-Verification replay gates the journal format)
 - Channel Expansion (Sessions 1-3: sender-trust core seam, then Telegram)
+- **Remote User Authentication (plan 53: durable session foundation → owner credential + CLI/deploy bootstrap → login front door → public-exposure hardening — the prerequisite for remote companion clients)**
 - Inbox/Notifications Unification (Sessions 1-3: kind registry + rules engine, inbox as the attention store, settings unification) — first full LIFECYCLE-DOCTRINE exercise
 - Learning Visibility (Sessions 1-2: end-to-end visible slice, "What I learned" surfaces)
 - Onboarding UX (Sessions 1-2: guided first run, progressive disclosure)
@@ -177,6 +181,7 @@ The product getting richer and more polished: platform/app evolution, knowledge-
 - Channel Expansion (Sessions 4-8: Discord, email, channel-author ramp)
 - Inbox/Notifications Unification (Sessions 4-5: proposal-surface fold-in, digest + cleanup)
 - Onboarding UX (Sessions 3-4: approval-brief polish, stranger validation)
+- **Companion Apps (plan 54: connectivity contract + Devices registry, LAN discovery, endpoint switching, native-wrapper coordination — MOBILE-COMPANION + DESKTOP-CAPABILITIES consume it; after Remote-User-Auth S1)**
 - Mobile Companion (Sessions 1-3: remote-access story, PWA companion view, web push)
 - Desktop Capabilities (Sessions 1-3: rebuild + signing, capability bridge, live audio)
 - Ecosystem Tooling (Sessions 1-2: scaffold + template, registry data tier)
@@ -209,10 +214,10 @@ The product getting richer and more polished: platform/app evolution, knowledge-
 Wave 0: DOCTRINE→ PUBLICATION  CI/RELEASE  DISTRIBUTION  SEC-LEGIBILITY  DISCOVER(1-3)  OSS-OPS  BOUNDARY-DONE  MCP-RO(1)
         GUARDRAILS  LMM-V2  LEGIBILITY(1-3)  RESILIENCE(1-3)  CONTEXT-ECON  MEM-GRAPH(1-3)  DURABILITY(1-3)  SELF-VERIF(1-2)  LEARNING(1-4)  ACP-PARITY  MT-READY(1-3)
                     │
-Wave 1: ════ WORKFLOWS-V2 Slices 0-5 ════  ∥  CHANNELS(1-3)  INBOX-UNIFY(1-3)  LEARN-VIS(1-2)  ONBOARD(1-2)  ARM  DISCOVER(4-5)  MCP-RO(2)
+Wave 1: ════ WORKFLOWS-V2 Slices 0-5 ════  ∥  CHANNELS(1-3)  REMOTE-AUTH  INBOX-UNIFY(1-3)  LEARN-VIS(1-2)  ONBOARD(1-2)  ARM  DISCOVER(4-5)  MCP-RO(2)
                     │
 Wave 2: LOOPS→PLAN  KNOWLEDGE  v2-6-8⇄CONTAINERS  TASKS  WATCHED(1-5)  AMBIENT(1-3)  ISOLATION  BROWSE  QA  MULTIMODAL(1-2)  LEGIBILITY(4-5)
-        CHANNELS(4-8)  INBOX-UNIFY(4-5)  ONBOARD(3-4)  MOBILE(1-3)  DESKTOP(1-3)  ECOSYSTEM(1-2)  WINDOWS(1-2)  LEARN-VIS(3)
+        CHANNELS(4-8)  INBOX-UNIFY(4-5)  ONBOARD(3-4)  COMPANION-APPS  MOBILE(1-3)  DESKTOP(1-3)  ECOSYSTEM(1-2)  WINDOWS(1-2)  LEARN-VIS(3)
                     │
 Wave 3: AUTOMATION(1-9)  LEARNING(5-9)  WATCHED(6-9)  AMBIENT(4-6)  MEM-GRAPH(4-5)  DURABILITY(4-5)  EXT-ACCESS  ROUTING  RESILIENCE(4)  MULTIMODAL(3-5)  EVAL(1-2)  MT-READY(4-5)
         MOBILE(4-6)  DESKTOP(4)  ECOSYSTEM(3-4)  LEARN-VIS(4)
