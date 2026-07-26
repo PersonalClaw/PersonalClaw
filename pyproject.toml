@@ -195,7 +195,10 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 xfail_strict = true
-pythonpath = ["src"]
+# "src" makes `personalclaw` importable; "." makes the repo-root `harness` dev
+# package importable from tests/ (the Self-Verification spec/replay harness lives
+# beside src/, not inside the shipped wheel — see harness/README.md).
+pythonpath = ["src", "."]
 addopts = [
     "--verbose",
     "--ignore=build",

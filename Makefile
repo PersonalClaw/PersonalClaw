@@ -7,6 +7,9 @@ PYTHON  ?= python3
 VENV    ?= .venv/bin
 PKG     := src/personalclaw
 TESTS   := tests
+# The self-development harness (Self-Verification): repo-inner dev infra beside src/,
+# linted to the same bar. Not shipped in the wheel (packages.find scopes to src/).
+HARNESS := harness
 
 # Docker / Podman / Finch — the runtime is auto-detected (override with COMPOSE=...)
 COMPOSE ?= $(shell \
@@ -25,7 +28,7 @@ WEB_DIR         := web
 DESKTOP_DIR     := desktop
 PYI_BUNDLE_DIR  := dist/personalclaw-backend
 
-.PHONY: help format lint test build clean \
+.PHONY: help format lint test build clean harness-validate \
         serve serve-fresh serve-web \
         web-build backend-build pyinstaller \
         desktop desktop-dist \
@@ -40,19 +43,23 @@ help:
 
 ## format: auto-format source and tests with black + isort
 format:
-	$(PYTHON) -m black $(PKG) $(TESTS)
-	$(PYTHON) -m isort $(PKG) $(TESTS)
+	$(PYTHON) -m black $(PKG) $(TESTS) $(HARNESS)
+	$(PYTHON) -m isort $(PKG) $(TESTS) $(HARNESS)
 
 ## lint: check formatting, run flake8 and mypy
 lint:
-	$(PYTHON) -m black --check $(PKG) $(TESTS)
-	$(PYTHON) -m isort --check-only $(PKG) $(TESTS)
-	$(PYTHON) -m flake8 $(PKG) $(TESTS)
-	$(PYTHON) -m mypy $(PKG)
+	$(PYTHON) -m black --check $(PKG) $(TESTS) $(HARNESS)
+	$(PYTHON) -m isort --check-only $(PKG) $(TESTS) $(HARNESS)
+	$(PYTHON) -m flake8 $(PKG) $(TESTS) $(HARNESS)
+	$(PYTHON) -m mypy $(PKG) $(HARNESS)
 
 ## test: run pytest
 test:
 	$(PYTHON) -m pytest
+
+## harness-validate: shape-validate + reference-resolve the self-dev harness specs
+harness-validate:
+	$(PYTHON) -m harness validate
 
 ## build: build a distributable wheel + sdist
 build:

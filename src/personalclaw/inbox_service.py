@@ -35,6 +35,7 @@ import time
 from typing import TYPE_CHECKING
 
 from personalclaw import shutdown_event
+from personalclaw import trace_recorder as _trace
 from personalclaw.inbox import (
     Classification,
     Confidence,
@@ -232,6 +233,17 @@ class InboxService:
             self.inbox.add(item)
             count += 1
             reason = evaluate_alert(item, settings, operator)
+            # Dev-only event-trace tap (Self-Verification §2.1): one event per NEWLY
+            # ingested item (past the dedup/mute/self filters), keyed by channel, carrying
+            # the alert decision — so replay can assert inbox dedup + alert-once. No-op
+            # unless PERSONALCLAW_TRACE_DIR is set.
+            if _trace.is_recording():
+                _trace.record(
+                    "inbox",
+                    m.channel_id,
+                    "item_ingested",
+                    {"item_id": item_id, "alerted": bool(reason), "reason": reason or ""},
+                )
             if reason:
                 notify_inbox_alert(dash_state, item, reason)
             if dash_state is not None:

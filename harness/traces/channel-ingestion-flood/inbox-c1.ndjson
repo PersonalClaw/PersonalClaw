@@ -1,0 +1,5 @@
+{"ts": 2000.0, "stream": "inbox", "key": "c1", "type": "item_ingested", "payload": {"item_id": "c1_0", "alerted": true, "reason": "mention"}}
+{"ts": 2000.2, "stream": "inbox", "key": "c1", "type": "item_ingested", "payload": {"item_id": "c1_1", "alerted": false, "reason": ""}}
+{"ts": 2000.4, "stream": "inbox", "key": "c1", "type": "item_ingested", "payload": {"item_id": "c1_2", "alerted": false, "reason": ""}}
+{"ts": 2000.6, "stream": "inbox", "key": "c2", "type": "item_ingested", "payload": {"item_id": "c2_0", "alerted": true, "reason": "mention"}}
+{"ts": 2000.8, "stream": "inbox", "key": "c1", "type": "item_ingested", "payload": {"item_id": "c1_1", "alerted": false, "reason": ""}}

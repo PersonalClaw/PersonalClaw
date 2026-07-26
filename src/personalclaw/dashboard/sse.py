@@ -40,6 +40,7 @@ from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
 from personalclaw import shutdown_event
+from personalclaw import trace_recorder as _trace
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,11 @@ class SseRegistry:
 
     def publish(self, key: str, event: str, data: Any) -> None:
         """Publish to ``key``'s hub iff it has live subscribers (else no-op)."""
+        # Dev-only event-trace tap (Self-Verification §2.1): captures every published
+        # event regardless of live subscribers, so a headless recording sees the full
+        # stream. No-op unless PERSONALCLAW_TRACE_DIR is set (see trace_recorder).
+        if _trace.is_recording():
+            _trace.record("sse", key, event, data)
         hub = self._hubs.get(key)
         if hub is not None:
             hub.publish(event, data)
