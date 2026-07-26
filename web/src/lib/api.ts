@@ -146,6 +146,29 @@ export interface SurfacingCandidate {
   reason: string
 }
 
+// Health-scored remediation engine (PLATFORM-RESILIENCE §4).
+export interface RemediationJobRow {
+  id: string
+  status: string
+  cost: number
+  detail?: string
+  error?: string
+}
+export interface RemediationRun {
+  ts: number
+  score_before: number
+  score_after: number
+  jobs: RemediationJobRow[]
+  stopped_reason: string
+}
+export interface RemediationSnapshot {
+  score: number
+  target_score: number
+  deficits: { key: string; count: number; penalty: number; reachable: boolean }[]
+  plan: RemediationJobRow[]
+  recent_runs: RemediationRun[]
+}
+
 export interface ChannelHealth { state: string; detail?: string }
 export interface ChannelRuntime {
   name: string; display_name: string; connected: boolean
@@ -1191,6 +1214,12 @@ export const api = {
     ),
   doctorCrash: (filename: string) =>
     get<Record<string, unknown>>(`/api/doctor/crash/${encodeURIComponent(filename)}`),
+  // ── Remediation engine (PLATFORM-RESILIENCE §4) ──
+  doctorRemediation: () => get<RemediationSnapshot>('/api/doctor/remediation'),
+  doctorRemediationRun: () =>
+    post<{ score_before: number; score_after: number; jobs: RemediationJobRow[]; stopped_reason: string }>(
+      '/api/doctor/remediation/run', { confirm: true },
+    ),
 
   // ── Memory Studio: health, observability, deep recall, promotion, lessons ──
   memoryGraph: () => get<MemoryGraphData>('/api/memory/graph'),

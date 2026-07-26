@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw, ChevronRight, CheckCircle2, AlertTriangle, XCircle, Wrench } from 'lucide-react'
-import { api, type DoctorReport, type DoctorCapability, type DoctorProbe } from '../../lib/api'
+import { api, type DoctorReport, type DoctorCapability, type DoctorProbe, type RemediationSnapshot } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { confirm } from '../../ui/dialog'
 import { PanelHeader, Section } from './settingsUI'
@@ -64,7 +64,60 @@ export function DoctorPanel() {
           )}
         </Section>
       )}
+
+      <RemediationSection />
     </div>
+  )
+}
+
+// ── remediation engine (PLATFORM-RESILIENCE §4) ─────────────────────────────
+// A health score + a confirm-gated "run maintenance now" + the recent-run ledger.
+// The engine also runs itself on an adaptive heartbeat cadence; this is the manual
+// surface + visibility.
+function RemediationSection() {
+  const [snap, setSnap] = useState<RemediationSnapshot | null>(null)
+  const [busy, setBusy] = useState(false)
+  const load = useCallback(() => { api.doctorRemediation().then(setSnap).catch(() => setSnap(null)) }, [])
+  useEffect(() => { load() }, [load])
+
+  const run = async () => {
+    if (!(await confirm({
+      title: 'Run maintenance now?',
+      body: 'Runs the health-scored remediation engine (re-index, orphan prune, skill aging) once. Deterministic work only; nothing destructive.',
+      confirmLabel: 'Run maintenance',
+    }))) return
+    setBusy(true)
+    try {
+      const r = await api.doctorRemediationRun()
+      notify(`Maintenance: score ${Math.round(r.score_before)}→${Math.round(r.score_after)} (${r.stopped_reason})`, 'success')
+      load()
+    } catch (e) {
+      notify(`Maintenance failed: ${String((e as Error)?.message || e)}`, 'error')
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <Section title="Maintenance" hint="A health-scored engine keeps the stores tidy (embedding re-index, orphan prune, skill aging) on an adaptive schedule. Run it on demand here.">
+      <div className="rounded-lg bg-surface-container px-4 py-3">
+        <div className="flex items-center justify-between gap-l">
+          <div className="text-on-surface text-[0.8125rem]">
+            {snap ? <>Health score <span className="tabular-nums" style={{ color: snap.score >= snap.target_score ? 'var(--color-success)' : 'var(--color-warning)' }}>{Math.round(snap.score)}</span> / target {snap.target_score}</> : 'Loading…'}
+          </div>
+          <Button variant="secondary" size="sm" onClick={run} loading={busy}>
+            <Wrench size={14} /> Run now
+          </Button>
+        </div>
+        {snap && snap.recent_runs.length > 0 && (
+          <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
+            {snap.recent_runs.slice(0, 5).map((r, i) => (
+              <div key={i} className="text-on-surface-low text-[0.75rem]">
+                score {Math.round(r.score_before)}→{Math.round(r.score_after)} · {r.jobs.length} job(s) · {r.stopped_reason}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Section>
   )
 }
 

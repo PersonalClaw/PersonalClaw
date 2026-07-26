@@ -57,6 +57,16 @@ from personalclaw.resilience.doctor import (
     run_doctor,
 )
 from personalclaw.resilience.fixes import Fix, all_fixes, apply_fix, get_fix, register_fix
+from personalclaw.resilience.remediation import (
+    Deficit,
+    RemediationJob,
+    RunResult,
+    all_jobs,
+    health_score,
+    measure_deficits,
+    recent_runs,
+    run_remediation,
+)
 
 __all__ = [
     "Probe",
@@ -87,4 +97,12 @@ __all__ = [
     "apply_fix",
     "get_fix",
     "register_fix",
+    "Deficit",
+    "RemediationJob",
+    "RunResult",
+    "all_jobs",
+    "health_score",
+    "measure_deficits",
+    "recent_runs",
+    "run_remediation",
 ]

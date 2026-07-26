@@ -259,6 +259,101 @@ async def _run_selftest(name: str) -> dict:
     return {"provider": name, "capabilities": out}
 
 
+# ── Remediation engine (§4) ───────────────────────────────────────────────────
+
+
+async def api_doctor_remediation(request: web.Request) -> web.Response:
+    """GET /api/doctor/remediation — current health score, a dry-run plan preview, and
+    the recent remediation-run ledger."""
+    if not _resilience_cfg().doctor_enabled:
+        return web.json_response(
+            {"error": {"code": "doctor_disabled", "message": "the Doctor surface is turned off"}},
+            status=404,
+        )
+
+    def _snapshot() -> dict:
+        import time as _t
+
+        from personalclaw.resilience import remediation as _rem
+
+        deficits = _rem.measure_deficits()
+        cfg = _resilience_cfg().remediation
+        preview = _rem.run_remediation(
+            target_score=float(cfg.target_score),
+            max_cost_usd=cfg.max_cost_usd,
+            now=_t.time(),
+            dry_run=True,
+        )
+        return {
+            "score": _rem.health_score(deficits),
+            "target_score": cfg.target_score,
+            "deficits": [
+                {
+                    "key": d.key,
+                    "count": d.count,
+                    "penalty": round(d.penalty, 1),
+                    "reachable": d.reachable,
+                }
+                for d in deficits
+            ],
+            "plan": preview.jobs,
+            "recent_runs": _rem.recent_runs(10),
+        }
+
+    return web.json_response(await asyncio.to_thread(_snapshot))
+
+
+async def api_doctor_remediation_run(request: web.Request) -> web.Response:
+    """POST /api/doctor/remediation/run — run the engine now (confirm-gated). SEL-audited."""
+    if not _resilience_cfg().doctor_enabled:
+        return web.json_response(
+            {"error": {"code": "doctor_disabled", "message": "the Doctor surface is turned off"}},
+            status=404,
+        )
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not (isinstance(body, dict) and body.get("confirm") is True):
+        return web.json_response(
+            {"error": {"code": "confirm_required", "message": 'requires {"confirm": true}'}},
+            status=400,
+        )
+
+    def _run() -> dict:
+        import time as _t
+
+        from personalclaw.resilience import remediation as _rem
+
+        cfg = _resilience_cfg().remediation
+        result = _rem.run_remediation(
+            target_score=float(cfg.target_score), max_cost_usd=cfg.max_cost_usd, now=_t.time()
+        )
+        from personalclaw.sel import sel
+
+        sel().log_tool_invocation(
+            session_key="dashboard",
+            agent="personalclaw",
+            source="dashboard",
+            tool_name="doctor_remediation_run",
+            tool_kind="maintenance",
+            outcome="ok",
+            metadata={
+                "score_before": result.score_before,
+                "score_after": result.score_after,
+                "stopped": result.stopped_reason,
+            },
+        )
+        return {
+            "score_before": result.score_before,
+            "score_after": result.score_after,
+            "jobs": result.jobs,
+            "stopped_reason": result.stopped_reason,
+        }
+
+    return web.json_response(await asyncio.to_thread(_run))
+
+
 # ── Crash artifact detail (§6.5) ──────────────────────────────────────────────
 
 

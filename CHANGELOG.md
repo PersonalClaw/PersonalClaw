@@ -12,6 +12,20 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 
 ### Added
 
+- **One health-scored maintenance engine replaces scattered upkeep.** PersonalClaw now
+  computes a **health score** (100 − measured deficits: knowledge items missing an
+  embedding, orphaned stale locks, skills due for aging — each capped, and an *unfixable*
+  deficit like "no embedder bound" is excluded rather than held against a score you can't
+  improve) and runs a **dependency-ordered remediation plan** to raise it: re-index,
+  orphan-prune, skill-age, stopping when the target score is reached, the per-run dollar
+  cap is spent, or the plan is exhausted. It runs itself on an **adaptive heartbeat cadence**
+  (further apart when healthy, sooner when degraded) and is visible + runnable on demand
+  from Settings → Doctor → Maintenance, with a run ledger. Deterministic jobs are free;
+  model-touching jobs (future) charge the guardrails spend meter. Every run is idempotent
+  (per-job cooldowns) and the whole engine is one toggle — disabling it falls back to the
+  legacy per-tick heartbeat maintenance. This is the final slice of the **Platform
+  Resilience** program (Doctor · degraded mode · mid-turn · fixes/simulators/crash-capture ·
+  this engine).
 - **The Doctor can now fix what it finds, explain what it surfaces, and remember what
   crashed.** Three additions to the health surface (all Settings → Doctor):
   **confirm-gated fixes** — a finding that has a repair (a `static/dist` copy shadowing

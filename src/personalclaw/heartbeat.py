@@ -63,6 +63,10 @@ class HeartbeatService:
         self._tick = 0
         self._processing = False
         self._task: asyncio.Task | None = None  # type: ignore[type-arg]
+        # Health-scored remediation engine (PLATFORM-RESILIENCE §4.3) — adaptive
+        # cadence: next run is scheduled further out when healthy, sooner when
+        # degraded. 0.0 = never run yet (fires on the first eligible beat).
+        self._remediation_next_ts = 0.0
 
     async def start(self) -> None:
         path = heartbeat_path()
@@ -122,6 +126,16 @@ class HeartbeatService:
             except Exception:
                 logger.debug("Skill curator aging failed", exc_info=True)
 
+        # Health-scored remediation engine (PLATFORM-RESILIENCE §4.3) — one background
+        # job with an adaptive cadence, replacing scattered maintenance. Runs off the
+        # event loop (deterministic re-index/prune do blocking I/O). Best-effort: a
+        # failure here never breaks the heartbeat. Disabling it (config) leaves the
+        # legacy per-tick maintenance above as the fallback.
+        try:
+            await self._maybe_remediate()
+        except Exception:
+            logger.debug("remediation beat failed", exc_info=True)
+
         # Check for idle sessions needing history consolidation (every tick)
         if self._consolidator:
             self._consolidator.check_idle_sessions()
@@ -135,6 +149,44 @@ class HeartbeatService:
                 await self._on_due_commitments()
             except Exception:
                 logger.warning("Commitment delivery failed", exc_info=True)
+
+    async def _maybe_remediate(self) -> None:
+        """Run the health-scored remediation engine when due (adaptive cadence).
+
+        Healthy (score ≥95) → schedule the next run ``idle_minutes_healthy`` out;
+        degraded → ``tick_minutes_degraded``. Off the event loop (blocking I/O).
+        """
+        import time
+
+        from personalclaw.config.loader import AppConfig
+
+        cfg = AppConfig.load().resilience.remediation
+        if not cfg.enabled:
+            return
+        now = time.time()
+        if self._remediation_next_ts and now < self._remediation_next_ts:
+            return
+
+        from personalclaw.resilience import remediation as _rem
+
+        result = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: _rem.run_remediation(
+                target_score=float(cfg.target_score), max_cost_usd=cfg.max_cost_usd, now=now
+            ),
+        )
+        # Adaptive cadence: schedule the NEXT run based on the resulting score.
+        healthy = result.score_after >= 95.0
+        minutes = cfg.idle_minutes_healthy if healthy else cfg.tick_minutes_degraded
+        self._remediation_next_ts = now + max(1, minutes) * 60.0
+        if result.jobs:
+            logger.info(
+                "Remediation run: score %.0f→%.0f (%s); next in %dm",
+                result.score_before,
+                result.score_after,
+                result.stopped_reason,
+                minutes,
+            )
 
     async def _run_one_task(self, task_text: str, deliver: str) -> str | None:
         """Execute a single heartbeat task (used by gather).

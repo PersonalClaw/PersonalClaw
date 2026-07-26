@@ -138,6 +138,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/doctor/crash/{filename}` — the full JSON of one crash artifact.
 - `POST /api/doctor/fix/{fix_id}` — apply a confirm-gated fix.
 - `GET /api/doctor/fixes` — the fix catalog with read-only dry-previews.
+- `GET /api/doctor/remediation` — current health score, a dry-run plan preview, and
+- `POST /api/doctor/remediation/run` — run the engine now (confirm-gated). SEL-audited.
 - `POST /api/doctor/simulate/surfacing` — {text} — dry-run the skill scorer in
 - `GET /api/doctor/{capability}` — re-run one capability's probes (uncached).
 - `GET /api/file-complete` — path autocomplete for the PathBar.

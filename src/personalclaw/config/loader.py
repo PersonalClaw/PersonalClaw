@@ -1181,6 +1181,52 @@ class GuardrailsConfig:
 
 
 @dataclass
+class RemediationConfig:
+    """Health-scored self-remediation engine tuning (PLATFORM-RESILIENCE §4).
+
+    The engine runs as one heartbeat-driven maintenance job. ``enabled`` is guard-class
+    only in the sense that disabling it restores today's heartbeat maintenance (kept
+    callable), so it defaults ON but is a plain toggle. The caps are the stopping
+    conditions: reach ``target_score`` or spend ``max_cost_usd`` (per run), whichever
+    first. Cadence adapts: healthy → ``idle_minutes_healthy`` between runs, degraded →
+    ``tick_minutes_degraded``.
+    """
+
+    enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Remediation Engine",
+            "Run the health-scored maintenance engine (FTS/embedding re-index, orphan "
+            "prune, skill aging) as one background job. Disabling it falls back to the "
+            "legacy per-tick heartbeat maintenance.",
+        ),
+    )
+    target_score: int = field(
+        default=90,
+        metadata=_meta(
+            "Target Health Score",
+            "The engine stops a run once the health score reaches this (0-100).",
+        ),
+    )
+    max_cost_usd: float = field(
+        default=1.0,
+        metadata=_meta(
+            "Max Cost / Run",
+            "Dollar ceiling for judgment-lane (model-touching) remediation work in one "
+            "run. Deterministic jobs (re-index, prune) are free and never blocked.",
+        ),
+    )
+    idle_minutes_healthy: int = field(
+        default=60,
+        metadata=_meta("Idle Cadence (healthy)", "Minutes between runs when healthy (score ≥95)."),
+    )
+    tick_minutes_degraded: int = field(
+        default=5,
+        metadata=_meta("Tick Cadence (degraded)", "Minutes between runs when degraded."),
+    )
+
+
+@dataclass
 class ResilienceConfig:
     """Platform-resilience knobs (PLATFORM-RESILIENCE §7).
 
@@ -1235,6 +1281,10 @@ class ResilienceConfig:
             "burst of rapid follow-ups produces ONE cancel + the last message (the "
             "intermediate ones coalesce) rather than N cancels.",
         ),
+    )
+    remediation: RemediationConfig = field(
+        default_factory=RemediationConfig,
+        metadata=_meta("Remediation Engine", "Health-scored maintenance engine tuning."),
     )
 
 
@@ -1826,6 +1876,9 @@ class AppConfig:
         resilience_data = data.get("resilience", {})
         if not isinstance(resilience_data, dict):
             resilience_data = {}
+        _remediation_data = resilience_data.get("remediation", {})
+        if not isinstance(_remediation_data, dict):
+            _remediation_data = {}
         budgets_data = guardrails_data.get("budgets", {})
         if not isinstance(budgets_data, dict):
             budgets_data = {}
@@ -2092,6 +2145,17 @@ class AppConfig:
                 ),
                 cancel_replace_min_interval_secs=max(
                     0.0, float(resilience_data.get("cancel_replace_min_interval_secs", 2.0))
+                ),
+                remediation=RemediationConfig(
+                    enabled=_guard_flag(_remediation_data.get("enabled")),
+                    target_score=max(0, min(100, int(_remediation_data.get("target_score", 90)))),
+                    max_cost_usd=max(0.0, float(_remediation_data.get("max_cost_usd", 1.0))),
+                    idle_minutes_healthy=max(
+                        1, int(_remediation_data.get("idle_minutes_healthy", 60))
+                    ),
+                    tick_minutes_degraded=max(
+                        1, int(_remediation_data.get("tick_minutes_degraded", 5))
+                    ),
                 ),
             ),
             observe_max_messages=max(1, int(data.get("observe_max_messages", 200))),

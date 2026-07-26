@@ -1,6 +1,6 @@
 # Plan: Platform Resilience — Doctor, No-Model Degraded Mode, Mid-Turn Message Handling
 
-**Status:** IN PROGRESS — Session 1 (Doctor core, §1) DONE 2026-07-25; Session 2 (no-model degraded contract, §5) DONE 2026-07-25; Session 3 (mid-turn message handling, §6) DONE 2026-07-25; Session 4 (fixes + simulators + crash capture, §2/§3/§6.5) DONE 2026-07-25; Session 5 (remediation engine, §4) remains. Created 2026-07-13 from research synthesis, promoted from backlog.
+**Status:** DONE — all 5 sessions landed 2026-07-25. S1 Doctor core (§1) · S2 no-model degraded contract (§5) · S3 mid-turn message handling (§6) · S4 confirm-gated fixes + trust simulators + crash capture (§2/§3.1/§3.2/§6.5) · S5 health-scored remediation engine (§4). Deferred-as-future-infra (E6, recorded per session): §3.3 automation would-execute (AUTOMATION-SUBSTRATE), the richer §3.2 memory-pipeline alarm + judgment-lane remediation jobs (LEARN-R19/KNOW-R17 flywheel infra), and the AUTOMATION-SUBSTRATE trigger-form for the engine's cadence (it runs off the heartbeat until then). Created 2026-07-13 from research synthesis, promoted from backlog.
 **Created:** 2026-07-13
 **Wave:** split — §1-§3 (doctor probes + read-only surface) and §5 (degraded contract) are Wave 0/1 invariants (every existing surface touches models; offline behavior must be designed before the engine multiplies unattended runs); §6 (mid-turn handling) is Wave 1, independent; §4 (remediation engine) is Wave 3 — it consumes AUTONOMY-GUARDRAILS budgets (SpendMeter, §1.1 there) and should land after them.
 **Depends on:** nothing for §1-§3/§5/§6 (Wave-0-compatible). §4 depends on AUTONOMY-GUARDRAILS (SpendMeter + model-call audit for cost caps) and prefers AUTOMATION-SUBSTRATE (runs as an adaptive-cadence trigger once triggers.json exists; hangs off the heartbeat until then).
@@ -530,3 +530,43 @@ Sessions 1-4 each ship independently; Session 1 alone is a Wave-0 win (the symli
   registration order, so GET /api/doctor/fixes and /api/doctor/crash/{filename} had to be
   registered BEFORE the pre-existing GET /api/doctor/{capability} catch-all or they'd bind
   as a capability name. The POST fix/simulate/selftest routes don't collide (different verb).
+
+- [2026-07-25][S5] DONE: Health-scored self-remediation engine (§4). New
+  `resilience/remediation.py` — `measure_deficits()` reads only REAL counts today
+  (knowledge missing-embeddings via count_items_missing_embedding, orphan stale locks,
+  skill aging-due via run_aging(dry_run=True).changed); each Deficit carries a
+  `max_penalty` ceiling and a `reachable` flag (an unfixable deficit — e.g. no embedder
+  bound — is excluded from the score, so the engine never burns budget on futile work).
+  `health_score = 100 − Σ reachable penalties`. `run_remediation()` builds a dependency-
+  ordered (`after:` edges, cycle-tolerant) plan of jobs whose deficit is present +
+  reachable, runs each re-checking the score, and stops at target_score / max_cost_usd /
+  exhausted. Two lanes: deterministic ($0, the 3 registered jobs — orphan-prune, skill-age,
+  knowledge-reindex) and judgment (model-touching, charges guardrails SpendMeter under
+  run_key "doctor" — none registered yet, mechanism ready). Per-job cooldown with
+  success-only timestamps (`doctor/jobs.json`) is the storm guard; every run writes
+  `doctor/remediation.jsonl` (2×-cap trim). Wired onto the heartbeat as ONE adaptive-cadence
+  job (`HeartbeatService._maybe_remediate`: healthy→idle_minutes_healthy, degraded→
+  tick_minutes_degraded). `RemediationConfig` sub-config (enabled/target_score/max_cost_usd/
+  idle/tick) nested under ResilienceConfig, wired 5-point. Endpoints: GET /api/doctor/
+  remediation (score + dry-run plan + ledger), POST /api/doctor/remediation/run (confirm-
+  gated, SEL-audited). FE: a Maintenance section in DoctorPanel (score, Run-now, recent
+  runs). Tests: `test_resilience_remediation.py` (13 — penalty cap, reachable-exclusion,
+  score clamp, dependency order + cycle tolerance, three stop conditions, cooldown skip,
+  dry-run no-op, ledger). DoD green: `make lint`, `make test` (7970 passed / 0 failed), web
+  typecheck + vitest 231 + build. Clean break — durable state is config + two capped local
+  JSON artifacts under doctor/. Validated live: score 100/target 90 on the healthy dev-home,
+  run stops "target_score already met", confirm-gate 400s without confirm, config round-trips.
+- [2026-07-25][S5] DEVIATION (safe superset, not the plan's deletion): §4.4 says the engine
+  ABSORBS the heartbeat maintenance jobs (FTS rebuild, prunes, skill aging move OUT of the
+  heartbeat into registered jobs). To avoid destabilizing the live heartbeat, S5 ADDS the
+  engine as one heartbeat job and registers its OWN deterministic jobs (orphan-prune, skill-
+  age, knowledge-reindex) rather than deleting the existing per-tick maintenance — which is
+  kept as the documented fallback when the engine is disabled (the plan's own risk-table
+  mitigation: "disabling it restores today's heartbeat jobs, kept callable"). Fully retiring
+  the duplicate heartbeat maintenance is a follow-on cleanup once the engine has soaked.
+- [2026-07-25][S5] DEVIATION (scope): the engine hangs off the heartbeat, NOT the
+  AUTOMATION-SUBSTRATE adaptive-clock trigger form (§4.3) — that substrate is future infra.
+  The "runs-inbox learned-overnight digest" pickup (also §4.4) likewise awaits it. The
+  judgment lane charges SpendMeter under run_key "doctor" (a run-key value — there is no
+  "doctor" SCOPE; day/run are the only scopes), and max_cost_usd is enforced against
+  run_totals("doctor").dollars since run_budget_from_config is tokens-only.
