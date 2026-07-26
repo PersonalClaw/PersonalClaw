@@ -48,6 +48,8 @@
 | **App manifest new fields** (plan 32 §Contracts) | 32 (cli.*, loggerRoots), 45 (desktop), 38/25 | app loader, scaffold (38) |
 | **SDK export additions** (§3.4) | 40 (trust), 42 (kinds), others | app bundles |
 | **Desktop capability bridge** (plan 45 §Contracts) | 45 | apps declaring `desktop:` perm |
+| **Durable session store + signing key** (plan 53 §C1) | 53 | 54 (device sessions), 44 (device tokens), the dashboard login |
+| **Device session + unified pairing** (plan 54 §C1/C2) | 54 | 44 (phone pairing/QR), 45 (desktop connect-mode), any native client |
 | **SQLite compat helper** (plan 39 §Contracts) | 39 | 6 FTS5 modules |
 
 ### 1.3 The three "landmine" convergence points (where two plans touch one surface — sequence carefully)
@@ -149,8 +151,10 @@ Each deepened plan carries a `Contracts & Interfaces` section defining its own t
 | 41 MCP-INBOUND | `inbound/` package API (auth/caps/audit/mcp_http/tools), the 5-tool JSON-RPC contract |
 | 42 INBOX-NOTIF | kind registry, rules schema, extended InboxItem, `emit_attention_item()` |
 | 43 ONBOARDING | onboarding-state schema, `EmptyState` props, approval-brief data model |
-| 44 MOBILE | device-token contract, push payload schema, companion route API map |
-| 45 DESKTOP | capability bridge API, `desktop:` manifest perm, gateway desktop route |
+| 44 MOBILE | push payload schema, companion route API map (**device-token + QR pairing superseded by 54 COMPANION-APPS §C1/C2**) |
+| 45 DESKTOP | capability bridge API, `desktop:` manifest perm, gateway desktop route (**connect-to-remote-gateway mode consumes 54's client contract**) |
+| 53 REMOTE-USER-AUTH | persistent signing key + durable session store (`auth/sessions.json`), owner credential (argon2id), `/api/auth/*` (login/logout/enroll) routes + error codes, `auth` config section |
+| 54 COMPANION-APPS | endpoint + device-session model, unified pairing (`/api/devices/pair/*`, `GET/revoke /api/devices`), LAN discovery (`_personalclaw._tcp`), `companion` config section |
 | 46 LEARNING-VIS | skill-draft shape, attribution event fields, refine-diff proposal shape |
 | 39 PLATFORM-REACH | `sqlite_features()` contract |
 | 38 ECOSYSTEM | scaffold type-table, `registry.json` schema |
