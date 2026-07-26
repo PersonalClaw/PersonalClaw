@@ -101,8 +101,9 @@ export function SystemHealth({ navigate }: RouteProps) {
     // right edge (without it the strip is content-width and ml-auto has no slack).
     // Gaps tighten as the container narrows, and word-labels/sparkline shed
     // (see Metric + the Spark wrapper) so the strip stays one line as long as it
-    // fits — the container is the rail wrapper, tracking --content-width.
-    <div className="flex h-full w-full flex-wrap items-center gap-x-l gap-y-s pt-xs @6xl:gap-x-xl">
+    // fits — the container is the rail island, tracking --content-width. The
+    // island owns symmetric vertical padding now, so the strip just centers.
+    <div className="flex h-full w-full flex-wrap items-center gap-x-l gap-y-s @6xl:gap-x-xl">
       <Metric icon={Clock} value={status.uptime ?? '—'} label="uptime" />
       <Metric icon={Tag} value={`v${status.version ?? '?'}`} label={status.platform ?? ''} />
       {/* Live metrics from /api/system (P27) — render only when present. */}
