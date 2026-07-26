@@ -1,0 +1,6 @@
+{"ts": 1000.0, "stream": "sse", "key": "loop:demo", "type": "queued", "seq": 0, "payload": {"loop_id": "demo"}}
+{"ts": 1000.5, "stream": "sse", "key": "loop:demo", "type": "plan_step", "seq": 1, "payload": {"loop_id": "demo"}}
+{"ts": 1001.0, "stream": "sse", "key": "loop:demo", "type": "cycle_score", "seq": 2, "payload": {"loop_id": "demo"}}
+{"ts": 1001.5, "stream": "sse", "key": "loop:demo", "type": "cycle_verdict", "seq": 3, "payload": {"loop_id": "demo"}}
+{"ts": 1002.0, "stream": "sse", "key": "loop:demo", "type": "new_finding", "seq": 4, "payload": {"loop_id": "demo"}}
+{"ts": 1002.5, "stream": "sse", "key": "loop:demo", "type": "complete", "seq": 5, "payload": {"loop_id": "demo"}}

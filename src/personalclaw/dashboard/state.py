@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from aiohttp import web
 
+from personalclaw import trace_recorder as _trace
 from personalclaw import trust_mode
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import DASHBOARD_PORT, config_dir
@@ -1542,6 +1543,11 @@ class DashboardState:
         per-concern doctrine: always-on state on the WS, page-scoped
         feeds (loops/logs/file-watch) on their own per-resource SSE.
         """
+        # Dev-only event-trace tap (Self-Verification §2.1): capture the multiplexed WS
+        # envelope keyed by its internal note type, before the live-client gate so a
+        # headless recording sees every broadcast. No-op unless PERSONALCLAW_TRACE_DIR set.
+        if _trace.is_recording():
+            _trace.record("ws", str(note.get("_type", "notification")), "note", note)
         # WS broadcast — translate internal _type to WS message format
         if self._ws_clients:
             msg_type = note.get("_type", "notification")
