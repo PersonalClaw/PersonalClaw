@@ -1,13 +1,13 @@
 import {
   User, Palette, MessageSquare, Plug, Cpu, FileText, Database, Bot, AudioLines,
-  Inbox, Bell, Shield, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass,
+  Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import {
   api, type SecurityStats, type MemoryStats, type AgentRuntime, type DashboardConfig,
   type SettingsProvider, type InboxSettings, type NotificationSettings, type UpdateCheck,
   type PromptBindings, type SessionArchive, type SelVerify, type SavedAgent,
-  type SearchProviderInfo, type AppSummary,
+  type SearchProviderInfo, type AppSummary, type DoctorReport, type ProjectionRule,
 } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { useIdentity } from '../../app/identity'
@@ -72,6 +72,9 @@ const useVoice = () => useCachedData('settings:voice', async () => {
 }, { persist: true })
 const useLegibility = () => useCachedData('settings:legibility', () =>
   api.personalclawConfig().then((c) => (c.legibility ?? {}) as Record<string, unknown>).catch(() => ({} as Record<string, unknown>)), { persist: true })
+const useDoctor = () => useCachedData('settings:doctor', () => api.doctor().catch(() => null as DoctorReport | null), { persist: false })
+const useIncident = () => useCachedData('settings:incident', () => api.incident().catch(() => null as { active: boolean; reason: string; started_at: string } | null), { persist: true })
+const useProjectionRules = () => useCachedData('settings:projection-rules', () => api.projectionRules().catch(() => [] as ProjectionRule[]), { persist: true })
 const useAgentDefaults = () => useCachedData('settings:agent-defaults', async () => {
   const [cfg, agents] = await Promise.all([
     api.personalclawConfig().then((c) => (c.agent ?? {}) as Record<string, unknown>).catch(() => ({} as Record<string, unknown>)),
@@ -445,6 +448,45 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
+    id: 'doctor', group: 'System', label: 'Doctor', icon: Stethoscope, size: 'sm',
+    description: 'Read-only health probes across every subsystem — memory, channels, models, apps, the SPA symlink.',
+    useSearchText() {
+      const { data: d } = useDoctor()
+      const failed = d ? Object.entries(d.capabilities).filter(([, c]) => !c.ok).map(([k]) => k).join(' ') : ''
+      return `doctor health probes diagnostics memory channels local models apps serving symlink breakers ${d ? (d.ok ? 'healthy ok' : `degraded ${failed}`) : ''}`
+    },
+    render(query, go) {
+      const { data: d } = useDoctor()
+      return (
+        <BentoCard icon={Stethoscope} title="Doctor" query={query} onClick={() => go('doctor')} loading={d === undefined}>
+          {d && (d.ok
+            ? <StatusPill label="All systems healthy" tone="ok" />
+            : !d.core_ok
+              ? <StatusPill label="Gateway core failing" tone="warn" />
+              : <><StatusPill query={query} label={`${d.worst} degraded`} tone="warn" />
+                  <div className="mt-1.5 text-on-surface-low text-[0.75rem]">Core healthy · one capability needs attention</div></>)}
+        </BentoCard>
+      )
+    },
+  },
+  {
+    id: 'guardrails', group: 'System', label: 'Guardrails', icon: ShieldAlert, size: 'sm',
+    description: 'Autonomy safety floor — incident kill switch, spend budgets, and outbound scanning.',
+    useSearchText() { const { data: i } = useIncident(); return `guardrails autonomy safety incident kill switch budgets spend scan denylist ${i ? (i.active ? 'incident active suspended' : 'normal') : ''}` },
+    render(query, go) {
+      const { data: i } = useIncident()
+      return (
+        <BentoCard icon={ShieldAlert} title="Guardrails" query={query} onClick={() => go('guardrails')} loading={i === undefined}>
+          {i && (i.active
+            ? <><StatusPill label="Incident mode — unattended work paused" tone="warn" />
+                {i.reason && <div className="mt-1.5 truncate text-on-surface-low text-[0.75rem]">{i.reason}</div>}</>
+            : <><StatusPill label="Normal operation" tone="ok" />
+                <div className="mt-1.5 text-on-surface-low text-[0.75rem]">Kill switch · budgets · outbound scan</div></>)}
+        </BentoCard>
+      )
+    },
+  },
+  {
     id: 'legibility', group: 'System', label: 'Legibility', icon: Compass, size: 'md',
     description: 'How PersonalClaw describes its capabilities — dashboard tips + project context files.',
     useSearchText() { const { data: c } = useLegibility(); return `legibility discover tips tour features context adapters claude.md agents.md cursorrules ${c ? `tips ${!!c.discover_tips} context ${!!c.context_adapters}` : ''}` },
@@ -459,6 +501,23 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
             { k: 'Discover tips', control: true, v: <Switch on={!!c.discover_tips} label="Discover tips" onToggle={(v) => save('discover_tips', v)} /> },
             { k: 'Context files', control: true, v: <Switch on={!!c.context_adapters} label="Context files" onToggle={(v) => save('context_adapters', v)} /> },
           ]} />}
+        </BentoCard>
+      )
+    },
+  },
+  {
+    id: 'tool-output', group: 'System', label: 'Tool output', icon: Scissors, size: 'sm',
+    description: 'Custom projection rules that shrink large tool output before it reaches the model.',
+    useSearchText() { const { data: r } = useProjectionRules(); return `tool output projection rules trim shrink token juice regex marker strategy ${(r ?? []).map((x) => `${x.name} ${x.strategy}`).join(' ')}` },
+    render(query, go) {
+      const { data: rules } = useProjectionRules()
+      const list = rules ?? []
+      return (
+        <BentoCard icon={Scissors} title="Tool output" query={query} onClick={() => go('tool-output')} loading={rules === undefined}>
+          {rules && (list.length
+            ? <><BigStat value={list.length} caption={list.length === 1 ? 'custom rule' : 'custom rules'} />
+                <div className="mt-2"><ChipRow query={query} chips={list.slice(0, 6).map((r) => ({ label: r.name, tone: 'muted' as const }))} /></div></>
+            : <div className="text-on-surface-low text-[0.8125rem]">Builtin projectors handle logs, diffs, JSON, tests, and CSV. Add a rule for an unrecognised large output.</div>)}
         </BentoCard>
       )
     },

@@ -371,6 +371,9 @@ async def start_dashboard(
     app.router.add_get("/api/system", handlers.api_system)
     app.router.add_get("/api/auth-status", handlers.api_auth_status)
     app.router.add_get("/api/onboarding", handlers.api_onboarding)
+    # Doctor — tiered read-only health probes (PLATFORM-RESILIENCE §1)
+    app.router.add_get("/api/doctor", handlers.api_doctor)
+    app.router.add_get("/api/doctor/{capability}", handlers.api_doctor_capability)
     # Skills marketplace
     from personalclaw.dashboard.handlers.skills import (
         api_ephemeral_skill_discard,

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Clock, Tag, Cpu, Zap, Users, ArrowUpCircle, ShieldAlert, Activity, MemoryStick, Network, HardDrive } from 'lucide-react'
+import { Clock, Tag, Cpu, Zap, Users, ArrowUpCircle, ShieldAlert, Activity, MemoryStick, Network, HardDrive, Stethoscope } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { api } from '../../../lib/api'
 import { confirm } from '../../../ui/dialog'
@@ -42,6 +42,14 @@ function Spark({ samples, tone = 'var(--color-primary)', width = 56, height = 16
 
 const _SPARK_MAX = 30  // rolling window of samples (~30 × fast-poll ≈ a few minutes)
 
+/** Prettify a doctor capability slug for the rollup chip ("serving-fs" →
+ *  "Serving fs", "model-providers" → "Model providers"). Display only. */
+function capLabel(key: string): string {
+  if (!key) return ''
+  const s = key.replace(/[-/]/g, ' ')
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
 /** Format a kb/s rate compactly: MB/s over 1024, else KB/s (integer). */
 function fmtRate(kbs: number | undefined): string {
   const v = kbs ?? 0
@@ -53,7 +61,7 @@ function fmtRate(kbs: number | undefined): string {
  *  live rates come from /api/system (P27 — already computed server-side, surfaced
  *  here) with a rolling CPU sparkline; an inline Update action + a YOLO indicator. */
 export function SystemHealth({ navigate }: RouteProps) {
-  const { status, system } = useDashboardLive()
+  const { status, system, doctor } = useDashboardLive()
   // Client-side rolling buffer of CPU% samples for the sparkline (the backend
   // computes the instantaneous rate; history is cheap to keep here).
   const cpuHist = useRef<number[]>([])
@@ -128,6 +136,14 @@ export function SystemHealth({ navigate }: RouteProps) {
         </span>
       )}
       <div className="ml-auto flex items-center gap-s">
+        {/* Doctor rollup — surfaces only when something needs attention; a healthy
+            system stays quiet (the strip is already dense). Links to the Doctor tab. */}
+        {doctor && !doctor.ok && (
+          <RowAction tone="danger" onClick={() => navigate('settings/doctor')}
+            title={doctor.core_ok ? `${capLabel(doctor.worst)} degraded — open Doctor` : 'Gateway core failing — open Doctor'}>
+            <Stethoscope size={14} /> {doctor.core_ok ? `${capLabel(doctor.worst)} degraded` : 'Core failing'}
+          </RowAction>
+        )}
         {status.update_available && (
           <RowAction tone="primary" onClick={runUpdate} title="Apply the available update">
             <ArrowUpCircle size={14} /> Update available

@@ -4,7 +4,7 @@ import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { api } from '../../lib/api'
 import type {
   PendingApproval, DashboardStatus, InboxItem, SkillProposal,
-  Loop, TaskItem, ScheduleRun, NotificationItem, SystemInfo, DiscoverResponse,
+  Loop, TaskItem, ScheduleRun, NotificationItem, SystemInfo, DiscoverResponse, DoctorReport,
 } from '../../lib/api'
 
 // ── Dashboard live feed ────────────────────────────────────────────────────
@@ -33,6 +33,9 @@ export interface DashboardLiveData {
   /** The curated Discover tips for the dashboard section + hub (§6), or an empty
    *  feed when everything's been explored / the kill switch is off. Polled on SLOW_POLL. */
   discover: DiscoverResponse | null
+  /** The doctor health rollup (PLATFORM-RESILIENCE §1) — cached 30s server-side, so
+   *  polled on SLOW_POLL. Powers the SystemHealth widget's one-line health signal. */
+  doctor: DoctorReport | null
   /** Dismiss a Discover tip forever, then refetch the slice so it drops from the
    *  feed (propose-don't-write: this hides, never enables). */
   dismissDiscoverTip: (id: string) => void
@@ -66,6 +69,7 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [system, setSystem] = useState<SystemInfo | null>(null)
   const [discover, setDiscover] = useState<DiscoverResponse | null>(null)
+  const [doctor, setDoctor] = useState<DoctorReport | null>(null)
 
   // Individual slice loaders — each swallows errors (a dead endpoint must not
   // blank the whole dashboard) and no-ops if the component has unmounted.
@@ -85,6 +89,7 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const loadNotifications = useCallback(() => { api.notifications().then((d) => guard(setNotifications)(d.notifications ?? [])).catch(() => {}) }, [])
   const loadSystem = useCallback(() => { api.system().then(guard(setSystem)).catch(() => {}) }, [])
   const loadDiscover = useCallback(() => { api.discover().then(guard(setDiscover)).catch(() => {}) }, [])
+  const loadDoctor = useCallback(() => { api.doctor().then(guard(setDoctor)).catch(() => {}) }, [])
 
   // Dismiss persists server-side; on success refetch so the tip drops from the
   // feed (or the "explored everything" empty state shows).
@@ -94,8 +99,8 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
 
   const refreshAll = useCallback(() => {
     loadApprovals(); loadInbox(); loadProposals(); loadLoops()
-    loadTasks(); loadSchedule(); loadStatus(); loadNotifications(); loadSystem(); loadDiscover()
-  }, [loadApprovals, loadInbox, loadProposals, loadLoops, loadTasks, loadSchedule, loadStatus, loadNotifications, loadSystem, loadDiscover])
+    loadTasks(); loadSchedule(); loadStatus(); loadNotifications(); loadSystem(); loadDiscover(); loadDoctor()
+  }, [loadApprovals, loadInbox, loadProposals, loadLoops, loadTasks, loadSchedule, loadStatus, loadNotifications, loadSystem, loadDiscover, loadDoctor])
 
   // Coalesce high-frequency work/status signals. `chat_status`/`sessions` fire on
   // every turn lifecycle change — during active streaming that's many events/sec —
@@ -135,11 +140,11 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   // Initial load once, then visibility-gated polls (pause when the tab is hidden).
   useEffect(() => { refreshAll() }, [refreshAll])
   useVisiblePoll(() => { loadApprovals(); loadInbox(); loadProposals(); loadLoops(); loadTasks(); loadSystem() }, FAST_POLL)
-  useVisiblePoll(() => { loadSchedule(); loadStatus(); loadNotifications(); loadDiscover() }, SLOW_POLL)
+  useVisiblePoll(() => { loadSchedule(); loadStatus(); loadNotifications(); loadDiscover(); loadDoctor() }, SLOW_POLL)
 
   const value: DashboardLiveData = {
     approvals, inbox, proposals, loops, tasks, schedule, status, notifications, system,
-    discover, dismissDiscoverTip, refreshAll,
+    discover, doctor, dismissDiscoverTip, refreshAll,
   }
   return <DashboardLiveContext.Provider value={value}>{children}</DashboardLiveContext.Provider>
 }

@@ -1,6 +1,6 @@
 # Plan: Platform Resilience — Doctor, No-Model Degraded Mode, Mid-Turn Message Handling
 
-**Status:** PROPOSED (created 2026-07-13 from research synthesis, promoted from backlog)
+**Status:** IN PROGRESS — Session 1 (Doctor core, §1) DONE 2026-07-25; Sessions 2-5 (degraded contract, mid-turn, fixes+simulators+crash-capture, remediation engine) remain. Created 2026-07-13 from research synthesis, promoted from backlog.
 **Created:** 2026-07-13
 **Wave:** split — §1-§3 (doctor probes + read-only surface) and §5 (degraded contract) are Wave 0/1 invariants (every existing surface touches models; offline behavior must be designed before the engine multiplies unattended runs); §6 (mid-turn handling) is Wave 1, independent; §4 (remediation engine) is Wave 3 — it consumes AUTONOMY-GUARDRAILS budgets (SpendMeter, §1.1 there) and should land after them.
 **Depends on:** nothing for §1-§3/§5/§6 (Wave-0-compatible). §4 depends on AUTONOMY-GUARDRAILS (SpendMeter + model-call audit for cost caps) and prefers AUTOMATION-SUBSTRATE (runs as an adaptive-cadence trigger once triggers.json exists; hangs off the heartbeat until then).
@@ -335,3 +335,60 @@ Sessions 1-4 each ship independently; Session 1 alone is a Wave-0 win (the symli
 6. One remediation run on a deliberately-degraded store (stale FTS, 50 heuristic-stamped items, dead locks) executes a dependency-ordered plan, stops at `max_cost_usd`, raises the health score, writes a ledger row — and the old heartbeat maintenance jobs no longer run independently.
 7. On a channel with `cancel_and_replace`, sending a rapid follow-up mid-generation cancels the stale turn (soft-cancel ack observed), marks the partial answer superseded in the UI, and answers the new message; the same follow-up on a `queue` channel queues and delivers next turn; a user message landing on a busy loop-worker session queues regardless of policy.
 8. Every new config field round-trips through load → to_dict → PATCH → FE toggle → config.json inspection (the four-wiring-points as-a-user check).
+
+---
+
+## Execution log
+
+- [2026-07-25][S1] DONE: Doctor core (§1). New `resilience/` package — `resilience/doctor.py`
+  (Tier ladder 0-3, `Probe`/`ProbeResult` frozen dataclasses, flat registry, `run_doctor`
+  with downward short-circuit + the "capability-degraded is never core failure" doctrine,
+  `run_capability` for the single-card re-probe; read-only-by-contract — every probe
+  exception becomes `ok=False`, never a 500; secrets redacted from `detail`/`evidence`).
+  Probe packs: memory (db open + WAL + integrity + faiss↔embedded consistency via a
+  short-lived RO sqlite connection), channels (registry `health()`, no `bind_state` side
+  effect), local-models (per-provider `is_available()` + phantom-binding detection scoped
+  to registered-local providers only), apps (backend-supervisor liveness + `.rollback`
+  leftovers), serving-fs (static/dist symlink-vs-copy detection replicated read-only from
+  `frontend.py` + dead lock/PID counts), model-providers (COMPOSES guardrails
+  `provider_health()`, never rebuilds it). HTTP: `dashboard/handlers/doctor.py` +
+  `GET /api/doctor` (cached 30s) + `GET /api/doctor/{capability}`. FE: read-only Doctor tab
+  (`web/src/pages/settings/DoctorPanel.tsx`, grouped capability cards + tier-failed badges +
+  `<details>` evidence disclosure), `api.doctor()`/`doctorCapability()` + `DoctorReport`
+  types, `DashboardLive` `doctor` slice (SLOW_POLL), and a SystemHealth one-line rollup
+  (surfaces only when unhealthy, links to the tab). Tests: `tests/test_resilience_doctor.py`
+  (13 — doctrine invariants: capability-fail-never-core, cheap-RPC-fail short-circuits +
+  suggests restart, socket-fail short-circuits without restart, probe-raise→ok=false,
+  secret masking, single-capability re-probe, + real memory/serving-fs probe packs against
+  isolated `tmp_path`). Success-criterion #1 (healthy core + dead capability → core OK, no
+  restart) and #2's DETECTION half (copy-shadowed static/dist flagged) validated live +
+  in unit tests. DoD green: `make lint` (black/isort/flake8/mypy), `make test`
+  (7911 passed / 0 failed), web typecheck + vitest 231 (ratchet held at rawButton=278 — new
+  disclosure uses native `<details>`, the rollup uses the `RowAction` primitive) + build.
+  Reference regenerated (`python -m personalclaw.manifest_reference` — both doctor routes
+  present). Clean break under the pre-1.0 banner: no persisted-state migration (Doctor
+  results are an in-process 30s cache; nothing durable added this session).
+- [2026-07-25][S1] DISCOVERY (plan citation drift — NOT a premise mismatch; every seam
+  exists functionally, only line numbers moved): `channel_transports/base.py` health/test are
+  at :135-155 (plan says 69/70); `can_resolve_use_case` is at `provider_bridge.py:730` (plan
+  says :672); `knowledge.db` lives under `config_dir()/workspace/knowledge/` (not directly in
+  `config_dir()`); the status/system routes register at `server.py:370-371` and their handlers
+  live in `handlers_system.py`, not `handlers/core.py`. Left the plan body as-is (it's a
+  design doc); recording here so a later session doesn't chase the stale lines.
+- [2026-07-25][S1] DISCOVERY (deferred to owning plans, NOT built here): (a) the HF
+  `models--…` on-disk cache-layout probe has no shared helper — `local_models/layouts.py` is
+  unbuilt and owned by LOCAL-MODEL-MANAGER-V2; the local-models pack therefore uses
+  provider-computed `is_available()`/catalog membership, not a raw disk scan (E6 scope
+  discipline). (b) installed-copy-vs-repo manifest DRIFT has no stored hash to diff (no
+  checksum in `installed.json`), so the apps pack probes backend liveness + `.rollback`
+  leftovers — the real signals available today — and drift detection waits for a plan that
+  records a manifest checksum.
+- [2026-07-25][S1] DISCOVERY (`redact()` coverage): the Doctor correctly WIRES `security.redact`
+  over all probe output, but `redact()` targets AWS-key/exfiltration-URL shapes — it does NOT
+  mask anthropic `sk-ant-…` keys. The masking test asserts against an AWS-key-shaped token (a
+  pattern `redact()` genuinely catches). Broadening `redact()`'s credential coverage is
+  security.py's contract, out of scope for this session; flagged for SECURITY-HARDENING.
+- [2026-07-25][S1] DEVIATION: capability key `serving/fs` → `serving-fs` (URL-safe slug). The
+  aiohttp `{capability}` path param can't match an embedded slash, so `GET /api/doctor/serving/fs`
+  was unreachable. The plan's "serving/fs" is treated as a display label (the FE prettifies the
+  slug); every capability is now addressable via the per-capability route. Validated live.

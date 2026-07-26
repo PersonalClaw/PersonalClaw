@@ -134,6 +134,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/dashboard/config` — read or write dashboard settings.
 - `PUT /api/dashboard/config` — read or write dashboard settings.
 - `GET /api/design/tokens/default` — PersonalClaw's canonical
+- `GET /api/doctor` — all probes, grouped by capability, cached 30s.
+- `GET /api/doctor/{capability}` — re-run one capability's probes (uncached).
 - `GET /api/file-complete` — path autocomplete for the PathBar.
 - `GET /api/file-content-search` — recursive content search.
 - `POST /api/file-create` — create a new file or directory in the explorer.

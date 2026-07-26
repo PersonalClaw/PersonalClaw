@@ -89,6 +89,32 @@ export interface ProviderHealth {
   degraded: boolean
 }
 
+// Doctor — the tiered read-only health report (PLATFORM-RESILIENCE §1).
+export interface DoctorProbe {
+  id: string
+  capability: string
+  tier: number
+  title: string
+  ok: boolean
+  detail: string
+  evidence: Record<string, unknown>
+  fix_id?: string
+}
+export interface DoctorCapability {
+  ok: boolean
+  tier: number
+  probes: DoctorProbe[]
+}
+export interface DoctorReport {
+  ok: boolean
+  core_ok: boolean
+  worst: string
+  restart_suggested: boolean
+  capabilities: Record<string, DoctorCapability>
+  skipped_capabilities: string[]
+  generated_at: number
+}
+
 export interface ChannelHealth { state: string; detail?: string }
 export interface ChannelRuntime {
   name: string; display_name: string; connected: boolean
@@ -1113,6 +1139,13 @@ export const api = {
   incidentResume: () => post<{ active: boolean }>('/api/incident/resume', { confirm: true }),
   modelsHealth: () =>
     get<{ providers: ProviderHealth[]; generated_from: number }>('/api/models/health'),
+
+  // ── Doctor: tiered read-only health probes (PLATFORM-RESILIENCE §1) ──
+  doctor: () => get<DoctorReport>('/api/doctor'),
+  doctorCapability: (capability: string) =>
+    get<{ capability: string; ok: boolean; probes: DoctorProbe[]; unknown?: boolean }>(
+      `/api/doctor/${encodeURIComponent(capability)}`,
+    ),
 
   // ── Memory Studio: health, observability, deep recall, promotion, lessons ──
   memoryGraph: () => get<MemoryGraphData>('/api/memory/graph'),

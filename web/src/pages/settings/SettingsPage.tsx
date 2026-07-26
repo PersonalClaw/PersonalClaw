@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import {
   Palette, Plug, Bell, Cpu, Shield, ShieldAlert, Database, User, MessageSquare, Bot, Inbox,
-  FolderSync, ScrollText, Archive, AudioLines, DownloadCloud, FileText, ChevronRight, Search, Blocks, Activity, Scissors, Compass,
+  FolderSync, ScrollText, Archive, AudioLines, DownloadCloud, FileText, ChevronRight, Search, Blocks, Activity, Scissors, Compass, Stethoscope,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -28,6 +28,7 @@ import { DiagnosticsPanel } from './DiagnosticsPanel'
 import { ProjectionRulesPanel } from './ProjectionRulesPanel'
 import { LegibilityPanel } from './LegibilityPanel'
 import { GuardrailsPanel } from './GuardrailsPanel'
+import { DoctorPanel } from './DoctorPanel'
 import { AppsPanel } from './AppsPanel'
 import { SettingsHome } from './SettingsHome'
 import type { RouteProps } from '../../app/useQueryState'
@@ -66,6 +67,7 @@ const SUBPAGES: SubPage[] = [
   { id: 'security', label: 'Security', icon: Shield, render: () => <SecurityPanel /> },
   { id: 'guardrails', label: 'Guardrails', icon: ShieldAlert, render: () => <GuardrailsPanel /> },
   { id: 'audit', label: 'Audit log', icon: ScrollText, render: () => <AuditPanel /> },
+  { id: 'doctor', label: 'Doctor', icon: Stethoscope, render: () => <DoctorPanel /> },
   { id: 'diagnostics', label: 'Diagnostics', icon: Activity, render: () => <DiagnosticsPanel /> },
   { id: 'tool-output', label: 'Tool output', icon: Scissors, render: () => <ProjectionRulesPanel /> },
   { id: 'legibility', label: 'Legibility', icon: Compass, render: () => <LegibilityPanel /> },

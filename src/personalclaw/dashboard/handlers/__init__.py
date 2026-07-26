@@ -106,6 +106,12 @@ from personalclaw.dashboard.handlers.core import (  # noqa: E402, F401
     index,
 )
 
+# ── Doctor (handlers/doctor.py) ──
+from personalclaw.dashboard.handlers.doctor import (  # noqa: E402, F401
+    api_doctor,
+    api_doctor_capability,
+)
+
 # ── Files & Workspaces (handlers/files.py) ──
 from personalclaw.dashboard.handlers.files import (  # noqa: E402, F401
     _validate_dashboard_path,

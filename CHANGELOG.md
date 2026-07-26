@@ -12,6 +12,20 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 
 ### Added
 
+- **A Doctor tab now diagnoses every subsystem from one read-only view.** Settings →
+  Doctor runs **tiered health probes** — process → socket → cheap-RPC → per-capability
+  — across memory (db + faiss consistency), channels, local models (availability +
+  phantom bindings), app backends (+ interrupted-update leftovers), the SPA
+  `static/dist` symlink (the stale-SPA bug-class), and model-provider breakers
+  (composed from the guardrails audit). The core doctrine is enforced: **a degraded
+  capability never marks the gateway down and never suggests a restart** — only a
+  core-tier failure does. Every probe is read-only and fail-safe (an exception
+  becomes a failed row, never a 500), and secrets are redacted from probe output. New
+  endpoints `GET /api/doctor` (all capabilities, cached 30s) and
+  `GET /api/doctor/{capability}` (re-run one card); the dashboard System Health strip
+  gains a one-line rollup that appears only when something needs attention and links
+  to the tab. Confirm-gated auto-fixes and the trust/debug simulators land in later
+  Platform-Resilience sessions.
 - **First-party apps now appear in the Store on a plain install.** The published
   first-party apps repository (`github.com/PersonalClaw/PersonalClawApps`) ships as
   a default Store source, so a bare `pip install personalclaw` surfaces every
