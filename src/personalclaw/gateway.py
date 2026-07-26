@@ -2227,13 +2227,22 @@ class GatewayOrchestrator:
 
             parent_key = info.parent_session_key
             guard_msg = ""
-            # Full result (up to 3000 chars) for immediate use.
+            # Subagent result → the parent transcript. A blind head-cut here was a real
+            # failure class ("the subagent found it but the 3000-char cap ate it" — a
+            # finding buried past char 3000 vanished). Route through project_and_retain
+            # (Context Economy §2.5a) so the parent gets a TYPE-PROJECTED digest plus a
+            # raw_ref recovery handle (tool_result_get) instead of a truncated prefix. The
+            # raw is retained under the PARENT's session key (the injected message lives in
+            # the parent transcript, so its raw must share that lifecycle). Fail-soft: no
+            # session key or a small result passes through untouched.
             if info.error:
                 detail = f"Error: {info.error}"
             else:
                 detail = info.result or "_No response._"
                 if len(detail) > 3000:
-                    detail = detail[:3000] + "\n…[truncated]"
+                    from personalclaw.tool_providers.projection import project_and_retain
+
+                    detail, _meta = project_and_retain(detail, session_key=parent_key, cap=3000)
             detail, _ = redact_exfiltration_urls(detail)
             detail, _ = redact_credentials(detail)
             task_text, _ = redact_exfiltration_urls(info.task)

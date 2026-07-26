@@ -8,6 +8,7 @@ import {
   type SettingsProvider, type InboxSettings, type NotificationSettings, type UpdateCheck,
   type PromptBindings, type SessionArchive, type SelVerify, type SavedAgent,
   type SearchProviderInfo, type AppSummary, type DoctorReport, type ProjectionRule,
+  type ToolsSavings,
 } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { useIdentity } from '../../app/identity'
@@ -75,6 +76,7 @@ const useLegibility = () => useCachedData('settings:legibility', () =>
 const useDoctor = () => useCachedData('settings:doctor', () => api.doctor().catch(() => null as DoctorReport | null), { persist: false })
 const useIncident = () => useCachedData('settings:incident', () => api.incident().catch(() => null as { active: boolean; reason: string; started_at: string } | null), { persist: true })
 const useProjectionRules = () => useCachedData('settings:projection-rules', () => api.projectionRules().catch(() => [] as ProjectionRule[]), { persist: true })
+const useToolsSavings = () => useCachedData('settings:tools-savings', () => api.toolsSavings().catch(() => null as ToolsSavings | null), { persist: true })
 const useAgentDefaults = () => useCachedData('settings:agent-defaults', async () => {
   const [cfg, agents] = await Promise.all([
     api.personalclawConfig().then((c) => (c.agent ?? {}) as Record<string, unknown>).catch(() => ({} as Record<string, unknown>)),
@@ -507,17 +509,33 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   },
   {
     id: 'tool-output', group: 'System', label: 'Tool output', icon: Scissors, size: 'sm',
-    description: 'Custom projection rules that shrink large tool output before it reaches the model.',
-    useSearchText() { const { data: r } = useProjectionRules(); return `tool output projection rules trim shrink token juice regex marker strategy ${(r ?? []).map((x) => `${x.name} ${x.strategy}`).join(' ')}` },
+    description: 'TokenJuice shrinks large tool output before it reaches the model — with custom projection rules and a savings meter.',
+    useSearchText() {
+      const { data: r } = useProjectionRules()
+      const { data: s } = useToolsSavings()
+      const saved = s && s.saved_tokens_estimated > 0 ? `saved ${s.saved_tokens_estimated} tokens top ${s.top_compressor ?? ''}` : ''
+      return `tool output projection rules trim shrink token juice tokenjuice savings saved tokens compressor regex marker strategy ${saved} ${(r ?? []).map((x) => `${x.name} ${x.strategy}`).join(' ')}`
+    },
     render(query, go) {
       const { data: rules } = useProjectionRules()
+      const { data: savings } = useToolsSavings()
       const list = rules ?? []
+      const savedTokens = savings?.saved_tokens_estimated ?? 0
       return (
         <BentoCard icon={Scissors} title="Tool output" query={query} onClick={() => go('tool-output')} loading={rules === undefined}>
-          {rules && (list.length
-            ? <><BigStat value={list.length} caption={list.length === 1 ? 'custom rule' : 'custom rules'} />
-                <div className="mt-2"><ChipRow query={query} chips={list.slice(0, 6).map((r) => ({ label: r.name, tone: 'muted' as const }))} /></div></>
-            : <div className="text-on-surface-low text-[0.8125rem]">Builtin projectors handle logs, diffs, JSON, tests, and CSV. Add a rule for an unrecognised large output.</div>)}
+          {/* Headline the savings meter once there's data (the feature's whole point);
+              fall back to the rule count / builtin-projectors hint otherwise so the card
+              is never empty and the feature is always discoverable from the grid. */}
+          {savedTokens > 0
+            ? <><BigStat value={`~${savedTokens.toLocaleString()}`} caption="tokens saved by projection" />
+                <div className="mt-1 text-on-surface-low text-[0.8125rem]">
+                  {list.length ? `${list.length} custom rule${list.length === 1 ? '' : 's'} · ` : ''}
+                  top compressor: {savings?.top_compressor ?? '—'}
+                </div></>
+            : rules && (list.length
+              ? <><BigStat value={list.length} caption={list.length === 1 ? 'custom rule' : 'custom rules'} />
+                  <div className="mt-2"><ChipRow query={query} chips={list.slice(0, 6).map((r) => ({ label: r.name, tone: 'muted' as const }))} /></div></>
+              : <div className="text-on-surface-low text-[0.8125rem]">Builtin projectors shrink logs, diffs, JSON, tests, and CSV; the full raw stays recoverable. A savings meter appears here once projection kicks in.</div>)}
         </BentoCard>
       )
     },

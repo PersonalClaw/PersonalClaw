@@ -821,6 +821,7 @@ async def start_dashboard(
         api_providers_toggle,
         api_tool_invoke,
         api_tools_list,
+        api_tools_savings,
         api_tools_toggle,
     )
 
@@ -828,6 +829,7 @@ async def start_dashboard(
     app.router.add_post("/api/tools/invoke", api_tool_invoke)
     app.router.add_post("/api/tools/toggle", api_tools_toggle)
     app.router.add_post("/api/tools/provider-toggle", api_providers_toggle)
+    app.router.add_get("/api/tools/savings", api_tools_savings)
 
     # Manifest — the generated self-description (tools + routes + providers) an
     # agent reads to drive this instance instead of guessing signatures.

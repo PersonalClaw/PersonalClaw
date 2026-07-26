@@ -420,6 +420,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/tools` — Return all tools from all active tool sources.
 - `POST /api/tools/invoke` — execute one tool through the Tool entity.
 - `POST /api/tools/provider-toggle` — enable/disable a whole NATIVE tool provider.
+- `GET /api/tools/savings` — the TokenJuice savings (counterfactual) summary.
 - `POST /api/tools/toggle` — enable/disable a native-provider tool.
 - `GET /api/triggers` — every trigger, both kinds.
 - `POST /api/triggers` — create a schedule or lifecycle trigger.

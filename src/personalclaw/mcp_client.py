@@ -29,6 +29,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw import trace_recorder as _trace
+
 logger = logging.getLogger(__name__)
 
 # Per-call ceiling so one wedged tool can't stall a chat turn indefinitely.
@@ -230,9 +232,20 @@ class McpServerConn:
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         await self._requests.put(("call", {"tool": tool, "arguments": arguments}, fut))
         try:
-            return await asyncio.wait_for(fut, timeout=_CALL_TIMEOUT_SECS)
+            ok, output = await asyncio.wait_for(fut, timeout=_CALL_TIMEOUT_SECS)
         except asyncio.TimeoutError:
-            return False, f"MCP tool '{tool}' timed out after {_CALL_TIMEOUT_SECS:.0f}s"
+            ok, output = False, f"MCP tool '{tool}' timed out after {_CALL_TIMEOUT_SECS:.0f}s"
+        # Dev-only event-trace tap (Self-Verification §2.1 MCP rider): record the
+        # request/response pair so `replay` can serve it back as a fake MCP server for
+        # deterministic offline debugging. No-op unless PERSONALCLAW_TRACE_DIR is set.
+        if _trace.is_recording():
+            _trace.record(
+                "mcp",
+                self.name,
+                "call_tool",
+                {"tool": tool, "arguments": arguments, "ok": ok, "output": output},
+            )
+        return ok, output
 
     async def shutdown(self) -> None:
         self._closing = True

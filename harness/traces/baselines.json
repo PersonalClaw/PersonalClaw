@@ -1,0 +1,46 @@
+{
+  "_comment": "Replay baselines (Self-Verification \u00a72.3). Per scenario: accepted metrics + optional threshold overrides (a loosened threshold REQUIRES a rationale). A missing scenario recording or an unrecorded scenario fails the gate.",
+  "scenarios": {
+    "happy-path-loop": {
+      "metrics": {
+        "event_count": 6,
+        "distinct_keys": 1,
+        "duplicate_event_rate": 0.0,
+        "event_fanout_ratio": 6.0,
+        "order_violation_count": 0,
+        "reconnect_loss_count": 0,
+        "latency_p50": {
+          "sse": 0.5
+        },
+        "latency_p95": {
+          "sse": 0.5
+        }
+      },
+      "thresholds": {
+        "event_fanout_ratio_max": 10.0
+      },
+      "rationale": "Single loop SSE stream with sequential lifecycle events: events/keys is high by construction (one key, many ordered events) \u2014 this is not over-broadcast, so the single-key fanout ceiling does not apply."
+    },
+    "channel-ingestion-flood": {
+      "metrics": {
+        "event_count": 5,
+        "distinct_keys": 2,
+        "duplicate_event_rate": 0.2,
+        "event_fanout_ratio": 2.5,
+        "order_violation_count": 0,
+        "reconnect_loss_count": 0,
+        "latency_p50": {
+          "inbox": 0.2
+        },
+        "latency_p95": {
+          "inbox": 0.2
+        }
+      },
+      "thresholds": {
+        "duplicate_event_rate_max": 0.5,
+        "event_fanout_ratio_max": 3.0
+      },
+      "rationale": "Flood scenario deliberately replays duplicate item_ids and 2 channels to exercise inbox dedup + multi-channel fanout; dup-rate/fanout above the single-stream default is the point of the fixture."
+    }
+  }
+}
