@@ -12,6 +12,17 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 
 ### Added
 
+- **First-party apps now appear in the Store on a plain install.** The published
+  first-party apps repository (`github.com/PersonalClaw/PersonalClawApps`) ships as
+  a default Store source, so a bare `pip install personalclaw` surfaces every
+  first-party app — model providers (OpenAI, Anthropic, Bedrock, Ollama, …),
+  search, speech, channels — without the dev workspace tree. They appear
+  **uninstalled**: nothing runs until you click Install, so the per-app
+  install-consent + provider-agnostic-core contracts are unchanged. The source is a
+  built-in default (not user-removable); the dev filesystem source and the
+  `PERSONALCLAW_FIRST_PARTY_APPS_DIR` override still work for offline/local-clone
+  development. The Store's catalog scan is cached (5-minute TTL) and runs off the
+  event loop, so the first open clones once in the background.
 - **Every non-interactive model call now passes through one guarded seam.**
   Background LLM calls (the `reasoning` axis behind `one_shot_completion`, the
   goal-loop judges, the loop gates, web-extract) are now wrapped in a
