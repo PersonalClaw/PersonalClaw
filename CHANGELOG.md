@@ -12,6 +12,19 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 
 ### Added
 
+- **Mid-turn message policy: queue (default) or cancel-and-replace.** A follow-up sent
+  while a turn is still generating now follows a *declared* policy. The default,
+  **`queue`**, is today's behavior formalized — the message is delivered next turn. Opt
+  into **`cancel_and_replace`** (a platform default in Settings, overridable per channel)
+  and a rapid follow-up instead cancels the in-flight answer and starts fresh with the new
+  message — no stale ghost response, no wasted compute. A per-session debounce coalesces a
+  burst of messages into ONE cancel + the last message. The guard is strict: only
+  **interactive** turns (the web chat, a channel DM) are ever cancel-and-replaced —
+  unattended work (goal loops, cron, subagents, the heartbeat) always queues, so a user
+  message can never pull the rug out from under a background job. Built on the existing
+  soft-cancel verb and turn-end queue drain (no new dispatch path); a new
+  `resilience/active_jobs.py` tracks each turn's origin as the bookkeeping behind the
+  decision.
 - **No-model degraded mode: the assistant stays useful, and honest, with no model bound.**
   Every model-dependent surface now declares its **LLM-free floor** explicitly, so an
   offline laptop (dead ollama, wiped cache, no API key) degrades by design instead of

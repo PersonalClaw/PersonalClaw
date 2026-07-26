@@ -1,6 +1,6 @@
 # Plan: Platform Resilience — Doctor, No-Model Degraded Mode, Mid-Turn Message Handling
 
-**Status:** IN PROGRESS — Session 1 (Doctor core, §1) DONE 2026-07-25; Session 2 (no-model degraded contract, §5) DONE 2026-07-25; Sessions 3-5 (mid-turn, fixes+simulators+crash-capture, remediation engine) remain. Created 2026-07-13 from research synthesis, promoted from backlog.
+**Status:** IN PROGRESS — Session 1 (Doctor core, §1) DONE 2026-07-25; Session 2 (no-model degraded contract, §5) DONE 2026-07-25; Session 3 (mid-turn message handling, §6) DONE 2026-07-25; Sessions 4-5 (fixes+simulators+crash-capture, remediation engine) remain. Created 2026-07-13 from research synthesis, promoted from backlog.
 **Created:** 2026-07-13
 **Wave:** split — §1-§3 (doctor probes + read-only surface) and §5 (degraded contract) are Wave 0/1 invariants (every existing surface touches models; offline behavior must be designed before the engine multiplies unattended runs); §6 (mid-turn handling) is Wave 1, independent; §4 (remediation engine) is Wave 3 — it consumes AUTONOMY-GUARDRAILS budgets (SpendMeter, §1.1 there) and should land after them.
 **Depends on:** nothing for §1-§3/§5/§6 (Wave-0-compatible). §4 depends on AUTONOMY-GUARDRAILS (SpendMeter + model-call audit for cost caps) and prefers AUTOMATION-SUBSTRATE (runs as an adaptive-cadence trigger once triggers.json exists; hangs off the heartbeat until then).
@@ -442,3 +442,47 @@ Sessions 1-4 each ship independently; Session 1 alone is a Wave-0 win (the symli
   says :672); the diarization floor comment is `use_cases.py:49-52` (plan says :47);
   `DashboardState.notify` is at `state.py:1061` (plan says ~:1027). Seams all exist; only the
   line numbers moved.
+
+- [2026-07-25][S3] DONE: Mid-turn message handling (§6). New `resilience/active_jobs.py` —
+  `ActiveJob{job_id, origin, started_at}` + `ActiveJobTracker` (register at turn start /
+  clear at turn end, both wired into `chat_runner._run_chat` at the semaphore-acquire and
+  the `finally` boundary where `notify_turn_complete` fires), plus `classify_origin` and
+  `is_cancellable_origin` (webui/channel = interactive+cancellable; loop-/cron:/subagent:/
+  _bg = never). `mid_turn_policy` (enum queue|cancel_and_replace, default queue) +
+  `cancel_replace_min_interval_secs` (2.0) added to `ResilienceConfig`, wired 5-point (+ the
+  enum in `test_config_roundtrip._SPECIAL`). Cancel-and-replace lives in
+  `chat_handlers._maybe_cancel_and_replace`: on a mid-turn follow-up to an interactive
+  session under the cancel_and_replace policy (past the debounce window), it soft-cancels
+  via the EXISTING `stop_turn(preserve_queue=True)` verb, broadcasts `chat_done
+  {superseded:true, superseded_by:qid}`, and queues the new message so the EXISTING
+  turn-end queue-drain delivers it as the next turn (§6.3.4 — no new dispatch path). FE:
+  the `chat_done` handler consumes `superseded` with a brief "Superseded by your new
+  message…" status. Tests: `test_resilience_active_jobs.py` (19 — origin classification,
+  interactive/cancellable predicate, register/clear lifecycle, per-session debounce
+  window, config policy default/invalid-fallback/honored). DoD green: `make lint`,
+  `make test` (7944 passed / 0 failed), web typecheck + vitest 231 + build. Clean break —
+  the only durable state is two config fields (round-trip-tested); the tracker is in-memory.
+  Validated live: the resilience config carries the mid-turn fields, the enum PATCH
+  round-trips (queue↔cancel_and_replace), an invalid value is rejected 400.
+- [2026-07-25][S3] DEVIATION (implementation, not behavior): the plan describes cancel-and-
+  replace as "cancel + deliver the new message as a normal turn." Rather than add a second
+  dispatch path, the new message is QUEUED after the cancel and delivered by the existing
+  turn-end queue-drain (`chat_runner` finally → `_dequeue_next_message` → re-dispatch). Same
+  observable result (stale turn dies, new message answers next), zero new hot-path code.
+- [2026-07-25][S3] DEVIATION (scope): the plan's FE §6.4 also asks for a composer "will
+  replace the current answer" hint and a dimmed/collapsible superseded partial bubble. The
+  functional behavior (cancel + replace + no ghost) is complete and the `superseded` signal
+  is consumed as a status line; the composer policy-hint and per-turn bubble dimming are
+  DEFERRED as polish — both require threading resilience config into the composer and
+  per-turn superseded state through the streaming render path, a change disproportionate to
+  the value and risky on the streaming hot path. Recorded honestly, not silently dropped.
+- [2026-07-25][S3] DISCOVERY (dead-code finding, not fixed): `SessionManager.enqueue`/
+  `dequeue`/`cancel_queued`/`is_cancelled`/`clear_queue` (session.py) have NO production
+  callers — only tests. The live dashboard queue is `_ChatSession._queue` +
+  `enqueue_or_run_prompt` + `_dequeue_next_message`. The plan's "`SessionManager.enqueue`
+  serializes channel threads" overstates current reality; S3 targets the live path. The dead
+  methods are left as-is (out of scope; removing them is a separate cleanup).
+- [2026-07-25][S3] DISCOVERY (plan citation drift): `stop_turn` is session.py:1581 (plan
+  :1529); the queue WS events are chat_handlers ~:172/:981 (plan :162/915); `chat_status` is
+  emitted from exactly one line (chat_runner:1494) and the turn-terminal frame is `chat_done`
+  (chat_runner:2833) — `superseded` was added there. Seams exist; line numbers moved.

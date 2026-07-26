@@ -146,6 +146,17 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         session.color_theme = color_theme
 
     if session.running:
+        # Cancel-and-replace (PLATFORM-RESILIENCE §6.3): when the resolved mid-turn
+        # policy is cancel_and_replace, a rapid follow-up to this interactive session
+        # cancels the in-flight answer and the new message is delivered as the next
+        # turn via the EXISTING queue-drain-on-turn-end path — no new dispatch. The
+        # webui chat is always an interactive origin, so eligibility reduces to policy
+        # + a debounce guard (a burst produces ONE cancel + the last message). Returns
+        # a response when it handled the message; None to fall through to steer/queue.
+        if message:
+            _cr = await _maybe_cancel_and_replace(state, session, message)
+            if _cr is not None:
+                return _cr
         # Mid-run handling (#37) — 4 modes:
         #   steer (default): inject at the next model boundary of the RUNNING turn
         #     (native loop only); followup: queue for after the turn; collect: queue
@@ -271,6 +282,71 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         session.drain()
         session._has_reader = False
     return resp
+
+
+async def _maybe_cancel_and_replace(
+    state: "DashboardState", session: "_ChatSession", message: str
+) -> "web.Response | None":
+    """Cancel-and-replace decision for a follow-up sent mid-turn (PLATFORM-RESILIENCE
+    §6.3). Returns a JSON response when it HANDLED the message (cancelled the in-flight
+    turn + queued the new one, which the turn-end drain delivers as the next turn), or
+    ``None`` to fall through to the normal steer/queue path.
+
+    Eligibility: the resolved mid-turn policy is ``cancel_and_replace`` AND the
+    in-flight turn is an interactive origin (webui) AND the per-session debounce window
+    has elapsed. Everything is best-effort — any failure returns ``None`` (queue), so a
+    broken check never blocks a message.
+    """
+    import time as _time
+
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.resilience.active_jobs import get_tracker, is_cancellable_origin
+
+    try:
+        cfg = AppConfig.load().resilience
+        if cfg.mid_turn_policy != "cancel_and_replace":
+            return None
+        key = session.key
+        tracker = get_tracker()
+        job = tracker.get(key) or tracker.get(f"dashboard:{key}")
+        # Only cancel INTERACTIVE turns — loop/cron/subagent work is never pulled out
+        # from under itself by a user message (§6.3.1). A webui session with no tracked
+        # job (racing the register) is still webui, so treat it as cancellable.
+        if job is not None and not is_cancellable_origin(job.origin):
+            return None
+        now = _time.time()
+        if tracker.within_debounce(key, cfg.cancel_replace_min_interval_secs, now=now):
+            return None  # a cancel just fired — coalesce: fall through to queue
+        tracker.mark_cancel(key, now=now)
+    except Exception:
+        logger.debug("cancel-and-replace check failed", exc_info=True)
+        return None
+
+    # Soft-cancel the in-flight turn (preserve the queue so earlier follow-ups
+    # survive), tell the FE the partial answer was superseded (it dims the bubble
+    # instead of leaving a ghost), then queue the new message — the existing
+    # turn-end queue-drain re-dispatches it as a fresh turn (§6.3.4).
+    try:
+        outcome = await state.sessions.stop_turn(
+            _history_key_for(session.key), force=False, preserve_queue=True
+        )
+        qid = session.queue_append(message)
+        state.broadcast_ws(
+            "chat_done", {"session": session.key, "superseded": True, "superseded_by": qid}
+        )
+        sel().log_tool_invocation(
+            session_key=_history_key_for(session.key),
+            agent=getattr(session, "agent", "") or "personalclaw",
+            source="dashboard",
+            tool_name="mid_turn_cancel_replace",
+            tool_kind="command",
+            outcome=str(outcome),
+            metadata={"session": session.key, "queue_id": qid},
+        )
+        return web.json_response({"ok": True, "cancelled_and_replaced": True})
+    except Exception:
+        logger.warning("cancel-and-replace stop_turn failed", exc_info=True)
+        return None
 
 
 # Worker session key prefixes — loop/code/campaign engines persist under the

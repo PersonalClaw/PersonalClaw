@@ -1184,12 +1184,13 @@ class GuardrailsConfig:
 class ResilienceConfig:
     """Platform-resilience knobs (PLATFORM-RESILIENCE §7).
 
-    Two guard-class switches so far: the Doctor health surface and the no-model
+    Two guard-class switches: the Doctor health surface and the no-model
     degraded-mode indicator. Both are **guard-class** — a missing or unknown value
     parses as ENABLED (fail-safe, §5 tenet): a config typo must not silently hide the
     Doctor or the degraded chip, which are the surfaces that make a degraded system
-    legible. Later sessions add the remediation-engine (target-score / max-cost / idle
-    cadence) and mid-turn-policy fields.
+    legible. Plus the platform default mid-turn message policy (§6). The
+    remediation-engine sub-config (target-score / max-cost / idle cadence) is a later
+    session's field.
     """
 
     doctor_enabled: bool = field(
@@ -1211,6 +1212,28 @@ class ResilienceConfig:
             "LLM-free floor. Guard-class: a missing/unknown value keeps it ON.",
             guard_class=True,
             safe_values=[True],
+        ),
+    )
+    mid_turn_policy: str = field(
+        default="queue",
+        metadata=_meta(
+            "Mid-Turn Message Policy",
+            "What happens to a follow-up message sent while a turn is still "
+            "generating: 'queue' (deliver it next turn — the default, safe behavior) "
+            "or 'cancel_and_replace' (cancel the in-flight answer and start fresh with "
+            "the new message). Applies to interactive turns only; unattended work "
+            "(loops, cron, subagents) always queues. A per-channel override wins over "
+            "this platform default.",
+            enum=["queue", "cancel_and_replace"],
+        ),
+    )
+    cancel_replace_min_interval_secs: float = field(
+        default=2.0,
+        metadata=_meta(
+            "Cancel-and-Replace Debounce",
+            "Minimum seconds between cancel-and-replace actions on one session, so a "
+            "burst of rapid follow-ups produces ONE cancel + the last message (the "
+            "intermediate ones coalesce) rather than N cancels.",
         ),
     )
 
@@ -2061,6 +2084,15 @@ class AppConfig:
                 # Guard-class (§5): parse fail-safe — missing/unknown ⇒ enabled.
                 doctor_enabled=_guard_flag(resilience_data.get("doctor_enabled")),
                 degraded_indicator=_guard_flag(resilience_data.get("degraded_indicator")),
+                mid_turn_policy=(
+                    str(resilience_data.get("mid_turn_policy", "queue"))
+                    if resilience_data.get("mid_turn_policy", "queue")
+                    in ("queue", "cancel_and_replace")
+                    else "queue"
+                ),
+                cancel_replace_min_interval_secs=max(
+                    0.0, float(resilience_data.get("cancel_replace_min_interval_secs", 2.0))
+                ),
             ),
             observe_max_messages=max(1, int(data.get("observe_max_messages", 200))),
             observe_ttl_hours=max(0.0, float(data.get("observe_ttl_hours", 168.0))),

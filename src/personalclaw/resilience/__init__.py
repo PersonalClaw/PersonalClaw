@@ -25,6 +25,14 @@ message handling, and the health-scored self-remediation engine (see
 ``docs/roadmap/plans/PLATFORM-RESILIENCE.md``).
 """
 
+from personalclaw.resilience.active_jobs import (
+    ActiveJob,
+    ActiveJobTracker,
+    classify_origin,
+    get_tracker,
+    is_cancellable_origin,
+    reset_tracker,
+)
 from personalclaw.resilience.degraded import (
     DegradedContract,
     all_contracts,
@@ -57,4 +65,10 @@ __all__ = [
     "evaluate",
     "get_contract",
     "register_contract",
+    "ActiveJob",
+    "ActiveJobTracker",
+    "classify_origin",
+    "get_tracker",
+    "is_cancellable_origin",
+    "reset_tracker",
 ]

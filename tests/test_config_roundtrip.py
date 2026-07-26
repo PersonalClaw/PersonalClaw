@@ -109,6 +109,9 @@ _SPECIAL = {
     # guardrails.scan_mode is an enum-constrained str — a generated "redact-x"
     # would fail load()'s validation and fall back to the default.
     ("guardrails", "scan_mode"): "block",
+    # resilience.mid_turn_policy is enum-constrained — a generated value would fail
+    # load()'s validation and fall back to the default.
+    ("resilience", "mid_turn_policy"): "cancel_and_replace",
     # security.autonomy_denylist is a list[dict] — the generic list rule would
     # append a bare string, which load() filters out (isinstance dict). Supply a
     # real rule dict so the round-trip preserves it.
