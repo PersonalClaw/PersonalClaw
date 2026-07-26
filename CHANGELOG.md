@@ -10,6 +10,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 
+## [0.1.2] — 2026-07-26
+
+The **safety-and-resilience** release: the autonomy guardrails program (kill switch,
+spend budgets, denylist, outbound scanning, named safety profiles), the full Platform
+Resilience program (Doctor health probes, no-model degraded mode, mid-turn message
+policy, confirm-gated fixes + trust simulators + crash capture, and a health-scored
+self-maintenance engine), first-party apps in the Store on a plain install, the
+legibility surfaces (self-documenting UI kit, Discover, routed project context, offline
+agent reference), and a render-smoke gate that closes the v0.1.0 blank-dashboard hole.
+
 ### Added
 
 - **One health-scored maintenance engine replaces scattered upkeep.** PersonalClaw now
