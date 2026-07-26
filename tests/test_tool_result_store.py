@@ -68,6 +68,88 @@ def test_pathlike_id_rejected():
     assert result_store.fetch_slice("sessP", "a/b")["ok"] is False
 
 
+# ── Context Economy §1.1: content-addressed ids + idempotent storage ──────────
+
+
+def test_content_hash_id_form():
+    rid = result_store.store_result("sessH", "some raw output")
+    # r_ + 12 hex sha prefix
+    assert rid.startswith("r_") and len(rid) == 14
+    assert all(c in "0123456789abcdef" for c in rid[2:])
+
+
+def test_identical_content_dedupes_to_one_file():
+    raw = "the same big output\n" * 500
+    rid1 = result_store.store_result("sessD", raw, content_type="log")
+    rid2 = result_store.store_result("sessD", raw, content_type="log")
+    assert rid1 == rid2  # content-addressed → same id
+    # exactly one file on disk for that content
+    import personalclaw.session_workspace as ws
+
+    store_dir = ws.workspace_dir("sessD") / "tool_results"
+    assert len(list(store_dir.glob(f"{rid1}.json"))) == 1
+
+
+def test_different_content_distinct_ids():
+    a = result_store.store_result("sessX", "output one")
+    b = result_store.store_result("sessX", "output two")
+    assert a != b
+
+
+# ── Context Economy §1.2: line addressing ─────────────────────────────────────
+
+
+def test_fetch_slice_line_range():
+    raw = "\n".join(f"line{i}" for i in range(1, 101))  # 100 lines
+    rid = result_store.store_result("sessL", raw)
+    res = result_store.fetch_slice("sessL", rid, line_start=10, line_end=12)
+    assert res["ok"] and res["mode"] == "lines"
+    assert res["content"] == "line10\nline11\nline12"
+    assert res["line_start"] == 10 and res["line_end"] == 12 and res["total_lines"] == 100
+
+
+def test_fetch_slice_line_start_only():
+    raw = "\n".join(f"L{i}" for i in range(1, 21))
+    rid = result_store.store_result("sessL2", raw)
+    res = result_store.fetch_slice("sessL2", rid, line_start=18)
+    assert res["ok"] and res["content"] == "L18\nL19\nL20"
+
+
+def test_fetch_slice_line_start_past_end_errors():
+    rid = result_store.store_result("sessL3", "one\ntwo\nthree")
+    res = result_store.fetch_slice("sessL3", rid, line_start=99)
+    assert res["ok"] is False and "past the result" in res["error"]
+
+
+def test_line_and_char_modes_mutually_exclusive():
+    # Passing a line range routes to line mode and ignores char start/end.
+    raw = "\n".join(f"row{i}" for i in range(1, 6))
+    rid = result_store.store_result("sessL4", raw)
+    res = result_store.fetch_slice("sessL4", rid, start=0, end=3, line_start=2, line_end=3)
+    assert res["mode"] == "lines" and res["content"] == "row2\nrow3"
+
+
+# ── OP4-analog: projection retains raw with NO double-loss on the new id form ──
+
+
+def test_project_and_retain_no_double_loss_content_hash():
+    # A large log projects to a preview AND retains the full raw under a content-hash id;
+    # the buried line is recoverable — the OP4 "no double loss" contract on the new id.
+    from personalclaw.tool_providers.projection import project_and_retain
+
+    lines = [f"ok {i}" for i in range(5000)]
+    lines[2500] = "ERROR: buried needle"
+    raw = "\n".join(lines)
+    preview, meta = project_and_retain(raw, session_key="sessND", content_type="log", cap=1000)
+    assert meta["truncated"] and meta["raw_ref"].startswith("r_")
+    # the needle is NOT in the preview (it was past the head) but IS recoverable
+    res = result_store.fetch_slice("sessND", meta["raw_ref"], grep="needle")
+    assert res["ok"] and "buried needle" in res["content"]
+    # storing the identical projection again reuses the same raw file (idempotent)
+    _, meta2 = project_and_retain(raw, session_key="sessND", content_type="log", cap=1000)
+    assert meta2["raw_ref"] == meta["raw_ref"]
+
+
 @pytest.mark.asyncio
 async def test_builtin_tool_result_get_roundtrip(tmp_path, monkeypatch):
     """End-to-end: a bash run that overflows the cap stores raw + names a
@@ -84,7 +166,10 @@ async def test_builtin_tool_result_get_roundtrip(tmp_path, monkeypatch):
     res = _ok_capped(big, content_type="log", session_key="sessRT")
     assert res.truncated and res.metadata.get("raw_ref")
     rid = res.metadata["raw_ref"]
-    assert f'tool_result_get(result_id="{rid}")' in res.output  # affordance named
+    # Affordance named — the recovery hint now names all three access modes (§1.2):
+    # a char/line range or grep. Assert the id + the line-range mode are surfaced.
+    assert f'tool_result_get(result_id="{rid}"' in res.output
+    assert "line_start" in res.output and "grep" in res.output
 
     prov = NativeBuiltinToolProvider(cwd=tmp_path, session_key="sessRT")
     got = await prov.invoke("tool_result_get", {"result_id": rid, "grep": "buried"})

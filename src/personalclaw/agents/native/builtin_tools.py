@@ -942,13 +942,17 @@ class NativeBuiltinToolProvider(ToolProvider):
                     "truncated. When a tool result shows '[projected … full result: "
                     'tool_result_get(result_id="r_…")]\', call this with that result_id to pull the '  # noqa: E501
                     "part the preview dropped. Args: result_id (str, required); optional grep (str, "  # noqa: E501
-                    "return only matching lines), start/end (int, char range), max_chars (int)."
+                    "return only matching lines), line_start/line_end (int, 1-indexed inclusive "  # noqa: E501
+                    "line range — the natural way to pull 'lines 40-80'), start/end (int, char "  # noqa: E501
+                    "range), max_chars (int). Access modes are checked grep → lines → char range."  # noqa: E501
                 ),
                 parameters={
                     **s,
                     "properties": {
                         "result_id": {"type": "string"},
                         "grep": {"type": "string"},
+                        "line_start": {"type": "integer"},
+                        "line_end": {"type": "integer"},
                         "start": {"type": "integer"},
                         "end": {"type": "integer"},
                         "max_chars": {"type": "integer"},
@@ -1005,12 +1009,18 @@ class NativeBuiltinToolProvider(ToolProvider):
         start = int(a.get("start") or 0)
         end = a.get("end")
         end = int(end) if end is not None else None
+        line_start = a.get("line_start")
+        line_start = int(line_start) if line_start is not None else None
+        line_end = a.get("line_end")
+        line_end = int(line_end) if line_end is not None else None
         max_chars = int(a.get("max_chars") or _MAX_OUTPUT_CHARS)
         res = result_store.fetch_slice(
             self._session_key,
             rid,
             start=start,
             end=end,
+            line_start=line_start,
+            line_end=line_end,
             grep=str(grep) if grep else None,
             max_chars=max_chars,
         )
@@ -1025,13 +1035,23 @@ class NativeBuiltinToolProvider(ToolProvider):
         note = (
             f"[{res['mode']}: showing {res['shown']} of {res['length']} chars"
             + (f", {res.get('matches', 0)} match(es)" if res["mode"] == "grep" else "")
+            + (
+                f", lines {res.get('line_start')}-{res.get('line_end')} of "
+                f"{res.get('total_lines')}"
+                if res["mode"] == "lines"
+                else ""
+            )
             + (f"; more from start_index={res['next_index']}" if res.get("next_index") else "")
             + "]"
         )
         # Carry the ORIGINAL stored content_type back so a retrieved diff/log/json
         # renders rich (not flattened to generic). A grep slice loses structure, so
-        # only the full range keeps the type; grep falls back to generic.
-        ctype = res.get("content_type", "generic") if res.get("mode") == "range" else "generic"
+        # only a full char/line range keeps the type; grep falls back to generic.
+        ctype = (
+            res.get("content_type", "generic")
+            if res.get("mode") in ("range", "lines")
+            else "generic"
+        )
         return ToolResult(
             success=True, output=f"{note}\n{res['content']}", metadata={"content_type": ctype}
         )

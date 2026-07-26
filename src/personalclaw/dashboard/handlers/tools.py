@@ -409,3 +409,16 @@ async def api_providers_toggle(request: web.Request) -> web.Response:
     if not result.get("ok"):
         return web.json_response(result, status=409 if result.get("locked") else 400)
     return web.json_response(result)
+
+
+async def api_tools_savings(request: web.Request) -> web.Response:
+    """GET /api/tools/savings — the TokenJuice savings (counterfactual) summary.
+
+    Read-only aggregate from ``~/.personalclaw/tokenjuice_savings.json`` (Context Economy
+    §1.3): estimated tokens saved by output projection, the top compressor, and a
+    per-compressor breakdown. Tokens are estimated (``chars/4``, flagged ``estimated``) —
+    this is the *savings* ledger, not authoritative spend metering. Never raises (an
+    absent/corrupt file returns an empty summary)."""
+    from personalclaw.tool_providers import savings
+
+    return web.json_response(savings.summary())
