@@ -68,9 +68,62 @@ LOOPBACK_INTERNAL = EgressPolicy(
     timeout_s=60.0,
 )
 
+# AUTONOMY-GUARDRAILS §4.2: a curated package-registry allow-list for sandboxed code
+# runs / loop workers that need to reach the common dev registries WITHOUT opening the
+# whole internet. STRICT posture (public-only, pin IP, redirect re-check) + this
+# preset in allow_hosts. A safety profile's egress tier "registry" selects this;
+# "all" selects STRICT (public), "listed" a user allow-list, "off" denies all egress.
+REGISTRY_HOSTS: tuple[str, ...] = (
+    "pypi.org",
+    "files.pythonhosted.org",
+    "registry.npmjs.org",
+    "npmjs.com",
+    "crates.io",
+    "static.crates.io",
+    "index.crates.io",
+    "docker.io",
+    "registry-1.docker.io",
+    "ghcr.io",
+    "github.com",
+    "raw.githubusercontent.com",
+    "codeload.github.com",
+    "objects.githubusercontent.com",
+    "repo1.maven.org",
+    "repo.maven.apache.org",
+    "rubygems.org",
+    "proxy.golang.org",
+    "sum.golang.org",
+    "packagist.org",
+    "nuget.org",
+    "api.nuget.org",
+)
+REGISTRY = EgressPolicy(
+    name="registry",
+    allow_hosts=REGISTRY_HOSTS,
+    max_bytes=100_000_000,  # a wheel/image layer is large
+    timeout_s=60.0,
+)
+
 _PROFILES: dict[str, EgressPolicy] = {
-    p.name: p for p in (STRICT, CONNECTOR, WEBHOOK, LOOPBACK_INTERNAL)
+    p.name: p for p in (STRICT, CONNECTOR, WEBHOOK, LOOPBACK_INTERNAL, REGISTRY)
 }
+
+
+def egress_policy_for_tier(tier: str) -> "EgressPolicy | None":
+    """Resolve a safety-profile egress TIER to a base :class:`EgressPolicy` (§4.2).
+
+    * ``off``      → ``None`` (the caller denies all egress — no policy applies).
+    * ``listed``   → STRICT + the operator's ``security.egress.allow_hosts`` (via
+                     ``egress_policy_for`` at the call site) — a user allow-list.
+    * ``registry`` → the curated REGISTRY preset (dev registries only).
+    * ``all``      → STRICT (public hosts, the normal agent posture).
+
+    An unknown tier falls back to STRICT (the safe public-only default)."""
+    if tier == "off":
+        return None
+    if tier == "registry":
+        return REGISTRY
+    return STRICT  # "listed" and "all" both start from STRICT; operator layering adds hosts
 
 
 def get_policy(name: str) -> EgressPolicy:

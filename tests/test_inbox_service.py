@@ -128,7 +128,7 @@ async def test_classify_parses_json_and_persists(monkeypatch):
     item = _item()
     svc = _svc_with(item)
 
-    async def fake_one_shot(prompt: str, *, use_case: str = "background") -> str:
+    async def fake_one_shot(prompt: str, *, use_case: str = "background", output_type=None) -> str:
         assert "<untrusted_content" in prompt  # fenced
         return '{"classification": "needs_reply", "confidence": "high"}'
 
@@ -144,7 +144,13 @@ async def test_classify_malformed_json_defaults_safe(monkeypatch):
     item = _item()
     svc = _svc_with(item)
 
-    async def fake_one_shot(prompt: str, *, use_case: str = "background") -> str:
+    async def fake_one_shot(prompt: str, *, use_case: str = "background", output_type=None) -> str:
+        # Mirror the real typed-output contract: a parse miss under output_type
+        # raises OutputContractError, which classify() catches and safe-defaults.
+        if output_type is not None:
+            from personalclaw.guardrails.failure import OutputContractError
+
+            raise OutputContractError("dict", "not json at all")
         return "not json at all"
 
     monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", fake_one_shot)

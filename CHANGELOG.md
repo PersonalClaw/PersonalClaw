@@ -12,6 +12,88 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 
 ### Added
 
+- **Every non-interactive model call now passes through one guarded seam.**
+  Background LLM calls (the `reasoning` axis behind `one_shot_completion`, the
+  goal-loop judges, the loop gates, web-extract) are now wrapped in a
+  **model-call guard** — the LLM twin of the network egress chokepoint. It adds a
+  **per-provider circuit breaker** (opens after N consecutive failures, half-opens
+  after a recovery window): during a provider outage an overnight run fails in
+  microseconds instead of stacking timeouts. It adds a **hard wall-clock timeout**
+  on every call, and an **attempt-level JSONL audit trail**
+  (`~/.personalclaw/model_calls.jsonl`, one line per attempt, trimmed to the most
+  recent entries) recording provider, model, latency, tokens, and outcome. The
+  **interactive chat stream is deliberately untouched** — a human is watching it.
+  `one_shot_completion` also gains a typed **`output_type`** option: pass `dict`
+  or `list` to require a parseable JSON shape, and a parse miss is retried once
+  with a targeted correction note before raising a loud `OutputContractError` —
+  replacing the silent `None` degrade that `parse_llm_json` returned at every
+  call site (migrated: web-extract, inbox classify). Goal-loop and eval judge
+  verdicts gain a bounded **`reasoning`** field written before the verdict, so a
+  structured-output constraint no longer suppresses the judge's chain of thought.
+  A new graded provider capability descriptor (`structured_output`:
+  `none`/`json_mode`/`json_schema`) lets provider apps opt into native
+  schema enforcement in a later change; until then every provider gets the
+  universal parse-with-retry path. This is a **clean break** (pre-1.0): the new
+  audit trail is additive on-disk state under `~/.personalclaw/` — **run
+  `personalclaw snapshot` before upgrading** if you want a rollback point.
+  (AUTONOMY-GUARDRAILS §2, Session 1.)
+- **Unattended spend now has budgets, and outbound prompts are scanned for
+  secrets.** A new **Guardrails** settings section (`config.json` → `guardrails`)
+  adds daily spend ceilings for unattended work: set a **max tokens/day** or
+  **max dollars/day** and when the day's automated spend hits the ceiling, further
+  unattended LLM calls are refused (a cron agent fire is skipped with a one-time
+  "daily automation budget reached" notification, a subagent spawn is refused) —
+  interactive chat is never budget-gated. Spend is metered at the model-call seam
+  into `~/.personalclaw/spend.json` (per-day, pruned after 30 days), with dollars
+  estimated from the existing per-model price table (provider-reported cost
+  preferred). Every outbound prompt bound for a **remote** provider is scanned for
+  secrets/PII (AWS keys, private keys, Slack tokens, emails, phone numbers) and
+  handled per a configurable **scan mode**: `warn` (log + send), `redact`
+  (substitute + send, the default), or `block` (refuse the call); a local provider
+  is always `warn` since its content never leaves the machine. The circuit-breaker
+  thresholds from Session 1 are now configurable here too (failure threshold,
+  recovery seconds). Defaults are **unlimited budget + redact**, so an existing
+  install's behavior is unchanged until you set a ceiling. Clean break (pre-1.0):
+  additive on-disk state (`spend.json`) — **run `personalclaw snapshot` before
+  upgrading** for a rollback point. (AUTONOMY-GUARDRAILS §1.1, §2.2, Session 2.)
+- **A kill switch, a path/action denylist, and a live-write guard for unattended
+  work.** Three safety-floor controls land. (1) **`personalclaw incident on`** (and
+  `POST /api/incident`) suspends every unattended fire — cron, hooks, event
+  triggers, subagent spawns — within one poll interval; **interactive chat keeps
+  working**, and resuming requires an explicit `personalclaw incident off` (or
+  `POST /api/incident/resume {confirm:true}`). Activation/resume are tamper-evidently
+  logged. (2) A **path/action denylist** (`security.autonomy_denylist`, rules of
+  `{paths, actions, verdict: block|needs_human}`) is enforced at all three
+  action-dispatch seams (script hooks, scheduled jobs, memory-event triggers), so
+  an app-contributed action provider inherits it without cooperating; it composes
+  with the always-on built-in sensitive-path + destructive-command denylists. A
+  `needs_human` rule holds the action and raises a needs-input notification instead
+  of dropping it. (3) **`PERSONALCLAW_DISABLE_LIVE_WRITES=1`** makes live,
+  hard-to-reverse writes (deleting a downloaded model, a non-GET request to a
+  non-loopback host) refuse with a loud typed error instead of executing — and it
+  is auto-set for the whole test suite, structurally closing the bug class where a
+  destructive test once deleted a real bound model. Guard flags parse fail-safe
+  (a missing/typo'd value keeps the guard ON), and the outbound scan now defaults
+  to `redact` (never the leaky `warn`), enforced by a schema test. Clean break
+  (pre-1.0): additive config + an `incident.json` flag file — **run `personalclaw
+  snapshot` before upgrading**. (AUTONOMY-GUARDRAILS §1.2–§1.4, §5, Session 3.)
+- **A Guardrails settings surface, a provider-health view, and named safety
+  profiles.** The safety floor gets its cockpit and its posture layer. A new
+  **Settings → Guardrails** panel gathers the incident kill switch (with a
+  one-click toggle), the daily spend budgets, the outbound scan mode, and the
+  circuit-breaker tuning — and a **provider-health view** derived from the
+  model-call audit (per-provider breaker state, pass rate, p50/p90/p99 latency,
+  recent failure modes; `GET /api/models/health`, computed from files already on
+  disk — no telemetry). A **persistent incident banner** now shows on every page
+  while incident mode is active, with inline Resume. Under the hood, **named safety
+  profiles** (`interactive` / `coding` / `review-only` / `cleanup` / `incident` /
+  `headless`) become the single object that decides approval + tool grants + egress
+  tier + budget + scan for a run; unattended runs (cron, subagents, channel, inbox,
+  loop workers) resolve to the read-only **`headless`** profile *by construction*
+  from their session key, and a curated **package-registry egress tier** lets a
+  sandboxed run reach pypi/npm/crates/GitHub/… without opening the whole internet.
+  Defaults preserve today's behavior. Clean break (pre-1.0), additive. (AUTONOMY-
+  GUARDRAILS §2.5, §3, §4.2, §4.4, Session 4.)
 - **The animated dot-wave backdrop is now a choosable background style.** A new
   **Background** control in Settings → Design → Backdrop & motion switches the
   surface behind chat, the new-chat composer, and onboarding between four modes:

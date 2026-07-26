@@ -66,7 +66,17 @@ def _patch_fetch(monkeypatch, resp=None):
 
 
 def _patch_llm(monkeypatch, text):
-    async def _fake(prompt, *, use_case="reasoning"):
+    async def _fake(prompt, *, use_case="reasoning", output_type=None):
+        # Faithfully mirror the real one_shot_completion typed-output contract
+        # (AUTONOMY-GUARDRAILS §2.4): when output_type is set and the text does
+        # not parse as that shape, raise OutputContractError (the mock returns a
+        # fixed text, so the internal retry can't change the outcome).
+        if output_type is not None:
+            from personalclaw.guardrails.failure import OutputContractError
+            from personalclaw.llm_helpers import _parse_llm
+
+            if _parse_llm(text, output_type) is None:
+                raise OutputContractError(getattr(output_type, "__name__", str(output_type)), text)
         return text
 
     # one_shot_completion is imported lazily inside web_extract from llm_helpers.

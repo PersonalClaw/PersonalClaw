@@ -570,6 +570,38 @@ async def run_script_hook(
         )
 
     ctx = ActionContext(event=hook.event, context=context, payload=hook_event)
+    # Incident kill switch (§1.3): a script hook's ACTION is an automated
+    # side-effect (bash/webhook/spawn), so it is suspended during an incident even
+    # if its triggering event occurred in an interactive turn — the chat STREAM
+    # keeps flowing (a separate path); only the automated action pauses.
+    from personalclaw.guardrails.incident import incident_active
+
+    if incident_active():
+        hook.last_run = time.time()
+        hook.last_status = "skipped_incident"
+        hook.run_count += 1
+        return ScriptHookResult(
+            hook_id=hook.id,
+            hook_name=hook.name,
+            event=hook.event,
+            error="skipped: incident mode active",
+        )
+    # Denylist gate (AUTONOMY-GUARDRAILS §1.2): a hook's action config is checked
+    # BEFORE dispatch, so an app-contributed provider inherits the denylist. A
+    # blocked action returns a blocked result rather than executing.
+    from personalclaw.guardrails.denylist import enforce_action
+
+    _deny = enforce_action(hook.provider, hook.provider_config, ctx)
+    if _deny.blocked:
+        hook.last_run = time.time()
+        hook.last_status = "blocked"
+        hook.run_count += 1
+        return ScriptHookResult(
+            hook_id=hook.id,
+            hook_name=hook.name,
+            event=hook.event,
+            error=f"blocked by guardrails denylist: {_deny.reason}",
+        )
     try:
         result = await provider.execute(hook.provider_config, ctx, timeout=hook.timeout)
     except Exception as exc:  # noqa: BLE001 - a misbehaving provider must not crash the seam

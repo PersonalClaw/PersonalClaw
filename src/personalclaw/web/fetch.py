@@ -309,22 +309,15 @@ async def web_extract(
         )
         or ""
     )
+    from personalclaw.guardrails.failure import OutputContractError
+    from personalclaw.llm_helpers import one_shot_completion, parse_llm_json
+
     try:
-        from personalclaw.llm_helpers import one_shot_completion, parse_llm_json
-
-        raw = await one_shot_completion(prompt, use_case="reasoning")
-    except Exception as exc:
-        logger.warning("web_extract LLM call failed for %s: %s", url, exc, exc_info=True)
-        return ExtractOutcome(
-            ok=False,
-            url=fetched.url,
-            title=fetched.title,
-            error=f"extraction model call failed: {exc}",
-            recovery_hints=["Ensure a chat/reasoning model is configured in Settings → Models."],
-        )
-
-    data = parse_llm_json(raw)
-    if data is None:
+        # output_type=dict enforces a parseable JSON object with ONE targeted
+        # correction-note retry inside the call (AUTONOMY-GUARDRAILS §2.4) —
+        # replacing the prior silent parse-then-None degrade.
+        raw = await one_shot_completion(prompt, use_case="reasoning", output_type=dict)
+    except OutputContractError:
         return ExtractOutcome(
             ok=False,
             url=fetched.url,
@@ -335,4 +328,16 @@ async def web_extract(
                 "web_fetch returns the raw page content if structured extraction isn't needed.",
             ],
         )
+    except Exception as exc:
+        logger.warning("web_extract LLM call failed for %s: %s", url, exc, exc_info=True)
+        return ExtractOutcome(
+            ok=False,
+            url=fetched.url,
+            title=fetched.title,
+            error=f"extraction model call failed: {exc}",
+            recovery_hints=["Ensure a chat/reasoning model is configured in Settings → Models."],
+        )
+
+    # Guaranteed parseable (output_type=dict succeeded, possibly after the retry).
+    data = parse_llm_json(raw) or {}
     return ExtractOutcome(ok=True, url=fetched.url, title=fetched.title, data=data)

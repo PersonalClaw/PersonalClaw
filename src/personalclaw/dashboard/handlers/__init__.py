@@ -85,7 +85,10 @@ from personalclaw.dashboard.handlers.agents import (  # noqa: E402, F401
 # ── Core (handlers/core.py) ──
 from personalclaw.dashboard.handlers.core import (  # noqa: E402, F401
     _DIST_DIR,
+    api_incident,
+    api_incident_resume,
     api_logout,
+    api_models_health,
     api_personalclaw_config,
     api_personalclaw_config_patch,
     api_security_denied_commands,

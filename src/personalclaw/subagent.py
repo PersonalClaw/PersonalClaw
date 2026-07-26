@@ -975,6 +975,62 @@ class SubagentManager:
             )
             return info
 
+        # --- Incident kill switch (§1.3): refuse spawns during an incident ---
+        # A subagent is unattended work. Interactive chat is untouched; a spawn is
+        # not the chat stream, so it is suspended.
+        try:
+            from personalclaw.guardrails.incident import incident_active
+
+            if incident_active():
+                logger.info("Subagent spawn refused: incident mode active")
+                sel().log_tool_invocation(
+                    session_key=parent_session_key or "",
+                    source="subagent",
+                    tool_name="subagent_run",
+                    outcome="refused_incident",
+                    metadata={"task": _redacted_task[:120]},
+                )
+                return SubagentInfo(
+                    id=uuid.uuid4().hex[:8],
+                    task=_redacted_task,
+                    agent=agent,
+                    done=True,
+                    error="spawn refused: incident mode active (resume with "
+                    "`personalclaw incident off`)",
+                )
+        except Exception:
+            logger.debug("subagent spawn incident check failed (fail-open)", exc_info=True)
+
+        # --- Budget guard: refuse to spawn if the day-scope spend ceiling is hit ---
+        # A subagent is unattended work; if the day's guardrail budget is already
+        # exhausted, don't start another one (§1.1 pause-into-refuse). Fail-open on
+        # any error — the budget is a guardrail, not a hard gate.
+        try:
+            from personalclaw.guardrails.budgets import BudgetVerdict, budget_from_config, get_meter
+
+            _day_budget = budget_from_config()
+            if not _day_budget.is_unlimited:
+                _verdict, _reason = get_meter().check_day(_day_budget)
+                if _verdict is BudgetVerdict.EXCEEDED:
+                    logger.warning("Subagent spawn refused: %s", _reason)
+                    sel().log_tool_invocation(
+                        session_key=parent_session_key or "",
+                        source="subagent",
+                        tool_name="subagent_run",
+                        outcome="refused_budget_exceeded",
+                        metadata={"reason": _reason, "task": _redacted_task[:120]},
+                    )
+                    return SubagentInfo(
+                        id=uuid.uuid4().hex[:8],
+                        task=_redacted_task,
+                        agent=agent,
+                        done=True,
+                        error=f"spawn refused: {_reason} (resets next day, or raise the "
+                        f"budget in Settings → Guardrails)",
+                    )
+        except Exception:
+            logger.debug("subagent spawn budget check failed (fail-open)", exc_info=True)
+
         # --- CWD validation: reject bad paths before consuming a session ---
         resolved_cwd = ""
         if cwd:

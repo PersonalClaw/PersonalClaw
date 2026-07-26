@@ -1056,6 +1056,108 @@ class EgressConfig:
 
 
 @dataclass
+class BudgetConfig:
+    """Default spend ceilings for unattended work (AUTONOMY-GUARDRAILS §1.1).
+
+    Zero means UNLIMITED for that dimension — the conservative default so an
+    existing user's unattended work is never suddenly capped on upgrade. A
+    ceiling bites the ``run`` scope (one goal-loop / cron fire) and the ``day``
+    scope (all unattended spend for a calendar day, per the ``spend.json`` meter).
+    Per-trigger overrides arrive with AUTOMATION-SUBSTRATE (Trigger.gates); until
+    then these globals apply to every unattended run.
+    """
+
+    max_tokens_per_run: int = field(
+        default=0,
+        metadata=_meta(
+            "Max Tokens / Run",
+            "Token ceiling for a single unattended run (goal-loop cycle, cron fire, "
+            "subagent). 0 = unlimited. At the ceiling the run pauses into needs-input.",
+        ),
+    )
+    max_tokens_per_day: int = field(
+        default=0,
+        metadata=_meta(
+            "Max Tokens / Day",
+            "Token ceiling for ALL unattended spend in a calendar day (across every "
+            "trigger). 0 = unlimited. At the ceiling further unattended runs are "
+            "skipped + paused until the next day.",
+        ),
+    )
+    max_dollars_per_day: float = field(
+        default=0.0,
+        metadata=_meta(
+            "Max Dollars / Day",
+            "Estimated-dollar ceiling for all unattended spend in a calendar day. "
+            "0 = unlimited. Estimates use provider-reported usage where available, "
+            "else a conservative heuristic.",
+        ),
+    )
+
+
+@dataclass
+class BreakerConfig:
+    """Per-provider circuit-breaker tuning (AUTONOMY-GUARDRAILS §2.3).
+
+    Consumed by the model-call chokepoint's breaker registry. Defaults match the
+    breaker module's built-ins; a value here overrides them for every provider.
+    """
+
+    failure_threshold: int = field(
+        default=5,
+        metadata=_meta(
+            "Breaker Failure Threshold",
+            "Consecutive failures before a provider's circuit breaker OPENs (fails "
+            "fast during an outage instead of stacking timeouts).",
+        ),
+    )
+    recovery_secs: float = field(
+        default=30.0,
+        metadata=_meta(
+            "Breaker Recovery Seconds",
+            "How long an OPEN breaker waits before allowing one HALF_OPEN probe.",
+        ),
+    )
+
+
+@dataclass
+class GuardrailsConfig:
+    """The personal safety-floor substrate (AUTONOMY-GUARDRAILS).
+
+    A *personal* safety floor — one user, one gateway, config plus one policy
+    check per seam. Session 1 shipped the model-call chokepoint (breaker + hard
+    timeout + audit + typed output); Session 2 adds spend metering + the outbound
+    scan mode. Later sessions add the denylist, incident kill switch, and named
+    safety profiles.
+    """
+
+    budgets: BudgetConfig = field(
+        default_factory=BudgetConfig,
+        metadata=_meta("Budgets", "Default spend ceilings for unattended work."),
+    )
+    breaker: BreakerConfig = field(
+        default_factory=BreakerConfig,
+        metadata=_meta("Circuit Breaker", "Per-provider model-call breaker tuning."),
+    )
+    scan_mode: str = field(
+        default="redact",
+        metadata=_meta(
+            "Outbound Scan Mode",
+            "How the model-call seam handles secrets/PII in an outbound prompt bound "
+            "for a REMOTE provider: 'warn' (log + proceed), 'redact' (substitute + "
+            "proceed), or 'block' (refuse the call). Local-only providers always warn "
+            "(the content never leaves the machine).",
+            enum=["warn", "redact", "block"],
+            # Guard-class (§5): the default must never be the leaky 'warn' (which
+            # would send secrets to a remote provider). A config typo falls back to
+            # this default, so it must be SAFE. Enforced by test_guardrails_flags.py.
+            guard_class=True,
+            safe_values=["redact", "block"],
+        ),
+    )
+
+
+@dataclass
 class SecurityConfig:
     """Security controls for the agent's shell access.
 
@@ -1079,6 +1181,17 @@ class SecurityConfig:
             "Egress Policy",
             "Operator overrides for the outbound network guard (allow/deny hosts, "
             "private-network opt-in).",
+        ),
+    )
+    autonomy_denylist: list[dict] = field(
+        default_factory=list,
+        metadata=_meta(
+            "Autonomy Denylist",
+            "Path/action deny rules for autonomous action-provider runs "
+            "(AUTONOMY-GUARDRAILS §1.2). Each rule is "
+            "{paths:[glob], actions:[class], verdict: block|needs_human}. Enforced at "
+            "every action-dispatch seam, so an app-contributed provider inherits it. "
+            "Composes with (never overrides) the always-on built-in denylists.",
         ),
     )
 
@@ -1486,6 +1599,10 @@ class AppConfig:
         default_factory=SecurityConfig,
         metadata=_meta("Security", "Shell-command security controls."),
     )
+    guardrails: GuardrailsConfig = field(
+        default_factory=GuardrailsConfig,
+        metadata=_meta("Guardrails", "Autonomy safety floor — budgets, breaker, scan."),
+    )
     inbox: InboxConfig = field(
         default_factory=InboxConfig,
         metadata=_meta("Inbox", "Reads messages, drafts replies."),
@@ -1617,6 +1734,16 @@ class AppConfig:
         security_data = data.get("security", {})
         if not isinstance(security_data, dict):
             security_data = {}
+
+        guardrails_data = data.get("guardrails", {})
+        if not isinstance(guardrails_data, dict):
+            guardrails_data = {}
+        budgets_data = guardrails_data.get("budgets", {})
+        if not isinstance(budgets_data, dict):
+            budgets_data = {}
+        breaker_data = guardrails_data.get("breaker", {})
+        if not isinstance(breaker_data, dict):
+            breaker_data = {}
 
         # Parse agents section into dict[str, AgentProfile]
         raw_agents = data.get("agents", {})
@@ -1841,6 +1968,29 @@ class AppConfig:
                         (security_data.get("egress", {}) or {}).get("allow_private", False)
                     ),
                 ),
+                autonomy_denylist=[
+                    d
+                    for d in (security_data.get("autonomy_denylist", []) or [])
+                    if isinstance(d, dict)
+                ],
+            ),
+            guardrails=GuardrailsConfig(
+                budgets=BudgetConfig(
+                    max_tokens_per_run=max(0, int(budgets_data.get("max_tokens_per_run", 0))),
+                    max_tokens_per_day=max(0, int(budgets_data.get("max_tokens_per_day", 0))),
+                    max_dollars_per_day=max(
+                        0.0, float(budgets_data.get("max_dollars_per_day", 0.0))
+                    ),
+                ),
+                breaker=BreakerConfig(
+                    failure_threshold=max(1, int(breaker_data.get("failure_threshold", 5))),
+                    recovery_secs=max(0.0, float(breaker_data.get("recovery_secs", 30.0))),
+                ),
+                scan_mode=(
+                    str(guardrails_data.get("scan_mode", "redact"))
+                    if guardrails_data.get("scan_mode", "redact") in ("warn", "redact", "block")
+                    else "redact"
+                ),
             ),
             observe_max_messages=max(1, int(data.get("observe_max_messages", 200))),
             observe_ttl_hours=max(0.0, float(data.get("observe_ttl_hours", 168.0))),
@@ -1992,6 +2142,7 @@ class AppConfig:
             "workflows": asdict(self.workflows),
             "learning": asdict(self.learning),
             "security": asdict(self.security),
+            "guardrails": asdict(self.guardrails),
             "timezone": self.timezone,
             "auto_update": self.auto_update,
             "snapshot_dir": self.snapshot_dir,
