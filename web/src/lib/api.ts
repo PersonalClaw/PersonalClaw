@@ -89,6 +89,86 @@ export interface ProviderHealth {
   degraded: boolean
 }
 
+// Doctor — the tiered read-only health report (PLATFORM-RESILIENCE §1).
+export interface DoctorProbe {
+  id: string
+  capability: string
+  tier: number
+  title: string
+  ok: boolean
+  detail: string
+  evidence: Record<string, unknown>
+  fix_id?: string
+}
+export interface DoctorCapability {
+  ok: boolean
+  tier: number
+  probes: DoctorProbe[]
+}
+export interface DoctorReport {
+  ok: boolean
+  core_ok: boolean
+  worst: string
+  restart_suggested: boolean
+  capabilities: Record<string, DoctorCapability>
+  skipped_capabilities: string[]
+  generated_at: number
+}
+
+// No-model degraded mode (PLATFORM-RESILIENCE §5).
+export interface DegradedSurface {
+  surface: string
+  available: boolean
+  floor: string
+  backlog: number
+  use_cases: string[]
+}
+export interface DegradedReport {
+  surfaces: DegradedSurface[]
+  degraded: string[]
+}
+
+// Confirm-gated fixes + surfacing simulator (PLATFORM-RESILIENCE §2/§3.1).
+export interface DoctorFix {
+  id: string
+  title: string
+  impact: string
+  preview: string
+}
+export interface SurfacingCandidate {
+  key: string
+  kw_score: number
+  sem_score: number
+  threshold_kw: number
+  threshold_sem: number
+  negated: boolean
+  included: boolean
+  reason: string
+}
+
+// Health-scored remediation engine (PLATFORM-RESILIENCE §4).
+export interface RemediationJobRow {
+  id: string
+  status: string
+  cost: number
+  detail?: string
+  error?: string
+}
+export interface RemediationRun {
+  ts: number
+  score_before: number
+  score_after: number
+  jobs: RemediationJobRow[]
+  stopped_reason: string
+}
+export interface RemediationSnapshot {
+  score: number
+  target_score: number
+  deficits: { key: string; count: number; penalty: number; reachable: boolean }[]
+  plan: RemediationJobRow[]
+  recent_runs: RemediationRun[]
+}
+
 export interface ChannelHealth { state: string; detail?: string }
 export interface ChannelRuntime {
   name: string; display_name: string; connected: boolean
@@ -1113,6 +1193,33 @@ export const api = {
   incidentResume: () => post<{ active: boolean }>('/api/incident/resume', { confirm: true }),
   modelsHealth: () =>
     get<{ providers: ProviderHealth[]; generated_from: number }>('/api/models/health'),
+
+  // ── Doctor: tiered read-only health probes (PLATFORM-RESILIENCE §1) ──
+  doctor: () => get<DoctorReport>('/api/doctor'),
+  doctorCapability: (capability: string) =>
+    get<{ capability: string; ok: boolean; probes: DoctorProbe[]; unknown?: boolean }>(
+      `/api/doctor/${encodeURIComponent(capability)}`,
+    ),
+  // ── No-model degraded mode (PLATFORM-RESILIENCE §5) ──
+  degraded: () => get<DegradedReport>('/api/resilience/degraded'),
+  // ── Confirm-gated fixes + surfacing simulator (PLATFORM-RESILIENCE §2/§3.1) ──
+  doctorFixes: () => get<{ fixes: DoctorFix[] }>('/api/doctor/fixes'),
+  doctorFixApply: (fixId: string) =>
+    post<{ ok: boolean; fix_id: string; result?: string; error?: string }>(
+      `/api/doctor/fix/${encodeURIComponent(fixId)}`, { confirm: true },
+    ),
+  doctorSimulateSurfacing: (text: string) =>
+    post<{ query: string; candidates: SurfacingCandidate[] }>(
+      '/api/doctor/simulate/surfacing', { text },
+    ),
+  doctorCrash: (filename: string) =>
+    get<Record<string, unknown>>(`/api/doctor/crash/${encodeURIComponent(filename)}`),
+  // ── Remediation engine (PLATFORM-RESILIENCE §4) ──
+  doctorRemediation: () => get<RemediationSnapshot>('/api/doctor/remediation'),
+  doctorRemediationRun: () =>
+    post<{ score_before: number; score_after: number; jobs: RemediationJobRow[]; stopped_reason: string }>(
+      '/api/doctor/remediation/run', { confirm: true },
+    ),
 
   // ── Memory Studio: health, observability, deep recall, promotion, lessons ──
   memoryGraph: () => get<MemoryGraphData>('/api/memory/graph'),

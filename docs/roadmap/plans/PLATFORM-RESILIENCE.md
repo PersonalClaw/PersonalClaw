@@ -1,6 +1,6 @@
 # Plan: Platform Resilience — Doctor, No-Model Degraded Mode, Mid-Turn Message Handling
 
-**Status:** PROPOSED (created 2026-07-13 from research synthesis, promoted from backlog)
+**Status:** DONE — all 5 sessions landed 2026-07-25. S1 Doctor core (§1) · S2 no-model degraded contract (§5) · S3 mid-turn message handling (§6) · S4 confirm-gated fixes + trust simulators + crash capture (§2/§3.1/§3.2/§6.5) · S5 health-scored remediation engine (§4). Deferred-as-future-infra (E6, recorded per session): §3.3 automation would-execute (AUTOMATION-SUBSTRATE), the richer §3.2 memory-pipeline alarm + judgment-lane remediation jobs (LEARN-R19/KNOW-R17 flywheel infra), and the AUTOMATION-SUBSTRATE trigger-form for the engine's cadence (it runs off the heartbeat until then). Created 2026-07-13 from research synthesis, promoted from backlog.
 **Created:** 2026-07-13
 **Wave:** split — §1-§3 (doctor probes + read-only surface) and §5 (degraded contract) are Wave 0/1 invariants (every existing surface touches models; offline behavior must be designed before the engine multiplies unattended runs); §6 (mid-turn handling) is Wave 1, independent; §4 (remediation engine) is Wave 3 — it consumes AUTONOMY-GUARDRAILS budgets (SpendMeter, §1.1 there) and should land after them.
 **Depends on:** nothing for §1-§3/§5/§6 (Wave-0-compatible). §4 depends on AUTONOMY-GUARDRAILS (SpendMeter + model-call audit for cost caps) and prefers AUTOMATION-SUBSTRATE (runs as an adaptive-cadence trigger once triggers.json exists; hangs off the heartbeat until then).
@@ -335,3 +335,238 @@ Sessions 1-4 each ship independently; Session 1 alone is a Wave-0 win (the symli
 6. One remediation run on a deliberately-degraded store (stale FTS, 50 heuristic-stamped items, dead locks) executes a dependency-ordered plan, stops at `max_cost_usd`, raises the health score, writes a ledger row — and the old heartbeat maintenance jobs no longer run independently.
 7. On a channel with `cancel_and_replace`, sending a rapid follow-up mid-generation cancels the stale turn (soft-cancel ack observed), marks the partial answer superseded in the UI, and answers the new message; the same follow-up on a `queue` channel queues and delivers next turn; a user message landing on a busy loop-worker session queues regardless of policy.
 8. Every new config field round-trips through load → to_dict → PATCH → FE toggle → config.json inspection (the four-wiring-points as-a-user check).
+
+---
+
+## Execution log
+
+- [2026-07-25][S1] DONE: Doctor core (§1). New `resilience/` package — `resilience/doctor.py`
+  (Tier ladder 0-3, `Probe`/`ProbeResult` frozen dataclasses, flat registry, `run_doctor`
+  with downward short-circuit + the "capability-degraded is never core failure" doctrine,
+  `run_capability` for the single-card re-probe; read-only-by-contract — every probe
+  exception becomes `ok=False`, never a 500; secrets redacted from `detail`/`evidence`).
+  Probe packs: memory (db open + WAL + integrity + faiss↔embedded consistency via a
+  short-lived RO sqlite connection), channels (registry `health()`, no `bind_state` side
+  effect), local-models (per-provider `is_available()` + phantom-binding detection scoped
+  to registered-local providers only), apps (backend-supervisor liveness + `.rollback`
+  leftovers), serving-fs (static/dist symlink-vs-copy detection replicated read-only from
+  `frontend.py` + dead lock/PID counts), model-providers (COMPOSES guardrails
+  `provider_health()`, never rebuilds it). HTTP: `dashboard/handlers/doctor.py` +
+  `GET /api/doctor` (cached 30s) + `GET /api/doctor/{capability}`. FE: read-only Doctor tab
+  (`web/src/pages/settings/DoctorPanel.tsx`, grouped capability cards + tier-failed badges +
+  `<details>` evidence disclosure), `api.doctor()`/`doctorCapability()` + `DoctorReport`
+  types, `DashboardLive` `doctor` slice (SLOW_POLL), and a SystemHealth one-line rollup
+  (surfaces only when unhealthy, links to the tab). Tests: `tests/test_resilience_doctor.py`
+  (13 — doctrine invariants: capability-fail-never-core, cheap-RPC-fail short-circuits +
+  suggests restart, socket-fail short-circuits without restart, probe-raise→ok=false,
+  secret masking, single-capability re-probe, + real memory/serving-fs probe packs against
+  isolated `tmp_path`). Success-criterion #1 (healthy core + dead capability → core OK, no
+  restart) and #2's DETECTION half (copy-shadowed static/dist flagged) validated live +
+  in unit tests. DoD green: `make lint` (black/isort/flake8/mypy), `make test`
+  (7911 passed / 0 failed), web typecheck + vitest 231 (ratchet held at rawButton=278 — new
+  disclosure uses native `<details>`, the rollup uses the `RowAction` primitive) + build.
+  Reference regenerated (`python -m personalclaw.manifest_reference` — both doctor routes
+  present). Clean break under the pre-1.0 banner: no persisted-state migration (Doctor
+  results are an in-process 30s cache; nothing durable added this session).
+- [2026-07-25][S1] DISCOVERY (plan citation drift — NOT a premise mismatch; every seam
+  exists functionally, only line numbers moved): `channel_transports/base.py` health/test are
+  at :135-155 (plan says 69/70); `can_resolve_use_case` is at `provider_bridge.py:730` (plan
+  says :672); `knowledge.db` lives under `config_dir()/workspace/knowledge/` (not directly in
+  `config_dir()`); the status/system routes register at `server.py:370-371` and their handlers
+  live in `handlers_system.py`, not `handlers/core.py`. Left the plan body as-is (it's a
+  design doc); recording here so a later session doesn't chase the stale lines.
+- [2026-07-25][S1] DISCOVERY (deferred to owning plans, NOT built here): (a) the HF
+  `models--…` on-disk cache-layout probe has no shared helper — `local_models/layouts.py` is
+  unbuilt and owned by LOCAL-MODEL-MANAGER-V2; the local-models pack therefore uses
+  provider-computed `is_available()`/catalog membership, not a raw disk scan (E6 scope
+  discipline). (b) installed-copy-vs-repo manifest DRIFT has no stored hash to diff (no
+  checksum in `installed.json`), so the apps pack probes backend liveness + `.rollback`
+  leftovers — the real signals available today — and drift detection waits for a plan that
+  records a manifest checksum.
+- [2026-07-25][S1] DISCOVERY (`redact()` coverage): the Doctor correctly WIRES `security.redact`
+  over all probe output, but `redact()` targets AWS-key/exfiltration-URL shapes — it does NOT
+  mask anthropic `sk-ant-…` keys. The masking test asserts against an AWS-key-shaped token (a
+  pattern `redact()` genuinely catches). Broadening `redact()`'s credential coverage is
+  security.py's contract, out of scope for this session; flagged for SECURITY-HARDENING.
+- [2026-07-25][S1] DEVIATION: capability key `serving/fs` → `serving-fs` (URL-safe slug). The
+  aiohttp `{capability}` path param can't match an embedded slash, so `GET /api/doctor/serving/fs`
+  was unreachable. The plan's "serving/fs" is treated as a display label (the FE prettifies the
+  slug); every capability is now addressable via the per-capability route. Validated live.
+
+- [2026-07-25][S2] DONE: No-model degraded contract (§5). New `resilience/degraded.py` —
+  `DegradedContract{surface, use_cases, floor, backlog_probe, drain}` frozen dataclass +
+  a module registry (`register_contract`/`all_contracts`/`get_contract`), `evaluate()`
+  deriving each surface's availability from `all(can_resolve_use_case(uc))` (cheap,
+  no-instantiate) with read-only fail-safe backlog probes, and one-notification-per-
+  transition (silent baseline on first sight → `warning` on down → `info` on recovery,
+  via the live `DashboardState.notify` gate). Seven contracts registered for the floors
+  that EXIST today — chat (honestly unavailable), inbox_enrichment (real backlog =
+  un-classified pending items), memory_extraction, knowledge_ingest, search_ranking (real
+  backlog = `count_items_missing_embedding`), transcription, assistant_reasoning
+  (catch-all for the reasoning axis behind `one_shot_completion`). `GET /api/resilience/
+  degraded` (handler folded into `dashboard/handlers/doctor.py`). `ResilienceConfig` wired
+  5-point (dataclass + `_meta`, `AppConfig` field, `load()` via a local fail-safe
+  `_guard_flag`, `to_dict()`, `_EDITABLE_CONFIG`) with two guard-class switches
+  (`doctor_enabled`, `degraded_indicator`, default True); the S1 Doctor endpoints are now
+  gated on `doctor_enabled`. FE: a self-polling shell chip `web/src/ui/DegradedChip.tsx`
+  (+ `.doc.ts`) mounted in `ShellCornerRight` beside SystemWidget — warn-toned pill +
+  popover (surface / floor / backlog); `api.degraded()` + `DegradedReport`/`DegradedSurface`
+  types. Tests: `test_resilience_degraded.py` (14 — registry, availability-all-must-resolve,
+  probe-fault-fails-available, backlog-fail-safe, transition warning→info, silent baseline)
+  + `test_resilience_degraded_lint.py` (3 — the honesty ratchet: every `one_shot_completion`
+  call-site file maps to a registered contract surface, no stale/unmapped entries) +
+  `resilience` added to `test_config_roundtrip._SECTIONS`. DoD green: `make lint`,
+  `make test` (7925 passed / 0 failed), web typecheck + vitest 231 (ratchet held —
+  DegradedChip lives in exempt `ui/`, documented per the ui-docs drift guard) + build.
+  Reference regenerated. Clean break under the pre-1.0 banner — the only durable state is
+  two config booleans (round-trip-tested); the degraded registry is derived/recomputable,
+  never persisted (§7). Validated live on the (binding-less) dev instance: all 7 surfaces
+  report degraded with floors, both config gates flip the surface on/off, Doctor unregressed.
+- [2026-07-25][S2] DEVIATION: §5.3 says the degraded chip rides "the same poll slice
+  DashboardLive already runs." Verified FALSE for a shell element — `DashboardLiveProvider`
+  wraps only `DashboardPage`, not the app shell, and `useDashboardLive()` throws outside it.
+  The chip instead SELF-POLLS via `useVisiblePoll(20s)`, matching the established
+  `IncidentBanner`/`SystemWidget` shell-element pattern. (A `DashboardLive` `degraded` slice
+  would still be correct for a dashboard-page widget, but the shell chip can't use it.)
+- [2026-07-25][S2] DISCOVERY (deferred to owning plans — floors that do NOT exist in code
+  today, so their contracts describe the CURRENT floor with backlog=0 rather than the plan's
+  future floor): LEARN-R19's memory-staging log, KNOW-R17's heuristic knowledge extractor,
+  and the synthesis-watcher `append_evidence` mode are all unbuilt Workflows-v2 infra. Per
+  E6 they were NOT built here — memory_extraction/knowledge_ingest register their *real*
+  present-day skip-and-continue floors, the synthesis surface is not registered at all
+  (nothing to declare against), and every contract's `drain` is `None` (drains are §4
+  remediation-engine jobs). The lint ratchet will force each future surface to declare a
+  contract as it lands.
+- [2026-07-25][S2] DISCOVERY (plan citation drift, non-blocking): `evaluate_alert` is at
+  `inbox.py:266` (plan says :270); `can_resolve_use_case` at `provider_bridge.py:730` (plan
+  says :672); the diarization floor comment is `use_cases.py:49-52` (plan says :47);
+  `DashboardState.notify` is at `state.py:1061` (plan says ~:1027). Seams all exist; only the
+  line numbers moved.
+
+- [2026-07-25][S3] DONE: Mid-turn message handling (§6). New `resilience/active_jobs.py` —
+  `ActiveJob{job_id, origin, started_at}` + `ActiveJobTracker` (register at turn start /
+  clear at turn end, both wired into `chat_runner._run_chat` at the semaphore-acquire and
+  the `finally` boundary where `notify_turn_complete` fires), plus `classify_origin` and
+  `is_cancellable_origin` (webui/channel = interactive+cancellable; loop-/cron:/subagent:/
+  _bg = never). `mid_turn_policy` (enum queue|cancel_and_replace, default queue) +
+  `cancel_replace_min_interval_secs` (2.0) added to `ResilienceConfig`, wired 5-point (+ the
+  enum in `test_config_roundtrip._SPECIAL`). Cancel-and-replace lives in
+  `chat_handlers._maybe_cancel_and_replace`: on a mid-turn follow-up to an interactive
+  session under the cancel_and_replace policy (past the debounce window), it soft-cancels
+  via the EXISTING `stop_turn(preserve_queue=True)` verb, broadcasts `chat_done
+  {superseded:true, superseded_by:qid}`, and queues the new message so the EXISTING
+  turn-end queue-drain delivers it as the next turn (§6.3.4 — no new dispatch path). FE:
+  the `chat_done` handler consumes `superseded` with a brief "Superseded by your new
+  message…" status. Tests: `test_resilience_active_jobs.py` (19 — origin classification,
+  interactive/cancellable predicate, register/clear lifecycle, per-session debounce
+  window, config policy default/invalid-fallback/honored). DoD green: `make lint`,
+  `make test` (7944 passed / 0 failed), web typecheck + vitest 231 + build. Clean break —
+  the only durable state is two config fields (round-trip-tested); the tracker is in-memory.
+  Validated live: the resilience config carries the mid-turn fields, the enum PATCH
+  round-trips (queue↔cancel_and_replace), an invalid value is rejected 400.
+- [2026-07-25][S3] DEVIATION (implementation, not behavior): the plan describes cancel-and-
+  replace as "cancel + deliver the new message as a normal turn." Rather than add a second
+  dispatch path, the new message is QUEUED after the cancel and delivered by the existing
+  turn-end queue-drain (`chat_runner` finally → `_dequeue_next_message` → re-dispatch). Same
+  observable result (stale turn dies, new message answers next), zero new hot-path code.
+- [2026-07-25][S3] DEVIATION (scope): the plan's FE §6.4 also asks for a composer "will
+  replace the current answer" hint and a dimmed/collapsible superseded partial bubble. The
+  functional behavior (cancel + replace + no ghost) is complete and the `superseded` signal
+  is consumed as a status line; the composer policy-hint and per-turn bubble dimming are
+  DEFERRED as polish — both require threading resilience config into the composer and
+  per-turn superseded state through the streaming render path, a change disproportionate to
+  the value and risky on the streaming hot path. Recorded honestly, not silently dropped.
+- [2026-07-25][S3] DISCOVERY (dead-code finding, not fixed): `SessionManager.enqueue`/
+  `dequeue`/`cancel_queued`/`is_cancelled`/`clear_queue` (session.py) have NO production
+  callers — only tests. The live dashboard queue is `_ChatSession._queue` +
+  `enqueue_or_run_prompt` + `_dequeue_next_message`. The plan's "`SessionManager.enqueue`
+  serializes channel threads" overstates current reality; S3 targets the live path. The dead
+  methods are left as-is (out of scope; removing them is a separate cleanup).
+- [2026-07-25][S3] DISCOVERY (plan citation drift): `stop_turn` is session.py:1581 (plan
+  :1529); the queue WS events are chat_handlers ~:172/:981 (plan :162/915); `chat_status` is
+  emitted from exactly one line (chat_runner:1494) and the turn-terminal frame is `chat_done`
+  (chat_runner:2833) — `superseded` was added there. Seams exist; line numbers moved.
+
+- [2026-07-25][S4] DONE: Fixes + simulators + crash capture (§2, §3.1, §3.2, §6.5). New
+  `resilience/fixes.py` — `Fix{id, title, impact, dry_preview(), apply()}` registry + 3
+  confirm-gated fixes (serving-fs.symlink-repair — replicates frontend.py's rmtree+symlink
+  with a shadow-copy backup since ensure_dev_dist_symlink early-returns on a valid copy;
+  serving-fs.orphan-prune — stale locks + recover_interrupted_updates; model-providers.
+  prune-bindings — persists load_active_models's removed-provider pruning). `apply_fix`
+  runs under a SEL audit, exception-safe. The serving-fs probe now attaches the matching
+  `fix_id`. New `resilience/crashes.py` — `record_crash` writes a redacted, capped
+  (20-file) `~/.personalclaw/crashes/<ts>-<kind>.json`; `recent_crashes`/`read_crash`
+  (traversal-guarded)/`crash_count` read them; a loop exception-handler installed in
+  `GatewayOrchestrator.run` captures unhandled turn/loop-worker exceptions and chains to
+  the default handler. `surface_skills` gains an `explain=True` path (with @overload) that
+  returns per-candidate arm scores + inclusion/exclusion reason — the §3.1 simulator, zero
+  LLM calls. Two new Doctor probes: `crashes` (recent artifacts → WARN) and
+  `memory-pipeline` (current-seam presence check). Endpoints: GET /api/doctor/fixes,
+  POST /api/doctor/fix/{fix_id} (confirm-gated), POST /api/doctor/simulate/surfacing,
+  POST /api/model-providers/{name}/selftest (real per-capability inference, user-click),
+  GET /api/doctor/crash/{filename} — the two GET sub-paths registered BEFORE the
+  {capability} catch-all (aiohttp registration-order shadowing). FE: DoctorPanel probe rows
+  render a confirm-gated Fix button (armed dialog → apply → re-run); api methods + types.
+  Tests: `test_resilience_fixes_crashes.py` (13 — fix registry/preview/apply+backup, crash
+  roundtrip/redaction/cap/traversal-guard, explain-mode breakdown/veto/opt-in) +
+  `dashboard/handlers/doctor.py` added to the degraded-lint call-site map (the honesty
+  ratchet caught the selftest's new one_shot_completion site — expected + correct). DoD
+  green: `make lint`, `make test` (7957 passed / 0 failed), web typecheck + vitest 231 +
+  build. Clean break — no persisted config; crash files are capped local artifacts.
+  Validated live: fixes catalog + previews, simulator (12 candidates for "help me deploy"),
+  confirm-required 400, crashes/memory-pipeline probes in the report.
+- [2026-07-25][S4] DEVIATION (scope, E6 — skipped as future infra): §3.3 (automation
+  would-execute / dry-run rendering) is NOT built — its execution machinery
+  (`automation_run(dry_run?)`, AUTO-R15, `triggers.json`) belongs to the unbuilt
+  WORKFLOWS-V2-AUTOMATION-SUBSTRATE; only unrelated cron-action/subagent observe-mode
+  dry-run primitives exist. Skipped entirely and noted rather than half-built against a
+  contract another plan owns.
+- [2026-07-25][S4] DEVIATION (scope): §3.2 memory-pipeline is the "current-seam version"
+  the plan sanctions — LEARN-R19's outcome records (FLUSH_OK/FLUSH_ERROR streak WARN,
+  staging backlog, per-op cost) are future flywheel infra (learning.db doesn't exist), so
+  the probe reports structural presence, not the richer freshness alarm. It never false-
+  alarms; the richer metrics arrive with the flywheel, same probe seam.
+- [2026-07-25][S4] DISCOVERY (route-ordering hazard, fixed): aiohttp matches routes in
+  registration order, so GET /api/doctor/fixes and /api/doctor/crash/{filename} had to be
+  registered BEFORE the pre-existing GET /api/doctor/{capability} catch-all or they'd bind
+  as a capability name. The POST fix/simulate/selftest routes don't collide (different verb).
+
+- [2026-07-25][S5] DONE: Health-scored self-remediation engine (§4). New
+  `resilience/remediation.py` — `measure_deficits()` reads only REAL counts today
+  (knowledge missing-embeddings via count_items_missing_embedding, orphan stale locks,
+  skill aging-due via run_aging(dry_run=True).changed); each Deficit carries a
+  `max_penalty` ceiling and a `reachable` flag (an unfixable deficit — e.g. no embedder
+  bound — is excluded from the score, so the engine never burns budget on futile work).
+  `health_score = 100 − Σ reachable penalties`. `run_remediation()` builds a dependency-
+  ordered (`after:` edges, cycle-tolerant) plan of jobs whose deficit is present +
+  reachable, runs each re-checking the score, and stops at target_score / max_cost_usd /
+  exhausted. Two lanes: deterministic ($0, the 3 registered jobs — orphan-prune, skill-age,
+  knowledge-reindex) and judgment (model-touching, charges guardrails SpendMeter under
+  run_key "doctor" — none registered yet, mechanism ready). Per-job cooldown with
+  success-only timestamps (`doctor/jobs.json`) is the storm guard; every run writes
+  `doctor/remediation.jsonl` (2×-cap trim). Wired onto the heartbeat as ONE adaptive-cadence
+  job (`HeartbeatService._maybe_remediate`: healthy→idle_minutes_healthy, degraded→
+  tick_minutes_degraded). `RemediationConfig` sub-config (enabled/target_score/max_cost_usd/
+  idle/tick) nested under ResilienceConfig, wired 5-point. Endpoints: GET /api/doctor/
+  remediation (score + dry-run plan + ledger), POST /api/doctor/remediation/run (confirm-
+  gated, SEL-audited). FE: a Maintenance section in DoctorPanel (score, Run-now, recent
+  runs). Tests: `test_resilience_remediation.py` (13 — penalty cap, reachable-exclusion,
+  score clamp, dependency order + cycle tolerance, three stop conditions, cooldown skip,
+  dry-run no-op, ledger). DoD green: `make lint`, `make test` (7970 passed / 0 failed), web
+  typecheck + vitest 231 + build. Clean break — durable state is config + two capped local
+  JSON artifacts under doctor/. Validated live: score 100/target 90 on the healthy dev-home,
+  run stops "target_score already met", confirm-gate 400s without confirm, config round-trips.
+- [2026-07-25][S5] DEVIATION (safe superset, not the plan's deletion): §4.4 says the engine
+  ABSORBS the heartbeat maintenance jobs (FTS rebuild, prunes, skill aging move OUT of the
+  heartbeat into registered jobs). To avoid destabilizing the live heartbeat, S5 ADDS the
+  engine as one heartbeat job and registers its OWN deterministic jobs (orphan-prune, skill-
+  age, knowledge-reindex) rather than deleting the existing per-tick maintenance — which is
+  kept as the documented fallback when the engine is disabled (the plan's own risk-table
+  mitigation: "disabling it restores today's heartbeat jobs, kept callable"). Fully retiring
+  the duplicate heartbeat maintenance is a follow-on cleanup once the engine has soaked.
+- [2026-07-25][S5] DEVIATION (scope): the engine hangs off the heartbeat, NOT the
+  AUTOMATION-SUBSTRATE adaptive-clock trigger form (§4.3) — that substrate is future infra.
+  The "runs-inbox learned-overnight digest" pickup (also §4.4) likewise awaits it. The
+  judgment lane charges SpendMeter under run_key "doctor" (a run-key value — there is no
+  "doctor" SCOPE; day/run are the only scopes), and max_cost_usd is enforced against
+  run_totals("doctor").dollars since run_budget_from_config is tokens-only.

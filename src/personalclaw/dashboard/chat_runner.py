@@ -1112,6 +1112,15 @@ async def _run_chat(
             project_id=getattr(session, "project_id", "") or "",
         )
         _acquired = True
+        # Register this turn on the active-job tracker (PLATFORM-RESILIENCE §6.2) —
+        # bookkeeping so the mid-turn cancel-and-replace decision can tell this
+        # interactive turn apart from unattended work. Best-effort; never blocks a turn.
+        try:
+            from personalclaw.resilience.active_jobs import get_tracker
+
+            get_tracker().register(session.key, now=time.time())
+        except Exception:
+            logger.debug("active-job register failed for %s", session.key, exc_info=True)
         # Display-only: when the user left the model on "auto", show the model the
         # provider actually resolved (AcpAgentProvider stores it on client._model)
         # in the status line — but do NOT write it back onto session.model. That
@@ -2703,6 +2712,14 @@ async def _run_chat(
         await state.sessions.record_failure(session_key)
     finally:
         session._batch_rejected = False
+        # Clear this turn from the active-job tracker (PLATFORM-RESILIENCE §6.2) — the
+        # same turn-exit boundary autonudge re-arms on. Best-effort.
+        try:
+            from personalclaw.resilience.active_jobs import get_tracker
+
+            get_tracker().clear(session.key)
+        except Exception:
+            logger.debug("active-job clear failed for %s", session.key, exc_info=True)
         # ── AutoNudge: re-arm the idle timer on EVERY turn exit (success OR
         # error), so a loop survives a failed turn instead of silently dying.
         # A persistently-broken worker is bounded by the service's consecutive-

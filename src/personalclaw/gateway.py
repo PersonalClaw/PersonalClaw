@@ -3133,6 +3133,47 @@ class GatewayOrchestrator:
 
         # ── Signal handlers ──
         loop = asyncio.get_running_loop()
+
+        # ── Structured crash capture (PLATFORM-RESILIENCE §6.5) ──
+        # An unhandled exception escaping a background task (a chat turn, a loop
+        # worker) reaches the loop's exception handler. Capture it as ONE structured,
+        # redacted artifact under ~/.personalclaw/crashes/ (best-effort, never masks
+        # the original) so a mid-stream death leaves a recoverable record, then chain
+        # to the default handler so logging is unchanged.
+        _default_exc_handler = loop.get_exception_handler()
+
+        def _crash_exc_handler(lp: "asyncio.AbstractEventLoop", context: dict) -> None:
+            try:
+                exc = context.get("exception")
+                if isinstance(exc, BaseException) and not isinstance(
+                    exc, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)
+                ):
+                    from personalclaw.resilience.crashes import record_crash
+
+                    key = ""
+                    task = context.get("task")
+                    if task is not None:
+                        key = str(getattr(task, "get_name", lambda: "")() or "")
+                    kind = "loop_worker" if "loop" in key.lower() else "turn"
+                    _ds = self.dashboard_state
+                    _start = float(getattr(_ds, "start_time", 0.0)) if _ds is not None else 0.0
+                    record_crash(
+                        kind,  # type: ignore[arg-type]
+                        exc,
+                        session_key=key,
+                        uptime_secs=time.time() - _start,
+                        now=time.time(),
+                    )
+            except Exception:
+                logger.debug("crash exception-handler hook failed", exc_info=True)
+            # Chain to the previously-installed handler (or the loop default).
+            if _default_exc_handler is not None:
+                _default_exc_handler(lp, context)
+            else:
+                loop.default_exception_handler(context)
+
+        loop.set_exception_handler(_crash_exc_handler)
+
         _shutting_down = False
 
         def _on_signal(*_args: object) -> None:

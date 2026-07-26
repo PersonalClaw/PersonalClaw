@@ -134,6 +134,14 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/dashboard/config` — read or write dashboard settings.
 - `PUT /api/dashboard/config` — read or write dashboard settings.
 - `GET /api/design/tokens/default` — PersonalClaw's canonical
+- `GET /api/doctor` — all probes, grouped by capability, cached 30s.
+- `GET /api/doctor/crash/{filename}` — the full JSON of one crash artifact.
+- `POST /api/doctor/fix/{fix_id}` — apply a confirm-gated fix.
+- `GET /api/doctor/fixes` — the fix catalog with read-only dry-previews.
+- `GET /api/doctor/remediation` — current health score, a dry-run plan preview, and
+- `POST /api/doctor/remediation/run` — run the engine now (confirm-gated). SEL-audited.
+- `POST /api/doctor/simulate/surfacing` — {text} — dry-run the skill scorer in
+- `GET /api/doctor/{capability}` — re-run one capability's probes (uncached).
 - `GET /api/file-complete` — path autocomplete for the PathBar.
 - `GET /api/file-content-search` — recursive content search.
 - `POST /api/file-create` — create a new file or directory in the explorer.
@@ -290,6 +298,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/model-providers/{name}/models/delete` — delete a local model.
 - `POST /api/model-providers/{name}/pull` — pull (download) a model.
 - `GET /api/model-providers/{name}/search` — search a provider's
+- `POST /api/model-providers/{name}/selftest` — dispatch a tiny real inference per
 - `GET /api/model-providers/{name}/show` — rich model metadata.
 - `POST /api/model-providers/{name}/test` — test provider connectivity.
 - `GET /api/models/active` — active models per use-case.
@@ -339,6 +348,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/prompts/{name}/launch` — {variables} — instantiate a RUNNABLE template
 - `POST /api/prompts/{name}/render` — render a prompt template with the
 - `GET /api/recent-projects` — list recently used project directories.
+- `GET /api/resilience/degraded` — per-surface no-model floor + availability.
 - `POST /api/reveal` — reveal a file/folder in Finder or open with default app.
 - `POST /api/screenshot` — capture screen region and return file path.
 - `GET /api/search/active` — bound provider name per use-case.

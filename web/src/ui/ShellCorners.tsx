@@ -6,6 +6,7 @@ import { ThemeControl } from './TopBar'
 import { WidthPill } from './WidthPill'
 import { NotificationBell } from './NotificationBell'
 import { SystemWidget } from './SystemWidget'
+import { DegradedChip } from './DegradedChip'
 import { useIsMobile } from '../app/useIsMobile'
 
 /** The app shell's two persistent CORNER regions — not a full header row, just
@@ -74,6 +75,9 @@ export function ShellCornerRight({ terminalOpen, onToggleTerminal, navigate }: {
         )}
         <NotificationBell navigate={navigate} />
         <ThemeControl />
+        {/* No-model degraded-mode chip (PLATFORM-RESILIENCE §5) — self-polling;
+            renders nothing unless a model-dependent surface is on its LLM-free floor. */}
+        <DegradedChip />
         {/* Gateway connectivity dot (live) → click opens the full system widget. */}
         <span className="h-4 w-px bg-outline-variant/40" aria-hidden />
         <SystemWidget />

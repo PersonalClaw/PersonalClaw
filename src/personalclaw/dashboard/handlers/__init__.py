@@ -106,6 +106,20 @@ from personalclaw.dashboard.handlers.core import (  # noqa: E402, F401
     index,
 )
 
+# ── Doctor + degraded mode (handlers/doctor.py) ──
+from personalclaw.dashboard.handlers.doctor import (  # noqa: E402, F401
+    api_degraded,
+    api_doctor,
+    api_doctor_capability,
+    api_doctor_crash,
+    api_doctor_fix_apply,
+    api_doctor_fixes,
+    api_doctor_remediation,
+    api_doctor_remediation_run,
+    api_doctor_simulate_surfacing,
+    api_provider_selftest,
+)
+
 # ── Files & Workspaces (handlers/files.py) ──
 from personalclaw.dashboard.handlers.files import (  # noqa: E402, F401
     _validate_dashboard_path,

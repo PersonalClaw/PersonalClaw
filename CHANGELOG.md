@@ -12,6 +12,78 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 
 ### Added
 
+- **One health-scored maintenance engine replaces scattered upkeep.** PersonalClaw now
+  computes a **health score** (100 − measured deficits: knowledge items missing an
+  embedding, orphaned stale locks, skills due for aging — each capped, and an *unfixable*
+  deficit like "no embedder bound" is excluded rather than held against a score you can't
+  improve) and runs a **dependency-ordered remediation plan** to raise it: re-index,
+  orphan-prune, skill-age, stopping when the target score is reached, the per-run dollar
+  cap is spent, or the plan is exhausted. It runs itself on an **adaptive heartbeat cadence**
+  (further apart when healthy, sooner when degraded) and is visible + runnable on demand
+  from Settings → Doctor → Maintenance, with a run ledger. Deterministic jobs are free;
+  model-touching jobs (future) charge the guardrails spend meter. Every run is idempotent
+  (per-job cooldowns) and the whole engine is one toggle — disabling it falls back to the
+  legacy per-tick heartbeat maintenance. This is the final slice of the **Platform
+  Resilience** program (Doctor · degraded mode · mid-turn · fixes/simulators/crash-capture ·
+  this engine).
+- **The Doctor can now fix what it finds, explain what it surfaces, and remember what
+  crashed.** Three additions to the health surface (all Settings → Doctor):
+  **confirm-gated fixes** — a finding that has a repair (a `static/dist` copy shadowing
+  the runtime symlink, stale locks/rollback leftovers, model bindings pointing at removed
+  providers) shows a **Fix** button with a read-only preview; nothing auto-applies, a
+  two-step confirm runs it, and every application is security-audited and touches harness
+  mechanics only (never your content). A **per-provider selftest** fires a tiny real
+  inference per capability (a one-token chat / short embed) for true ground-truth instead
+  of a reachability guess. A **surfacing simulator** dry-runs the skill scorer in explain
+  mode — type a query and see, per candidate, the keyword/semantic scores, the thresholds,
+  and exactly why each skill was included or excluded (zero model calls). And **structured
+  crash capture**: an unhandled failure at a turn/loop/gateway boundary now writes one
+  redacted, recoverable artifact under `~/.personalclaw/crashes/` (capped, never uploaded)
+  that the Doctor surfaces as a card — a mid-stream death leaves a record instead of a lost
+  stack trace.
+- **Mid-turn message policy: queue (default) or cancel-and-replace.** A follow-up sent
+  while a turn is still generating now follows a *declared* policy. The default,
+  **`queue`**, is today's behavior formalized — the message is delivered next turn. Opt
+  into **`cancel_and_replace`** (a platform default in Settings, overridable per channel)
+  and a rapid follow-up instead cancels the in-flight answer and starts fresh with the new
+  message — no stale ghost response, no wasted compute. A per-session debounce coalesces a
+  burst of messages into ONE cancel + the last message. The guard is strict: only
+  **interactive** turns (the web chat, a channel DM) are ever cancel-and-replaced —
+  unattended work (goal loops, cron, subagents, the heartbeat) always queues, so a user
+  message can never pull the rug out from under a background job. Built on the existing
+  soft-cancel verb and turn-end queue drain (no new dispatch path); a new
+  `resilience/active_jobs.py` tracks each turn's origin as the bookkeeping behind the
+  decision.
+- **No-model degraded mode: the assistant stays useful, and honest, with no model bound.**
+  Every model-dependent surface now declares its **LLM-free floor** explicitly, so an
+  offline laptop (dead ollama, wiped cache, no API key) degrades by design instead of
+  error-walling: search drops from hybrid to keyword (FTS) + graph + recency ranking;
+  the inbox keeps raising keyword/name-mention alerts (only auto-classify/draft/digest
+  pause); knowledge still captures documents (only entity/insight extraction is skipped,
+  marking the item partial); memory keeps its deterministic preference-facet capture;
+  speech features turn visibly off rather than erroring; and chat says so plainly rather
+  than faking a reply. A compact **degraded chip** appears in the shell (with a popover
+  listing each degraded surface, its floor, and any pending-enrichment backlog) whenever a
+  surface is running on its floor, and a notification fires on the transition down
+  (`warning`) and on recovery (`info`). A lint test asserts every non-interactive
+  model-call site maps to a registered contract, so a future surface can't ship without
+  declaring its floor. New `GET /api/resilience/degraded`; two guard-class config switches
+  (`resilience.doctor_enabled`, `resilience.degraded_indicator` — a missing/unknown value
+  keeps the surface visible).
+- **A Doctor tab now diagnoses every subsystem from one read-only view.** Settings →
+  Doctor runs **tiered health probes** — process → socket → cheap-RPC → per-capability
+  — across memory (db + faiss consistency), channels, local models (availability +
+  phantom bindings), app backends (+ interrupted-update leftovers), the SPA
+  `static/dist` symlink (the stale-SPA bug-class), and model-provider breakers
+  (composed from the guardrails audit). The core doctrine is enforced: **a degraded
+  capability never marks the gateway down and never suggests a restart** — only a
+  core-tier failure does. Every probe is read-only and fail-safe (an exception
+  becomes a failed row, never a 500), and secrets are redacted from probe output. New
+  endpoints `GET /api/doctor` (all capabilities, cached 30s) and
+  `GET /api/doctor/{capability}` (re-run one card); the dashboard System Health strip
+  gains a one-line rollup that appears only when something needs attention and links
+  to the tab. Confirm-gated auto-fixes and the trust/debug simulators land in later
+  Platform-Resilience sessions.
 - **First-party apps now appear in the Store on a plain install.** The published
   first-party apps repository (`github.com/PersonalClaw/PersonalClawApps`) ships as
   a default Store source, so a bare `pip install personalclaw` surfaces every

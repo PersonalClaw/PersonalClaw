@@ -282,6 +282,29 @@ def _meta(label: str, help: str, **kwargs: object) -> dict:
     return {"label": label, "help": help, **kwargs}
 
 
+# Guard-flag spellings that DISABLE a guard; anything else (missing/unknown/typo)
+# stays ENABLED. Mirrors ``guardrails.flags.guard_flag`` but is defined locally to
+# keep the config loader free of a guardrails import (avoids an import cycle).
+_GUARD_FALSE = frozenset({"0", "false", "no", "off", "disable", "disabled", "n", "f"})
+
+
+def _guard_flag(value: object) -> bool:
+    """Parse a guard-class flag fail-safe: missing/unknown ⇒ ``True`` (enabled).
+
+    Only an explicit bool ``False``, ``0``, or a known falsy token disables. See the
+    §5 fail-safe tenet — a guard's ambiguity must fail ON.
+    """
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() not in _GUARD_FALSE
+    return True
+
+
 _BOT_NAME_MAX = 50
 _BOT_NAME_RE = _re.compile(r"[^a-zA-Z0-9 _\-.]")
 
@@ -1158,6 +1181,114 @@ class GuardrailsConfig:
 
 
 @dataclass
+class RemediationConfig:
+    """Health-scored self-remediation engine tuning (PLATFORM-RESILIENCE §4).
+
+    The engine runs as one heartbeat-driven maintenance job. ``enabled`` is guard-class
+    only in the sense that disabling it restores today's heartbeat maintenance (kept
+    callable), so it defaults ON but is a plain toggle. The caps are the stopping
+    conditions: reach ``target_score`` or spend ``max_cost_usd`` (per run), whichever
+    first. Cadence adapts: healthy → ``idle_minutes_healthy`` between runs, degraded →
+    ``tick_minutes_degraded``.
+    """
+
+    enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Remediation Engine",
+            "Run the health-scored maintenance engine (FTS/embedding re-index, orphan "
+            "prune, skill aging) as one background job. Disabling it falls back to the "
+            "legacy per-tick heartbeat maintenance.",
+        ),
+    )
+    target_score: int = field(
+        default=90,
+        metadata=_meta(
+            "Target Health Score",
+            "The engine stops a run once the health score reaches this (0-100).",
+        ),
+    )
+    max_cost_usd: float = field(
+        default=1.0,
+        metadata=_meta(
+            "Max Cost / Run",
+            "Dollar ceiling for judgment-lane (model-touching) remediation work in one "
+            "run. Deterministic jobs (re-index, prune) are free and never blocked.",
+        ),
+    )
+    idle_minutes_healthy: int = field(
+        default=60,
+        metadata=_meta("Idle Cadence (healthy)", "Minutes between runs when healthy (score ≥95)."),
+    )
+    tick_minutes_degraded: int = field(
+        default=5,
+        metadata=_meta("Tick Cadence (degraded)", "Minutes between runs when degraded."),
+    )
+
+
+@dataclass
+class ResilienceConfig:
+    """Platform-resilience knobs (PLATFORM-RESILIENCE §7).
+
+    Two guard-class switches: the Doctor health surface and the no-model
+    degraded-mode indicator. Both are **guard-class** — a missing or unknown value
+    parses as ENABLED (fail-safe, §5 tenet): a config typo must not silently hide the
+    Doctor or the degraded chip, which are the surfaces that make a degraded system
+    legible. Plus the platform default mid-turn message policy (§6). The
+    remediation-engine sub-config (target-score / max-cost / idle cadence) is a later
+    session's field.
+    """
+
+    doctor_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Doctor",
+            "Show the Doctor health surface (Settings → Doctor + GET /api/doctor). "
+            "Guard-class: a missing/unknown value keeps it ON.",
+            guard_class=True,
+            safe_values=[True],
+        ),
+    )
+    degraded_indicator: bool = field(
+        default=True,
+        metadata=_meta(
+            "Degraded-Mode Indicator",
+            "Show the no-model degraded-mode chip in the shell (and GET "
+            "/api/resilience/degraded) when a model-dependent surface is running on its "
+            "LLM-free floor. Guard-class: a missing/unknown value keeps it ON.",
+            guard_class=True,
+            safe_values=[True],
+        ),
+    )
+    mid_turn_policy: str = field(
+        default="queue",
+        metadata=_meta(
+            "Mid-Turn Message Policy",
+            "What happens to a follow-up message sent while a turn is still "
+            "generating: 'queue' (deliver it next turn — the default, safe behavior) "
+            "or 'cancel_and_replace' (cancel the in-flight answer and start fresh with "
+            "the new message). Applies to interactive turns only; unattended work "
+            "(loops, cron, subagents) always queues. A per-channel override wins over "
+            "this platform default.",
+            enum=["queue", "cancel_and_replace"],
+        ),
+    )
+    cancel_replace_min_interval_secs: float = field(
+        default=2.0,
+        metadata=_meta(
+            "Cancel-and-Replace Debounce",
+            "Minimum seconds between cancel-and-replace actions on one session, so a "
+            "burst of rapid follow-ups produces ONE cancel + the last message (the "
+            "intermediate ones coalesce) rather than N cancels.",
+        ),
+    )
+    remediation: RemediationConfig = field(
+        default_factory=RemediationConfig,
+        metadata=_meta("Remediation Engine", "Health-scored maintenance engine tuning."),
+    )
+
+
+@dataclass
 class SecurityConfig:
     """Security controls for the agent's shell access.
 
@@ -1603,6 +1734,10 @@ class AppConfig:
         default_factory=GuardrailsConfig,
         metadata=_meta("Guardrails", "Autonomy safety floor — budgets, breaker, scan."),
     )
+    resilience: ResilienceConfig = field(
+        default_factory=ResilienceConfig,
+        metadata=_meta("Resilience", "Doctor health surface + no-model degraded indicator."),
+    )
     inbox: InboxConfig = field(
         default_factory=InboxConfig,
         metadata=_meta("Inbox", "Reads messages, drafts replies."),
@@ -1738,6 +1873,12 @@ class AppConfig:
         guardrails_data = data.get("guardrails", {})
         if not isinstance(guardrails_data, dict):
             guardrails_data = {}
+        resilience_data = data.get("resilience", {})
+        if not isinstance(resilience_data, dict):
+            resilience_data = {}
+        _remediation_data = resilience_data.get("remediation", {})
+        if not isinstance(_remediation_data, dict):
+            _remediation_data = {}
         budgets_data = guardrails_data.get("budgets", {})
         if not isinstance(budgets_data, dict):
             budgets_data = {}
@@ -1992,6 +2133,31 @@ class AppConfig:
                     else "redact"
                 ),
             ),
+            resilience=ResilienceConfig(
+                # Guard-class (§5): parse fail-safe — missing/unknown ⇒ enabled.
+                doctor_enabled=_guard_flag(resilience_data.get("doctor_enabled")),
+                degraded_indicator=_guard_flag(resilience_data.get("degraded_indicator")),
+                mid_turn_policy=(
+                    str(resilience_data.get("mid_turn_policy", "queue"))
+                    if resilience_data.get("mid_turn_policy", "queue")
+                    in ("queue", "cancel_and_replace")
+                    else "queue"
+                ),
+                cancel_replace_min_interval_secs=max(
+                    0.0, float(resilience_data.get("cancel_replace_min_interval_secs", 2.0))
+                ),
+                remediation=RemediationConfig(
+                    enabled=_guard_flag(_remediation_data.get("enabled")),
+                    target_score=max(0, min(100, int(_remediation_data.get("target_score", 90)))),
+                    max_cost_usd=max(0.0, float(_remediation_data.get("max_cost_usd", 1.0))),
+                    idle_minutes_healthy=max(
+                        1, int(_remediation_data.get("idle_minutes_healthy", 60))
+                    ),
+                    tick_minutes_degraded=max(
+                        1, int(_remediation_data.get("tick_minutes_degraded", 5))
+                    ),
+                ),
+            ),
             observe_max_messages=max(1, int(data.get("observe_max_messages", 200))),
             observe_ttl_hours=max(0.0, float(data.get("observe_ttl_hours", 168.0))),
         )
@@ -2143,6 +2309,7 @@ class AppConfig:
             "learning": asdict(self.learning),
             "security": asdict(self.security),
             "guardrails": asdict(self.guardrails),
+            "resilience": asdict(self.resilience),
             "timezone": self.timezone,
             "auto_update": self.auto_update,
             "snapshot_dir": self.snapshot_dir,

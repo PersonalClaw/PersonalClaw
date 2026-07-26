@@ -33,6 +33,7 @@ import logging
 import math
 import re
 from pathlib import Path
+from typing import Literal, overload
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.skills.loader import skills_dir
@@ -153,6 +154,30 @@ def _active_embedder():
     return fn, model
 
 
+@overload
+def surface_skills(
+    text: str,
+    skills: list[dict],
+    *,
+    max_skills: int,
+    semantic_threshold: float = ...,
+    embed_cache: _EmbedCache | None = ...,
+    explain: Literal[False] = ...,
+) -> list[str]: ...
+
+
+@overload
+def surface_skills(
+    text: str,
+    skills: list[dict],
+    *,
+    max_skills: int,
+    semantic_threshold: float = ...,
+    embed_cache: _EmbedCache | None = ...,
+    explain: Literal[True],
+) -> list[dict]: ...
+
+
 def surface_skills(
     text: str,
     skills: list[dict],
@@ -160,12 +185,20 @@ def surface_skills(
     max_skills: int,
     semantic_threshold: float = DEFAULT_SEMANTIC_THRESHOLD,
     embed_cache: _EmbedCache | None = None,
-) -> list[str]:
+    explain: bool = False,
+) -> list[str] | list[dict]:
     """Return up to *max_skills* skill keys for this turn, semantic ∪ keyword.
 
     *skills* is ``SkillsLoader.list_skills(with_usage=True)`` output (needs
     key/description/triggers/path/always/use_count). The ``use_count`` field (#25)
     is the tiebreak. Excludes ``always`` skills (injected unconditionally elsewhere).
+
+    With ``explain=True`` (the Doctor surfacing simulator, PLATFORM-RESILIENCE §3.1)
+    it returns instead a per-candidate breakdown — ``[{key, kw_score, sem_score,
+    threshold_kw, threshold_sem, negated, included, reason}, …]`` for EVERY candidate
+    (including excluded ones, so the user sees WHY something was excluded), sorted the
+    same way. Pure deterministic scoring, zero LLM calls — the same arms the real turn
+    computes, returned instead of discarded.
     """
     query = (text or "").strip()
     if not query or not skills:
@@ -184,14 +217,52 @@ def surface_skills(
     cache = embed_cache or _EmbedCache()
 
     scored: list[tuple[float, int, str]] = []  # (score, use_count, key)
+    explained: list[dict] = []
     for s in skills:
+        key = s.get("key", "")
         if s.get("always"):
+            if explain:
+                explained.append(
+                    _explain_row(
+                        key,
+                        0.0,
+                        0.0,
+                        semantic_threshold,
+                        False,
+                        False,
+                        "always-on (injected unconditionally)",
+                    )
+                )
             continue
         if s.get("status") == "archived":
+            if explain:
+                explained.append(
+                    _explain_row(
+                        key,
+                        0.0,
+                        0.0,
+                        semantic_threshold,
+                        False,
+                        False,
+                        "archived by the skill curator",
+                    )
+                )
             continue  # curator (#27) archived this skill — keep on disk, off the turn
         triggers = s.get("triggers", "") or ""
         kw_score, negated = _keyword_score(query_words, triggers) if triggers else (0.0, False)
         if negated:
+            if explain:
+                explained.append(
+                    _explain_row(
+                        key,
+                        kw_score,
+                        0.0,
+                        semantic_threshold,
+                        True,
+                        False,
+                        "vetoed by a negative (!) trigger",
+                    )
+                )
             continue  # a negative trigger vetoes the skill outright
 
         kw_hit = kw_score >= _KEYWORD_GATE
@@ -212,7 +283,28 @@ def surface_skills(
                 sem_score = _cosine(query_vec, vec)
         sem_hit = sem_score >= semantic_threshold
 
-        if not (kw_hit or sem_hit):
+        included = kw_hit or sem_hit
+        if explain:
+            if included:
+                why = (
+                    f"keyword {kw_score:.2f} ≥ {_KEYWORD_GATE}"
+                    if kw_hit
+                    else f"semantic {sem_score:.2f} ≥ {semantic_threshold}"
+                )
+                reason = f"included ({why})"
+            elif query_vec is None:
+                reason = (
+                    f"excluded (keyword {kw_score:.2f} < {_KEYWORD_GATE}; no embedder for semantic)"
+                )
+            else:
+                reason = (
+                    f"excluded (keyword {kw_score:.2f} < {_KEYWORD_GATE}, "
+                    f"semantic {sem_score:.2f} < {semantic_threshold})"
+                )
+            explained.append(
+                _explain_row(key, kw_score, sem_score, semantic_threshold, False, included, reason)
+            )
+        if not included:
             continue
         # Union score: the better of the two normalized signals.
         score = max(kw_score, sem_score)
@@ -220,10 +312,38 @@ def surface_skills(
         scored.append((score, use_count, s["key"]))
 
     cache.flush()
+    if explain:
+        # Included first (by score), then excluded — the same ordering the real turn
+        # would rank, with excluded candidates surfaced for the "why not?" answer.
+        explained.sort(
+            key=lambda r: (not r["included"], -max(r["kw_score"], r["sem_score"]), r["key"])
+        )
+        return explained
     # Rank by score desc, then proven use_count desc (#25 tiebreak), then key for
     # determinism.
     scored.sort(key=lambda t: (-t[0], -t[1], t[2]))
     return [key for _score, _uc, key in scored[:max_skills]]
+
+
+def _explain_row(
+    key: str,
+    kw_score: float,
+    sem_score: float,
+    threshold_sem: float,
+    negated: bool,
+    included: bool,
+    reason: str,
+) -> dict:
+    return {
+        "key": key,
+        "kw_score": round(kw_score, 3),
+        "sem_score": round(sem_score, 3),
+        "threshold_kw": _KEYWORD_GATE,
+        "threshold_sem": threshold_sem,
+        "negated": negated,
+        "included": included,
+        "reason": reason,
+    }
 
 
 def search_skills(query: str, skills: list[dict], *, limit: int = 20) -> list[dict]:
