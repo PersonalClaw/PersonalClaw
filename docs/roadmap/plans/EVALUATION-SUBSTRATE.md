@@ -366,3 +366,36 @@ Sessions 1-2 are shippable before any v2 slice; 3-5 assume Run Ledger + flywheel
 8. Attention accounting answers "is autonomy paying?": per-template attention-events-per-run trends render on the Learning page, graduation proposals cite the trend, and a post-grant attention rise files a demotion signal.
 9. The bundled optimize-harness template completes a budgeted search over one of PClaw's own skills/templates: candidates scope-checked by diff, scored against the dual gate (suite threshold + monotonic best-ever), halted by hypothesis-abandon/no-improvement rules — and its winner arrives as a PROPOSAL (template version or skill sidecar overlay) that the human installs; nothing live mutates during search.
 10. The whole substrate runs with zero new daemons: every runner is a trigger-fired workflow or a user click, every result is a file under `~/.personalclaw/evals/`, and snapshot/restore round-trips it.
+
+## Amendment (2026-07-26 — gap analysis round 2, owner-approved mechanisms)
+
+**The three-loop sharpening.** The plan already contains all three loops in embryo; sibling-platform evidence says the make-or-break move is making them *distinct, named, and cross-referencing*: Loop 1 lab evals say "should be better," Loop 3 field metrics say "is," and Loop 2 is the gate between a change and shipping. This amendment sharpens existing sections rather than duplicating: §2/§1 already carry pinning and studies (Loop 1's formal tier); §2.4/§8 already gate flywheel diffs (Loop 2's deliberate tier); §4.4 already computes attention (part of Loop 3). What is missing: the existing `eval/` embryo (4 scenarios in `eval/scenarios/*.json`, `LLMJudge`, `EvalRunner` — verified) never grew into a versioned scenario LIBRARY with pinned runs; regression gating has no *cheap always-on subset* below the k=5 study tier; and no surface renders field metrics beside lab results. New dependency noted: **FEEDBACK-SIGNAL (plan 58, created this same rev)** supplies Loop 3's 👍/👎 records, alongside the earned-autonomy ledger (AUTONOMY-GUARDRAILS round-2 amendment, `autonomy_rungs.json` + SEL approval outcomes).
+
+### Contract-level design
+
+- **Loop 1 — scenario evals (lab):** grow `eval/scenarios/` into `~/.personalclaw/evals/scenarios/` (joins the §1.1 store), a versioned library over seeded fixture homes (the `tests_fixtures/` seed mechanism `--seed` already ships; scenarios reference a fixture home by name so runs are reproducible from a clean state). Every run is PINNED:
+
+```python
+# evals/pinning.py
+@dataclass(frozen=True)
+class RunPin:
+    scenario_id: str
+    scenario_sha256: str
+    model_fingerprint: dict[str, str]   # per use-case "Provider:model", from active_models.json
+    prompt_pack_sha256: str             # hash over the resolved system/judge prompts
+    config_snapshot_ref: str            # relevant AppConfig subset hash
+```
+
+  Executed via the §1.2 matrix runner in §1.3's subprocess isolation (unchanged); results persist as artifacts under `matrices/` + a `results.tsv` row carrying the pin — "did anything change" is a pin-diff query. This extends §3.2's model fingerprint from a watchdog key to a universal run attribute.
+- **Loop 2 — regression gating:** a curated CHEAP subset (`evals/scenarios/gate/` — a dozen fast scenarios, assertion-heavy, judge-light) re-runs before any prompt/skill/routing change ships. Explicitly INCLUDING self-modification proposals from the Learning-Flywheel interpretive arm: the proposal card carries `{before: {scenario_scores}, after: {scenario_scores}, pin}` (the golden-set pattern — §8.3's proposal emission gains the two score columns; GateOK stays the flywheel's own pre-surfacing filter, this is the substrate-side evidence attached to what surfaces). A gate-subset run is minutes and cents, sitting BELOW the §2 k=5 study tier (which remains the graduation instrument).
+- **Loop 3 — live quality (field):** derived metrics, computed by query, stored nowhere new (the §4.4 discipline): per-template/per-action-type 👍/👎 rate + edit-before-approve rate from plan 58's FEEDBACK-SIGNAL store, plus approval/rejection/undo rates from the earned-autonomy ledger. Rendered BESIDE lab results on the §10 Learning-page tab — one row per subject: lab score (Loop 1, pinned) | gate status (Loop 2) | field trend (Loop 3). A subject whose lab score rose while its field trend fell is flagged `lab_field_divergence` — the honest "should-be vs is" check, and a §4.2 trust-record demotion signal.
+
+### Session placement
+
+Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the store/matrix session); the gate subset + proposal score columns extend **Session 3** (studies/verdict wiring); Loop 3 rendering extends **Session 4** (trust ladder + attention queries — same page, same data direction). The added dependency (plan 58 S1) gates only the Loop 3 half of Session 4. Honest count ~5 → **~6** (the three extensions together are one honest session, spread across S1/S3/S4).
+
+| ID | Task | Files | Done when |
+|---|---|---|---|
+| E1 | `RunPin` + scenario library migration (`eval/scenarios/` → versioned `evals/scenarios/` over named fixture homes); every matrix/study/gate run persists its pin; pin-diff query over `results.tsv` (extends Session 1) | `evals/pinning.py`, `evals/matrix.py`, `eval/runner.py` child wiring, store layout | re-running a scenario after a model rebind yields a different fingerprint row, same scenario hash; a run without a pin cannot be written to results.tsv |
+| E2 | Gate subset (`evals/scenarios/gate/`) + before/after score columns on flywheel self-modification proposals; a prompt/skill/routing proposal without a gate run renders "ungated" honestly (never blocks pre-flywheel) (extends Session 3) | gate scenario set, §8.3 proposal emission, proposal card FE | a planted regression in a candidate skill edit shows a score drop on its own proposal card before the user accepts; gate run cost is bounded and metered via SpendMeter |
+| E3 | Loop 3 derived field metrics (plan-58 records + autonomy ledger + SEL outcomes, query-computed) rendered beside lab results on the Learning tab; `lab_field_divergence` flag feeding §4.2 demotion (extends Session 4; gated on plan 58 S1) | ledger query module, Learning-page tab, trust-record wiring | the tab answers "lab says better — is it?" per subject in one row; a post-ship field decline on a lab-improved subject files a divergence flag and a demotion signal, mechanically |

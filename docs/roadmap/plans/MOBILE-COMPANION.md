@@ -122,3 +122,26 @@ Plan 42 rules-engine `push` target calls `send_push` with `{kind, item_id}` only
 - **IP-bound tokens vs roaming phones** is the one real unknown (T2.3 resolves it surgically); worst case the device claim mints unbound tokens with shorter TTL + SEL visibility — still within the existing model.
 - **iOS web-push limitations** (requires installed PWA; feature-gated by iOS version) — the wrapper tier exists precisely for reliable iOS push; PWA push documented as best-effort on iOS.
 - **Open:** whether the companion should also render a minimal chat composer ("quick ask") — deferred; channels cover phone chat (revisit after field week evidence).
+
+## Amendment (2026-07-26 — sibling-platform gap analysis, owner greenlight)
+
+**Approve-from-phone is milestone one.** Sibling evidence confirms this plan's own investigation note ("approvals are the killer feature — approval latency caps autonomy"): the first shipped slice must be the complete loop *push notification on pending approval → open PWA → approve/reject with the approval card's full context* — not a four-section companion page that happens to include approvals. This is a **reordering and sharpening of existing scope, not an expansion**: every ingredient is already in S1-S3 (the `#/companion` route, `POST /api/chat/sessions/{session}/approve` at `server.py:667`, `GET /api/approvals` + `POST /api/approvals/{id}/{action}` at `server.py:941-942`, C3 push, plan 42's `push` target). The change: S2 ships approvals-only; S3 wires push to approvals FIRST; loops/tasks/inbox sections move to a new S3.5 that can slip without delaying the milestone.
+
+### Contract-level design (sharpened, not new)
+
+- **Milestone-1 definition of done:** phone locked in a pocket → an unattended run hits a tool approval → content-free push `{kind: "approval", item_id}` (C3, unchanged) → tap opens `#/companion` scrolled to that approval → the card shows FULL context (tool name, arguments, session/agent, the plan-43 decision-brief when it exists; raw fallback until then — do not block on plan 43) → approve/reject → the paused run proceeds. Target round-trip <30s on cell data (the existing V3 number, now attached to the milestone).
+- **Approval card context source:** the same `GET /api/approvals` rows the dashboard Action Center renders — the companion adds no backend; if a context field is missing on the phone it is missing on the desktop too (fix at the shared endpoint, once).
+- **Per-category sounds/badges ride plan 42, not new machinery:** the notification-rules store (plan 42 C2) — not this plan — carries any per-(source,kind) `sound`/badge preference; the service worker maps the push payload's `kind` to the platform notification options (`tag` for coalescing, `badge` count from inbox PENDING per plan 42 S5). This plan contributes only the SW-side mapping; the rules schema field itself is a one-line addition proposed to plan 42 (record as a coordination note there). No sound/badge config UI is built here.
+
+### Session placement (reorder; count 6 → unchanged, boundaries move)
+
+- **S1** unchanged (remote access — the transport the milestone needs).
+- **S2 — Approvals-first companion:** T2.1 narrows to the Approvals section only (full-context cards); T2.2 narrows to the approve/reject wiring; T2.3/T2.4 (device sessions/devices list — already superseded to plan 54's contract) unchanged.
+- **S3 — Push-to-approval (milestone 1 completes here):** T3.1 (manifest/SW) + T3.2 (web push) + tap-through deep-link to the specific approval; V3 is the milestone validation.
+- **S3.5 — the rest of the companion (new session, absorbing deferred S2 scope):** Running loops (pause/nudge/stop), tasks/inbox, recent notifications; plus the SW sound/badge mapping (needs plan 42's field).
+
+| ID | Task | Files | Done when |
+|---|---|---|---|
+| T2.1r | Rescope S2 to approvals-only: `#/companion` renders full-context approval cards from `GET /api/approvals`; approve/reject round-trip; other sections stubbed behind S3.5 | `web/src/pages/companion/`, router | phone viewport: a real pending approval renders with tool+args+session context and resolves; no other section ships |
+| T3.4 | Push→approval deep link: SW notification click opens `#/companion?approval=<id>` scrolled/highlighted; payload stays content-free `{kind, item_id}` | `web/src/sw.ts`, companion route | locked-phone push → tap → correct card focused → approve → run proceeds; <30s on cell data, timed |
+| T3.5.1 | S3.5: loops/tasks/inbox/notifications sections (former T2.1/T2.2 scope) + SW per-kind sound/badge mapping reading plan 42's rules field | companion components, `sw.ts` | sections work per original S2 Done-whens; distinct sound fires for a kind configured in the rules UI |

@@ -828,3 +828,20 @@ Each slice is independently shippable and testable. Rev-2 scope grows the estima
 8. A gate/judge never passes on the producing agent's self-report — engine-executed verification only; verdicts are closed-enum routed.
 9. From `events.jsonl` alone, a run's reasoning path (prompt → tools → output per node, with model/cost) is reconstructable; crystallized digests survive retention pruning.
 10. No residual code, config, or UI surface from the old SOP feature remains; the `workflow` provider type still round-trips app install/update (PROVIDER_TYPES ↔ handler parity test green).
+
+## Amendment (2026-07-26 — sibling-platform gap analysis, owner greenlight)
+
+**What & why.** Two sibling-platform mechanisms: (a) per-stage cached re-runs after an edit, and (b) a per-node inspection view. Recon verdict on (a): **already structurally covered** — the journal key is `sha256(instance_path + node_spec_hash + resolved_inputs_hash + epoch)` (§2 Resume) and §3 item 4 (inputs-hash memoization) already specifies that a cascaded node whose `(node_spec_hash, resolved_inputs_hash)` is unchanged replays its cached output after rewind/`run_from`/`update_node`. What is missing is *visibility and a locked acceptance bar*, so this amendment sharpens rather than duplicates: cache hits become a first-class ledger event and widget state, with a CI regression pair. (b) is genuinely additive UI: the ledger already journals the **fully-resolved post-binding prompt** (or content ref) per stage instance (§5 Run Ledger reconstructability criterion), but no surface exposes it — debugging "what exactly did this node see" requires reading `events.jsonl` by hand.
+
+**Design (contract level).**
+- New Run Ledger event: `step_cached` `{node_id, instance_path, journal_key, saved_tokens_est, cause: rewind|run_from|edit_cascade|resume}` — emitted whenever `frontier()` serves a completed node from the journal instead of dispatching. Widget: cached nodes render a distinct `cached` badge (not a fresh `done` pulse); `workflow_node_done` payload gains optional `cached: true`.
+- Inspection endpoint: `GET /api/workflows/runs/{id}/nodes/{node_id}/inspect` → `{resolved_prompt | prompt_ref, resolved_inputs, output | artifact_ref, attempts: [attempt records], ledger_events: [...], cached: bool}` (secrets already never reach these stores per §1 Secrets Hygiene — the RedactingSink covers this surface for free). FE: an inspector drawer on `WorkflowRunDetail` node rows + a "inspect" affordance on the chat widget's node rows.
+- Acceptance sharpening (Slice 11): edit node X mid-run → confirm cascade → every completed node OUTSIDE the binding closure re-completes via `step_cached` with zero model calls; a node INSIDE the closure re-executes. Asserted from the ledger, not logs.
+
+**Lands in:** Slice 1 (`step_cached` emission — journal.py already computes the hit), Slice 7 (inspect endpoint + drawer), Slice 8 (widget badge), Slice 11 (regression pair). No new slice; honest estimate 31 → **32 sessions** (+1 spread across Slices 7/8).
+
+| ID | Task | Files | Done when |
+|---|---|---|---|
+| WF2-A1 | `step_cached` ledger event + `cached` flag on `workflow_node_done`; cache-hit regression pair (outside-closure cached / inside-closure re-run, ledger-asserted) | `workflows/journal.py`, `workflows/tick.py`, Slice 11 test file | edit-then-rerun fixture shows N cached + M re-run nodes exactly matching the binding closure; zero model calls for cached nodes |
+| WF2-A2 | Node inspection endpoint returning resolved prompt/inputs/output/attempts/ledger slice | `workflows/handlers.py`, `lib/api.ts` | endpoint returns the §5 reconstructability set for any terminal node; secrets absent (RedactingSink fixture) |
+| WF2-A3 | FE inspector drawer (run detail + widget node rows) with cached badge rendering | `web/src/pages/workflows/WorkflowRunDetail.tsx`, `WorkflowProgressCard.tsx` | a user can open any node and read its exact resolved prompt, inputs, and output; cached nodes visually distinct |

@@ -283,3 +283,23 @@ Sessions 1-3 are NEW-10's core and ship value alone; 4-5 are NEW-20; 6 completes
 8. An unknown Slack DM sender gets no agent reply and spends no tokens; a pairing code flow promotes them to `allowed` in `sender_trust.json`; the same store and flow work unchanged for the next channel transport with zero transport code.
 9. The control bridge lets a local MCP agent open a cockpit and read a transcript without DOM scraping, but `create_task` returns `needs_confirmation` until the user confirms in the dashboard — enforced server-side.
 10. A workflow with `a2a_published: true` appears on the agent card and an external A2A client can run it headless within its budget; an `a2a-call` hook action to a non-allowlisted host is blocked by the egress guard, and hook creation with the provider succeeds only because it is in `ALLOWED_HOOK_PROVIDERS`.
+
+## Amendment (2026-07-26 — sibling-platform gap analysis, owner greenlight)
+
+**Standard-API doorway priority + contract sharpening.** Sibling-platform evidence: the OpenAI-compatible `/v1/chat/completions` endpoint (any off-the-shelf client talks to the assistant) is the highest-leverage single slice of this plan — every OpenAI-SDK tool, editor plugin, and phone client becomes a PClaw front-end for free. **This is ALREADY §2 of this plan** (Session 2) — the amendment does not duplicate it; it (a) promotes Sessions 1+2 to an explicitly separable early sub-slice ("the doorway") that may land ahead of the rest of Wave 3 once AUTONOMY-GUARDRAILS ships (Session 2's only hard dependency; §2.3), and (b) sharpens §2.1's acceptance criteria where the sibling ecosystem hit interop bugs.
+
+### Contract sharpening (additive to §2.1/§2.3 — no design change)
+
+- **`model` naming:** accept BOTH `personalclaw/<agent>` and bare `<agent>` (clients with model-name dropdowns can't always send slashes); `GET /v1/models` returns `{id: "personalclaw/<agent>", ...}` rows only for agents the client's binding permits. Unknown agent → 404 with §2.2 envelope `{"error": {"code": "unknown_agent", ...}}` wrapped in OpenAI's error shape (`{"error": {"message", "type", "code"}}` — the dialect's wire contract wins on this surface, stable-code preserved in `code`).
+- **Streaming:** SSE `chat.completion.chunk` frames translated from the internal event stream; `[DONE]` sentinel; `usage` block on the final frame (from the ModelCallGuard's token counts) — clients budget off it. Non-stream waits and returns one `chat.completion`. Tool calls execute **server-side** and are NEVER surfaced as OpenAI `tool_calls` deltas (the caller is not the tool executor — the headless profile is, §2.3); tool activity appears as content, and a needs-approval pause returns the §2.1 terminal "check your dashboard" message with `finish_reason: "stop"`.
+- **Sessions:** stateless per request by default; `user` field → `inbound:<client_id>:<sha8(user)>` continuity (already §2.1); ADD a header escape hatch `X-PersonalClaw-Session: <name>` for clients that can't set `user` (maps to the same key derivation; only honored when the client record sets `persistent_sessions: true` — the same declared-choice gate).
+- Everything else (auth via §1.1 surface bearer + §1.2 client bindings, headless profile, SpendMeter per-client budgets, `inbound:` stateless prefix) is already specified — no change.
+
+### Session placement
+
+No new session; session count stays ~7. Session 2 gains the three sharpenings above as acceptance criteria. Add to Session 2's Done-when: an unmodified `openai` Python SDK client and one off-the-shelf chat app (e.g. any BYO-base-URL client) each hold a multi-turn conversation via `user` continuity AND via the header escape hatch; a run that hits a tool approval returns the dashboard-pointer message rather than hanging the HTTP caller.
+
+| ID | Task | Files | Done when |
+|---|---|---|---|
+| T2-A1 | Model-name dual form + OpenAI-shaped error envelope (stable `code` preserved) + usage block on final SSE frame | `inbound/openai_dialect.py` (Session 2 module), tests | `openai` SDK `client.chat.completions.create(model="<agent>", stream=True)` works verbatim; error shapes parse in the SDK |
+| T2-A2 | `X-PersonalClaw-Session` header mapping behind `persistent_sessions` | same module | header session resumes across two requests; ignored (stateless) when the client record doesn't opt in; SEL-clean |

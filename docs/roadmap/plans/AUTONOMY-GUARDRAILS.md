@@ -579,3 +579,45 @@ subagent write-gating + §4.3 project trust gate (engine per-template profiles /
 and the live cron-approval rewire to `profile_for_session` (its per-template consumers). The
 substrate for all of them ships here; the deferred pieces are seams awaiting their consumers,
 not gaps.
+
+## Amendment (2026-07-26 — gap analysis round 2, owner-approved mechanisms)
+
+**Earned autonomy per action type — the plan's second act.** The shipped floor (S1-4, all DONE) is binary: an unattended run is HEADLESS read-only, or a write is a creation-time grant. There is no graduated middle and no track record — a reply-draft that has been approved unchanged 40 times still asks every time. Sibling-platform evidence: per-action-type rung ladders with *derived* track records are what let autonomy grow without a leap of faith. This adds the ladder ON TOP of the existing floor; budgets, denylist, and the kill switch always sit BELOW it — a rung never overrides a `check_action` block, a budget pause, or `incident_active()`.
+
+### Contract-level design
+
+- **Action-type registry** — every autonomous WRITE action gets a stable type key, declared where actions are declared: core keys at provider registration (`action_providers/registry.py:_ensure_default_providers_registered`) and at the inbox AI affordances (`inbox_service.py:draft_reply`/`classify` → `inbox.reply_draft`, `sessions.auto_tag`); app actions via an additive `autonomy: {floor, ceiling}` block on the manifest provider extension (`apps/manifest.py` ProviderConfig — unknown-field-preserved), keyed `app:<name>.<action>`.
+
+```python
+# guardrails/autonomy.py — beside policy.py/denylist.py, same frozen-dataclass template
+RUNGS = ("draft_only", "one_tap", "auto_with_undo", "autonomous")   # ordered ladder
+
+@dataclass(frozen=True)
+class ActionTypeSpec:
+    key: str                    # "inbox.reply_draft" | "sessions.auto_tag" | "app:<name>.<action>"
+    floor: str = "draft_only"
+    ceiling: str = "one_tap"    # anything leaving the machine ceilings below "autonomous" by default
+    leaves_machine: bool = False
+    promotion: PromotionRule = PromotionRule(clean_approvals=10, min_days=7, max_rejections=0)
+
+def register_action_type(spec: ActionTypeSpec) -> None
+def resolve_rung(key: str) -> str            # floor + accepted grants, clamped to ceiling;
+                                             # incident_active() freezes resolution above one_tap
+def promotion_eligibility(key: str) -> Eligibility   # DERIVED, never stored-as-opinion
+def demote(key: str, cause: str) -> None     # automatic + immediate; starts cooldown_days
+```
+
+- **Enforcement at the existing chokepoints, no new seam:** `resolve_rung` composes with `enforce_action` at the three dispatch seams (`hooks.run_script_hook`, `gateway._run_action_job`, `event_triggers._fire`) and with `profile_for_session` for unattended spawns. Routing per rung: `draft_only` → proposals inbox (plan 42's `kind=proposal` via `emit_attention_item` once 42 lands; pre-42, the `skills/proposals.py` pending-item + `notify` pattern); `one_tap` → approval card (the `ApprovalGate.request` surface, `agents/native/approval.py`); `auto_with_undo` → execute + persist a reversal handle on the `ActionResult` + passive notify; `autonomous` → execute under SEL.
+- **Track record DERIVED, not stored:** eligibility computes from SEL `tool_approved`/`tool_rejected` outcomes plus FEEDBACK-SIGNAL records (plan 58, created this same rev — its store is the 👍/👎 source). Only *grants* and *demotions* persist (`~/.personalclaw/autonomy_rungs.json`, atomic_write, joins snapshot CORE_FILES): `{key: {rung, granted_at, evidence_window, demotions: [{at, cause, cooldown_until}]}}`.
+- **Asymmetric by design:** promotion is ALWAYS a user click — eligibility files a *proposal*, never auto-promotes. Demotion is automatic + immediate on ANY rejection, undo, or 👎 for that type, with a cooldown before re-eligibility. Thresholds per-type configurable via a new `guardrails.autonomy` config subsection (four wiring points, §7).
+- **Kill switch:** `personalclaw incident on` (existing `guardrails/incident.py`) additionally clamps every resolution above `one_tap` — during an incident nothing executes-with-undo or runs autonomous, even attended-adjacent actions.
+
+### Session placement
+
+Wave 3, **after plan 58 S1** (its records feed eligibility). Two new sessions; honest count ~4 → **~6**.
+
+| ID | Task | Files | Done when |
+|---|---|---|---|
+| S5.1 | `guardrails/autonomy.py` (RUNGS, ActionTypeSpec, registry, resolve_rung with incident clamp, derived eligibility over SEL + plan-58 records, demote+cooldown); `autonomy_rungs.json` store; `guardrails.autonomy` config through the four wiring points | `guardrails/autonomy.py`, `config/loader.py`, `dashboard/handlers/core.py`, tests | a type with 10 clean approvals over 7 days + zero rejections is eligible; one rejection demotes immediately + starts cooldown; incident clamps above one_tap; eligibility is recomputed, never cached to disk |
+| S5.2 | Core action-type declarations (registry seam + inbox affordances) + manifest `autonomy` block for `app:<name>.<action>`; rung routing wired at the three dispatch seams + `profile_for_session` (draft_only→proposal item, one_tap→ApprovalGate, auto_with_undo→execute+reversal handle+notify, autonomous→SEL) | `action_providers/registry.py`, `apps/manifest.py`, `hooks.py`, `gateway.py`, `event_triggers.py`, `guardrails/policy.py` | an app-contributed action inherits its declared floor/ceiling without dispatch-layer special-casing; a leaves-machine type cannot resolve `autonomous` without an explicit ceiling raise |
+| S6.1 | Promotion proposals (user-click accept, SEL-audited like a skill install) + FE: rung chip on trigger/job rows, ladder panel in Settings → Guardrails (current rung, derived record, demotion history), undo affordance on auto_with_undo notifications; as-a-user validation sweep | proposal store wiring, `web/src/pages/settings/GuardrailsPanel.tsx`, trigger row components | promotion never happens without a click; an undo click both reverses and demotes; the chip answers "why is this allowed to run by itself?" in one glance |

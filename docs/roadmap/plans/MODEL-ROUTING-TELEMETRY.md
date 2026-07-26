@@ -259,3 +259,25 @@ Policy-table mutations (accept/reject/pin/mode-change) are SEL-logged (`sel.py:S
 6. An unresolvable pinned ref under routing still raises `ProviderResolutionError` — proven by test — and a ref removed from `active_models.json` disappears from policy candidates on next load.
 7. The rate table serves three consumers (router ordering, SpendMeter estimates, WF2 `cost_usd`) from one `rate_for()`; editing `model_rates.json` changes all three without a restart-order dependency.
 8. The whole substrate is files: deleting `routing_stats.json`/`routing_policy.json` degrades to heuristic/off gracefully (rebuildable from the audit JSONL), and nothing in `memory.db` or `knowledge.db` changed during the entire validation sweep.
+
+## Amendment (2026-07-26 — sibling-platform gap analysis, owner greenlight)
+
+**The usage story (legible spend).** Sibling-platform evidence: the single most-requested legibility surface is "what did this cost me, in words a human uses" — not a router. Session 1 already ships the Routing & Efficiency tab (§1.5), but it is fitness-framed (Pareto frontier per query class). This amendment adds the spend-framed read model over the SAME recorded telemetry: daily/weekly charts by model/provider/purpose (interactive vs background vs loops), per-task/loop cost attribution ("this run cost ~$X"), and a plain-language monthly recap. **Zero new collection** — recon confirms `model_calls.jsonl` (`guardrails/audit.py:39` `AttemptRecord`: `ts, use_case, provider, model, tokens_in/out, dollars_est, estimated, passed`) plus `spend.json` day totals (`guardrails/budgets.py`, `_PRUNE_DAYS=30`) already carry everything; this is a fold + two surfaces. It deliberately front-runs the router: it needs only AUTONOMY-GUARDRAILS §2.1, none of §2-§6 here.
+
+### Contract-level design
+
+- **Durable usage fold** — `routing/usage.py` (rides §1.3's fold discipline; same updated-post-attempt code path): `~/.personalclaw/usage_stats.json` (atomic_write, rebuildable via the §1.3 `--rebuild` path) — per-day rows keyed `(date → provider:model → purpose)` of `{calls, tokens_in, tokens_out, dollars_est, estimated_share}`. The JSONL trims at 2×5000 lines (`audit.py:29`), so the fold — not the JSONL — is the long-horizon record (the §1.3 relationship, restated). `purpose` derives deterministically from `use_case` + the audit's run/session provenance: `interactive | background | loop | eval | app` (mapping table is a module constant; unknown → `background`).
+- **Attribution:** per-run cost reuses the SpendMeter run scope (`budgets.py::run_totals(run_key)`) live, and the fold's run-keyed rollup after `end_run`; WORK-R9 RunStats stays the workflow-native view — linked, not recomputed (§1.1 discipline).
+- **Route:** `GET /api/usage?window=day|week|month&group=model|provider|purpose` → `{rows: [{key, calls, tokens, dollars_est, estimated_share}], total, window}`; errors per §2.2 envelope. Derived on request from the fold — no collector process.
+- **Recap:** `usage_recap(month) -> str` — a template-rendered (NOT LLM) plain-language summary ("July so far: ~$4.20 across 312 calls; 78% local at $0; your loops cost $1.10; biggest line item: anthropic:… on planning") delivered as one `digest`-mode notification through the plan-42 rules engine on the monthly boundary (system cron, respects `--no-crons`). `estimated: true` share is always disclosed ("~" and a footnote) — never fake precision.
+- **FE:** a "Usage" section on the same Settings → Models page as the Session-1 tab (one page, two lenses: fitness and spend) + an optional dashboard stat tile later via AMBIENT-SURFACES (not built here). Charts follow the dataviz conventions.
+
+### Session placement
+
+Folded into **Session 1** as its second half (Session 1 was already "telemetry remainder + Pareto view"); session count stays ~3 but Session 1 is now explicitly shippable stand-alone before any router work — record a DEVIATION if it needs splitting into 1a/1b.
+
+| ID | Task | Files | Done when |
+|---|---|---|---|
+| T-U1 | Usage fold: `routing/usage.py` (purpose mapping, per-day rollup, rebuild-from-JSONL path shared with §1.3), `GET /api/usage` | `routing/usage.py`, dashboard route, tests | fold matches a hand-computed fixture over 50 audit lines; rebuild after deleting the fold reproduces it; estimated_share correct |
+| T-U2 | Usage UI: daily/weekly charts (model/provider/purpose group-by), per-run cost line on run/loop detail surfaces via `run_totals` | Settings → Models Usage section, run detail component | charts render from real dev-home traffic; a loop's detail shows "~$X this run" |
+| T-U3 | Monthly recap: template renderer + system cron + delivery through the rules engine as a `digest`-mode notification | `routing/usage.py`, cron registration site | fixture month renders the recap verbatim-predictable; notification obeys quiet hours/mute |

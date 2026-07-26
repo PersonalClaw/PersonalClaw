@@ -164,3 +164,25 @@ Each transport declares honest `ChannelCapabilities` (§3.5 dataclass). Credenti
 - **Discord gateway maintenance** is the highest-complexity piece (WS lifecycle); contained by the minimal-intents client + conformance kit. If it exceeds budget, ship Telegram+email first (owner's "few core channels" is satisfied) and let Discord ride a community bounty with the half-built client as a head start — E6 decision point, flagged early.
 - **Telegram MarkdownV2** and **Discord rate buckets** are the two classic correctness traps — both have dedicated table-driven tests by design.
 - **Open:** whether pairing prompts should also appear in channel (canned reply) when `dm_policy=owner_only` — default: no reply at all (silent), documented.
+
+## Amendment (2026-07-26 — gap analysis round 2, owner decisions)
+
+**The vendor-completeness pattern (owner decision; Slack is the exemplar).** Manifest recon (2026-07-26, `PersonalClawApps/slack-channel/app.json`): today the Slack app registers exactly ONE provider — `provider: {type: "channel", implementation: slack_runtime.transport:create_provider}` with a settingsSchema. It does NOT register an inbox source (core's `inbox_providers/__init__.py` docstring promises channel apps contribute one — "sources (e.g. 'slack') are contributed by their app bundle" — but no `type: "inbox"` provider exists in the manifest), and trigger sources don't exist as a seam yet (the substrate plan owns that). Meanwhile the manifest machinery already supports everything the pattern needs: multiple providers per app (`AppManifest.providers[]` / `all_providers()`), a `ui` manifest block, and `PROVIDER_TYPES` already includes `inbox`.
+
+**The pattern (each channel author follows it; telegram/discord/email inherit):**
+
+1. **ONE vendor app registers EVERY provider seam that vendor touches** via the manifest `providers[]` list: the `channel` transport (existing), an `inbox` message source (`MessageSourceProvider` — Slack's is the missing exemplar piece), a **trigger source** once WORKFLOWS-V2-AUTOMATION-SUBSTRATE exposes app-registered source types (coordination note there — e.g. Slack events as trigger sources), and its settings/config UI as **contributed UI** (manifest `ui` block) where the generic provider-settings form doesn't fit.
+2. **Anything not fitting a pluggable seam becomes that vendor app's own UI surface** (a `ui` page inside the app) — NEVER a core accommodation. If a vendor feature seems to need a core change, the change is a new *generic* seam or it doesn't happen.
+3. **Core never names the vendor.** The two known residues (the `inbox_providers` docstring's "e.g. slack"; `native_source.py`'s comment) are comment-level only — scrub them while touching the seam; PROVIDER-BOUNDARY-COMPLETION's rule ("do not add residue") stays binding.
+
+Fit with this plan: S1's trust seam and C3's obligation table stay exactly as designed — the pattern ADDS the "register every seam" completeness bar on top. The S7-8 author ramp is where it becomes teachable: the guide + conformance kit grow a vendor-completeness section, and the Slack app is brought up to the full pattern as the reference implementation.
+
+### Session placement
+
+Extends **Sessions 7-8** (the ramp — the guide/kit are being written there anyway) plus one Slack task; the trigger-source leg is a *forward obligation* documented now, implemented per-app only after the substrate's seam exists. No count change (S7-8 absorb it).
+
+| ID | Task | Files | Done when |
+|---|---|---|---|
+| T7.4 | Slack to full pattern: add the `inbox` provider registration (`MessageSourceProvider` over the existing runtime client) to `providers[]`; move any non-seam Slack-specific surface behind the app's own `ui` block; scrub vendor-name residue from core seam comments | apps repo `slack-channel/app.json` + `slack_runtime/`, core `inbox_providers/` docstrings | Slack messages flow through the generic inbox source seam (no core slack string); manifest registers ≥2 providers; boundary tests green |
+| T7.5 | Guide + kit: vendor-completeness section in `build-a-channel-app.md` (the seam checklist: channel + inbox + trigger-source-when-available + contributed UI; rule 2's "your UI, not core's" doctrine) + a conformance-kit check that a channel app also registers an inbox source (or declares why not) | `docs/guides/build-a-channel-app.md`, `tests/channel_conformance.py` | the checklist is explicit in the guide; telegram/discord/email tasks (S2-6) cite it; kit flags a channel-only app with a warning |
+| T7.6 | Trigger-source forward note: coordination line into WORKFLOWS-V2-AUTOMATION-SUBSTRATE (app-registered trigger source types) so each vendor app adds its trigger-source provider when that seam lands — no early hand-rolled event glue | this plan + substrate plan cross-refs | both plans reference one seam; no vendor app ships bespoke trigger machinery before it exists |
