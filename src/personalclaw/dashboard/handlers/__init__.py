@@ -111,6 +111,11 @@ from personalclaw.dashboard.handlers.doctor import (  # noqa: E402, F401
     api_degraded,
     api_doctor,
     api_doctor_capability,
+    api_doctor_crash,
+    api_doctor_fix_apply,
+    api_doctor_fixes,
+    api_doctor_simulate_surfacing,
+    api_provider_selftest,
 )
 
 # ── Files & Workspaces (handlers/files.py) ──

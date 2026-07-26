@@ -1,6 +1,6 @@
 # Plan: Platform Resilience — Doctor, No-Model Degraded Mode, Mid-Turn Message Handling
 
-**Status:** IN PROGRESS — Session 1 (Doctor core, §1) DONE 2026-07-25; Session 2 (no-model degraded contract, §5) DONE 2026-07-25; Session 3 (mid-turn message handling, §6) DONE 2026-07-25; Sessions 4-5 (fixes+simulators+crash-capture, remediation engine) remain. Created 2026-07-13 from research synthesis, promoted from backlog.
+**Status:** IN PROGRESS — Session 1 (Doctor core, §1) DONE 2026-07-25; Session 2 (no-model degraded contract, §5) DONE 2026-07-25; Session 3 (mid-turn message handling, §6) DONE 2026-07-25; Session 4 (fixes + simulators + crash capture, §2/§3/§6.5) DONE 2026-07-25; Session 5 (remediation engine, §4) remains. Created 2026-07-13 from research synthesis, promoted from backlog.
 **Created:** 2026-07-13
 **Wave:** split — §1-§3 (doctor probes + read-only surface) and §5 (degraded contract) are Wave 0/1 invariants (every existing surface touches models; offline behavior must be designed before the engine multiplies unattended runs); §6 (mid-turn handling) is Wave 1, independent; §4 (remediation engine) is Wave 3 — it consumes AUTONOMY-GUARDRAILS budgets (SpendMeter, §1.1 there) and should land after them.
 **Depends on:** nothing for §1-§3/§5/§6 (Wave-0-compatible). §4 depends on AUTONOMY-GUARDRAILS (SpendMeter + model-call audit for cost caps) and prefers AUTOMATION-SUBSTRATE (runs as an adaptive-cadence trigger once triggers.json exists; hangs off the heartbeat until then).
@@ -486,3 +486,47 @@ Sessions 1-4 each ship independently; Session 1 alone is a Wave-0 win (the symli
   :1529); the queue WS events are chat_handlers ~:172/:981 (plan :162/915); `chat_status` is
   emitted from exactly one line (chat_runner:1494) and the turn-terminal frame is `chat_done`
   (chat_runner:2833) — `superseded` was added there. Seams exist; line numbers moved.
+
+- [2026-07-25][S4] DONE: Fixes + simulators + crash capture (§2, §3.1, §3.2, §6.5). New
+  `resilience/fixes.py` — `Fix{id, title, impact, dry_preview(), apply()}` registry + 3
+  confirm-gated fixes (serving-fs.symlink-repair — replicates frontend.py's rmtree+symlink
+  with a shadow-copy backup since ensure_dev_dist_symlink early-returns on a valid copy;
+  serving-fs.orphan-prune — stale locks + recover_interrupted_updates; model-providers.
+  prune-bindings — persists load_active_models's removed-provider pruning). `apply_fix`
+  runs under a SEL audit, exception-safe. The serving-fs probe now attaches the matching
+  `fix_id`. New `resilience/crashes.py` — `record_crash` writes a redacted, capped
+  (20-file) `~/.personalclaw/crashes/<ts>-<kind>.json`; `recent_crashes`/`read_crash`
+  (traversal-guarded)/`crash_count` read them; a loop exception-handler installed in
+  `GatewayOrchestrator.run` captures unhandled turn/loop-worker exceptions and chains to
+  the default handler. `surface_skills` gains an `explain=True` path (with @overload) that
+  returns per-candidate arm scores + inclusion/exclusion reason — the §3.1 simulator, zero
+  LLM calls. Two new Doctor probes: `crashes` (recent artifacts → WARN) and
+  `memory-pipeline` (current-seam presence check). Endpoints: GET /api/doctor/fixes,
+  POST /api/doctor/fix/{fix_id} (confirm-gated), POST /api/doctor/simulate/surfacing,
+  POST /api/model-providers/{name}/selftest (real per-capability inference, user-click),
+  GET /api/doctor/crash/{filename} — the two GET sub-paths registered BEFORE the
+  {capability} catch-all (aiohttp registration-order shadowing). FE: DoctorPanel probe rows
+  render a confirm-gated Fix button (armed dialog → apply → re-run); api methods + types.
+  Tests: `test_resilience_fixes_crashes.py` (13 — fix registry/preview/apply+backup, crash
+  roundtrip/redaction/cap/traversal-guard, explain-mode breakdown/veto/opt-in) +
+  `dashboard/handlers/doctor.py` added to the degraded-lint call-site map (the honesty
+  ratchet caught the selftest's new one_shot_completion site — expected + correct). DoD
+  green: `make lint`, `make test` (7957 passed / 0 failed), web typecheck + vitest 231 +
+  build. Clean break — no persisted config; crash files are capped local artifacts.
+  Validated live: fixes catalog + previews, simulator (12 candidates for "help me deploy"),
+  confirm-required 400, crashes/memory-pipeline probes in the report.
+- [2026-07-25][S4] DEVIATION (scope, E6 — skipped as future infra): §3.3 (automation
+  would-execute / dry-run rendering) is NOT built — its execution machinery
+  (`automation_run(dry_run?)`, AUTO-R15, `triggers.json`) belongs to the unbuilt
+  WORKFLOWS-V2-AUTOMATION-SUBSTRATE; only unrelated cron-action/subagent observe-mode
+  dry-run primitives exist. Skipped entirely and noted rather than half-built against a
+  contract another plan owns.
+- [2026-07-25][S4] DEVIATION (scope): §3.2 memory-pipeline is the "current-seam version"
+  the plan sanctions — LEARN-R19's outcome records (FLUSH_OK/FLUSH_ERROR streak WARN,
+  staging backlog, per-op cost) are future flywheel infra (learning.db doesn't exist), so
+  the probe reports structural presence, not the richer freshness alarm. It never false-
+  alarms; the richer metrics arrive with the flywheel, same probe seam.
+- [2026-07-25][S4] DISCOVERY (route-ordering hazard, fixed): aiohttp matches routes in
+  registration order, so GET /api/doctor/fixes and /api/doctor/crash/{filename} had to be
+  registered BEFORE the pre-existing GET /api/doctor/{capability} catch-all or they'd bind
+  as a capability name. The POST fix/simulate/selftest routes don't collide (different verb).

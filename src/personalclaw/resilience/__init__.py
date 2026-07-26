@@ -33,6 +33,12 @@ from personalclaw.resilience.active_jobs import (
     is_cancellable_origin,
     reset_tracker,
 )
+from personalclaw.resilience.crashes import (
+    crash_count,
+    read_crash,
+    recent_crashes,
+    record_crash,
+)
 from personalclaw.resilience.degraded import (
     DegradedContract,
     all_contracts,
@@ -50,6 +56,7 @@ from personalclaw.resilience.doctor import (
     run_capability,
     run_doctor,
 )
+from personalclaw.resilience.fixes import Fix, all_fixes, apply_fix, get_fix, register_fix
 
 __all__ = [
     "Probe",
@@ -71,4 +78,13 @@ __all__ = [
     "get_tracker",
     "is_cancellable_origin",
     "reset_tracker",
+    "record_crash",
+    "recent_crashes",
+    "read_crash",
+    "crash_count",
+    "Fix",
+    "all_fixes",
+    "apply_fix",
+    "get_fix",
+    "register_fix",
 ]

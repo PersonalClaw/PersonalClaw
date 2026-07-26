@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { RefreshCw, ChevronRight, CheckCircle2, AlertTriangle, XCircle } from 'lucide-react'
+import { RefreshCw, ChevronRight, CheckCircle2, AlertTriangle, XCircle, Wrench } from 'lucide-react'
 import { api, type DoctorReport, type DoctorCapability, type DoctorProbe } from '../../lib/api'
+import { notify } from '../../app/appSdk'
+import { confirm } from '../../ui/dialog'
 import { PanelHeader, Section } from './settingsUI'
 import { Button } from '../../ui/Button'
 import { FormSkeleton } from '../../ui/ListScaffold'
@@ -53,7 +55,7 @@ export function DoctorPanel() {
       {report && (
         <Section>
           <div className="flex flex-col gap-m">
-            {caps.map(([key, cap]) => <CapabilityCard key={key} name={key} cap={cap} />)}
+            {caps.map(([key, cap]) => <CapabilityCard key={key} name={key} cap={cap} onFixed={refresh} />)}
           </div>
           {report.skipped_capabilities.length > 0 && (
             <div className="mt-m text-on-surface-low text-[0.75rem]">
@@ -93,7 +95,7 @@ function StatusBanner({ report }: { report: DoctorReport }) {
 }
 
 // ── one capability card ────────────────────────────────────────────────────
-function CapabilityCard({ name, cap }: { name: string; cap: DoctorCapability }) {
+function CapabilityCard({ name, cap, onFixed }: { name: string; cap: DoctorCapability; onFixed: () => void }) {
   const Icon = cap.ok ? CheckCircle2 : cap.tier <= 2 ? XCircle : AlertTriangle
   const color = cap.ok ? 'var(--color-success)' : cap.tier <= 2 ? 'var(--color-error)' : 'var(--color-warning)'
   return (
@@ -106,16 +108,45 @@ function CapabilityCard({ name, cap }: { name: string; cap: DoctorCapability }) 
         )}
       </div>
       <div className="mt-2 flex flex-col gap-1.5">
-        {cap.probes.map((p) => <ProbeRow key={p.id} probe={p} />)}
+        {cap.probes.map((p) => <ProbeRow key={p.id} probe={p} onFixed={onFixed} />)}
       </div>
     </div>
+  )
+}
+
+// ── a confirm-gated fix button (PLATFORM-RESILIENCE §2) ─────────────────────
+// Nothing auto-applies: a two-step confirm (the armed-delete pattern) runs the fix,
+// which is SEL-audited server-side. On success we re-run the doctor so the fixed
+// capability turns green.
+function FixButton({ fixId, onFixed }: { fixId: string; onFixed: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const run = async () => {
+    if (!(await confirm({
+      title: 'Apply this fix?',
+      body: 'This repairs harness state (symlinks, stale locks, or stale bindings) — never your content. It is logged to the security audit.',
+      confirmLabel: 'Apply fix',
+    }))) return
+    setBusy(true)
+    try {
+      const r = await api.doctorFixApply(fixId)
+      notify(r.ok ? (r.result || 'Fix applied.') : `Fix failed: ${r.error || 'unknown error'}`,
+        r.ok ? 'success' : 'error')
+      if (r.ok) onFixed()
+    } catch (e) {
+      notify(`Fix failed: ${String((e as Error)?.message || e)}`, 'error')
+    } finally { setBusy(false) }
+  }
+  return (
+    <Button variant="secondary" size="xs" onClick={run} loading={busy} className="mt-1 shrink-0">
+      <Wrench size={13} /> Fix
+    </Button>
   )
 }
 
 // ── one probe row with expandable evidence ─────────────────────────────────
 // Native details/summary disclosure: no JS state, keyboard-accessible by the
 // platform, and not a bespoke button element (design-system primitive discipline).
-function ProbeRow({ probe }: { probe: DoctorProbe }) {
+function ProbeRow({ probe, onFixed }: { probe: DoctorProbe; onFixed: () => void }) {
   const hasEvidence = probe.evidence && Object.keys(probe.evidence).length > 0
   const dot = probe.ok ? 'var(--color-success)' : probe.tier <= 2 ? 'var(--color-error)' : 'var(--color-warning)'
   const head = (
@@ -125,6 +156,7 @@ function ProbeRow({ probe }: { probe: DoctorProbe }) {
         <span className="text-on-surface text-[0.8125rem]">{probe.title}</span>
         <span className="block text-on-surface-low text-[0.75rem]">{probe.detail}</span>
       </span>
+      {probe.fix_id && !probe.ok && <FixButton fixId={probe.fix_id} onFixed={onFixed} />}
     </>
   )
   if (!hasEvidence) {

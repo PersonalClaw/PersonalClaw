@@ -12,6 +12,21 @@ Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 
 ### Added
 
+- **The Doctor can now fix what it finds, explain what it surfaces, and remember what
+  crashed.** Three additions to the health surface (all Settings → Doctor):
+  **confirm-gated fixes** — a finding that has a repair (a `static/dist` copy shadowing
+  the runtime symlink, stale locks/rollback leftovers, model bindings pointing at removed
+  providers) shows a **Fix** button with a read-only preview; nothing auto-applies, a
+  two-step confirm runs it, and every application is security-audited and touches harness
+  mechanics only (never your content). A **per-provider selftest** fires a tiny real
+  inference per capability (a one-token chat / short embed) for true ground-truth instead
+  of a reachability guess. A **surfacing simulator** dry-runs the skill scorer in explain
+  mode — type a query and see, per candidate, the keyword/semantic scores, the thresholds,
+  and exactly why each skill was included or excluded (zero model calls). And **structured
+  crash capture**: an unhandled failure at a turn/loop/gateway boundary now writes one
+  redacted, recoverable artifact under `~/.personalclaw/crashes/` (capped, never uploaded)
+  that the Doctor surfaces as a card — a mid-stream death leaves a record instead of a lost
+  stack trace.
 - **Mid-turn message policy: queue (default) or cancel-and-replace.** A follow-up sent
   while a turn is still generating now follows a *declared* policy. The default,
   **`queue`**, is today's behavior formalized — the message is delivered next turn. Opt

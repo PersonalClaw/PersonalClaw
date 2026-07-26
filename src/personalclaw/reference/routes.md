@@ -135,6 +135,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/dashboard/config` — read or write dashboard settings.
 - `GET /api/design/tokens/default` — PersonalClaw's canonical
 - `GET /api/doctor` — all probes, grouped by capability, cached 30s.
+- `GET /api/doctor/crash/{filename}` — the full JSON of one crash artifact.
+- `POST /api/doctor/fix/{fix_id}` — apply a confirm-gated fix.
+- `GET /api/doctor/fixes` — the fix catalog with read-only dry-previews.
+- `POST /api/doctor/simulate/surfacing` — {text} — dry-run the skill scorer in
 - `GET /api/doctor/{capability}` — re-run one capability's probes (uncached).
 - `GET /api/file-complete` — path autocomplete for the PathBar.
 - `GET /api/file-content-search` — recursive content search.
@@ -292,6 +296,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/model-providers/{name}/models/delete` — delete a local model.
 - `POST /api/model-providers/{name}/pull` — pull (download) a model.
 - `GET /api/model-providers/{name}/search` — search a provider's
+- `POST /api/model-providers/{name}/selftest` — dispatch a tiny real inference per
 - `GET /api/model-providers/{name}/show` — rich model metadata.
 - `POST /api/model-providers/{name}/test` — test provider connectivity.
 - `GET /api/models/active` — active models per use-case.

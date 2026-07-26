@@ -128,6 +128,24 @@ export interface DegradedReport {
   degraded: string[]
 }
 
+// Confirm-gated fixes + surfacing simulator (PLATFORM-RESILIENCE §2/§3.1).
+export interface DoctorFix {
+  id: string
+  title: string
+  impact: string
+  preview: string
+}
+export interface SurfacingCandidate {
+  key: string
+  kw_score: number
+  sem_score: number
+  threshold_kw: number
+  threshold_sem: number
+  negated: boolean
+  included: boolean
+  reason: string
+}
+
 export interface ChannelHealth { state: string; detail?: string }
 export interface ChannelRuntime {
   name: string; display_name: string; connected: boolean
@@ -1161,6 +1179,18 @@ export const api = {
     ),
   // ── No-model degraded mode (PLATFORM-RESILIENCE §5) ──
   degraded: () => get<DegradedReport>('/api/resilience/degraded'),
+  // ── Confirm-gated fixes + surfacing simulator (PLATFORM-RESILIENCE §2/§3.1) ──
+  doctorFixes: () => get<{ fixes: DoctorFix[] }>('/api/doctor/fixes'),
+  doctorFixApply: (fixId: string) =>
+    post<{ ok: boolean; fix_id: string; result?: string; error?: string }>(
+      `/api/doctor/fix/${encodeURIComponent(fixId)}`, { confirm: true },
+    ),
+  doctorSimulateSurfacing: (text: string) =>
+    post<{ query: string; candidates: SurfacingCandidate[] }>(
+      '/api/doctor/simulate/surfacing', { text },
+    ),
+  doctorCrash: (filename: string) =>
+    get<Record<string, unknown>>(`/api/doctor/crash/${encodeURIComponent(filename)}`),
 
   // ── Memory Studio: health, observability, deep recall, promotion, lessons ──
   memoryGraph: () => get<MemoryGraphData>('/api/memory/graph'),

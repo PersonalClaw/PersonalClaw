@@ -373,9 +373,19 @@ async def start_dashboard(
     app.router.add_get("/api/onboarding", handlers.api_onboarding)
     # Doctor — tiered read-only health probes (PLATFORM-RESILIENCE §1)
     app.router.add_get("/api/doctor", handlers.api_doctor)
+    # Specific GET sub-paths BEFORE the {capability} catch-all (aiohttp matches in
+    # registration order — otherwise "fixes"/"crash" bind as a capability name).
+    app.router.add_get("/api/doctor/fixes", handlers.api_doctor_fixes)
+    app.router.add_get("/api/doctor/crash/{filename}", handlers.api_doctor_crash)
     app.router.add_get("/api/doctor/{capability}", handlers.api_doctor_capability)
     # No-model degraded-mode contract (PLATFORM-RESILIENCE §5)
     app.router.add_get("/api/resilience/degraded", handlers.api_degraded)
+    # Confirm-gated fixes + trust simulators + selftest (PLATFORM-RESILIENCE §2/§3/§1.4).
+    # POST routes don't collide with the {capability} GET; the two GETs above are
+    # ordered before it.
+    app.router.add_post("/api/doctor/fix/{fix_id}", handlers.api_doctor_fix_apply)
+    app.router.add_post("/api/doctor/simulate/surfacing", handlers.api_doctor_simulate_surfacing)
+    app.router.add_post("/api/model-providers/{name}/selftest", handlers.api_provider_selftest)
     # Skills marketplace
     from personalclaw.dashboard.handlers.skills import (
         api_ephemeral_skill_discard,

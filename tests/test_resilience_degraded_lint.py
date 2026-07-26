@@ -35,6 +35,9 @@ _CALL_SITE_SURFACES = {
     "dashboard/chat_retag.py": "assistant_reasoning",
     "dashboard/chat_handlers.py": "assistant_reasoning",
     "dashboard/handlers/loop_routes.py": "assistant_reasoning",
+    # The Doctor per-provider selftest (§1.4) fires a tiny one-token completion to
+    # ground-truth the chat capability — user-click only, covered by the chat contract.
+    "dashboard/handlers/doctor.py": "chat",
 }
 
 _CALL_RE = re.compile(r"\bone_shot_completion\s*\(")

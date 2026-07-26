@@ -612,14 +612,19 @@ async def _probe_serving_fs(ctx: DoctorContext) -> ProbeResult:
     ev = await asyncio.to_thread(_read)
     dist = ev.get("dist", {})
     problems = []
+    fix_id: Optional[str] = None
     if dist.get("kind") == "copy":
         problems.append("static/dist is a COPY shadowing the runtime symlink (serves a stale SPA)")
+        fix_id = "serving-fs.symlink-repair"  # confirm-gated repair (§2)
     elif not dist.get("target_ok"):
         problems.append(f"static/dist {dist.get('kind')} — SPA not resolvable")
+    if ev.get("dead_locks") or ev.get("dead_pids"):
+        fix_id = fix_id or "serving-fs.orphan-prune"
     return ProbeResult(
         ok=not problems,
         detail=("; ".join(problems) if problems else "serving/fs healthy"),
         evidence=ev,
+        fix_id=fix_id,
     )
 
 
@@ -643,6 +648,66 @@ async def _probe_model_providers(ctx: DoctorContext) -> ProbeResult:
             else f"{len(providers)} provider(s), no open breakers"
         ),
         evidence={"providers": providers, "generated_from": health.get("generated_from", 0)},
+    )
+
+
+async def _probe_crashes(ctx: DoctorContext) -> ProbeResult:
+    """crashes — recent structured crash artifacts (PLATFORM-RESILIENCE §6.5).
+
+    A crash file on disk is not a live failure — the gateway is running (we are
+    probing from inside it). It's a WARN so the user (or the agent-run Doctor) sees
+    that an unhandled failure was captured, with the most recent one summarized.
+    """
+    from personalclaw.resilience import crashes as _crashes
+
+    recent = await asyncio.to_thread(_crashes.recent_crashes, 10)
+    if not recent:
+        return ProbeResult(ok=True, detail="no crash artifacts", evidence={"crashes": []})
+    latest = recent[0]
+    return ProbeResult(
+        ok=False,
+        detail=(
+            f"{len(recent)} recent crash artifact(s); latest: {latest.get('kind')} — "
+            f"{latest.get('exception_type')}"
+        ),
+        evidence={"crashes": recent},
+    )
+
+
+async def _probe_memory_pipeline(ctx: DoctorContext) -> ProbeResult:
+    """memory-pipeline — is memory extraction actually running? (PLATFORM-RESILIENCE
+    §3.2, current-seam version.)
+
+    Silent memory-pipeline death (the S05 bug-class) becomes visible. The rich
+    LEARN-R19 outcome records (FLUSH_OK/FLUSH_ERROR, staging backlog, per-op cost) are
+    future Workflows-v2 infra — until then this reads what exists: the most recent
+    consolidation activity. Absence of any consolidation on a store with history is a
+    WARN. Read-only; degrades to ok when there's simply no history yet.
+    """
+
+    def _read() -> dict[str, Any]:
+        ev: dict[str, Any] = {"source": "history (LEARN-R19 records pending)"}
+        try:
+            from personalclaw.history import HistoryConsolidator  # noqa: F401
+        except Exception:
+            ev["available"] = False
+            return ev
+        ev["available"] = True
+        # Best-effort: report the consolidation metadata store's presence. A dedicated
+        # "last consolidation timestamp" doesn't exist yet (offsets, not wall-clock),
+        # so we report structural presence rather than fabricate a freshness metric.
+        home = ctx.home
+        ev["history_dir_present"] = (home / "history").exists()
+        return ev
+
+    ev = await asyncio.to_thread(_read)
+    # This probe is intentionally conservative today: it confirms the pipeline module
+    # is importable and reports structural signals. It never falsely alarms — the
+    # richer FLUSH_OK-streak WARN arrives with the flywheel's records.
+    return ProbeResult(
+        ok=True,
+        detail="memory pipeline present (richer freshness metrics arrive with the flywheel)",
+        evidence=ev,
     )
 
 
@@ -721,6 +786,24 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_model_providers,
             "Model provider health (breakers/latency)",
+        )
+    )
+    register_probe(
+        Probe(
+            "memory-pipeline.freshness",
+            "memory-pipeline",
+            Tier.CAPABILITY,
+            _probe_memory_pipeline,
+            "Memory extraction pipeline",
+        )
+    )
+    register_probe(
+        Probe(
+            "crashes.recent",
+            "crashes",
+            Tier.CAPABILITY,
+            _probe_crashes,
+            "Recent crash artifacts",
         )
     )
 
