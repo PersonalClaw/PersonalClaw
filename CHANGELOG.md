@@ -12,9 +12,30 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 > ordered fallback-chain semantics. Old stores read cleanly (a single binding is a
 > one-entry chain); consider `personalclaw snapshot` before upgrading, per the
 > pre-1.0 banner.
+>
+> **Note (0.x clean break):** true rewind adds a `rewound` field to persisted chat
+> messages (the retained discarded tail). Old sessions read cleanly (missing field =
+> today's behavior — no migration); consider `personalclaw snapshot` before upgrading.
 
 ### Added
 
+- **Chat craft: seven chat-surface mechanics.** The chat surface gains the pieces
+  the sibling platforms proved out. **True rewind** — edit ANY past user message and
+  replay from there; the discarded answers are kept in this chat's history (viewable
+  under a "rewound from here" divider, restorable as a fork) and the provider context
+  rebuilds from the truncated transcript, so the agent never references the undone
+  turns. **Queue with manners** — each queued message now has an "Interrupt now" that
+  gracefully stops the running turn and runs that message next. **Find in
+  conversation** — Cmd/Ctrl+F opens an in-chat find bar (count, next/prev, jump-to-
+  match) that highlights every occurrence without ever re-rendering the markdown.
+  **Quote toolbar** — selecting transcript text floats a Quote + Copy toolbar; Quote
+  inserts an attributed blockquote (who said it) into the composer, now from keyboard
+  and touch selections too. **Follow-up chips** — after each reply, 2-3 suggested next
+  messages appear via one cheap background call (never blocks the turn; skipped for
+  temporary/incognito chats and silent when no model is bound; toggle in Settings →
+  Chat). **Smoother streaming** — the reveal snaps to word boundaries so text lands in
+  whole words, with a new Settings → Chat "Streaming text reveal" (smooth | immediate)
+  control.
 - **Feedback that actually teaches: 👍/👎 on AI judgments.** Inbox classifications,
   drafted replies, digests, and loop findings now carry a quiet thumbs pair. 👍 is
   silent-positive ("Mark accurate" — it only feeds the accuracy denominator); 👎

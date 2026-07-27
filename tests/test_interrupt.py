@@ -136,6 +136,29 @@ async def test_interrupt_queue_id_promotes_preserving_id(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_interrupt_queue_id_broadcasts_promoted(tmp_path, monkeypatch) -> None:
+    """Promoting a queued item echoes queue_promoted so every client reorders."""
+    state = _make_state(tmp_path)
+    state.sessions.stop_turn = AsyncMock(return_value="soft")
+    session = state.get_or_create_session(name=None)
+    session.task = _FakeTask()
+    session.queue_append("first")
+    id_b = session.queue_append("second")
+    broadcasts: list[tuple[str, object]] = []
+    monkeypatch.setattr(state, "broadcast_ws", lambda t, d: broadcasts.append((t, d)), raising=True)
+    client = await _client(state)
+    try:
+        resp = await client.post(
+            f"/api/chat/sessions/{session.key}/interrupt", json={"queue_id": id_b}
+        )
+        assert resp.status == 200
+        promoted = [d for t, d in broadcasts if t == "queue_promoted"]
+        assert promoted and promoted[0]["queue_id"] == id_b
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_interrupt_unknown_queue_id_404(tmp_path) -> None:
     state = _make_state(tmp_path)
     state.sessions.stop_turn = AsyncMock(return_value="soft")

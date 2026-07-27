@@ -2681,6 +2681,8 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             "show_timestamps",
             "show_thinking_inline",
             "simplified_tool_names",
+            "followup_chips",
+            "stream_reveal",
             "confirm_close_session",
             # home dashboard widget layout (customization; per-user)
             "dashboard_layout",
@@ -2733,6 +2735,16 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
                     {"error": "widget_density must be 'more' or 'less'"}, status=400
                 )
             cfg.dashboard.widget_density = val
+        if "stream_reveal" in body:
+            val = body["stream_reveal"]
+            if val not in ("smooth", "immediate"):
+                _sel().log_tool_invocation(
+                    session_key="dashboard", tool_name="dashboard_config_write", outcome="failure"
+                )
+                return web.json_response(
+                    {"error": "stream_reveal must be 'smooth' or 'immediate'"}, status=400
+                )
+            cfg.dashboard.stream_reveal = val
         if "user_name" in body:
             val = body["user_name"]
             if not isinstance(val, str):
@@ -2749,6 +2761,7 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             "show_timestamps",
             "show_thinking_inline",
             "simplified_tool_names",
+            "followup_chips",
             "confirm_close_session",
             "auto_tag_sessions",
         ):
@@ -2797,6 +2810,8 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             "show_timestamps": cfg.dashboard.show_timestamps,
             "show_thinking_inline": cfg.dashboard.show_thinking_inline,
             "simplified_tool_names": cfg.dashboard.simplified_tool_names,
+            "followup_chips": cfg.dashboard.followup_chips,
+            "stream_reveal": cfg.dashboard.stream_reveal,
             "confirm_close_session": cfg.dashboard.confirm_close_session,
             "dashboard_layout": cfg.dashboard.dashboard_layout or {},
         }

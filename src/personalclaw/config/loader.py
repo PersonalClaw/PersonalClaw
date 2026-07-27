@@ -761,6 +761,24 @@ class DashboardConfig:
             "Inline tool pills show a simplified purpose instead of the exact command.",
         ),
     )
+    followup_chips: bool = field(
+        default=True,
+        metadata=_meta(
+            "Follow-up suggestions",
+            "After each reply, show 2-3 suggested next messages (one small background model "
+            "call; never blocks the turn). Skipped for temporary/incognito chats; silent when "
+            "no model is bound.",
+        ),
+    )
+    stream_reveal: str = field(
+        default="smooth",
+        metadata=_meta(
+            "Streaming text reveal",
+            "smooth: steady word-by-word reveal decoupled from network chunks (never lags). "
+            "immediate: render each chunk the instant it arrives.",
+            enum=["smooth", "immediate"],
+        ),
+    )
     confirm_close_session: bool = field(
         default=False,
         metadata=_meta(
@@ -2097,6 +2115,8 @@ class AppConfig:
                 show_timestamps=dashboard_data.get("show_timestamps", False),
                 show_thinking_inline=dashboard_data.get("show_thinking_inline", False),
                 simplified_tool_names=dashboard_data.get("simplified_tool_names", False),
+                followup_chips=dashboard_data.get("followup_chips", True),
+                stream_reveal=dashboard_data.get("stream_reveal", "smooth"),
                 confirm_close_session=dashboard_data.get("confirm_close_session", False),
                 auto_open_browser=dashboard_data.get("auto_open_browser", True),
                 update_dev_mode=dashboard_data.get("update_dev_mode", False),

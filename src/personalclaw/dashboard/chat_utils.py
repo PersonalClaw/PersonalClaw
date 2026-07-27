@@ -632,6 +632,25 @@ def _prepare_messages(messages: list[dict], running: bool) -> list[dict]:
                     for v in msg_out["variants"]
                     if isinstance(v, dict)
                 ]
+            # Rewind tails (CHAT-CRAFT S1): redact non-user snapshot content on the
+            # wire, matching the main transcript's redaction (user content is left
+            # as-is, exactly like the primary user messages above).
+            if isinstance(msg_out.get("rewound"), list):
+                redacted_chain: list[dict] = []
+                for snap in msg_out["rewound"]:
+                    if not isinstance(snap, dict) or not isinstance(snap.get("messages"), list):
+                        continue
+                    snap_msgs = []
+                    for sm in snap["messages"]:
+                        if not isinstance(sm, dict):
+                            continue
+                        sc = sm.get("content", "")
+                        if sm.get("role") not in ("user", "system") and sc:
+                            sc, _ = redact_exfiltration_urls(sc)
+                            sc, _ = redact_credentials(sc)
+                        snap_msgs.append({**sm, "content": sc})
+                    redacted_chain.append({**snap, "messages": snap_msgs})
+                msg_out["rewound"] = redacted_chain
             meta = parse_cls_meta(m.get("cls", ""))
             if meta is not None:
                 msg_out["meta"] = meta

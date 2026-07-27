@@ -163,3 +163,35 @@ One task row, landing in **S4** (the polish session); **no count change**.
 | ID | Task | Files | Done when |
 |---|---|---|---|
 | T4.5 | Optimizer polish: (a) richer FE context — role-labeled turns (`user:`/`assistant:`), last ~10 turns, ~400 chars/turn, assembled newest-last so the handler's `[-2000:]` keeps the most recent exchange intact (verify against the 2000 cap; no backend change unless the cap itself proves the bottleneck — then raise it in the same task, one knob); (b) explicit already-good→`UNCHANGED` contract in the bundled prompt (instruct the exact token; handler already honors it) so good prompts cost near-zero output and never churn on whitespace; (c) confirm + test the existing revert path (preOptimize survives until next edit; composer keyboard focus returns after revert) rather than building a second undo | `web/src/pages/ChatPage.tsx` (`optimize`/`optimizeAndSend` ctx builder), `src/personalclaw/config/prompts/task-prompt_optimizer.md`, FE test beside the composer tests | an already-specific prompt returns `changed:false` via the `UNCHANGED` token (fixture asserts the short reply); a vague prompt referencing "that file from earlier" optimizes correctly because the labeled context carries the referent; revert restores the exact pre-optimize draft |
+
+## Execution log
+
+- **2026-07-27 — S1-3 DONE (Wave 2).** Shipped Sessions 1-3 as one branch
+  (`feature-chat-craft`), one conceptual commit. **S1 (T1.1-T1.3):** true rewind via
+  fork-and-swap — `edit-resend` gains `rewind:true` (snapshots the discarded tail onto
+  the edited user message's `rewound` chain, capped 5, truncates, `sessions.reset` so
+  the next turn rebuilds context from the truncated transcript, `chat_rewound` WS,
+  SEL `chat.rewind`); tolerant reads across all three rehydration paths +
+  `_save_session_to_history` + `_prepare_messages` (redacted). FE: Rewind action on
+  non-last user turns (confirm), `RewindDivider` (kept-count + read-only tail
+  disclosure) + restore-as-fork via a new `POST /fork-rewound` (restore = fork, never
+  swap — the plan's Open-question resolved in favor of the stated non-goal). Queue
+  manners: wired the orphaned `/interrupt` — `queue_promoted` WS echo + "Interrupt now"
+  on `QueueStack` cards. **S2 (T2.1-T2.3):** `findMatches.ts` pure scanner (+8 unit
+  tests, <10ms on 500 turns); `FindBar.tsx` (Cmd/Ctrl+F, count/cycle/scroll, CSS
+  Custom Highlight API paint over live text nodes — never re-parses markdown, range-walk
+  is the highlight, `::highlight(pc-find)` token rule); quote toolbar via new
+  `SelectionToolbar` primitive (Quote + Copy, attributed blockquote, `selectionchange`
+  positioning for keyboard/touch). **S3 (T3.1-T3.5):** `chat_followups.py` +
+  `task-followups` bundled prompt (2-3 chips via `_bg` lite session, gated on
+  config/restricted/queue/error, silent with no model bound, cancel-on-next-dispatch
+  via `session._followups_task`, SEL `chat_followups`); `FollowupChips.tsx` (built from
+  QuietButton+IconButton primitives); word-boundary + CJK snapping in
+  `CoalescerCore.tick()` (+4 unit tests; catch-up past `MAX_LAG` still wins);
+  `followup_chips` + `stream_reveal` config fields wired 5-point (round-trip green) +
+  ChatPanel rows. DoD: `make lint` clean (black/isort/flake8/mypy), 43 targeted +
+  full backend suite, web typecheck + 251 tests (primitive-adoption + doc-drift
+  ratchets satisfied by real primitive adoption, not baseline bumps), reference
+  regenerated for the new route. **S4 deferred** (Wave 3 — screen-snip + polish + T4.5
+  optimizer). Class-B `rewound` field lands as a plain clean break under the pre-1.0
+  banner (tolerant reads, no migration; CHANGELOG note + snapshot advice).

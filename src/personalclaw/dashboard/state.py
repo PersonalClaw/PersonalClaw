@@ -243,6 +243,7 @@ class _ChatSession:
         "_pending_context",
         "_app",
         "_last_turn_errored",
+        "_followups_task",
         "_pending_variants",
         "_lock",
         "forked_from",
@@ -388,6 +389,9 @@ class _ChatSession:
         self._pending_context: list[dict[str, Any]] = []
         self._app: str = ""  # owning app identity (empty = dashboard user)
         self._last_turn_errored: bool = False  # set by _run_chat on a crashed turn
+        # Follow-up chips (CHAT-CRAFT S3): the fire-and-forget background task that
+        # suggests next messages after a completed turn; cancelled by the next dispatch.
+        self._followups_task: asyncio.Task | None = None  # type: ignore[type-arg]
         # Regenerate feature: variants pending attachment to next finalized assistant message
         self._pending_variants: list[dict] = []
         self._lock = asyncio.Lock()

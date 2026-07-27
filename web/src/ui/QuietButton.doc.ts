@@ -11,6 +11,7 @@ const doc: UiDoc = {
   props: [
     { name: 'children', description: 'The leading glyph + label; they carry the accessible name (there is no separate label prop).' },
     { name: 'onClick', description: 'Click handler; receives the button mouse event.' },
+    { name: 'onDoubleClick', description: 'Optional double-click handler (e.g. a chip whose single click fills and double click sends).' },
     { name: 'title', description: 'Supplementary native tooltip (three of the consuming sites pass one).' },
     { name: 'className', description: 'Extra classes (tokens only — no raw hex/px).' },
   ],

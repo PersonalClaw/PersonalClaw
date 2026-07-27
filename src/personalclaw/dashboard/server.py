@@ -661,6 +661,10 @@ async def start_dashboard(
     # Context injection (App Kit — silent background context)
     app.router.add_post("/api/chat/sessions/{session}/context", chat.api_chat_session_context)
     app.router.add_post("/api/chat/sessions/{session}/fork", chat.api_chat_session_fork)
+    # Restore a rewind tail as a NEW fork (CHAT-CRAFT S1 — restore = fork, never swap)
+    app.router.add_post(
+        "/api/chat/sessions/{session}/fork-rewound", chat.api_chat_session_fork_rewound
+    )
     app.router.add_post("/api/chat/sessions/{session}/undo", chat.api_chat_session_undo)
     # Side chat (ephemeral, isolated Q&A against a frozen parent snapshot)
     app.router.add_post("/api/chat/sessions/{session}/side/open", chat.api_side_open)

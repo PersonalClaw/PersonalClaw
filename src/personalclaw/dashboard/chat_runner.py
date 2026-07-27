@@ -21,6 +21,7 @@ from personalclaw.config.loader import (
 )
 from personalclaw.constants import CHAT_TURN_TIMEOUT
 from personalclaw.context_engine import assemble_context
+from personalclaw.dashboard.chat_followups import _maybe_followups
 from personalclaw.dashboard.chat_persistence import _build_history_prefix, _save_session_to_history
 from personalclaw.dashboard.chat_title import _maybe_auto_title
 from personalclaw.dashboard.chat_utils import (
@@ -813,6 +814,15 @@ async def _run_chat(
     """Stream LLM response into *session*.  Survives browser disconnect."""
     # Reset the per-turn error flag; the except block sets it True on a crash.
     session._last_turn_errored = False
+    # Cancel any still-pending follow-up-chip generation from the PRIOR turn (CHAT-CRAFT
+    # S3) — the user is sending again, so its chips are moot; the FE hides them on the
+    # next stream. Fire-and-forget cancel; the task swallows CancelledError cleanly.
+    # getattr-guarded so lightweight session doubles (test_prompts) without the slot work.
+    _prev_followups = getattr(session, "_followups_task", None)
+    if _prev_followups is not None and not _prev_followups.done():
+        _prev_followups.cancel()
+    if hasattr(session, "_followups_task"):
+        session._followups_task = None
 
     def _agent_hook_ids() -> list[str]:
         """Resolve THIS session's agent's referenced lifecycle-trigger IDs
@@ -2902,3 +2912,10 @@ async def _run_chat(
                 t = asyncio.create_task(_maybe_auto_title(state, session))
                 state._background_tasks.add(t)
                 t.add_done_callback(state._background_tasks.discard)
+            # Follow-up chips (CHAT-CRAFT S3): suggest 2-3 next messages via one cheap
+            # background call. Fire-and-forget — never blocks the turn; the handle is
+            # stored so the next _run_chat dispatch cancels a still-pending generation.
+            ft = asyncio.create_task(_maybe_followups(state, session))
+            session._followups_task = ft
+            state._background_tasks.add(ft)
+            ft.add_done_callback(state._background_tasks.discard)

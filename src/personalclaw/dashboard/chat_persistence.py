@@ -171,6 +171,63 @@ def _attach_variants(session: _ChatSession, m: dict) -> None:
         session.messages[-1]["variant_idx"] = m.get("variant_idx", 0)
 
 
+def _redact_snapshot_message(m: dict) -> dict:
+    """Redact one message dict inside a rewind tail snapshot.
+
+    Keeps only the fields the read-only tail viewer renders (role, content, ts,
+    cls, meta) and applies the same credential/URL passes as the main transcript
+    for non-user roles.
+    """
+    role = m.get("role", "assistant")
+    content = m.get("content", "")
+    if role not in ("user", "system"):
+        content, _ = redact_exfiltration_urls(content)
+        content, _ = redact_credentials(content)
+    out: dict = {"role": role, "content": content, "ts": m.get("ts", "")}
+    if m.get("cls"):
+        out["cls"] = m["cls"]
+    if m.get("meta"):
+        out["meta"] = _redact_meta(m["meta"])
+    return out
+
+
+def _redact_rewound(raw: object) -> list[dict]:
+    """Redact a rewind-tail chain for persistence/rehydration.
+
+    Tolerant of the pre-rewind shape (non-list / missing key → empty). Each entry
+    is ``{"messages": [<redacted msg dicts>], "ts": <ISO>}``.
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for snap in raw:
+        if not isinstance(snap, dict):
+            continue
+        snap_msgs = snap.get("messages")
+        if not isinstance(snap_msgs, list):
+            continue
+        out.append(
+            {
+                "messages": [
+                    _redact_snapshot_message(sm) for sm in snap_msgs if isinstance(sm, dict)
+                ],
+                "ts": snap.get("ts", ""),
+            }
+        )
+    return out
+
+
+def _attach_rewound(session: _ChatSession, m: dict) -> None:
+    """Copy a rewind tail chain onto the session's last message, tolerantly.
+
+    Missing/old-shape key = today's behaviour (pre-rewind sessions load
+    unchanged — the plan's one clean-break field under the pre-1.0 banner).
+    """
+    out = _redact_rewound(m.get("rewound"))
+    if out:
+        session.messages[-1]["rewound"] = out
+
+
 def _rehydrate_session_from_history(
     state: DashboardState, session_name: str
 ) -> _ChatSession | None:
@@ -295,6 +352,7 @@ def _rehydrate_session_from_history(
             meta=_redact_meta(m["meta"]) if m.get("meta") else None,
         )
         _attach_variants(session, m)
+        _attach_rewound(session, m)
     session.drain()
     session._resumed_count = len(session.messages)
     session._dirty = False
@@ -425,6 +483,7 @@ def restore_recent_sessions(
                 meta=_redact_meta(m["meta"]) if m.get("meta") else None,
             )
             _attach_variants(session, m)
+            _attach_rewound(session, m)
         session.drain()
         session._resumed_count = len(session.messages)
         session._dirty = False
@@ -536,6 +595,13 @@ def _save_session_to_history(
                     redacted_variants.append({**v, "content": vc})
                 entry["variants"] = redacted_variants
                 entry["variant_idx"] = m.get("variant_idx", 0)
+            # Rewind tails (the retained discarded messages from an edit-and-replay).
+            # Redacted like variants; tolerant of the pre-rewind shape. Clean-break
+            # field under the pre-1.0 banner — old sessions simply lack it.
+            if m.get("rewound"):
+                rewound = _redact_rewound(m["rewound"])
+                if rewound:
+                    entry["rewound"] = rewound
             cls_val = m.get("cls", "")
             if role == "system" and cls_val:
                 entry["cls"] = cls_val
