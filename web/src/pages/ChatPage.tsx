@@ -20,6 +20,7 @@ import { ComposerStage } from '../ui/ComposerStage'
 import { CollapseColumnButton, CollapsedBoardColumn, boardGridTemplate, useBoardCollapse } from '../ui/BoardCollapse'
 import { PromptPalette } from './chat/PromptPalette'
 import { SessionSkillsReview } from './chat/SessionSkillsReview'
+import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { DotGlow } from '../ui/DotGlow'
 import { EmptyState, ListSkeleton, Skeleton } from '../ui/ListScaffold'
 import { MessageUser } from '../ui/chat/MessageUser'
@@ -466,6 +467,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // never block/shift the composer; reset per session.
   const [followups, setFollowups] = useState<string[]>([])
   useEffect(() => { setFollowups([]) }, [sessionId])
+  // Agent routing suggestion (AGENT-ROUTING S2): a non-blocking chip proposing a
+  // better-fit specialist for this default-agent chat. Cleared on send / agent
+  // switch / session change; arrives via the routing_suggestion WS push.
+  const [routingSuggestion, setRoutingSuggestion] = useState<RoutingSuggestion | null>(null)
+  useEffect(() => { setRoutingSuggestion(null) }, [sessionId])
   // composer extras: @-mentioned file paths (sent as meta.files) + large-paste
   // blocks (collapsed to cards + inline [Paste #N] markers, expanded on send).
   const [mentionedFiles, setMentionedFiles] = useState<string[]>([])
@@ -914,6 +920,20 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         setFollowups(items)
         break
       }
+      // Agent routing suggestion (AGENT-ROUTING S2): a specialist fits this message
+      // better — surface the routing chip above the composer (non-blocking proposal).
+      case 'routing_suggestion': {
+        if (d.session !== sessionRef.current) break
+        const agent = String(d.agent ?? '')
+        if (!agent) break
+        setRoutingSuggestion({
+          session: String(d.session), agent,
+          specialty: String(d.specialty ?? ''),
+          score: typeof d.score === 'number' ? d.score : 0,
+          method: String(d.method ?? ''),
+        })
+        break
+      }
       // True rewind (CHAT-CRAFT S1): the edited turn's later messages were discarded
       // (retained in history server-side) and the provider was reset. Re-hydrate from
       // the now-truncated transcript so the divider chip + tail disclosure appear.
@@ -1251,8 +1271,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   async function send(text = input, opts?: { original?: string }) {
     const t = text.trim()
     if (!t) return
-    // Sending dismisses any follow-up chips from the prior turn (CHAT-CRAFT S3).
+    // Sending dismisses any follow-up chips from the prior turn (CHAT-CRAFT S3) and
+    // clears a pending routing suggestion (AGENT-ROUTING S2) — the moment passed.
     if (followups.length) setFollowups([])
+    if (routingSuggestion) setRoutingSuggestion(null)
     // Use the synchronous streamingRef (not the `streaming` state) for the queue-vs-
     // fresh-turn decision: two sends in one tick both see the stale state, but the
     // ref flips the instant the first turn commits — so the second correctly queues.
@@ -1954,6 +1976,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             <SessionSkillsReview sessionKey={sessionRef.current} agent={selection.agent || undefined} refreshKey={sessionSkillsEpoch} />
           </div>
         )}
+        <AnimatePresence>
+          {routingSuggestion && (
+            <div className="mb-1 flex justify-center">
+              <RoutingChip suggestion={routingSuggestion} defaultAgent={selection.agent || ''}
+                onRoute={() => { setSelection((s) => ({ ...s, agent: routingSuggestion.agent })); setRoutingSuggestion(null) }}
+                onDismiss={() => setRoutingSuggestion(null)} />
+            </div>
+          )}
+        </AnimatePresence>
         <ComposerStage ref={composerRef} value={input} onChange={(v) => { setInput(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length && v.trim().length >= 3) setFollowups([]) }} onSend={() => send()}
           streaming={streaming} onStop={stop} controls={CHAT_CONTROLS} data={data}
           selection={selection} onSelect={applySelection} onAttach={attach} onFocusChange={setComposerFocused}

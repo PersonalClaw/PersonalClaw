@@ -716,6 +716,10 @@ async def api_personalclaw_agents_create(request: web.Request) -> web.Response:
                 [str(t) for t in body["triggers"]] if isinstance(body.get("triggers"), list) else []
             ),
             source=body.get("source", "personalclaw"),
+            # Routing metadata (AGENT-ROUTING S1) — persist at create or the
+            # authoring form's values are lost until re-edit.
+            specialty=body.get("specialty", ""),
+            route_hints=body.get("route_hints", ""),
         )
         cfg.save()
     _sel().log_api_access(
@@ -800,6 +804,12 @@ async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
         if "source" in body:
             agent.source = body["source"]
             changed.append("source")
+        if "specialty" in body:  # routing metadata (AGENT-ROUTING S1)
+            agent.specialty = body["specialty"]
+            changed.append("specialty")
+        if "route_hints" in body:
+            agent.route_hints = body["route_hints"]
+            changed.append("route_hints")
         cfg.save()
     _sel().log_api_access(
         caller=request.get("user", "dashboard"),

@@ -19,6 +19,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Agent routing: suggest the right specialist, never route silently.** Give an
+  installed agent a **Specialty** and comma-separated **Routing hints** (in the agent
+  editor), and when a message in a default-agent chat clearly fits it, a quiet
+  "route to `<agent>`?" chip appears above the composer. One click re-targets the
+  session (via the existing agent-switch path); the ✕ dismisses it and suppresses
+  that agent for a cooldown (three dismissals mute it until you re-enable). It is a
+  **proposal** — nothing changes until you click — and classification is
+  deterministic-first (keyword-phrase overlap, then embedding cosine when an
+  embedding model is bound), with the LLM never in the hot path. Silent auto-routing
+  is deliberately out of scope. Route/dismiss also feed the routing pair's accuracy
+  into Settings → AI feedback. Tune it in Settings → Chat → Agent routing
+  (`agents_routing.*`); zero behavior change until you author routing metadata.
 - **Chat craft: seven chat-surface mechanics.** The chat surface gains the pieces
   the sibling platforms proved out. **True rewind** — edit ANY past user message and
   replay from there; the discarded answers are kept in this chat's history (viewable

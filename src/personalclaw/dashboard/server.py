@@ -680,6 +680,17 @@ async def start_dashboard(
     app.router.add_get("/api/agents", handlers.api_personalclaw_agents)
     app.router.add_post("/api/agents", handlers.api_personalclaw_agents_create)
     app.router.add_post("/api/agents/sync", handlers.api_personalclaw_agents_sync)
+    # Agent routing (AGENT-ROUTING S1) suppression endpoints — registered BEFORE the
+    # /api/agents/{name} CRUD routes so "routing" is never captured as an agent name.
+    from personalclaw.dashboard.handlers.routing import (
+        api_routing_dismiss,
+        api_routing_status,
+        api_routing_unmute,
+    )
+
+    app.router.add_get("/api/agents/routing/status", api_routing_status)
+    app.router.add_post("/api/agents/routing/dismiss", api_routing_dismiss)
+    app.router.add_post("/api/agents/routing/unmute", api_routing_unmute)
     app.router.add_put("/api/agents/{name}", handlers.api_personalclaw_agent_update)
     app.router.add_delete("/api/agents/{name}", handlers.api_personalclaw_agent_delete)
     # Agent marketplace — local filesystem + extensible registry

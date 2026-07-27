@@ -253,6 +253,27 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     task.add_done_callback(state._background_tasks.discard)
     state.push_sessions_update()
 
+    # Agent routing (AGENT-ROUTING S1): if this default-agent chat's message fits an
+    # installed specialist, broadcast a non-blocking suggestion the FE renders as a
+    # chip. Best-effort — a classifier error must never break the send.
+    try:
+        from personalclaw.agents.routing import suggest_for_send
+
+        _suggestion = suggest_for_send(state, session, message)
+        if _suggestion is not None:
+            state.broadcast_ws(
+                "routing_suggestion",
+                {
+                    "session": session.key,
+                    "agent": _suggestion.agent,
+                    "specialty": _suggestion.specialty,
+                    "score": round(_suggestion.score, 3),
+                    "method": _suggestion.method,
+                },
+            )
+    except Exception:
+        logger.debug("routing suggestion hook failed", exc_info=True)
+
     if ws_mode:
         return web.json_response({"ok": True, "session": session.key})
 

@@ -73,6 +73,11 @@ class AgentDefinition:
     # default — same semantics as AgentProfile.provider, so a marketplace-
     # imported agent is a first-class peer of a config-defined one.
     provider: str = ""
+    # Agent routing metadata (AGENT-ROUTING S1) — the portable copy of the config
+    # AgentProfile fields (that layer is the routing source of truth; chat binds it).
+    # Both optional; empty = not a routing candidate.
+    specialty: str = ""
+    route_hints: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -98,6 +103,9 @@ class AgentDefinition:
             # loses that binding on every load/round-trip and falls back to the
             # global default — so the connected ACP provider is never used.
             provider=str(d.get("provider", "")),
+            # Routing metadata (AGENT-ROUTING S1) — same loader-allowlist gotcha.
+            specialty=str(d.get("specialty", "")),
+            route_hints=str(d.get("route_hints", "")),
         )
 
     def validate(self) -> list[str]:
@@ -109,6 +117,10 @@ class AgentDefinition:
             errors.append(f"description exceeds {_MAX_DESCRIPTION} chars")
         if len(self.system_prompt) > _MAX_SYSTEM_PROMPT:
             errors.append(f"system_prompt exceeds {_MAX_SYSTEM_PROMPT} chars")
+        if len(self.specialty) > _MAX_DESCRIPTION:
+            errors.append(f"specialty exceeds {_MAX_DESCRIPTION} chars")
+        if len(self.route_hints) > _MAX_DESCRIPTION:
+            errors.append(f"route_hints exceeds {_MAX_DESCRIPTION} chars")
         for s in self.skills:
             if not isinstance(s, str) or ".." in s or "/" in s:
                 errors.append(f"invalid skill name: {s!r}")
@@ -236,6 +248,10 @@ class LocalAgentMarketplace(AgentMarketplace):
             # Agent-runtime axis — must be updatable so an agent can be (re)bound
             # to an ACP runtime ("acp:<cli>") or back to "native".
             "provider",
+            # Routing metadata (AGENT-ROUTING S1) — updatable or the authoring
+            # surface silently drops edits (the _UPDATABLE half of the gotcha).
+            "specialty",
+            "route_hints",
         }
         for key, value in patch.items():
             if key not in _UPDATABLE:

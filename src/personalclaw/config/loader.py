@@ -914,6 +914,25 @@ class AgentProfile:
         default="personalclaw",
         metadata=_meta("Source", "Agent origin: personalclaw, marketplace, or builtin."),
     )
+    # Agent routing (AGENT-ROUTING S1) — suggest-first specialist routing metadata.
+    # Both optional; empty = "not a routing candidate" (opt-in per agent, zero
+    # behavior change for existing agents).
+    specialty: str = field(
+        default="",
+        metadata=_meta(
+            "Specialty",
+            "One line: what this agent is the specialist for. Drives the routing "
+            "suggestion's embedding match. Empty = never suggested.",
+        ),
+    )
+    route_hints: str = field(
+        default="",
+        metadata=_meta(
+            "Routing Hints",
+            "Comma-separated example utterances / trigger phrases that should route "
+            "to this agent (the same authoring vocabulary as workflow match text).",
+        ),
+    )
 
 
 @dataclass
@@ -1765,6 +1784,37 @@ class FeedbackConfig:
 
 
 @dataclass
+class AgentsRoutingConfig:
+    """Agent routing (AGENT-ROUTING) — suggest-first specialist routing. Deterministic
+    classification (keyword + embedding, no LLM); a non-blocking chip proposes, the
+    user consents. Silent auto-routing is explicitly out of scope."""
+
+    enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Agent routing suggestions",
+            "When a message in a default-agent chat fits an installed specialist, "
+            "show a one-click 'route to <agent>?' chip. Off = never suggested.",
+        ),
+    )
+    min_confidence: float = field(
+        default=0.62,
+        metadata=_meta(
+            "Routing confidence",
+            "Minimum embedding-match confidence before a routing chip appears.",
+        ),
+    )
+    cooldown_hours: float = field(
+        default=24.0,
+        metadata=_meta(
+            "Routing dismiss cooldown (hours)",
+            "After dismissing a suggestion for an agent, suppress it for this long "
+            "(three cumulative dismissals mute the agent until you re-enable it).",
+        ),
+    )
+
+
+@dataclass
 class ToolsConfig:
     """Tool-output handling config. Today: user-teachable projection rules that extend
     the builtin content-type dispatch for large tool outputs (TokenJuice, OP6)."""
@@ -1834,6 +1884,10 @@ class AppConfig:
     feedback: FeedbackConfig = field(
         default_factory=FeedbackConfig,
         metadata=_meta("Feedback", "👍/👎 capture on AI judgments + accuracy thresholds."),
+    )
+    agents_routing: AgentsRoutingConfig = field(
+        default_factory=AgentsRoutingConfig,
+        metadata=_meta("Agent Routing", "Suggest-first specialist routing."),
     )
 
     dashboard: DashboardConfig = field(
@@ -1946,6 +2000,9 @@ class AppConfig:
         feedback_data = data.get("feedback", {})
         if not isinstance(feedback_data, dict):
             feedback_data = {}
+        agents_routing_data = data.get("agents_routing", {})
+        if not isinstance(agents_routing_data, dict):
+            agents_routing_data = {}
         skills_data = data.get("skills", {})
         if not isinstance(skills_data, dict):
             skills_data = {}
@@ -2004,6 +2061,10 @@ class AppConfig:
                         # lifecycle triggers; the write side only emits ``triggers``.
                         triggers=entry.get("triggers", entry.get("hooks", [])) or [],
                         source=entry.get("source", "personalclaw"),
+                        # Agent routing metadata (AGENT-ROUTING S1) — MUST be read
+                        # here (the loader-allowlist gotcha) or dropped on reload.
+                        specialty=entry.get("specialty", ""),
+                        route_hints=entry.get("route_hints", ""),
                     )
 
         # Parse memory_stores; synthesize default if missing
@@ -2173,6 +2234,11 @@ class AppConfig:
                 retire_threshold=float(feedback_data.get("retire_threshold", 0.4)),
                 min_n=int(feedback_data.get("min_n", 5)),
                 window_days=int(feedback_data.get("window_days", 90)),
+            ),
+            agents_routing=AgentsRoutingConfig(
+                enabled=bool(agents_routing_data.get("enabled", True)),
+                min_confidence=float(agents_routing_data.get("min_confidence", 0.62)),
+                cooldown_hours=float(agents_routing_data.get("cooldown_hours", 24.0)),
             ),
             skills=SkillsConfig(
                 max_triggered=int(skills_data.get("max_triggered", 3)),
@@ -2409,6 +2475,7 @@ class AppConfig:
             "inbox": asdict(self.inbox),
             "tools": asdict(self.tools),
             "feedback": asdict(self.feedback),
+            "agents_routing": asdict(self.agents_routing),
             "loops": asdict(self.loops),
             "skills": asdict(self.skills),
             "workflows": asdict(self.workflows),

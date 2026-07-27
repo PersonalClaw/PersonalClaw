@@ -29,6 +29,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/agents/detail/{name}` — view, delete, or update agent config.
 - `PATCH /api/agents/detail/{name}` — view, delete, or update agent config.
 - `GET /api/agents/installed` — list installed agent provider names.
+- `POST /api/agents/routing/dismiss` — {agent} — bump the dismissal counter; the
+- `GET /api/agents/routing/status` — enabled flag + muted/dismissal state.
+- `POST /api/agents/routing/unmute` — {agent} — clear an agent's mute + dismissals.
 - `POST /api/agents/sync` — auto-sync marketplace-installed agents into config.json.
 - `DELETE /api/agents/{name}` — delete a PersonalClaw agent.
 - `PUT /api/agents/{name}` — update a PersonalClaw agent.

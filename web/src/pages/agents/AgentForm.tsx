@@ -12,16 +12,19 @@ export interface AgentDraft {
   name: string; description: string; model: string; system_prompt: string; voice: string
   approval_mode: string; skills: string[]; tools: string[]; triggers: string[]
   default_dir: string; memory_store: string
+  // Agent routing (AGENT-ROUTING) — suggest-first specialist routing metadata.
+  specialty: string; route_hints: string
 }
 
 export function emptyDraft(): AgentDraft {
-  return { name: '', description: '', model: '', system_prompt: '', voice: '', approval_mode: '', skills: [], tools: [], triggers: [], default_dir: '', memory_store: '' }
+  return { name: '', description: '', model: '', system_prompt: '', voice: '', approval_mode: '', skills: [], tools: [], triggers: [], default_dir: '', memory_store: '', specialty: '', route_hints: '' }
 }
 export function toDraft(a: SavedAgent): AgentDraft {
   return {
     name: a.name, description: a.description ?? '', model: a.model ?? '', system_prompt: a.system_prompt ?? '', voice: a.voice ?? '',
     approval_mode: a.approval_mode ?? '', skills: a.skills ?? [], tools: a.tools ?? [], triggers: a.triggers ?? [],
     default_dir: a.default_dir ?? '', memory_store: a.memory_store ?? '',
+    specialty: a.specialty ?? '', route_hints: a.route_hints ?? '',
   }
 }
 export function draftToPayload(d: AgentDraft): Record<string, unknown> {
@@ -33,6 +36,7 @@ export function draftToPayload(d: AgentDraft): Record<string, unknown> {
     system_prompt: d.system_prompt, voice: d.voice, approval_mode: d.approval_mode,
     skills: d.skills, tools: d.tools, triggers: d.triggers,
     default_dir: d.default_dir.trim(), memory_store: d.memory_store.trim(),
+    specialty: d.specialty.trim(), route_hints: d.route_hints.trim(),
     source: 'personalclaw',
   }
 }
@@ -86,6 +90,13 @@ export function AgentForm({ draft, onChange, nameLocked, compact }: { draft: Age
       <CheckList label="Skills" hint="Skills surfaced to this agent." options={skills} value={draft.skills} onChange={(v) => set('skills', v)} />
       <CheckList label="Tools" hint="Tools this agent may call. None selected = all available tools." options={tools} value={draft.tools} onChange={(v) => set('tools', v)} />
       <CheckList label="Triggers" hint="Lifecycle triggers that fire for this agent (the agent-scoped allow-list)." options={lifecycleTriggers} value={draft.triggers} onChange={(v) => set('triggers', v)} />
+
+      <Field label="Specialty" hint="One line: what this agent is the specialist for. Enables a 'route to this agent?' suggestion in default-agent chats. Leave empty to never suggest it.">
+        <TextInput value={draft.specialty} onChange={(v) => set('specialty', v)} placeholder="e.g. Postgres performance + query optimization" />
+      </Field>
+      <Field label="Routing hints" hint="Comma-separated example utterances that should route here (e.g. 'optimize this query, why is my db slow, add an index').">
+        <TextArea value={draft.route_hints} onChange={(v) => set('route_hints', v)} rows={compact ? 2 : 3} placeholder="optimize this query, why is my db slow, add an index" />
+      </Field>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-l">
         <Field label="Default directory" hint="Optional working dir for this agent."><TextInput value={draft.default_dir} onChange={(v) => set('default_dir', v)} placeholder="/abs/path (optional)" /></Field>

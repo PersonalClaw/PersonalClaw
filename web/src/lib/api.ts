@@ -939,6 +939,8 @@ export interface ChatModelOption { name: string; model_id: string; provider: str
 export interface SavedAgent {
   name: string; provider: string; provider_agent?: string; acp_mode?: string; model?: string; approval_mode?: string
   description?: string; system_prompt?: string; voice?: string; skills?: string[]; tools?: string[]; triggers?: string[]; source?: string; default_dir?: string; memory_store?: string
+  // Agent routing (AGENT-ROUTING) — suggest-first specialist routing metadata.
+  specialty?: string; route_hints?: string
   reserved?: boolean; editable?: boolean
 }
 
@@ -1240,6 +1242,11 @@ export const api = {
   updateAgent: (name: string, body: Record<string, unknown>) => put<{ ok: boolean }>(`/api/agents/${encodeURIComponent(name)}`, body),
   deleteAgent: (name: string) => del(`/api/agents/${encodeURIComponent(name)}`),
   setDefaultAgent: (name: string) => put<{ ok: boolean; default_agent: string }>('/api/config/default-agent', { agent: name }),
+  // Agent routing (AGENT-ROUTING) — suggestion-suppression endpoints. The suggestion
+  // itself arrives as a `routing_suggestion` WS push; these manage dismiss/mute state.
+  routingDismiss: (agent: string) => post<{ ok: boolean; count: number; muted: boolean }>('/api/agents/routing/dismiss', { agent }),
+  routingUnmute: (agent: string) => post<{ ok: boolean }>('/api/agents/routing/unmute', { agent }),
+  routingStatus: () => get<{ enabled: boolean; muted: string[]; dismissals: Record<string, { count: number; last_dismissed_at: number }> }>('/api/agents/routing/status'),
   // full backend config (read the `agent` subtree for Agent defaults) + the
   // single-field PATCH (allowlisted dotted paths — see _EDITABLE_CONFIG).
   personalclawConfig: () => get<Record<string, any>>('/api/config/personalclaw'),
