@@ -93,6 +93,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/sessions/{session}/edit-resend` — edit a user message and resend.
 - `PATCH /api/chat/sessions/{session}/folder` — assign session to a folder.
 - `POST /api/chat/sessions/{session}/fork` — fork session into a new tab.
+- `POST /api/chat/sessions/{session}/fork-rewound` — restore a rewind tail as a fork.
 - `POST /api/chat/sessions/{session}/generate-title` — manually trigger title generation.
 - `POST /api/chat/sessions/{session}/handoff` — hand off session to channel DM thread.
 - `POST /api/chat/sessions/{session}/interrupt` — stop the turn, KEEP the queue.

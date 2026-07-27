@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from aiohttp import web
 
@@ -15,6 +15,9 @@ from personalclaw.sel import sel
 logger = logging.getLogger(__name__)
 
 _MAX_VARIANTS = 20
+# Rewind tail snapshots retained per edited user message. Mirrors _MAX_VARIANTS'
+# spirit (bound the persisted growth); owner tunes against real sessions (S4 task).
+_MAX_REWIND_SNAPSHOTS = 5
 
 
 async def _persist_history_off_thread(
@@ -192,6 +195,7 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
     index = body.get("index")
     ts = body.get("ts")
     client_ts = body.get("client_ts")
+    rewind = bool(body.get("rewind"))
     content = (body.get("content") or "").strip()
     if not content:
         return web.json_response({"error": "content is required"}, status=400)
@@ -227,6 +231,32 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
             return web.json_response({"error": "no user message to edit"}, status=400)
         index = target
 
+        # True rewind (fork-and-swap under the same slot): snapshot the discarded
+        # tail — the edited turn's old content + every message AFTER it — as a
+        # `rewound` chain (the variants pattern at message level, capped like
+        # `_MAX_VARIANTS`), then re-attach it to the freshly-appended edited message
+        # below. edit-resend deletes `messages[index:]` and re-appends, so the chain
+        # (which may already exist on the edited turn from a prior rewind) has to be
+        # carried across the delete. Resetting the provider below makes the next turn
+        # rebuild context from the truncated transcript, so the agent never
+        # references the undone answers. Without the flag this is byte-identical to
+        # today's last-turn edit-resend.
+        retained = 0
+        carried_rewound: list[dict] = []
+        if rewind:
+            edited_old = msgs[index]
+            _rw = edited_old.get("rewound")
+            carried_rewound = list(_rw) if isinstance(_rw, list) else []
+            tail = [dict(m) for m in msgs[index:] if m.get("role") in ("user", "assistant")]
+            # count = messages after the edited user turn (the tail the user loses)
+            retained = max(0, len(tail) - 1)
+            if tail:
+                carried_rewound.append(
+                    {"messages": tail, "ts": datetime.now(tz=timezone.utc).isoformat()}
+                )
+                if len(carried_rewound) > _MAX_REWIND_SNAPSHOTS:
+                    carried_rewound = carried_rewound[-_MAX_REWIND_SNAPSHOTS:]
+
         del session.messages[index:]
         session._dirty = True
         session._resumed_count = 0
@@ -243,16 +273,31 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
             except (ValueError, TypeError):
                 _resend_ts = ""
         session.append("user", _bc, "msg msg-u", ts=_resend_ts)
+        if rewind and carried_rewound:
+            session.messages[-1]["rewound"] = carried_rewound
 
         await _persist_history_off_thread(state, session, "edit-resend")
 
         sel().log_api_access(
             caller="dashboard",
-            operation="chat.edit_resend",
+            operation="chat.rewind" if rewind else "chat.edit_resend",
             outcome="allowed",
             source="dashboard",
             resources=session.key,
         )
+
+        # Fork-and-swap: reset the provider so the next _run_chat's `is_new` path
+        # rebuilds context from the truncated transcript (the running provider owns
+        # its own history and doesn't know we truncated the dashboard list). Only on
+        # rewind — the last-turn path relies on the provider absorbing the resend.
+        if rewind:
+            from personalclaw.dashboard.chat_utils import _history_key_for
+
+            await state.sessions.reset(_history_key_for(session.key))
+            state.broadcast_ws(
+                "chat_rewound",
+                {"session": session.key, "index": index, "retained": retained},
+            )
 
         task = asyncio.create_task(_run_chat(state, session, _bc))
         session.task = task
@@ -268,4 +313,4 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
         task.add_done_callback(_on_done)
 
     state.push_sessions_update()
-    return web.json_response({"ok": True})
+    return web.json_response({"ok": True, "rewound": retained})

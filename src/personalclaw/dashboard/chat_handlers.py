@@ -1000,6 +1000,9 @@ async def api_chat_session_interrupt(request: web.Request) -> web.Response:
     if queue_id:
         if not session.queue_promote(str(queue_id)):
             return web.json_response({"error": "queue_id not found"}, status=404)
+        # Tell every client the strip reordered so the promoted card jumps to the
+        # front on all of them (the finally-block drain will run it next).
+        state.broadcast_ws("queue_promoted", {"session": name, "queue_id": str(queue_id)})
 
     session._stop_state = "soft_pending"
     session._auto_run = False

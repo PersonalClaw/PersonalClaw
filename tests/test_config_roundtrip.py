@@ -98,6 +98,9 @@ _SPECIAL = {
     ("agent", "bot_name"): "TestBot",
     ("agent", "soft_stop_budget_secs"): 12.5,
     ("dashboard", "widget_density"): "less",
+    # stream_reveal is enum-constrained (smooth|immediate) — a generated "smooth-x"
+    # would fail load()'s validation and fall back to the default.
+    ("dashboard", "stream_reveal"): "immediate",
     ("dashboard", "terminal"): {"enabled": False, "persist": True},
     ("dashboard", "dashboard_layout"): {"widgets": [], "v": 1},
     ("inbox", "poll_interval_seconds"): 90,

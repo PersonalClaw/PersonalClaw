@@ -101,6 +101,13 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
         <Row label="Simplified tool names" hint="Tool pills show a simplified purpose instead of the exact command.">
           <Toggle on={cfg.simplified_tool_names} onChange={(v) => save({ simplified_tool_names: v })} label="Simplified tool names" />
         </Row>
+        <Row label="Follow-up suggestions" hint="After each reply, show 2-3 suggested next messages (one small background call; never blocks the turn). Skipped for temporary/incognito chats; silent with no model bound.">
+          <Toggle on={cfg.followup_chips} onChange={(v) => save({ followup_chips: v })} label="Follow-up suggestions" />
+        </Row>
+        <Row label="Streaming text reveal" hint="Smooth: steady word-by-word reveal decoupled from network chunks (never lags). Immediate: render each chunk the instant it arrives.">
+          <SegPills value={cfg.stream_reveal} onChange={(v) => save({ stream_reveal: v as 'smooth' | 'immediate' })}
+            options={[{ key: 'smooth', label: 'Smooth' }, { key: 'immediate', label: 'Immediate' }]} />
+        </Row>
         <Row label="Widget density" hint="How aggressively the agent uses inline widgets for visual content.">
           <SegPills value={cfg.widget_density} onChange={(v) => save({ widget_density: v as 'more' | 'less' })}
             options={[{ key: 'more', label: 'More' }, { key: 'less', label: 'Less' }]} />

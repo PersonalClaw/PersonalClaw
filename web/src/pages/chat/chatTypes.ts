@@ -88,6 +88,11 @@ export interface ChatTurn {
   // swaps the text + index in place. `variantCount` ≤ 1 → no switcher.
   variantCount?: number
   variantIdx?: number
+  // True rewind (CHAT-CRAFT S1): when this USER turn was edited-and-replayed, the
+  // discarded tail(s) are retained here so the divider chip can show "N messages
+  // kept in history" and the read-only disclosure can render them. Each snapshot's
+  // `messages` begins with the edited turn's OLD content. Absent = never rewound.
+  rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]
 }
 
 /** Convenience: a user turn from plain text. `optimized` records the optimized
@@ -172,7 +177,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { index, files: [...files.values()], links: [...links.values()] }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string } }
 
 /** Re-collapse a persisted user message: the stored content has paste markers
  *  expanded to full text (the model saw that), but meta.pastes lets us swap each
@@ -231,7 +236,11 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       const primary = original ?? m.content
       const display = pastes?.length ? recollapsePastes(primary, pastes) : primary
       const files = Array.isArray(m.meta?.files) ? m.meta!.files : undefined
-      turns.push(userTurn(display, m.ts, pastes?.length ? pastes : undefined, files, original ? m.content : undefined))
+      const ut = userTurn(display, m.ts, pastes?.length ? pastes : undefined, files, original ? m.content : undefined)
+      // Rewind tails retained on this user turn (CHAT-CRAFT S1) → drive the divider
+      // chip + read-only disclosure. Tolerant: absent on pre-rewind sessions.
+      if (Array.isArray(m.rewound) && m.rewound.length) ut.rewound = m.rewound
+      turns.push(ut)
       lastUserText = text; assistantTextSinceUser = false
     } else if (m.role === 'assistant') {
       const at = lastAssistant()

@@ -52,7 +52,13 @@ export class CoalescerCore {
 
   /** Advance the reveal by one frame's adaptive budget; returns the revealed prefix.
    *  `speed` scales pace (runtime.animSpeed); ≤0 means the caller should be in
-   *  immediate mode, but we still clamp to a floor so a stray call makes progress. */
+   *  immediate mode, but we still clamp to a floor so a stray call makes progress.
+   *
+   *  Word-boundary snapping (CHAT-CRAFT S3): once the budget cursor lands, back it up
+   *  to the last whitespace/CJK boundary within the just-revealed window so reveals
+   *  land on whole words instead of cutting mid-word. Skipped when the backlog is
+   *  past MAX_LAG (catch-up ALWAYS wins — snapping must never make us fall behind) and
+   *  when snapping would erase all forward progress this frame (never stall). */
   tick(speed: number): string {
     const backlog = this.backlog()
     if (backlog <= 0) return this.revealedText()
@@ -62,8 +68,38 @@ export class CoalescerCore {
     // EMA of the recent per-frame backlog; the budget tracks it within [MIN, MAX].
     this.ema = EMA_ALPHA * backlog + (1 - EMA_ALPHA) * this.ema
     const budget = Math.max(MIN_BUDGET, Math.min(MAX_BUDGET, Math.ceil(this.ema * this.drain * s)))
-    this.revealed = Math.min(this.pending.length, this.revealed + budget)
+    const from = this.revealed
+    let to = Math.min(this.pending.length, from + budget)
+    // Snap back to a word/CJK boundary within (from, to) — but not when catching up,
+    // not when we've already revealed to the very end, and not if it would undo all
+    // progress. If the char AFTER `to` is itself a boundary, we're already aligned.
+    if (backlog <= MAX_LAG && to < this.pending.length && !this._isBoundary(this.pending[to])) {
+      const snapped = this._lastBoundary(from + 1, to)
+      if (snapped > from) to = snapped
+    }
+    this.revealed = to
     return this.revealedText()
+  }
+
+  /** A char we may reveal up to: ASCII whitespace or a CJK ideograph (each CJK glyph
+   *  is a word, so any CJK char is a valid stop). */
+  private _isBoundary(ch: string): boolean {
+    if (ch === ' ' || ch === '\n' || ch === '\t' || ch === '\r') return true
+    const c = ch.codePointAt(0) ?? 0
+    return (c >= 0x4e00 && c <= 0x9fff) || (c >= 0x3040 && c <= 0x30ff)
+  }
+
+  /** The greatest index in [lo, hi] whose char (or the char before it) is a boundary,
+   *  so the revealed prefix ends on a whole word; -1 if none. We prefer to end the
+   *  reveal JUST AFTER a space (include the trailing space) or right before a CJK glyph. */
+  private _lastBoundary(lo: number, hi: number): number {
+    for (let i = hi; i >= lo; i--) {
+      // ending right before a CJK glyph is a clean word stop
+      if (this._isBoundary(this.pending[i])) return i
+      // ending just after a run of whitespace is a clean stop too
+      if (i > 0 && this._isBoundary(this.pending[i - 1])) return i
+    }
+    return -1
   }
 }
 

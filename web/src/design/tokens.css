@@ -492,3 +492,14 @@
   }
   svg.dag-hovering .dag-edge.dag-lit.dag-edge-bad path { stroke-width: 2.5; opacity: 1; }
 }
+
+/* Find-in-conversation (CHAT-CRAFT S2) — the CSS Custom Highlight API paints
+   every match of the FindBar query without touching the rendered markdown
+   structure (highlight overlay, never a re-parse). Only background/color are
+   honored on ::highlight; the warm primary-container tint reads as a highlighter
+   without fighting the reading tone. Not in @layer (highlight registry paint is
+   global + must not be layer-shadowed). */
+::highlight(pc-find) {
+  background-color: color-mix(in srgb, var(--color-primary) 34%, transparent);
+  color: var(--color-on-surface);
+}

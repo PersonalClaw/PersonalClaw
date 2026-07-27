@@ -151,6 +151,22 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
         ),
     ),
     BundledPrompt(
+        name="task-followups",
+        use_case="followups",
+        filename="task-followups.md",
+        kind="user",
+        category="internal",
+        description="Suggest 2-3 short follow-up messages the user might send next, from the last chat exchange.",  # noqa: E501
+        variables=(
+            PromptVariable(
+                name="exchange",
+                type="textarea",
+                required=True,
+                description="The last user message + assistant reply tail (role: content, truncated).",  # noqa: E501
+            ),
+        ),
+    ),
+    BundledPrompt(
         name="task-nl-to-cron",
         use_case="nl_to_cron",
         filename="task-nl_to_cron.md",
