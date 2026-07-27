@@ -209,6 +209,7 @@ class _ChatSession:
         "_trust_reads",
         "_agent_floor_seeded",
         "_task_mode",
+        "_investigate_ctx",
         "_suppress_autonudge_rearm",
         "_titled",
         "_resumed_count",
@@ -339,6 +340,10 @@ class _ChatSession:
         #   'build' — scoped to producing an artifact/widget/skill.
         # Complements approval mode: e.g. Plan + Trust is a valid combination.
         self._task_mode: str = "agent"
+        # Investigate Anywhere (plan 60): the staged context envelope (a dict from
+        # InvestigateContext.to_dict) consumed + cleared by the FIRST turn's
+        # _inject_investigate_context. Transient — never persisted with history.
+        self._investigate_ctx: dict | None = None
         # When set, chat_runner skips re-arming the autonudge idle timer on turn
         # exit. The goal-loop re-prompt loop sets this while it drives several
         # back-to-back turns within ONE logical cycle, so the idle timer doesn't

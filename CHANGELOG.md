@@ -27,6 +27,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   no model calls, and feedback never leaves the instance. Apps record feedback on
   their own judgments via `personalclaw.sdk.feedback` / `POST /api/feedback`
   (namespaced server-side, so an app can never impersonate a core source).
+- **Investigate anywhere: chat about any entity with its context pre-loaded.** Inbox
+  items and loop findings (more surfaces to follow) gain an "Investigate in chat"
+  button that opens a fresh chat carrying the entity's full context — composed
+  server-side from the owning store, injected as fenced untrusted data on your
+  first message (never pasted into your visible text), with the composer pre-filled
+  with an editable opening question. The session opens in read-only **Ask** mode —
+  investigating never mutates the entity; you escalate the mode yourself. A header
+  chip deep-links back to the source. Apps get the same primitive via
+  `useInvestigate` in the app SDK.
 - **Model use-cases v2: routing sub-categories + fallback chains.** Chat work is
   now routable by kind — `background` (titles, tags, suggestions, digests,
   consolidation), `orchestration` (supervising turns and model-less subagents),

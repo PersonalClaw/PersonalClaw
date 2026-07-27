@@ -200,7 +200,9 @@ function AppInner() {
       if (d.prompt) qs.set('seed', d.prompt)
       if (d.agent) qs.set('agent', d.agent)
       const q = qs.toString()
-      navigate(d.session ? `chat/${encodeURIComponent(d.session)}` : `chat/new${q ? `?${q}` : ''}`)
+      // A staged session keeps its ?seed too (plan 60: investigate pre-fills the
+      // composer with an editable opening question — never auto-sent).
+      navigate(d.session ? `chat/${encodeURIComponent(d.session)}${q ? `?${q}` : ''}` : `chat/new${q ? `?${q}` : ''}`)
     }
     const onBadge = (e: Event) => {
       const d = (e as CustomEvent).detail || {}

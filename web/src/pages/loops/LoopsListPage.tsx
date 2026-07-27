@@ -12,6 +12,7 @@ import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
 import { SidePanel } from '../../ui/SidePanel'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { FeedbackThumbs } from '../../ui/FeedbackThumbs'
+import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Spark } from '../../ui/Spark'
@@ -359,6 +360,9 @@ function LoopPeek({ loop, onOpenFull }: { loop: GoalLoop; onOpenFull: () => void
               targetId={`${loop.id}:${latest?.cycle ?? loop.findings!.length}`}
               producer={loop.feedback_producer}
               snapshot={{ key_insight: (latestText ?? '').slice(0, 200) }} />
+            {/* Investigate (plan 60): chat about this finding with the loop's goal,
+                the finding, and its judge verdict pre-loaded (fenced, ask mode). */}
+            <InvestigateButton kind="loop_finding" id={`${loop.id}:${latest?.cycle ?? ''}`} backLink={`#/loops/${loop.id}`} />
           </div>
           <p className="text-on-surface-var text-[0.8125rem]">{latestText}</p>
         </div>

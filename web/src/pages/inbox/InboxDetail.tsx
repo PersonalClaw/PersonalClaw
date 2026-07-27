@@ -3,6 +3,7 @@ import { fvs } from '../../design/fontWeight'
 import { Sparkles, Send, Check, XCircle, BellOff, Loader2, Star } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { FeedbackThumbs } from '../../ui/FeedbackThumbs'
+import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { TextArea, Segmented } from '../../ui/forms'
 import { api, type InboxItem, type InboxClassification } from '../../lib/api'
@@ -63,6 +64,9 @@ export function InboxDetail({ item, onChanged }: { item: InboxItem; onChanged: (
             snapshot={{ classification: item.classification, confidence: item.confidence }} />
         )}
         <span className="ml-auto inline-flex items-center gap-1.5 text-on-surface-low text-[0.8125rem]">{(() => { const sm = statusMeta(item.status); return <><sm.icon size={13} style={{ color: sm.tone }} /> {sm.label}</> })()}</span>
+        {/* Investigate (plan 60): open a chat pre-loaded with this item's full
+            context (fenced, ask mode) — "what does this message need from me?" */}
+        <InvestigateButton kind="inbox_item" id={item.id} backLink="#/inbox" />
       </div>
 
       {/* sender + channel + source */}
