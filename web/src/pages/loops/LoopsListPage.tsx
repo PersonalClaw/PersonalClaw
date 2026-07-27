@@ -11,6 +11,7 @@ import { ListControls } from '../../ui/ListControls'
 import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
 import { SidePanel } from '../../ui/SidePanel'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
+import { FeedbackThumbs } from '../../ui/FeedbackThumbs'
 import { Markdown } from '../../ui/Markdown'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Spark } from '../../ui/Spark'
@@ -350,7 +351,15 @@ function LoopPeek({ loop, onOpenFull }: { loop: GoalLoop; onOpenFull: () => void
 
       {latestText && (
         <div>
-          <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">Latest finding · {loop.findings?.length ?? 0} total</div>
+          <div className="mb-1.5 flex items-center gap-s">
+            <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Latest finding · {loop.findings?.length ?? 0} total</span>
+            {/* Findings are AI judgments (plan 58): thumbs attribute to the
+                per-kind loop judge. Target = this loop's latest finding cycle. */}
+            <FeedbackThumbs targetKind="loop_finding"
+              targetId={`${loop.id}:${latest?.cycle ?? loop.findings!.length}`}
+              producer={loop.feedback_producer}
+              snapshot={{ key_insight: (latestText ?? '').slice(0, 200) }} />
+          </div>
           <p className="text-on-surface-var text-[0.8125rem]">{latestText}</p>
         </div>
       )}

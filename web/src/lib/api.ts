@@ -654,6 +654,8 @@ export interface InboxItem {
   source?: string; can_reply?: boolean; reply_target?: string
   // P11: user-favorited (a strong engagement signal + a star in the UI).
   favorited?: boolean
+  // Feedback Signal (plan 58): per-judgment producer meta the thumbs attribute to.
+  feedback_producers?: Record<'classification' | 'draft' | 'digest', FeedbackProducer | undefined>
 }
 export interface InboxProvider { name: string; display_name: string; source_name: string }
 export interface InboxHealth { running: boolean; last_poll_at?: number; last_poll_ok?: boolean; last_error?: string; poll_count?: number; stale?: boolean }
@@ -748,6 +750,36 @@ export interface ProjectionRule {
   skip?: string
   count?: string
 }
+// Feedback Signal (plan 58) — the closed judgment-target vocabulary + producer meta.
+export type FeedbackTargetKind =
+  | 'inbox_classification' | 'inbox_draft' | 'inbox_digest'
+  | 'loop_finding' | 'routing_suggestion' | 'proposal_content' | 'app_judgment'
+export interface FeedbackProducer { producer_kind: string; producer_id: string }
+export interface FeedbackRecordBody {
+  target_kind: FeedbackTargetKind
+  target_id: string
+  verdict: 'up' | 'down'
+  reason?: string
+  snapshot?: Record<string, unknown>
+  producer_kind?: string
+  producer_id?: string
+}
+export interface FeedbackProducerRow {
+  producer_kind: string
+  producer_id: string
+  ups: number
+  downs: number
+  n: number
+  accuracy?: number
+  suppressed?: boolean
+  collecting?: boolean
+}
+export interface FeedbackProducersResponse {
+  producers: FeedbackProducerRow[]
+  min_n: number
+  window_days: number
+}
+
 export interface ToolsSavings {
   saved_chars: number
   saved_tokens_estimated: number
@@ -940,6 +972,7 @@ export interface GoalLoop {
   status: LoopStatus; total_cycles: number; error_message: string | null
   created_at: number; started_at: number | null; completed_at: number | null; elapsed_seconds?: number
   findings?: LoopFinding[]; verdicts?: LoopVerdict[]; pending_question?: string | null; nudges?: LoopNudge[]
+  feedback_producer?: FeedbackProducer
   linked_task_ids?: string[]
   // The containing Project this loop scopes under (Projects native entity, S3a).
   // project_id = explicit user scope; tasks_project_id = the auto-provisioned backing
@@ -1108,6 +1141,9 @@ export interface Loop {
   // conflicting `evidence` types: goal string vs code unknown), keyed by loop.kind.
   findings?: (LoopFinding | CodeFinding)[]; verdicts?: LoopVerdict[]; marginal_scores?: number[]
   nudges?: LoopNudge[]; pending_question?: { question: string; why?: string } | string | null
+  // Feedback Signal (plan 58): the producer the finding thumbs attribute to
+  // (("loop_judge", kind) — per-kind, each kind carries its own brief/rubric).
+  feedback_producer?: FeedbackProducer
   // Everything kind-specific. goal: {goal_type, granularity, sub_goals, deliverables,
   // rubric, ratchet_mode, verify_command, execution_plan}. code: {entry_stage,
   // project_kind, verify_command, test_command, queued_task_ids}. design:
@@ -2021,6 +2057,14 @@ export const api = {
   // TokenJuice savings (counterfactual) summary — estimated tokens saved by output
   // projection this month, top compressor, per-compressor breakdown (§1.3).
   toolsSavings: () => get<ToolsSavings>('/api/tools/savings'),
+  // Feedback Signal (plan 58): 👍/👎 on AI judgment outputs + per-producer accuracy.
+  recordFeedback: (body: FeedbackRecordBody) => post<{ ok: boolean; id: string; verdict: string }>('/api/feedback', body),
+  feedbackTarget: (kind: FeedbackTargetKind, id: string) =>
+    get<{ verdict: 'up' | 'down' | null; reason?: string }>(`/api/feedback/target/${kind}/${encodeURIComponent(id)}`),
+  feedbackProducers: (windowDays?: number) =>
+    get<FeedbackProducersResponse>(`/api/feedback/producers${windowDays ? `?window_days=${windowDays}` : ''}`),
+  feedbackSnooze: (producer: FeedbackProducer) => post<{ ok: boolean }>('/api/feedback/producers/snooze', producer),
+  feedbackClear: (producer: FeedbackProducer) => post<{ ok: boolean }>('/api/feedback/producers/clear', producer),
 
   // upload (multipart — no JSON headers)
   // Extracted text content for an uploaded attachment (what the agent saw) — used

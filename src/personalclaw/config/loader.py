@@ -1710,6 +1710,43 @@ class ProjectionRuleConfig:
 
 
 @dataclass
+class FeedbackConfig:
+    """Feedback Signal (plan 58) — 👍/👎 capture on AI judgment outputs + the
+    deterministic per-producer accuracy thresholds. No LLM anywhere; zero telemetry."""
+
+    enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Feedback",
+            "Show 👍/👎 on AI judgment outputs (inbox classifications, drafts, digests, "
+            "loop findings) and track per-source accuracy. Off = thumbs never render.",
+        ),
+    )
+    retire_threshold: float = field(
+        default=0.4,
+        metadata=_meta(
+            "Retire Threshold",
+            "A judgment source whose accuracy falls below this (with enough verdicts) "
+            "stops surfacing and gets a 'retire this rule?' proposal.",
+        ),
+    )
+    min_n: int = field(
+        default=5,
+        metadata=_meta(
+            "Minimum Verdicts",
+            "Verdicts required before a source's accuracy is shown or acted on.",
+        ),
+    )
+    window_days: int = field(
+        default=90,
+        metadata=_meta(
+            "Attribution Window (days)",
+            "How far back verdicts count toward a source's rolling accuracy.",
+        ),
+    )
+
+
+@dataclass
 class ToolsConfig:
     """Tool-output handling config. Today: user-teachable projection rules that extend
     the builtin content-type dispatch for large tool outputs (TokenJuice, OP6)."""
@@ -1775,6 +1812,10 @@ class AppConfig:
     tools: ToolsConfig = field(
         default_factory=ToolsConfig,
         metadata=_meta("Tools", "Tool-output handling — user-teachable projection rules."),
+    )
+    feedback: FeedbackConfig = field(
+        default_factory=FeedbackConfig,
+        metadata=_meta("Feedback", "👍/👎 capture on AI judgments + accuracy thresholds."),
     )
 
     dashboard: DashboardConfig = field(
@@ -1884,6 +1925,9 @@ class AppConfig:
         tools_data = data.get("tools", {})
         if not isinstance(tools_data, dict):
             tools_data = {}
+        feedback_data = data.get("feedback", {})
+        if not isinstance(feedback_data, dict):
+            feedback_data = {}
         skills_data = data.get("skills", {})
         if not isinstance(skills_data, dict):
             skills_data = {}
@@ -2103,6 +2147,12 @@ class AppConfig:
                     for r in tools_data.get("projection_rules", [])
                     if isinstance(r, dict) and str(r.get("match_regex", "")).strip()
                 ],
+            ),
+            feedback=FeedbackConfig(
+                enabled=bool(feedback_data.get("enabled", True)),
+                retire_threshold=float(feedback_data.get("retire_threshold", 0.4)),
+                min_n=int(feedback_data.get("min_n", 5)),
+                window_days=int(feedback_data.get("window_days", 90)),
             ),
             skills=SkillsConfig(
                 max_triggered=int(skills_data.get("max_triggered", 3)),
@@ -2338,6 +2388,7 @@ class AppConfig:
             "memory_stores": {name: asdict(ms_cfg) for name, ms_cfg in self.memory_stores.items()},
             "inbox": asdict(self.inbox),
             "tools": asdict(self.tools),
+            "feedback": asdict(self.feedback),
             "loops": asdict(self.loops),
             "skills": asdict(self.skills),
             "workflows": asdict(self.workflows),

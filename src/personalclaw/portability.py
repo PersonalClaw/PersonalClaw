@@ -123,6 +123,7 @@ def create_export_zip() -> tuple[bytes, dict]:
             "hooks.json",
             "crons.json",
             "notifications.jsonl",
+            "feedback.jsonl",
             "project_dir",
             "workspace_dir",
         ):
@@ -289,6 +290,13 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                 else:
                     shutil.copy2(str(snap / "notifications.jsonl"), str(pc / "notifications.jsonl"))
                     summary["items"].append("notifications (copied)")
+
+            # Feedback records (append-only; supersede-by-target makes ordering
+            # forgiving): restore only when absent — merging two instances'
+            # verdict streams is not meaningful.
+            if (snap / "feedback.jsonl").is_file() and not (pc / "feedback.jsonl").is_file():
+                shutil.copy2(str(snap / "feedback.jsonl"), str(pc / "feedback.jsonl"))
+                summary["items"].append("feedback (restored)")
 
             for dirname in ("workspace", "plan_memory"):
                 sd = snap / dirname

@@ -48,6 +48,33 @@ def _redact_item(item: dict) -> dict:
         if ctx.get("text"):
             ctx["text"], _ = redact_exfiltration_urls(ctx["text"])
             ctx["text"], _ = redact_credentials(ctx["text"])
+    # Feedback producer meta (plan 58 T1.5, additive): each judgment field on the
+    # item names its producing artifact — the bound prompt ref — so the FE thumbs
+    # can attribute a verdict without a second lookup. Digest items are their own
+    # judgment (source == "digest").
+    try:
+        from personalclaw.providers.prompt_use_cases import active_prompt_ref
+
+        producers: dict[str, dict] = {}
+        if item.get("classification"):
+            producers["classification"] = {
+                "producer_kind": "prompt",
+                "producer_id": active_prompt_ref("inbox_classify"),
+            }
+        if item.get("draft"):
+            producers["draft"] = {
+                "producer_kind": "prompt",
+                "producer_id": active_prompt_ref("inbox_draft"),
+            }
+        if item.get("source") == "digest":
+            producers["digest"] = {
+                "producer_kind": "prompt",
+                "producer_id": active_prompt_ref("inbox_digest"),
+            }
+        if producers:
+            item["feedback_producers"] = producers
+    except Exception:  # noqa: BLE001 — meta must never break the inbox payload
+        logger.debug("feedback producer meta failed", exc_info=True)
     return item
 
 

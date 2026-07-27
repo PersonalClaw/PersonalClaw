@@ -1,6 +1,6 @@
 import {
   User, Palette, MessageSquare, Plug, Cpu, FileText, Database, Bot, AudioLines,
-  Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors,
+  Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import {
@@ -77,6 +77,7 @@ const useDoctor = () => useCachedData('settings:doctor', () => api.doctor().catc
 const useIncident = () => useCachedData('settings:incident', () => api.incident().catch(() => null as { active: boolean; reason: string; started_at: string } | null), { persist: true })
 const useProjectionRules = () => useCachedData('settings:projection-rules', () => api.projectionRules().catch(() => [] as ProjectionRule[]), { persist: true })
 const useToolsSavings = () => useCachedData('settings:tools-savings', () => api.toolsSavings().catch(() => null as ToolsSavings | null), { persist: true })
+const useFeedbackProducers = () => useCachedData('settings:feedback-producers', () => api.feedbackProducers().catch(() => null), { persist: false })
 const useAgentDefaults = () => useCachedData('settings:agent-defaults', async () => {
   const [cfg, agents] = await Promise.all([
     api.personalclawConfig().then((c) => (c.agent ?? {}) as Record<string, unknown>).catch(() => ({} as Record<string, unknown>)),
@@ -536,6 +537,32 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
               ? <><BigStat value={list.length} caption={list.length === 1 ? 'custom rule' : 'custom rules'} />
                   <div className="mt-2"><ChipRow query={query} chips={list.slice(0, 6).map((r) => ({ label: r.name, tone: 'muted' as const }))} /></div></>
               : <div className="text-on-surface-low text-[0.8125rem]">Builtin projectors shrink logs, diffs, JSON, tests, CSV, and code; the full raw stays recoverable. A savings meter appears here once projection kicks in.</div>)}
+        </BentoCard>
+      )
+    },
+  },
+  {
+    id: 'feedback', group: 'System', label: 'AI feedback', icon: ThumbsUp, size: 'sm',
+    description: 'Per-source accuracy from your 👍/👎 on AI judgments — a source that keeps missing stops surfacing.',
+    useSearchText() {
+      const { data } = useFeedbackProducers()
+      const rows = data?.producers ?? []
+      return `feedback thumbs accuracy judgment verdict up down retire suppress ${rows.map((r) => r.producer_id).join(' ')}`
+    },
+    render(query, go) {
+      const { data } = useFeedbackProducers()
+      const rows = data?.producers ?? []
+      const rated = rows.filter((r) => !r.collecting)
+      const suppressed = rows.filter((r) => r.suppressed).length
+      return (
+        <BentoCard icon={ThumbsUp} title="AI feedback" query={query} onClick={() => go('feedback')} loading={data === undefined}>
+          {rows.length === 0
+            ? <div className="text-on-surface-low text-[0.8125rem]">👍/👎 on inbox triage, drafts, digests, and loop findings collect here per judgment source. A source that keeps missing stops surfacing.</div>
+            : <><BigStat value={rows.length} caption={rows.length === 1 ? 'judgment source' : 'judgment sources'} />
+                <div className="mt-1 text-on-surface-low text-[0.8125rem]">
+                  {rated.length ? `${rated.length} rated` : 'collecting verdicts'}
+                  {suppressed ? ` · ${suppressed} suppressed` : ''}
+                </div></>}
         </BentoCard>
       )
     },

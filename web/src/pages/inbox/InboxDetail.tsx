@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { Sparkles, Send, Check, XCircle, BellOff, Loader2, Star } from 'lucide-react'
 import { Button } from '../../ui/Button'
+import { FeedbackThumbs } from '../../ui/FeedbackThumbs'
 import { Markdown } from '../../ui/Markdown'
 import { TextArea, Segmented } from '../../ui/forms'
 import { api, type InboxItem, type InboxClassification } from '../../lib/api'
@@ -47,10 +48,20 @@ export function InboxDetail({ item, onChanged }: { item: InboxItem; onChanged: (
 
   return (
     <div className="flex flex-col gap-l">
-      {/* triage verdict */}
+      {/* triage verdict — the classification is an AI judgment: thumbs attribute
+          to its bound prompt (plan 58). Digest items judge the digest instead. */}
       <div className="flex flex-wrap items-center gap-s">
         <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: `color-mix(in srgb, ${cm.tone} 16%, transparent)`, color: cm.tone }}><cm.icon size={13} /> {cm.label}</span>
         <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: `color-mix(in srgb, ${cf.tone} 16%, transparent)`, color: cf.tone }}><cf.icon size={13} /> {cf.label}</span>
+        {item.source === 'digest' ? (
+          <FeedbackThumbs targetKind="inbox_digest" targetId={item.id}
+            producer={item.feedback_producers?.digest}
+            snapshot={{ classification: item.classification }} />
+        ) : (
+          <FeedbackThumbs targetKind="inbox_classification" targetId={item.id}
+            producer={item.feedback_producers?.classification}
+            snapshot={{ classification: item.classification, confidence: item.confidence }} />
+        )}
         <span className="ml-auto inline-flex items-center gap-1.5 text-on-surface-low text-[0.8125rem]">{(() => { const sm = statusMeta(item.status); return <><sm.icon size={13} style={{ color: sm.tone }} /> {sm.label}</> })()}</span>
       </div>
 
@@ -91,8 +102,14 @@ export function InboxDetail({ item, onChanged }: { item: InboxItem; onChanged: (
           value={item.classification} onChange={(v) => patch({ classification: v as InboxClassification }, 'class')} />
       </Section>
 
-      {/* drafted reply */}
-      <Section label="Drafted reply">
+      {/* drafted reply — the draft is an AI judgment: thumbs attribute to the
+          inbox_draft prompt binding (plan 58). Only shown once a draft exists. */}
+      <Section label="Drafted reply"
+        right={item.draft ? (
+          <FeedbackThumbs targetKind="inbox_draft" targetId={item.id}
+            producer={item.feedback_producers?.draft}
+            snapshot={{ draft_preview: (item.draft ?? '').slice(0, 200) }} />
+        ) : undefined}>
         <TextArea value={draft} onChange={setDraft} rows={5} placeholder="No draft yet — generate one or write your own." ariaLabel="Drafted reply" />
         <div className="mt-2 flex flex-wrap items-center gap-s">
           <Button size="sm" variant="secondary" onClick={generate} disabled={busy === 'draft'}>{busy === 'draft' ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} {item.draft ? 'Regenerate' : 'Generate draft'}</Button>
