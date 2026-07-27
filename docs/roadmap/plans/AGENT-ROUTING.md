@@ -131,3 +131,39 @@ class AgentsRoutingConfig:
 - **Embedding-cache invalidation** on agent metadata edit — cache keyed by `(agent, updated_at/config-mtime, embedding_model)`; a stale entry degrades to keyword (never wrong-agent-by-stale-vector), matching the `workflows` staleness discipline.
 - **Open:** should ACP-discovered agents (no local metadata home) ever be candidates? Deferred — they have no `specialty` field to author; a DISCOVERY entry if demand appears.
 - **FEEDBACK-SIGNAL coordination (plan 58 shipped 2026-07-27, its T3.4):** the chip's Route/dismiss handlers must DOUBLE-WRITE a feedback record — Route → `record_feedback(target_kind="routing_suggestion", target_id=<suggestion id>, verdict="up", producer_kind="routing_pair", producer_id=f"{default}->{candidate}")`, dismiss → `verdict="down"` — so routing-pair accuracy appears in `GET /api/feedback/producers` with zero extra UI. The store, closed vocabulary (`routing_suggestion` target kind + `routing_pair` producer kind), and API are live; wire at this plan's T3.x action handlers when the chip lands.
+
+## Execution log
+
+- [2026-07-27][S1+S2] DONE: both sessions in one branch (`feature-agent-routing`).
+  **S1 (backend):** `specialty` + `route_hints` added to `AgentProfile` (dataclass+`_meta`,
+  `load()` mapping — the loader-allowlist gotcha — + asdict `to_dict`) and `AgentDefinition`
+  (`from_dict` + `_UPDATABLE` + `validate` ≤1024-char caps); agents API create + update
+  handlers pass both through. `agents/routing.py` (pure): `eligible_candidates` (non-reserved
+  config profiles with metadata; config layer is the routing source of truth per §Risks),
+  `classify` (stage-1 keyword overlap gate 0.7 + ≥3-word-phrase guard + 0.1 margin; stage-2
+  embedding cosine gate `min_confidence` + 0.1 margin via `get_active_embed_fn`, skipped when
+  no embedder; embedding preferred, keyword fallback; never raises), `suggest_for_send` (the
+  `api_chat` hook: default-agent + persistent + frequency-cap (1/5 turns, tracked on
+  DashboardState) + not-suppressed gates → classify → SEL `agents.routing_suggest` →
+  return; caller broadcasts `routing_suggestion` WS best-effort). Suppression store
+  (`entity_settings/agent_routing.json`, fail-OPEN tolerant reads): `is_suppressed`/
+  `record_dismiss` (1 dismiss = cooldown, 3 = mute)/`unmute`/`routing_status`. `AgentsRoutingConfig`
+  (enabled/min_confidence/cooldown_hours) 5-point wired + `_EDITABLE_CONFIG`. Routes
+  `GET /api/agents/routing/status`, `POST .../dismiss`, `POST .../unmute` (§2.2 envelope),
+  registered BEFORE `/api/agents/{name}` so "routing" is never a captured agent name.
+  **S2 (frontend):** `RoutingChip.tsx` (SessionSkillsReview pill idiom, built from Button +
+  IconButton primitives) — Route → `setSessionAgent` + success toast + **double-write feedback**
+  (routing_suggestion/up, routing_pair producer `default->agent`); ✕ → `routingDismiss` +
+  feedback down; mounted above the composer, WS-driven, cleared on send/switch/session-change.
+  `AgentForm.tsx` Specialty + Routing-hints fields (draft/empty/toDraft/payload + `SavedAgent`
+  type). Settings → Chat → **Agent routing** section (enabled toggle + confidence + cooldown,
+  via `agents_routing.*` PATCH). Tests: `test_agent_routing.py` (14 — eligibility, keyword/
+  embedding/margin/short-message classify, suppression cooldown→mute→unmute, all `suggest_for_send`
+  gates). Gate: `make lint` green, `make test` 8191 passed, web typecheck + 251 vitest + build
+  green, reference regenerated for the 3 new routes. Class-B `entity_settings/agent_routing.json`
+  = plain clean break under the pre-1.0 banner (tolerant reads, no migration).
+- [2026-07-27][S2] DEVIATION (deferred, small): the plan's T2.2 "muted-state row + Unmute on the
+  agent detail page" is NOT built — `routingUnmute` + `routingStatus` API methods ship and the
+  cooldown/mute logic is fully tested, but the detail-page affordance is deferred (the dismiss
+  cooldown + config kill-switch already give the user control; a muted agent self-heals on
+  cooldown for single dismissals, and unmute is one API call away). Logged so the tail is honest.
