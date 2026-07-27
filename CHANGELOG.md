@@ -19,6 +19,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Artifacts: collections + save-time dedup.** Saved artifacts can now carry a
+  **collection** label (a free-form grouping for the coming library), settable at
+  save time and reassignable later, and filterable via `GET /api/artifacts?collection=`
+  and the `artifact_list` tool. And saving no longer silently mints duplicates: a
+  fresh `artifact_save` (or `POST /api/artifacts`) whose name matches an existing
+  artifact now **refuses with a hint** — the tool tells the agent to update the
+  existing slug or pass `force`, and the REST route returns `409 similar_artifact_exists`
+  with the existing slug (bypass with `?force=1`). File-backed saves keep their
+  existing source-path dedup. Pre-existing artifacts load unchanged (tolerant read).
 - **Agent routing: suggest the right specialist, never route silently.** Give an
   installed agent a **Specialty** and comma-separated **Routing hints** (in the agent
   editor), and when a message in a default-agent chat clearly fits it, a quiet

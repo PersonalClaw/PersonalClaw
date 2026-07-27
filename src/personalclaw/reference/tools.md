@@ -47,13 +47,14 @@ Fetch a saved artifact's content by slug. Pass version=N for a historical snapsh
 
 ### `artifact_list`
 
-List saved artifacts (name/slug/kind/version/tags). Filter by tag, kind, or a text query q.
+List saved artifacts (name/slug/kind/version/tags). Filter by tag, kind, collection, or a text query q.
 
 **Response type:** `artifact.list`
 
 **Safety:** requires approval
 
 **Parameters:**
+- `collection` (string, optional)
 - `kind` (string, optional)
 - `q` (string, optional)
 - `tag` (string, optional)
@@ -75,9 +76,11 @@ Save content as a named, versioned artifact so it persists beyond chat scrollbac
 **Safety:** requires approval, risk: caution
 
 **Parameters:**
+- `collection` (string, optional) — Optional library collection label to group this artifact under.
 - `content` (string, optional) — Artifact body (inline)
 - `content_file` (string, optional) — Absolute path to read content from instead of inline content
 - `description` (string, optional)
+- `force` (boolean, optional) — Save a NEW artifact even if one with the same name exists (skip the dedup hint).
 - `kind` (string, optional) — Content kind (default widget). Use 'markdown' for prose/markdown bodies (# headings, **bold**, tables, lists); 'document' ONLY for semantic HTML editorial docs, never for markdown.
 - `name` (string, required) — Display name
 - `slug` (string, optional) — Explicit slug (else derived from name)
@@ -102,6 +105,7 @@ Update a saved artifact by slug, creating a new version snapshot (each agent upd
 **Safety:** requires approval, risk: caution
 
 **Parameters:**
+- `collection` (string, optional) — Reassign the library collection label (metadata-only).
 - `content` (string, optional)
 - `content_file` (string, optional) — Absolute path to read new content from
 - `description` (string, optional)

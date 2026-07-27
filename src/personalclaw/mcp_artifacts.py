@@ -75,6 +75,14 @@ def _list_tools() -> list[dict[str, Any]]:
                     },
                     "description": {"type": "string"},
                     "tags": {"type": "array", "items": {"type": "string"}},
+                    "collection": {
+                        "type": "string",
+                        "description": "Optional library collection label to group this artifact under.",  # noqa: E501
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "Save a NEW artifact even if one with the same name exists (skip the dedup hint).",  # noqa: E501
+                    },
                 },
                 "required": ["name"],
             },
@@ -115,13 +123,17 @@ def _list_tools() -> list[dict[str, Any]]:
                     },
                     "description": {"type": "string"},
                     "tags": {"type": "array", "items": {"type": "string"}},
+                    "collection": {
+                        "type": "string",
+                        "description": "Reassign the library collection label (metadata-only).",
+                    },
                 },
                 "required": ["slug"],
             },
         },
         {
             "name": "artifact_list",
-            "description": "List saved artifacts (name/slug/kind/version/tags). Filter by tag, kind, or a text query q.",  # noqa: E501
+            "description": "List saved artifacts (name/slug/kind/version/tags). Filter by tag, kind, collection, or a text query q.",  # noqa: E501
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -141,6 +153,7 @@ def _list_tools() -> list[dict[str, Any]]:
                         ],
                     },
                     "q": {"type": "string"},
+                    "collection": {"type": "string"},
                 },
             },
         },
@@ -351,6 +364,19 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             if content is None:
                 _audit("denied", error="no content")
                 return "Error: provide content or content_file"
+            # List-before-save dedup (ARTIFACTS S1): a fresh save (no explicit slug,
+            # not forced) whose name matches an existing artifact refuses with a hint
+            # so the agent updates the existing one instead of minting a "-2" twin.
+            if not args.get("slug") and not args.get("force"):
+                similar = prov.find_similar(args["name"], kind=args.get("kind", "widget"))
+                if similar is not None:
+                    _audit("deduped", similar.slug)
+                    return (
+                        f"An artifact named '{similar.name}' already exists "
+                        f"(slug: {similar.slug}). To revise it, call artifact_update with "
+                        f"slug='{similar.slug}'. To save a NEW separate artifact anyway, "
+                        f"call artifact_save again with force=true."
+                    )
             art = prov.create(
                 name=args["name"],
                 content=content or "",
@@ -359,6 +385,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 slug=args.get("slug"),
                 description=args.get("description", ""),
                 tags=args.get("tags"),
+                collection=args.get("collection", ""),
                 actor="agent",
                 session_id=sk,
                 # Tie the artifact to the active Project (S5) so it surfaces in the
@@ -388,6 +415,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 snapshot=True,  # every agent update is a checkpoint
                 description=args.get("description"),
                 tags=args.get("tags"),
+                collection=args.get("collection"),
                 actor="agent",
                 session_id=sk,
             )
@@ -398,7 +426,12 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             return f"Updated artifact '{upd.name}' → version {upd.version}."
 
         if name == "artifact_list":
-            arts = prov.list(tag=args.get("tag"), kind=args.get("kind"), q=args.get("q"))
+            arts = prov.list(
+                tag=args.get("tag"),
+                kind=args.get("kind"),
+                q=args.get("q"),
+                collection=args.get("collection"),
+            )
             _audit("success")
             if not arts:
                 return "No artifacts found."

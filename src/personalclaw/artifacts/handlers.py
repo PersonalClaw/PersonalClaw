@@ -38,6 +38,7 @@ def _serialize(art: Artifact, *, include_content: bool = False) -> dict[str, Any
     d = art.to_dict(persist=False)
     d["name"] = _redact(d.get("name", ""))
     d["description"] = _redact(d.get("description", ""))
+    d["collection"] = _redact(d.get("collection", ""))
     d["tags"] = [_redact(t) for t in d.get("tags", [])]
     if include_content and d.get("content") is not None:
         d["content"] = _redact(d["content"])
@@ -82,6 +83,7 @@ async def api_artifacts_list(request: web.Request) -> web.Response:
         source=request.query.get("source"),
         source_path=request.query.get("source_path"),
         project_id=request.query.get("project_id"),
+        collection=request.query.get("collection"),
     )
     return web.json_response({"artifacts": [_serialize(a) for a in arts]})
 
@@ -130,6 +132,21 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
     requested_slug = str(body.get("slug", "")).strip() or None
     if requested_slug and prov.get(requested_slug) is not None:
         return web.json_response({"error": "slug already exists"}, status=409)
+    # Server-backed dedup hint (ARTIFACTS S1): a fresh save (no slug, no source_path)
+    # whose name matches an existing artifact 409s with the existing slug so the UI can
+    # offer "open it / save anyway". `?force=1` bypasses (mint a new artifact anyway).
+    force = request.query.get("force") in ("1", "true")
+    if not requested_slug and not source_path and not force:
+        similar = prov.find_similar(name, kind=str(body.get("kind", "widget")))
+        if similar is not None:
+            _audit(request, "artifact.create", "deduped", f"similar={similar.slug}")
+            return web.json_response(
+                {
+                    "error": "similar_artifact_exists",
+                    "similar": {"slug": similar.slug, "name": similar.name, "kind": similar.kind},
+                },
+                status=409,
+            )
     try:
         art = prov.create(
             name=name,
@@ -143,6 +160,7 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
             actor="user",
             session_id=session_id,
             project_id=str(body.get("project_id", "")).strip(),
+            collection=str(body.get("collection", "")).strip(),
         )
     except (ValueError, PermissionError) as e:
         return web.json_response({"error": str(e)}, status=400)
@@ -219,6 +237,7 @@ async def api_artifact_update(request: web.Request) -> web.Response:
             name=body.get("name"),
             description=body.get("description"),
             tags=body.get("tags"),
+            collection=body.get("collection"),
         )
     except (ValueError, PermissionError) as e:
         return web.json_response({"error": str(e)}, status=400)
