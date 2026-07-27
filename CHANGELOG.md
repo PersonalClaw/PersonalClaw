@@ -15,6 +15,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Feedback that actually teaches: 👍/👎 on AI judgments.** Inbox classifications,
+  drafted replies, digests, and loop findings now carry a quiet thumbs pair. 👍 is
+  silent-positive ("Mark accurate" — it only feeds the accuracy denominator); 👎
+  optionally takes a one-line "why". Every verdict is attributed to the source that
+  produced the judgment — the bound prompt, the loop judge, a workflow's surfacing —
+  and per-source rolling accuracy lives in Settings → AI feedback (honest counts,
+  shown only after enough verdicts). A source that keeps being wrong **stops
+  surfacing** and raises a one-time "retire this rule?" notification with a deep
+  link; snooze or clear it after an edit. Everything is deterministic counting —
+  no model calls, and feedback never leaves the instance. Apps record feedback on
+  their own judgments via `personalclaw.sdk.feedback` / `POST /api/feedback`
+  (namespaced server-side, so an app can never impersonate a core source).
 - **Model use-cases v2: routing sub-categories + fallback chains.** Chat work is
   now routable by kind — `background` (titles, tags, suggestions, digests,
   consolidation), `orchestration` (supervising turns and model-less subagents),

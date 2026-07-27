@@ -272,6 +272,15 @@ class InboxService:
             removed = self.inbox.cleanup_by_retention(days)
         if self.state.prune_dismissed():
             self.state.save()
+        # FEEDBACK-SIGNAL (plan 58): the retire-candidate check rides this existing
+        # maintenance cadence (no new loop) — one-time "retire this rule?" proposal
+        # per producer per threshold crossing, notified via the dashboard state.
+        try:
+            from personalclaw.feedback import check_retire_candidates
+
+            check_retire_candidates(state=_dashboard_state())
+        except Exception:  # noqa: BLE001 — maintenance must never fail on feedback
+            logger.debug("feedback retire check failed", exc_info=True)
         return removed
 
     @staticmethod

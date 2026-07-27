@@ -633,6 +633,10 @@ def get_redacted(loop_id: str) -> dict | None:
     view = _redact_loop(loop.to_dict())
     view["findings"] = get_findings(loop_id)
     view["nudges"] = get_nudges(loop_id)
+    # Feedback producer meta (plan 58 T1.5, additive): findings are judged
+    # per-kind (each kind carries its own brief/rubric), so the producer is
+    # ("loop_judge", kind) — the FE thumbs attribute a verdict with no lookup.
+    view["feedback_producer"] = {"producer_kind": "loop_judge", "producer_id": loop.kind}
     view["pending_question"] = pending_question(loop_id)
     # The third-party judge's per-cycle verdicts + the marginal-value trail back the
     # cockpit's ROI rail / verdict nodes (open-ended goals). The FE reads these off
@@ -711,6 +715,7 @@ def list_redacted(project_id: str = "", kind: str = "") -> list[dict]:
             continue
         d = _redact_loop(loop.to_dict())
         d["findings"] = get_findings(loop.id)
+        d["feedback_producer"] = {"producer_kind": "loop_judge", "producer_id": loop.kind}
         # The dashboard ActiveWork widget renders the loop's question inline for
         # needs_input rows. Gate the per-row fs read on that status so the list
         # stays lean (a needs_input loop is the rare, blocked-on-you case).

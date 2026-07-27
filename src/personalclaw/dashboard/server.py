@@ -381,6 +381,10 @@ async def start_dashboard(
     app.router.add_get("/api/doctor/{capability}", handlers.api_doctor_capability)
     # No-model degraded-mode contract (PLATFORM-RESILIENCE §5)
     app.router.add_get("/api/resilience/degraded", handlers.api_degraded)
+    # Feedback Signal (plan 58) — 👍/👎 capture + per-producer accuracy
+    from personalclaw.dashboard.handlers.feedback import register_feedback_routes
+
+    register_feedback_routes(app)
     # Confirm-gated fixes + trust simulators + selftest (PLATFORM-RESILIENCE §2/§3/§1.4).
     # POST routes don't collide with the {capability} GET; the two GETs above are
     # ordered before it.
