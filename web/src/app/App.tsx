@@ -3,7 +3,7 @@ import { MotionConfig, motion } from 'framer-motion'
 import { ease, duration } from '../design/motion'
 import {
   MessageSquare, Bell, ListChecks, Zap,
-  Inbox, Files, BookOpen, Users, Wrench, Sparkles,
+  Inbox, Files, FileCode, BookOpen, Users, Wrench, Sparkles,
   Workflow, FileText, Settings, Terminal, Loader2, FolderKanban, Blocks,
   LayoutDashboard, Compass,
 } from 'lucide-react'
@@ -49,6 +49,7 @@ const KnowledgeSection = lazy(() => import('../pages/knowledge/KnowledgeSection'
 const LoopSection = lazy(() => import('../pages/loop/LoopSection').then((m) => ({ default: m.LoopSection })))
 const InboxPage = lazy(() => import('../pages/inbox/InboxPage').then((m) => ({ default: m.InboxPage })))
 const FilesSection = lazy(() => import('../pages/files/FilesSection').then((m) => ({ default: m.FilesSection })))
+const ArtifactsSection = lazy(() => import('../pages/artifacts/ArtifactsSection').then((m) => ({ default: m.ArtifactsSection })))
 const AppsSection = lazy(() => import('../pages/apps/AppsSection').then((m) => ({ default: m.AppsSection })))
 const AppHostPage = lazy(() => import('../pages/apps/AppHostPage').then((m) => ({ default: m.AppHostPage })))
 const TerminalPage = lazy(() => import('../pages/terminal/TerminalPage').then((m) => ({ default: m.TerminalPage })))
@@ -67,6 +68,7 @@ const NAV: NavItem[] = [
   { id: 'inbox', label: 'Inbox', icon: Inbox, section: 'Platform' },
   { id: 'triggers', label: 'Triggers', icon: Zap, section: 'Platform' },
   { id: 'files', label: 'Files', icon: Files, section: 'Platform' },
+  { id: 'artifacts', label: 'Artifacts', icon: FileCode, section: 'Platform' },
   { id: 'terminal', label: 'Terminal', icon: Terminal, section: 'Platform' },
   // Capabilities group (was "Build").
   { id: 'agents', label: 'Agents', icon: Users, section: 'Capabilities' },
@@ -107,6 +109,7 @@ function renderPage(active: string, r: RouteProps) {
     case 'knowledge': return <KnowledgeSection {...r} />
     case 'inbox': return <InboxPage {...r} />
     case 'files': return <FilesSection {...r} />
+    case 'artifacts': return <ArtifactsSection {...r} />
     case 'terminal': return <TerminalPage {...r} />
     case 'workflows': return <WorkflowsSection {...r} />
     case 'prompts': return <PromptsSection {...r} />

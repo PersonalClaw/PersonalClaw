@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react'
-import { fvs } from '../../../design/fontWeight'
+import { fvs } from '../../design/fontWeight'
 import { Search } from 'lucide-react'
-import type { Artifact } from '../../../lib/api'
-import { ARTIFACT_KINDS, artifactKindMeta, relTime } from '../fileMeta'
-import { TextInput } from '../../../ui/forms'
+import type { Artifact } from '../../lib/api'
+import { ARTIFACT_KINDS, artifactKindMeta, relTime } from '../files/fileMeta'
+import { TextInput } from '../../ui/forms'
 
 /** The artifacts rail — filterable list standing in for the file tree when the
  *  scope switch is on "Artifacts". */

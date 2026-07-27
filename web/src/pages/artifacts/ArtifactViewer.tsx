@@ -1,18 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
-import { fvs } from '../../../design/fontWeight'
+import { fvs } from '../../design/fontWeight'
 import {
   Clock, RotateCcw, Loader2, Trash2, FileSymlink, History, Tag, Download, ChevronUp, FileWarning,
 } from 'lucide-react'
-import { api, type Artifact, type ArtifactEvent } from '../../../lib/api'
-import { notify } from '../../../app/appSdk'
-import { confirmDelete } from '../../../ui/dialog'
-import { Button } from '../../../ui/Button'
-import { QuietButton } from '../../../ui/QuietButton'
-import { downloadText, safeFilename } from '../../../lib/download'
-import { artifactKindMeta, relTime } from '../fileMeta'
-import { ContentSurface } from '../../../ui/content/ContentSurface'
-import { resolveContentType } from '../../../ui/content/contentTypes'
-import type { CommentTarget } from '../../../ui/content/commentTarget'
+import { api, type Artifact, type ArtifactEvent } from '../../lib/api'
+import { notify } from '../../app/appSdk'
+import { confirmDelete } from '../../ui/dialog'
+import { Button } from '../../ui/Button'
+import { QuietButton } from '../../ui/QuietButton'
+import { downloadText, safeFilename } from '../../lib/download'
+import { artifactKindMeta, relTime } from '../files/fileMeta'
+import { ContentSurface } from '../../ui/content/ContentSurface'
+import { resolveContentType } from '../../ui/content/contentTypes'
+import type { CommentTarget } from '../../ui/content/commentTarget'
 
 interface ViewerProps {
   slug: string
