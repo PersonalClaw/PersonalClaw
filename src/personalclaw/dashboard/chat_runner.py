@@ -1110,6 +1110,11 @@ async def _run_chat(
             # turn so artifact_save stamps the artifact's project_id, tying artifacts
             # created here back to the Project (S5). "" for an unscoped session.
             project_id=getattr(session, "project_id", "") or "",
+            # Loop worker sessions resolve the ``loops`` chain for their inner model
+            # (MODEL-USE-CASES-V2 T2.3; key off _app — the manager sets it — NOT the
+            # session-key prefix). An explicit per-loop model still wins (it rides
+            # session.model above). Unbound axis → chat chain, unchanged.
+            model_axis="loops" if getattr(session, "_app", "") == "loop" else "",
         )
         _acquired = True
         # Register this turn on the active-job tracker (PLATFORM-RESILIENCE §6.2) —

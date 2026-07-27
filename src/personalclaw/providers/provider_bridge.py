@@ -39,6 +39,23 @@ _CAPABILITY_TO_ENUM = {
 }
 
 
+def _log_chain_skip(use_case: str, ref: str, reason: str) -> None:
+    """SEL-record one fallback-chain entry skip (MODEL-USE-CASES-V2) — the audit
+    trail for "why did my default model not serve this call". Best-effort."""
+    try:
+        from personalclaw.sel import sel
+
+        sel().log_api_access(
+            caller="system",
+            operation="model.chain_skip",
+            outcome="success",
+            source="provider_bridge",
+            resources=f"{use_case}:{ref}:{reason}",
+        )
+    except Exception:  # noqa: BLE001 — audit must never break resolution
+        logger.debug("chain-skip SEL record failed", exc_info=True)
+
+
 def _capability_enum(capability: str):
     """Map a Settings→Models capability string to the provider Capability enum, or None
     if it isn't a provider-type capability (caller then can't match by capability)."""
@@ -93,21 +110,23 @@ def _agent_provider_kind(agent: str | None) -> str:
     return "acp" if str(kind).startswith("acp") else "native"
 
 
-def _provider_entry_name(provider: "ModelProvider | None") -> str:
+def _provider_entry_name(provider: "ModelProvider | None", *, use_case: str = "chat") -> str:
     """Best-effort name of the provider ENTRY a resolved ModelProvider came from.
 
     Used to keep ``_fallback_chat_model`` in agreement with the inner provider the
     native runtime already resolved. Providers don't reliably carry their entry
-    name, so derive it from the FIRST resolvable active chat ref — deterministically
-    the same ref the inner resolver (``resolve_provider_for_use_case`` → the
-    ``active_model_refs`` loop) picks first, since both walk the refs in order and
-    take the first whose provider is configured. Returns "" when indeterminate
-    (then ``_fallback_chat_model`` uses its own ordered fallback)."""
+    name, so derive it from the FIRST resolvable ref of the GOVERNING axis's chain
+    (``use_case`` — the sub-category the inner resolve used, falling back to chat
+    when unbound via ``active_model_refs``) — deterministically the same ref the
+    inner resolver (``resolve_provider_for_use_case`` → the chain walk) picks
+    first, since both walk the refs in order and take the first whose provider is
+    configured. Returns "" when indeterminate (then ``_fallback_chat_model`` uses
+    its own ordered fallback)."""
     del provider  # entry name isn't stamped on the instance; use the ref order.
     try:
         from personalclaw.providers.use_cases import active_model_refs, split_ref
 
-        for ref in active_model_refs("chat"):
+        for ref in active_model_refs(use_case):
             parsed = split_ref(ref)
             if not parsed:
                 continue
@@ -137,8 +156,12 @@ def _provider_is_configured(provider_name: str) -> bool:
     return True
 
 
-def _fallback_chat_model(provider_hint: str | None = None) -> str:
-    """A concrete chat model to use when an agent declares no model of its own.
+def _fallback_chat_model(provider_hint: str | None = None, *, use_case: str = "chat") -> str:
+    """A concrete model id to use when an agent declares no model of its own.
+
+    ``use_case`` names the governing axis (MODEL-USE-CASES-V2): the id comes from
+    THAT axis's chain (``active_model_refs`` falls back to chat when the
+    sub-category is unbound, preserving today's behavior until the user binds it).
 
     Background agents (``personalclaw-lite`` for suggestions + consolidation) and
     any agent whose ``model`` is empty would otherwise pass ``model=""`` down to
@@ -170,10 +193,10 @@ def _fallback_chat_model(provider_hint: str | None = None) -> str:
         return not provider_hint or ref_provider == provider_hint
 
     # 1. When we know which provider the inner resolver picked, take the model
-    #    from the matching active chat ref so model + provider agree.
+    #    from the matching active ref of the governing axis so model + provider agree.
     if provider_hint:
         try:
-            for ref in active_model_refs("chat"):
+            for ref in active_model_refs(use_case):
                 parsed = split_ref(ref)
                 if not parsed:
                     continue
@@ -208,11 +231,11 @@ def _fallback_chat_model(provider_hint: str | None = None) -> str:
     except Exception:
         logger.debug("fallback model: default-agent lookup failed", exc_info=True)
 
-    # 3. First active chat model (strip the "provider:" prefix the store keeps).
-    #    Prefer a hint-matching ref; otherwise the first ref (mirrors the inner
-    #    resolver's "first resolvable ref" order).
+    # 3. First active model of the governing axis (strip the "provider:" prefix the
+    #    store keeps). Prefer a hint-matching ref; otherwise the first ref (mirrors
+    #    the inner resolver's "first resolvable ref" order).
     try:
-        for ref in active_model_refs("chat"):
+        for ref in active_model_refs(use_case):
             parsed = split_ref(ref)
             if not parsed:
                 model_id, ref_provider = ref, ""
@@ -308,14 +331,19 @@ def _build_native_runtime(
     dry_run: bool = False,
     reasoning_effort: str = "",
     project_id: str = "",
+    model_axis: str = "",
     **kwargs: Any,
 ) -> ModelProvider:
     """Construct a :class:`NativeAgentRuntime` for a ``native`` agent.
 
     Its inference ModelProvider is resolved through the SAME active-model
-    selection (Settings → Models), so the native agent's model is governed
-    exactly like every other ``chat`` consumer. Tools come from the in-process
-    core provider.
+    selection (Settings → Models). ``model_axis`` names the chat sub-category
+    whose CHAIN governs the inner model (MODEL-USE-CASES-V2): "background" for
+    the lite factory, "loops" for loop workers, "orchestration" for model-less
+    subagent spawns, else the session's own use case — so a sub-category
+    binding governs native agents too (previously the inner model hardcoded
+    "chat", making e.g. a code_tools binding cosmetic). Tools come from the
+    in-process core provider.
     """
     from pathlib import Path
 
@@ -334,16 +362,22 @@ def _build_native_runtime(
     # Reconcile it to "" so the active chat binding fully governs the model.
     model_override = _reconcile_agent_model(model_override or "") or None
 
-    # The inner ModelProvider — resolve the chat binding WITHOUT recursing into
-    # the native branch (pass a sentinel kwarg the factory honors).
+    # The inner ModelProvider — resolve the governing axis's chain WITHOUT
+    # recursing into the native branch (pass a sentinel kwarg the factory honors).
+    # ``model_axis`` (a chat sub-category, or "chat") picks WHICH chain governs:
+    # an unbound sub-category falls back to the chat chain via active_model_refs,
+    # so the default behavior is unchanged until the user binds the axis.
     # ``_model_axis_only`` additionally excludes agent-runtime (acp_agent)
     # registry entries from resolution: the native loop calls
     # ``ModelProvider.complete()``, which an AgentProvider (ACP) does not
     # implement. Without this, a stack whose ``chat`` use case resolves to an
     # ACP entry would hand the native loop an AcpAgentProvider and blow up with
     # "'AcpAgentProvider' object has no attribute 'complete'".
+    from personalclaw.providers.use_cases import CHAT_SUBCATEGORIES
+
+    inner_axis = model_axis if model_axis in CHAT_SUBCATEGORIES else "chat"
     model_provider = resolve_provider_for_use_case(
-        "chat",
+        inner_axis,
         session_key=session_key,
         agent=agent,
         model_override=model_override,
@@ -418,7 +452,10 @@ def _build_native_runtime(
     # ``glm-5.2`` sent to the Bedrock client → "model identifier is invalid",
     # which failed every background suggestions/consolidation turn).
     if not model:
-        model = _fallback_chat_model(provider_hint=_provider_entry_name(model_provider))
+        model = _fallback_chat_model(
+            provider_hint=_provider_entry_name(model_provider, use_case=inner_axis),
+            use_case=inner_axis,
+        )
 
     definition = AgentRuntimeDefinition(
         name=name,
@@ -566,6 +603,14 @@ def resolve_provider_for_use_case(
     # leaks into the model-axis resolvers; meaningful only to the native builder,
     # which binds it per-turn so artifact_save can stamp the artifact's project_id (S5).
     _project_id = str(kwargs.pop("project_id", "") or "")
+    # The chat sub-category whose CHAIN governs this session's INNER model
+    # (MODEL-USE-CASES-V2 T2.x): the _bg factory passes "background", loop worker
+    # sessions "loops", model-less subagent spawns "orchestration". Defaults to the
+    # outer use_case itself (chat sessions → the chat chain; code_tools sessions →
+    # the code_tools chain — previously the inner model hardcoded "chat", making a
+    # code_tools binding cosmetic for native agents). Pop unconditionally so it
+    # never leaks into the model-axis resolvers.
+    _model_axis = str(kwargs.pop("model_axis", "") or "")
     # Per-turn reasoning effort. The native builder consumes it (forwarded to the
     # model's complete()); the ACP path reads reasoning_effort_override from kwargs
     # in its own factory, so DON'T pop it here for ACP — peek without removing.
@@ -591,6 +636,7 @@ def resolve_provider_for_use_case(
             dry_run=_dry_run,
             reasoning_effort=_reasoning_effort,
             project_id=_project_id,
+            model_axis=_model_axis or use_case,
             **kwargs,
         )
 
@@ -607,17 +653,20 @@ def resolve_provider_for_use_case(
     # registered entry (else it's a bare id that happens to contain a colon, e.g.
     # "gpt-oss:20b").
     capability = parent_capability(use_case)
-    # Model-call guard (AUTONOMY-GUARDRAILS §2): the non-interactive text axis
-    # (``reasoning`` — backs one_shot_completion, loop judges/gates, web-extract)
-    # routes every resolved provider through ModelCallGuard (per-provider circuit
-    # breaker + hard wall-clock timeout + attempt-level JSONL audit). The interactive
-    # chat/code_tools stream is explicitly OUT OF SCOPE for v1: it returns above via
-    # _build_native_runtime (native) or resolves an ACP CLI — both human-watched — and
-    # the native runtime's INNER model resolves with use_case="chat" + _force_model_axis,
-    # never "reasoning". Thread the flag through kwargs so all four resolution attempts
-    # below wrap identically; _resolve_from_config_registry pops it (never reaches the
-    # build factory) and wraps at the single point where the entry name + model are known.
-    if use_case == "reasoning":
+    # Model-call guard (AUTONOMY-GUARDRAILS §2): every NON-INTERACTIVE text axis
+    # (``reasoning`` / ``background`` / ``loops`` / ``orchestration`` — backing
+    # one_shot_completion, the lite background factory, loop workers/judges/gates,
+    # and model-less subagent spawns) routes every resolved provider through
+    # ModelCallGuard (per-provider circuit breaker + hard wall-clock timeout +
+    # attempt-level JSONL audit) — so the breaker and the audit see the TRUE axis
+    # (MODEL-USE-CASES-V2). The interactive chat/code_tools stream stays OUT OF
+    # SCOPE: it returns above via _build_native_runtime (native) or resolves an
+    # ACP CLI — both human-watched (its INNER model resolves with
+    # _force_model_axis under its own axis). Thread the flag through kwargs so all
+    # resolution attempts below wrap identically; _resolve_from_config_registry
+    # pops it (never reaches the build factory) and wraps at the single point
+    # where the entry name + model are known.
+    if use_case in ("reasoning", "background", "loops", "orchestration"):
         kwargs["_guard_use_case"] = use_case
     # A colon-qualified "Provider:model" ref is tried FIRST (below) because its
     # model_id can itself contain a slash (e.g. "nvidia:meta/llama-3.1-8b"); the
@@ -657,15 +706,38 @@ def resolve_provider_for_use_case(
         if direct is not None:
             return direct
 
-    # The active selection (Settings → Models) pins resolution to a specific
-    # configured provider + model. A chat sub-category with no model of its own
-    # borrows the parent ``chat`` selection (active_model_refs handles that).
+    # The active selection (Settings → Models) is an ordered fallback CHAIN
+    # (MODEL-USE-CASES-V2): position 0 is the default, 1..n are the user's
+    # declared fallbacks. Resolution walks the chain in order: an entry whose
+    # provider's circuit breaker is OPEN is skipped (routed around a known-down
+    # provider); an entry whose provider can't be built is skipped-with-warning
+    # ONLY when a later entry exists — a chain whose entries ALL fail preserves
+    # the stale-pin rule and raises (block, don't silently degrade past the
+    # user's whole declared chain into implicit fallback). A one-entry chain
+    # therefore behaves exactly as the single binding always did. A chat
+    # sub-category with no chain of its own borrows the parent ``chat`` chain
+    # (active_model_refs handles that).
     _refs = list(active_model_refs(use_case))
-    for ref in _refs:
+    _last_dead: tuple[str, str] | None = None  # (ref, provider_name) of a dead entry
+    for i, ref in enumerate(_refs):
         parsed = split_ref(ref)
         if not parsed:
             continue
         provider_name, model_id = parsed
+        has_later = i + 1 < len(_refs)
+        # Breaker-OPEN skip: the guard's per-provider breaker already knows this
+        # provider is down — don't burn a build + timeout to rediscover it.
+        try:
+            from personalclaw.guardrails.breaker import get_breaker
+
+            if get_breaker(provider_name).is_open() and has_later:
+                logger.warning(
+                    "chain skip: %s entry %d (%s) — provider breaker OPEN", use_case, i, ref
+                )
+                _log_chain_skip(use_case, ref, "breaker_open")
+                continue
+        except Exception:  # noqa: BLE001 — breaker introspection must never break resolution
+            pass
         pinned = _resolve_from_config_registry(
             capability,
             session_key=session_key,
@@ -677,12 +749,24 @@ def resolve_provider_for_use_case(
         )
         if pinned is not None:
             return pinned
-        # The selection names a provider the config registry can't build — its app
-        # isn't installed / configured. Per the "block, don't silently fall back"
-        # rule (a stale Bedrock pin must NOT be handed to Ollama as a literal model
-        # id → 404), raise a clear, actionable error instead of the implicit
-        # fallback. The user fixes it by installing the provider or picking another
-        # in Settings → Models.
+        # This entry names a provider the config registry can't build — its app
+        # isn't installed / configured. With a later entry declared, skip it
+        # (the user opted into fallback by ADDING entries); with none, fall
+        # through to the stale-pin raise below.
+        _last_dead = (ref, provider_name)
+        if has_later:
+            logger.warning(
+                "chain skip: %s entry %d (%s) — provider not buildable", use_case, i, ref
+            )
+            _log_chain_skip(use_case, ref, "unbuildable")
+            continue
+    if _last_dead is not None:
+        # The chain exhausted with at least one unbuildable entry. Per the
+        # "block, don't silently fall back" rule (a stale Bedrock pin must NOT be
+        # handed to Ollama as a literal model id → 404), raise a clear, actionable
+        # error instead of the implicit fallback. The user fixes it by installing
+        # the provider or picking another in Settings → Models.
+        ref, provider_name = _last_dead
         raise ProviderResolutionError(
             f"The model selected for {use_case!r} ({ref!r}) isn't available — its "
             f"provider {provider_name!r} isn't installed or configured. Install it "
@@ -693,6 +777,7 @@ def resolve_provider_for_use_case(
                 why=(
                     f"the active ref names provider {provider_name!r}, which is absent "
                     f"from config.json (its app isn't installed or configured)"
+                    + (" — every other chain entry was skipped too" if len(_refs) > 1 else "")
                 ),
                 fix=(
                     f"install {provider_name!r} in the App Store, or rebind {use_case!r} "

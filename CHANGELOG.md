@@ -8,8 +8,26 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+> **Note (0.x clean break):** model bindings in `active_models.json` now carry
+> ordered fallback-chain semantics. Old stores read cleanly (a single binding is a
+> one-entry chain); consider `personalclaw snapshot` before upgrading, per the
+> pre-1.0 banner.
+
 ### Added
 
+- **Model use-cases v2: routing sub-categories + fallback chains.** Chat work is
+  now routable by kind — `background` (titles, tags, suggestions, digests,
+  consolidation), `orchestration` (supervising turns and model-less subagents),
+  `loops` (goal-loop workers and judges), alongside the existing `code_tools` and
+  `reasoning` — each bindable in Settings → Models under a new **Chat routing**
+  group, falling back to your Chat chain when unbound. Bind a cheap or local model
+  to `background` and housekeeping chores stop burning your flagship chat model.
+- **Every model binding is an ordered fallback chain.** The first model is the
+  default; later entries take over when an earlier provider's circuit breaker is
+  open or a call fails (background calls advance mid-batch; a failed chain surfaces
+  one clear error). The Models panel gains a chain editor with reordering and
+  per-entry provider-health dots; the composer's model pick sits above the chain —
+  if the picked model fails, the chain takes over.
 - **Type-routed tool-output compressors.** Large tool results now project smarter: a
   JSON array of thousands of items becomes a per-field schema (names, types, ranges,
   null counts) plus the first/last item verbatim; a large code file becomes a

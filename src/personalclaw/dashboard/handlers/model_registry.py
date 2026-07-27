@@ -19,7 +19,6 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.providers.use_cases import (
-    MULTI_ACTIVE_USE_CASES,
     USE_CASES,
     VALID_USE_CASES,
     load_active_models,
@@ -275,10 +274,12 @@ async def api_models_active(request: web.Request) -> web.Response:
 
 
 async def api_models_active_set(request: web.Request) -> web.Response:
-    """PUT /api/models/active/{use_case} — set active model(s) for a use-case.
+    """PUT /api/models/active/{use_case} — set the active model CHAIN for a use-case.
 
-    Body: {models: ["provider_name:model_id", ...]} for multi-active use-cases.
-    Body: {models: ["provider_name:model_id"]} for single-active use-cases.
+    Body: {models: ["provider_name:model_id", ...]} — an ordered fallback chain
+    for EVERY use case (MODEL-USE-CASES-V2): position 0 is the default, later
+    entries are fallbacks resolution walks when an earlier provider's breaker is
+    open or its build fails. Order is preserved verbatim.
     """
     use_case = request.match_info["use_case"]
     if use_case not in VALID_USE_CASES:
@@ -298,9 +299,9 @@ async def api_models_active_set(request: web.Request) -> web.Response:
     if not isinstance(models, list):
         return web.json_response({"error": "models must be a list"}, status=400)
 
-    if use_case not in MULTI_ACTIVE_USE_CASES and len(models) > 1:
+    if len(models) > 20:
         return web.json_response(
-            {"error": f"Use case {use_case!r} only supports one active model"},
+            {"error": "a fallback chain may have at most 20 entries"},
             status=400,
         )
 

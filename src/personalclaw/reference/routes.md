@@ -302,7 +302,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/model-providers/{name}/show` — rich model metadata.
 - `POST /api/model-providers/{name}/test` — test provider connectivity.
 - `GET /api/models/active` — active models per use-case.
-- `PUT /api/models/active/{use_case}` — set active model(s) for a use-case.
+- `PUT /api/models/active/{use_case}` — set the active model CHAIN for a use-case.
 - `GET /api/models/available` — discover models from all configured providers.
 - `GET /api/models/chat` — chat models for dropdowns (the one model list).
 - `GET /api/models/downloads` — live + recently-finished download jobs.
