@@ -41,9 +41,15 @@ class ArtifactProvider(ABC):
         source: str | None = None,
         source_path: str | None = None,
         project_id: str | None = None,
+        collection: str | None = None,
     ) -> list[Artifact]:
         """Return matching artifacts (without ``content``)."""
         ...
+
+    def find_similar(self, name: str, *, kind: str | None = None) -> Artifact | None:
+        """The existing artifact whose name matches *name* by slug, or None — the
+        list-before-save dedup hint. Default returns None (a backend opts in)."""
+        return None
 
     @abstractmethod
     def get(self, slug: str, *, version: int | None = None) -> Artifact | None:
@@ -69,6 +75,7 @@ class ArtifactProvider(ABC):
         actor: str | None = None,
         session_id: str | None = None,
         project_id: str = "",
+        collection: str = "",
     ) -> Artifact: ...
 
     @abstractmethod
@@ -84,6 +91,7 @@ class ArtifactProvider(ABC):
         name: str | None = None,
         description: str | None = None,
         tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
+        collection: str | None = None,
     ) -> Artifact | None: ...
 
     def revert(

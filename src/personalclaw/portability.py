@@ -35,13 +35,35 @@ from personalclaw.snapshot import (
 
 logger = logging.getLogger(__name__)
 
-EXPORT_EXCLUDE = frozenset(
-    {
+
+def _inventory_secrets() -> frozenset[str]:
+    """Secret basenames from the state inventory (DURABILITY §1).
+
+    The export exclude-set is now a PROJECTION of the manifest's ``secret=True``
+    entries rather than a second hand-maintained list — the drift between these
+    two lists is exactly what let stores escape coverage. Falls back to the
+    historical literals if the import ever fails, so an export can never
+    accidentally start including credentials.
+    """
+    literals = {
         ".env",
         ".local_secret",
         "sel_hmac.key",
         "telemetry_salt",
         "session_map.json",
+    }
+    try:
+        from personalclaw.durability import inventory as inv
+
+        return frozenset(literals | {p.rsplit("/", 1)[-1] for p in inv.secret_paths()})
+    except Exception:  # noqa: BLE001 — never widen the export on an import error
+        return frozenset(literals)
+
+
+EXPORT_EXCLUDE = frozenset(
+    _inventory_secrets()
+    | {
+        # Process-local runtime files (not "state", so not inventory entries).
         "session_pids.txt",
         "agent_pids.txt",
     }
@@ -123,6 +145,7 @@ def create_export_zip() -> tuple[bytes, dict]:
             "hooks.json",
             "crons.json",
             "notifications.jsonl",
+            "feedback.jsonl",
             "project_dir",
             "workspace_dir",
         ):
@@ -289,6 +312,13 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                 else:
                     shutil.copy2(str(snap / "notifications.jsonl"), str(pc / "notifications.jsonl"))
                     summary["items"].append("notifications (copied)")
+
+            # Feedback records (append-only; supersede-by-target makes ordering
+            # forgiving): restore only when absent — merging two instances'
+            # verdict streams is not meaningful.
+            if (snap / "feedback.jsonl").is_file() and not (pc / "feedback.jsonl").is_file():
+                shutil.copy2(str(snap / "feedback.jsonl"), str(pc / "feedback.jsonl"))
+                summary["items"].append("feedback (restored)")
 
             for dirname in ("workspace", "plan_memory"):
                 sd = snap / dirname

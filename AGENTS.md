@@ -40,6 +40,16 @@ a red gate with `--no-verify` — that is reserved for owner-declared emergencie
 - **Clean break.** No backward-compat shims, dual paths, dead code, or
   TODO/FIXME/commented-out blocks. Replace a mechanism → delete the old one in
   the same change. Unfinished work lives in a plan file, not in code.
+- **Breaking changes are the maintainer's call, not yours.** During 0.x the
+  maintainer lands backward-incompatible clean breaks with **no migrations**
+  (lifecycle doctrine is deliberately deferred to near the END of the roadmap —
+  so no `lifecycle/` package exists and hand-rolled gate/migration machinery is a
+  rejection). Working an owner-assigned roadmap task, a class-B/S clean break is
+  expected: execute it, note it in the CHANGELOG, advise `personalclaw snapshot`.
+  Working anything else, stay **additive** (defaults on new fields, tolerant
+  reads, routes beside routes) and if the clean fix needs a persisted-shape,
+  route-contract, or credential-format change, **stop and surface it** (E3
+  lifecycle/state ambiguity) instead of improvising compatibility.
 - **Provider-agnostic core.** No vendor names or vendor-specific logic in core.
   Vendor integrations are removable app bundles in the separate PersonalClawApps
   repo; apps import core **only** via `personalclaw.sdk.*`.
@@ -87,6 +97,9 @@ a red gate with `--no-verify` — that is reserved for owner-declared emergencie
 - An app importing core outside `personalclaw.sdk.*`.
 - Dead code, TODO/FIXME comments, commented-out blocks, "phase 2" stubs, or a
   second implementation of an existing behavior left in place.
+- Hand-rolled versioning/gate/migration machinery, or an unrequested breaking
+  change to a persisted shape / route contract / credential format (surface it,
+  don't ship it — see Doctrine).
 - A backend/behavior change with no test, or a config field that skips the
   round-trip wiring.
 - Editing `docs/roadmap/` to reshape the roadmap in a PR (open an issue instead).

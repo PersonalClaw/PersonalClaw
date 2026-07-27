@@ -803,3 +803,117 @@ class TestConcurrentSnapshot:
         tarballs = list(out.glob("personalclaw-snapshot-*.tar.gz"))
         assert len(tarballs) == 2
         assert tarballs[0].name != tarballs[1].name
+
+
+# ── DURABILITY §1: safe live-database capture + inventory-driven gap closure ──
+
+
+class TestLiveDatabaseSafety:
+    """A live sqlite store must be captured via the backup API, never raw-copied.
+
+    Regression: only the two files in CORE_FILES["memory"] got the safe path.
+    `knowledge.db`, `lexicon.db` and `loops.db` were inside tree copies, so a
+    snapshot taken while the gateway held them open could capture a torn page set
+    — measured at 2000 of 4000 rows lost in a raw copy of a WAL-heavy DB.
+    """
+
+    def _home_with_live_db(self, tmp_path, rel: str, rows: int = 500):
+        home = tmp_path / "src"
+        _setup_fake_personalclaw(home)
+        db = home / rel
+        db.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db))
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("CREATE TABLE probe(id INTEGER PRIMARY KEY, v TEXT)")
+        conn.commit()
+        for i in range(rows):
+            conn.execute("INSERT INTO probe(v) VALUES (?)", (f"row-{i}" * 20,))
+        conn.commit()
+        # Deliberately keep the handle OPEN with un-checkpointed WAL content —
+        # this is the state a real snapshot runs against.
+        return home, conn
+
+    @pytest.mark.parametrize(
+        "rel", ["workspace/knowledge/knowledge.db", "loop/loops.db", "workspace/lexicon/lexicon.db"]
+    )
+    def test_declared_db_captured_completely_while_open(self, tmp_path, monkeypatch, rel):
+        home, conn = self._home_with_live_db(tmp_path, rel)
+        try:
+            monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+            out = tmp_path / "out"
+            tarball = _make_snapshot(home, out)
+            extract = tmp_path / "x"
+            with tarfile.open(str(tarball)) as tar:
+                tar.extractall(extract)
+            snap = next(extract.glob("personalclaw-snapshot-*"))
+            staged = snap / rel
+            assert staged.is_file(), f"{rel} missing from the snapshot"
+            c = sqlite3.connect(str(staged))
+            try:
+                assert c.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+                assert c.execute("SELECT count(*) FROM probe").fetchone()[0] == 500
+            finally:
+                c.close()
+        finally:
+            conn.close()
+
+    def test_wal_sidecars_never_ride_along(self, tmp_path, monkeypatch):
+        """Sidecars are checkpointed/backed-up state, not files to copy — shipping
+        them alongside a backup-API copy risks a mismatched pair on restore."""
+        home, conn = self._home_with_live_db(tmp_path, "workspace/knowledge/knowledge.db")
+        try:
+            monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+            tarball = _make_snapshot(home, tmp_path / "out")
+            with tarfile.open(str(tarball)) as tar:
+                names = tar.getnames()
+            assert not [n for n in names if n.endswith(("-wal", "-shm"))]
+        finally:
+            conn.close()
+
+
+class TestInventoryGapClosure:
+    """The nine stores that used to be in NEITHER the snapshot nor the export."""
+
+    def test_previously_missing_stores_are_captured(self, tmp_path, monkeypatch):
+        home = tmp_path / "src"
+        _setup_fake_personalclaw(home)
+        # Seed one real file in each formerly-uncovered store.
+        seeded = {
+            "tasks/t-1.json": '{"id": "t-1", "title": "keep me"}',
+            "projects/p-1/project.json": '{"id": "p-1"}',
+            "artifacts/a-1/meta.json": '{"slug": "a-1"}',
+            "prompts/p.json": '{"name": "p"}',
+            "workflows/w.json": '{"id": "w"}',
+            "agents/a.json": '{"name": "a"}',
+            "entity_settings/s.json": "{}",
+            "sessions/s-1.jsonl": '{"role": "user"}\n',
+        }
+        for rel, body in seeded.items():
+            path = home / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body)
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+        tarball = _make_snapshot(home, tmp_path / "out")
+        extract = tmp_path / "x"
+        with tarfile.open(str(tarball)) as tar:
+            tar.extractall(extract)
+        snap = next(extract.glob("personalclaw-snapshot-*"))
+        for rel, body in seeded.items():
+            staged = snap / rel
+            assert staged.is_file(), f"{rel} was NOT captured — the backup is incomplete"
+            assert staged.read_text() == body, f"{rel} content differs"
+
+    def test_default_output_dir_honors_the_active_home(self, tmp_path, monkeypatch):
+        """The fallback used to hardcode ~/.personalclaw/snapshots, so snapshotting
+        an isolated home wrote its archive into the REAL one."""
+        from personalclaw.snapshot import _default_snapshot_dir
+
+        home = tmp_path / "isolated"
+        home.mkdir()
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+        # No config file → the fallback path is what we're pinning.
+        monkeypatch.setattr(
+            "personalclaw.config.loader.AppConfig.load",
+            classmethod(lambda cls: (_ for _ in ()).throw(RuntimeError("no config"))),
+        )
+        assert _default_snapshot_dir() == str(home / "snapshots")

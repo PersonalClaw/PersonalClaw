@@ -83,6 +83,14 @@ export function ContentTypeOutput({ seg }: { seg: ToolSegment }) {
   if (ct === 'log' || ct === 'test') {
     return <RawBlock label="Result"><LogView text={text} /></RawBlock>
   }
+  if (ct === 'code') {
+    // A code outline (signatures + line map) or raw code — mono, no error tinting.
+    return (
+      <RawBlock label="Code">
+        <pre className="max-h-72 overflow-auto whitespace-pre-wrap font-mono text-[0.75rem] leading-relaxed text-on-surface-var">{text}</pre>
+      </RawBlock>
+    )
+  }
   if (ct === 'csv') {
     return <RawBlock label="Result"><CsvTable text={text} /></RawBlock>
   }

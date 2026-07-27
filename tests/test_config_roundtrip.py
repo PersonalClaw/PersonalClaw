@@ -98,6 +98,9 @@ _SPECIAL = {
     ("agent", "bot_name"): "TestBot",
     ("agent", "soft_stop_budget_secs"): 12.5,
     ("dashboard", "widget_density"): "less",
+    # stream_reveal is enum-constrained (smooth|immediate) — a generated "smooth-x"
+    # would fail load()'s validation and fall back to the default.
+    ("dashboard", "stream_reveal"): "immediate",
     ("dashboard", "terminal"): {"enabled": False, "persist": True},
     ("dashboard", "dashboard_layout"): {"widgets": [], "v": 1},
     ("inbox", "poll_interval_seconds"): 90,
@@ -106,6 +109,9 @@ _SPECIAL = {
     ("tools", "projection_rules"): [
         ProjectionRuleConfig(name="t", match_regex="^x", strategy="log")
     ],
+    # tools.group_defaults is a dict[str, list[str]] (surface → active tool groups);
+    # load() keeps only str→list[str] entries, so supply that shape.
+    ("tools", "group_defaults"): {"background": ["core", "memory"]},
     # guardrails.scan_mode is an enum-constrained str — a generated "redact-x"
     # would fail load()'s validation and fall back to the default.
     ("guardrails", "scan_mode"): "block",

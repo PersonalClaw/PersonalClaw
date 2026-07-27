@@ -761,6 +761,24 @@ class DashboardConfig:
             "Inline tool pills show a simplified purpose instead of the exact command.",
         ),
     )
+    followup_chips: bool = field(
+        default=True,
+        metadata=_meta(
+            "Follow-up suggestions",
+            "After each reply, show 2-3 suggested next messages (one small background model "
+            "call; never blocks the turn). Skipped for temporary/incognito chats; silent when "
+            "no model is bound.",
+        ),
+    )
+    stream_reveal: str = field(
+        default="smooth",
+        metadata=_meta(
+            "Streaming text reveal",
+            "smooth: steady word-by-word reveal decoupled from network chunks (never lags). "
+            "immediate: render each chunk the instant it arrives.",
+            enum=["smooth", "immediate"],
+        ),
+    )
     confirm_close_session: bool = field(
         default=False,
         metadata=_meta(
@@ -895,6 +913,25 @@ class AgentProfile:
     source: str = field(
         default="personalclaw",
         metadata=_meta("Source", "Agent origin: personalclaw, marketplace, or builtin."),
+    )
+    # Agent routing — suggest-first specialist routing metadata.
+    # Both optional; empty = "not a routing candidate" (opt-in per agent, zero
+    # behavior change for existing agents).
+    specialty: str = field(
+        default="",
+        metadata=_meta(
+            "Specialty",
+            "One line: what this agent is the specialist for. Drives the routing "
+            "suggestion's embedding match. Empty = never suggested.",
+        ),
+    )
+    route_hints: str = field(
+        default="",
+        metadata=_meta(
+            "Routing Hints",
+            "Comma-separated example utterances / trigger phrases that should route "
+            "to this agent (the same authoring vocabulary as workflow match text).",
+        ),
     )
 
 
@@ -1657,10 +1694,11 @@ class InboxConfig:
 
 @dataclass
 class ProjectionRuleConfig:
-    """A user-taught tool-output projection rule (TokenJuice, OP6). Output whose head
-    matches ``match_regex`` is projected with ``strategy`` (a builtin content type:
-    log/diff/json/test/csv) — teaching the DISPATCH for a tool the sniffer would else
-    mis-read as generic. Pure data; no user code runs."""
+    """A user-taught tool-output projection rule (TokenJuice, OP6 + §2.3). Output whose
+    head matches ``match_regex`` is projected with ``strategy`` (a builtin content type:
+    log/diff/json/test/csv/code) — or, when any op field is set (head/tail/keep/skip/
+    count), shaped by the declarative ops interpreter instead. Pure data; no user code
+    runs."""
 
     name: str = field(
         default="",
@@ -1675,7 +1713,104 @@ class ProjectionRuleConfig:
     )
     strategy: str = field(
         default="log",
-        metadata=_meta("Strategy", "The builtin projector to apply (log/diff/json/test/csv)."),
+        metadata=_meta("Strategy", "The builtin projector to apply (log/diff/json/test/csv/code)."),
+    )
+    head: int = field(
+        default=0,
+        metadata=_meta(
+            "Keep Head Lines",
+            "Keep the first N lines (0 = off). Op — overrides the strategy projector.",
+        ),  # noqa: E501
+    )
+    tail: int = field(
+        default=0,
+        metadata=_meta(
+            "Keep Tail Lines",
+            "Keep the last N lines (0 = off). Op — overrides the strategy projector.",
+        ),  # noqa: E501
+    )
+    keep: str = field(
+        default="",
+        metadata=_meta("Keep Lines Matching", "Keep only lines matching this regex (empty = off)."),
+    )
+    skip: str = field(
+        default="",
+        metadata=_meta("Skip Lines Matching", "Drop lines matching this regex (empty = off)."),
+    )
+    count: str = field(
+        default="",
+        metadata=_meta(
+            "Fold Lines Matching",
+            "Fold lines matching this regex into one 'N elided' note (empty = off).",
+        ),
+    )
+
+
+@dataclass
+class FeedbackConfig:
+    """Feedback Signal (plan 58) — 👍/👎 capture on AI judgment outputs + the
+    deterministic per-producer accuracy thresholds. No LLM anywhere; zero telemetry."""
+
+    enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Feedback",
+            "Show 👍/👎 on AI judgment outputs (inbox classifications, drafts, digests, "
+            "loop findings) and track per-source accuracy. Off = thumbs never render.",
+        ),
+    )
+    retire_threshold: float = field(
+        default=0.4,
+        metadata=_meta(
+            "Retire Threshold",
+            "A judgment source whose accuracy falls below this (with enough verdicts) "
+            "stops surfacing and gets a 'retire this rule?' proposal.",
+        ),
+    )
+    min_n: int = field(
+        default=5,
+        metadata=_meta(
+            "Minimum Verdicts",
+            "Verdicts required before a source's accuracy is shown or acted on.",
+        ),
+    )
+    window_days: int = field(
+        default=90,
+        metadata=_meta(
+            "Attribution Window (days)",
+            "How far back verdicts count toward a source's rolling accuracy.",
+        ),
+    )
+
+
+@dataclass
+class AgentsRoutingConfig:
+    """Agent routing (AGENT-ROUTING) — suggest-first specialist routing. Deterministic
+    classification (keyword + embedding, no LLM); a non-blocking chip proposes, the
+    user consents. Silent auto-routing is explicitly out of scope."""
+
+    enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Agent routing suggestions",
+            "When a message in a default-agent chat fits an installed specialist, "
+            "show a one-click 'route to <agent>?' chip. Off = never suggested.",
+        ),
+    )
+    min_confidence: float = field(
+        default=0.62,
+        metadata=_meta(
+            "Routing confidence",
+            "Minimum embedding-match confidence before a routing chip appears.",
+        ),
+    )
+    cooldown_hours: float = field(
+        default=24.0,
+        metadata=_meta(
+            "Routing dismiss cooldown (hours)",
+            "After dismissing a suggestion for an agent, suppress it for this long "
+            "(three cumulative dismissals mute the agent until you re-enable it).",
+        ),
     )
 
 
@@ -1692,6 +1827,55 @@ class ToolsConfig:
             "builtin projection strategy (log/diff/json/test/csv), so a large output "
             "the sniffer would blunt-cut as generic keeps its salient slice instead. "
             "Consulted before the heuristic sniff; a bad regex is skipped.",
+        ),
+    )
+    # Background compression service (Context Economy §4) — the always-on complement
+    # to on-demand projection: idle, at-rest session history is topic-segmented and
+    # attention-weighted compressed on the maintenance cadence so long sessions stay
+    # fast. Feature flag (missing = the DEFAULT, not fail-safe-off): a maintenance
+    # nicety, not a guard.
+    bg_compress_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Background compression",
+            "Continuously compress old, idle conversation history in the background "
+            "(topic-segmented, attention-weighted) so long sessions stay fast. Every "
+            "dropped span is archived first (fully recoverable) and the summary names "
+            "its archive. Incognito/temporary chats are never touched.",
+        ),
+    )
+    bg_compress_idle_days: float = field(
+        default=7.0,
+        metadata=_meta(
+            "Background compression idle window",
+            "Only compress sessions untouched for at least this many days (at rest — "
+            "an active session is never compressed).",
+        ),
+    )
+    # Dynamic tool-group activation (Context Economy §5) — partition the tool
+    # surface by provider so inactive groups cost one catalog line instead of
+    # every schema. Off by default: with it off, and for interactive chat even
+    # when on, the tool block is byte-identical to having no groups at all.
+    groups_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Tool groups",
+            "Partition tools into named groups (one per tool provider) that the "
+            "agent activates on demand, so unused groups don't spend context on "
+            "their schemas. Every tool stays callable by name and searchable via "
+            "tool_search — this saves context, it does not restrict capability. "
+            "Interactive chat keeps every group active; background/loop/subagent "
+            "runs start focused (see the per-surface defaults).",
+        ),
+    )
+    group_defaults: dict[str, list[str]] = field(
+        default_factory=dict,
+        metadata=_meta(
+            "Tool groups per surface",
+            'Which tool groups start active per surface, e.g. {"background": '
+            '["core", "memory"]}. Keys are session axes (background, loops, '
+            'orchestration, chat); "*" means all groups. A surface with no entry '
+            "keeps every group active. Overrides the built-in defaults.",
         ),
     )
 
@@ -1745,6 +1929,14 @@ class AppConfig:
     tools: ToolsConfig = field(
         default_factory=ToolsConfig,
         metadata=_meta("Tools", "Tool-output handling — user-teachable projection rules."),
+    )
+    feedback: FeedbackConfig = field(
+        default_factory=FeedbackConfig,
+        metadata=_meta("Feedback", "👍/👎 capture on AI judgments + accuracy thresholds."),
+    )
+    agents_routing: AgentsRoutingConfig = field(
+        default_factory=AgentsRoutingConfig,
+        metadata=_meta("Agent Routing", "Suggest-first specialist routing."),
     )
 
     dashboard: DashboardConfig = field(
@@ -1854,6 +2046,12 @@ class AppConfig:
         tools_data = data.get("tools", {})
         if not isinstance(tools_data, dict):
             tools_data = {}
+        feedback_data = data.get("feedback", {})
+        if not isinstance(feedback_data, dict):
+            feedback_data = {}
+        agents_routing_data = data.get("agents_routing", {})
+        if not isinstance(agents_routing_data, dict):
+            agents_routing_data = {}
         skills_data = data.get("skills", {})
         if not isinstance(skills_data, dict):
             skills_data = {}
@@ -1912,6 +2110,10 @@ class AppConfig:
                         # lifecycle triggers; the write side only emits ``triggers``.
                         triggers=entry.get("triggers", entry.get("hooks", [])) or [],
                         source=entry.get("source", "personalclaw"),
+                        # Agent routing metadata — MUST be read
+                        # here (the loader-allowlist gotcha) or dropped on reload.
+                        specialty=entry.get("specialty", ""),
+                        route_hints=entry.get("route_hints", ""),
                     )
 
         # Parse memory_stores; synthesize default if missing
@@ -2023,6 +2225,8 @@ class AppConfig:
                 show_timestamps=dashboard_data.get("show_timestamps", False),
                 show_thinking_inline=dashboard_data.get("show_thinking_inline", False),
                 simplified_tool_names=dashboard_data.get("simplified_tool_names", False),
+                followup_chips=dashboard_data.get("followup_chips", True),
+                stream_reveal=dashboard_data.get("stream_reveal", "smooth"),
                 confirm_close_session=dashboard_data.get("confirm_close_session", False),
                 auto_open_browser=dashboard_data.get("auto_open_browser", True),
                 update_dev_mode=dashboard_data.get("update_dev_mode", False),
@@ -2064,10 +2268,34 @@ class AppConfig:
                         name=str(r.get("name", "")),
                         match_regex=str(r.get("match_regex", "")),
                         strategy=str(r.get("strategy", "log")),
+                        head=int(r.get("head", 0) or 0),
+                        tail=int(r.get("tail", 0) or 0),
+                        keep=str(r.get("keep", "")),
+                        skip=str(r.get("skip", "")),
+                        count=str(r.get("count", "")),
                     )
                     for r in tools_data.get("projection_rules", [])
                     if isinstance(r, dict) and str(r.get("match_regex", "")).strip()
                 ],
+                bg_compress_enabled=bool(tools_data.get("bg_compress_enabled", True)),
+                bg_compress_idle_days=float(tools_data.get("bg_compress_idle_days", 7.0)),
+                groups_enabled=bool(tools_data.get("groups_enabled", False)),
+                group_defaults={
+                    str(k): [str(g) for g in v if isinstance(g, str)]
+                    for k, v in (tools_data.get("group_defaults") or {}).items()
+                    if isinstance(k, str) and isinstance(v, list)
+                },
+            ),
+            feedback=FeedbackConfig(
+                enabled=bool(feedback_data.get("enabled", True)),
+                retire_threshold=float(feedback_data.get("retire_threshold", 0.4)),
+                min_n=int(feedback_data.get("min_n", 5)),
+                window_days=int(feedback_data.get("window_days", 90)),
+            ),
+            agents_routing=AgentsRoutingConfig(
+                enabled=bool(agents_routing_data.get("enabled", True)),
+                min_confidence=float(agents_routing_data.get("min_confidence", 0.62)),
+                cooldown_hours=float(agents_routing_data.get("cooldown_hours", 24.0)),
             ),
             skills=SkillsConfig(
                 max_triggered=int(skills_data.get("max_triggered", 3)),
@@ -2303,6 +2531,8 @@ class AppConfig:
             "memory_stores": {name: asdict(ms_cfg) for name, ms_cfg in self.memory_stores.items()},
             "inbox": asdict(self.inbox),
             "tools": asdict(self.tools),
+            "feedback": asdict(self.feedback),
+            "agents_routing": asdict(self.agents_routing),
             "loops": asdict(self.loops),
             "skills": asdict(self.skills),
             "workflows": asdict(self.workflows),

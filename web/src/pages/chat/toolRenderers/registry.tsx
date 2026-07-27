@@ -110,6 +110,7 @@ export function renderToolOutput(seg: ToolSegment): ReactNode {
  *  cards stop falling through to plain text. */
 const _DIFF_RE = /^(diff --git |@@ -\d|index [0-9a-f]+\.\.|\+\+\+ |--- )/m
 const _TEST_RE = /\b(PASSED|FAILED|\d+ passed|\d+ failed|=+ test session|FAIL\b|AssertionError)\b/
+const _CODE_RE = /^\s*(def |class |import |from \w+ import |function |const |let |var |pub fn |fn |func |interface |type \w+ (struct|interface)|package |#include |public |private |protected )/gm
 export function sniffContentType(text: string | undefined): string {
   const s = (text ?? '').slice(0, 4096)
   if (!s.trim()) return 'generic'
@@ -119,7 +120,17 @@ export function sniffContentType(text: string | undefined): string {
     try { JSON.parse((text ?? '').trim()); return 'json' } catch { /* not json */ }
   }
   if (looksCsv(s)) return 'csv'
+  if (looksCode(s)) return 'code'
   return 'generic'
+}
+function looksCode(sample: string): boolean {
+  // Mirrors the backend's conservative density gate (shebang, or ≥3 definition/import
+  // markers at ≥5% of lines) — a stray "import" in prose must not trip it.
+  if (sample.startsWith('#!')) return true
+  const lines = sample.split('\n').filter((l) => l.trim())
+  if (lines.length < 8) return false
+  const hits = (sample.match(_CODE_RE) || []).length
+  return hits >= 3 && hits / lines.length >= 0.05
 }
 function looksCsv(sample: string): boolean {
   const lines = sample.split('\n').filter((l) => l.trim()).slice(0, 5)

@@ -134,25 +134,39 @@ class ToolRetriever:
             except Exception:
                 self._embed_cache[name] = None
 
-    def select(self, query: str) -> list:
+    def select(self, query: str, *, restrict: set[str] | None = None) -> list:
         """Return the tool defs to surface this turn (a subset of the catalog).
 
-        Fail-open: if the union would be ≥ the whole catalog (the common case
-        until catalogs grow), or anything goes wrong, return the FULL catalog.
+        ``restrict`` limits selection to those tool names — the tool-GROUP seam
+        (CONTEXT-ECONOMY §5.3): retrieval selects *within* the active groups, so
+        the K budget is spent on tools whose schemas can actually ride this turn,
+        while :meth:`search` still ranks the FULL catalog across inactive groups.
+
+        Fail-open: if the union would be ≥ the whole (restricted) catalog — the
+        common case until catalogs grow — or anything goes wrong, return it all.
         """
         try:
-            return self._select(query)
+            return self._select(query, restrict=restrict)
         except Exception:
             logger.debug("tool retrieval failed — surfacing full catalog", exc_info=True)
-            return list(self._defs)
+            return self._pool(restrict)
 
-    def _select(self, query: str) -> list:
-        total = len(self._defs)
+    def _pool(self, restrict: set[str] | None) -> list:
+        """The candidate defs for selection (the full catalog, or the restriction)."""
+        if restrict is None:
+            return list(self._defs)
+        return [d for d in self._defs if getattr(d, "name", "") in restrict]
+
+    def _select(self, query: str, *, restrict: set[str] | None = None) -> list:
+        pool = self._pool(restrict)
+        pool_names = {getattr(d, "name", "") for d in pool}
+        total = len(pool)
         if total <= self._k:
-            return list(self._defs)  # no-op: everything fits
+            return pool  # no-op: everything fits
 
         q = (query or "").strip()
         selected: set[str] = set(self._core) | set(self._sticky) | self._structural(q)
+        selected &= pool_names  # never surface a tool outside the candidate pool
 
         query_words = set(re.findall(r"\w+", q.lower()))
         scored: list[tuple[float, str]] = []
@@ -167,7 +181,7 @@ class ToolRetriever:
                 self._ensure_embeddings(embed_fn, model)
 
         for name, d in self._by_name.items():
-            if name in selected:
+            if name in selected or name not in pool_names:
                 continue
             desc_words = set(
                 re.findall(r"\w+", f"{name} {getattr(d, 'description', '') or ''}".lower())
@@ -187,10 +201,10 @@ class ToolRetriever:
         for _score, name in scored[:room]:
             selected.add(name)
 
-        # If selection didn't actually reduce (rare), just return full (fail-open).
+        # If selection didn't actually reduce (rare), just return the pool (fail-open).
         if len(selected) >= total:
             self._last_surfaced = total
-            return list(self._defs)
+            return pool
         self._last_surfaced = len(selected)
         return [d for n, d in self._by_name.items() if n in selected]
 

@@ -381,6 +381,14 @@ async def start_dashboard(
     app.router.add_get("/api/doctor/{capability}", handlers.api_doctor_capability)
     # No-model degraded-mode contract
     app.router.add_get("/api/resilience/degraded", handlers.api_degraded)
+    # Feedback Signal — 👍/👎 capture + per-producer accuracy
+    from personalclaw.dashboard.handlers.feedback import register_feedback_routes
+
+    register_feedback_routes(app)
+    # Investigate Anywhere — chat-with-context from any entity row
+    from personalclaw.dashboard.handlers.investigate import register_investigate_routes
+
+    register_investigate_routes(app)
     # Confirm-gated fixes + trust simulators + selftest.
     # POST routes don't collide with the {capability} GET; the two GETs above are
     # ordered before it.
@@ -653,6 +661,10 @@ async def start_dashboard(
     # Context injection (App Kit — silent background context)
     app.router.add_post("/api/chat/sessions/{session}/context", chat.api_chat_session_context)
     app.router.add_post("/api/chat/sessions/{session}/fork", chat.api_chat_session_fork)
+    # Restore a rewind tail as a NEW fork (restore = fork, never swap)
+    app.router.add_post(
+        "/api/chat/sessions/{session}/fork-rewound", chat.api_chat_session_fork_rewound
+    )
     app.router.add_post("/api/chat/sessions/{session}/undo", chat.api_chat_session_undo)
     # Side chat (ephemeral, isolated Q&A against a frozen parent snapshot)
     app.router.add_post("/api/chat/sessions/{session}/side/open", chat.api_side_open)
@@ -668,6 +680,17 @@ async def start_dashboard(
     app.router.add_get("/api/agents", handlers.api_personalclaw_agents)
     app.router.add_post("/api/agents", handlers.api_personalclaw_agents_create)
     app.router.add_post("/api/agents/sync", handlers.api_personalclaw_agents_sync)
+    # Agent routing suppression endpoints — registered BEFORE the
+    # /api/agents/{name} CRUD routes so "routing" is never captured as an agent name.
+    from personalclaw.dashboard.handlers.routing import (
+        api_routing_dismiss,
+        api_routing_status,
+        api_routing_unmute,
+    )
+
+    app.router.add_get("/api/agents/routing/status", api_routing_status)
+    app.router.add_post("/api/agents/routing/dismiss", api_routing_dismiss)
+    app.router.add_post("/api/agents/routing/unmute", api_routing_unmute)
     app.router.add_put("/api/agents/{name}", handlers.api_personalclaw_agent_update)
     app.router.add_delete("/api/agents/{name}", handlers.api_personalclaw_agent_delete)
     # Agent marketplace — local filesystem + extensible registry
@@ -819,6 +842,7 @@ async def start_dashboard(
     # Tools — aggregated listing from all tool providers
     from personalclaw.dashboard.handlers.tools import (
         api_providers_toggle,
+        api_tool_groups,
         api_tool_invoke,
         api_tools_list,
         api_tools_savings,
@@ -830,6 +854,9 @@ async def start_dashboard(
     app.router.add_post("/api/tools/toggle", api_tools_toggle)
     app.router.add_post("/api/tools/provider-toggle", api_providers_toggle)
     app.router.add_get("/api/tools/savings", api_tools_savings)
+    # Static route BEFORE any dynamic sibling would shadow it (registration order
+    # is match order) — the group partition + per-surface activation defaults.
+    app.router.add_get("/api/tools/groups", api_tool_groups)
 
     # Manifest — the generated self-description (tools + routes + providers) an
     # agent reads to drive this instance instead of guessing signatures.
@@ -1036,7 +1063,14 @@ async def start_dashboard(
             projection.set_user_rules(
                 [
                     projection.ProjectionRule(
-                        name=r.name, match_regex=r.match_regex, strategy=r.strategy
+                        name=r.name,
+                        match_regex=r.match_regex,
+                        strategy=r.strategy,
+                        head=r.head,
+                        tail=r.tail,
+                        keep=r.keep,
+                        skip=r.skip,
+                        count=r.count,
                     )
                     for r in AppConfig.load().tools.projection_rules
                 ]

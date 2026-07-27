@@ -209,6 +209,7 @@ class _ChatSession:
         "_trust_reads",
         "_agent_floor_seeded",
         "_task_mode",
+        "_investigate_ctx",
         "_suppress_autonudge_rearm",
         "_titled",
         "_resumed_count",
@@ -242,6 +243,7 @@ class _ChatSession:
         "_pending_context",
         "_app",
         "_last_turn_errored",
+        "_followups_task",
         "_pending_variants",
         "_lock",
         "forked_from",
@@ -339,6 +341,10 @@ class _ChatSession:
         #   'build' — scoped to producing an artifact/widget/skill.
         # Complements approval mode: e.g. Plan + Trust is a valid combination.
         self._task_mode: str = "agent"
+        # Investigate Anywhere: the staged context envelope (a dict from
+        # InvestigateContext.to_dict) consumed + cleared by the FIRST turn's
+        # _inject_investigate_context. Transient — never persisted with history.
+        self._investigate_ctx: dict | None = None
         # When set, chat_runner skips re-arming the autonudge idle timer on turn
         # exit. The goal-loop re-prompt loop sets this while it drives several
         # back-to-back turns within ONE logical cycle, so the idle timer doesn't
@@ -383,6 +389,9 @@ class _ChatSession:
         self._pending_context: list[dict[str, Any]] = []
         self._app: str = ""  # owning app identity (empty = dashboard user)
         self._last_turn_errored: bool = False  # set by _run_chat on a crashed turn
+        # Follow-up chips: the fire-and-forget background task that
+        # suggests next messages after a completed turn; cancelled by the next dispatch.
+        self._followups_task: asyncio.Task | None = None  # type: ignore[type-arg]
         # Regenerate feature: variants pending attachment to next finalized assistant message
         self._pending_variants: list[dict] = []
         self._lock = asyncio.Lock()

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Copy, Check, RotateCcw, GitBranch, Volume2, Square, Pencil, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Copy, Check, RotateCcw, GitBranch, Volume2, Square, Pencil, ChevronLeft, ChevronRight, Rewind } from 'lucide-react'
 
 /** Action bar below an ASSISTANT turn. Copy + Speak always; Regenerate only on
  *  the last turn (it replaces the latest reply); Fork from any turn (branches a
@@ -59,16 +59,20 @@ function VariantSwitcher({ count, idx, onSwitch }: { count: number; idx: number;
   )
 }
 
-/** Action bar below a USER turn — Copy, Edit & resend (re-runs from that point),
- *  Fork. Right-aligned to sit under the bubble. `canFork` hides Fork on a
- *  non-persistent session (the backend refuses to fork temporary/incognito). */
-export function UserActions({ text, canFork = true, onEdit, onFork }: { text: string; canFork?: boolean; onEdit: () => void; onFork: () => void }) {
+/** Action bar below a USER turn — Copy, Edit & resend, Rewind, Fork. Right-aligned
+ *  to sit under the bubble. `canFork` hides Fork on a non-persistent session (the
+ *  backend refuses to fork temporary/incognito). Rewind is offered only on
+ *  NON-last user turns (`canRewind`): editing an earlier turn replays from there
+ *  and keeps the discarded tail in history (fork-and-swap); the last turn uses
+ *  plain Edit & resend (nothing to retain). */
+export function UserActions({ text, canFork = true, canRewind = false, onEdit, onRewind, onFork }: { text: string; canFork?: boolean; canRewind?: boolean; onEdit: () => void; onRewind?: () => void; onFork: () => void }) {
   const [copied, setCopied] = useState(false)
   const copy = () => { navigator.clipboard?.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {}) }
   return (
     <div className="mt-1.5 flex items-center justify-end gap-0.5 translate-y-0.5 opacity-0 transition duration-150 group-hover/msg:translate-y-0 group-hover/msg:opacity-100 focus-within:translate-y-0 focus-within:opacity-100">
       <ActBtn icon={copied ? Check : Copy} label={copied ? 'Copied' : 'Copy'} onClick={copy} done={copied} />
       <ActBtn icon={Pencil} label="Edit & resend" onClick={onEdit} />
+      {canRewind && onRewind && <ActBtn icon={Rewind} label="Rewind to here" onClick={onRewind} />}
       {canFork && <ActBtn icon={GitBranch} label="Fork from here" onClick={onFork} />}
     </div>
   )

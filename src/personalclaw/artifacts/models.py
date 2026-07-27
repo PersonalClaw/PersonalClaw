@@ -157,6 +157,10 @@ class Artifact:
     # Optional containing Project (Projects native entity) this artifact belongs to.
     # "" = unscoped. Lets a project's outputs surface alongside its loops/code/tasks.
     project_id: str = ""
+    # Optional user-defined library collection (a free-form grouping label for the
+    # artifacts library — ARTIFACTS S1). "" = uncollected. Tolerant read: pre-existing
+    # meta.json without the key loads as "" (clean break under the pre-1.0 banner).
+    collection: str = ""
 
     def to_dict(self, *, persist: bool = False) -> dict[str, Any]:
         """Serialize. ``persist=True`` (meta.json) drops the transient/derived
@@ -174,6 +178,7 @@ class Artifact:
             "updated_at": self.updated_at,
             "source_path": self.source_path,
             "project_id": self.project_id,
+            "collection": self.collection,
             "mime": self.mime,
             "events": [e.to_dict() for e in self.events],
         }
@@ -199,6 +204,7 @@ class Artifact:
             source_path=str(d.get("source_path", "")),
             live_dirty=bool(d.get("live_dirty", False)),
             project_id=str(d.get("project_id", "")),
+            collection=str(d.get("collection", "")),
             mime=str(d.get("mime", "")),
         )
 

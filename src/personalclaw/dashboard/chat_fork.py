@@ -197,3 +197,107 @@ async def api_chat_session_fork(request: web.Request) -> web.Response:
             "prompt": prompt,
         }
     )
+
+
+async def api_chat_session_fork_rewound(request: web.Request) -> web.Response:
+    """POST /api/chat/sessions/{session}/fork-rewound — restore a rewind tail as a fork.
+
+    True rewind (CHAT-CRAFT S1) retains the discarded tail on the edited user
+    message's ``rewound`` chain. Restoring it never swaps the active timeline (that
+    would reintroduce the branch bookkeeping the plan deliberately avoids); instead
+    it forks — reconstructing ``pre-edit history + retained tail`` into a NEW session.
+
+    Body: ``{ index: int, snapshot_index?: int }`` — ``index`` is the visible
+    user/assistant index of the edited turn; ``snapshot_index`` selects which
+    retained tail (default: the most recent, i.e. last in the chain).
+    """
+    state: DashboardState = request.app["state"]
+    name = request.match_info["session"]
+    session = state._sessions.get(name)
+    if not session:
+        return web.json_response({"error": "not found"}, status=404)
+    if session.memory_mode != "persistent":
+        return web.json_response({"error": "cannot fork a non-persistent session"}, status=400)
+    if len(state._sessions) >= _MAX_SESSIONS_FOR_FORK:
+        return web.json_response(
+            {"error": f"session cap reached ({_MAX_SESSIONS_FOR_FORK})"}, status=429
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be a JSON object"}, status=400)
+    index = body.get("index")
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        return web.json_response({"error": "index must be a non-negative integer"}, status=400)
+    snapshot_index = body.get("snapshot_index")
+    if snapshot_index is not None and (
+        isinstance(snapshot_index, bool) or not isinstance(snapshot_index, int)
+    ):
+        return web.json_response({"error": "snapshot_index must be an integer"}, status=400)
+
+    async with session._fork_lock:
+        visible = [m for m in session.messages if m.get("role") in ("user", "assistant")]
+        if index >= len(visible):
+            return web.json_response({"error": "index out of range"}, status=400)
+        edited = visible[index]
+        chain = edited.get("rewound")
+        if not isinstance(chain, list) or not chain:
+            return web.json_response({"error": "no retained tail at this turn"}, status=400)
+        snap = chain[snapshot_index] if snapshot_index is not None else chain[-1]
+        if not isinstance(snap, dict) or not isinstance(snap.get("messages"), list):
+            return web.json_response({"error": "invalid snapshot"}, status=400)
+        # Reconstruct the pre-rewind timeline: history BEFORE the edited turn +
+        # the retained tail (which begins with the edited turn's OLD content).
+        reconstructed = list(visible[:index]) + list(snap["messages"])
+
+        new_session = state.get_or_create_session(
+            name=None,
+            agent=session.agent,
+            workspace_dir=session.workspace_dir,
+            model=session.model,
+            mode=session.mode,
+        )
+        new_session.forked_from = _history_key_for(session.key)
+        new_session.reasoning_effort = session.reasoning_effort
+        new_session.folder_id = session.folder_id
+        parent_title = session.title if session._titled else "Untitled"
+        parent_title, _ = redact_exfiltration_urls(parent_title)
+        parent_title, _ = redact_credentials(parent_title)
+        new_session.title = f"Rewound from {parent_title}"
+        new_session._titled = True
+        try:
+            for m in reconstructed:
+                role = m.get("role", "assistant")
+                content = m.get("content", "")
+                if role != "user":
+                    content, _ = redact_exfiltration_urls(content)
+                    content, _ = redact_credentials(content)
+                cls = "msg msg-u" if role == "user" else "msg msg-a"
+                new_session.append(role, content, cls, ts=m.get("ts", ""), broadcast=False)
+            new_session.drain()
+            _save_session_to_history(state, new_session)
+            new_session._resumed_count = len(new_session.messages)
+        except Exception:
+            state._sessions.pop(new_session.key, None)
+            raise
+
+    sel().log_api_access(
+        caller="dashboard",
+        operation="chat.fork_rewound",
+        outcome="allowed",
+        source="dashboard",
+        resources=f"from={session.key},to={new_session.key},messages={len(reconstructed)}",
+    )
+    _sync_dashboard_sessions(state)
+    state.push_sessions_update()
+    return web.json_response(
+        {
+            "ok": True,
+            "key": new_session.key,
+            "title": new_session.title,
+            "messages": len(reconstructed),
+        }
+    )

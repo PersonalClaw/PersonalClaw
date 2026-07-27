@@ -2,14 +2,17 @@ import { useState } from 'react'
 import { Scissors, Plus, X, AlertTriangle, Gauge } from 'lucide-react'
 import { api, type ProjectionRule, type ProjectionStrategy, type ToolsSavings } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
+import { Button } from '../../ui/Button'
+import { NumberField, TextInput } from '../../ui/forms'
 import { PanelHeader, Section } from './settingsUI'
 
 const STRATEGIES: { id: ProjectionStrategy; label: string; blurb: string }[] = [
   { id: 'log', label: 'Log', blurb: 'keep head + error/warning lines + tail' },
   { id: 'test', label: 'Test', blurb: 'keep failures + the summary line' },
   { id: 'diff', label: 'Diff', blurb: 'keep changed hunks + a +N/−M stat' },
-  { id: 'json', label: 'JSON', blurb: 'keep the shape (keys/types) + a sample' },
+  { id: 'json', label: 'JSON', blurb: 'keep field schema + first/last items' },
   { id: 'csv', label: 'CSV', blurb: 'keep the header + first/last rows' },
+  { id: 'code', label: 'Code', blurb: 'keep signatures + docstrings + line map' },
 ]
 
 /** User-teachable tool-output projection rules (TokenJuice, OP6).
@@ -55,7 +58,7 @@ export function ProjectionRulesPanel() {
           ))}
           {list.length === 0 && (
             <div className="rounded-lg bg-surface-container px-3 py-3 text-on-surface-low text-[0.8125rem]">
-              No custom rules — the builtin projectors handle logs, diffs, JSON, test output, and CSV automatically. Add a rule only for a tool whose large output isn't recognised.
+              No custom rules — the builtin projectors handle logs, diffs, JSON, test output, CSV, and code automatically, and a builtin rule pack recognises common command output (git, pytest, npm, docker…). Add a rule only for a tool whose large output isn't recognised.
             </div>
           )}
           <AddRule disabled={busy} onAdd={(r) => save([...list, r])} />
@@ -107,6 +110,9 @@ function StrategyPicker({ value, disabled, onChange }: {
 function RuleRow({ rule, disabled, onChange, onRemove }: {
   rule: ProjectionRule; disabled?: boolean; onChange: (r: ProjectionRule) => void; onRemove: () => void
 }) {
+  const hasOps = Boolean(rule.head || rule.tail || rule.keep || rule.skip || rule.count)
+  const [showOps, setShowOps] = useState(hasOps)
+  const inputCls = 'h-9 rounded-md bg-surface px-2 font-mono text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
   return (
     <div className="flex flex-col gap-2 rounded-lg bg-surface-container px-3 py-2.5">
       <div className="flex items-center gap-2">
@@ -120,7 +126,39 @@ function RuleRow({ rule, disabled, onChange, onRemove }: {
       </div>
       <input value={rule.match_regex} disabled={disabled} spellCheck={false} placeholder="match regex, e.g. ^\[MYAPP\]"
         onChange={(e) => onChange({ ...rule, match_regex: e.target.value })}
-        className="h-9 rounded-md bg-surface px-2 font-mono text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+        className={inputCls} />
+      {/* Rule ops v2: declarative line operations. When any is set they replace the
+          strategy projector; still pure data — no code runs. */}
+      {showOps ? (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+          <div className="flex flex-col gap-1 text-on-surface-low text-[0.6875rem]">head lines
+            <NumberField value={rule.head ?? 0} min={0} width="w-full" ariaLabel="Keep head lines"
+              onChange={(n) => onChange({ ...rule, head: n })} />
+          </div>
+          <div className="flex flex-col gap-1 text-on-surface-low text-[0.6875rem]">tail lines
+            <NumberField value={rule.tail ?? 0} min={0} width="w-full" ariaLabel="Keep tail lines"
+              onChange={(n) => onChange({ ...rule, tail: n })} />
+          </div>
+          <div className="flex flex-col gap-1 text-on-surface-low text-[0.6875rem]">keep matching
+            <TextInput value={rule.keep ?? ''} size="sm" mono placeholder="regex" ariaLabel="Keep lines matching regex"
+              onChange={(v) => onChange({ ...rule, keep: v })} />
+          </div>
+          <div className="flex flex-col gap-1 text-on-surface-low text-[0.6875rem]">skip matching
+            <TextInput value={rule.skip ?? ''} size="sm" mono placeholder="regex" ariaLabel="Skip lines matching regex"
+              onChange={(v) => onChange({ ...rule, skip: v })} />
+          </div>
+          <div className="flex flex-col gap-1 text-on-surface-low text-[0.6875rem]">fold matching
+            <TextInput value={rule.count ?? ''} size="sm" mono placeholder="regex" ariaLabel="Fold lines matching regex"
+              onChange={(v) => onChange({ ...rule, count: v })} />
+          </div>
+        </div>
+      ) : (
+        <div className="self-start">
+          <Button variant="ghost" size="xs" disabled={disabled} onClick={() => setShowOps(true)}>
+            + line operations (head/tail window, keep/skip/fold filters)
+          </Button>
+        </div>
+      )}
     </div>
   )
 }

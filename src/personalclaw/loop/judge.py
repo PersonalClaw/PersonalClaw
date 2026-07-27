@@ -215,7 +215,7 @@ async def assess_cycle(
         def provider_factory(_session_key):
             from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
 
-            return resolve_provider_for_use_case("reasoning")
+            return resolve_provider_for_use_case("loops")
 
     from personalclaw.eval.judge import LLMJudge
 
@@ -283,7 +283,7 @@ async def assess_cycle_skeptic(
         def provider_factory(_session_key):
             from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
 
-            return resolve_provider_for_use_case("reasoning")
+            return resolve_provider_for_use_case("loops")
 
     from personalclaw.eval.judge import LLMJudge
 

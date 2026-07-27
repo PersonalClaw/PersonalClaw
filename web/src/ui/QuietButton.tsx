@@ -12,9 +12,10 @@ import { cx } from './cx'
  *  inline; this is the single source. Children are the leading glyph + label
  *  (they carry the accessible name); `title` adds the supplementary tooltip
  *  three of the sites pass. */
-export function QuietButton({ children, onClick, title, className }: {
+export function QuietButton({ children, onClick, onDoubleClick, title, className }: {
   children: ReactNode
   onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void
+  onDoubleClick?: (e: React.MouseEvent<HTMLButtonElement>) => void
   title?: string
   className?: string
 }) {
@@ -22,6 +23,7 @@ export function QuietButton({ children, onClick, title, className }: {
     <button
       type="button"
       onClick={onClick}
+      onDoubleClick={onDoubleClick}
       title={title}
       className={cx(
         'inline-flex items-center gap-1 rounded-md px-2 h-7 text-[0.75rem]',

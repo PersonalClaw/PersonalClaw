@@ -475,7 +475,7 @@ export interface SkillFile { path: string; size: number }
 export interface SkillMarketplace { name: string; type: string }
 export interface SkillSearchResult { id: string; name: string; description: string; source: string; url?: string; installs?: number }
 export interface SkillMarketplaceDetail { id: string; name: string; audit_status?: string; files: Array<{ path: string; binary?: boolean }>; frontmatter?: Record<string, unknown>; body?: string; marketplace?: string }
-export interface ToolItem { name: string; description: string; provider: string; parameters?: Record<string, unknown>; requires_approval?: boolean; risk_level?: 'safe' | 'caution' | 'destructive'; disabled?: boolean; locked?: boolean; providerDisabled?: boolean }
+export interface ToolItem { name: string; description: string; provider: string; parameters?: Record<string, unknown>; requires_approval?: boolean; risk_level?: 'safe' | 'caution' | 'destructive'; disabled?: boolean; locked?: boolean; providerDisabled?: boolean; group?: string }
 export interface ToolLoadFailure { provider: string; error: string }
 // The generated self-description document served at GET /api/manifest — the same
 // shape an agent driving this instance reads (personalclaw/manifest.py).
@@ -654,6 +654,8 @@ export interface InboxItem {
   source?: string; can_reply?: boolean; reply_target?: string
   // P11: user-favorited (a strong engagement signal + a star in the UI).
   favorited?: boolean
+  // Feedback Signal: per-judgment producer meta the thumbs attribute to.
+  feedback_producers?: Record<'classification' | 'draft' | 'digest', FeedbackProducer | undefined>
 }
 export interface InboxProvider { name: string; display_name: string; source_name: string }
 export interface InboxHealth { running: boolean; last_poll_at?: number; last_poll_ok?: boolean; last_error?: string; poll_count?: number; stale?: boolean }
@@ -736,8 +738,50 @@ export interface DeniedCommands { builtin: string[]; user: string[] }
 export interface EgressPolicyConfig { allow_hosts: string[]; deny_hosts: string[]; allow_private: boolean }
 // User-teachable tool-output projection rule (TokenJuice OP6): output matching
 // match_regex is projected with `strategy` (a builtin content type).
-export type ProjectionStrategy = 'log' | 'diff' | 'json' | 'test' | 'csv'
-export interface ProjectionRule { name: string; match_regex: string; strategy: ProjectionStrategy }
+export type ProjectionStrategy = 'log' | 'diff' | 'json' | 'test' | 'csv' | 'code'
+export interface ProjectionRule {
+  name: string
+  match_regex: string
+  strategy: ProjectionStrategy
+  /** Rule ops v2 — optional declarative line operations (0/empty = off). */
+  head?: number
+  tail?: number
+  keep?: string
+  skip?: string
+  count?: string
+}
+// Feedback Signal — the closed judgment-target vocabulary + producer meta.
+export type FeedbackTargetKind =
+  | 'inbox_classification' | 'inbox_draft' | 'inbox_digest'
+  | 'loop_finding' | 'routing_suggestion' | 'proposal_content' | 'app_judgment'
+export interface FeedbackProducer { producer_kind: string; producer_id: string }
+export interface FeedbackRecordBody {
+  target_kind: FeedbackTargetKind
+  target_id: string
+  verdict: 'up' | 'down'
+  reason?: string
+  snapshot?: Record<string, unknown>
+  producer_kind?: string
+  producer_id?: string
+}
+export interface FeedbackProducerRow {
+  producer_kind: string
+  producer_id: string
+  ups: number
+  downs: number
+  n: number
+  accuracy?: number
+  suppressed?: boolean
+  collecting?: boolean
+}
+export interface FeedbackProducersResponse {
+  producers: FeedbackProducerRow[]
+  min_n: number
+  window_days: number
+}
+// Investigate Anywhere: the origin chip fields the session detail carries.
+export interface InvestigateOrigin { kind: string; title: string; back_link: string }
+
 export interface ToolsSavings {
   saved_chars: number
   saved_tokens_estimated: number
@@ -746,6 +790,29 @@ export interface ToolsSavings {
   top_compressor: string | null
   by_compressor: Record<string, number>
   rows: unknown[]
+}
+
+/** Tool GROUPS (Context Economy §5) — the provider-grain partition of the tool
+ *  surface. Activation is per-session runtime state (the agent drives it via
+ *  reset_tools); what's configurable is `enabled` + the per-surface defaults. */
+export interface ToolGroupInfo {
+  name: string
+  display: string
+  alwaysOn: boolean
+  toolCount: number
+  tools: string[]
+  capability: string
+  /** False when the group's declared capability doesn't resolve — its tools are
+   *  hidden entirely rather than offered in a state where they'd fail. */
+  offerable: boolean
+  instructions: string
+}
+
+export interface ToolGroupsData {
+  enabled: boolean
+  groups: ToolGroupInfo[]
+  /** surface → group names that start ACTIVE. An empty array means "all groups". */
+  surfaceDefaults: Record<string, string[]>
 }
 
 export interface SystemAgentStats {
@@ -881,6 +948,8 @@ export interface DashboardConfig {
   // server-stored message display prefs (consistent across browsers)
   send_on_enter: boolean; show_timestamps: boolean; show_thinking_inline: boolean
   simplified_tool_names: boolean; confirm_close_session: boolean
+  // Follow-up chips after each reply (default on) + streaming reveal cadence.
+  followup_chips: boolean; stream_reveal: 'smooth' | 'immediate'
   // Vestigial server field from the retired customizable-bento dashboard (the
   // grid + per-user layout persistence were dropped in the v2 launcher-forward
   // redesign — everyone gets one curated content-first layout now). No FE
@@ -893,6 +962,8 @@ export interface ChatModelOption { name: string; model_id: string; provider: str
 export interface SavedAgent {
   name: string; provider: string; provider_agent?: string; acp_mode?: string; model?: string; approval_mode?: string
   description?: string; system_prompt?: string; voice?: string; skills?: string[]; tools?: string[]; triggers?: string[]; source?: string; default_dir?: string; memory_store?: string
+  // Agent routing — suggest-first specialist routing metadata.
+  specialty?: string; route_hints?: string
   reserved?: boolean; editable?: boolean
 }
 
@@ -930,6 +1001,7 @@ export interface GoalLoop {
   status: LoopStatus; total_cycles: number; error_message: string | null
   created_at: number; started_at: number | null; completed_at: number | null; elapsed_seconds?: number
   findings?: LoopFinding[]; verdicts?: LoopVerdict[]; pending_question?: string | null; nudges?: LoopNudge[]
+  feedback_producer?: FeedbackProducer
   linked_task_ids?: string[]
   // The containing Project this loop scopes under (Projects native entity).
   // project_id = explicit user scope; tasks_project_id = the auto-provisioned backing
@@ -1098,6 +1170,9 @@ export interface Loop {
   // conflicting `evidence` types: goal string vs code unknown), keyed by loop.kind.
   findings?: (LoopFinding | CodeFinding)[]; verdicts?: LoopVerdict[]; marginal_scores?: number[]
   nudges?: LoopNudge[]; pending_question?: { question: string; why?: string } | string | null
+  // Feedback Signal: the producer the finding thumbs attribute to
+  // (("loop_judge", kind) — per-kind, each kind carries its own brief/rubric).
+  feedback_producer?: FeedbackProducer
   // Everything kind-specific. goal: {goal_type, granularity, sub_goals, deliverables,
   // rubric, ratchet_mode, verify_command, execution_plan}. code: {entry_stage,
   // project_kind, verify_command, test_command, queued_task_ids}. design:
@@ -1177,6 +1252,8 @@ export interface Artifact {
   created_at: string; updated_at: string
   content?: string | null; events: ArtifactEvent[]
   source_path: string; live_dirty: boolean; project_id?: string
+  // Optional library collection label (ARTIFACTS S1). "" = uncollected.
+  collection?: string
 }
 
 export const api = {
@@ -1190,6 +1267,11 @@ export const api = {
   updateAgent: (name: string, body: Record<string, unknown>) => put<{ ok: boolean }>(`/api/agents/${encodeURIComponent(name)}`, body),
   deleteAgent: (name: string) => del(`/api/agents/${encodeURIComponent(name)}`),
   setDefaultAgent: (name: string) => put<{ ok: boolean; default_agent: string }>('/api/config/default-agent', { agent: name }),
+  // Agent routing — suggestion-suppression endpoints. The suggestion
+  // itself arrives as a `routing_suggestion` WS push; these manage dismiss/mute state.
+  routingDismiss: (agent: string) => post<{ ok: boolean; count: number; muted: boolean }>('/api/agents/routing/dismiss', { agent }),
+  routingUnmute: (agent: string) => post<{ ok: boolean }>('/api/agents/routing/unmute', { agent }),
+  routingStatus: () => get<{ enabled: boolean; muted: string[]; dismissals: Record<string, { count: number; last_dismissed_at: number }> }>('/api/agents/routing/status'),
   // full backend config (read the `agent` subtree for Agent defaults) + the
   // single-field PATCH (allowlisted dotted paths — see _EDITABLE_CONFIG).
   personalclawConfig: () => get<Record<string, any>>('/api/config/personalclaw'),
@@ -1531,14 +1613,24 @@ export const api = {
   // every tab); returns the now-active index. 409 if the session is mid-turn.
   switchVariant: (session: string, index: number) =>
     post<{ ok: boolean; index: number }>(`/api/chat/sessions/${session}/switch-variant`, { index }),
-  editResend: (session: string, content: string, ts?: string, index?: number, client_ts?: string) =>
-    post<{ ok: boolean }>(`/api/chat/sessions/${session}/edit-resend`,
+  editResend: (session: string, content: string, ts?: string, index?: number, client_ts?: string, rewind?: boolean) =>
+    post<{ ok: boolean; rewound: number }>(`/api/chat/sessions/${session}/edit-resend`,
       // Prefer the original turn's ts to LOCATE the message; always send the index
       // as a fallback (un-hydrated optimistic turns have no ts) + a fresh client_ts
       // the backend stores on the re-appended message so a repeat edit still matches.
-      { content, ...(ts ? { ts } : {}), ...(index !== undefined ? { index } : {}), ...(client_ts ? { client_ts } : {}) }),
+      // rewind=true → fork-and-swap (edit ANY past turn): retain the discarded tail
+      // on the edited message + reset the provider so context rebuilds truncated.
+      { content, ...(ts ? { ts } : {}), ...(index !== undefined ? { index } : {}), ...(client_ts ? { client_ts } : {}), ...(rewind ? { rewind: true } : {}) }),
+  // Interrupt the running turn but KEEP the queue (unlike /stop). Optional queueId
+  // promotes that queued message to the front so it runs next (queue_promoted WS echo).
+  interruptChat: (session: string, queueId?: string) =>
+    post<{ ok: boolean }>(`/api/chat/sessions/${session}/interrupt`, queueId ? { queue_id: queueId } : {}),
   forkSession: (session: string, at_message_index?: number) =>
     post<{ ok: boolean; key: string; title: string; messages: number; prompt?: string }>(`/api/chat/sessions/${session}/fork`, at_message_index != null ? { at_message_index } : {}),
+  // Restore a rewind tail as a NEW fork — reconstructs pre-edit
+  // history + the retained tail into a fresh session (restore = fork, never swap).
+  forkRewound: (session: string, index: number, snapshot_index?: number) =>
+    post<{ ok: boolean; key: string; title: string; messages: number }>(`/api/chat/sessions/${session}/fork-rewound`, { index, ...(snapshot_index != null ? { snapshot_index } : {}) }),
   voiceSynthesize: (text: string, session = '') => post<{ ok: boolean; chunks: number }>('/api/voice/synthesize', { text, session }),
 
   // ── Unified Loop client (/api/loops, kind-aware) — the ONE surface for every kind
@@ -2011,6 +2103,22 @@ export const api = {
   // TokenJuice savings (counterfactual) summary — estimated tokens saved by output
   // projection this month, top compressor, per-compressor breakdown.
   toolsSavings: () => get<ToolsSavings>('/api/tools/savings'),
+  // Tool groups (Context Economy §5): the derived partition + per-surface
+  // activation defaults. Read-only — the flag and defaults are config writes.
+  toolGroups: () => get<ToolGroupsData>('/api/tools/groups'),
+  setToolGroupsEnabled: (enabled: boolean) =>
+    patch<Record<string, any>>('/api/config/personalclaw', { path: 'tools.groups_enabled', value: enabled }),
+  // Feedback Signal: 👍/👎 on AI judgment outputs + per-producer accuracy.
+  recordFeedback: (body: FeedbackRecordBody) => post<{ ok: boolean; id: string; verdict: string }>('/api/feedback', body),
+  feedbackTarget: (kind: FeedbackTargetKind, id: string) =>
+    get<{ verdict: 'up' | 'down' | null; reason?: string }>(`/api/feedback/target/${kind}/${encodeURIComponent(id)}`),
+  feedbackProducers: (windowDays?: number) =>
+    get<FeedbackProducersResponse>(`/api/feedback/producers${windowDays ? `?window_days=${windowDays}` : ''}`),
+  feedbackSnooze: (producer: FeedbackProducer) => post<{ ok: boolean }>('/api/feedback/producers/snooze', producer),
+  feedbackClear: (producer: FeedbackProducer) => post<{ ok: boolean }>('/api/feedback/producers/clear', producer),
+  // Investigate Anywhere: server-composed context envelope + staged session.
+  investigate: (body: { kind: string; id: string; back_link?: string }) =>
+    post<{ session_key: string; context: InvestigateOrigin & { snapshot: string; opening_prompt?: string } }>('/api/investigate', body),
 
   // upload (multipart — no JSON headers)
   // Extracted text content for an uploaded attachment (what the agent saw) — used

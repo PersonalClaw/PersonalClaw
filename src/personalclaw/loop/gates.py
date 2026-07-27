@@ -111,15 +111,17 @@ def verdict_rendered(raw: str | None) -> bool:
 
 
 async def judge_verdict(prompt: str) -> str:
-    """One-shot judge over the 'reasoning' provider (the robust bridge path, not the
-    config-only one_shot helper). The judge has NO write tools — any tool call it
-    attempts is rejected. Returns the collected text (or '' on failure). Used by the
-    code stage gate + any kind needing a conservative LLM verdict."""
+    """One-shot judge over the ``loops`` axis (the robust bridge path, not the
+    config-only one_shot helper) — loop judgments ride the loops chain so
+    long-horizon work gets its own model knob (MODEL-USE-CASES-V2; falls back to
+    chat when unbound). The judge has NO write tools — any tool call it attempts
+    is rejected. Returns the collected text (or '' on failure). Used by the code
+    stage gate + any kind needing a conservative LLM verdict."""
     from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
     from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
 
     try:
-        provider = resolve_provider_for_use_case("reasoning")
+        provider = resolve_provider_for_use_case("loops")
         await provider.start()
     except Exception:
         logger.warning("loop gate: judge provider unavailable", exc_info=True)

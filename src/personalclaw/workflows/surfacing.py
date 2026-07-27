@@ -100,11 +100,26 @@ def _is_eligible(wf: Workflow, turn: TurnScope) -> bool:
 
 async def eligible_workflows(turn: TurnScope) -> list[Workflow]:
     """All enabled workflows eligible for this turn, across providers (union of
-    scopes). Ranking happens in :func:`best_match`."""
+    scopes). Ranking happens in :func:`best_match`.
+
+    FEEDBACK-SIGNAL (plan 58): a workflow whose surfacing accuracy fell below the
+    retire threshold (per user 👎s, min-N gated) is excluded — one membership
+    check, no scoring change; fail-open (an error suppresses nothing).
+    """
     from personalclaw.workflows.registry import list_all_workflows
 
     workflows, _ = await list_all_workflows(limit=1000, offset=0)
-    return [wf for wf in workflows if _is_eligible(wf, turn)]
+    try:
+        from personalclaw.feedback import suppressed_producers
+
+        suppressed = suppressed_producers()
+    except Exception:  # noqa: BLE001 — fail open
+        suppressed = set()
+    return [
+        wf
+        for wf in workflows
+        if _is_eligible(wf, turn) and ("workflow_surfacing", wf.id) not in suppressed
+    ]
 
 
 def _keyword_score(query: str, match_text: str) -> float:

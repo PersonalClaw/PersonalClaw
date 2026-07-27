@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react'
 import {
   ChevronRight, Check, MessageSquare, Boxes, Mic, Volume2, Eye, ImagePlus,
-  Ear, Music, ScanEye, Clapperboard, Users, Download, type LucideIcon,
+  Ear, Music, ScanEye, Clapperboard, Users, Download, Code2, BrainCircuit,
+  Moon, Network, RefreshCcw, ArrowUp, ArrowDown, X, type LucideIcon,
 } from 'lucide-react'
-import { api, type AvailableModel } from '../../lib/api'
+import { api, type AvailableModel, type ProviderHealth } from '../../lib/api'
+import { IconButton } from '../../ui/IconButton'
 import { SearchField } from '../../ui/SearchField'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { confirm } from '../../ui/dialog'
@@ -11,42 +13,59 @@ import { PanelHeader, Section } from './settingsUI'
 import { ListSkeleton } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
 
-// Canonical use-cases (matches the backend's USE_CASES + MULTI_ACTIVE set).
-// `multi`: several models can be active (routing pool); else single-select.
+// Canonical use-cases (matches the backend's USE_CASES vocabulary).
+// `chain`: the binding is an ordered fallback CHAIN (position 0 = default,
+// later entries tried when an earlier provider's breaker is open or its build
+// fails) with a reorderable editor; else single-select.
 // `fallback` names the use-case this one INHERITS its binding from when no model
 // is pinned here (mirrors backend parent_capability). Its presence changes the
 // empty-picker state from a misleading "add a backend first" to an accurate
-// "already uses your <fallback> model; pin one here only to override".
-const USE_CASE_META: Record<string, { label: string; group?: string; description: string; multi: boolean; icon: LucideIcon; fallback?: string }> = {
-  chat: { label: 'Chat', description: 'Conversational models for chat and agent interactions.', multi: true, icon: MessageSquare },
-  embedding: { label: 'Embedding', description: 'Vector embedding models for knowledge and memory.', multi: false, icon: Boxes },
-  stt: { label: 'Speech-to-text', description: 'Voice transcription models.', multi: false, icon: Mic },
-  tts: { label: 'Text-to-speech', description: 'Voice synthesis models.', multi: false, icon: Volume2 },
-  diarization: { label: 'Speaker diarization', description: 'Labels "who spoke when" in audio/video (speaker turns). Served by diarization providers (ONNX, pyannote).', multi: false, icon: Users },
-  image_modality: { label: 'Image · Modality', group: 'Image', description: 'Models that understand images as input (vision / VLM).', multi: true, icon: Eye },
-  image_gen: { label: 'Image · Generation', group: 'Image', description: 'Models that generate images from a prompt.', multi: false, icon: ImagePlus },
-  audio_modality: { label: 'Audio · Modality', group: 'Audio', description: 'Models that understand audio as input.', multi: false, icon: Ear },
-  audio_gen: { label: 'Audio · Generation', group: 'Audio', description: 'Models that generate audio, music, or sound effects.', multi: false, icon: Music },
-  video_modality: { label: 'Video · Modality', group: 'Video', description: 'Models that understand video as input.', multi: false, icon: ScanEye },
-  video_gen: { label: 'Video · Generation', group: 'Video', description: 'Models that generate video from a prompt.', multi: false, icon: Clapperboard },
+// "already uses your <fallback> chain; pin one here only to override".
+const USE_CASE_META: Record<string, { label: string; group?: string; description: string; chain: boolean; icon: LucideIcon; fallback?: string }> = {
+  chat: { label: 'Chat', description: 'Conversational models for chat and agent interactions. Order matters: the first model is the default; later ones are fallbacks used when an earlier provider is down.', chain: true, icon: MessageSquare },
+  code_tools: { label: 'Code & tools', group: 'Chat routing', description: 'Native agent turns that lean on tool use and code work.', chain: true, icon: Code2, fallback: 'Chat' },
+  reasoning: { label: 'Reasoning', group: 'Chat routing', description: 'One-shot judgment calls — web-page extraction and other guarded single completions.', chain: true, icon: BrainCircuit, fallback: 'Chat' },
+  background: { label: 'Background', group: 'Chat routing', description: 'Housekeeping chores — session titles, tags, suggestions, digests, consolidation. Bind a cheap or local model here so chores stop burning your main chat model.', chain: true, icon: Moon, fallback: 'Chat' },
+  orchestration: { label: 'Orchestration', group: 'Chat routing', description: 'Supervising turns and subagents spawned without an explicit model.', chain: true, icon: Network, fallback: 'Chat' },
+  loops: { label: 'Loops', group: 'Chat routing', description: 'Autonomous goal-loop workers, gates and judges — long-horizon work that benefits from a long-context model.', chain: true, icon: RefreshCcw, fallback: 'Chat' },
+  embedding: { label: 'Embedding', group: 'Capabilities', description: 'Vector embedding models for knowledge and memory.', chain: false, icon: Boxes },
+  stt: { label: 'Speech-to-text', group: 'Capabilities', description: 'Voice transcription models.', chain: false, icon: Mic },
+  tts: { label: 'Text-to-speech', group: 'Capabilities', description: 'Voice synthesis models.', chain: false, icon: Volume2 },
+  diarization: { label: 'Speaker diarization', group: 'Capabilities', description: 'Labels "who spoke when" in audio/video (speaker turns). Served by diarization providers (ONNX, pyannote).', chain: false, icon: Users },
+  image_modality: { label: 'Image · Modality', group: 'Image', description: 'Models that understand images as input (vision / VLM).', chain: true, icon: Eye },
+  image_gen: { label: 'Image · Generation', group: 'Image', description: 'Models that generate images from a prompt.', chain: false, icon: ImagePlus },
+  audio_modality: { label: 'Audio · Modality', group: 'Audio', description: 'Models that understand audio as input.', chain: false, icon: Ear },
+  audio_gen: { label: 'Audio · Generation', group: 'Audio', description: 'Models that generate audio, music, or sound effects.', chain: false, icon: Music },
+  video_modality: { label: 'Video · Modality', group: 'Video', description: 'Models that understand video as input.', chain: false, icon: ScanEye },
+  video_gen: { label: 'Video · Generation', group: 'Video', description: 'Models that generate video from a prompt.', chain: false, icon: Clapperboard },
   // NOTE: knowledge-ingestion (OCR/vision/classify/consolidation) has NO dedicated
   // use-case rows — each ingestion node resolves directly to the relevant default
   // binding (Image·Modality / Chat / Speech-to-text). There is no per-role override.
 }
-const USE_CASE_ORDER = ['chat', 'embedding', 'stt', 'tts', 'diarization', 'image_modality', 'image_gen', 'audio_modality', 'audio_gen', 'video_modality', 'video_gen']
+const USE_CASE_ORDER = [
+  'chat', 'code_tools', 'reasoning', 'background', 'orchestration', 'loops',
+  'embedding', 'stt', 'tts', 'diarization',
+  'image_modality', 'image_gen', 'audio_modality', 'audio_gen', 'video_modality', 'video_gen',
+]
+
+// Chat sub-categories (mirrors backend CHAT_SUBCATEGORIES): models never declare
+// these as capabilities — their pickable pool is the CHAT-capable catalog.
+const CHAT_SUBCATEGORIES = new Set(['code_tools', 'reasoning', 'background', 'orchestration', 'loops'])
 
 /** The models a use-case can pick from: every catalog model declaring the capability
- *  (deduped by `provider:id`), PLUS a synthetic "unavailable" row for any ACTIVE binding
+ *  (a chat SUB-CATEGORY draws from the chat pool — models never declare "code_tools"),
+ *  deduped by `provider:id`, PLUS a synthetic "unavailable" row for any ACTIVE binding
  *  whose model is absent from the catalog (e.g. an ollama model deleted or never pulled).
  *  Without the synthetic row the use-case reads "N active" but the bound model is invisible
  *  AND unremovable in the picker — a phantom binding the user can't clear. Synthetic rows
  *  carry `downloaded:false` so the not-downloaded chip renders; toggling one off unbinds it.
  *  Pure + exported for unit testing. */
 export function capableModels(useCase: string, allModels: AvailableModel[], activeModels: string[]): AvailableModel[] {
+  const capability = CHAT_SUBCATEGORIES.has(useCase) ? 'chat' : useCase
   const seen = new Set<string>()
   const out: AvailableModel[] = []
   for (const m of allModels) {
-    if (!m.capabilities.includes(useCase)) continue
+    if (!m.capabilities.includes(capability)) continue
     const ref = `${m.provider}:${m.id}`
     if (seen.has(ref)) continue
     seen.add(ref)
@@ -79,6 +98,10 @@ export function ModelsPanel() {
     ])
     return { allModels: rows.flatMap((r) => r.models ?? []), active }
   }, { persist: true })
+  // Per-provider breaker health for the chain-entry dots — refreshed on panel
+  // mount (persist:false so a broken provider isn't shown green from cache).
+  const { data: health } = useCachedData('settings:models-health', () =>
+    api.modelsHealth().then((h) => h.providers).catch(() => [] as ProviderHealth[]), { persist: false })
   const allModels = data?.allModels
   const active = data?.active ?? {}
 
@@ -90,7 +113,7 @@ export function ModelsPanel() {
 
   return (
     <div>
-      <PanelHeader title="Models" hint="Assign discovered models to each use case. Chat and Image·Modality allow several active models; the rest take one. Modality means understanding that media as input; Generation means producing it." />
+      <PanelHeader title="Models" hint="Assign discovered models to each use case. Chat and its routing sub-categories store an ordered fallback chain — the first model is the default; later ones take over when an earlier provider is down. Modality means understanding that media as input; Generation means producing it." />
       <Section>
         {allModels.length === 0 && (
           <div className="mb-3 rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low text-[0.8125rem]">
@@ -104,7 +127,7 @@ export function ModelsPanel() {
           return (
             <div key={uc}>
               {showGroupHeader && <div className="mb-1.5 mt-3 px-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{meta.group}</div>}
-              <UseCaseRow useCase={uc} activeModels={active[uc] ?? []} allModels={allModels} onChanged={reloadActive} />
+              <UseCaseRow useCase={uc} activeModels={active[uc] ?? []} allModels={allModels} health={health ?? []} onChanged={reloadActive} />
             </div>
           )
         })}
@@ -113,14 +136,28 @@ export function ModelsPanel() {
   )
 }
 
-function UseCaseRow({ useCase, activeModels, allModels, onChanged }: {
-  useCase: string; activeModels: string[]; allModels: AvailableModel[]; onChanged: () => void
+/** Breaker-state dot for one chain entry's provider: closed→green, half_open→amber,
+ *  open→red (+ retry hint). No health row (provider never called) renders nothing —
+ *  absence of data must not read as "healthy". */
+function HealthDot({ provider, health }: { provider: string; health: ProviderHealth[] }) {
+  const h = health.find((p) => p.name === provider)
+  if (!h) return null
+  const color = h.breaker_state === 'open' ? 'var(--color-danger)'
+    : h.breaker_state === 'half_open' ? 'var(--color-warning)' : 'var(--color-ok)'
+  const label = h.breaker_state === 'open'
+    ? `${provider}: circuit open (${h.consecutive_failures} consecutive failures) — chain entries on this provider are skipped until it recovers`
+    : h.breaker_state === 'half_open' ? `${provider}: recovering — next call probes it` : `${provider}: healthy`
+  return <span className="size-2 shrink-0 rounded-pill" style={{ background: color }} title={label} aria-label={label} />
+}
+
+function UseCaseRow({ useCase, activeModels, allModels, health, onChanged }: {
+  useCase: string; activeModels: string[]; allModels: AvailableModel[]; health: ProviderHealth[]; onChanged: () => void
 }) {
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [query, setQuery] = useState('')
   const [reindex, setReindex] = useState<import('../../lib/api').ReindexJob | null>(null)
-  const meta = USE_CASE_META[useCase] ?? { label: useCase, description: '', multi: false, icon: Boxes }
+  const meta = USE_CASE_META[useCase] ?? { label: useCase, description: '', chain: false, icon: Boxes }
   // Filter to models declaring this capability, then DEDUPE by the `provider:id`
   // ref. A model can legitimately surface from two discovery paths (e.g.
   // `OpenAI:gpt-image-1` appears via both the chat `/v1/models` sweep AND the
@@ -186,8 +223,17 @@ function UseCaseRow({ useCase, activeModels, allModels, onChanged }: {
     } finally { setSaving(false) }
   }
   const toggle = (ref: string) => {
-    if (meta.multi) setActive(activeModels.includes(ref) ? activeModels.filter((m) => m !== ref) : [...activeModels, ref])
+    // Chain use-cases APPEND a newly-picked model to the end of the chain (the
+    // user then reorders); picking an already-chained model removes it.
+    if (meta.chain) setActive(activeModels.includes(ref) ? activeModels.filter((m) => m !== ref) : [...activeModels, ref])
     else setActive(activeModels.includes(ref) ? [] : [ref])
+  }
+  const move = (i: number, dir: -1 | 1) => {
+    const j = i + dir
+    if (j < 0 || j >= activeModels.length) return
+    const next = [...activeModels]
+    ;[next[i], next[j]] = [next[j], next[i]]
+    setActive(next)
   }
 
   return (
@@ -203,7 +249,13 @@ function UseCaseRow({ useCase, activeModels, allModels, onChanged }: {
         <div className="min-w-0 flex-1">
           <div className="text-on-surface text-[0.8125rem]" style={fvs(500)}>{meta.label}</div>
           <div className="mt-0.5 text-on-surface-low text-[0.75rem]">
-            {activeModels.length > 0 ? `${activeModels.length} active` : <span className="italic">none configured</span>}
+            {activeModels.length > 0
+              ? meta.chain && activeModels.length > 1
+                ? `chain of ${activeModels.length}`
+                : `${activeModels.length} active`
+              : meta.fallback
+                ? <span className="italic">uses your {meta.fallback} chain</span>
+                : <span className="italic">none configured</span>}
           </div>
         </div>
         {capable.length > 0 && <span className="shrink-0 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low text-[0.75rem] tabular-nums">{capable.length} available</span>}
@@ -213,10 +265,39 @@ function UseCaseRow({ useCase, activeModels, allModels, onChanged }: {
         <div className="flex flex-col gap-3 border-t border-outline-variant/30 px-4 pb-4 pt-3">
           <p className="text-on-surface-low text-[0.8125rem]">{meta.description}</p>
           <div className="inline-flex w-fit items-center gap-1.5 rounded-md px-2 py-1 text-[0.75rem]"
-            style={meta.multi ? { background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)', color: 'var(--color-primary)' } : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
-            <span className="size-1.5 rounded-pill" style={{ background: meta.multi ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
-            {meta.multi ? 'Multi-select — several models can be active' : 'Single-select — one model per use case'}
+            style={meta.chain ? { background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)', color: 'var(--color-primary)' } : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
+            <span className="size-1.5 rounded-pill" style={{ background: meta.chain ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
+            {meta.chain ? 'Fallback chain — first is the default, later entries take over on failure' : 'Single-select — one model per use case'}
           </div>
+
+          {/* The ordered chain editor: position 0 is the default; reorder with the
+              arrow buttons (keyboard-accessible), remove with ×. Each entry carries
+              its provider's breaker-health dot. */}
+          {meta.chain && activeModels.length > 0 && (
+            <div className="flex flex-col gap-1 rounded-lg bg-surface p-2">
+              {activeModels.map((ref, i) => {
+                const sep = ref.indexOf(':')
+                const provider = sep >= 0 ? ref.slice(0, sep) : ''
+                const id = sep >= 0 ? ref.slice(sep + 1) : ref
+                return (
+                  <div key={ref} className="flex items-center gap-2 rounded-md bg-surface-container px-2.5 py-1.5">
+                    <span className="w-16 shrink-0 text-on-surface-low text-[0.6875rem] uppercase tracking-wide">
+                      {i === 0 ? 'default' : `fallback ${i}`}
+                    </span>
+                    <HealthDot provider={provider} health={health} />
+                    <span className="min-w-0 flex-1 truncate font-mono text-on-surface text-[0.8125rem]">{id}</span>
+                    {provider && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">{provider}</span>}
+                    <IconButton icon={ArrowUp} label={`Move ${id} up`} size={24} iconSize={13}
+                      disabled={saving || i === 0} onClick={() => move(i, -1)} />
+                    <IconButton icon={ArrowDown} label={`Move ${id} down`} size={24} iconSize={13}
+                      disabled={saving || i === activeModels.length - 1} onClick={() => move(i, 1)} />
+                    <IconButton icon={X} label={`Remove ${id} from chain`} size={24} iconSize={13}
+                      disabled={saving} onClick={() => setActive(activeModels.filter((m) => m !== ref))} />
+                  </div>
+                )
+              })}
+            </div>
+          )}
 
           {useCase === 'embedding' && reindex && (
             <div className="rounded-md px-3 py-2 text-[0.75rem]"
@@ -239,7 +320,7 @@ function UseCaseRow({ useCase, activeModels, allModels, onChanged }: {
           {capable.length === 0 ? (
             <div className="rounded-lg border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low text-[0.8125rem] italic">
               {meta.fallback ? (
-                <>Already uses your <span className="text-on-surface not-italic font-medium">{meta.fallback}</span> model by default — no dedicated {meta.label} model is required. Add a backend with a {meta.label}-capable model to override.</>
+                <>Already uses your <span className="text-on-surface not-italic font-medium">{meta.fallback}</span> chain by default — no dedicated {meta.label} model is required. Add a backend with a chat-capable model to override.</>
               ) : (
                 <>No models with {meta.label} capability. Add a backend with compatible models first.</>
               )}

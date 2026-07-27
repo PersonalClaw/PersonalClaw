@@ -8,7 +8,43 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
-Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
+> **Note (0.x clean break):** model bindings in `active_models.json` now carry
+> ordered fallback-chain semantics. Old stores read cleanly (a single binding is a
+> one-entry chain); consider `personalclaw snapshot` before upgrading, per the
+> pre-1.0 banner.
+>
+> **Note (0.x clean break):** true rewind adds a `rewound` field to persisted chat
+> messages (the retained discarded tail). Old sessions read cleanly (missing field =
+> today's behavior — no migration); consider `personalclaw snapshot` before upgrading.
+
+### Added
+
+- **Tool groups: the agent loads the tools it needs, not all of them.**
+- **The artifacts library: live previews, search, and collections.**
+- **Artifacts get their own page.**
+- **Artifacts: collections + save-time dedup.**
+- **Agent routing: suggest the right specialist, never route silently.**
+- **Chat craft: seven chat-surface mechanics.**
+- **Background compression keeps long chats fast.**
+- **Feedback that actually teaches: 👍/👎 on AI judgments.**
+- **Investigate anywhere: chat about any entity with its context pre-loaded.**
+- **Model use-cases v2: routing sub-categories + fallback chains.**
+- **Every model binding is an ordered fallback chain.**
+- **Type-routed tool-output compressors.**
+- **Projection rules: three layers + line operations.**
+- **Background prose summarizer.**
+
+- **"Investigate in chat" is now on everything worth asking about.**
+- **Tool groups are now visible, and they hide what can't work.**
+
+### Fixed
+
+- **`personalclaw snapshot` was not backing up everything — and could copy a live database unsafely.**
+- **Snapshots of a non-default home no longer land in your real home.**
+
+### Changed
+
+- **Breaking-change policy is now written down, and it distinguishes maintainer from contributor.**
 
 ## [0.1.2] — 2026-07-26
 

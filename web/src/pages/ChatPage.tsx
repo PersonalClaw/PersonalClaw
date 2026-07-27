@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { fvs, withWeight } from '../design/fontWeight'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, type LucideIcon } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, type LucideIcon } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
 import { TopBar } from '../ui/TopBar'
 import { SidePanel } from '../ui/SidePanel'
 import { Button } from '../ui/Button'
-import { SelectionPill } from '../ui/SelectionPill'
+import { QuietButton } from '../ui/QuietButton'
+import { SelectionToolbar } from '../ui/SelectionPill'
 import { TextLink } from '../ui/TextLink'
 import { Segmented } from '../ui/Segmented'
 import { ContextMenu, type ContextMenuItem } from '../ui/motion'
@@ -19,6 +20,7 @@ import { ComposerStage } from '../ui/ComposerStage'
 import { CollapseColumnButton, CollapsedBoardColumn, boardGridTemplate, useBoardCollapse } from '../ui/BoardCollapse'
 import { PromptPalette } from './chat/PromptPalette'
 import { SessionSkillsReview } from './chat/SessionSkillsReview'
+import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { DotGlow } from '../ui/DotGlow'
 import { EmptyState, ListSkeleton, Skeleton } from '../ui/ListScaffold'
 import { MessageUser } from '../ui/chat/MessageUser'
@@ -47,6 +49,8 @@ import { spring, stagger, listItemEnter, expr } from '../design/motion'
 import { api, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob } from '../lib/api'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useStreamCoalescer } from './chat/useStreamCoalescer'
+import { FindBar } from './chat/FindBar'
+import { FollowupChips } from './chat/FollowupChips'
 import { applyCoalescedFlush, insertActivity } from './chat/coalesceReducers'
 import { useCachedData, invalidateCache } from '../lib/useCachedData'
 import { useComposerData } from '../lib/useComposerData'
@@ -368,8 +372,10 @@ export function ChatPage({ sub, navigate, navEpoch = 0, query, setQuery }: { sub
   // silently rewritten by the composer's replaceState (the "New Chat stuck" fix).
   if (!seg || seg === 'new') return <ChatSession key={`new-${navEpoch}`} sessionId={null} navigate={navigate} query={q} setQuery={setQ} seed={seed} agent={agentParam} />
   // else it's a session key to resume (deep-linked; keyed off `sub` only so
-  // unrelated navigations don't remount/reload it).
-  return <ChatSession key={sub} sessionId={sub} navigate={navigate} query={q} setQuery={setQ} />
+  // unrelated navigations don't remount/reload it). `seed` rides along for
+  // sessions STAGED before their first turn (the investigate opening
+  // prompt) — the composer pre-fill is editable, never auto-sent.
+  return <ChatSession key={sub} sessionId={sub} navigate={navigate} query={q} setQuery={setQ} seed={seed} />
 }
 
 function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialProjectId = '', seed = '', agent: initialAgent = '' }: { sessionId: string | null; navigate: (p: string, opts?: { replace?: boolean }) => void; query: Record<string, string>; setQuery: RouteProps['setQuery']; projectId?: string; seed?: string; agent?: string }) {
@@ -451,6 +457,21 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const [historyOpen, setHistoryOpen] = useQueryFlag(query, setQuery, 'history')
   // per-turn DOM nodes so the Index tab can scroll to a turn.
   const turnNodes = useRef<Map<number, HTMLDivElement>>(new Map())
+  // Find-in-conversation — a client-side find bar over the hydrated
+  // turns, opened with Cmd/Ctrl+F while the chat page owns focus + a session is open.
+  const [findOpen, setFindOpen] = useState(false)
+  // Close the find bar when the open session changes (its matches no longer apply).
+  useEffect(() => { setFindOpen(false) }, [sessionId])
+  // Follow-up chips: 2-3 suggested next messages pushed over the
+  // chat_followups WS after a reply completes. Cleared on any user activity so they
+  // never block/shift the composer; reset per session.
+  const [followups, setFollowups] = useState<string[]>([])
+  useEffect(() => { setFollowups([]) }, [sessionId])
+  // Agent routing suggestion: a non-blocking chip proposing a
+  // better-fit specialist for this default-agent chat. Cleared on send / agent
+  // switch / session change; arrives via the routing_suggestion WS push.
+  const [routingSuggestion, setRoutingSuggestion] = useState<RoutingSuggestion | null>(null)
+  useEffect(() => { setRoutingSuggestion(null) }, [sessionId])
   // composer extras: @-mentioned file paths (sent as meta.files) + large-paste
   // blocks (collapsed to cards + inline [Paste #N] markers, expanded on send).
   const [mentionedFiles, setMentionedFiles] = useState<string[]>([])
@@ -482,6 +503,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // transient like micError.
   const [attachError, setAttachError] = useState<string | null>(null)
   const [memoryMode, setMemoryMode] = useState<MemoryMode>('persistent')
+  // Investigate origin: the entity this chat was opened to investigate.
+  // Rendered as a header chip deep-linking back to the source surface.
+  const [investigateOrigin, setInvestigateOrigin] = useState<import('../lib/api').InvestigateOrigin | null>(null)
   // "Show full result" (tool-io-rendering TC4): the full raw of a projected tool
   // result, fetched on demand from the per-session store + shown in a modal. The
   // OPEN state is the URL (?result=<rawRef>, push); the fetched body + the tool
@@ -545,13 +569,19 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // replaces vs. appends). flushNow() on every segment boundary lands buffered text
   // before the run changes; reset() clears for the next run.
   const coalescing = useRef(false)
+  // Streaming reveal cadence: 'immediate' short-circuits the rAF
+  // coalescer so each chunk paints the instant it arrives; 'smooth' (default) keeps
+  // the word-boundary-snapped animated reveal. Read from the server dashboard config
+  // (cached; paints instantly on revisit). reduced-motion/animSpeed=0 still force
+  // immediate inside the coalescer regardless of this preference.
+  const { data: streamRevealCfg } = useCachedData('chat:stream-reveal', () => api.dashboardConfig().then((c) => c.stream_reveal).catch(() => 'smooth' as const), { persist: true })
   const coalescer = useStreamCoalescer((revealed) => {
     patchLastAssistant((segs) => {
       const r = applyCoalescedFlush(segs, revealed, coalescing.current)
       coalescing.current = r.coalescing
       return r.segs
     })
-  })
+  }, { immediate: streamRevealCfg === 'immediate' })
   const started = turns.length > 0
   // show the thinking indicator while streaming and the active assistant turn
   // has produced nothing renderable yet (no text/tool/approval segment)
@@ -641,6 +671,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // which the backend refuses on a non-persistent session) reflect the real
       // posture of a reopened chat instead of the 'persistent' default.
       setMemoryMode((d.memory_mode || 'persistent') as MemoryMode)
+      // Investigate origin chip — present on sessions opened via
+      // POST /api/investigate; survives the first turn (display fields kept).
+      setInvestigateOrigin((d as { investigate?: import('../lib/api').InvestigateOrigin | null }).investigate ?? null)
       // remember the session's agent/model binding so the composer restores the
       // SAME selection it was using (resolved against discovered agents below,
       // once they've loaded).
@@ -867,6 +900,52 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         if (id) setQueued((prev) => prev.filter((q) => q.id !== id))
         break
       }
+      // A queued item was promoted to the front (interrupt-now). Reorder the strip
+      // so the promoted card jumps to the top on every client (it runs next).
+      case 'queue_promoted': {
+        if (d.session !== sessionRef.current) break
+        const id = String(d.queue_id ?? '')
+        if (id) setQueued((prev) => {
+          const i = prev.findIndex((q) => q.id === id)
+          if (i <= 0) return prev
+          const next = [...prev]; next.unshift(next.splice(i, 1)[0]); return next
+        })
+        break
+      }
+      // Follow-up chips: 2-3 suggested next messages for the just-
+      // completed turn. Render under the last assistant turn; any user activity clears.
+      case 'chat_followups': {
+        if (d.session !== sessionRef.current) break
+        const items = Array.isArray(d.items) ? d.items.filter((x): x is string => typeof x === 'string') : []
+        setFollowups(items)
+        break
+      }
+      // Agent routing suggestion: a specialist fits this message
+      // better — surface the routing chip above the composer (non-blocking proposal).
+      case 'routing_suggestion': {
+        if (d.session !== sessionRef.current) break
+        const agent = String(d.agent ?? '')
+        if (!agent) break
+        setRoutingSuggestion({
+          session: String(d.session), agent,
+          specialty: String(d.specialty ?? ''),
+          score: typeof d.score === 'number' ? d.score : 0,
+          method: String(d.method ?? ''),
+        })
+        break
+      }
+      // True rewind: the edited turn's later messages were discarded
+      // (retained in history server-side) and the provider was reset. Re-hydrate from
+      // the now-truncated transcript so the divider chip + tail disclosure appear.
+      case 'chat_rewound': {
+        if (d.session !== sessionRef.current) break
+        const sk = sessionRef.current
+        if (sk) api.chatSessionDetail(sk).then((det) => {
+          writeCachedDetail(sk, det)
+          setTurns(hydrateTurns(det.messages || [], det.running))
+        }).catch(() => {})
+        break
+      }
       // A queued message the server just dequeued and is about to run. Normal sends
       // add the user bubble optimistically; queued ones only had a strip card, so
       // render the bubble now (the strip card is removed by the paired queue_pop).
@@ -876,6 +955,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         const content = String(d.content ?? '')
         if (!content) break
         breakText.current = true
+        setFollowups([])  // a new turn is starting (queued drain) — clear stale chips
         setTurns((prev) => [...prev, userTurn(content, d.ts ? String(d.ts) : undefined)])
         break
       }
@@ -979,6 +1059,27 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // The composer is a CodeMirror editor (.cm-content), not a <textarea>.
       const cm = composerRef.current?.querySelector<HTMLElement>('.cm-content')
       if (cm) { e.preventDefault(); cm.focus() }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // Cmd/Ctrl+F → open the in-conversation find bar, but ONLY when a
+  // session is open and the chat page owns focus (not typing in another field). A
+  // SECOND press or Esc closes it and falls through to the browser's native find.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'f' || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return
+      if (!sessionRef.current) return  // no open session → let the browser find run
+      const t = e.target as HTMLElement | null
+      // Don't hijack when the user is typing in a different input/editor — except our
+      // own find input, where a repeat ⌘F should close (toggle) rather than no-op.
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
+        const inFind = !!t.closest('[role="search"]')
+        if (!inFind) return
+      }
+      e.preventDefault()
+      setFindOpen((o) => !o)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -1170,6 +1271,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   async function send(text = input, opts?: { original?: string }) {
     const t = text.trim()
     if (!t) return
+    // Sending dismisses any follow-up chips from the prior turn and
+    // clears a pending routing suggestion — the moment passed.
+    if (followups.length) setFollowups([])
+    if (routingSuggestion) setRoutingSuggestion(null)
     // Use the synchronous streamingRef (not the `streaming` state) for the queue-vs-
     // fresh-turn decision: two sends in one tick both see the stale state, but the
     // ref flips the instant the first turn commits — so the second correctly queues.
@@ -1397,7 +1502,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       })
   }
 
-  async function editResend(turnIndex: number, content: string) {
+  async function editResend(turnIndex: number, content: string, rewind = false) {
     const s = sessionRef.current
     const t = content.trim()
     if (!s || !t || streaming) return
@@ -1416,8 +1521,41 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // run → the new answer renders glued onto the old one (K44/K45). The next
     // chat_chunk's reset() discards the stale buffer and starts clean.
     markStreaming(true); breakText.current = true
-    try { await api.editResend(s, t, turn?.ts, turnIndex, newTs) }
+    // rewind=true (edit of a NON-last turn): the backend retains the discarded tail
+    // on the edited message and resets the provider so context rebuilds from the
+    // truncated transcript. The chat_rewound WS re-hydrates so the divider chip +
+    // read-only tail disclosure appear. Without it, this is the last-turn path.
+    try { await api.editResend(s, t, turn?.ts, turnIndex, newTs, rewind) }
     catch (e) { markStreaming(false); patchLastAssistant((segs) => [...segs, { kind: 'text', text: `⚠️ ${(e as Error).message}` }]) }
+  }
+
+  // Rewind to an earlier user turn: confirm (it discards the later answers into
+  // history), then edit-resend with the same text and rewind=true. The inline
+  // editor stays available for changing the text first (Edit & resend); Rewind is
+  // the one-click "replay from here unchanged, keep the tail" affordance.
+  async function rewindTo(turnIndex: number) {
+    const turn = turns[turnIndex]
+    if (!turn || turn.role !== 'user') return
+    const later = turns.length - 1 - turnIndex
+    if (!(await confirm({
+      title: 'Rewind to this message?',
+      body: `The ${later} later message${later === 1 ? '' : 's'} will be replayed from here — the current answers are kept in this chat's history and can be forked back.`,
+      confirmLabel: 'Rewind',
+    }))) return
+    await editResend(turnIndex, turnText(turn), true)
+  }
+
+  // Restore a retained rewind tail as a NEW fork (restore = fork, never swap).
+  async function forkRewound(turnIndex: number, snapshotIndex?: number) {
+    const s = sessionRef.current
+    if (!s) return
+    try {
+      const r = await api.forkRewound(s, turnIndex, snapshotIndex)
+      if (r?.key) navigate(`chat/${r.key}`)
+    } catch (e) {
+      setMicError(`Couldn’t restore that history: ${(e as Error).message}`)
+      window.setTimeout(() => setMicError(null), 6000)
+    }
   }
 
   // Voice playback uses the Web Audio API, not an <audio> element: Chrome
@@ -1514,15 +1652,33 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     requestAnimationFrame(() => composerRef.current?.querySelector<HTMLElement>('.cm-content')?.focus())
   }
 
-  // select-to-quote: insert the highlighted passage into the composer as a quote.
-  function quoteToComposer(text: string) {
+  // select-to-quote: insert the highlighted passage into the composer as an
+  // attributed blockquote. `attribution` ("You" / the agent name) prefixes the
+  // block so the quoted passage carries who said it.
+  function quoteToComposer(text: string, attribution?: string) {
     const q = text.trim()
     if (!q) return
-    const block = q.split('\n').map((l) => `> ${l}`).join('\n')
+    const lines = q.split('\n').map((l) => `> ${l}`)
+    const block = attribution ? `> **${attribution} said:**\n${lines.join('\n')}` : lines.join('\n')
     setInput((prev) => (prev ? `${prev}\n\n${block}\n\n` : `${block}\n\n`))
     // The composer is a CodeMirror editor (.cm-content), not a <textarea> — focus
     // it so the user can keep typing after quoting a selection.
     composerRef.current?.querySelector<HTMLElement>('.cm-content')?.focus()
+  }
+
+  // Resolve who said the selected passage: walk up from the selection node to the
+  // enclosing turn's DOM node (turnNodes), then read that turn's role. Attribute the
+  // agent side to its name when one is bound, else the neutral "Assistant".
+  function attributionForNode(node: Node | null): string | undefined {
+    if (!node) return undefined
+    for (const [idx, el] of turnNodes.current.entries()) {
+      if (el.contains(node)) {
+        const turn = turns[idx]
+        if (!turn) return undefined
+        return turn.role === 'user' ? 'You' : (selection.agent || 'Assistant')
+      }
+    }
+    return undefined
   }
 
   // activity panel: Index tab jumps to a turn by scrolling its node into view.
@@ -1783,7 +1939,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       )}
       {/* Queued messages (typed mid-stream) — the backend sends them one-by-one as
           each turn finishes; each can be cancelled while still pending. */}
-      <QueueStack items={queued}
+      <QueueStack items={queued} canInterrupt={streaming}
         onCancel={(id) => { setQueued((prev) => prev.filter((q) => q.id !== id)); const s = sessionRef.current; if (s) api.cancelQueued(s, id).catch(() => {}) }}
         onEdit={(id, content) => {
           // Honest "edit": there's no queue-edit endpoint, so cancel the pending item
@@ -1791,6 +1947,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           // (avoids a fake in-place edit that would silently re-queue at the back).
           setQueued((prev) => prev.filter((q) => q.id !== id)); const s = sessionRef.current; if (s) api.cancelQueued(s, id).catch(() => {})
           setInput((cur) => (cur.trim() ? cur : content))
+        }}
+        onInterrupt={(id) => {
+          // Interrupt-now: soft-stop the running turn and run THIS queued message
+          // next (the backend promotes it + the finally-block drain picks it up).
+          // The queue_promoted WS echo reorders the strip on every client.
+          const s = sessionRef.current; if (s) api.interruptChat(s, id).catch(() => {})
         }} />
       <div className="relative">
         {/* Saved-prompt palette + auto-nudge now live INSIDE the composer's "+"
@@ -1814,7 +1976,16 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             <SessionSkillsReview sessionKey={sessionRef.current} agent={selection.agent || undefined} refreshKey={sessionSkillsEpoch} />
           </div>
         )}
-        <ComposerStage ref={composerRef} value={input} onChange={(v) => { setInput(v); if (preOptimize !== null) setPreOptimize(null) }} onSend={() => send()}
+        <AnimatePresence>
+          {routingSuggestion && (
+            <div className="mb-1 flex justify-center">
+              <RoutingChip suggestion={routingSuggestion} defaultAgent={selection.agent || ''}
+                onRoute={() => { setSelection((s) => ({ ...s, agent: routingSuggestion.agent })); setRoutingSuggestion(null) }}
+                onDismiss={() => setRoutingSuggestion(null)} />
+            </div>
+          )}
+        </AnimatePresence>
+        <ComposerStage ref={composerRef} value={input} onChange={(v) => { setInput(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length && v.trim().length >= 3) setFollowups([]) }} onSend={() => send()}
           streaming={streaming} onStop={stop} controls={CHAT_CONTROLS} data={data}
           selection={selection} onSelect={applySelection} onAttach={attach} onFocusChange={setComposerFocused}
           onOpenPrompts={() => setPromptPaletteOpen(true)}
@@ -1897,6 +2068,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                   <FolderKanban size={12} className="text-primary" /> {projectName}
                 </button>
               )}
+              {/* Investigate origin: the entity this chat was opened to
+                  investigate; click deep-links back to the source surface. */}
+              {investigateOrigin?.title && (
+                <Button size="xs" variant="secondary"
+                  onClick={() => { if (investigateOrigin.back_link) navigate(investigateOrigin.back_link.replace(/^#\//, '')) }}
+                  title={`Investigating: ${investigateOrigin.title} — open the source`}>
+                  <MessageCircleQuestion size={12} className="text-primary" /> {investigateOrigin.title}
+                </Button>
+              )}
               {/* copy chat link — lives next to the title (its subject). */}
               {sessionRef.current && (
                 <IconButton icon={linkCopied ? Check : Link2} label={linkCopied ? 'Link copied' : 'Copy chat link'} size={40} onClick={copyLink} />
@@ -1968,7 +2148,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           ) : (
             <>
               <div ref={scrollRef} className="relative flex-1 overflow-y-auto">
-                <SelectionQuote scrollRef={scrollRef} onQuote={quoteToComposer} />
+                <AnimatePresence>
+                  {findOpen && (
+                    <FindBar turns={turns} scrollRef={scrollRef} turnNodes={turnNodes} onClose={() => setFindOpen(false)} />
+                  )}
+                </AnimatePresence>
+                <SelectionQuote scrollRef={scrollRef} onQuote={quoteToComposer} attributionFor={attributionForNode} />
                 <div className="mx-auto flex flex-col gap-2xl px-l py-2xl" style={{ maxWidth: 'var(--content-width)' }}>
                   {turns.map((turn, i) => {
                     const isLast = i === turns.length - 1
@@ -1990,7 +2175,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                             <div className="group/msg">
                               <MessageUser fromComposer={isLast} onFileClick={setOpenFile} pastes={turn.pastes} optimized={turn.optimized}>{turnTextOf(turn)}</MessageUser>
                               {turn.files && turn.files.length > 0 && <TurnAttachments paths={turn.files} onOpenFile={setOpenFile} />}
-                              {!streaming && <UserActions text={turnTextOf(turn)} canFork={memoryMode === 'persistent'} onEdit={() => setEditingTurn(i)} onFork={() => forkAt(i)} />}
+                              {turn.rewound && turn.rewound.length > 0 && (
+                                <RewindDivider snapshots={turn.rewound} canFork={memoryMode === 'persistent'} onFork={(si) => forkRewound(i, si)} />
+                              )}
+                              {!streaming && <UserActions text={turnTextOf(turn)} canFork={memoryMode === 'persistent'}
+                                canRewind={!isLast} onRewind={() => rewindTo(i)}
+                                onEdit={() => setEditingTurn(i)} onFork={() => forkAt(i)} />}
                             </div>
                           )
                         ) : (
@@ -2003,6 +2193,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                           )}>
                             <AssistantSegments segments={turn.segments} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onOption={(t) => send(t)} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} chatSessionKey={sessionRef.current ?? undefined} />
                           </MessageAssistant>
+                        )}
+                        {/* Follow-up chips under the last assistant turn only,
+                            once the reply has settled — click fills, send-glyph sends. */}
+                        {turn.role === 'assistant' && isLast && !streaming && followups.length > 0 && (
+                          <FollowupChips items={followups} onPick={(t) => { setInput(t); setFollowups([]) }} onSend={(t) => { setFollowups([]); void send(t) }} />
                         )}
                       </div>
                     )
@@ -2316,10 +2511,12 @@ function KnowledgeChips({ items, onRemove }: { items: { id: string; name: string
  *  reorder/edit endpoint, so we DON'T fake persistent reorder): Cancel removes the
  *  item; Edit cancels it AND drops its text back into the composer to resend (no
  *  false "in-place edit" that would silently move it to the back of the FIFO). */
-function QueueStack({ items, onCancel, onEdit }: {
+function QueueStack({ items, onCancel, onEdit, onInterrupt, canInterrupt = false }: {
   items: { id: string; content: string }[]
   onCancel: (id: string) => void
   onEdit: (id: string, content: string) => void
+  onInterrupt?: (id: string) => void
+  canInterrupt?: boolean  // a turn is running → "Interrupt now" can promote + soft-stop
 }) {
   const reduce = useReducedMotion()
   const [expanded, setExpanded] = useState(false)
@@ -2355,6 +2552,10 @@ function QueueStack({ items, onCancel, onEdit }: {
       {/* Actions only on the top card in stacked mode (deeper cards are non-interactive peeks). */}
       {(!stacked || depth === 0) && (
         <span className="flex shrink-0 items-center gap-0.5">
+          {canInterrupt && onInterrupt && (
+            <IconButton icon={PlayCircle} label="Interrupt now — stop the current turn and run this next" onClick={() => onInterrupt(q.id)} size={20} iconSize={13}
+              className="opacity-0 transition-opacity hover:text-primary group-hover/q:opacity-100" />
+          )}
           <IconButton icon={Pencil} label="Edit queued message" onClick={() => onEdit(q.id, q.content)} size={20} iconSize={12}
             className="opacity-0 transition-opacity hover:text-primary group-hover/q:opacity-100" />
           <IconButton icon={X} label="Cancel queued message" onClick={() => onCancel(q.id)} size={20} iconSize={13}
@@ -2435,6 +2636,58 @@ function PasteCards({ blocks, onRemove }: { blocks: PasteBlock[]; onRemove: (seq
   )
 }
 
+/** Rewind divider — shown under a user turn that was
+ *  edited-and-replayed. States "N messages kept in history" and discloses the
+ *  retained tail read-only. Restoring a tail = forking it into a new session
+ *  (restore = fork, never an in-place timeline swap). Shows the most recent
+ *  snapshot; earlier ones (repeated rewinds) are reachable via the count. */
+function RewindDivider({ snapshots, canFork, onFork }: {
+  snapshots: NonNullable<ChatTurn['rewound']>
+  canFork: boolean
+  onFork: (snapshotIndex?: number) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const latest = snapshots[snapshots.length - 1]
+  // The retained tail begins with the edited turn's OLD content; count the
+  // messages AFTER it as "kept" (what the user actually rewound past).
+  const kept = Math.max(0, (latest?.messages?.length ?? 0) - 1)
+  return (
+    <div className="mt-2 flex flex-col items-end gap-1.5">
+      <div className="flex items-center gap-2 text-on-surface-low text-[0.75rem]">
+        <Rewind size={12} className="shrink-0" />
+        <span>Rewound from here · {kept} message{kept === 1 ? '' : 's'} kept in history</span>
+        <QuietButton onClick={() => setOpen((o) => !o)} className="h-6">
+          {open ? 'Hide' : 'View'} <ChevronDown size={11} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+        </QuietButton>
+      </div>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+            transition={spring.spatialFast}
+            className="w-full max-w-[452px] overflow-hidden rounded-xl border border-outline-variant/50 bg-surface-container/60">
+            <div className="flex items-center justify-between border-b border-outline-variant/40 px-3 py-2">
+              <span className="text-on-surface-low text-[0.6875rem] uppercase tracking-wide">Retained history (read-only)</span>
+              {canFork && (
+                <Button size="sm" variant="ghost" onClick={() => onFork()} className="h-6 px-2 text-[0.75rem]">
+                  <GitBranch size={12} /> Restore as fork
+                </Button>
+              )}
+            </div>
+            <div className="flex flex-col gap-2 px-3 py-2.5">
+              {(latest?.messages ?? []).map((m, mi) => (
+                <div key={mi} className={`text-[0.8125rem] leading-relaxed ${m.role === 'user' ? 'text-on-surface-var' : 'text-on-surface-low'}`}>
+                  <span className="mr-1.5 text-on-surface-low text-[0.6875rem] uppercase tracking-wide">{m.role === 'user' ? 'You' : 'Assistant'}</span>
+                  <span className="whitespace-pre-wrap">{m.content.length > 400 ? m.content.slice(0, 400) + '…' : m.content}</span>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 /** Inline editor for a user turn (Edit & resend). Replaces the bubble with a
  *  right-aligned textarea + Cancel/Resend; ⌘↵ submits, Esc cancels. */
 function UserEditor({ initial, onSubmit, onCancel }: { initial: string; onSubmit: (v: string) => void; onCancel: () => void }) {
@@ -2457,17 +2710,22 @@ function UserEditor({ initial, onSubmit, onCancel }: { initial: string; onSubmit
 }
 
 /** Select-to-quote — when the user selects text inside the transcript, float a
- *  "Quote" button near the selection that drops the passage into the composer. */
-function SelectionQuote({ scrollRef, onQuote }: { scrollRef: React.RefObject<HTMLDivElement | null>; onQuote: (text: string) => void }) {
-  const [pos, setPos] = useState<{ x: number; y: number; text: string } | null>(null)
-  const btnRef = useRef<HTMLButtonElement | null>(null)
+ *  toolbar (Quote + Copy) near the selection. Quote inserts an
+ *  ATTRIBUTED blockquote into the composer (who said it, resolved from the
+ *  enclosing turn); Copy copies the plain text. Positioning tracks BOTH mouseup
+ *  and `selectionchange` so keyboard/touch selections get the toolbar too (not
+ *  only mouse drags). */
+function SelectionQuote({ scrollRef, onQuote, attributionFor }: {
+  scrollRef: React.RefObject<HTMLDivElement | null>
+  onQuote: (text: string, attribution?: string) => void
+  attributionFor: (node: Node | null) => string | undefined
+}) {
+  const [pos, setPos] = useState<{ x: number; y: number; text: string; attribution?: string } | null>(null)
+  const barRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
     const root = scrollRef.current
     if (!root) return
-    const onUp = (e: MouseEvent) => {
-      // a click ON the quote button must NOT recompute/clear before its own
-      // handler runs — bail so the button's onMouseDown wins.
-      if (btnRef.current && e.target instanceof Node && btnRef.current.contains(e.target)) return
+    const recompute = () => {
       const sel = window.getSelection()
       const text = sel?.toString().trim() ?? ''
       if (!text || !sel || sel.rangeCount === 0) { setPos(null); return }
@@ -2476,29 +2734,54 @@ function SelectionQuote({ scrollRef, onQuote }: { scrollRef: React.RefObject<HTM
       if (!root.contains(range.commonAncestorContainer)) { setPos(null); return }
       const r = range.getBoundingClientRect()
       const pr = root.getBoundingClientRect()
-      // The button is position:absolute inside the SCROLLING root, so its
+      // The toolbar is position:absolute inside the SCROLLING root, so its
       // coordinates are content-relative, not viewport-relative. Add scrollLeft/
       // scrollTop or it drifts far from the selection once the transcript scrolls.
       setPos({
         x: r.left - pr.left + root.scrollLeft + r.width / 2,
         y: r.top - pr.top + root.scrollTop - 8,
         text,
+        attribution: attributionFor(range.commonAncestorContainer),
       })
     }
-    // clear on a fresh mousedown that ISN'T the quote button (don't unmount the
-    // button mid-click — that was eating the quote action).
+    const onUp = (e: MouseEvent) => {
+      // a click ON the toolbar must NOT recompute/clear before its own handler runs.
+      if (barRef.current && e.target instanceof Node && barRef.current.contains(e.target)) return
+      recompute()
+    }
+    // selectionchange fires for keyboard + touch selection too; debounce a frame so
+    // it settles (and never fights the mouseup path). No-selection clears the bar.
+    let raf = 0
+    const onSelChange = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        const sel = window.getSelection()
+        if (!sel || !sel.toString().trim()) { setPos(null); return }
+        recompute()
+      })
+    }
+    // clear on a fresh mousedown that ISN'T the toolbar (don't unmount mid-click).
     const onDown = (e: MouseEvent) => {
-      if (btnRef.current && e.target instanceof Node && btnRef.current.contains(e.target)) return
+      if (barRef.current && e.target instanceof Node && barRef.current.contains(e.target)) return
       setPos(null)
     }
     document.addEventListener('mouseup', onUp)
+    document.addEventListener('selectionchange', onSelChange)
     root.addEventListener('mousedown', onDown)
-    return () => { document.removeEventListener('mouseup', onUp); root.removeEventListener('mousedown', onDown) }
-  }, [scrollRef])
+    return () => {
+      cancelAnimationFrame(raf)
+      document.removeEventListener('mouseup', onUp)
+      document.removeEventListener('selectionchange', onSelChange)
+      root.removeEventListener('mousedown', onDown)
+    }
+  }, [scrollRef, attributionFor])
   if (!pos) return null
+  const clear = () => { setPos(null); window.getSelection()?.removeAllRanges() }
   return (
-    <SelectionPill ref={btnRef} icon={Quote} label="Quote" x={pos.x} y={pos.y}
-      onPress={() => { onQuote(pos.text); setPos(null); window.getSelection()?.removeAllRanges() }} />
+    <SelectionToolbar ref={barRef} x={pos.x} y={pos.y} actions={[
+      { icon: Quote, label: 'Quote', onPress: () => { onQuote(pos.text, pos.attribution); clear() } },
+      { icon: Clipboard, label: 'Copy', onPress: () => { navigator.clipboard?.writeText(pos.text).catch(() => {}); clear() } },
+    ]} />
   )
 }
 

@@ -29,6 +29,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/agents/detail/{name}` — view, delete, or update agent config.
 - `PATCH /api/agents/detail/{name}` — view, delete, or update agent config.
 - `GET /api/agents/installed` — list installed agent provider names.
+- `POST /api/agents/routing/dismiss` — {agent} — bump the dismissal counter; the
+- `GET /api/agents/routing/status` — enabled flag + muted/dismissal state.
+- `POST /api/agents/routing/unmute` — {agent} — clear an agent's mute + dismissals.
 - `POST /api/agents/sync` — auto-sync marketplace-installed agents into config.json.
 - `DELETE /api/agents/{name}` — delete a PersonalClaw agent.
 - `PUT /api/agents/{name}` — update a PersonalClaw agent.
@@ -93,6 +96,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/sessions/{session}/edit-resend` — edit a user message and resend.
 - `PATCH /api/chat/sessions/{session}/folder` — assign session to a folder.
 - `POST /api/chat/sessions/{session}/fork` — fork session into a new tab.
+- `POST /api/chat/sessions/{session}/fork-rewound` — restore a rewind tail as a fork.
 - `POST /api/chat/sessions/{session}/generate-title` — manually trigger title generation.
 - `POST /api/chat/sessions/{session}/handoff` — hand off session to channel DM thread.
 - `POST /api/chat/sessions/{session}/interrupt` — stop the turn, KEEP the queue.
@@ -142,6 +146,11 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/doctor/remediation/run` — run the engine now (confirm-gated). SEL-audited.
 - `POST /api/doctor/simulate/surfacing` — {text} — dry-run the skill scorer in
 - `GET /api/doctor/{capability}` — re-run one capability's probes (uncached).
+- `POST /api/feedback` — record one verdict.
+- `GET /api/feedback/producers` — per-producer accuracy.
+- `POST /api/feedback/producers/clear` — un-suppress after an artifact edit.
+- `POST /api/feedback/producers/snooze` — 30-day snooze for one producer.
+- `GET /api/feedback/target/{kind}/{id}` — the current verdict for hydration.
 - `GET /api/file-complete` — path autocomplete for the PathBar.
 - `GET /api/file-content-search` — recursive content search.
 - `POST /api/file-create` — create a new file or directory in the explorer.
@@ -175,6 +184,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/incident` — current state; POST /api/incident — activate.
 - `POST /api/incident` — current state; POST /api/incident — activate.
 - `POST /api/incident/resume` — turn incident mode OFF.
+- `POST /api/investigate` — _(no summary)_
 - `POST /api/knowledge/embedding/generate` — - embed all unembedded items (or re-embed all).
 - `GET /api/knowledge/embedding/status` — - embedding config and progress.
 - `GET /api/knowledge/entities` — _(no summary)_
@@ -302,7 +312,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/model-providers/{name}/show` — rich model metadata.
 - `POST /api/model-providers/{name}/test` — test provider connectivity.
 - `GET /api/models/active` — active models per use-case.
-- `PUT /api/models/active/{use_case}` — set active model(s) for a use-case.
+- `PUT /api/models/active/{use_case}` — set the active model CHAIN for a use-case.
 - `GET /api/models/available` — discover models from all configured providers.
 - `GET /api/models/chat` — chat models for dropdowns (the one model list).
 - `GET /api/models/downloads` — live + recently-finished download jobs.
@@ -418,6 +428,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/themes/{slug}` — get, update, or delete a custom theme.
 - `GET /api/token/local` — issue a token for local apps.
 - `GET /api/tools` — Return all tools from all active tool sources.
+- `GET /api/tools/groups` — the tool-GROUP partition (Context Economy §5).
 - `POST /api/tools/invoke` — execute one tool through the Tool entity.
 - `POST /api/tools/provider-toggle` — enable/disable a whole NATIVE tool provider.
 - `GET /api/tools/savings` — the TokenJuice savings (counterfactual) summary.

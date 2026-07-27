@@ -30,6 +30,10 @@ _KEEP_RE = re.compile(_KEEP_SENTINEL, re.IGNORECASE)
 _DEFAULT_INTERVAL = 60
 _FTS_REBUILD_TICKS = 15  # rebuild every 15 ticks (15 min at 60s interval)
 _PRUNE_TICKS = 1440  # prune old history once per day (1440 min at 60s interval)
+# Background compression pass (Context Economy §4) — hourly, budgeted. It only ever
+# touches sessions idle for days, so an hourly cadence is plenty; the per-pass cap
+# bounds LLM spend regardless.
+_BG_COMPRESS_TICKS = 60
 HEARTBEAT_FILE = "HEARTBEAT.md"
 _HEADER = (
     "# Heartbeat Tasks\n\n<!-- Add tasks below (one per line). "
@@ -140,6 +144,15 @@ class HeartbeatService:
         if self._consolidator:
             self._consolidator.check_idle_sessions()
 
+        # Background compression pass (Context Economy §4) — hourly, budgeted, off the
+        # request path. Topic-compresses old idle at-rest sessions so long histories
+        # stay fast; config-gated + fully reversible (archive-before-rewrite).
+        if self._consolidator and self._tick % _BG_COMPRESS_TICKS == 0:
+            try:
+                await self._run_bg_compression()
+            except Exception:
+                logger.debug("background compression pass failed", exc_info=True)
+
         # Proactive commitment delivery (M5e — O-A4): deliver any due check-ins
         # the agent inferred, at most once per window (the callback dismisses on
         # delivery so it never re-fires). Off unless the user opted in + the
@@ -149,6 +162,34 @@ class HeartbeatService:
                 await self._on_due_commitments()
             except Exception:
                 logger.warning("Commitment delivery failed", exc_info=True)
+
+    async def _run_bg_compression(self) -> None:
+        """Run one budgeted background-compression pass over idle at-rest sessions.
+
+        Resolves the active embedder for topic segmentation (deterministic fallback
+        when none is bound — the designed no-model tier); config-gating + eligibility
+        live in the service. Best-effort: any failure degrades to "did nothing"."""
+        if self._consolidator is None:
+            return
+        log = getattr(self._consolidator, "_log", None)
+        if log is None:
+            return
+        embed_fn = None
+        try:
+            from personalclaw.embedding_providers.registry import get_active_embed_fn
+
+            embed_fn = get_active_embed_fn()
+        except Exception:
+            embed_fn = None  # no embedder → deterministic turn-count segmentation
+
+        from personalclaw.bg_compress import run_bg_compression_pass
+
+        stats = await run_bg_compression_pass(log, embed_fn=embed_fn)
+        if stats:
+            saved = sum(s["chars_in"] - s["chars_out"] for s in stats)
+            logger.info(
+                "Background compression: %d session(s), ~%d chars reclaimed", len(stats), saved
+            )
 
     async def _maybe_remediate(self) -> None:
         """Run the health-scored remediation engine when due (adaptive cadence).

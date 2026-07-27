@@ -14,6 +14,7 @@ from personalclaw.tool_providers.base import (  # noqa: F401
 )
 from personalclaw.tool_providers.projection import (  # noqa: F401
     DEFAULT_TOOL_OUTPUT_CAP,
+    ProjectionRule,
     project_and_retain,
 )
 
@@ -22,6 +23,7 @@ __all__ = [
     "ToolDefinition",
     "ToolResult",
     "RiskLevel",
+    "ProjectionRule",
     "project_and_retain",
     "DEFAULT_TOOL_OUTPUT_CAP",
 ]

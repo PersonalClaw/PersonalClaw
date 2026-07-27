@@ -253,6 +253,27 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     task.add_done_callback(state._background_tasks.discard)
     state.push_sessions_update()
 
+    # Agent routing: if this default-agent chat's message fits an
+    # installed specialist, broadcast a non-blocking suggestion the FE renders as a
+    # chip. Best-effort — a classifier error must never break the send.
+    try:
+        from personalclaw.agents.routing import suggest_for_send
+
+        _suggestion = suggest_for_send(state, session, message)
+        if _suggestion is not None:
+            state.broadcast_ws(
+                "routing_suggestion",
+                {
+                    "session": session.key,
+                    "agent": _suggestion.agent,
+                    "specialty": _suggestion.specialty,
+                    "score": round(_suggestion.score, 3),
+                    "method": _suggestion.method,
+                },
+            )
+    except Exception:
+        logger.debug("routing suggestion hook failed", exc_info=True)
+
     if ws_mode:
         return web.json_response({"ok": True, "session": session.key})
 
@@ -672,6 +693,22 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             # per-session; approval is derived from the yolo(global)/trust/
             # trust_reads precedence so the single enum the UI uses round-trips.
             "task_mode": getattr(session, "_task_mode", "agent") or "agent",
+            # Investigate origin: the header ContextChip reads the staged
+            # envelope's display fields (title/kind/back_link) — present only until
+            # the first turn consumes it, or permanently via the injected preamble.
+            "investigate": (
+                {
+                    "kind": str((getattr(session, "_investigate_ctx", None) or {}).get("kind", "")),
+                    "title": str(
+                        (getattr(session, "_investigate_ctx", None) or {}).get("title", "")
+                    ),
+                    "back_link": str(
+                        (getattr(session, "_investigate_ctx", None) or {}).get("back_link", "")
+                    ),
+                }
+                if isinstance(getattr(session, "_investigate_ctx", None), dict)
+                else None
+            ),
             "approval": (
                 "yolo"
                 if state.is_yolo_active()
@@ -984,6 +1021,9 @@ async def api_chat_session_interrupt(request: web.Request) -> web.Response:
     if queue_id:
         if not session.queue_promote(str(queue_id)):
             return web.json_response({"error": "queue_id not found"}, status=404)
+        # Tell every client the strip reordered so the promoted card jumps to the
+        # front on all of them (the finally-block drain will run it next).
+        state.broadcast_ws("queue_promoted", {"session": name, "queue_id": str(queue_id)})
 
     session._stop_state = "soft_pending"
     session._auto_run = False

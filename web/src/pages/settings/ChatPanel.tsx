@@ -20,6 +20,7 @@ const RESTORE_WINDOWS = [
 export function ChatPanel() {
   const [cfg, setCfg] = useState<DashboardConfig | null>(null)
   const [session, setSession] = useState<Record<string, unknown> | null>(null)
+  const [routing, setRouting] = useState<Record<string, unknown> | null>(null)
   const { options: agentOptions, discovered } = useAgentCatalog()
 
   // Stale-while-revalidate + persist: paint instantly on revisit/reload from a
@@ -28,16 +29,20 @@ export function ChatPanel() {
   const { data } = useCachedData('settings:chat', async () => {
     const [dash, plaw] = await Promise.all([
       api.dashboardConfig().catch(() => null),
-      api.personalclawConfig().then((c) => (c.session ?? {}) as Record<string, unknown>).catch(() => ({} as Record<string, unknown>)),
+      api.personalclawConfig().catch(() => ({} as Record<string, unknown>)),
     ])
-    return { cfg: dash, session: plaw }
+    return {
+      cfg: dash,
+      session: (plaw.session ?? {}) as Record<string, unknown>,
+      routing: (plaw.agents_routing ?? {}) as Record<string, unknown>,
+    }
   }, { persist: true })
 
   useEffect(() => {
-    if (data) { setCfg(data.cfg); setSession(data.session) }
+    if (data) { setCfg(data.cfg); setSession(data.session); setRouting(data.routing) }
   }, [data])
 
-  if (!data || !cfg || !session) return <FormSkeleton sections={3} />
+  if (!data || !cfg || !session || !routing) return <FormSkeleton sections={3} />
 
   return (
     <div>
@@ -45,8 +50,38 @@ export function ChatPanel() {
 
       <SessionsSection cfg={cfg} setCfg={setCfg} />
       <MessagesSection cfg={cfg} setCfg={setCfg} />
+      <RoutingSection routing={routing} setRouting={setRouting} />
       <LifecycleSection session={session} setSession={setSession} agentOptions={agentOptions} discovered={discovered} />
     </div>
+  )
+}
+
+// ── Agent routing (personalclaw config: agents_routing.*) ────────────────────
+function RoutingSection({ routing, setRouting }: { routing: Record<string, unknown>; setRouting: (r: Record<string, unknown>) => void }) {
+  const [saved, flash] = useSavedFlash()
+  const patch = (key: string, value: unknown) => {
+    const prev = routing[key]
+    setRouting({ ...routing, [key]: value })
+    api.patchConfig(`agents_routing.${key}`, value).then(flash).catch(() => {
+      setRouting({ ...routing, [key]: prev })
+      notify(`Couldn't save ${key}`, 'error')
+    })
+  }
+  const enabled = routing.enabled !== false
+  return (
+    <Section title="Agent routing" hint="Suggest a better-fit specialist agent when a message matches one — you always confirm before it re-targets the chat.">
+      <div className="rounded-lg bg-surface-container px-4 py-1">
+        <Row label="Suggest specialists" hint="When a message in a default-agent chat fits an installed specialist, show a one-click 'route to <agent>?' chip. Never routes silently.">
+          <div className="flex items-center gap-2"><SavedToast show={saved} /><Toggle on={enabled} onChange={(v) => patch('enabled', v)} label="Suggest specialists" /></div>
+        </Row>
+        {enabled && (
+          <NumberRow label="Confidence threshold" hint="Minimum match confidence before a routing chip appears. Higher = fewer, surer suggestions." value={Number(routing.min_confidence ?? 0.62)} min={0.3} max={0.95} step={0.01} onCommit={(n) => patch('min_confidence', n)} saved={saved} />
+        )}
+        {enabled && (
+          <NumberRow label="Dismiss cooldown" hint="After you dismiss a suggestion for an agent, suppress it for this long (three dismissals mute it until you re-enable)." value={Number(routing.cooldown_hours ?? 24)} min={0} max={720} step={1} suffix="h" onCommit={(n) => patch('cooldown_hours', n)} saved={saved} />
+        )}
+      </div>
+    </Section>
   )
 }
 
@@ -100,6 +135,13 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
         </Row>
         <Row label="Simplified tool names" hint="Tool pills show a simplified purpose instead of the exact command.">
           <Toggle on={cfg.simplified_tool_names} onChange={(v) => save({ simplified_tool_names: v })} label="Simplified tool names" />
+        </Row>
+        <Row label="Follow-up suggestions" hint="After each reply, show 2-3 suggested next messages (one small background call; never blocks the turn). Skipped for temporary/incognito chats; silent with no model bound.">
+          <Toggle on={cfg.followup_chips} onChange={(v) => save({ followup_chips: v })} label="Follow-up suggestions" />
+        </Row>
+        <Row label="Streaming text reveal" hint="Smooth: steady word-by-word reveal decoupled from network chunks (never lags). Immediate: render each chunk the instant it arrives.">
+          <SegPills value={cfg.stream_reveal} onChange={(v) => save({ stream_reveal: v as 'smooth' | 'immediate' })}
+            options={[{ key: 'smooth', label: 'Smooth' }, { key: 'immediate', label: 'Immediate' }]} />
         </Row>
         <Row label="Widget density" hint="How aggressively the agent uses inline widgets for visual content.">
           <SegPills value={cfg.widget_density} onChange={(v) => save({ widget_density: v as 'more' | 'less' })}

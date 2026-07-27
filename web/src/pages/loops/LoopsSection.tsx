@@ -171,7 +171,7 @@ function CockpitRouter({ id, navigate, query, setQuery }: { id: string } & Pick<
     // Invalidate the cached list before navigating so the deleted loop doesn't ghost
     // in the list (SWR paints the stale snapshot on mount). Matches the Code fix.
     onDeleted={() => { invalidateCache('loops'); navigate('loops/history') }}
-    onOpenArtifact={(slug) => navigate(`files/${slug}`)}
+    onOpenArtifact={(slug) => navigate(`artifacts/${slug}`)}
     onOpenTask={(taskId) => navigate(`tasks?open=${encodeURIComponent(taskId)}`)}
     onOpenProject={(pid) => navigate(`projects/${pid}`)}
     query={query} setQuery={setQuery} />
