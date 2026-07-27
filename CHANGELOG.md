@@ -36,6 +36,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   Chat). **Smoother streaming** — the reveal snaps to word boundaries so text lands in
   whole words, with a new Settings → Chat "Streaming text reveal" (smooth | immediate)
   control.
+- **Background compression keeps long chats fast.** Old, idle conversation history
+  is now topic-segmented and compressed in the background on the maintenance
+  cadence — the always-on complement to on-demand tool-output projection. A
+  transcript untouched for a week (default) is split into topics (by embedding drift
+  when an embedding model is bound; a deterministic turn-count fallback otherwise),
+  then compressed by attention: the most-recent topic stays verbatim, middle topics
+  reduce to their request/response pairs, and the oldest tier is summarized by a
+  cheap background model. It only ever touches sessions **at rest** (never a live
+  turn), incognito/temporary chats are skipped entirely, every dropped span is
+  archived first (fully recoverable) and any tool-result recovery handle is
+  preserved, and savings land in the TokenJuice ledger under `bg_topic`. Toggle and
+  idle window live in Settings → Chat config (`tools.bg_compress_enabled` /
+  `tools.bg_compress_idle_days`); disabling it stops the pass within one tick.
 - **Feedback that actually teaches: 👍/👎 on AI judgments.** Inbox classifications,
   drafted replies, digests, and loop findings now carry a quiet thumbs pair. 👍 is
   silent-positive ("Mark accurate" — it only feeds the accuracy denominator); 👎

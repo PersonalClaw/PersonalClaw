@@ -702,8 +702,13 @@ class ConversationLog:
         split = max(0, len(messages) - keep_recent * 2)
         return messages[:split], messages[split:]
 
-    def rewrite_session(self, key: str, messages: list[dict]) -> None:
-        """Rewrite session JSONL with only the given messages."""
+    def rewrite_session(self, key: str, messages: list[dict], *, reason: str = "compact") -> None:
+        """Rewrite session JSONL with only the given messages.
+
+        Dropped lines are archived (recoverable) with ``reason`` naming why —
+        "compact" for manual/idle compaction, "bg_compress" for the background
+        compression service (Context Economy §4).
+        """
         path = self._path(key)
         self._dir.mkdir(parents=True, exist_ok=True)
         # Archive only messages being dropped (old content minus what's being kept).
@@ -725,7 +730,7 @@ class ConversationLog:
                 if normalized not in kept_serialized:
                     dropped.append(ln)
             try:
-                _archive_lines(key, dropped, reason="compact", base=self._dir)
+                _archive_lines(key, dropped, reason=reason, base=self._dir)
             except Exception:
                 logger.warning("Failed to archive dropped lines for %s", key, exc_info=True)
         # Preserve select fields from original metadata

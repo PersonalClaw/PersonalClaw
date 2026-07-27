@@ -464,6 +464,9 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "resilience.remediation.idle_minutes_healthy": {"type": "int", "min": 1, "max": 1440},
     "resilience.remediation.tick_minutes_degraded": {"type": "int", "min": 1, "max": 1440},
     "tools.projection_rules": {"type": "projection_rules"},
+    # Context Economy §4 — background compression feature flags (runtime-editable).
+    "tools.bg_compress_enabled": {"type": "bool"},
+    "tools.bg_compress_idle_days": {"type": "float", "min": 0.0, "max": 365.0},
     "feedback.enabled": {"type": "bool"},
     "feedback.retire_threshold": {"type": "float", "min": 0.1, "max": 0.9},
     "feedback.min_n": {"type": "int", "min": 3, "max": 50},

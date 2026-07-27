@@ -1779,6 +1779,29 @@ class ToolsConfig:
             "Consulted before the heuristic sniff; a bad regex is skipped.",
         ),
     )
+    # Background compression service (Context Economy §4) — the always-on complement
+    # to on-demand projection: idle, at-rest session history is topic-segmented and
+    # attention-weighted compressed on the maintenance cadence so long sessions stay
+    # fast. Feature flag (missing = the DEFAULT, not fail-safe-off): a maintenance
+    # nicety, not a guard.
+    bg_compress_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Background compression",
+            "Continuously compress old, idle conversation history in the background "
+            "(topic-segmented, attention-weighted) so long sessions stay fast. Every "
+            "dropped span is archived first (fully recoverable) and the summary names "
+            "its archive. Incognito/temporary chats are never touched.",
+        ),
+    )
+    bg_compress_idle_days: float = field(
+        default=7.0,
+        metadata=_meta(
+            "Background compression idle window",
+            "Only compress sessions untouched for at least this many days (at rest — "
+            "an active session is never compressed).",
+        ),
+    )
 
 
 @dataclass
@@ -2167,6 +2190,8 @@ class AppConfig:
                     for r in tools_data.get("projection_rules", [])
                     if isinstance(r, dict) and str(r.get("match_regex", "")).strip()
                 ],
+                bg_compress_enabled=bool(tools_data.get("bg_compress_enabled", True)),
+                bg_compress_idle_days=float(tools_data.get("bg_compress_idle_days", 7.0)),
             ),
             feedback=FeedbackConfig(
                 enabled=bool(feedback_data.get("enabled", True)),
