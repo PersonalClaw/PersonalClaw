@@ -385,6 +385,10 @@ async def start_dashboard(
     from personalclaw.dashboard.handlers.feedback import register_feedback_routes
 
     register_feedback_routes(app)
+    # Investigate Anywhere (plan 60) — chat-with-context from any entity row
+    from personalclaw.dashboard.handlers.investigate import register_investigate_routes
+
+    register_investigate_routes(app)
     # Confirm-gated fixes + trust simulators + selftest (PLATFORM-RESILIENCE §2/§3/§1.4).
     # POST routes don't collide with the {capability} GET; the two GETs above are
     # ordered before it.

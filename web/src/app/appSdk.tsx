@@ -24,6 +24,7 @@ import * as React from 'react'
 import * as ReactDOM from 'react-dom'
 import * as ReactDOMClient from 'react-dom/client'
 import { useEffect, useRef, useState, createContext, useContext, createElement } from 'react'
+import { useInvestigate } from '../lib/investigate'
 
 // ── permission scope carried per app (mirrors manifest Permissions) ──
 export interface AppPermissions {
@@ -442,6 +443,7 @@ export function installAppSdk(): void {
       setNavBadge,
       useChatLauncher,
       launchChat,
+      useInvestigate,
       useAgentTask,
       createAgentTask,
       createAppApi,

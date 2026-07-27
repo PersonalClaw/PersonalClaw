@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { fvs, withWeight } from '../design/fontWeight'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, type LucideIcon } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, type LucideIcon } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -368,8 +368,10 @@ export function ChatPage({ sub, navigate, navEpoch = 0, query, setQuery }: { sub
   // silently rewritten by the composer's replaceState (the "New Chat stuck" fix).
   if (!seg || seg === 'new') return <ChatSession key={`new-${navEpoch}`} sessionId={null} navigate={navigate} query={q} setQuery={setQ} seed={seed} agent={agentParam} />
   // else it's a session key to resume (deep-linked; keyed off `sub` only so
-  // unrelated navigations don't remount/reload it).
-  return <ChatSession key={sub} sessionId={sub} navigate={navigate} query={q} setQuery={setQ} />
+  // unrelated navigations don't remount/reload it). `seed` rides along for
+  // sessions STAGED before their first turn (plan 60's investigate opening
+  // prompt) — the composer pre-fill is editable, never auto-sent.
+  return <ChatSession key={sub} sessionId={sub} navigate={navigate} query={q} setQuery={setQ} seed={seed} />
 }
 
 function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialProjectId = '', seed = '', agent: initialAgent = '' }: { sessionId: string | null; navigate: (p: string, opts?: { replace?: boolean }) => void; query: Record<string, string>; setQuery: RouteProps['setQuery']; projectId?: string; seed?: string; agent?: string }) {
@@ -482,6 +484,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // transient like micError.
   const [attachError, setAttachError] = useState<string | null>(null)
   const [memoryMode, setMemoryMode] = useState<MemoryMode>('persistent')
+  // Investigate origin (plan 60): the entity this chat was opened to investigate.
+  // Rendered as a header chip deep-linking back to the source surface.
+  const [investigateOrigin, setInvestigateOrigin] = useState<import('../lib/api').InvestigateOrigin | null>(null)
   // "Show full result" (tool-io-rendering TC4): the full raw of a projected tool
   // result, fetched on demand from the per-session store + shown in a modal. The
   // OPEN state is the URL (?result=<rawRef>, push); the fetched body + the tool
@@ -641,6 +646,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // which the backend refuses on a non-persistent session) reflect the real
       // posture of a reopened chat instead of the 'persistent' default.
       setMemoryMode((d.memory_mode || 'persistent') as MemoryMode)
+      // Investigate origin chip (plan 60) — present on sessions opened via
+      // POST /api/investigate; survives the first turn (display fields kept).
+      setInvestigateOrigin((d as { investigate?: import('../lib/api').InvestigateOrigin | null }).investigate ?? null)
       // remember the session's agent/model binding so the composer restores the
       // SAME selection it was using (resolved against discovered agents below,
       // once they've loaded).
@@ -1896,6 +1904,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                   className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 text-[0.75rem] text-on-surface-var hover:text-on-surface" title={`Scoped to project: ${projectName}`}>
                   <FolderKanban size={12} className="text-primary" /> {projectName}
                 </button>
+              )}
+              {/* Investigate origin (plan 60): the entity this chat was opened to
+                  investigate; click deep-links back to the source surface. */}
+              {investigateOrigin?.title && (
+                <Button size="xs" variant="secondary"
+                  onClick={() => { if (investigateOrigin.back_link) navigate(investigateOrigin.back_link.replace(/^#\//, '')) }}
+                  title={`Investigating: ${investigateOrigin.title} — open the source`}>
+                  <MessageCircleQuestion size={12} className="text-primary" /> {investigateOrigin.title}
+                </Button>
               )}
               {/* copy chat link — lives next to the title (its subject). */}
               {sessionRef.current && (

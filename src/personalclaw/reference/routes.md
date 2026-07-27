@@ -180,6 +180,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/incident` — current state; POST /api/incident — activate.
 - `POST /api/incident` — current state; POST /api/incident — activate.
 - `POST /api/incident/resume` — turn incident mode OFF.
+- `POST /api/investigate` — _(no summary)_
 - `POST /api/knowledge/embedding/generate` — - embed all unembedded items (or re-embed all).
 - `GET /api/knowledge/embedding/status` — - embedding config and progress.
 - `GET /api/knowledge/entities` — _(no summary)_

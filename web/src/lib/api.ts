@@ -779,6 +779,8 @@ export interface FeedbackProducersResponse {
   min_n: number
   window_days: number
 }
+// Investigate Anywhere (plan 60): the origin chip fields the session detail carries.
+export interface InvestigateOrigin { kind: string; title: string; back_link: string }
 
 export interface ToolsSavings {
   saved_chars: number
@@ -2065,6 +2067,9 @@ export const api = {
     get<FeedbackProducersResponse>(`/api/feedback/producers${windowDays ? `?window_days=${windowDays}` : ''}`),
   feedbackSnooze: (producer: FeedbackProducer) => post<{ ok: boolean }>('/api/feedback/producers/snooze', producer),
   feedbackClear: (producer: FeedbackProducer) => post<{ ok: boolean }>('/api/feedback/producers/clear', producer),
+  // Investigate Anywhere (plan 60): server-composed context envelope + staged session.
+  investigate: (body: { kind: string; id: string; back_link?: string }) =>
+    post<{ session_key: string; context: InvestigateOrigin & { snapshot: string; opening_prompt?: string } }>('/api/investigate', body),
 
   // upload (multipart — no JSON headers)
   // Extracted text content for an uploaded attachment (what the agent saw) — used
