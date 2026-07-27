@@ -633,7 +633,7 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
                   <div className="flex flex-col gap-1.5">
                     <WorkGroupLabel text="Artifacts" count={artifacts.length} tone="muted" />
                     {artifacts.map((a) => (
-                      <button key={a.slug} type="button" onClick={() => navigate(`files/${a.slug}`)}
+                      <button key={a.slug} type="button" onClick={() => navigate(`artifacts/${a.slug}`)}
                         className="group flex items-center gap-2 rounded-md bg-surface-high/60 px-2.5 py-1.5 text-left text-[0.8125rem] text-on-surface-var hover:bg-surface-high">
                         <FileBox size={13} className="shrink-0 text-primary" />
                         <span className="min-w-0 flex-1 truncate">{a.name}</span>

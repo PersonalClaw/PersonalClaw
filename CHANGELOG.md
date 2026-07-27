@@ -19,6 +19,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Artifacts get their own page.** Artifacts — the named, versioned outputs agents
+  produce — moved out of the Files page into their own top-level **Artifacts** nav
+  entry (`#/artifacts`, deep-linkable per slug). Files now shows only your raw file
+  roots; old `#/files/<slug>` artifact links (in past chats and event timelines)
+  redirect automatically to the artifact's new home, and "Save as artifact" from a
+  file jumps you there. The viewer itself is unchanged — render, edit/snapshot,
+  version history + revert, and the events timeline all work exactly as before.
 - **Artifacts: collections + save-time dedup.** Saved artifacts can now carry a
   **collection** label (a free-form grouping for the coming library), settable at
   save time and reassignable later, and filterable via `GET /api/artifacts?collection=`

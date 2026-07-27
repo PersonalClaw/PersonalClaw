@@ -20,37 +20,37 @@ import { FileTree } from './browse/FileTree'
 import { FileViewer, type FileViewerHandle } from './browse/FileViewer'
 import { PathBar } from './browse/PathBar'
 import { useFileTabs } from './browse/useFileTabs'
-import { ArtifactList } from './artifacts/ArtifactList'
-import { ArtifactViewer } from './artifacts/ArtifactViewer'
 import { newSessionTarget } from '../../ui/content/commentTarget'
 import { baseName, fileIcon } from './fileMeta'
 
-const ARTIFACTS_TAB = 'artifacts'
 const TAB_KEY = 'files-tab'
 
-/** Unified Files + Artifacts page. ONE top-right tab strip = the file roots
- *  (Workspace/Home/Outbox) + Artifacts. Root tabs show the explorer + a rich
- *  multi-tab editor/preview; the Artifacts tab shows rendered, versioned
- *  artifacts. No roots sidebar (the top-bar tabs ARE the root selector). */
+/** Files page — the raw file roots (Workspace/Home/Outbox): explorer + a rich
+ *  multi-tab editor/preview. Artifacts moved to their OWN top-level surface
+ *  (`#/artifacts`, ARTIFACTS S1b) — they were a tab here for navigational
+ *  similarity only. Old `#/files/<slug>` deep-links redirect there. */
 export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: RouteProps) {
   const { roots, loading: rootsLoading } = useFileRoots()
-  // A deep-link `#/files/<slug>` opens the Artifacts tab on that artifact.
+  // Legacy deep-link `#/files/<slug>` (the pre-split artifact link, persisted in
+  // old chat transcripts/events) → redirect to the artifact's new home.
   const deepSlug = (sub || '').split('/')[0] || ''
+  useEffect(() => {
+    if (deepSlug) navigate(`artifacts/${deepSlug}`, { replace: true })
+  }, [deepSlug, navigate])
   // The explorer's current directory rides the URL (?dir=<abspath>, push → Back =
   // up a dir; deep-link/refresh restores it). It is the SINGLE source of truth for
   // where the explorer is pointing — a bare ?dir-less route means "the root tab".
   // The dir lives under a registered root (Home/Workspace), so the allowlist permits
   // it. Content search rides ?q/?include (replace — an in-place refinement).
   const [dir, setDir] = useQueryParam(routeQuery, setQuery, 'dir', '')
-  const [tab, setTab] = useState<string>(() => (deepSlug ? ARTIFACTS_TAB : (localStorage.getItem(TAB_KEY) || '')))
+  const [tab, setTab] = useState<string>(() => localStorage.getItem(TAB_KEY) || '')
   useEffect(() => { if (tab) localStorage.setItem(TAB_KEY, tab) }, [tab])
 
-  const isArtifacts = tab === ARTIFACTS_TAB
   // The explorer browses ?dir when set, else the root tab. Navigating the path bar
   // writes ?dir (push → Back = up a dir); switching root tabs clears it so a stale
   // subdir from one root can't leak into another (the seed effect would otherwise
-  // flip the tab back). A user-driven tab/artifact switch goes through switchTab.
-  const activeRoot = isArtifacts ? '' : (dir || tab)
+  // flip the tab back). A user-driven tab switch goes through switchTab.
+  const activeRoot = dir || tab
   const switchTab = useCallback((t: string) => {
     setTab(t)
     if (dir) setQuery({ dir: null }, { replace: true })
@@ -85,9 +85,9 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
   const [rootDrop, setRootDrop] = useState(false)
   const [artModal, setArtModal] = useState<{ entry: FsEntry; content: string; name: string } | null>(null)
 
+  // File-backed artifact paths — the drift badge in the tree. The full artifact
+  // surface lives at #/artifacts; Files only needs to know WHICH paths are backed.
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
-  const [artLoading, setArtLoading] = useState(false)
-  const [activeArtifact, setActiveArtifact] = useState<Artifact | null>(null)
   // The file explorer is a right-docked, hidable panel (standard SidePanel),
   // open by default so browsing works on arrival.
   const [explorerOpen, setExplorerOpen] = useState(true)
@@ -103,25 +103,16 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
     if (owning && owning.path !== tab) setTab(owning.path)
   }, [dir, roots]) // eslint-disable-line react-hooks/exhaustive-deps
   // Default to the first root once roots arrive, unless the saved tab is valid.
+  // (A pre-split localStorage tab may still say 'artifacts' — no longer valid here.)
   useEffect(() => {
     if (!roots.length) return
-    const valid = tab === ARTIFACTS_TAB || roots.some((r) => r.path === tab)
-    if (!valid) setTab(roots[0].path)
+    if (!roots.some((r) => r.path === tab)) setTab(roots[0].path)
   }, [roots, tab])
 
   const loadArtifacts = useCallback(async () => {
-    setArtLoading(true)
     try { setArtifacts(await api.artifacts()) } catch { setArtifacts([]) }
-    finally { setArtLoading(false) }
   }, [])
   useEffect(() => { loadArtifacts() }, [loadArtifacts])
-
-  // Deep-link `#/files/<slug>` → select that artifact once the list is in.
-  useEffect(() => {
-    if (!deepSlug || !artifacts.length) return
-    const match = artifacts.find((a) => a.slug === deepSlug)
-    if (match) { setTab(ARTIFACTS_TAB); setActiveArtifact(match) }
-  }, [deepSlug, artifacts])
 
   const artifactPaths = useMemo(() => new Set(artifacts.filter((a) => a.source_path).map((a) => a.source_path)), [artifacts])
 
@@ -129,13 +120,12 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
 
   const openByPath = useCallback((path: string, rootPath?: string) => {
     if (rootPath) setTab(rootPath)
-    else setTab((t) => (t === ARTIFACTS_TAB ? (roots[0]?.path ?? '') : t))
     fileTabs.open({ name: baseName(path), path, is_dir: false })
-  }, [fileTabs, roots])
+  }, [fileTabs])
 
   // Debounced content search under the active root.
   useEffect(() => {
-    if (isArtifacts || !activeRoot || grep.trim().length < 2) { setResults([]); setSearchEngine(''); return }
+    if (!activeRoot || grep.trim().length < 2) { setResults([]); setSearchEngine(''); return }
     setSearchBusy(true)
     const t = setTimeout(() => {
       api.fileContentSearch(activeRoot, grep.trim(), include.trim() || undefined)
@@ -144,7 +134,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
         .finally(() => setSearchBusy(false))
     }, 250)
     return () => clearTimeout(t)
-  }, [grep, include, activeRoot, isArtifacts])
+  }, [grep, include, activeRoot])
 
   // Keyboard: ⌘S saves the focused tab, ⌘F focuses the search box.
   const searchRef = useRef<HTMLInputElement>(null)
@@ -152,12 +142,12 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return
       const k = e.key.toLowerCase()
-      if (k === 's' && !isArtifacts && fileTabs.activePath) { e.preventDefault(); viewerRefs.current.get(fileTabs.activePath)?.save() }
-      else if (k === 'f' && !isArtifacts) { e.preventDefault(); searchRef.current?.focus() }
+      if (k === 's' && fileTabs.activePath) { e.preventDefault(); viewerRefs.current.get(fileTabs.activePath)?.save() }
+      else if (k === 'f') { e.preventDefault(); searchRef.current?.focus() }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [isArtifacts, fileTabs.activePath])
+  }, [fileTabs.activePath])
 
   const saveAsArtifact = (entry: FsEntry, content: string) => setArtModal({ entry, content, name: baseName(entry.path) })
   const confirmArtifact = async () => {
@@ -165,14 +155,10 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
     try {
       const created = await api.createArtifact({ name: artModal.name.trim(), content: artModal.content, source: 'manual', source_path: artModal.entry.path, kind: guessKind(artModal.entry.name) })
       setArtModal(null); await loadArtifacts()
-      setTab(ARTIFACTS_TAB); setActiveArtifact(created)
+      // The artifact surface is its own page now — jump to the saved artifact there.
+      navigate(`artifacts/${created.slug}`)
     } catch (e) { notify(`Could not save artifact: ${(e as Error).message}`, 'error') }
   }
-
-  const openSourceFile = useCallback((path: string) => {
-    const owning = roots.find((r) => path === r.path || path.startsWith(r.path + '/'))
-    openByPath(path, owning?.path ?? roots[0]?.path)
-  }, [roots, openByPath])
 
   const submitCreate = async () => {
     const name = newName.trim()
@@ -243,10 +229,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
     }
   }, [refresh])
 
-  const tabOptions = [
-    ...roots.map((r) => ({ key: r.path, label: r.label })),
-    { key: ARTIFACTS_TAB, label: 'Artifacts', icon: Box },
-  ]
+  const tabOptions = roots.map((r) => ({ key: r.path, label: r.label }))
   const showResults = grep.trim().length >= 2
 
   return (
@@ -266,7 +249,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
         right={
           <HeaderActions>
             <HeaderControl icon={PanelRight}
-              label={explorerOpen ? (isArtifacts ? 'Hide artifact list' : 'Hide explorer') : (isArtifacts ? 'Show artifact list' : 'Show explorer')}
+              label={explorerOpen ? 'Hide explorer' : 'Show explorer'}
               active={explorerOpen} onClick={() => setExplorerOpen((v) => !v)} />
           </HeaderActions>
         }
@@ -276,8 +259,6 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
           (the 'full' preset still fills — min(1600px,100%)); its internal columns
           flex within that. */}
       <div className="mx-auto flex min-h-0 w-full flex-1" style={{ maxWidth: 'var(--content-width)' }}>
-        {!isArtifacts ? (
-          <>
             {/* editor column — tab strip + the focused file's viewer (fills width;
                 the explorer is a right-docked, hidable panel beside it) */}
             <div className="flex min-w-0 flex-1 flex-col">
@@ -400,25 +381,6 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
             </div>
             </SidePanel>
             )}
-          </>
-        ) : (
-          <>
-            {/* artifact viewer fills width; the list is a right-docked, hidable
-                SidePanel (same pattern as the file explorer). */}
-            <div className="min-w-0 flex-1">
-              {activeArtifact
-                ? <ArtifactViewer key={activeArtifact.slug} slug={activeArtifact.slug} onChanged={loadArtifacts}
-                    onDeleted={() => { setActiveArtifact(null); loadArtifacts() }} onOpenSourceFile={openSourceFile}
-                    commentTarget={navigate ? newSessionTarget(navigate, { name: `Comments: ${activeArtifact.name}` }) : undefined} />
-                : <EmptyState icon={Box} title="No artifact selected" hint="Artifacts are named, versioned snapshots — widgets, docs, and files agents produce. Pick one to view its render, history, and timeline." />}
-            </div>
-            {explorerOpen && (
-              <SidePanel title="Artifacts" icon={<Box size={18} />} storeKey="artifacts-list-w" fillHeight onClose={() => setExplorerOpen(false)}>
-                {artLoading && artifacts.length === 0 ? <Loading /> : <ArtifactList artifacts={artifacts} activeSlug={activeArtifact?.slug ?? null} onSelect={setActiveArtifact} />}
-              </SidePanel>
-            )}
-          </>
-        )}
       </div>
 
       {artModal && (

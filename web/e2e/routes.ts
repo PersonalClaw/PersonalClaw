@@ -23,6 +23,7 @@ export const ROUTES: RouteEntry[] = [
   { route: 'inbox', label: 'Inbox', needsData: true },
   { route: 'triggers', label: 'Triggers', needsData: true },
   { route: 'files', label: 'Files', needsData: true },
+  { route: 'artifacts', label: 'Artifacts', needsData: true },
   { route: 'terminal', label: 'Terminal' },
   { route: 'agents', label: 'Agents', needsData: true },
   { route: 'tools', label: 'Tools', needsData: true },

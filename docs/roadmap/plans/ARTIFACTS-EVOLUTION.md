@@ -161,3 +161,25 @@ def _inject_artifact_content(state, session, message) -> str: ...
   unsupervised overnight execution (atomic-completability: ship the finished backend half,
   do the risky FE relocation with care). S1b is the next Artifacts session; S2 (library
   surface) builds on the split, so S1b precedes it.
+- [2026-07-27][S1b] DONE (T1.3, route split): artifacts are their own top-level surface.
+  `web/src/pages/artifacts/` is the new home — `ArtifactList.tsx` + `ArtifactViewer.tsx`
+  relocated verbatim via `git mv` (imports repointed; `artifactKindMeta`/`relTime` stay in
+  `files/fileMeta` — they have 10+ cross-page consumers, moving them is churn not cleanup)
+  plus a new `ArtifactsSection.tsx` host: viewer fills width, list is the right-docked
+  hidable SidePanel (the Files-era layout carried over), deep-link `#/artifacts/<slug>`,
+  selection writes the slug to the URL (replace). App.tsx: `artifacts` NAV entry (FileCode,
+  Platform group) + lazy route; e2e `routes.ts` gains the route (needsData). FilesSection:
+  the ARTIFACTS_TAB, its render branch, and all `isArtifacts` state are DELETED (clean
+  break — files-only now); a legacy `#/files/<slug>` deep-link redirects (replace) to
+  `#/artifacts/<slug>` — kept for persisted references in old transcripts/events, not a
+  dual path; a stale `files-tab=artifacts` localStorage value self-heals to the first root.
+  "Save as artifact" navigates to the new page; the file-tree drift badge keeps its
+  `artifactPaths` feed. Cross-page emitters updated: ProjectsSection + LoopsSection now
+  navigate to `artifacts/<slug>`. The bundled artifacts SKILL.md prose already said
+  `/artifacts/<slug>` (was aspirational; now true — no edit needed). Validated as a user
+  on :10020 (Playwright): `#/artifacts` renders the nav entry + list + live widget render;
+  `#/artifacts/<slug>` deep-link opens the artifact; legacy `#/files/<slug>` lands on
+  `#/artifacts/<slug>` (hash verified rewritten) with the viewer working; `#/files` shows
+  root tabs only (no Artifacts tab) with the explorer intact; ZERO console errors on all
+  routes. Gate: web typecheck + 251 vitest + build green, `make lint` green, full backend
+  suite green. Remaining: S2 (library surface — grid/previews/collections) builds on this.
