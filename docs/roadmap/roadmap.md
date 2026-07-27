@@ -2,8 +2,10 @@
 
 Active and planned feature work. Each entry links to a detailed plan document in `plans/`.
 
-**Last updated:** 2026-07-26 · **rev 11** — 54 plans / 6 pillars / ~294 sessions.
+**Last updated:** 2026-07-26 · **rev 13** — 62 plans / 6 pillars / ~330 sessions.
 
+- **rev 13** — gap-analysis round 2 (owner Q&A + five approved mechanism designs). Five new plans: **58 Feedback-Signal** (Pillar C — 👍/👎 on AI judgments; 👍 silent-positive-only; capture store + per-producer accuracy + deterministic retire-thresholds; interpretive arm forward-hooked to Learning-Flywheel), **59 Model-Use-Cases-V2** (Pillar D — chat sub-vocabulary grows to background/orchestration/loops + code_tools/reasoning finally exposed; ordered per-use-case fallback chains, breaker-aware; composer override chains on top: override → chain default → fallbacks), **60 Investigate-Anywhere** (Pillar F — one fenced chat-with-context primitive + ~13-surface adoption sweep), **61 Artifacts-Evolution** (Pillar F — artifacts split from Files into a first-class library; store already first-class per recon — surface/dedup/iterate/diffs are the real gaps), **62 Agent-Rooms** (Pillar A — PROPOSED stub, owner-deferred until WORKFLOWS-V2 slices + ACP-AGENT-PARITY; council workflow template named as the cheap precursor). Ten round-2 amendments (`## Amendment (2026-07-26 — gap analysis round 2 …)` blocks): AUTONOMY-GUARDRAILS (earned-autonomy rung ladder per action type, ~4→~6), BROWSE-AUTOMATION (a11y-outline compression + live mirror + auth handoff + scheduled actuator, ~4→~5), EVALUATION-SUBSTRATE (lab/gate/field three-loop structure, ~5→~6), AMBIENT-SURFACES (dashboard-as-views w/ Overview + Mission Control presets-first + modern agent-world seam, ~6→~8), INBOX-NOTIFICATIONS-UNIFICATION (typed Proposal payload + apply contract + app emission, 6→7), ONBOARDING-UX (three-surface split; onboarding walks essential first-party apps FIRST, 4→5), COMPANION-APPS (multi-gateway pairing/switching = the sanctioned multi-instance story; hub explicitly vetoed), CHANNEL-EXPANSION (vendor-completeness pattern, Slack exemplar), AUTOMATION-SUBSTRATE (app-contributed trigger sources committed), CHAT-CRAFT (optimizer polish row). Owner rulings recorded: no multi-instance hub ever (remote access = Remote-User-Auth; separation = Companion-Apps switching); presets-first on a composition-ready view registry; 👍 silent-positive-only; composer model override chains rather than failing hard. **Execution-order pass folded in:** the rev-12/13 batch entries in the Wave 2/3 lists carry an explicit in-wave pickup order — contract-owners before consumers (Model-UC-v2 and Feedback-Signal first; Investigate-Anywhere before Artifacts S3; Inbox-Unify's proposals contract before Guardrails' promotion offers), ChatPage-heavy work serialized (Chat-Craft → Agent-Routing → Artifacts' chat touches) so no two plans churn ChatPage concurrently, and Personality-Themes after Fluid-Motion (it rides those dials).
+- **rev 12** — sibling-platform gap analysis (MeshClaw/KiroClaw core + website + ~75 apps surveyed 2026-07-26), owner-greenlit batch. Three new plans: **55 Chat-Craft** (Pillar F — seven proven chat-surface mechanics: true rewind, queue interrupt-now, find-in-conversation, quote-reply, follow-up chips, screen-snip, smooth streaming), **56 Agent-Routing** (Pillar D — suggest-first specialist routing chip; deterministic+embedding classification, LLM never in the hot path; silent auto-routing deferred to a future earned-autonomy mechanism), **57 Personality-Themes** (Pillar F — themes that carry behavior: name/logo/sound/flourishes, strictly additive, a11y never weakened). Thirteen dated amendments (each plan carries an `## Amendment (2026-07-26 …)` block): WORKFLOWS-V2 (cached-rerun legibility + per-node inspection, 31→32), PLATFORM-RESILIENCE (`steer` mid-turn policy, 5→6), EXECUTION-ISOLATION (ceiling-everything + spawn-audit test, 7→8), AUTOMATION-SUBSTRATE (calendar-aware scheduling: quiet windows + duty gate + week grid, 9→10), INBOX-NOTIFICATIONS-UNIFICATION (second-opinion verify gate, 5→6), SECURITY-HARDENING (tamper-resistant baseline denylist), LEARNING-VISIBILITY (periodic identity report), MODEL-ROUTING-TELEMETRY (the usage story over the guardrails audit), EXTERNAL-ACCESS (OpenAI-compatible doorway promoted to an early sub-slice), AMBIENT-SURFACES (in-chat widget round-trip formalized — bridge already exists), APP-PLATFORM-EVOLUTION (app update badges, consented cross-app reads, Fix-with-AI), MOBILE-COMPANION (approve-from-phone reordered to milestone one), DURABILITY-AND-SYNC (merge-restore gaps closed — merge mode already exists).
 - **rev 11** — two cross-cutting infrastructure plans added from the owner's remote-access ask: **53 Remote-User-Auth** (Pillar B — human login that mints the existing session token for internet-exposed self-hosting, on a durable-session foundation; the prerequisite for remote companion clients) and **54 Companion-Apps** (Pillar D — the connectivity contract native clients use to reach a local-or-remote gateway: discovery, unified pairing, endpoint switching, auth; MOBILE-COMPANION + DESKTOP-CAPABILITIES consume it). Note verified in the same pass: the desktop shell is **already Electron** — there is no Tauri anywhere, so no migration plan was created; the mic/audio gap is DESKTOP-CAPABILITIES S3 (unbuilt), not a re-platform. v0.1.2 shipped Design-System-Consistency, Platform-Legibility, Autonomy-Guardrails, and Platform-Resilience.
 - **rev 10** — Pillar F "Product Depth & Craft" added (48 App-Platform-Evolution, 49 Knowledge-Library, 50 Session-Management, 51 Design-System-Consistency, 52 Fluid-Motion), from the owner's product-depth ask.
 - **rev 9** — pre-launch alignment: 17 plans (31-47) added from the pre-launch investigation & owner review under new Pillar E (Launch, Reach & Ecosystem) + additions to B/C/D; PUBLICATION amended (repos under the `PersonalClaw` GitHub org, personalclaw.dev primary domain, force-push/SOURCE_REV retired → feature-branches-to-`main`); EXTERNAL-ACCESS §3 read-only MCP extracted to plan 41. Deepened plans carry Contracts & Interfaces + executor task tables; see the three companion docs below.
@@ -13,7 +15,7 @@ Active and planned feature work. Each entry links to a detailed plan document in
 
 ## Program Structure
 
-54 plans across 6 conceptual pillars. Plans interleave via execution waves; the engine carries embedded acceptance criteria from downstream plans. The research corpus lives at `docs/research/learnings/` (14 source-agnostic topic files, ~320 mechanisms) — feed a topic file to any implementation session for mechanism-level grounding.
+62 plans across 6 conceptual pillars. Plans interleave via execution waves; the engine carries embedded acceptance criteria from downstream plans. The research corpus lives at `docs/research/learnings/` (14 source-agnostic topic files, ~320 mechanisms) — feed a topic file to any implementation session for mechanism-level grounding.
 
 **Every implementation session executes under [plans/EXECUTION-PROTOCOL.md](plans/EXECUTION-PROTOCOL.md)** — the standing ground rules (scope discipline, definition of done, validation-as-a-user, deviation ledger, escalation triggers) that let plan tasks be delegated to any session, including smaller models, without eroding standards. Deepened plans carry executor-ready task tables (ID / task / files / done-when); a session that can't tell what "done" means for a task treats that as a defect in the task, not license to improvise.
 
@@ -39,15 +41,16 @@ The v2 workflow engine and the systems it subsumes.
 
 | # | Feature | Plan | Sessions | Wave |
 |---|---|---|---|---|
-| 1 | Workflows v2 — Composable Execution Platform | [WORKFLOWS-V2](plans/WORKFLOWS-V2.md) | ~31 | 1 |
+| 1 | Workflows v2 — Composable Execution Platform | [WORKFLOWS-V2](plans/WORKFLOWS-V2.md) | ~32 | 1 |
 | 2 | Loop Evolution — Loops as Workflow Templates | [LOOPS-EVOLUTION](plans/WORKFLOWS-V2-LOOPS-EVOLUTION.md) | ~5 | 2A |
 | 3 | Universal Project Planning + Planner Collapse | [UNIVERSAL-PLANNING](plans/WORKFLOWS-V2-UNIVERSAL-PLANNING.md) | ~6 | 2A |
 | 4 | Tasks & SOPs as Workflow Primitives | [TASKS-SOPS](plans/WORKFLOWS-V2-TASKS-SOPS.md) | ~7 | 2D |
 | 5 | Knowledge Artifact Synthesis Nodes | [KNOWLEDGE-SYNTHESIS](plans/WORKFLOWS-V2-KNOWLEDGE-SYNTHESIS.md) | ~6 | 2B |
 | 6 | Work-Container Hierarchy — Project as Sole Umbrella | [WORK-CONTAINERS](plans/WORKFLOWS-V2-WORK-CONTAINERS.md) | ~9 | 2C |
-| 7 | One Automation Substrate — Triggers Fire Workflows | [AUTOMATION-SUBSTRATE](plans/WORKFLOWS-V2-AUTOMATION-SUBSTRATE.md) | ~9 | 3 |
+| 7 | One Automation Substrate — Triggers Fire Workflows | [AUTOMATION-SUBSTRATE](plans/WORKFLOWS-V2-AUTOMATION-SUBSTRATE.md) | ~10 | 3 |
 | 8 | Learning Flywheel — One Lifecycle for Learned Artifacts | [LEARNING-FLYWHEEL](plans/WORKFLOWS-V2-LEARNING-FLYWHEEL.md) | ~11 | 0+3 |
 | 30 | Harness Craft — Fast Worktrees + Best-of-N + Check-Work | [HARNESS-CRAFT](plans/HARNESS-CRAFT.md) | ~3 | 2/3 |
+| 62 | Agent Rooms — Persistent Multi-Agent Deliberation (PROPOSED, deferred) | [AGENT-ROOMS](plans/AGENT-ROOMS.md) | ~6 | 4 |
 
 ### Pillar B — Safety, Resilience & Operations
 
@@ -55,11 +58,11 @@ Cross-cutting floors everything else depends on.
 
 | # | Feature | Plan | Sessions | Wave |
 |---|---|---|---|---|
-| 9 | Autonomy Guardrails — Budgets, Denylist, Kill Switch | [AUTONOMY-GUARDRAILS](plans/AUTONOMY-GUARDRAILS.md) | ~4 | 0 |
-| 10 | Platform Resilience — Doctor, Degraded Mode, Mid-Turn | [PLATFORM-RESILIENCE](plans/PLATFORM-RESILIENCE.md) | ~5 | 0/1+3 |
+| 9 | Autonomy Guardrails — Budgets, Denylist, Kill Switch (+ Earned Autonomy) | [AUTONOMY-GUARDRAILS](plans/AUTONOMY-GUARDRAILS.md) | ~6 | 0+3 |
+| 10 | Platform Resilience — Doctor, Degraded Mode, Mid-Turn | [PLATFORM-RESILIENCE](plans/PLATFORM-RESILIENCE.md) | ~6 | 0/1+3 |
 | 11 | Self-Verification — Spec Harness + Event Replay + QA Companion | [SELF-VERIFICATION](plans/SELF-VERIFICATION.md) | ~6 | 0/1+2 |
 | 12 | Context Economy — Compression + Tool-Groups + Codebase Graph | [CONTEXT-ECONOMY](plans/CONTEXT-ECONOMY.md) | ~6 | 0/1 |
-| 13 | Execution Isolation — Sandbox + BYO Runners + Secrets Vault | [EXECUTION-ISOLATION](plans/EXECUTION-ISOLATION.md) | ~7 | 2 |
+| 13 | Execution Isolation — Sandbox + BYO Runners + Secrets Vault | [EXECUTION-ISOLATION](plans/EXECUTION-ISOLATION.md) | ~8 | 2 |
 | 28 | ACP Agent Parity — One Provider, the Whole Platform | [ACP-AGENT-PARITY](plans/ACP-AGENT-PARITY.md) | ~9 | 0 |
 | 31 | Lifecycle Doctrine & API Stability — Post-PoC Change Discipline | [LIFECYCLE-DOCTRINE](plans/LIFECYCLE-DOCTRINE.md) | ~3 | 0 (first) |
 | 32 | Provider-Boundary Completion — Retire the Slack Residue | [PROVIDER-BOUNDARY-COMPLETION](plans/PROVIDER-BOUNDARY-COMPLETION.md) | ~2 | 0 |
@@ -74,7 +77,8 @@ How the system learns, remembers, and builds knowledge.
 |---|---|---|---|---|
 | 14 | Memory Graph + Vault — Linked Recall + Editable Mirror | [MEMORY-GRAPH-AND-VAULT](plans/MEMORY-GRAPH-AND-VAULT.md) | ~5 | 0 |
 | 15 | Watched Sources — URL/Feed/Dir → Knowledge Ingestion | [WATCHED-SOURCES](plans/WATCHED-SOURCES.md) | ~5 | 2E+3 |
-| 16 | Evaluation Substrate — Template Studies + Trust Ladder | [EVALUATION-SUBSTRATE](plans/EVALUATION-SUBSTRATE.md) | ~5 | 3/4 |
+| 16 | Evaluation Substrate — Template Studies + Trust Ladder | [EVALUATION-SUBSTRATE](plans/EVALUATION-SUBSTRATE.md) | ~6 | 3/4 |
+| 58 | Feedback Signal — The Thumbs That Actually Teach | [FEEDBACK-SIGNAL](plans/FEEDBACK-SIGNAL.md) | ~3 | 2 |
 | 17 | Model Routing Telemetry — Learned Local-vs-Cloud | [MODEL-ROUTING-TELEMETRY](plans/MODEL-ROUTING-TELEMETRY.md) | ~3 | 3 |
 | 46 | Learning Visibility — Make the Flywheel Felt | [LEARNING-VISIBILITY](plans/LEARNING-VISIBILITY.md) | ~4 | 1+2+3 |
 
@@ -86,10 +90,10 @@ What the user sees and how the platform interoperates.
 |---|---|---|---|---|
 | 18 | Local Model Manager v2 — Sidecar Isolation + DX | [LOCAL-MODEL-MANAGER-V2](plans/LOCAL-MODEL-MANAGER-V2.md) | ~5 | 0 |
 | 19 | Platform Legibility — Manifest, SKILL.md, Error Envelopes | [PLATFORM-LEGIBILITY](plans/PLATFORM-LEGIBILITY.md) | ~5 | 0 |
-| 20 | Ambient Surfaces — Composable Home + Menu Bar | [AMBIENT-SURFACES](plans/AMBIENT-SURFACES.md) | ~6 | 2F+3 |
+| 20 | Ambient Surfaces — Composable Home + Menu Bar + Views | [AMBIENT-SURFACES](plans/AMBIENT-SURFACES.md) | ~8 | 2F+3 |
 | 21 | Proactive Assistant — Triage + Decision Journal | [PROACTIVE-ASSISTANT](plans/PROACTIVE-ASSISTANT.md) | ~5 | 4 |
 | 22 | Multimodal I/O — Voice Profiles + Screen Context | [MULTIMODAL-IO](plans/MULTIMODAL-IO.md) | ~5 | 2/3 |
-| 23 | Browse Automation — Web-Interaction Action Provider | [BROWSE-AUTOMATION](plans/BROWSE-AUTOMATION.md) | ~4 | 2 |
+| 23 | Browse Automation — Web-Interaction Action Provider | [BROWSE-AUTOMATION](plans/BROWSE-AUTOMATION.md) | ~5 | 2 |
 | 24 | External Access — Inbound API + Capture Proxy + Headless CLI | [EXTERNAL-ACCESS](plans/EXTERNAL-ACCESS.md) | ~7 | 3 |
 | 25 | Agent Packs & Portable Bundles | [AGENT-PACKS](plans/AGENT-PACKS.md) | ~6 | 4 |
 | 26 | Durability & Multi-Machine Sync | [DURABILITY-AND-SYNC](plans/DURABILITY-AND-SYNC.md) | ~5 | 0+3 |
@@ -97,11 +101,13 @@ What the user sees and how the platform interoperates.
 | 29 | Multi-Tenant Entity Readiness — Harness as a Good Citizen of Shared Stores | [TEAM-SHARED-ENTITIES](plans/TEAM-SHARED-ENTITIES.md) | ~5 | 0+3 |
 | 40 | Channel Expansion — Sender Trust + Telegram/Discord/Email | [CHANNEL-EXPANSION](plans/CHANNEL-EXPANSION.md) | ~8 | 1+2 |
 | 41 | MCP Read-Only Inbound — Curated Query Surface (extracted from 24) | [MCP-READONLY-INBOUND](plans/MCP-READONLY-INBOUND.md) | ~2 | 0/1 |
-| 42 | Inbox/Notifications Unification — One Attention Store + Rules | [INBOX-NOTIFICATIONS-UNIFICATION](plans/INBOX-NOTIFICATIONS-UNIFICATION.md) | ~5 | 1+2 |
-| 43 | Onboarding UX — Guided First Run + Progressive Disclosure | [ONBOARDING-UX](plans/ONBOARDING-UX.md) | ~4 | 1+2 |
+| 42 | Inbox/Notifications Unification — One Attention Store + Rules | [INBOX-NOTIFICATIONS-UNIFICATION](plans/INBOX-NOTIFICATIONS-UNIFICATION.md) | ~7 | 1+2 |
+| 43 | Onboarding UX — Guided First Run + Progressive Disclosure | [ONBOARDING-UX](plans/ONBOARDING-UX.md) | ~5 | 1+2 |
 | 44 | Mobile Companion — Monitor + Approve From the Phone | [MOBILE-COMPANION](plans/MOBILE-COMPANION.md) | ~6 | 2+3 |
 | 45 | Desktop Capabilities — Electron as the OS-Capability Surface | [DESKTOP-CAPABILITIES](plans/DESKTOP-CAPABILITIES.md) | ~4 | 2/3 |
 | 54 | Companion Apps — Native Clients Over a Local or Remote Gateway | [COMPANION-APPS](plans/COMPANION-APPS.md) | ~4 | 2 |
+| 56 | Agent Routing — Suggest-First Specialist Routing | [AGENT-ROUTING](plans/AGENT-ROUTING.md) | ~2 | 2 |
+| 59 | Model Use-Cases v2 — Sovereign Vocabulary + Fallback Chains | [MODEL-USE-CASES-V2](plans/MODEL-USE-CASES-V2.md) | ~3 | 2 |
 
 ### Pillar E — Launch, Reach & Ecosystem (new in rev 9)
 
@@ -128,8 +134,12 @@ The product getting richer and more polished: platform/app evolution, knowledge-
 | 50 | Session Management — Search, Organize, Lifecycle | [SESSION-MANAGEMENT](plans/SESSION-MANAGEMENT.md) | ~4 | 2+3 |
 | 51 | Design-System Consistency — One Coherent Surface | [DESIGN-SYSTEM-CONSISTENCY](plans/DESIGN-SYSTEM-CONSISTENCY.md) | ~3 | 2 |
 | 52 | Fluid Motion — Liquid Morphing & Motion Physics | [FLUID-MOTION](plans/FLUID-MOTION.md) | ~3 | 3 |
+| 55 | Chat Craft — Seven Proven Chat-Surface Mechanics | [CHAT-CRAFT](plans/CHAT-CRAFT.md) | ~4 | 2+3 |
+| 57 | Personality Themes — Themes That Carry Behavior | [PERSONALITY-THEMES](plans/PERSONALITY-THEMES.md) | ~2 | 3 |
+| 60 | Investigate Anywhere — One Chat-With-Context Primitive | [INVESTIGATE-ANYWHERE](plans/INVESTIGATE-ANYWHERE.md) | ~2 | 2 |
+| 61 | Artifacts Evolution — First-Class Creative Library | [ARTIFACTS-EVOLUTION](plans/ARTIFACTS-EVOLUTION.md) | ~3 | 2+3 |
 
-**Total estimated effort:** ~294 sessions across 54 plans.
+**Total estimated effort:** ~330 sessions across 62 plans.
 
 ---
 
@@ -191,6 +201,14 @@ The product getting richer and more polished: platform/app evolution, knowledge-
 - **Knowledge Library (Sessions 1-2: collections, curation + taxonomy + bulk)**
 - **Session Management (Sessions 1-2: cross-session search, smart organization + bulk + auto-archive)**
 - **App Platform Evolution (Sessions 1-2: background/event capabilities, quality bar + native evolution)**
+- *The rev-12/13 batch below is listed in deliberate in-wave pickup order — contract-owners and floor multipliers first, then the ChatPage-heavy work serialized (Chat-Craft → Agent-Routing → Artifacts' chat touches) so no two of them churn ChatPage concurrently:*
+- **Model Use-Cases v2 (full, ~3: vocabulary + chain resolver, consumer wiring, Settings chains UI — rev 13; floor multiplier: background/loop chores stop burning the flagship chat model, and Model-Routing-Telemetry later learns inside this vocabulary)**
+- **Feedback Signal (full, ~3: capture store + SDK, thumbs on core surfaces, deterministic thresholds — rev 13; contract-owner: its records gate Autonomy-Guardrails' earned-autonomy ladder and Evaluation-Substrate's field loop)**
+- **Investigate Anywhere (full, ~2: fenced primitive + SDK, adoption sweep — rev 13; contract-owner: Artifacts-Evolution S3 consumes its resolver registry)**
+- **Chat Craft (Sessions 1-3: rewind + queue manners, find + quote, chips + smooth streaming — rev 12; the heaviest ChatPage churn of the batch — land it before the other ChatPage touches)**
+- **Agent Routing (full, ~2: routing metadata + classifier, suggestion chip + suppression — rev 12; after Feedback-Signal so its routing-pair double-write lands live, and after Chat-Craft's ChatPage churn)**
+- **Artifacts Evolution (Sessions 1-2: entity split + store hardening, library surface — rev 13; S3 unblocks the moment Investigate-Anywhere lands)**
+- Platform Resilience Session 6 (`steer` mid-turn policy — rev 12 amendment; after the capability-gate recon; independent — slots anywhere in the batch)
 
 **Wave 3 — Substrate unification + intelligence:**
 - Automation Substrate (steps 1-9); Learning Flywheel (steps 5-9); Watched Sources (Sessions 6-9); Ambient Surfaces (Sessions 4-6); Memory Graph + Vault (Sessions 4-5); Durability & Sync (Sessions 4-5); Model Routing Telemetry; Platform Resilience Session 4; Multimodal I/O (Sessions 3-5); Evaluation Substrate (Sessions 1-2); Multi-Tenant Entity Readiness (Sessions 4-5)
@@ -203,12 +221,20 @@ The product getting richer and more polished: platform/app evolution, knowledge-
 - **Session Management (Session 3: lifecycle, templates, export/share)**
 - **App Platform Evolution (Sessions 3-4: app-to-app messaging, richer UI contribution)**
 - **Fluid Motion (full, ~3: physics system → liquid morphing primitives → route transitions + budget proof — on the consistency baseline)**
+- *Rev-12/13 Wave-3 additions in dependency order — the proposals contract first (three later items emit through it), then its consumers:*
+- Inbox/Notifications Unification (Sessions 6-7: second-opinion verify gate — rev 12; proposals contract + app emission — rev 13; **take these early in the wave** — Feedback-Signal retire proposals, Guardrails promotion offers, and app-update notifications all upgrade from `notify()` to the typed contract the moment S7 lands)
+- Autonomy Guardrails (Sessions 5-6: earned-autonomy rung ladder — rev 13; after Feedback-Signal S1, ideally after Inbox-Unify S7 so promotion proposals ride the typed contract from birth)
+- Ambient Surfaces (Sessions 7-8: dashboard-as-views presets + modern agent-world seam — rev 13; Mission Control after Inbox-Unification S1-2)
+- **Chat Craft (Session 4: screen-snip + polish/validation — rev 12; independent tail)**
+- **Artifacts Evolution (Session 3: iterate-with-agent + diffs + chat references — rev 13; needs Investigate-Anywhere's resolver registry; sequence its ChatPage touches after Chat-Craft S4)**
+- **Personality Themes (full, ~2: personality registry + two first-party proofs — rev 12; after Fluid Motion — it rides those dials)**
 
 **Wave 4 — Capstone + retirements:**
 - Loop engine retirement (Loops Evolution Phase 4); Autonudge absorption; v2 Slices 9-11
 - Proactive Assistant (triage pipeline + decision journal — its ambient digest slice already landed via plan 42)
-- Evaluation Substrate (Sessions 3-5); Agent Packs & Portable Bundles
+- Evaluation Substrate (Sessions 3-6); Agent Packs & Portable Bundles
 - **Security Hardening (plan 47: keychain, signed manifests, gate fuzzing, SEL surface, external review)**
+- Agent Rooms (plan 62 — PROPOSED; un-defer only after WORKFLOWS-V2 core slices + ACP-AGENT-PARITY land; council workflow template front-runs it as a LOOPS-EVOLUTION library candidate)
 
 ```
 Wave 0: DOCTRINE→ PUBLICATION  CI/RELEASE  DISTRIBUTION  SEC-LEGIBILITY  DISCOVER(1-3)  OSS-OPS  BOUNDARY-DONE  MCP-RO(1)
@@ -218,11 +244,14 @@ Wave 1: ════ WORKFLOWS-V2 Slices 0-5 ════  ∥  CHANNELS(1-3)  R
                     │
 Wave 2: LOOPS→PLAN  KNOWLEDGE  v2-6-8⇄CONTAINERS  TASKS  WATCHED(1-5)  AMBIENT(1-3)  ISOLATION  BROWSE  QA  MULTIMODAL(1-2)  LEGIBILITY(4-5)
         CHANNELS(4-8)  INBOX-UNIFY(4-5)  ONBOARD(3-4)  COMPANION-APPS  MOBILE(1-3)  DESKTOP(1-3)  ECOSYSTEM(1-2)  WINDOWS(1-2)  LEARN-VIS(3)
+        MODEL-UC-V2 → FEEDBACK-SIGNAL → INVESTIGATE → CHAT-CRAFT(1-3) → AGENT-ROUTING → ARTIFACTS(1-2)  ∥  RESILIENCE(6:steer)
                     │
-Wave 3: AUTOMATION(1-9)  LEARNING(5-9)  WATCHED(6-9)  AMBIENT(4-6)  MEM-GRAPH(4-5)  DURABILITY(4-5)  EXT-ACCESS  ROUTING  RESILIENCE(4)  MULTIMODAL(3-5)  EVAL(1-2)  MT-READY(4-5)
+Wave 3: AUTOMATION(1-10)  LEARNING(5-9)  WATCHED(6-9)  AMBIENT(4-6)  MEM-GRAPH(4-5)  DURABILITY(4-5)  EXT-ACCESS  MODEL-ROUTING-TEL  RESILIENCE(4)  MULTIMODAL(3-5)  EVAL(1-2)  MT-READY(4-5)
         MOBILE(4-6)  DESKTOP(4)  ECOSYSTEM(3-4)  LEARN-VIS(4)
+        INBOX-UNIFY(6-7:verify+proposals) → GUARDRAILS(5-6:earned-autonomy)  AMBIENT(7-8:views+worlds)
+        CHAT-CRAFT(4) → ARTIFACTS(3)  FLUID-MOTION → PERSONALITY-THEMES
                     │
-Wave 4: LOOPS-Ph4→AUTO(final)  v2-9-11  PROACTIVE  EVAL(3-5)  AGENT-PACKS  SEC-HARDENING
+Wave 4: LOOPS-Ph4→AUTO(final)  v2-9-11  PROACTIVE  EVAL(3-6)  AGENT-PACKS  SEC-HARDENING  AGENT-ROOMS(deferred)
 ```
 
 ---

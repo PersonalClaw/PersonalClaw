@@ -341,3 +341,43 @@ Each session ships independently; Sessions 1-2 produce a working page-reader usa
 6. A workflow action node invokes `browse` by name in a trigger/hook definition — and the definition is accepted (provider is in `ALLOWED_HOOK_PROVIDERS`), dispatched through the standard seams, and inherits the denylist/budget/profile enforcement from AUTONOMY-GUARDRAILS without browse-specific code at the dispatch layer.
 7. The WATCHED-SOURCES escalation chain successfully falls through from `web_fetch` (which returns empty/garbage for a JS-rendered page) to the browse provider (which returns meaningful content) — demonstrating the escalation integration.
 8. An unattended browse run that exhausts its step budget or token budget parks cleanly into needs-input (not crash, not silent failure) with accumulated notes preserved in the ActionResult.
+
+## Amendment (2026-07-26 — gap analysis round 2, owner-approved mechanisms)
+
+**The three make-or-break enrichments + the actuator pattern.** Sibling-platform evidence: browse agents live or die on context cost (~20x reduction from compressed outlines + screenshots-as-paths; unusable without), on the user being able to *watch* an unattended browse, and on auth that never transits the agent. The plan already has the credential-handoff invariant (§5) and the ~800-token text representation (§1); this amendment names the compression layer as a first-class session, adds the live mirror and the honest auth-expiry state, and reframes long-running browse as stateless scheduled ticks. Rung-capped via AUTONOMY-GUARDRAILS' earned-autonomy ladder (round-2 amendment there): read-only browse may graduate up the ladder; any action that SUBMITS starts `draft_only`.
+
+### Contract-level design
+
+- **(a) Context compression layer** — an in-gateway module between the browser driver and the agent, formalizing §1 into a stable contract:
+
+```python
+# browse/compress.py (app bundle)
+@dataclass(frozen=True)
+class PageOutline:
+    url: str
+    text: str                    # §1.1 pipeline output, ≤4000 chars
+    elements: list[ElementRef]   # interactive elements with STABLE refs
+    screenshot_path: str         # file under the run workspace — NEVER base64 in context
+
+@dataclass(frozen=True)
+class ElementRef:
+    ref: str          # stable across re-snapshots: sha1(role + accessible_name + form_id)[:8]
+    role: str         # link | button | field | checkbox | select
+    label: str
+    state: str = ""   # value/checked for fields
+```
+
+  Sentinel vocabulary (§2) migrates from positional numbers to refs (`CLICK <ref>`, `TYPE <ref>(value)`) — a re-snapshot after dynamic DOM change no longer invalidates the agent's plan (the numbered-list TOCTOU the sibling platforms all hit). Screenshots are captured per step for verification (§7) but enter context only as `[SCREENSHOT: <path>]` placeholders; a multimodal step may load one explicitly.
+- **(b) Live browse mirror** — read-only dashboard relay of the screenshots the agent already takes: each step's screenshot path + current URL + last action broadcast via `DashboardState.broadcast_ws("browse_step", {run_id, url, action, screenshot_url, step_n})` (`dashboard/state.py:1644`); a `BrowseMirror` panel renders the stream with the incident kill switch adjacent (one click from "that looks wrong" to full stop). No debug port, no CDP exposure, no new attack surface — the mirror consumes artifacts the loop produces anyway.
+- **(c) Auth handoff honestly scoped** — §5 kept, sharpened: the user completes logins once in a visible window; session state (cookies/localStorage) is captured to the per-site profile (§5.1) with the profile-encryption key held in the credential store (`save_credential("BROWSE_PROFILE_KEY_<slug>", …)`, `config/loader.py:234` — never in the profile dir); headless reuse thereafter. **Expiry is a first-class `auth_needed` state**, not a failure: the §5.3 validity check failing sets `.meta.json:{auth_state:"expired"}`, surfaces a persistent banner on the browse panel + an inbox `needs_input` item, and every dependent scheduled tick short-circuits to `ActionResult(outcome="skip")` until re-auth. The agent NEVER handles credentials (§5.2 invariant unchanged).
+- **(d) Scheduled-actuator pattern** — browse runs as stateless, idempotent scheduled ticks against a persisted plan, not as one long-lived session: `browse/plans/<id>.json` `{goal, kind: watch_page|walk_flow, cursor, notes, max_steps_per_tick}` (atomic_write). "Watch this page" = one tick re-extracts + diffs against cursor; "walk this flow" = one step per tick, cursor advances only on verified success. Coordinates with WATCHED-SOURCES: its escalation chain (§8.1) invokes exactly one tick, and `SourcePollCompleted`-style accounting carries `escalated: browse`. Crash mid-tick loses at most one step.
+
+### Session placement
+
+(a) restructures Session 1 (extraction was already there; stable refs + screenshot-path discipline join it). (b), (c)-sharpening, and (d) are new surface + persistence work: one added **Session 5**. Honest count ~4 → **~5**.
+
+| ID | Task | Files | Done when |
+|---|---|---|---|
+| A1 | Stable `ElementRef` contract + ref-based sentinels + screenshot-as-path discipline folded into the extraction module (extends Session 1) | `browse/compress.py`, `browse/extraction.py`, sentinel parser, fixture tests | a re-snapshot after DOM mutation preserves refs for unchanged elements; no base64 appears in any rendered prompt (regression-tested); a 100K-token DOM enters context as <1K tokens + a path |
+| A2 | Live mirror: `browse_step` WS broadcast per loop step + FE mirror panel with kill-switch adjacency; `auth_needed` first-class state (meta flag, banner, `needs_input` inbox item, tick short-circuit) with profile key in the credential store | browse loop, `dashboard/state.py` consumer, `web/src/pages/` browse panel, `.meta.json` schema | a user watches an unattended browse live and can stop it in one click; an expired session produces a banner + inbox item and zero failed ticks, and re-auth resumes without agent involvement |
+| A3 | Scheduled-actuator: persisted browse plans + idempotent one-tick execute (watch_page diff / walk_flow single-step), WATCHED-SOURCES escalation = one tick; rung caps wired (read-only browse graduates per the AUTONOMY-GUARDRAILS ladder; SUBMIT-bearing plans registered `floor=draft_only`) | `browse/plans.py`, provider `execute()`, WATCHED-SOURCES escalation seam, autonomy type registration | killing the gateway mid-flow loses ≤1 step; the same tick re-fired is a no-op at the same cursor; a form-submitting plan cannot run unattended until its type earns promotion |

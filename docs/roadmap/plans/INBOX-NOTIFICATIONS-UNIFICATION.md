@@ -174,3 +174,74 @@ def emit_attention_item(*, source: str, kind: str, title: str, body: str,
 - **Risk — double-notification during dual-path:** with the gate ON, an emitter migrated in S2 must not ALSO fire its legacy notification; the emit-helper owns both halves — conformance asserted per migrated site (test per emitter).
 - **Risk — inbox page becomes a junk drawer:** kind chips + sane defaults (above) are the mitigation; PROACTIVE-ASSISTANT owns real triage intelligence later.
 - **Open:** whether `digest` items themselves notify `immediate` on the dashboard (proposal: yes, once, at digest delivery — it IS the morning knock).
+
+## Amendment (2026-07-26 — sibling-platform gap analysis, owner greenlight)
+
+**Second-opinion verification gate ("don't cry wolf").** Sibling-platform evidence: AI-produced attention items (alerts, findings, proposals) train the user to ignore the inbox once even a small fraction are wrong. This adds an opt-in, per-(source,kind) skeptic pass: before an AI-produced item surfaces, a cheap background model call is prompted to REFUTE the item's claim; refuted items land in a reviewable FILTERED state (never silently deleted), non-refuted items surface normally. Channel-message kinds are exempt by design (they are the user's real mail); only kinds registered as verifiable may opt in, and real-time blocking kinds (`needs_input`, `agent_request`) never do. Deterministic fallback is fail-OPEN per §2.7: no bound model, resolution error, timeout, budget exhaustion, or unparseable verdict → the item surfaces with honest `verify: skipped` provenance — a broken verifier must never silence the system.
+
+### Contract-level design
+
+- **C1 gains one field:** `NotificationKind.verifiable: bool = False` — registered `True` only for AI-claim kinds (`proposal`, `digest`-feeding app alert kinds); the rules PUT rejects `verify: true` on a non-verifiable kind.
+- **C2 rule schema gains one field** (additive): `"<source>/<kind>": {mode, targets, conditions, "verify": false}` — the T3.1 rules matrix renders the toggle only for verifiable kinds.
+- **Verifier core** — new `src/personalclaw/notification_verify.py`:
+
+```python
+@dataclass(frozen=True)
+class VerifyVerdict:
+    status: Literal["refuted", "upheld", "skipped"]
+    reason: str        # the model's one-line refutation, or the skip reason
+    model_ref: str     # "provider:model" that judged; "" when skipped
+
+async def verify_attention_item(*, source: str, kind: str, title: str, body: str) -> VerifyVerdict: ...
+```
+
+  Implementation: `one_shot_completion(use_case="background")` (`llm_helpers.py:277` — the reasoning axis, never chat/code_tools), prompted to refute; ONLY an explicit structured `REFUTED: <reason>` verdict filters — every other outcome (upheld, parse failure, `ProviderResolutionError`, timeout) is upheld/skipped. Spend meters through the ModelCallGuard at the bridge seam like every one-shot call; a day-budget breach skips verification for the rest of the day (logged, honest).
+- **Hook point:** inside `emit_attention_item()` (C5) — the single helper — between item construction and `notify()`. Refuted: the `InboxItem` persists with new `ItemStatus.FILTERED` (additive to `inbox.py:42`; tolerant `from_dict` unaffected) and `refs["verify"] = {status, reason, model_ref}`; no notification fires. Upheld/skipped: normal path, provenance still recorded. The raw channel-ingestion path (`inbox.py`/`inbox_service.py::_ingest`) is untouched — messages never route through the gate.
+- **Review surface:** the T2.4 kind-chip row gains a "Filtered" chip; a Restore action flips FILTERED→PENDING and fires the withheld notification exactly once through `notify()` (the unchanged choke point). Filtered items obey standard retention pruning. Per-verdict SEL: none (not security-relevant); `verify` rule edits ride the existing rules-PUT audit.
+
+### Session placement
+
+New **Session 6** (session count 5→6, honest): needs C1/C2/C5 (S1-2) and the rules UI (S3); Wave 2, after S4-5.
+
+| ID | Task | Files | Done when |
+|---|---|---|---|
+| T6.1 | `verifiable` on the kind registry + `verify` rule field + `notification_verify.py` (REFUTED-only filtering; fail-open on every failure path; ModelCallGuard-metered) | `notification_kinds.py`, `notification_rules.py`, new `notification_verify.py`, tests | refuted fixture → FILTERED + no notify; no-model fixture → surfaces with `verify: skipped`; `verify: true` on a non-verifiable kind → rules PUT 400 |
+| T6.2 | `ItemStatus.FILTERED` + emit-helper wiring + Filtered chip + Restore (FILTERED→PENDING, withheld notification fires once) | `inbox.py`, inbox handlers, `web/src/pages/inbox/` | restore round-trips; old fixture items still load; no double-notification on restore |
+| V6 | Validation: opt a `proposal` rule into verify; drive one true + one planted-false proposal — false lands Filtered with a readable refutation, true surfaces; unbind the reasoning model → both surface with skipped provenance | — | holds; Execution log written |
+
+## Amendment (2026-07-26 — gap analysis round 2, owner decisions)
+
+**The Proposals contract (owner-approved primitive).** This plan already types `proposal` (C1/C4) and folds the skills queue in at S4 (T4.1) with LEARNING-FLYWHEEL's queue registering as `proposal` from birth — this amendment does NOT re-add the kind. What is missing is a CONTRACT: today a proposal item is just an InboxItem with `refs.pid`, its resolution hard-wired to `skills/proposals.accept/reject`. Every upcoming producer (auto-learned skills, SESSION-MANAGEMENT org suggestions, FEEDBACK-SIGNAL retire-proposals (plan 58), AUTONOMY-GUARDRAILS' round-2 earned-autonomy promotion offers, email/reply drafts) would otherwise hard-wire its own resolution path. This contractifies the payload + the apply mechanics + adds the app emission path.
+
+### Contract-level design
+
+- **C6 — Proposal payload** (typed, carried in `refs["proposal"]` on a `kind=proposal` InboxItem — additive, tolerant `from_dict` unaffected):
+```python
+@dataclass(frozen=True)
+class Proposal:
+    title: str
+    preview: str            # rendered body — markdown or unified diff
+    preview_kind: Literal["text", "diff"]
+    provenance: str         # who/what produced it: "skills", "learning", "app:<name>", "session_org"
+    expires_at: str | None  # ISO; expiry → auto-DISMISSED with an audit line
+    editable: bool          # approve / edit-then-approve / dismiss; edit re-posts edited payload into apply
+    apply: dict             # THE APPLY CONTRACT — exactly one of:
+                            #  {"action": {provider, config}}          — action-provider invocation (registry dispatch)
+                            #  {"workflow": {ref | inline}}            — a workflow run
+                            #  {"skill_promotion": {pid}}              — skills/proposals.accept (T4.1 path, now one case of the contract)
+                            #  {"app_callback": {app, route}}          — POST to the emitting app's declared route, its scoped token identity
+```
+  Approval executes `apply` through the EXISTING dispatchers (action registry / workflow engine / skills accept / app-permission-gated app route) — the proposals surface owns none of its own execution. Apply outcomes write back to the item (`HANDLED` + result ref, or a typed failure kept `PENDING` with the error).
+- **App emission path:** apps declare proposal kinds in `app.json` (`permissions.proposals: [{kind_suffix, label}]`, registered as `("app:<name>", "proposal:<suffix>")` in the C1 kind registry at enable-time) and POST `/api/inbox/proposals` with their scoped token (the `request["app"]` identity from `apps/permissions.py`); undeclared kind or an `apply.app_callback` targeting another app → 403. App-emitted proposals are `verifiable=True` by default (they are AI/app claims — the round-1 skeptic gate applies).
+- **Proposals view + safe batching:** the T2.4 inbox gains a Proposals lens; batch-approve is offered ONLY across same-`(provenance, kind)` groups (never a mixed sweep); each batch apply is N individual applies with per-item outcomes.
+- **SDK surface** (`sdk` proposal-post helper) is an **APP-PLATFORM-EVOLUTION coordination line** — the HTTP contract lands here; the ergonomic wrapper lands there.
+
+### Session placement
+
+Extends **Session 4** (which already owns the proposal fold-in): T4.1 becomes the first `apply.skill_promotion` consumer of C6 rather than a bespoke wiring. The app path + batching = new **Session 7** (after S4-6; count 6 → 7, honest). Round 1's Session 6 (verification gate) is untouched; C6 composes with it (`verifiable` proposals pass the skeptic before surfacing).
+
+| ID | Task | Files | Done when |
+|---|---|---|---|
+| T7.1 | C6 Proposal dataclass + apply dispatcher (four apply cases through existing dispatchers; typed failure keeps item PENDING); T4.1's skill path re-expressed as `skill_promotion` | `inbox.py` or new `proposals_contract.py`, inbox handlers, tests | each apply case round-trips on fixtures; a failing apply surfaces the error on the item; skills accept path behavior unchanged |
+| T7.2 | App emission: `permissions.proposals` manifest field + kind registration at enable-time + `POST /api/inbox/proposals` (scoped-token identity, 403 on undeclared kind/foreign callback) | `apps/manifest.py`, `apps/permissions.py`, inbox handlers | fixture app posts a proposal that renders + applies via its callback; undeclared kind rejected; SEL entry per app emission |
+| T7.3 | Proposals lens + same-(provenance,kind) batch-approve with per-item outcomes; edit-then-approve for `editable` payloads | `web/src/pages/inbox/` | batch across mixed kinds impossible in the UI; edited payload is what apply receives; per-item results visible |

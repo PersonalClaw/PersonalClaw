@@ -219,3 +219,22 @@ under the pre-1.0 banner. Sequenced strictly after REMOTE-USER-AUTH S1.
 | Remote path built before REMOTE-USER-AUTH's TLS boundary | S3/S4 hard-gated on REMOTE-USER-AUTH S4 (`public_url` + `Secure`/`wss`); the LAN path (S1–S2) needs only S1 |
 | Scope creep into a full native app | Guardrail: no new product surface — same served SPA; wrappers live in the existing per-platform plans, gated on PLATFORM-REACH |
 | **Open:** whether the shared client contract needs a tiny published TS module vs prose | T3.1 decides based on how much desktop + mobile actually share; default to prose + a minimal helper, not a framework |
+
+## Amendment (2026-07-26 — gap analysis round 2, owner decisions)
+
+**The sanctioned multi-instance story (owner decision — and a hub veto).** Honest recon: this is mostly a SHARPENING of scope the plan already carries, not an addition. S3/C1 already define a client-side list of saved endpoints ("one local, one remote is the common case") with switching + graceful reconnection, and T4.1 already gives desktop a connect-to-a-different-gateway mode. What the plan does NOT yet say — and this amendment pins down — is that N endpoints may be N **different gateways** (work brain / personal brain), that this is the ONLY sanctioned multi-instance mechanism, and what the pairing registry must therefore hold.
+
+Owner rulings:
+
+- **Multi-gateway pairing + switching is the story.** A native shell (desktop per DESKTOP-CAPABILITIES, mobile per MOBILE-COMPANION) holds N paired gateways, each its own C1 endpoint entry with its own `device_session_ref` (device sessions live per-gateway in THAT gateway's `sessions.json` — nothing federates), plus a **switcher** UI affordance the shells share.
+- **No hub in core, ever. No gateway-to-gateway anything.** Gateways never discover, sync with, or proxy for each other; no shared identity, no cross-gateway search, no aggregated inbox in core or in the shells. A future "hub" could only ever be a third-party app running against gateways the user pairs it with — explicitly out of every first-party plan's scope.
+- **One small contract addition (C1 sharpened, not replaced):** the client-side pairing registry becomes `{active: str, endpoints: [{id, label, base_url, kind, device_session_ref}]}` — a multi-entry list + an **active-gateway pointer**. Switching re-points `active` and reloads the same served SPA from the new origin (S3 semantics unchanged); every cache/WS/store in the shell is namespaced by endpoint `id` so two brains never bleed state. Per-gateway labels/instance names come from `companion.instance_name` (C4 — already designed).
+
+### Session placement
+
+No new session. S3 T3.1's client contract is WHERE the multi-entry registry + active pointer are specified (it was going to specify the endpoint list anyway); S4 T4.1/T4.2 gain the switcher acceptance bar. One added task row in S3 for the isolation guarantee.
+
+| ID | Task | Files | Done when |
+|---|---|---|---|
+| T3.3 | Multi-gateway registry in the client contract: `{active, endpoints[]}` shape, per-endpoint state namespacing (caches/WS/prefs keyed by endpoint id), switcher behavior spec (re-point + reload), and the written no-hub/no-gateway-to-gateway rule | `docs/guides/companion-apps.md` (T3.1's doc), the shared TS helper if T3.1 ships one | two paired gateways switchable from one client with zero state bleed (verify: distinct sessions/inbox/settings render per endpoint); the doc states the hub veto verbatim |
+| T4.4 | Switcher acceptance on both wrappers: desktop connect dialog + mobile shell each list N gateways, show the active one, and switch cleanly (graceful reconnect per S3 on the target) | `desktop/main.js` connect dialog, MOBILE-COMPANION task refs | V4 extended: pair a "work" and a "personal" dev gateway, switch between them on desktop and on the phone; revoking one gateway's device session breaks only that entry |
