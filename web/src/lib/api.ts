@@ -736,8 +736,18 @@ export interface DeniedCommands { builtin: string[]; user: string[] }
 export interface EgressPolicyConfig { allow_hosts: string[]; deny_hosts: string[]; allow_private: boolean }
 // User-teachable tool-output projection rule (TokenJuice OP6): output matching
 // match_regex is projected with `strategy` (a builtin content type).
-export type ProjectionStrategy = 'log' | 'diff' | 'json' | 'test' | 'csv'
-export interface ProjectionRule { name: string; match_regex: string; strategy: ProjectionStrategy }
+export type ProjectionStrategy = 'log' | 'diff' | 'json' | 'test' | 'csv' | 'code'
+export interface ProjectionRule {
+  name: string
+  match_regex: string
+  strategy: ProjectionStrategy
+  /** Rule ops v2 — optional declarative line operations (0/empty = off). */
+  head?: number
+  tail?: number
+  keep?: string
+  skip?: string
+  count?: string
+}
 export interface ToolsSavings {
   saved_chars: number
   saved_tokens_estimated: number

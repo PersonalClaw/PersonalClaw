@@ -1657,10 +1657,11 @@ class InboxConfig:
 
 @dataclass
 class ProjectionRuleConfig:
-    """A user-taught tool-output projection rule (TokenJuice, OP6). Output whose head
-    matches ``match_regex`` is projected with ``strategy`` (a builtin content type:
-    log/diff/json/test/csv) — teaching the DISPATCH for a tool the sniffer would else
-    mis-read as generic. Pure data; no user code runs."""
+    """A user-taught tool-output projection rule (TokenJuice, OP6 + §2.3). Output whose
+    head matches ``match_regex`` is projected with ``strategy`` (a builtin content type:
+    log/diff/json/test/csv/code) — or, when any op field is set (head/tail/keep/skip/
+    count), shaped by the declarative ops interpreter instead. Pure data; no user code
+    runs."""
 
     name: str = field(
         default="",
@@ -1675,7 +1676,36 @@ class ProjectionRuleConfig:
     )
     strategy: str = field(
         default="log",
-        metadata=_meta("Strategy", "The builtin projector to apply (log/diff/json/test/csv)."),
+        metadata=_meta("Strategy", "The builtin projector to apply (log/diff/json/test/csv/code)."),
+    )
+    head: int = field(
+        default=0,
+        metadata=_meta(
+            "Keep Head Lines",
+            "Keep the first N lines (0 = off). Op — overrides the strategy projector.",
+        ),  # noqa: E501
+    )
+    tail: int = field(
+        default=0,
+        metadata=_meta(
+            "Keep Tail Lines",
+            "Keep the last N lines (0 = off). Op — overrides the strategy projector.",
+        ),  # noqa: E501
+    )
+    keep: str = field(
+        default="",
+        metadata=_meta("Keep Lines Matching", "Keep only lines matching this regex (empty = off)."),
+    )
+    skip: str = field(
+        default="",
+        metadata=_meta("Skip Lines Matching", "Drop lines matching this regex (empty = off)."),
+    )
+    count: str = field(
+        default="",
+        metadata=_meta(
+            "Fold Lines Matching",
+            "Fold lines matching this regex into one 'N elided' note (empty = off).",
+        ),
     )
 
 
@@ -2064,6 +2094,11 @@ class AppConfig:
                         name=str(r.get("name", "")),
                         match_regex=str(r.get("match_regex", "")),
                         strategy=str(r.get("strategy", "log")),
+                        head=int(r.get("head", 0) or 0),
+                        tail=int(r.get("tail", 0) or 0),
+                        keep=str(r.get("keep", "")),
+                        skip=str(r.get("skip", "")),
+                        count=str(r.get("count", "")),
                     )
                     for r in tools_data.get("projection_rules", [])
                     if isinstance(r, dict) and str(r.get("match_regex", "")).strip()

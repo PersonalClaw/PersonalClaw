@@ -71,16 +71,23 @@ def bind_tool_context(
     list of reset tokens the caller restores after the call. Called by the native
     runtime in ``_invoke`` so the registry-singleton category providers resolve
     this turn's cwd/agent/extra-roots/project."""
+    from personalclaw.tool_providers import projection as _projection
+
     tokens = [
         _CURRENT_CWD.set(str(cwd) if cwd else ""),
         _CURRENT_AGENT.set(agent or ""),
         _CURRENT_EXTRA_ROOTS.set(tuple(str(r) for r in (extra_roots or []))),
         _CURRENT_PROJECT_ID.set(project_id or ""),
+        # Also bind the projection PROJECT rule layer (§2.3) to this turn's cwd, so a
+        # repo's `.personalclaw/projection_rules.json` shapes ITS tools' output only.
+        _projection.bind_project_dir(cwd),
     ]
     return tokens
 
 
 def reset_tool_context(tokens) -> None:
+    from personalclaw.tool_providers import projection as _projection
+
     _vars: tuple[contextvars.ContextVar, ...] = (
         _CURRENT_CWD,
         _CURRENT_AGENT,
@@ -92,6 +99,8 @@ def reset_tool_context(tokens) -> None:
             var.reset(tok)
         except (ValueError, LookupError):
             pass
+    if tokens and len(tokens) > len(_vars):
+        _projection.reset_project_dir(tokens[len(_vars)])
 
 
 def current_project_id() -> str:

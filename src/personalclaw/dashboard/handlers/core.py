@@ -618,18 +618,19 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         clean["allow_private"] = ap
         value = clean
     elif spec["type"] == "projection_rules":
-        # A list of user-taught tool-output projection rules (TokenJuice OP6):
-        # [{name, match_regex, strategy}]. Normalise to exactly those keys; each regex
-        # must compile + each strategy must be a known builtin projector. Declarative
-        # only (no code) — a bad rule is rejected here, never at dispatch time.
+        # A list of user-taught tool-output projection rules (TokenJuice OP6 + §2.3):
+        # [{name, match_regex, strategy, head?, tail?, keep?, skip?, count?}].
+        # Normalise to exactly those keys; every regex must compile + each strategy
+        # must be a known builtin projector. Declarative only (no code) — a bad rule
+        # is rejected here, never at dispatch time.
         from personalclaw.tool_providers.projection import _PROJECTORS  # noqa: F811
 
         if not isinstance(value, list):
             return _deny("must be a list", f"{path_key}={value}")
         if len(value) > 50:
             return _deny("must have at most 50 rules", f"{path_key}")
-        strategies = set(_PROJECTORS)  # log/diff/json/test/csv
-        clean_rules: list[dict[str, str]] = []
+        strategies = set(_PROJECTORS)  # log/diff/json/test/csv/code
+        clean_rules: list[dict[str, object]] = []
         for i, r in enumerate(value):
             if not isinstance(r, dict):
                 return _deny("each rule must be an object", f"{path_key}[{i}]")
@@ -646,7 +647,30 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
                 return _deny(f"invalid regex {rx!r}: {exc}", f"{path_key}[{i}]")
             if strat not in strategies:
                 return _deny(f"strategy must be one of {sorted(strategies)}", f"{path_key}[{i}]")
-            clean_rules.append({"name": name, "match_regex": rx, "strategy": strat})
+            clean_rule: dict[str, object] = {"name": name, "match_regex": rx, "strategy": strat}
+            # Rule ops v2 (§2.3): optional declarative line operations. Each op regex
+            # must compile; head/tail must be small non-negative ints. Omitted = off.
+            for k in ("head", "tail"):
+                try:
+                    n = int(r.get(k, 0) or 0)
+                except (TypeError, ValueError):
+                    return _deny(f"{k} must be an integer", f"{path_key}[{i}]")
+                if n < 0 or n > 10_000:
+                    return _deny(f"{k} must be 0..10000", f"{path_key}[{i}]")
+                if n:
+                    clean_rule[k] = n
+            for k in ("keep", "skip", "count"):
+                op_rx = str(r.get(k, "") or "").strip()
+                if not op_rx:
+                    continue
+                if len(op_rx) > 500:
+                    return _deny(f"{k} regex too long (max 500)", f"{path_key}[{i}]")
+                try:
+                    re.compile(op_rx)
+                except re.error as exc:
+                    return _deny(f"invalid {k} regex {op_rx!r}: {exc}", f"{path_key}[{i}]")
+                clean_rule[k] = op_rx
+            clean_rules.append(clean_rule)
         value = clean_rules
     else:
         return _deny("unsupported config type", f"{path_key}={value}", 500)
@@ -720,6 +744,11 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
                         name=r.get("name", ""),
                         match_regex=r.get("match_regex", ""),
                         strategy=r.get("strategy", "log"),
+                        head=int(r.get("head", 0) or 0),
+                        tail=int(r.get("tail", 0) or 0),
+                        keep=str(r.get("keep", "") or ""),
+                        skip=str(r.get("skip", "") or ""),
+                        count=str(r.get("count", "") or ""),
                     )
                     for r in (value or [])
                 ]

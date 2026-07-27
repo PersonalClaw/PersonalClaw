@@ -165,6 +165,7 @@ personalclaw = [
     "config/prompts/*.md",
     "config/prompt_snippets/*.md",
     "config/design/*.json",
+    "tool_providers/rules_builtin.json",
     "eval/scenarios/*.json",
     "tests_fixtures/*/*",
     "skills/bundled/*/SKILL.md",

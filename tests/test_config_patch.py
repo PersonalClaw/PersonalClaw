@@ -320,7 +320,11 @@ class TestProjectionRulesValidator:
             )
             assert resp.status == 200
             saved = json.loads(tmp_config.read_text())["tools"]["projection_rules"]
-            assert saved == [{"name": "acme", "match_regex": r"^\[ACME\]", "strategy": "log"}]
+            # The rule persists (the file may carry the full dataclass form with
+            # default op fields — load()'s migration write-back serializes via asdict).
+            assert saved[0]["name"] == "acme"
+            assert saved[0]["match_regex"] == r"^\[ACME\]"
+            assert saved[0]["strategy"] == "log"
         # Live-applied: the engine now dispatches a matching sample to 'log'.
         from personalclaw.tool_providers.projection import infer_content_type
 
@@ -354,7 +358,7 @@ class TestProjectionRulesValidator:
 
     @pytest.mark.asyncio
     async def test_strips_unknown_keys(self, tmp_config) -> None:
-        """Only name/match_regex/strategy persist — a stray field can't be smuggled in."""
+        """Only allowlisted rule fields persist — a stray field can't be smuggled in."""
         async with TestClient(TestServer(_make_app())) as c:
             resp = await _patch(
                 c,
@@ -365,7 +369,48 @@ class TestProjectionRulesValidator:
             )
             assert resp.status == 200
             saved = json.loads(tmp_config.read_text())["tools"]["projection_rules"][0]
-            assert set(saved) == {"name", "match_regex", "strategy"}
+            assert "evil" not in saved
+            allowed = {"name", "match_regex", "strategy", "head", "tail", "keep", "skip", "count"}
+            assert set(saved) <= allowed
+
+    @pytest.mark.asyncio
+    async def test_op_fields_validate_and_persist(self, tmp_config) -> None:
+        """Rule ops v2 (§2.3): head/tail ints + keep/skip/count regexes round-trip;
+        a bad op regex or negative count is rejected at the boundary."""
+        async with TestClient(TestServer(_make_app())) as c:
+            resp = await _patch(
+                c,
+                "tools.projection_rules",
+                [
+                    {
+                        "name": "ops",
+                        "match_regex": r"^\[SVC\]",
+                        "strategy": "log",
+                        "head": 5,
+                        "tail": 3,
+                        "skip": r"^DEBUG",
+                        "count": r"^heartbeat",
+                    },
+                ],
+            )
+            assert resp.status == 200
+            saved = json.loads(tmp_config.read_text())["tools"]["projection_rules"][0]
+            assert saved["head"] == 5 and saved["tail"] == 3
+            assert saved["skip"] == r"^DEBUG" and saved["count"] == r"^heartbeat"
+            # bad op regex → 400
+            resp = await _patch(
+                c,
+                "tools.projection_rules",
+                [{"name": "x", "match_regex": "ok", "strategy": "log", "keep": "("}],
+            )
+            assert resp.status == 400
+            # negative head → 400
+            resp = await _patch(
+                c,
+                "tools.projection_rules",
+                [{"name": "x", "match_regex": "ok", "strategy": "log", "head": -1}],
+            )
+            assert resp.status == 400
 
 
 # ── P11 engagement-ranking flag: the full config-flag thread (PATCH → config.json →
