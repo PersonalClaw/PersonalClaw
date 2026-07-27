@@ -42,4 +42,17 @@ describe('capableModels', () => {
     expect(out[0].provider).toBe('')
     expect(out[0].id).toBe('bare-model')
   })
+
+  it('chat sub-categories draw from the chat-capable pool', () => {
+    // Models never declare "code_tools"/"background"/… as capabilities — a
+    // sub-category row must offer every CHAT-capable model (MODEL-USE-CASES-V2).
+    const all = [
+      M('OpenAI', 'gpt-4', ['chat']),
+      M('Bedrock', 'gemma-3', ['image_modality']), // not chat → excluded
+    ]
+    for (const uc of ['code_tools', 'reasoning', 'background', 'orchestration', 'loops']) {
+      const out = capableModels(uc, all, [])
+      expect(out.map((m) => `${m.provider}:${m.id}`)).toEqual(['OpenAI:gpt-4'])
+    }
+  })
 })

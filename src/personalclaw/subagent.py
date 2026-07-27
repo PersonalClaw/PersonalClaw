@@ -1489,6 +1489,11 @@ class SubagentManager:
         extra_kwargs: dict[str, Any] = {}
         if info.model:
             extra_kwargs["model"] = info.model
+        else:
+            # A model-less spawn resolves the ``orchestration`` chain for its inner
+            # model (MODEL-USE-CASES-V2 T2.2) — an explicit spawn model still wins
+            # (the branch above). Unbound axis → chat chain, unchanged.
+            extra_kwargs["model_axis"] = "orchestration"
         if info.cwd:
             extra_kwargs["cwd"] = info.cwd
         # Unattended = no human can answer an interactive tool/approval prompt, so

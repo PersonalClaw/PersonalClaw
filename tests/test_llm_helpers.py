@@ -217,9 +217,10 @@ class TestOneShotCompletion:
         ) as resolve:
             out = await llm_helpers.one_shot_completion("hi", use_case="background")
         assert out == '{"ok": true}'
-        # The informal "background" label collapses to the reasoning axis (→ chat
-        # fallback), never "chat"/"code_tools" (which route the native agent runtime).
-        assert resolve.call_args.args[0] == "reasoning"
+        # "background" is a REAL chat sub-category now (MODEL-USE-CASES-V2) — it
+        # resolves its own axis (→ chat fallback when unbound), never
+        # "chat"/"code_tools" (which route the native agent runtime).
+        assert resolve.call_args.args[0] == "background"
         provider.start.assert_awaited()
         provider.shutdown.assert_awaited()
 

@@ -339,7 +339,13 @@ class SessionManager:
         if not self._provider_factory:
             return
         try:
-            provider = self._provider_factory(BACKGROUND_KEY, agent="personalclaw-lite")
+            # The lite background session resolves the ``background`` chain
+            # (MODEL-USE-CASES-V2 T2.1): titles/tags/suggestions/digests/
+            # consolidation stop burning the flagship chat model once the user
+            # binds a cheap model to the axis (unbound → chat chain, unchanged).
+            provider = self._provider_factory(
+                BACKGROUND_KEY, agent="personalclaw-lite", model_axis="background"
+            )
             async with self._start_sem:
                 await provider.start()
         except _PROVIDER_RESOLUTION_ERRORS:
@@ -850,6 +856,12 @@ class SessionManager:
                 agents skip the warm pool (cold start only).
             model: Optional model override for the session.
         """
+        # A cold-started background session (its _ensure_background creation died,
+        # or a consumer touched it first) must resolve the background axis too —
+        # same governance as the normal creation path (MODEL-USE-CASES-V2 T2.1).
+        if key == BACKGROUND_KEY:
+            extra_factory_kwargs.setdefault("model_axis", "background")
+
         # Fast path: existing session — hold lock only briefly
         stale_provider = None
         # A live existing session to return; its per-session semaphore is acquired

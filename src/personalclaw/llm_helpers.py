@@ -285,12 +285,18 @@ async def one_shot_completion(
     the collected text. The resolved provider is wrapped in the model-call guard
     (circuit breaker + hard timeout + attempt audit) at the bridge seam.
 
-    ``use_case`` is an INFORMAL label (``"background"``, ``"ingestion"``) — these
-    are not model-axis use cases, so they map to ``"reasoning"``, a chat
-    sub-category that falls back to the active ``chat`` model when unpinned. We use
-    ``"reasoning"`` rather than ``"chat"`` deliberately: ``chat``/``code_tools``
-    route a native agent through the in-process agent runtime, but a one-shot
-    completion wants a plain model provider, which the ``reasoning`` axis resolves.
+    ``use_case`` names a chat sub-category axis (MODEL-USE-CASES-V2):
+    ``"background"`` IS a real axis now (titles/tags/suggestions/digests/
+    consolidation route through it, falling back to the active ``chat`` chain when
+    unbound), as are ``"reasoning"``, ``"loops"``, and ``"orchestration"``. The
+    remaining informal label ``"ingestion"`` collapses to ``"background"``; anything
+    unrecognized collapses to ``"reasoning"``. ``chat``/``code_tools`` are never
+    used here — they route a native agent through the in-process agent runtime,
+    but a one-shot completion wants a plain model provider.
+
+    On a chain with fallbacks, a ``CircuitOpenError``/provider failure from entry N
+    advances to entry N+1 for this call (bounded by chain length) — the
+    call-failure walk that complements the seam's resolution-time breaker skip.
 
     ``output_type`` (AUTONOMY-GUARDRAILS §2.4) opts into typed structured output:
     pass ``dict`` or ``list`` to require the response parse as that JSON shape.
@@ -305,13 +311,82 @@ async def one_shot_completion(
     from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
     from personalclaw.providers.use_cases import VALID_USE_CASES
 
-    # Honor a caller that already named a real model-axis use case; otherwise the
-    # informal label collapses to the reasoning axis (→ chat fallback).
-    resolved_uc = (
-        use_case
-        if use_case in VALID_USE_CASES and use_case not in ("chat", "code_tools")
-        else "reasoning"
-    )
+    # Honor a caller that already named a real model-axis use case; the remaining
+    # informal label ("ingestion") collapses to the background axis; anything
+    # unrecognized collapses to reasoning (→ chat fallback either way).
+    if use_case in VALID_USE_CASES and use_case not in ("chat", "code_tools"):
+        resolved_uc = use_case
+    elif use_case == "ingestion":
+        resolved_uc = "background"
+    else:
+        resolved_uc = "reasoning"
+
+    from personalclaw.guardrails.failure import OutputContractError
+
+    async def _run(provider) -> str:
+        try:
+            await provider.start()
+            text = await stream_and_collect(provider, prompt)
+            if output_type is None:
+                return text
+            # Typed path: parse; on a miss, ONE targeted correction-note retry.
+            if _parse_llm(text, output_type) is not None:
+                return text
+            from personalclaw.guardrails.failure import FailureMode, correction_note
+
+            retry_prompt = f"{prompt}\n\n{correction_note(FailureMode.SCHEMA_VIOLATION)}"
+            retry_text = await stream_and_collect(provider, retry_prompt)
+            if _parse_llm(retry_text, output_type) is not None:
+                return retry_text
+            raise OutputContractError(
+                getattr(output_type, "__name__", str(output_type)), retry_text
+            )
+        finally:
+            try:
+                await provider.shutdown()
+            except Exception:
+                pass
+
+    # Call-failure chain advance (MODEL-USE-CASES-V2 T2.4): with a multi-entry
+    # chain declared, a CircuitOpenError/provider failure from entry N advances to
+    # entry N+1 for THIS call — once per remaining entry, bounded by chain length.
+    # An OutputContractError does NOT advance (the model responded; the contract
+    # miss is not a provider outage). A one-entry/empty chain takes the plain
+    # resolution path below — today's exact behavior.
+    try:
+        from personalclaw.providers.use_cases import resolution_chain
+
+        _chain = resolution_chain(resolved_uc)
+    except Exception:
+        _chain = []
+    if len(_chain) > 1:
+        last_exc: Exception | None = None
+        for i, ref in enumerate(_chain):
+            try:
+                entry_provider = resolve_provider_for_use_case(resolved_uc, model_override=ref)
+            except Exception as exc:  # noqa: BLE001 — an unbuildable entry advances
+                last_exc = exc
+                continue
+            try:
+                return await _run(entry_provider)
+            except OutputContractError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — a failed call advances
+                last_exc = exc
+                if i + 1 < len(_chain):
+                    logger.warning(
+                        "one_shot chain advance: %s entry %d (%s) failed (%s) — trying next",
+                        resolved_uc,
+                        i,
+                        ref,
+                        type(exc).__name__,
+                    )
+        # The whole chain failed — surface ONE clear error, not N stack traces.
+        raise RuntimeError(
+            f"every model in the {resolved_uc!r} fallback chain failed "
+            f"({len(_chain)} entr{'y' if len(_chain) == 1 else 'ies'}); "
+            f"last error: {last_exc}"
+        ) from last_exc
 
     provider = None
     try:
@@ -333,28 +408,7 @@ async def one_shot_completion(
             raise RuntimeError("No provider entries registered")
         provider = registry.build(entries[0].name)
 
-    try:
-        await provider.start()
-        text = await stream_and_collect(provider, prompt)
-        if output_type is None:
-            return text
-        # Typed path: parse; on a miss, ONE targeted correction-note retry.
-        if _parse_llm(text, output_type) is not None:
-            return text
-        from personalclaw.guardrails.failure import FailureMode, correction_note
-
-        retry_prompt = f"{prompt}\n\n{correction_note(FailureMode.SCHEMA_VIOLATION)}"
-        retry_text = await stream_and_collect(provider, retry_prompt)
-        if _parse_llm(retry_text, output_type) is not None:
-            return retry_text
-        from personalclaw.guardrails.failure import OutputContractError
-
-        raise OutputContractError(getattr(output_type, "__name__", str(output_type)), retry_text)
-    finally:
-        try:
-            await provider.shutdown()
-        except Exception:
-            pass
+    return await _run(provider)
 
 
 def humanize_provider_error(exc: object) -> str:

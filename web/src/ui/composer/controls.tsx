@@ -132,7 +132,7 @@ export function ModelPill({ data, agent, value, onSelect, contextPct, openSignal
     <Popover width={280} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={dot} label={pillLabel} open={open} toggle={toggle} />}>
       {(close) => (
         <div className="max-h-[320px] overflow-y-auto">
-          <MenuRow icon={<Cpu size={16} />} label="Auto" hint="Agent's configured model" selected={!value || value === 'Auto'} onClick={() => { onSelect('Auto'); close() }} />
+          <MenuRow icon={<Cpu size={16} />} label="Auto" hint="Use-case chain (Settings → Models)" selected={!value || value === 'Auto'} onClick={() => { onSelect('Auto'); close() }} />
           {acp
             ? acpModels.length > 0
               ? acpModels.map((m) => <MenuRow key={m} icon={<Cpu size={16} />} label={m} hint={acp.runtime} selected={m === value} onClick={() => { onSelect(m); close() }} />)
@@ -140,6 +140,11 @@ export function ModelPill({ data, agent, value, onSelect, contextPct, openSignal
             : (data?.models ?? []).map((m) => (
                 <MenuRow key={m.name} icon={<Cpu size={16} />} label={m.model_name || m.name} hint={m.provider} selected={m.name === value} onClick={() => { onSelect(m.name); close() }} />
               ))}
+          {/* Precedence explainer (MODEL-USE-CASES-V2 T3.4): the pick sits one level
+              above the use-case chain — it never replaces the chain, only fronts it. */}
+          <div className="border-t border-outline-variant/30 px-m py-2 text-[0.75rem] text-on-surface-low">
+            A picked model overrides this session's use-case chain; if it fails, the chain takes over.
+          </div>
         </div>
       )}
     </Popover>

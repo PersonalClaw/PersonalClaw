@@ -66,23 +66,36 @@ CAPABILITIES: tuple[str, ...] = (
 
 # Finer roles within the ``chat`` capability. Each falls back to ``chat`` when
 # the user has not pinned a distinct model (see :func:`parent_capability`).
-# Only roles with a real runtime consumer live here: ``code_tools`` routes to the
-# native agent runtime (provider_bridge) and ``reasoning`` backs one_shot_completion
-# + loop gates/judges. (``summarization`` / ``planning`` were selectable routing
-# targets with NO resolver — a pinned model was silently ignored — so they were
-# removed. The Capability.SUMMARIZATION / .PLANNING enum flags remain as provider
-# capability *advertisements* that installed apps declare; they are not use-cases.)
+# Only roles with a real runtime consumer live here (the removal doctrine:
+# ``summarization`` / ``planning`` were selectable routing targets with NO
+# resolver — a pinned model was silently ignored — so they were removed. The
+# Capability.SUMMARIZATION / .PLANNING enum flags remain as provider capability
+# *advertisements* that installed apps declare; they are not use-cases.)
+# Consumers, per axis (MODEL-USE-CASES-V2):
+#   code_tools    — the native agent runtime (provider_bridge)
+#   reasoning     — explicit one-shot judgment calls (web-extract, guarded one-shots)
+#   background    — the _bg/personalclaw-lite session factory + one_shot_completion's
+#                   informal-label collapse (titles, tags, suggestions, digests,
+#                   consolidation)
+#   orchestration — orchestrated-chat supervising turns + model-less subagent spawns
+#   loops         — loop worker sessions + loop gates/judges (long-horizon)
 CHAT_SUBCATEGORIES: tuple[str, ...] = (
     "code_tools",
     "reasoning",
+    "background",
+    "orchestration",
+    "loops",
 )
 
 # Every selectable use case = capabilities + chat sub-categories.
 USE_CASES: tuple[str, ...] = CAPABILITIES + CHAT_SUBCATEGORIES
 VALID_USE_CASES = frozenset(USE_CASES)
 
-# Use cases where multiple models can be active at once (shown in dropdowns).
-# Generation + single-modality understanding are pick-one routing targets.
+# Use cases whose bound models feed PICKER POOLS (the app-wide model dropdowns
+# offer every entry). Historically this set also gated ">1 entry allowed" on the
+# PUT — that meaning is retired: EVERY use case now stores an ordered fallback
+# CHAIN (position 0 = default, 1..n = fallbacks; MODEL-USE-CASES-V2), so the
+# constant's only remaining meaning is dropdown-pool membership.
 MULTI_ACTIVE_USE_CASES = frozenset({"chat", "image_modality"})
 
 
@@ -222,7 +235,13 @@ def _prune_removed_providers(active: dict[str, list[str]]) -> dict[str, list[str
 
 def load_active_models() -> dict[str, list[str]]:
     """Active-model selections per use-case, with refs from removed providers
-    pruned so no consumer surfaces a ghost model."""
+    pruned so no consumer surfaces a ghost model.
+
+    Tolerant chain read (MODEL-USE-CASES-V2, clean break under the pre-1.0
+    banner): every value is semantically an ordered fallback CHAIN. A bare
+    string value from an older store normalizes to a one-entry chain; writes
+    (:func:`save_active_models`) emit lists only.
+    """
     path = _active_models_path()
     if not path.is_file():
         return {}
@@ -232,7 +251,13 @@ def load_active_models() -> dict[str, list[str]]:
         return {}
     if not isinstance(data, dict):
         return {}
-    return _prune_removed_providers(data)
+    normalized: dict[str, list[str]] = {}
+    for uc, refs in data.items():
+        if isinstance(refs, str):
+            normalized[uc] = [refs]
+        else:
+            normalized[uc] = refs
+    return _prune_removed_providers(normalized)
 
 
 def save_active_models(active: dict[str, list[str]]) -> None:
@@ -246,12 +271,31 @@ def active_model_refs(use_case: str) -> list[str]:
 
     A chat sub-category with no model of its own borrows the parent ``chat``
     selection (:func:`parent_capability`). Returns ``[]`` when nothing is active.
+    The list is the use case's ordered fallback CHAIN (position 0 = default).
     """
     active = load_active_models()
     refs = active.get(use_case)
     if not refs and use_case in CHAT_SUBCATEGORIES:
         refs = active.get("chat")
     return list(refs) if isinstance(refs, list) else []
+
+
+def resolution_chain(use_case: str, *, session_override: str = "") -> list[str]:
+    """Ordered candidate refs for one resolution: ``[override?] + chain``.
+
+    The composer/session override sits ONE LEVEL ABOVE the chain (owner-decided
+    semantics, MODEL-USE-CASES-V2): it is a single ref — never itself a chain —
+    prepended to the use case's chain (or, for an unbound sub-category, the
+    parent ``chat`` chain via :func:`active_model_refs`). Duplicates dedupe with
+    the override keeping the front position. Resolution walks the result in
+    order: override fails → chain default → fallback 1 → …
+    """
+    chain = active_model_refs(use_case)
+    if not session_override:
+        return chain
+    out = [session_override]
+    out.extend(r for r in chain if r != session_override)
+    return out
 
 
 def split_ref(ref: str) -> tuple[str, str] | None:
