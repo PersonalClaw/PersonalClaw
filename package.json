@@ -11,7 +11,7 @@
     "hooks:install": "sh scripts/install_git_hooks.sh"
   },
   "devDependencies": {
-    "playwright": "^1.61.1"
+    "playwright": "^1.62.0"
   },
   "overrides": {
     "@types/react": "^18.3.18",
