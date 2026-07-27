@@ -132,3 +132,32 @@ def _inject_artifact_content(state, session, message) -> str: ...
 
 
 
+
+## Execution log
+
+- [2026-07-27][S1a] DONE (T1.1 + T1.2, backend): the store-hardening half of S1,
+  shipped as an atomic backend sub-scope. **T1.1 collection field:** `Artifact.collection`
+  (model + `to_dict`/`from_dict` tolerant read — pre-collection meta.json loads as ""),
+  threaded through `NativeArtifactProvider.create`/`update` (metadata-only, no version
+  bump) + `list(collection=...)` filter, the abstract `ArtifactProvider` signatures,
+  REST create/update/list handlers (+ `_serialize` redaction), the `artifact_save`/
+  `artifact_update`/`artifact_list` MCP tools + their schemas, and the FE `Artifact` type.
+  **T1.2 server-backed dedup:** `provider.find_similar(name, kind)` (by derived slug,
+  newest-first, read-only never-raise); `artifact_save` refuses a name-collision with a
+  hint (update existing slug / `force=true`); `POST /api/artifacts` returns
+  `409 similar_artifact_exists {similar:{slug,name,kind}}` (bypass `?force=1`), SEL
+  `outcome="deduped"`. The existing source_path dedup path is untouched (a file-backed
+  re-save still bumps, never 409s on name). Tests: `test_artifacts_collection_dedup.py`
+  (11 — model round-trip + tolerant read, provider create/update/list-filter + reload,
+  find_similar, REST 409+force, collection PATCH round-trip, source_path-still-bumps).
+  Gate: `make lint` green, `make test` green, web typecheck green, reference regenerated
+  (tools.md — new tool args). Class-B `collection` field = plain clean break (banner).
+- [2026-07-27][S1b] DEFERRED (T1.3, route split): moving artifacts to their own
+  `#/artifacts` top-level route + dropping the Files artifacts tab + `#/files/<slug>`
+  redirect is a 470-line refactor of `FilesSection.tsx` (31 artifact-branch points; files
+  + artifacts share the tab strip, header, content-search, explorer state, and the
+  file-side drift badge consumes `artifactPaths`). Extracting it cleanly without
+  regressing BOTH surfaces needs a focused pass — deliberately NOT rushed under
+  unsupervised overnight execution (atomic-completability: ship the finished backend half,
+  do the risky FE relocation with care). S1b is the next Artifacts session; S2 (library
+  surface) builds on the split, so S1b precedes it.

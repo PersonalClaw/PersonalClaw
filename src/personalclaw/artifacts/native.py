@@ -319,6 +319,7 @@ class NativeArtifactProvider(ArtifactProvider):
         source: str | None = None,
         source_path: str | None = None,
         project_id: str | None = None,
+        collection: str | None = None,
     ) -> list[Artifact]:
         root = self._ensure_root()
         with self._lock:
@@ -338,6 +339,8 @@ class NativeArtifactProvider(ArtifactProvider):
                 continue
             if project_id and art.project_id != project_id:
                 continue
+            if collection and art.collection != collection:
+                continue
             if q:
                 hay = f"{art.name}\n{art.description}\n{' '.join(art.tags)}".lower()
                 if q.lower() not in hay:
@@ -346,6 +349,22 @@ class NativeArtifactProvider(ArtifactProvider):
             out.append(art)
         out.sort(key=lambda a: a.updated_at or a.created_at, reverse=True)
         return out
+
+    def find_similar(self, name: str, *, kind: str | None = None) -> Artifact | None:
+        """The most-recent existing artifact whose name matches *name* by slug — the
+        list-before-save dedup hint (ARTIFACTS S1). Same slug derivation as save, so a
+        re-save of "Sales Dashboard" finds the prior one instead of minting a ``-2``.
+        Returns None when nothing matches. A read-only scan; never raises into save."""
+        target = slugify(name or "")
+        if not target:
+            return None
+        try:
+            for art in self.list(kind=kind):  # newest-first
+                if slugify(art.name) == target or art.slug == target:
+                    return art
+        except Exception:
+            return None
+        return None
 
     def find_by_source_path(self, source_path: str) -> Artifact | None:
         if not source_path:
@@ -579,6 +598,7 @@ class NativeArtifactProvider(ArtifactProvider):
         actor: str | None = None,
         session_id: str | None = None,
         project_id: str = "",
+        collection: str = "",
     ) -> Artifact:
         name = (name or "").strip()[:MAX_NAME_LEN] or "Untitled"
         # Binary kinds (image) must go through create_binary — their body is bytes,
@@ -608,6 +628,7 @@ class NativeArtifactProvider(ArtifactProvider):
                 updated_at=ts,
                 source_path=source_path or "",
                 project_id=project_id or "",
+                collection=(collection or "").strip()[:MAX_NAME_LEN],
                 events=[event],
             )
             d = self._artifact_dir(final_slug)
@@ -632,6 +653,7 @@ class NativeArtifactProvider(ArtifactProvider):
         name: str | None = None,
         description: str | None = None,
         tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
+        collection: str | None = None,
     ) -> Artifact | None:
         # Validate event type BEFORE any side effect so an invalid type can't
         # orphan a versions/vN.html. 'reverted' is NOT an update event — it has its
@@ -656,6 +678,9 @@ class NativeArtifactProvider(ArtifactProvider):
                 meta_changed = True
             if tags is not None:
                 art.tags = clean_tags(tags)
+                meta_changed = True
+            if collection is not None:
+                art.collection = collection.strip()[:MAX_NAME_LEN]
                 meta_changed = True
 
             wrote_content = False

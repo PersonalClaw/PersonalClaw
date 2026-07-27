@@ -1229,6 +1229,8 @@ export interface Artifact {
   created_at: string; updated_at: string
   content?: string | null; events: ArtifactEvent[]
   source_path: string; live_dirty: boolean; project_id?: string
+  // Optional library collection label (ARTIFACTS S1). "" = uncollected.
+  collection?: string
 }
 
 export const api = {
