@@ -8,6 +8,23 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Added
+
+- **Type-routed tool-output compressors.** Large tool results now project smarter: a
+  JSON array of thousands of items becomes a per-field schema (names, types, ranges,
+  null counts) plus the first/last item verbatim; a large code file becomes a
+  signatures-and-docstrings outline with a line map (`code` is a new content type,
+  sniffed conservatively). The full raw always stays one `tool_result_get` away.
+- **Projection rules: three layers + line operations.** A builtin rule pack now
+  recognises common command output (git, pytest, npm, docker, cargo…) so e.g. a
+  `git diff` run through the shell projects as a diff; a repo can ship its own
+  `.personalclaw/projection_rules.json` (project layer, beats user rules); and every
+  rule may carry declarative line operations — head/tail window, keep/skip filters,
+  and a fold-repeats counter — editable in Settings → Tool output.
+- **Background prose summarizer.** Long natural-language output on background paths
+  can be model-summarized with a guaranteed deterministic fallback (never wired into
+  the synchronous tool path).
+
 Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 
 ## [0.1.2] — 2026-07-26

@@ -35,6 +35,10 @@ _CALL_SITE_SURFACES = {
     "dashboard/chat_retag.py": "assistant_reasoning",
     "dashboard/chat_handlers.py": "assistant_reasoning",
     "dashboard/handlers/loop_routes.py": "assistant_reasoning",
+    # Prose-model compressor (CONTEXT-ECONOMY §2.4): background-only; its no-model
+    # floor is BUILT IN — any failure degrades to the deterministic log projector,
+    # so callers always get a bounded result (guard-the-guard).
+    "tool_providers/prose_compress.py": "assistant_reasoning",
     # The Doctor per-provider selftest (§1.4) fires a tiny one-token completion to
     # ground-truth the chat capability — user-click only, covered by the chat contract.
     "dashboard/handlers/doctor.py": "chat",

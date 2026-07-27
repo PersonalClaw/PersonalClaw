@@ -535,7 +535,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
             : rules && (list.length
               ? <><BigStat value={list.length} caption={list.length === 1 ? 'custom rule' : 'custom rules'} />
                   <div className="mt-2"><ChipRow query={query} chips={list.slice(0, 6).map((r) => ({ label: r.name, tone: 'muted' as const }))} /></div></>
-              : <div className="text-on-surface-low text-[0.8125rem]">Builtin projectors shrink logs, diffs, JSON, tests, and CSV; the full raw stays recoverable. A savings meter appears here once projection kicks in.</div>)}
+              : <div className="text-on-surface-low text-[0.8125rem]">Builtin projectors shrink logs, diffs, JSON, tests, CSV, and code; the full raw stays recoverable. A savings meter appears here once projection kicks in.</div>)}
         </BentoCard>
       )
     },

@@ -1036,7 +1036,14 @@ async def start_dashboard(
             projection.set_user_rules(
                 [
                     projection.ProjectionRule(
-                        name=r.name, match_regex=r.match_regex, strategy=r.strategy
+                        name=r.name,
+                        match_regex=r.match_regex,
+                        strategy=r.strategy,
+                        head=r.head,
+                        tail=r.tail,
+                        keep=r.keep,
+                        skip=r.skip,
+                        count=r.count,
                     )
                     for r in AppConfig.load().tools.projection_rules
                 ]
