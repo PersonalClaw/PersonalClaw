@@ -2195,6 +2195,47 @@ async def _iter_multipart(reader):
             yield part
 
 
+def _apply_centrality(results: list, root: str, max_results: int) -> list:
+    """Re-rank file matches by codebase centrality (CONTEXT-ECONOMY §5.5).
+
+    Among files that match the query about equally well, the one the rest of the
+    codebase actually references is far more likely to be the one meant. The boost
+    is a fraction of a name-match tier, so it only ever breaks near-ties — a better
+    textual match still wins outright.
+
+    Fail-soft: no index (or any error) returns the list untouched, so `@`-mention
+    behaves exactly as it does today.
+    """
+    if not results:
+        return results
+    try:
+        from personalclaw.codegraph import CodeGraphIndex
+
+        index = CodeGraphIndex(root)
+        if index.is_empty():
+            return results[:max_results]
+        ranks = index.centrality(limit=400)
+        index.close()
+    except Exception:  # noqa: BLE001
+        logger.debug("file_search: centrality unavailable", exc_info=True)
+        return results[:max_results]
+    if not ranks:
+        return results[:max_results]
+    top = max(ranks.values()) or 1
+
+    def boosted(row: dict) -> float:
+        try:
+            rel = os.path.relpath(row["path"], root).replace(os.sep, "/")
+        except (ValueError, KeyError):
+            return float(row.get("_score", 0.0))
+        # Capped at 8.0 — below the 10-point relpath-substring tier, so centrality
+        # informs the order without overriding what the user typed.
+        return float(row.get("_score", 0.0)) + 8.0 * (ranks.get(rel, 0) / top)
+
+    ordered = sorted(results, key=lambda r: (-boosted(r), len(r.get("name", ""))))
+    return ordered[:max_results]
+
+
 def _fuzzy_score(q: str, name: str, rel: str) -> float:
     """Score a file match. Higher = better. Returns 0 for no match."""
     nl = name.lower()
@@ -2336,7 +2377,12 @@ async def api_file_search(request: web.Request) -> web.Response:
     if scoped and len(safe_roots) == 1:
         idx = state.file_indexes.get(safe_roots[0])
         if idx and idx.is_ready and not idx.truncated:
-            results = await asyncio.to_thread(idx.search, query, _fuzzy_score, max_results)
+            # Over-fetch so the centrality boost has candidates to reorder; without
+            # this it could only shuffle a list already cut to max_results.
+            results = await asyncio.to_thread(idx.search, query, _fuzzy_score, max_results * 3)
+            results = await asyncio.to_thread(
+                _apply_centrality, results, safe_roots[0], max_results
+            )
             trimmed = [{k: v for k, v in r.items() if k != "_score"} for r in results]
             _sel().log_api_access(
                 caller=caller,
@@ -2422,6 +2468,9 @@ async def api_file_search(request: web.Request) -> web.Response:
     # Sort by score descending, then shorter name, then recency
     now = time.time()
     results.sort(key=lambda r: (-r["_score"], len(r["name"]), now - r["mtime"]))
+
+    if scoped and len(safe_roots) == 1:
+        results = await asyncio.to_thread(_apply_centrality, results, safe_roots[0], max_results)
 
     # Strip internal scoring field before response
     trimmed = [{k: v for k, v in r.items() if k != "_score"} for r in results[:max_results]]

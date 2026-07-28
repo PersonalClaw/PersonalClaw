@@ -682,6 +682,12 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
                 required=True,
                 description="The step-list JSON filename to write (plan_steps.json).",
             ),
+            PromptVariable(
+                name="code_map_block",
+                type="textarea",
+                default="",
+                description="Pre-rendered code map of the workspace (empty when no index exists — the block is then omitted entirely).",  # noqa: E501
+            ),
         ),
     ),
     BundledPrompt(

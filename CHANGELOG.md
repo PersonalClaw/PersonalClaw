@@ -19,6 +19,24 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **The agent navigates your code by symbol instead of grepping blind.** Asking
+  "where is this function defined and what calls it?" used to cost a grep, a couple
+  of file reads, and often another grep — every round-trip spending tokens on
+  navigation instead of the actual work. A new `code_map` tool answers it in one
+  call from a tree-sitter index of your workspace, and `code_map_overview` gives the
+  shape of an unfamiliar codebase (the most-referenced modules and their public
+  surface) in one read.
+
+  Indexing Python, TypeScript, JavaScript, Rust and Go: on a 1,500-file repository
+  the first pass takes about four seconds and later passes are effectively
+  instant, since only changed files are re-read. The same index makes SDLC planning
+  passes start from a map of the codebase rather than exploring for it, and ranks
+  the chat composer's `@` file picker so widely-used modules surface above
+  same-named leaves.
+
+  It is strictly an accelerator: with no index, no parsers, or an unparseable file,
+  everything falls back to the grep-and-read behavior it had before, and the tool
+  says so plainly rather than guessing.
 - **Memory now knows what it's *about*.** Every memory is linked to the people,
   projects and tools it names, so asking "what do I know about Ana?" follows those
   links instead of hoping a similarity search surfaces everything. A memory about a

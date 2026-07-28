@@ -32,6 +32,37 @@ STEP_KIND_GUIDE: tuple[tuple[str, str], ...] = (
 )
 
 
+_CODE_MAP_BUDGET_CHARS = 8_000  # ~2K tokens, per §5.5
+
+
+def _code_map_block(workspace_dir: str) -> str:
+    """A bounded code map of the workspace, or "" when unavailable.
+
+    Never raises and never blocks meaningfully: it uses whatever index already
+    exists rather than building one, because a planning pass must not wait on an
+    indexer. No index yet ⇒ no block, and the planner explores as it always has.
+    """
+    try:
+        from personalclaw.codegraph import CodeGraphIndex
+
+        index = CodeGraphIndex(workspace_dir)
+        if index.is_empty():
+            return ""
+        summary = index.module_summary()
+        index.close()
+    except Exception:  # noqa: BLE001
+        return ""
+    if not summary:
+        return ""
+    if len(summary) > _CODE_MAP_BUDGET_CHARS:
+        summary = summary[:_CODE_MAP_BUDGET_CHARS].rstrip() + "\n  … (map truncated)"
+    return (
+        "  Already indexed for you — the workspace's most-referenced modules and "
+        "their public surface. Use it to target your reading; it is a map, not the "
+        "territory:\n" + summary
+    )
+
+
 def build_design_brief(task: str, workspace_dir: str = "") -> str:
     """Pass 1 — design the ordered step list for THIS target.
 
@@ -41,6 +72,7 @@ def build_design_brief(task: str, workspace_dir: str = "") -> str:
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
     guide = "\n".join(f"  - {k}: {desc}" for k, desc in STEP_KIND_GUIDE)
+    code_map = _code_map_block(workspace_dir.strip()) if workspace_dir.strip() else ""
     rendered = render_use_case_prompt(
         "code_design_brief",
         {
@@ -48,6 +80,7 @@ def build_design_brief(task: str, workspace_dir: str = "") -> str:
             "workspace_dir": workspace_dir.strip(),
             "guide": guide,
             "steps_sentinel": STEPS_SENTINEL,
+            "code_map_block": code_map,
         },
     )
     if rendered is not None:
@@ -68,6 +101,11 @@ def build_design_brief(task: str, workspace_dir: str = "") -> str:
             "  Read its key files (READMEs, plans/ or docs/, ROADMAP/BACKLOG, config, "
             "AGENTS.md) to learn the conventions + the SPECIFIC items this targets.",
         ]
+        # A code map of the workspace, when one is available (Context-Economy §5.5).
+        # Handing the planner the shape of the codebase up front replaces the first
+        # several exploratory tool calls of every planning pass.
+        if code_map:
+            lines += ["", code_map]
     else:
         lines += [
             "  No local workspace. Gather context from where the task points — "

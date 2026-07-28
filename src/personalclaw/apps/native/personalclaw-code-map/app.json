@@ -1,0 +1,20 @@
+{
+  "name": "personalclaw-code-map",
+  "version": "1.0.0",
+  "displayName": "Code Map",
+  "description": "Navigate a codebase by symbol instead of by grep — look up where a function or class is defined, which files reference it, or what one file contains, from a tree-sitter index that answers in one call.",
+  "icon": "Waypoints",
+  "author": "PersonalClaw",
+  "tags": [
+    "tool",
+    "bundled"
+  ],
+  "provider": {
+    "type": "tool",
+    "implementation": "personalclaw.tool_providers.registry:create_code_map_provider",
+    "capabilities": [
+      "code_map"
+    ]
+  },
+  "native": true
+}

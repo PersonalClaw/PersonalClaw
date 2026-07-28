@@ -37,6 +37,7 @@ The extension-provider taxonomy (the capability types an app can contribute) and
 - **native-skills** — type `skills` / `` (enabled); capabilities: crud, triggers, auto_generation
 - **native-tasks** — type `task` / `` (enabled); capabilities: crud, comments, labels, dependencies
 - **personalclaw-artifacts** — type `tool` / `` (enabled); capabilities: artifacts
+- **personalclaw-code-map** — type `tool` / `` (enabled); capabilities: code_map
 - **personalclaw-inbox-tools** — type `tool` / `` (enabled); capabilities: inbox
 - **personalclaw-knowledge-tools** — type `tool` / `` (enabled); capabilities: knowledge
 - **personalclaw-memory** — type `tool` / `` (enabled); capabilities: memory
