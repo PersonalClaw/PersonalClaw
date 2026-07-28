@@ -373,14 +373,44 @@ async def _commits_behind_upstream(proj: str) -> int | None:
 _apply_in_flight = False
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _installer_error_summary(stderr: str, *, limit: int = 200) -> str:
+    """One UI-safe line describing why an install failed.
+
+    Two things the raw text can't do (both found by driving the real panel):
+
+    * **Strip ANSI.** uv colorizes its diagnostics, so the raw bytes carry SGR
+      escapes. Rendered in the browser they show up literally (``\x1b[31m``),
+      making the message look corrupted.
+    * **Take the FIRST meaningful line, not the last.** uv's resolver error is a
+      multi-line tree whose headline comes first ("No solution found when
+      resolving dependencies") and whose last line is a fragment ("unsatisfiable.")
+      that says nothing on its own. pip's single-line ``ERROR:`` output is
+      unaffected either way.
+    """
+    clean = _ANSI_RE.sub("", stderr or "")
+    lines = [ln.strip(" \t│╰─▶×") for ln in clean.splitlines()]
+    lines = [ln for ln in lines if ln.strip()]
+    if not lines:
+        return ""
+    # Prefer an explicit error line when one exists (pip), else the headline (uv).
+    head = next((ln for ln in lines if ln.lower().startswith(("error", "error:"))), lines[0])
+    # Fold the following continuation lines in so a wrapped reason stays readable.
+    joined = " ".join([head, *[ln for ln in lines[lines.index(head) + 1 :]]])
+    return joined[:limit].strip()
+
+
 async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.Response:
     """Upgrade a pip/uv/pipx install in place, then graceful re-exec (T4.3).
 
-    Runs ``pip install -U personalclaw==<tag>`` (pinned to the latest release
-    tag when known; unpinned ``-U`` otherwise) using ``sys.executable`` so the
-    upgrade lands in the SAME interpreter/prefix the gateway runs from — mirrors
-    the git path's ``pip install -e .`` step. No web build: the wheel already
-    carries the SPA. The 409 concurrent-apply guard is shared with the git path.
+    Runs ``<installer> install -U personalclaw==<tag>`` (pinned to the latest
+    release tag when known; unpinned ``-U`` otherwise) targeting the SAME
+    interpreter/prefix the gateway runs from — mirrors the git path's editable
+    install step. The installer is RESOLVED (uv or pip), not assumed: a uv-created
+    venv ships no pip module (issue #51). No web build: the wheel already carries
+    the SPA. The 409 concurrent-apply guard is shared with the git path.
     """
     global _apply_in_flight
 
@@ -402,15 +432,21 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
     async def _apply() -> None:
         global _apply_in_flight
         try:
+            # Resolve the installer instead of assuming stdlib pip — a uv venv has
+            # none, which made self-update impossible on the uv install path while
+            # the UI already labelled this kind "pip / uv install" (issue #51).
+            from personalclaw._installer import NoInstallerError, install_argv
+
+            try:
+                argv = install_argv(["-U", spec, "--quiet"])
+            except NoInstallerError as exc:
+                logger.error("self-update: %s", exc)
+                state.push_update_progress("error", str(exc))
+                return
+
             state.push_update_progress("installing", f"Upgrading {spec}…")
             pip_up = await asyncio.create_subprocess_exec(
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "-U",
-                spec,
-                "--quiet",
+                *argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -425,12 +461,16 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
                 state.push_update_progress("error", "pip upgrade timed out")
                 return
             if pip_up.returncode != 0:
-                logger.error(
-                    "pip self-update failed (rc=%d): %s",
-                    pip_up.returncode,
-                    (pip_err or b"").decode(errors="replace")[:500],
+                detail = (pip_err or b"").decode(errors="replace").strip()
+                logger.error("self-update failed (rc=%d): %s", pip_up.returncode, detail[:500])
+                # Surface the REAL error, not just a static label. The cause was
+                # captured and logged but never sent to the UI, so the panel said
+                # only "pip upgrade failed" and the user had to read gateway.log
+                # to learn anything actionable (issue #51).
+                summary = _installer_error_summary(detail)
+                state.push_update_progress(
+                    "error", f"Upgrade failed: {summary}" if summary else "Upgrade failed"
                 )
-                state.push_update_progress("error", "pip upgrade failed")
                 return
             # No frontend build — assets ship in the wheel.
             state.push_update_progress("restarting", "Restarting server…")

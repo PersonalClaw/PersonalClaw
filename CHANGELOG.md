@@ -332,6 +332,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Installing an app and updating PersonalClaw both failed on a `uv` virtualenv.**
+  A `uv venv` ships no `pip` module — uv is the installer — but four separate code
+  paths hardcoded `python -m pip install`, so each died with `No module named pip`
+  on the project's own documented dev setup and on the uv-based end-user install
+  path. Installing **any** app that declares `pythonDependencies` failed, and
+  Settings → Updates showed "Update failed — pip upgrade failed" forever with no way
+  to see why (the real cause was logged but never sent to the UI). Now one resolver
+  picks the installer that actually exists — **uv** (targeted at the running
+  interpreter, so the packages land where the gateway imports from) or **pip** — and
+  says so plainly, naming both remedies, when neither is available. The update panel
+  now shows the **real** failure reason instead of a static label, with the
+  installer's colour codes stripped and the meaningful line first. The same resolver
+  also fixes startup dependency repair and the git-checkout updater's editable
+  install, which had the identical assumption. (#46, #51)
 - **`personalclaw snapshot` was not backing up everything — and could copy a live
   database unsafely.** Two real problems, both closed. Your **tasks, projects,
   autonomous runs, artifacts, prompts, workflows, agents, installed apps, and

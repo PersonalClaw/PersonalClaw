@@ -592,8 +592,20 @@ class GatewayOrchestrator:
         print(f"Installing missing dependencies: {', '.join(missing)}")
         import subprocess as _sp
 
+        # Same installer resolution as the app installer and self-updater: a uv
+        # venv has no pip module, and startup dep-repair silently failing there
+        # left the gateway running without deps it had just decided it needed.
+        from personalclaw._installer import NoInstallerError, install_argv
+
+        try:
+            argv = install_argv(["--quiet", *missing])
+        except NoInstallerError as exc:
+            print(f"❌ {exc}")
+            logger.error("Dep repair impossible: %s", exc)
+            return
+
         result = _sp.run(
-            [sys.executable, "-m", "pip", "install", "--quiet", *missing],
+            argv,
             cwd=proj,
             capture_output=True,
             timeout=300,
@@ -603,7 +615,7 @@ class GatewayOrchestrator:
             importlib.invalidate_caches()
             print("✅ Dependencies installed")
         else:
-            print("❌ pip install failed — run manually: personalclaw update")
+            print("❌ Dependency install failed — run manually: personalclaw update")
             logger.error("Dep repair failed: %s", result.stderr.decode(errors="replace")[:500])
 
     # ------------------------------------------------------------------
