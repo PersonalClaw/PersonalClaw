@@ -5262,16 +5262,14 @@ class TestLumonPersonaInjection:
     def setup_method(self):
         from personalclaw.dashboard import chat
 
-        if hasattr(chat, "_cached_lumon_persona"):
-            chat._cached_lumon_persona.cache_clear()
+        if hasattr(chat, "_cached_persona"):
+            chat._cached_persona.cache_clear()
 
     def test_persona_appended_when_lumon(self, tmp_path):
         from personalclaw.dashboard.chat import _maybe_inject_persona
 
         fake_persona = "Use a light Lumon-inspired persona."
-        with patch(
-            "personalclaw.dashboard.chat_utils._cached_lumon_persona", return_value=fake_persona
-        ):
+        with patch("personalclaw.dashboard.chat_utils._cached_persona", return_value=fake_persona):
             result = _maybe_inject_persona("hello", "lumon", True)
 
         assert "[LUMON PERSONA]" in result
@@ -5293,7 +5291,7 @@ class TestLumonPersonaInjection:
         from personalclaw.dashboard.chat import _maybe_inject_persona
 
         with patch(
-            "personalclaw.dashboard.chat_utils._cached_lumon_persona",
+            "personalclaw.dashboard.chat_utils._cached_persona",
             side_effect=ImportError("boom"),
         ):
             result = _maybe_inject_persona("hello", "lumon", True)
@@ -5302,7 +5300,7 @@ class TestLumonPersonaInjection:
     def test_persona_empty_cache_returns_original(self):
         from personalclaw.dashboard.chat import _maybe_inject_persona
 
-        with patch("personalclaw.dashboard.chat_utils._cached_lumon_persona", return_value=""):
+        with patch("personalclaw.dashboard.chat_utils._cached_persona", return_value=""):
             result = _maybe_inject_persona("hello", "lumon", True)
         assert result == "hello"
 

@@ -83,7 +83,11 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
                 client_ts = ""  # malformed → fall back to server-stamped ts
         if not user_meta:
             user_meta = None
-    if not isinstance(color_theme, str) or color_theme not in {"", "lumon"}:
+    # Validate against the SAME closed set the injector uses, so the accepted
+    # values and the injectable personas cannot drift apart.
+    from personalclaw.dashboard.chat_utils import persona_themes
+
+    if not isinstance(color_theme, str) or color_theme not in {"", *persona_themes()}:
         color_theme = ""
     if not isinstance(agent, str) or not (agent == "" or _AGENT_NAME_RE.match(agent)):
         _emit_agent_assignment(str(session_name or ""), str(agent), outcome="denied_invalid")

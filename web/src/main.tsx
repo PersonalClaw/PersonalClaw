@@ -5,6 +5,7 @@ import './design/tokens.css'
 import { App } from './app/App'
 import { ThemeProvider } from './app/theme'
 import { AppearanceProvider } from './app/appearance'
+import { PersonalityProvider } from './app/personality'
 import { IdentityProvider } from './app/identity'
 import { installAppSdk } from './app/appSdk'
 import { registerBuiltinContentTypes } from './ui/content/registerBuiltins'
@@ -22,9 +23,13 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ThemeProvider>
       <AppearanceProvider>
-        <IdentityProvider>
-          <App />
-        </IdentityProvider>
+        {/* Inside AppearanceProvider: a personality applies its colors + density
+            THROUGH the appearance store rather than owning its own palette. */}
+        <PersonalityProvider>
+          <IdentityProvider>
+            <App />
+          </IdentityProvider>
+        </PersonalityProvider>
       </AppearanceProvider>
     </ThemeProvider>
   </StrictMode>,

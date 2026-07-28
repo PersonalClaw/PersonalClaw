@@ -143,6 +143,17 @@ export const SCHEMES: Scheme[] = [
     gradient: ['#8a8a8a', '#d4d4d4', '#f0f0f0', '#a0a0a0'],
     glowA: ['#d4d4d4', '#5a5a5a'], glowB: ['#f0f0f0', '#8a8a8a'],
   }),
+  // PHOSPHOR — the mono-green CRT family, the base scheme for the retro-terminal
+  // personality (PERSONALITY-THEMES §S1). Light-mode values are darkened greens
+  // that hold ≥4.5:1 both as a white-text button fill and as text on white, the
+  // same rule the other schemes follow (schemeContrast.test.ts enforces it).
+  scheme('phosphor', 'Phosphor', {
+    primary: ['#3ddc74', '#1a7f3c'], primaryEmphasis: ['#7bf5a5', '#136230'],
+    onPrimary: ['#062211', '#ffffff'], primaryContainer: ['#0f3d22', '#d4f7e0'],
+    secondary: ['#8ce6a8', '#2b8b52'], info: ['#5cd6c0', '#127d6d'],
+    gradient: ['#0f6b38', '#3ddc74', '#7bf5a5', '#2b8b52'],
+    glowA: ['#3ddc74', '#1a7f3c'], glowB: ['#7bf5a5', '#2b8b52'],
+  }),
 ]
 
 export const DEFAULT_SCHEME = 'coral'

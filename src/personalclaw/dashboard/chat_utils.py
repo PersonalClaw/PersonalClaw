@@ -435,29 +435,50 @@ def _apply_incognito_prefix(session, message: str) -> str:
     return message
 
 
+# Themes that carry a PERSONA — a bundled ``persona-<id>`` prompt snippet appended
+# on a new session's first turn (PERSONALITY-THEMES §S1). A CLOSED set: the value
+# arrives from a client, and it selects a snippet name, so an open set would let a
+# caller name any snippet in the prompt store. Lumon is entry #1 rather than a
+# special case — the hardcoded branch it replaced is gone (clean break).
+_PERSONA_THEMES: frozenset[str] = frozenset({"lumon", "retro-terminal"})
+
+
+def persona_themes() -> frozenset[str]:
+    """The themes that carry a persona. Shared with the request-validation site so
+    the accepted values and the injectable set can never drift apart."""
+    return _PERSONA_THEMES
+
+
 def _maybe_inject_persona(message: str, color_theme: str, is_new: bool) -> str:
-    """Append Lumon persona to *message* on first turn when theme is 'lumon'."""
-    if color_theme != "lumon" or not is_new:
+    """Append the theme's persona to *message* on a new session's first turn.
+
+    Session-scoped by design: the snippet itself tells the model to drop the voice
+    if the user switches themes mid-session, so injecting once is correct rather
+    than a limitation.
+    """
+    if not is_new or color_theme not in _PERSONA_THEMES:
         return message
     try:
-        text = _cached_lumon_persona()
+        text = _cached_persona(color_theme)
         if text:
-            return message + f"\n[LUMON PERSONA]\n{text}\n[END LUMON PERSONA]\n\n"
+            tag = f"{color_theme.upper().replace('-', ' ')} PERSONA"
+            return message + f"\n[{tag}]\n{text}\n[END {tag}]\n\n"
         return message
     except Exception:
-        logger.warning("Lumon persona injection failed", exc_info=True)
+        logger.warning("Persona injection failed for theme %r", color_theme, exc_info=True)
         return message
 
 
-@functools.lru_cache(maxsize=1)
-def _cached_lumon_persona() -> str:
-    """Load and cache the Lumon persona from the prompt system.
+@functools.lru_cache(maxsize=len(_PERSONA_THEMES) or 1)
+def _cached_persona(theme: str) -> str:
+    """Load and cache one theme's persona snippet.
 
-    The persona is the bundled ``persona-lumon`` snippet (editable in
-    Settings → Prompts), rendered raw (no variables)."""
+    The snippet is the bundled ``persona-<theme>`` (editable in Settings →
+    Prompts), rendered raw (no variables). Only callers that already checked
+    ``_PERSONA_THEMES`` reach here, so the name can't be attacker-chosen."""
     from personalclaw.prompt_providers.runtime import render_snippet_block
 
-    return render_snippet_block("persona-lumon")
+    return render_snippet_block(f"persona-{theme}")
 
 
 def _project_context_preamble(project_id: str) -> str:
