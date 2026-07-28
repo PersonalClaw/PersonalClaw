@@ -75,6 +75,13 @@ async def api_tools_list(request: web.Request) -> web.Response:
     disabled_keys = tool_prefs.load_disabled()
     disabled_provs = tool_prefs.load_disabled_providers()
 
+    from personalclaw.tool_providers.groups import CORE_GROUP, group_name_for_provider
+
+    def _group_of(name: str, provider: str) -> str:
+        # Mirrors tool_providers.groups.group_of_tool over the catalog's (name,
+        # provider) pair: a core-locked name is always core, wherever it lives.
+        return CORE_GROUP if tool_prefs.is_locked(name) else group_name_for_provider(provider)
+
     tools_out: list[dict] = []
     seen: set[tuple[str, str]] = set()
 
@@ -112,6 +119,10 @@ async def api_tools_list(request: web.Request) -> web.Response:
                 "providerDisabled": prov_off,
                 "disabled": (not locked)
                 and (prov_off or tool_prefs.key_for(provider, name) in disabled_keys),
+                # CONTEXT-ECONOMY §5: which activation GROUP this tool belongs to
+                # (derived from its provider; core-locked names are always "core").
+                # Read-only here — activation is per-session runtime state, not a pref.
+                "group": _group_of(name, provider),
             }
         )
 

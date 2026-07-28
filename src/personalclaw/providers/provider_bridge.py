@@ -332,6 +332,7 @@ def _build_native_runtime(
     reasoning_effort: str = "",
     project_id: str = "",
     model_axis: str = "",
+    tool_groups: list | None = None,
     **kwargs: Any,
 ) -> ModelProvider:
     """Construct a :class:`NativeAgentRuntime` for a ``native`` agent.
@@ -535,6 +536,14 @@ def _build_native_runtime(
         dry_run=dry_run,
         reasoning_effort=reasoning_effort,
         project_id=project_id,
+        # Tool groups (CONTEXT-ECONOMY §5). ``surface`` is the session class whose
+        # per-surface defaults seed activation — the SAME axis label that governs
+        # the inner model, so "background"/"loops"/"orchestration" runs start
+        # focused while interactive chat keeps every group active (zero change).
+        # ``tool_groups`` is the explicit per-template override (the engine's
+        # stage-spawn seam): when given it wins over the surface default.
+        tool_groups=list(tool_groups) if tool_groups is not None else None,
+        surface=inner_axis,
     )
 
 
@@ -611,6 +620,10 @@ def resolve_provider_for_use_case(
     # code_tools binding cosmetic for native agents). Pop unconditionally so it
     # never leaks into the model-axis resolvers.
     _model_axis = str(kwargs.pop("model_axis", "") or "")
+    # Explicit per-template tool-group activation (CONTEXT-ECONOMY §5.4 — the
+    # WORKFLOWS-V2 stage-spawn seam). Pop unconditionally: native-only, and the
+    # model-axis resolvers don't expect it.
+    _tool_groups = kwargs.pop("tool_groups", None)
     # Per-turn reasoning effort. The native builder consumes it (forwarded to the
     # model's complete()); the ACP path reads reasoning_effort_override from kwargs
     # in its own factory, so DON'T pop it here for ACP — peek without removing.
@@ -637,6 +650,7 @@ def resolve_provider_for_use_case(
             reasoning_effort=_reasoning_effort,
             project_id=_project_id,
             model_axis=_model_axis or use_case,
+            tool_groups=_tool_groups,
             **kwargs,
         )
 

@@ -109,6 +109,9 @@ _SPECIAL = {
     ("tools", "projection_rules"): [
         ProjectionRuleConfig(name="t", match_regex="^x", strategy="log")
     ],
+    # tools.group_defaults is a dict[str, list[str]] (surface → active tool groups);
+    # load() keeps only str→list[str] entries, so supply that shape.
+    ("tools", "group_defaults"): {"background": ["core", "memory"]},
     # guardrails.scan_mode is an enum-constrained str — a generated "redact-x"
     # would fail load()'s validation and fall back to the default.
     ("guardrails", "scan_mode"): "block",

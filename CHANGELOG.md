@@ -19,6 +19,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Tool groups: the agent loads the tools it needs, not all of them.** Every tool
+  provider is now an activatable **group** (`schedule`, `artifacts`, `memory`, one
+  per MCP server or app, …), and a session can run with only the groups it needs —
+  so unused capabilities cost one line of catalog instead of every schema. Measured
+  on the 69-tool built-in surface: a background session's tool block drops **56%
+  (~6,900 tokens per turn)**. The agent manages this itself via a new `reset_tools`
+  tool that takes the *final* set of groups it wants.
+  Capability is never reduced, only context: **every tool stays callable by name
+  even while its group is inactive**, each inactive group advertises itself in one
+  line, and `tool_search` still searches everything — naming the activation step
+  when it finds a tool in an inactive group. Off by default (`tools.groups_enabled`),
+  and interactive chat keeps every group active even when on, so nothing changes for
+  the chat you're watching; background, loop, and subagent runs start focused
+  (tune per surface with `tools.group_defaults`). `GET /api/tools` now reports each
+  tool's group.
 - **The artifacts library: live previews, search, and collections.** The new
   Artifacts page is now a real library: a responsive grid where every card renders
   a **live preview** — widgets/HTML/React/documents/SVG in the same sandboxed,
