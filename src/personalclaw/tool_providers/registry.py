@@ -102,6 +102,16 @@ def create_subagents_provider(config: dict[str, Any] | None = None) -> ToolProvi
     )
 
 
+def create_code_map_provider(config: dict[str, Any] | None = None) -> ToolProvider:
+    """Extension factory for the code-map tool surface — symbol lookup over the
+    tree-sitter codebase index (Context-Economy §5.5), replacing several grep/read
+    round-trips with one call. Registered as ``workflows-tools`` so its group derives
+    to ``workflows``; fails soft to grep/read when no index exists."""
+    from personalclaw.tool_providers.code_map import CodeMapToolProvider
+
+    return CodeMapToolProvider()
+
+
 def create_ui_docs_provider(config: dict[str, Any] | None = None) -> ToolProvider:
     """Extension factory for the ``personalclaw-ui-docs`` tool surface — serves the
     ``web/src/ui`` design-system kit as ``ui_search`` / ``ui_get`` documentation-as-

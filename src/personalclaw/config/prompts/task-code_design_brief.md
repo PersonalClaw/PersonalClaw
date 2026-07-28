@@ -5,7 +5,9 @@ You are designing the PLANNING WALKTHROUGH for this task — the ordered set of 
 
 FIRST, investigate the real context (so the steps fit reality, not a template):
 {% if workspace_dir %}  A workspace is bound at: {{workspace_dir}}
-  Read its key files (READMEs, plans/ or docs/, ROADMAP/BACKLOG, config, AGENTS.md) to learn the conventions + the SPECIFIC items this targets.{% else %}  No local workspace. Gather context from where the task points — internal docs/wikis/tickets via MCP, web/code search — whatever you have.{% endif %}
+  Read its key files (READMEs, plans/ or docs/, ROADMAP/BACKLOG, config, AGENTS.md) to learn the conventions + the SPECIFIC items this targets.{% if code_map_block %}
+
+{{code_map_block}}{% endif %}{% else %}  No local workspace. Gather context from where the task points — internal docs/wikis/tickets via MCP, web/code search — whatever you have.{% endif %}
 
 THEN decide which steps this target needs and in what order. Standard step kinds (pick the SUBSET that fits — skip any that don't apply):
 {{guide}}

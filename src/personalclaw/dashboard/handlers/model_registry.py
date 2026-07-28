@@ -295,6 +295,34 @@ async def api_models_active_set(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
 
+    # An OMITTED key is not an empty chain. `body.get("models", [])` treated a body
+    # that never mentioned `models` — e.g. a caller guessing `{"providers": [...]}` —
+    # as "clear this binding", unset the use-case, and still answered ok:true. The
+    # caller saw success while its binding was wiped. Clearing must be explicit, so
+    # `{"models": []}` still clears and anything else is a 400 naming the key.
+    if "models" not in body:
+        _sel_log(
+            "models.active_set",
+            "error",
+            use_case,
+            request,
+            error=f"body has no 'models' key (got: {sorted(body)})",
+        )
+        return web.json_response(
+            {
+                "error": {
+                    "code": "models_required",
+                    "message": (
+                        "Body must include a 'models' key holding an ordered list of "
+                        '"provider:model_id" refs. To clear this use-case\'s binding, '
+                        'send {"models": []} explicitly.'
+                    ),
+                    "received_keys": sorted(str(k) for k in body),
+                }
+            },
+            status=400,
+        )
+
     models = body.get("models", [])
     if not isinstance(models, list):
         return web.json_response({"error": "models must be a list"}, status=400)

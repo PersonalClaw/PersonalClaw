@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-07-27T06:37:34.011Z",
+  "generatedAt": "2026-07-28T09:25:31.833Z",
   "totals": {
     "driftHits": 6,
-    "filesScanned": 366,
+    "filesScanned": 384,
     "filesWithDrift": 5
   },
   "byCategory": {
@@ -174,12 +174,12 @@
       "detail": "1 color, 1 duration"
     },
     {
-      "file": "pages/chat/ChatActivityPanel.tsx",
+      "file": "pages/artifacts/ArtifactViewer.tsx",
       "score": 7,
       "detail": "3 raw-button, 1 raw-input"
     },
     {
-      "file": "pages/files/artifacts/ArtifactViewer.tsx",
+      "file": "pages/chat/ChatActivityPanel.tsx",
       "score": 7,
       "detail": "3 raw-button, 1 raw-input"
     },
@@ -215,11 +215,11 @@
     }
   ],
   "a11y": {
-    "outlineNoneCount": 134,
-    "outlineNoneFiles": 58,
-    "localFocusVisibleFiles": 8,
+    "outlineNoneCount": 137,
+    "outlineNoneFiles": 60,
+    "localFocusVisibleFiles": 10,
     "reducedMotionFiles": 8,
-    "animatedFiles": 149,
+    "animatedFiles": 152,
     "hasGlobalReducedMotion": true,
     "hasGlobalFocusRing": true
   },
@@ -303,6 +303,16 @@
     },
     "pages/apps/appConfigForm.tsx": {
       "raw-button": 1,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/artifacts/ArtifactList.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/artifacts/ArtifactViewer.tsx": {
+      "raw-button": 3,
       "raw-input": 1,
       "raw-dialog": 0
     },
@@ -409,16 +419,6 @@
     "pages/files/FilesSection.tsx": {
       "raw-button": 4,
       "raw-input": 2,
-      "raw-dialog": 0
-    },
-    "pages/files/artifacts/ArtifactList.tsx": {
-      "raw-button": 2,
-      "raw-input": 0,
-      "raw-dialog": 0
-    },
-    "pages/files/artifacts/ArtifactViewer.tsx": {
-      "raw-button": 3,
-      "raw-input": 1,
       "raw-dialog": 0
     },
     "pages/files/browse/FilePreviews.tsx": {

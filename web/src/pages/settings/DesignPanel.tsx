@@ -8,6 +8,7 @@ import { ColorControl, ScalarControl, SelectControl } from '../../ui/TokenContro
 import { TOKENS, type ColorToken, type ScalarToken, type SelectToken } from '../../design/tokenRegistry'
 import { useAppearance } from '../../app/appearance'
 import { useMode, type Preference } from '../../app/theme'
+import { PersonalityPicker } from './PersonalityPicker'
 import { COLOR_GROUPS, BACKDROP_GROUPS, TYPOGRAPHY_GROUPS, LAYOUT_GROUPS, type Scheme } from '../../design/schemes'
 
 /** Design subpage. Cleanly separated concerns:
@@ -48,6 +49,12 @@ export function DesignPanel() {
               )
             })}
           </div>
+        </div>
+
+        {/* Personality first: it's the coarse identity choice, and picking one sets
+            the scheme below — so it reads top-down rather than as a competing knob. */}
+        <div className="mb-2xl border-b border-outline-variant/30 pb-2xl">
+          <PersonalityPicker />
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-m">

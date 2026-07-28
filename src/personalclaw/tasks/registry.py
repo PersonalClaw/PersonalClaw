@@ -162,13 +162,38 @@ async def task_graph(provider_filter: str | None = None) -> dict[str, Any]:
     return await asyncio.to_thread(prov.graph)  # type: ignore[attr-defined]
 
 
-async def ready_tasks(project: str | None = None, task_list_id: str | None = None) -> list[Task]:
+async def ready_tasks(
+    project: str | None = None,
+    task_list_id: str | None = None,
+    *,
+    mine_only: bool = True,
+) -> list[Task]:
     """Tasks that can be started now (no unfinished prerequisites), optionally
-    scoped to a project label or a task list."""
+    scoped to a project label or a task list.
+
+    ``mine_only`` (default True) is the load-bearing guarantee from
+    TEAM-SHARED-ENTITIES §2.1: a multi-tenant provider may return tasks assigned to
+    other people, and those must never be counted or picked as the owner's work. This
+    is the ONE funnel every work-selection path goes through — the ready-count
+    endpoint and the agent's next-task tool both call it — so filtering here means
+    nobody has to remember to filter downstream.
+
+    Dependency readiness is still computed over the FULL set: a task of mine blocked
+    by a colleague's unfinished prerequisite is genuinely not ready, and filtering
+    before reconciliation would call it startable.
+    """
     tasks, _ = await list_all_tasks(project=project, task_list_id=task_list_id, limit=10_000)
     task_map = {t.id: t for t in tasks}
     ready_ids = set(reconcile.ready_task_ids(task_map))
-    return [t for t in tasks if t.id in ready_ids]
+    ready = [t for t in tasks if t.id in ready_ids]
+    if not mine_only:
+        return ready
+    from personalclaw.identity import current_username
+
+    owner = current_username()
+    if not owner:
+        return ready
+    return [t for t in ready if t.belongs_to(owner)]
 
 
 async def search_tasks(

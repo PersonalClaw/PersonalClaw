@@ -682,6 +682,12 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
                 required=True,
                 description="The step-list JSON filename to write (plan_steps.json).",
             ),
+            PromptVariable(
+                name="code_map_block",
+                type="textarea",
+                default="",
+                description="Pre-rendered code map of the workspace (empty when no index exists — the block is then omitted entirely).",  # noqa: E501
+            ),
         ),
     ),
     BundledPrompt(
@@ -1311,6 +1317,14 @@ BUNDLED_SNIPPETS: tuple[BundledSnippet, ...] = (
         name="persona-lumon",
         filename="persona-lumon.md",
         description="The Lumon persona, appended on first turn for the 'lumon' dashboard theme.",
+    ),
+    BundledSnippet(
+        name="persona-retro-terminal",
+        filename="persona-retro-terminal.md",
+        description=(
+            "The terse terminal-operator persona, appended on first turn for the "
+            "'retro-terminal' personality."
+        ),
     ),
     # ── loop per-cycle directives (prepended to a worker's cycle nudge) ──
     BundledSnippet(

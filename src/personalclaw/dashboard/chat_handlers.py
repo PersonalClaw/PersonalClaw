@@ -83,7 +83,11 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
                 client_ts = ""  # malformed → fall back to server-stamped ts
         if not user_meta:
             user_meta = None
-    if not isinstance(color_theme, str) or color_theme not in {"", "lumon"}:
+    # Validate against the SAME closed set the injector uses, so the accepted
+    # values and the injectable personas cannot drift apart.
+    from personalclaw.dashboard.chat_utils import persona_themes
+
+    if not isinstance(color_theme, str) or color_theme not in {"", *persona_themes()}:
         color_theme = ""
     if not isinstance(agent, str) or not (agent == "" or _AGENT_NAME_RE.match(agent)):
         _emit_agent_assignment(str(session_name or ""), str(agent), outcome="denied_invalid")
@@ -448,6 +452,20 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
     default-hide them behind a filter and link each back to its cockpit.
     """
     state: DashboardState = request.app["state"]
+    # Archived sessions are excluded by DEFAULT — that is the whole point of
+    # archiving. `?archived=1` returns only the archive (the Archived view); `?all=1`
+    # returns both. Filtering here rather than in the client keeps the contract in one
+    # place, so a future consumer can't accidentally show archived chats as active.
+    _arch = request.query.get("archived", "")
+    _all = request.query.get("all", "")
+    want_archived = _arch in ("1", "true", "yes")
+    want_all = _all in ("1", "true", "yes")
+
+    def _lifecycle_ok(lifecycle: str) -> bool:
+        if want_all:
+            return True
+        return (lifecycle == "archived") if want_archived else (lifecycle != "archived")
+
     out: list[dict] = []
     seen: set[str] = set()
     # In-memory first — these are live and authoritative.
@@ -474,8 +492,12 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
         if origin != "manual":
             d["source_id"] = sid
             d["source_label"] = _origin_label(origin, sid)
-        out.append(d)
+        # `seen` is marked regardless of the lifecycle filter: a live session that is
+        # filtered out here must NOT then be re-added by the disk-merge branch below.
         seen.add(s.key)
+        if not _lifecycle_ok(str(d.get("lifecycle") or "active")):
+            continue
+        out.append(d)
 
     # Then merge disk-only sessions not already represented in memory.
     if state.conversation_log:
@@ -541,10 +563,26 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
                 "color_index": meta.get("color_index"),
                 "memory_mode": meta.get("memory_mode", "persistent"),
                 "origin": origin,
+                # Lifecycle. The live branch above gets these from to_dict();
+                # this hand-built row has to carry them too or an archived session
+                # would read as active the moment it is served from disk.
+                "lifecycle": (
+                    meta["lifecycle"]
+                    if meta.get("lifecycle") in ("active", "archived")
+                    else "active"
+                ),
+                "last_activity_at": (
+                    float(meta["last_activity_at"])
+                    if isinstance(meta.get("last_activity_at"), (int, float))
+                    else 0.0
+                ),
+                "never_archive": bool(meta.get("never_archive")),
             }
             if origin != "manual":
                 row["source_id"] = sid
                 row["source_label"] = _origin_label(origin, sid)
+            if not _lifecycle_ok(str(row.get("lifecycle") or "active")):
+                continue
             out.append(row)
 
     return web.json_response(out)

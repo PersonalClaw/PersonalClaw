@@ -470,6 +470,15 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # Context Economy §5 — dynamic tool-group activation (runtime-editable). Takes
     # effect for sessions created after the change (activation state is per-runtime).
     "tools.groups_enabled": {"type": "bool"},
+    # The kill switch is runtime-editable so turning the
+    # surface OFF takes effect on the next request without a restart. `allow_remote`
+    # and `public_url` are deliberately NOT here: widening a network surface should
+    # be a deliberate config-file edit, not a one-click PATCH.
+    "inbound.mcp.enabled": {"type": "bool"},
+    # Entity linking. Runtime-editable: turning it off
+    # stops new links immediately (existing links are kept, so re-enabling doesn't
+    # need a backfill).
+    "memory.graph_enabled": {"type": "bool"},
     "feedback.enabled": {"type": "bool"},
     "feedback.retire_threshold": {"type": "float", "min": 0.1, "max": 0.9},
     "feedback.min_n": {"type": "int", "min": 3, "max": 50},
@@ -491,6 +500,9 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "session.pool_size": {"type": "int", "min": 0, "max": 10},
     "session.pool_agent": {"type": "str", "values_fn": _agent_values},
     "session.pool_ttl_secs": {"type": "int", "min": 0, "max": 7200},
+    # 0 = off; the ceiling is generous on purpose (a year) since "archive rarely"
+    # is a legitimate preference and archiving is non-destructive.
+    "session.auto_archive_days": {"type": "int", "min": 0, "max": 3650},
     "auto_update": {"type": "bool"},
     "dashboard.mcp_probe_timeout_secs": {"type": "int", "min": 5, "max": 120},
     # P25: opt-in tmux-backed terminal persistence (survives a gateway restart). Read as a

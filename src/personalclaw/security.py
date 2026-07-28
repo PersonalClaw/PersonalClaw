@@ -388,6 +388,16 @@ _CREDENTIAL_PATTERNS = re.compile(
     r"|(?:AccessKeyId|aws_access_key_id)\s*[:=]\s*\S+"
     r"|BEGIN[\s](?:RSA|DSA|EC|OPENSSH)[\s]PRIVATE[\s]KEY"
     r"|xox[bpas]-[0-9a-zA-Z-]{10,}"  # Slack token
+    # LLM provider API keys. These are the credentials THIS project's users actually
+    # hold — an Anthropic or OpenAI key pasted into a chat was previously invisible to
+    # this redactor, so it survived into any surface that redacts on the way out
+    # (session search results, inbound tool output). Found by the inbound
+    # sessions_search redaction test.
+    r"|sk-ant-(?:api|admin)[0-9]{2}-[A-Za-z0-9_-]{20,}"  # Anthropic
+    r"|sk-proj-[A-Za-z0-9_-]{20,}"  # OpenAI project key
+    r"|sk-[A-Za-z0-9]{32,}"  # OpenAI classic / compatible
+    r"|gh[pousr]_[A-Za-z0-9]{20,}"  # GitHub token
+    r"|AIza[0-9A-Za-z_-]{35}"  # Google API key
     r")",
 )
 

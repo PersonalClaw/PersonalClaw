@@ -592,8 +592,20 @@ class GatewayOrchestrator:
         print(f"Installing missing dependencies: {', '.join(missing)}")
         import subprocess as _sp
 
+        # Same installer resolution as the app installer and self-updater: a uv
+        # venv has no pip module, and startup dep-repair silently failing there
+        # left the gateway running without deps it had just decided it needed.
+        from personalclaw._installer import NoInstallerError, install_argv
+
+        try:
+            argv = install_argv(["--quiet", *missing])
+        except NoInstallerError as exc:
+            print(f"❌ {exc}")
+            logger.error("Dep repair impossible: %s", exc)
+            return
+
         result = _sp.run(
-            [sys.executable, "-m", "pip", "install", "--quiet", *missing],
+            argv,
             cwd=proj,
             capture_output=True,
             timeout=300,
@@ -603,7 +615,7 @@ class GatewayOrchestrator:
             importlib.invalidate_caches()
             print("✅ Dependencies installed")
         else:
-            print("❌ pip install failed — run manually: personalclaw update")
+            print("❌ Dependency install failed — run manually: personalclaw update")
             logger.error("Dep repair failed: %s", result.stderr.decode(errors="replace")[:500])
 
     # ------------------------------------------------------------------
@@ -646,6 +658,8 @@ class GatewayOrchestrator:
             episodic_max=self._cfg.memory.episodic_max_count,
             episodic_limit=self._cfg.memory.episodic_max_results,
         )
+        # graph_enabled is deliberately NOT pinned here — the store reads
+        # `memory.graph_enabled` live so the Settings toggle works without a restart.
         self.vector_memory.init()
         memory.vector_store = self.vector_memory
 
@@ -1499,11 +1513,37 @@ class GatewayOrchestrator:
                     # for this window (it never re-fires; the next window re-infers).
                     svc.dismiss_commitment(c["key"])
 
+        async def _auto_archive_sessions() -> None:
+            """Move conversations idle past the configured threshold to Archived.
+
+            Reversible by construction: an archived session keeps its transcript and
+            its search index entry, so a wrong archive costs one click to restore.
+            Off entirely when ``session.auto_archive_days`` is 0.
+            """
+            state = getattr(self, "dashboard_state", None)
+            if state is None:
+                return
+            from personalclaw.config.loader import AppConfig
+            from personalclaw.dashboard.chat_persistence import _save_session_to_history
+            from personalclaw.dashboard.session_lifecycle import run_auto_archive
+
+            days = int(AppConfig.load().session.auto_archive_days)
+            if days <= 0:
+                return
+            keys = run_auto_archive(state, days=days)
+            for key in keys:
+                session = state._sessions.get(key)
+                if session is not None:
+                    _save_session_to_history(state, session, force=True)
+            if keys:
+                state.push_sessions_update()
+
         self.heartbeat_svc = HeartbeatService(
             memory=memory,
             on_task=_heartbeat_task,
             consolidator=self.consolidator,
             on_due_commitments=_deliver_due_commitments,
+            on_auto_archive=_auto_archive_sessions,
         )
         await self.heartbeat_svc.start()
 

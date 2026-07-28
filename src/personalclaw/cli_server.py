@@ -454,9 +454,19 @@ def _update() -> None:
     # Build frontend frontend assets (assumes Node.js is already on PATH)
     build_frontend_sync(proj_path)
 
-    print("  🔨 pip install -e .")
+    # Installer-resolved: the git-checkout updater ran in whatever venv the
+    # contributor made, and `uv venv` (what CONTRIBUTING documents) has no pip.
+    from personalclaw._installer import NoInstallerError, install_argv, installer_name
+
+    try:
+        argv = install_argv(["-e", ".", "--quiet"])
+    except NoInstallerError as exc:
+        print(f"  ❌ {exc}")
+        sys.exit(1)
+
+    print(f"  🔨 {installer_name()} install -e .")
     result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "-e", ".", "--quiet"],
+        argv,
         cwd=proj,
         capture_output=True,
         text=True,

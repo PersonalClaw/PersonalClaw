@@ -163,6 +163,7 @@ def test_capabilities_defaults_and_dict():
         "transactional_batch": False,
         "event_log": True,
         "full_text_search": True,
+        "entity_graph": False,
     }
 
 

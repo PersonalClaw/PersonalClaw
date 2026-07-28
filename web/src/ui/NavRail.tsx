@@ -5,6 +5,7 @@ import { motion } from 'framer-motion'
 import { cx } from './cx'
 import { fvs } from '../design/fontWeight'
 import { Wordmark, Spark } from './Spark'
+import { usePersonality } from '../app/personality'
 import { spring } from '../design/motion'
 
 export interface NavItem {
@@ -49,6 +50,7 @@ export function NavRail({
   /** Tap the scrim behind the open overlay → close the drawer. */
   onScrimClick?: () => void
 }) {
+  const { wordmarkLabel } = usePersonality()
   const [width, setWidth] = useState(() => {
     const v = Number(localStorage.getItem(W_KEY))
     return v >= MIN_W && v <= MAX_W ? v : DEFAULT_W
@@ -135,7 +137,8 @@ export function NavRail({
       style={{ width: overlay ? OVERLAY_W : w, background: 'var(--color-rail)' }}>
       {/* header — logo (the collapse toggle lives in the main area, not here) */}
       <div className={cx('flex items-center pb-m', showFull ? 'px-s' : 'justify-center')}>
-        {showFull ? <Wordmark /> : <Spark size={22} />}
+        {/* The wordmark tracks the active PERSONALITY's label (default: PersonalClaw). */}
+        {showFull ? <Wordmark label={wordmarkLabel} /> : <Spark size={22} />}
       </div>
 
       {topItems.map((item) => renderItem(item, true))}

@@ -55,13 +55,26 @@ export function useCachedData<T>(
   // Keep the latest fetcher without making it a re-run dependency.
   const fetcherRef = useRef(fetcher)
   fetcherRef.current = fetcher
+  // The key this hook last fetched for. A KEY CHANGE means a different resource, so
+  // the old value must not be shown under the new key; a same-key re-run is a
+  // REVALIDATION, where the whole point is to keep painting what we already have.
+  // Without this distinction the near-universal `invalidateCache(k); refresh()`
+  // idiom blanked every panel: invalidate drops the entry, so the next run's
+  // `seeded` is undefined, `data` became undefined, and each panel's
+  // `if (!data) return <Skeleton/>` gate fired — a full remount-to-skeleton flash
+  // on an interaction that changed almost nothing.
+  const fetchedKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
     let alive = true
     const seeded = persist ? _seedFromSession<T>(key) : _cache.get(key) as T | undefined
+    const keyChanged = fetchedKeyRef.current !== key
+    fetchedKeyRef.current = key
     if (seeded === undefined) setLoading(true)
-    // Show cached value instantly while we revalidate.
-    setData(seeded)
+    // Paint the cached value instantly while revalidating. On a same-key refresh
+    // with nothing cached, HOLD the current value rather than dropping to
+    // undefined — the refetch is already in flight and `loading` marks it.
+    if (keyChanged || seeded !== undefined) setData(seeded)
     fetcherRef.current()
       .then((res) => {
         if (!alive) return

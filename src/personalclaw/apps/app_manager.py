@@ -28,7 +28,6 @@ import json
 import logging
 import shutil
 import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -190,10 +189,22 @@ def _install_python_deps(manifest: AppManifest) -> bool:
         logger.info("app %s: all %d python deps already satisfied", manifest.name, len(reqs))
         return False
 
-    logger.info("app %s: installing python deps %s", manifest.name, missing)
+    # Resolve the installer rather than assuming stdlib pip: a uv-created venv
+    # ships none, which made every dep-declaring app un-installable on the
+    # project's own documented dev setup (issue #46).
+    from personalclaw._installer import NoInstallerError, install_argv, installer_name
+
+    try:
+        argv = install_argv(["--disable-pip-version-check", *missing])
+    except NoInstallerError as exc:
+        raise AppLifecycleError(str(exc)) from exc
+
+    logger.info(
+        "app %s: installing python deps %s via %s", manifest.name, missing, installer_name()
+    )
     try:
         proc = subprocess.run(  # noqa: S603 — deps come from a scanned+vetted manifest
-            [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", *missing],
+            argv,
             timeout=_PIP_TIMEOUT,
             capture_output=True,
             text=True,
@@ -204,7 +215,7 @@ def _install_python_deps(manifest: AppManifest) -> bool:
         ) from exc
     if proc.returncode != 0:
         tail = (proc.stderr or proc.stdout or "").strip()[-400:]
-        raise AppLifecycleError(f"pip install failed for {missing}: {tail}")
+        raise AppLifecycleError(f"dependency install failed for {missing}: {tail}")
     return True
 
 

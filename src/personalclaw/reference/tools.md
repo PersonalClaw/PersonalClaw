@@ -1385,3 +1385,57 @@ Load a workflow SOP as the procedure to follow for the current task. Workflows a
   "workflow_id": "weekly-digest"
 }
 ```
+
+## workflows-tools
+
+### `code_map`
+
+Look up where a symbol is defined and which files reference it, or outline one file's imports and definitions — from a pre-built index, in ONE call instead of several grep/read round-trips. Prefer this over grep when you're navigating by symbol or function name. Falls back to reporting no index (use grep/read then); indexes Python, TypeScript, JavaScript, Rust and Go.
+
+**Response type:** `code.map.symbol`
+
+**Parameters:**
+- `file` (string, optional) — Outline this file instead: its imports and every definition with line numbers. A workspace-relative or trailing path fragment both work.
+- `refresh` (boolean, optional) — Re-index changed files before answering. The index self-updates, so this is only for a tree you just modified outside the session.
+- `symbol` (string, optional) — Function, class, method or type name to locate. Returns its definition sites plus the files that reference it.
+- `workspace` (string, optional) — Directory to query. Defaults to the active workspace; you rarely need to set this.
+
+**Example — Find where a function is defined and what calls it:**
+
+```json
+{
+  "symbol": "parse_source"
+}
+```
+
+**Example — Outline one file's imports and definitions:**
+
+```json
+{
+  "file": "src/personalclaw/codegraph/parse.py"
+}
+```
+
+**Example — Re-index a tree changed outside the session, then look up:**
+
+```json
+{
+  "refresh": true,
+  "symbol": "CodeGraphIndex"
+}
+```
+
+### `code_map_overview`
+
+The codebase's shape: the most-referenced modules and their public surface, with line numbers. Read this once when you're new to a repository instead of exploring file by file.
+
+**Response type:** `code.map.overview`
+
+**Parameters:**
+- `workspace` (string, optional) — Directory to summarize (defaults to the active one).
+
+**Example — Get the shape of an unfamiliar codebase before exploring it:**
+
+```json
+{}
+```

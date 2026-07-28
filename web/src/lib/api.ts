@@ -299,6 +299,18 @@ export interface ChatSessionSummary {
   // friendly label so the history list can tag + link them and default-hide them.
   origin?: 'manual' | 'loop' | 'code' | 'campaign' | 'channel'
   source_id?: string; source_label?: string
+  // Session lifecycle. 'archived' leaves the active list but
+  // stays fully searchable and restorable — archiving is never deletion.
+  lifecycle?: 'active' | 'archived'
+  last_activity_at?: number
+  never_archive?: boolean
+}
+/** A knowledge shelf. `manual` holds an explicit membership list; `smart` stores a
+ *  query re-run on read, so it stays current with no backfill. `item_count` is null
+ *  for a smart shelf — counting it would mean a search per shelf on every rail render. */
+export interface KnowledgeCollection {
+  id: string; name: string; kind: 'manual' | 'smart'; query?: string; icon?: string
+  position?: number; item_count?: number | null; created_at?: string; updated_at?: string
 }
 export interface ChatFolder { id: string; name: string; order?: number; collapsed?: boolean; parent_id?: string }
 export interface ChatTag { id: string; name: string; color?: string; order?: number; status?: boolean }
@@ -365,6 +377,8 @@ export interface BlockReason { is_blocked?: boolean; blocking_task_ids?: string[
 export interface TaskItem {
   id: string; title: string; status: string; description?: string
   provider?: string; project?: string; assignee?: string; priority?: string
+  // WHO created it — distinct from assignee, who does it.
+  author?: string
   labels?: string[]; depends_on?: string[]; due?: string; url?: string
   created_at?: string; updated_at?: string
   // rich / forward-looking (may be absent from the backend today)
@@ -585,6 +599,9 @@ export interface KnowledgeItem {
   item_type?: string; tags?: string[]
   provider?: string; status?: string
   is_pinned?: boolean; is_archived?: boolean
+  // library curation. read_state is a three-value cycle, not a
+  // boolean — "reading" is the state a reading list exists to represent.
+  read_state?: 'unread' | 'reading' | 'read'; favorited?: boolean
   created_at?: string; updated_at?: string
   _score?: number; _match_type?: string
   // vision fields (may be absent from the PClaw backend today)
@@ -697,7 +714,7 @@ export interface NotificationSettings {
   mute_all: boolean; quiet_hours_enabled: boolean; quiet_hours_start: string; quiet_hours_end: string
   min_severity: string
 }
-export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_enabled?: boolean; vault_path?: string }
+export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_enabled?: boolean; vault_path?: string; graph_enabled?: boolean }
 export interface MemoryVaultStatus { enabled: boolean; path: string; files: number; exists: boolean }
 export interface MemoryVaultSyncResult { records: number; files: number; written: number; pruned: number; path: string }
 export interface DailyDigest { day: string; text: string; created_at: string }
@@ -719,6 +736,51 @@ export interface MemoryContextPreview { semantic_context: string; episodic_conte
 // Memory health lint: auto-fixed counts + per-flag advisories (near-dup / stale / orphan / contradiction).
 export interface MemoryLintFlag { check: string; key: string; detail: string }
 export interface MemoryLint { auto_fixed: Record<string, number>; flags: MemoryLintFlag[]; flag_count: number }
+// Entity graph. The type set is closed server-side.
+export type MemoryEntityType = 'person' | 'project' | 'tool' | 'org' | 'topic' | 'place'
+export interface MemoryEntity {
+  id: string
+  name: string
+  entity_type: MemoryEntityType
+  aliases: string[]
+  source: string
+  inbound_count: number
+  last_linked_at?: string | null
+}
+export interface MemoryLink {
+  id: number
+  from_kind: string
+  from_ref: string
+  to_entity: string | null
+  to_ref: string | null
+  link_type: string
+  provenance: string
+  confidence: number
+  context: string | null
+  created_at: string
+}
+export interface MemoryGraphSummary {
+  entities: number
+  links: number
+  linked_records: number
+  proposals: number
+  semantic_orphans: number
+  episodic_orphans: number
+  phantom_entities: number
+}
+export interface MemoryEntitiesResponse {
+  entities: MemoryEntity[]
+  summary: MemoryGraphSummary | Record<string, never>
+  enabled: boolean
+}
+export interface MemoryGraphRebuild {
+  ok: boolean
+  seeded: { from_facts: number; from_knowledge: number }
+  records_processed: number
+  links_created: number
+  before: MemoryGraphSummary
+  after: MemoryGraphSummary
+}
 // Memory observability: live counts, injection-rejection reasons, and the injected-context preview.
 export interface MemoryObservability {
   stats: Record<string, number>
@@ -945,6 +1007,9 @@ export interface DashboardConfig {
   // user-tagged or incognito/temporary sessions)
   auto_tag_sessions: boolean
   widget_density: 'more' | 'less'; user_name: string
+  // Attribution handle stamped onto records you create.
+  // A label, not a credential; '' = writes carry no attribution.
+  username: string
   // server-stored message display prefs (consistent across browsers)
   send_on_enter: boolean; show_timestamps: boolean; show_thinking_inline: boolean
   simplified_tool_names: boolean; confirm_close_session: boolean
@@ -1318,6 +1383,15 @@ export const api = {
   memoryObservability: () => get<MemoryObservability>('/api/memory/observability'),
   memoryRecall: (q: string) => get<{ result: string; query: string; deep: boolean }>(`/api/memory/recall?q=${encodeURIComponent(q)}`),
   memoryPromote: () => post<{ ok: boolean; promoted: number }>('/api/memory/promote'),
+  // Entity graph — the typed links under recall.
+  memoryEntities: () => get<MemoryEntitiesResponse>('/api/memory/entities'),
+  memoryEntityCreate: (body: { name: string; entity_type: MemoryEntityType; aliases?: string[] }) =>
+    post<{ ok: boolean; id: string }>('/api/memory/entities', body),
+  memoryEntityBacklinks: (id: string) =>
+    get<{ links: MemoryLink[] }>(`/api/memory/entities/${encodeURIComponent(id)}/backlinks`),
+  memoryEntityProposal: (body: { name: string; action: 'accept' | 'reject'; entity_type?: MemoryEntityType }) =>
+    post<{ ok: boolean; id?: string }>('/api/memory/entities/proposals', body),
+  memoryGraphRebuild: () => post<MemoryGraphRebuild>('/api/memory/graph/rebuild'),
   // Raw markdown memory files (preferences / projects / history) — GET+PUT {content}.
   memoryDoc: (which: 'preferences' | 'projects' | 'history') => get<{ content: string }>(`/api/memory/${which}`).then((d) => d.content),
   saveMemoryDoc: (which: 'preferences' | 'projects' | 'history', content: string) => put<{ ok: boolean }>(`/api/memory/${which}`, { content }),
@@ -1329,7 +1403,9 @@ export const api = {
   deleteLesson: (rule: string) => fetch('/api/lessons', { method: 'DELETE', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ rule }) }).then(j<{ ok: boolean }>),
 
   // ── Full-text conversation search (over persisted JSONL content) ──
-  sessionsSearch: (q: string) => get<{ sessions: Array<{ key: string; title?: string; messages?: number }> }>(`/api/sessions/search?q=${encodeURIComponent(q)}`).then((d) => d.sessions),
+  // `snippet` carries the matching passage with `<<`/`>>` around the matched terms
+  // (present on FTS-index hits; absent when the linear-scan fallback answered).
+  sessionsSearch: (q: string) => get<{ sessions: Array<{ key: string; title?: string; messages?: number; snippet?: string }>; source?: string }>(`/api/sessions/search?q=${encodeURIComponent(q)}`).then((d) => d.sessions),
 
   // ── Background subagents monitor (spawned by crons / loops / Slack) ──
   spawnedAgents: () => get<{ agents: SpawnedAgent[] }>('/api/spawn').then((d) => d.agents),
@@ -1519,7 +1595,8 @@ export const api = {
   // blocked commands + supplies one-line hints).
   slashCommands: () => get<{ name: string; description: string }[]>('/api/slash-commands'),
   // sessions
-  chatSessions: () => get<ChatSessionSummary[]>('/api/chat/sessions'),
+  chatSessions: (archived = false) =>
+    get<ChatSessionSummary[]>(`/api/chat/sessions${archived ? '?archived=1' : ''}`),
   pinChatSession: (session: string, pinned: boolean) => patch(`/api/chat/sessions/${encodeURIComponent(session)}/pin`, { pinned }),
   // ── chat organization: folders, tags, kanban tag-columns (backend already
   //    persists folder_id/tags/color_index per session; legacy web exposes these) ──
@@ -1546,6 +1623,13 @@ export const api = {
   dropSessionToColumn: (session: string, columnId: string) => post(`/api/chat/sessions/${encodeURIComponent(session)}/drop`, { column_id: columnId }),
   chatSessionDetail: (key: string) => get<{ key: string; title: string; messages: ChatHistoryMsg[]; running?: boolean; pending_approval?: boolean; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string }[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null }>(`/api/chat/sessions/${encodeURIComponent(key)}`),
   deleteChatSession: (key: string) => del(`/api/chat/sessions/${encodeURIComponent(key)}`),
+  // ── session lifecycle + bulk ──
+  setSessionLifecycle: (session: string, body: { lifecycle?: 'active' | 'archived'; never_archive?: boolean }) =>
+    patch<{ ok: boolean; lifecycle: string; never_archive: boolean }>(`/api/chat/sessions/${encodeURIComponent(session)}/lifecycle`, body),
+  bulkSessions: (op: 'archive' | 'restore' | 'tag' | 'untag' | 'folder' | 'never_archive', keys: string[], args: { tag_id?: string; folder_id?: string; value?: boolean } = {}) =>
+    post<{ ok: boolean; op: string; changed: string[]; unchanged: string[]; missing: string[] }>('/api/chat/sessions/bulk', { op, keys, ...args }),
+  autoArchiveSessions: (opts: { dry_run?: boolean; active_session?: string } = {}) =>
+    post<{ ok: boolean; enabled: boolean; days: number; keys: string[]; count: number }>('/api/chat/sessions/auto-archive', opts),
   createChatSession: (opts: { name?: string; agent?: string; model?: string; memory_mode?: MemoryMode; mode?: string; project_id?: string } = {}) =>
     post<ChatSession>('/api/chat/sessions', opts),
   setSessionAgent: (session: string, agent: string) => post(`/api/chat/sessions/${session}/agent`, { agent }),
@@ -1724,14 +1808,18 @@ export const api = {
   triggerVariables: () => get<TriggerVariables>('/api/triggers/variables'),
 
   // tasks
-  tasks: (opts: { project?: string; task_list?: string; status?: string; limit?: number } = {}) => {
+  // `mine` narrows to the owner's work (assigned to them, or authored by them and
+  // unassigned) — resolved server-side from the configured username. `owner` comes
+  // back on every response so rows can be labelled mine vs someone else's.
+  tasks: (opts: { project?: string; task_list?: string; status?: string; limit?: number; mine?: boolean } = {}) => {
     const qs = new URLSearchParams()
     if (opts.project) qs.set('project', opts.project)
     if (opts.task_list) qs.set('task_list', opts.task_list)
     if (opts.status) qs.set('status', opts.status)
     if (opts.limit) qs.set('limit', String(opts.limit))
+    if (opts.mine) qs.set('mine', '1')
     const s = qs.toString()
-    return get<{ tasks: TaskItem[]; total: number }>(`/api/tasks${s ? `?${s}` : ''}`)
+    return get<{ tasks: TaskItem[]; total: number; owner?: string }>(`/api/tasks${s ? `?${s}` : ''}`)
   },
   task: (id: string, provider?: string) => get<TaskItem>(`/api/tasks/${encodeURIComponent(id)}${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
   taskGraph: (provider?: string) => get<TaskGraphData>(`/api/tasks/graph${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
@@ -1987,6 +2075,25 @@ export const api = {
   knowledgeProviders: () => get<{ providers: Array<{ name: string; display_name: string; always_on: boolean; kind: string }> }>('/api/knowledge/providers').then((d) => d.providers),
   // Distinct tags (frequency-ordered) for tag-input autocomplete.
   knowledgeTags: () => get<{ tags: string[] }>('/api/knowledge/tags').then((d) => d.tags),
+  // ── Knowledge collections ──
+  knowledgeCollections: () =>
+    get<{ collections: KnowledgeCollection[] }>('/api/knowledge/collections').then((d) => d.collections),
+  createKnowledgeCollection: (body: { name: string; kind?: 'manual' | 'smart'; query?: string; icon?: string }) =>
+    post<{ ok: boolean; collection: KnowledgeCollection }>('/api/knowledge/collections', body),
+  updateKnowledgeCollection: (id: string, body: { name?: string; kind?: 'manual' | 'smart'; query?: string; icon?: string; position?: number }) =>
+    patch<{ ok: boolean; collection: KnowledgeCollection }>(`/api/knowledge/collections/${encodeURIComponent(id)}`, body),
+  deleteKnowledgeCollection: (id: string) =>
+    del(`/api/knowledge/collections/${encodeURIComponent(id)}`),
+  knowledgeCollectionItems: (id: string, limit = 50) =>
+    get<{ collection: KnowledgeCollection; items: KnowledgeItem[]; count: number }>(`/api/knowledge/collections/${encodeURIComponent(id)}/items?limit=${limit}`),
+  addToKnowledgeCollection: (id: string, itemIds: string[]) =>
+    post<{ ok: boolean; added: string[]; missing: string[] }>(`/api/knowledge/collections/${encodeURIComponent(id)}/items`, { item_ids: itemIds }),
+  removeFromKnowledgeCollection: (id: string, itemId: string) =>
+    del(`/api/knowledge/collections/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}`),
+  setKnowledgeReadState: (id: string, state: 'unread' | 'reading' | 'read') =>
+    post<{ ok: boolean; read_state: string }>(`/api/knowledge/items/${encodeURIComponent(id)}/read-state`, { state }),
+  setKnowledgeFavorited: (id: string, value: boolean) =>
+    post<{ ok: boolean; favorited: boolean }>(`/api/knowledge/items/${encodeURIComponent(id)}/favorite`, { value }),
   knowledgeEmbeddingStatus: () => get<{ enabled: boolean; available?: boolean; model?: string; total_items?: number; embedded_items?: number; stale_items?: number }>('/api/knowledge/embedding/status'),
   generateKnowledgeEmbeddings: (rebuild = false) => post<{ ok?: boolean; embedded?: number }>('/api/knowledge/embedding/generate', { rebuild }),
   // Every uploaded file → ONE logical-document item run through its node-graph.

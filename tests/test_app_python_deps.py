@@ -71,3 +71,55 @@ def test_pip_failure_raises_lifecycle_error(monkeypatch):
 
     with pytest.raises(app_manager.AppLifecycleError):
         app_manager._install_python_deps(_manifest(["totally-not-a-real-pkg-xyz==9.9.9"]))
+
+
+# ── uv-venv support (issue #46) ────────────────────────────────────────────────
+
+
+def test_uses_uv_on_a_pip_less_venv(monkeypatch):
+    """The #46 repro: a uv-created venv ships no pip, so hardcoding
+    ``python -m pip`` made EVERY dep-declaring app un-installable on the project's
+    own documented dev setup. The installer must resolve uv instead."""
+    from personalclaw import _installer
+
+    monkeypatch.setattr(_installer, "_have_uv", lambda: True)
+    monkeypatch.setattr(_installer, "_have_pip", lambda: False)
+
+    calls: list[list[str]] = []
+
+    class _OK:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(
+        app_manager.subprocess, "run", lambda cmd, **kw: (calls.append(cmd), _OK())[1]
+    )
+    assert (
+        app_manager._install_python_deps(_manifest(["totally-not-a-real-pkg-xyz==9.9.9"])) is True
+    )
+    argv = calls[0]
+    assert argv[:3] == ["uv", "pip", "install"]
+    # Targeted at the running interpreter, not uv's inferred environment.
+    assert "--python" in argv
+    # The pip-only flag must not be forwarded — uv exits non-zero on it.
+    assert "--disable-pip-version-check" not in argv
+
+
+def test_no_installer_raises_actionable_lifecycle_error(monkeypatch):
+    """Previously surfaced as ``pip install failed …: No module named pip``, which
+    points at pip when the real answer is usually "uv isn't on PATH"."""
+    import pytest
+
+    from personalclaw import _installer
+
+    monkeypatch.setattr(_installer, "_have_uv", lambda: False)
+    monkeypatch.setattr(_installer, "_have_pip", lambda: False)
+
+    def unreachable(cmd, **kw):  # pragma: no cover — must fail before spawning
+        raise AssertionError("attempted a subprocess with no installer available")
+
+    monkeypatch.setattr(app_manager.subprocess, "run", unreachable)
+    with pytest.raises(app_manager.AppLifecycleError) as ei:
+        app_manager._install_python_deps(_manifest(["totally-not-a-real-pkg-xyz==9.9.9"]))
+    assert "uv" in str(ei.value)

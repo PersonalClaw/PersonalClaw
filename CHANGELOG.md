@@ -19,6 +19,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Hand an artifact to the agent, or point at one mid-conversation.**
+- **Shelves for your knowledge library — including ones that fill themselves.**
+- **Clean up a long chat list in one action, and let old chats retire themselves.**
+- **On a shared task board, your assistant only works on *your* tasks.**
+- **Backups now happen on their own, and they get checked.**
+- **Find any chat by what was said in it.**
+- **The agent navigates your code by symbol instead of grepping blind.**
+- **Memory now knows what it's *about*.**
+- **Your IDE can now actually ask your assistant things.**
+- **Point your IDE at your assistant: a read-only MCP endpoint.**
 - **Tool groups: the agent loads the tools it needs, not all of them.**
 - **The artifacts library: live previews, search, and collections.**
 - **Artifacts get their own page.**
@@ -37,8 +47,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **"Investigate in chat" is now on everything worth asking about.**
 - **Tool groups are now visible, and they hide what can't work.**
 
+- **Personalities: themes that carry an identity, not just a palette.**
+
+- **A username, so your contributions stay attributable.**
+
+- **Backups you can actually read and verify: `personalclaw backup`.**
+
 ### Fixed
 
+- **Knowledge and memory could never embed with a config-defined provider.**
+- **Binding a model can no longer fail silently.**
+- **Settings and the Store no longer blink to a loading skeleton when you touch anything.**
+- **Installing an app and updating PersonalClaw both failed on a `uv` virtualenv.**
 - **`personalclaw snapshot` was not backing up everything — and could copy a live database unsafely.**
 - **Snapshots of a non-default home no longer land in your real home.**
 

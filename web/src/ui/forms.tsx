@@ -262,3 +262,35 @@ export function ChipInput({ values, onChange, placeholder, max, suggestions }: {
     </div>
   )
 }
+
+/** Checkbox — a single boolean tick, for row selection and inline opt-ins.
+ *
+ *  Distinct from `Switch`: a switch applies a SETTING immediately (and reads as
+ *  on/off state), while a checkbox marks a SELECTION the user then acts on. The
+ *  multi-select bars that drive bulk actions want the latter.
+ *
+ *  `stopPropagation` is built in, not left to callers: these live inside clickable
+ *  rows, and every call site forgetting it would make ticking a row also open it. */
+export function Checkbox({ checked, onChange, ariaLabel, className }: {
+  checked: boolean
+  onChange: (v: boolean) => void
+  /** Required in practice — a bare tick has no accessible name of its own. */
+  ariaLabel: string
+  /** Extra classes for visibility rules (e.g. reveal-on-hover in a list row). */
+  className?: string
+}) {
+  return (
+    <input
+      type="checkbox"
+      checked={checked}
+      aria-label={ariaLabel}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => { e.stopPropagation(); onChange(e.target.checked) }}
+      className={cx(
+        'size-4 shrink-0 cursor-pointer accent-primary',
+        'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary',
+        className,
+      )}
+    />
+  )
+}

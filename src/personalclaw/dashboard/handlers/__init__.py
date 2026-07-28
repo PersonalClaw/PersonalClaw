@@ -120,6 +120,13 @@ from personalclaw.dashboard.handlers.doctor import (  # noqa: E402, F401
     api_provider_selftest,
 )
 
+# ── Durability: scheduled backups + retention (handlers/durability.py) ──
+from personalclaw.dashboard.handlers.durability import (  # noqa: E402, F401
+    api_durability_run,
+    api_durability_snapshots,
+    api_durability_status,
+)
+
 # ── Files & Workspaces (handlers/files.py) ──
 from personalclaw.dashboard.handlers.files import (  # noqa: E402, F401
     _validate_dashboard_path,
@@ -201,12 +208,17 @@ from personalclaw.dashboard.handlers.memory import (  # noqa: E402, F401
     api_memory_embedding_models,
     api_memory_embedding_status,
     api_memory_enable_embeddings,
+    api_memory_entities,
+    api_memory_entity_backlinks,
+    api_memory_entity_create,
+    api_memory_entity_proposals,
     api_memory_episodic_delete,
     api_memory_episodic_list,
     api_memory_episodic_search,
     api_memory_event_undo,
     api_memory_events,
     api_memory_graph,
+    api_memory_graph_rebuild,
     api_memory_history,
     api_memory_import,
     api_memory_lint,

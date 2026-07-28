@@ -965,6 +965,83 @@ def _resolve_audit_event(entity_id: str, state) -> InvestigateContext | None:
     )
 
 
+# ── Artifacts: iterate on a versioned artifact ───────────────────────────────
+
+
+def _resolve_artifact(entity_id: str, state) -> InvestigateContext | None:
+    """An artifact, staged so the agent can ITERATE on it rather than just read it.
+
+    This resolver is the only one that suggests ``agent`` mode. Every other kind
+    stages a read-only investigation, but iterating on an artifact means calling
+    ``artifact_update`` against this one slug — and (owner ruling, 2026-07-29) the
+    work legitimately needs the wider toolset too: searching the web, reading
+    knowledge, running commands, investigating the project. A narrower mode would
+    produce a panel where the agent cannot do the thing the panel is for.
+
+    The body rides the snapshot RAW and is fenced once at injection, matching every
+    other resolver — an artifact body is agent-authored content, so fencing it twice
+    would corrupt it and fencing it not at all would trust it.
+    """
+    try:
+        from personalclaw.artifacts import registry
+
+        prov = registry.get_provider("native")
+        art = prov.get(entity_id) if prov is not None else None
+    except Exception:  # noqa: BLE001
+        logger.debug("artifact read failed for %s", entity_id, exc_info=True)
+        art = None
+    if art is None:
+        return None
+
+    lines = [
+        f"Artifact `{art.slug}`: {art.name}",
+        f"Kind: {art.kind}",
+        f"Version: v{art.version}",
+    ]
+    if art.description:
+        lines.append(f"Description: {art.description}")
+    if art.tags:
+        lines.append(f"Tags: {', '.join(str(t) for t in art.tags)}")
+    if art.source_path:
+        # A file-backed artifact's real source of truth is the workspace file; the
+        # agent must edit THAT, not the snapshot, or the next read reverts its work.
+        lines.append(f"File-backed — live source: {art.source_path}")
+        if art.live_dirty:
+            lines.append("The live file currently differs from the latest snapshot.")
+    versions = []
+    try:
+        versions = prov.list_versions(art.slug) if prov is not None else []
+    except Exception:  # noqa: BLE001
+        logger.debug("artifact version list failed for %s", art.slug, exc_info=True)
+    if len(versions) > 1:
+        lines.append(f"Existing versions: {', '.join('v' + str(v) for v in versions[-8:])}")
+
+    body = art.content or ""
+    if art.kind in ("image",):
+        # A binary body is a raw URL reference, never bytes — putting a data URL in
+        # the snapshot would blow the turn budget for no benefit.
+        lines.append(f"\nBinary artifact; body served at: {body}")
+    else:
+        lines.append(f"\nCurrent content (v{art.version}):\n{body}")
+
+    return InvestigateContext(
+        kind="artifact",
+        id=art.slug,
+        title=f"Artifact: {art.name}",
+        snapshot="\n".join(lines),
+        back_link=f"#/artifacts/{art.slug}",
+        suggested_task_mode="agent",
+        # Names the slug and the tool explicitly: the agent must update THIS artifact
+        # in place (a new version on the same slug), not create a near-duplicate —
+        # which is exactly what a vaguer prompt produces.
+        opening_prompt=(
+            f"Iterate on artifact `{art.slug}`. Use artifact_update on that same slug "
+            f"so the change lands as a new version rather than a new artifact. What "
+            f"would you like changed?"
+        ),
+    )
+
+
 register_investigate_resolver("inbox_item", _resolve_inbox_item)
 register_investigate_resolver("loop_finding", _resolve_loop_finding)
 register_investigate_resolver("notification", _resolve_notification)
@@ -978,3 +1055,4 @@ register_investigate_resolver("memory_lesson", _resolve_memory_lesson)
 register_investigate_resolver("doctor_finding", _resolve_doctor_finding)
 register_investigate_resolver("crash_report", _resolve_crash_report)
 register_investigate_resolver("audit_event", _resolve_audit_event)
+register_investigate_resolver("artifact", _resolve_artifact)

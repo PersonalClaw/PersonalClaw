@@ -365,6 +365,18 @@ async def start_dashboard(
     # WebSocket (multiplexed real-time events)
     app.router.add_get("/api/ws", ws.api_ws)
 
+    # Inbound read-only MCP surface. Mounts ONLY when
+    # enablement passes (config flag + a valid dedicated token); a refusal logs one
+    # line naming the failing condition and /mcp simply 404s. Registered here so it
+    # sits outside the dashboard's cookie-auth world — it carries its own bearer
+    # credential and its own loopback rail.
+    try:
+        from personalclaw.inbound.mcp_http import mount as _mount_inbound_mcp
+
+        _mount_inbound_mcp(app)
+    except Exception:  # noqa: BLE001 — an inbound fault must never block startup
+        logging.getLogger(__name__).warning("inbound: /mcp mount failed", exc_info=True)
+
     # Status / system
     app.router.add_get("/api/healthz", handlers.api_healthz)
     app.router.add_get("/api/status", handlers.api_status)
@@ -372,6 +384,12 @@ async def start_dashboard(
     app.router.add_get("/api/auth-status", handlers.api_auth_status)
     app.router.add_get("/api/onboarding", handlers.api_onboarding)
     # Doctor — tiered read-only health probes
+    # Scheduled-backup status, the archive list with its
+    # retention plan, and on-demand jobs. Restore is deliberately NOT here (see the
+    # handler module docstring).
+    app.router.add_get("/api/durability/status", handlers.api_durability_status)
+    app.router.add_get("/api/durability/snapshots", handlers.api_durability_snapshots)
+    app.router.add_post("/api/durability/run", handlers.api_durability_run)
     app.router.add_get("/api/doctor", handlers.api_doctor)
     # Specific GET sub-paths BEFORE the {capability} catch-all (aiohttp matches in
     # registration order — otherwise "fixes"/"crash"/"remediation" bind as a capability).
@@ -547,6 +565,15 @@ async def start_dashboard(
     app.router.add_get("/api/memory/observability", handlers.api_memory_observability)
     app.router.add_get("/api/memory/graph", handlers.api_memory_graph)
     app.router.add_post("/api/memory/promote", handlers.api_memory_promote)
+    # The typed entity graph (distinct from
+    # /api/memory/graph, which renders the record visualization).
+    app.router.add_get("/api/memory/entities", handlers.api_memory_entities)
+    app.router.add_post("/api/memory/entities", handlers.api_memory_entity_create)
+    app.router.add_post("/api/memory/entities/proposals", handlers.api_memory_entity_proposals)
+    app.router.add_get(
+        "/api/memory/entities/{entity_id}/backlinks", handlers.api_memory_entity_backlinks
+    )
+    app.router.add_post("/api/memory/graph/rebuild", handlers.api_memory_graph_rebuild)
 
     # Crons, lessons, spawn, send-message, notifications
     # are registered via _register_mcp_routes() above.
@@ -636,6 +663,12 @@ async def start_dashboard(
     app.router.add_get("/api/chat/sessions", chat.api_chat_sessions)
     app.router.add_post("/api/chat/sessions", chat.api_chat_session_create)
     app.router.add_post("/api/chat/sessions/cleanup", chat.api_chat_sessions_cleanup)
+    # Bulk ops + the session lifecycle (archive/restore/auto-archive). Registered
+    # BEFORE the `{session}` routes below so the literal `bulk`/`auto-archive` paths
+    # aren't captured as a session name by the dynamic pattern.
+    from personalclaw.dashboard import session_bulk
+
+    session_bulk.register_routes(app)
     app.router.add_get("/api/chat/sessions/{session}", chat.api_chat_session_detail)
     app.router.add_get("/api/chat/sessions/{session}/tool-result/{rid}", chat.api_chat_tool_result)
     app.router.add_post("/api/chat/sessions/{session}/stop", chat.api_chat_session_stop)
@@ -1583,6 +1616,18 @@ async def start_dashboard(
     # Sweep abandoned resumable-upload session dirs (partial parts) so a never-
     # finished large upload can't pin disk forever.
     state._upload_sweep_task = asyncio.create_task(_upload_sweep_loop())  # prevent GC
+
+    # Scheduled backups: nightly snapshot with tiered
+    # retention, hourly incremental shard export, monthly restore drill. Started
+    # here so durability never depends on remembering to run a command; the drill
+    # reports through state.notify so a FAILED one is a warning the user sees.
+    try:
+        from personalclaw.durability.service import DurabilityService
+
+        state._durability_svc = DurabilityService(notifier=state.notify)  # prevent GC
+        await state._durability_svc.start()
+    except Exception:
+        logger.warning("Durability service failed to start", exc_info=True)
 
     # Start periodic flush loop for crash protection (saves dirty sessions every 5s)
     state.start_flush_loop()
