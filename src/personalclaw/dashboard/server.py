@@ -842,6 +842,7 @@ async def start_dashboard(
     # Tools — aggregated listing from all tool providers
     from personalclaw.dashboard.handlers.tools import (
         api_providers_toggle,
+        api_tool_groups,
         api_tool_invoke,
         api_tools_list,
         api_tools_savings,
@@ -853,6 +854,9 @@ async def start_dashboard(
     app.router.add_post("/api/tools/toggle", api_tools_toggle)
     app.router.add_post("/api/tools/provider-toggle", api_providers_toggle)
     app.router.add_get("/api/tools/savings", api_tools_savings)
+    # Static route BEFORE any dynamic sibling would shadow it (registration order
+    # is match order) — the group partition + per-surface activation defaults.
+    app.router.add_get("/api/tools/groups", api_tool_groups)
 
     # Manifest — the generated self-description (tools + routes + providers) an
     # agent reads to drive this instance instead of guessing signatures.

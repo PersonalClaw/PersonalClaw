@@ -494,3 +494,79 @@ async def test_unattended_strip_precedes_grouping():
     names = {getattr(d, "name", "") for d in rt._active_defs}
     assert "ask_user" not in names
     assert "schedule_add" in names
+
+
+# ── per-capability gating (§5.5) ──
+
+
+def test_capability_probe_fails_open_on_every_uncertainty(monkeypatch):
+    """A wrongly-HIDDEN group is the capability regression this module promises not
+    to cause, so every uncertainty resolves toward available."""
+    assert g.capability_available("") is True  # no declaration
+    assert g.capability_available("bogus_kind:x") is True  # unknown probe kind
+    assert g.capability_available("tool_provider:definitely-not-registered") is False
+
+    def _boom(_use_case):
+        raise RuntimeError("probe exploded")
+
+    monkeypatch.setattr("personalclaw.providers.provider_bridge.can_resolve_use_case", _boom)
+    assert g.capability_available("model:orchestration") is True  # error → available
+
+
+def test_always_on_group_is_never_gated(monkeypatch):
+    """No probe may remove `core` — it holds the primitives an agent can't recover
+    from losing."""
+    gated_core = g.ToolGroup(
+        name=g.CORE_GROUP, display="Core", always_on=True, capability="tool_provider:nope"
+    )
+    assert g.offerable(gated_core) is True
+    assert g.offerable(g.ToolGroup(name="x", display="X", capability="tool_provider:nope")) is False
+
+
+@pytest.mark.asyncio
+async def test_unofferable_group_is_neither_active_nor_stubbed(monkeypatch):
+    """§5.5: the model never sees tools that cannot work — no schemas AND no stub."""
+    monkeypatch.setattr(g, "_GROUP_CAPABILITY", {"schedule": "tool_provider:nope"})
+    model = _ScriptedModel(
+        [[AgentEvent(kind=EVENT_TEXT_CHUNK, text="hi"), AgentEvent(kind=EVENT_COMPLETE)]]
+    )
+    rt = NativeAgentRuntime(
+        definition=_defn(),
+        model_provider=model,
+        tool_providers=_providers(),
+        tool_groups=["schedule", "memory"],
+    )
+    await rt.start()
+    assert "schedule" in rt._unofferable
+    assert "schedule" not in (rt._active_groups or set())  # requested, but withheld
+    await _run(rt, "hello")
+    assert "schedule_add" not in _surfaced(model)
+    note = _sys_text(model)
+    assert "schedule (" not in note  # NOT stub-listed either
+    assert "artifacts (" in note  # an offerable inactive group still stubs
+
+
+@pytest.mark.asyncio
+async def test_reset_tools_refuses_an_unofferable_group_and_says_why(monkeypatch):
+    """Silently returning an unchanged set would leave the model retrying; name it."""
+    monkeypatch.setattr(g, "_GROUP_CAPABILITY", {"schedule": "tool_provider:nope"})
+    model = _ScriptedModel([[AgentEvent(kind=EVENT_COMPLETE)]])
+    rt = NativeAgentRuntime(
+        definition=_defn(), model_provider=model, tool_providers=_providers(), tool_groups=[]
+    )
+    await rt.start()
+    out = rt._reset_tools({"groups": {"schedule": True, "memory": True}})
+    assert "Unavailable in this install" in out and "schedule" in out
+    assert "memory" in (rt._active_groups or set())  # the valid part still applied
+    assert "schedule" not in (rt._active_groups or set())
+    # ...and it isn't listed as merely "Inactive" (which would imply activatable).
+    inactive_line = next((p for p in out.split(". ") if p.startswith("Inactive:")), "")
+    assert "schedule" not in inactive_line
+
+
+def test_subagents_group_declares_its_model_capability():
+    """The shipped gating: subagent tools inference through a ModelProvider, so with
+    no model resolvable they'd fail at the first turn."""
+    assert g._GROUP_CAPABILITY.get("subagents") == "model:orchestration"
+    defs = [ToolDefinition(name="subagent_run", description="", provider="personalclaw-subagents")]
+    assert g.partition(defs)[0].capability == "model:orchestration"

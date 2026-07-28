@@ -154,6 +154,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   can be model-summarized with a guaranteed deterministic fallback (never wired into
   the synchronous tool path).
 
+- **Tool groups are now visible, and they hide what can't work.** The Tools page shows
+  the group partition — every group with its tool count, which ones are always loaded,
+  and what each kind of session starts with — plus the switch to turn grouping on or
+  off. Each tool provider is labeled with the group it belongs to. And groups whose
+  capability isn't configured (subagent tools with no model bound, say) are now hidden
+  entirely rather than offered in a state where they'd fail; asking to activate one
+  says so plainly instead of quietly doing nothing. New `GET /api/tools/groups` reports
+  the partition for anything else that needs it.
+
 ### Changed
 
 - **Breaking-change policy is now written down, and it distinguishes maintainer from

@@ -333,6 +333,9 @@ class NativeAgentRuntime(AgentProvider):
         self._active_defs: list[Any] = []
         # tool name → the provider key the disable gate resolved (grouping reuses it).
         self._provider_of: dict[str, str] = {}
+        # Groups whose declared capability doesn't resolve (§5.5): not activatable,
+        # not stub-listed. Recomputed on every schema assembly.
+        self._unofferable: set[str] = set()
         self._last_result_meta: dict = {}  # typed meta of the last tool result (for TOOL_RESULT)
         self._approval = ApprovalGate()
         # Approval policy: "" / "default" prompt; "auto"/"yolo" auto-approve.
@@ -567,8 +570,25 @@ class NativeAgentRuntime(AgentProvider):
             for d in self._tool_defs
         }
         if self._active_groups is None:
+            # No grouping in effect: nothing is filtered, so DON'T probe. The
+            # capability probes read config + walk the provider registry, and this
+            # runs on every runtime start (including every test's) — paying for an
+            # answer that cannot change the outcome made the suite ~7x slower.
+            self._unofferable = set()
             self._active_defs = list(self._tool_defs)
         else:
+            # PER-CAPABILITY GATING (§5.5): a group whose declared capability doesn't
+            # resolve is not offerable — neither active nor stub-listed, so the model
+            # never sees tools that cannot work. Probed only for groups that actually
+            # DECLARE a capability (the common case declares none, so this is usually
+            # zero probes), and re-probed on refresh so binding a model mid-session
+            # makes its group offerable. always_on groups are never gated.
+            self._unofferable = {
+                g.name
+                for g in self._groups
+                if g.capability and not g.always_on and not _groups.offerable(g)
+            }
+            self._active_groups -= self._unofferable
             self._active_defs = [
                 d
                 for d in self._tool_defs
@@ -592,7 +612,7 @@ class NativeAgentRuntime(AgentProvider):
             return []
         lines: list[str] = []
         for g in self._groups:
-            if g.name in self._active_groups:
+            if g.name in self._active_groups or g.name in self._unofferable:
                 continue
             sample = ", ".join(g.tools[:4])
             more = f", +{len(g.tools) - 4} more" if len(g.tools) > 4 else ""
@@ -621,6 +641,11 @@ class NativeAgentRuntime(AgentProvider):
         wanted = {str(k) for k, v in raw.items() if bool(v)}
         unknown = sorted(n for n in wanted if n not in known)
         wanted &= set(known)
+        # A group whose capability doesn't resolve can't be activated — its tools
+        # would be present but inert. Name it so the model learns WHY, instead of
+        # silently re-reading a set that didn't change (§5.5).
+        blocked = sorted(n for n in wanted if n in self._unofferable)
+        wanted -= self._unofferable
         # always_on groups can never be deactivated.
         new_active = {g.name for g in self._groups if g.always_on} | wanted
         previous = self._active_groups if self._active_groups is not None else set(known)
@@ -634,11 +659,16 @@ class NativeAgentRuntime(AgentProvider):
                 f"Unknown group(s) ignored: {', '.join(unknown)}. "
                 f"Available: {', '.join(sorted(known))}."
             )
+        if blocked:
+            parts.append(
+                f"Unavailable in this install (not activated): {', '.join(blocked)} — "
+                "the capability these tools need isn't configured, so they would fail."
+            )
         active_desc = ", ".join(
             f"{n} ({_n_tools(len(known[n].tools))})" for n in sorted(new_active) if n in known
         )
         parts.append(f"Active tool groups: {active_desc}.")
-        inactive = sorted(set(known) - new_active)
+        inactive = sorted(set(known) - new_active - self._unofferable)
         if inactive:
             parts.append(f"Inactive: {', '.join(inactive)}.")
         for name in newly:

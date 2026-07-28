@@ -433,3 +433,66 @@ async def api_tools_savings(request: web.Request) -> web.Response:
     from personalclaw.tool_providers import savings
 
     return web.json_response(savings.summary())
+
+
+async def api_tool_groups(request: web.Request) -> web.Response:
+    """GET /api/tools/groups — the tool-GROUP partition (Context Economy §5).
+
+    Groups are *derived* from the registered tool providers, so this reports the
+    same partition the native runtime assembles: one entry per group with its tool
+    count, whether it's always-on (``core``), whether its declared capability
+    resolves (``offerable``), and the per-surface activation defaults.
+
+    Read-only by design. Activation is **per-session runtime state** (seeded from
+    the defaults, changed by the agent's ``reset_tools``), not a stored preference
+    — so there is nothing here to toggle. What the user configures is the feature
+    flag (``tools.groups_enabled``) and the per-surface defaults
+    (``tools.group_defaults``), both via the config API.
+    """
+    from personalclaw.tool_providers import groups as groups_mod
+    from personalclaw.tool_providers.registry import list_all_tools
+
+    defs: list = []
+    try:
+        defs = [t for t in await list_all_tools() if t.provider != "mcp"]
+    except Exception:
+        logger.warning("Failed to list tools for the group partition", exc_info=True)
+    # The cwd-coupled platform provider isn't in the registry (same reason the
+    # catalog enumerates it separately) — include it so `core` reports honestly.
+    try:
+        from personalclaw.agents.native.builtin_tools import create_platform_tools_provider
+
+        defs = list(await create_platform_tools_provider().list_tools()) + defs
+    except Exception:
+        logger.warning("Failed to enumerate platform tools for groups", exc_info=True)
+
+    surfaces = {
+        key: sorted(value)
+        for key, value in (
+            (surface, groups_mod.resolve_default_groups(surface) or set())
+            for surface in ("chat", "background", "loops", "orchestration")
+        )
+    }
+    out = []
+    for group in groups_mod.partition(defs):
+        out.append(
+            {
+                "name": group.name,
+                "display": group.display,
+                "alwaysOn": group.always_on,
+                "toolCount": len(group.tools),
+                "tools": list(group.tools),
+                "capability": group.capability,
+                "offerable": groups_mod.offerable(group),
+                "instructions": group.instructions,
+            }
+        )
+    return web.json_response(
+        {
+            "enabled": groups_mod.groups_enabled(),
+            "groups": out,
+            # Per surface: the groups that start ACTIVE. An empty list means "every
+            # group" (no per-surface default configured — today's chat behavior).
+            "surfaceDefaults": surfaces,
+        }
+    )

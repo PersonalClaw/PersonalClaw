@@ -428,6 +428,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/themes/{slug}` — get, update, or delete a custom theme.
 - `GET /api/token/local` — issue a token for local apps.
 - `GET /api/tools` — Return all tools from all active tool sources.
+- `GET /api/tools/groups` — the tool-GROUP partition (Context Economy §5).
 - `POST /api/tools/invoke` — execute one tool through the Tool entity.
 - `POST /api/tools/provider-toggle` — enable/disable a whole NATIVE tool provider.
 - `GET /api/tools/savings` — the TokenJuice savings (counterfactual) summary.
