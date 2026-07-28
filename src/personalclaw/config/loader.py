@@ -1852,6 +1852,32 @@ class ToolsConfig:
             "an active session is never compressed).",
         ),
     )
+    # Dynamic tool-group activation (Context Economy §5) — partition the tool
+    # surface by provider so inactive groups cost one catalog line instead of
+    # every schema. Off by default: with it off, and for interactive chat even
+    # when on, the tool block is byte-identical to having no groups at all.
+    groups_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Tool groups",
+            "Partition tools into named groups (one per tool provider) that the "
+            "agent activates on demand, so unused groups don't spend context on "
+            "their schemas. Every tool stays callable by name and searchable via "
+            "tool_search — this saves context, it does not restrict capability. "
+            "Interactive chat keeps every group active; background/loop/subagent "
+            "runs start focused (see the per-surface defaults).",
+        ),
+    )
+    group_defaults: dict[str, list[str]] = field(
+        default_factory=dict,
+        metadata=_meta(
+            "Tool groups per surface",
+            'Which tool groups start active per surface, e.g. {"background": '
+            '["core", "memory"]}. Keys are session axes (background, loops, '
+            'orchestration, chat); "*" means all groups. A surface with no entry '
+            "keeps every group active. Overrides the built-in defaults.",
+        ),
+    )
 
 
 @dataclass
@@ -2253,6 +2279,12 @@ class AppConfig:
                 ],
                 bg_compress_enabled=bool(tools_data.get("bg_compress_enabled", True)),
                 bg_compress_idle_days=float(tools_data.get("bg_compress_idle_days", 7.0)),
+                groups_enabled=bool(tools_data.get("groups_enabled", False)),
+                group_defaults={
+                    str(k): [str(g) for g in v if isinstance(g, str)]
+                    for k, v in (tools_data.get("group_defaults") or {}).items()
+                    if isinstance(k, str) and isinstance(v, list)
+                },
             ),
             feedback=FeedbackConfig(
                 enabled=bool(feedback_data.get("enabled", True)),

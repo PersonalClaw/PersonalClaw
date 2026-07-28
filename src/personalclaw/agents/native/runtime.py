@@ -256,6 +256,8 @@ class NativeAgentRuntime(AgentProvider):
         dry_run: bool = False,
         reasoning_effort: str = "",
         project_id: str = "",
+        tool_groups: list[str] | None = None,
+        surface: str = "",
     ) -> None:
         self._definition = definition
         self._model = model_provider
@@ -310,6 +312,27 @@ class NativeAgentRuntime(AgentProvider):
         self._tool_retriever: Any = None  # built in start() (per-turn tool retrieval)
         self._tool_search_def: Any = None  # synthetic escape-hatch def (built in start())
         self._tool_schema_def: Any = None  # synthetic schema-expander def (built in start())
+        self._reset_tools_def: Any = None  # synthetic group meta-tool (built in start())
+        # ── tool groups (CONTEXT-ECONOMY §5) ──
+        # The surface whose per-surface defaults seed activation ("" = chat, i.e.
+        # everything active). The explicit tool_groups kwarg (the engine's
+        # per-template seam) wins over the surface default when given.
+        self._surface = surface or ""
+        self._group_seed = list(tool_groups) if tool_groups is not None else None
+        # Derived partition of the assembled catalog (built in start()).
+        self._groups: list[Any] = []
+        # ACTIVE group names, or None = every group active (grouping is a no-op —
+        # the tool block is then byte-identical to having no groups at all).
+        self._active_groups: set[str] | None = None
+        # Newly-activated groups whose instructions the NEXT turn should carry
+        # (group changes take effect at the turn boundary, §3 prefix corollary).
+        self._pending_group_note = ""
+        # tool name → group name, and the group-filtered defs (both built in
+        # start()/_assemble_schema; the filtered set IS _tool_defs when ungrouped).
+        self._group_of_name: dict[str, str] = {}
+        self._active_defs: list[Any] = []
+        # tool name → the provider key the disable gate resolved (grouping reuses it).
+        self._provider_of: dict[str, str] = {}
         self._last_result_meta: dict = {}  # typed meta of the last tool result (for TOOL_RESULT)
         self._approval = ApprovalGate()
         # Approval policy: "" / "default" prompt; "auto"/"yolo" auto-approve.
@@ -342,6 +365,7 @@ class NativeAgentRuntime(AgentProvider):
             logger.info("native: model has no tool support; running tool-less")
             self._tool_defs, self._tool_schema, self._tool_index = [], [], {}
             self._tool_sanitized_index = {}
+            self._groups, self._active_defs, self._group_of_name = [], [], {}
             return
         # User-disabled tools/providers (PT3 + UT4): a harder gate than retrieval —
         # a disabled tool (individually OR via its whole provider being off) is
@@ -354,6 +378,7 @@ class NativeAgentRuntime(AgentProvider):
         disabled_provs = tool_prefs.load_disabled_providers()
         defs: list[Any] = []
         index: dict[str, ToolProvider] = {}
+        provider_of: dict[str, str] = {}  # tool name → resolved provider key (grouping)
         dropped: list[str] = []
         for prov in self._tool_providers:
             prov_name = getattr(prov, "name", "") or ""
@@ -376,6 +401,11 @@ class NativeAgentRuntime(AgentProvider):
                     continue
                 defs.append(t)
                 index[t.name] = prov
+                # Same provider key the disable gate resolved (tool tag, else the
+                # instance name) — group derivation reuses it so a provider that
+                # forgot to stamp its tools still groups correctly instead of
+                # collapsing into "other".
+                provider_of[t.name] = pkey
         if dropped:
             logger.info("native: %d user-disabled tool(s) excluded: %s", len(dropped), dropped)
         # Unattended runs strip option-prompt-shaped tools so a background turn
@@ -390,8 +420,22 @@ class NativeAgentRuntime(AgentProvider):
                 index = {n: p for n, p in index.items() if n not in stripped}
                 logger.info("native: unattended run — stripped interactive tools %s", stripped)
         self._tool_defs = defs
-        self._tool_schema = tool_definitions_to_openai_schema(defs)
         self._tool_index = index
+        # GROUP PARTITION (§5.1) — derived from the assembled catalog, so it
+        # reflects exactly the providers this session actually has (post-disable,
+        # post-strip). Seeds activation from the explicit kwarg or this surface's
+        # default; None = every group active.
+        from personalclaw.tool_providers import groups as _groups
+
+        self._provider_of = provider_of
+        self._groups = _groups.partition(defs, provider_of=provider_of)
+        if self._group_seed is not None:
+            self._active_groups = {_groups.CORE_GROUP, *self._group_seed}
+        else:
+            self._active_groups = _groups.resolve_default_groups(self._surface)
+        # SCHEMA ASSEMBLY (group filter → serialization) — factored out so a group
+        # change can re-run it without re-discovering providers.
+        self._assemble_schema()
         # Sanitized-name fallback (provider-agnostic reverse-map insurance). For
         # each real name that a provider WOULD have to rewrite, remember the
         # rewritten form -> real name, but ONLY when that sanitized form is unique
@@ -463,9 +507,161 @@ class NativeAgentRuntime(AgentProvider):
                 "required": ["tool_name"],
             },
         )
+        # The group meta-tool (§5.2) — final-state semantics, core group, SAFE: it
+        # changes what the model SEES, not what it can do. Only ever surfaced on a
+        # session where grouping is actually in effect (see _assemble_schema).
+        self._reset_tools_def = _TD(
+            name="reset_tools",
+            provider="native",
+            requires_approval=False,
+            description=(
+                "Set which tool GROUPS are active, so unused groups don't spend context "
+                "on their schemas. FINAL STATE, not a delta: pass every group you want "
+                "active; any group you omit is deactivated. The 'core' group is always "
+                "on. Returns the new active set plus usage guidance for each group you "
+                "just activated. Changes apply from your NEXT turn (they rewrite the "
+                "tool block, which costs a cache re-read) — so batch your changes into "
+                "ONE call instead of toggling groups one at a time. Every tool stays "
+                "callable by name even while its group is inactive; use tool_search to "
+                "find one. Args: groups (object mapping group name → true/false)."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "groups": {
+                        "type": "object",
+                        "description": (
+                            "Group name → true (active) / false (inactive). Omitted "
+                            "groups deactivate."
+                        ),
+                        "additionalProperties": {"type": "boolean"},
+                    }
+                },
+                "required": ["groups"],
+            },
+        )
         logger.info(
             "native: discovered %d tools across %d providers", len(defs), len(self._tool_providers)
         )
+
+    # ── tool groups (CONTEXT-ECONOMY §5) ──
+    def _assemble_schema(self) -> None:
+        """Build the model-facing tool schema from ``self._tool_defs``.
+
+        The group filter lives HERE — after the hard gates (user-disable,
+        unattended strip) that ran in :meth:`start`, before serialization:
+
+            providers → disable → unattended strip → GROUP FILTER → schema
+
+        When no grouping is in effect (``_active_groups is None`` — the default
+        for interactive chat) this is exactly the old one-line serialization, so
+        the tool block is BYTE-IDENTICAL to having no groups at all. Re-runnable:
+        :meth:`refresh_toolset` calls it after an activation change.
+        """
+        from personalclaw.tool_providers import groups as _groups
+
+        self._group_of_name = {
+            (getattr(d, "name", "") or ""): _groups.group_of_tool(
+                d, provider=self._provider_of.get(getattr(d, "name", "") or "", "")
+            )
+            for d in self._tool_defs
+        }
+        if self._active_groups is None:
+            self._active_defs = list(self._tool_defs)
+        else:
+            self._active_defs = [
+                d
+                for d in self._tool_defs
+                if self._group_of_name.get(getattr(d, "name", "") or "") in self._active_groups
+            ]
+        self._tool_schema = tool_definitions_to_openai_schema(self._active_defs)
+
+    def refresh_toolset(self) -> None:
+        """Re-run schema assembly after an activation change (no re-discovery).
+
+        Provider discovery is untouched — only which of the already-discovered
+        tools carry their schema. Called by ``reset_tools``; the new block reaches
+        the model at the next turn boundary (§3 prefix corollary).
+        """
+        self._assemble_schema()
+
+    def _group_stub_lines(self) -> list[str]:
+        """One line per INACTIVE group: the capability stays visible at ~15 tokens
+        instead of ~7 schemas, and names the activation step (fail-open triad)."""
+        if self._active_groups is None:
+            return []
+        lines: list[str] = []
+        for g in self._groups:
+            if g.name in self._active_groups:
+                continue
+            sample = ", ".join(g.tools[:4])
+            more = f", +{len(g.tools) - 4} more" if len(g.tools) > 4 else ""
+            lines.append(
+                f"- {g.name} ({_n_tools(len(g.tools))}, INACTIVE): {sample}{more} "
+                f'— reset_tools({{"{g.name}": true}}) to activate'
+            )
+        return lines
+
+    def _reset_tools(self, args: dict) -> str:
+        """Apply ``reset_tools`` — FINAL-STATE group activation (§5.2).
+
+        One boolean per group; every non-``always_on`` group the caller omits (or
+        sets false) deactivates. Final-state rather than delta semantics because
+        deltas accumulate drift over a long session. Returns the new active set
+        plus the instructions of each NEWLY activated group, so usage guidance
+        arrives exactly when the tools do.
+        """
+        raw = args.get("groups")
+        if not isinstance(raw, dict):
+            return (
+                "Error: `groups` must be an object mapping group name → true/false, "
+                'e.g. {"groups": {"schedule": true, "memory": true}}.'
+            )
+        known = {g.name: g for g in self._groups}
+        wanted = {str(k) for k, v in raw.items() if bool(v)}
+        unknown = sorted(n for n in wanted if n not in known)
+        wanted &= set(known)
+        # always_on groups can never be deactivated.
+        new_active = {g.name for g in self._groups if g.always_on} | wanted
+        previous = self._active_groups if self._active_groups is not None else set(known)
+        newly = sorted(new_active - previous)
+        self._active_groups = new_active
+        self.refresh_toolset()
+
+        parts: list[str] = []
+        if unknown:
+            parts.append(
+                f"Unknown group(s) ignored: {', '.join(unknown)}. "
+                f"Available: {', '.join(sorted(known))}."
+            )
+        active_desc = ", ".join(
+            f"{n} ({_n_tools(len(known[n].tools))})" for n in sorted(new_active) if n in known
+        )
+        parts.append(f"Active tool groups: {active_desc}.")
+        inactive = sorted(set(known) - new_active)
+        if inactive:
+            parts.append(f"Inactive: {', '.join(inactive)}.")
+        for name in newly:
+            instructions = known[name].instructions
+            if instructions:
+                parts.append(f"[{name}] {instructions}")
+        parts.append(
+            "This takes effect on your NEXT turn — the tools you just activated "
+            "carry their schemas from then on. (Any tool remains callable by name "
+            "even while its group is inactive.)"
+        )
+        note = " ".join(p for p in parts if p)
+        # Carried into the next turn's context so the model sees the new state
+        # alongside the rewritten tool block.
+        self._pending_group_note = (
+            f"[tool groups] {note}" if self._active_groups != previous else ""
+        )
+        logger.info(
+            "native: reset_tools → active=%s (newly=%s)",
+            sorted(new_active),
+            newly or "none",
+        )
+        return note
 
     async def shutdown(self) -> None:
         self._cancelled = True
@@ -480,44 +676,10 @@ class NativeAgentRuntime(AgentProvider):
         self._steers_injected = 0
         self._messages.append({"role": "user", "content": message})
 
-        # Per-turn tool retrieval (TR2): surface only the relevant projection of
-        # the catalog for this turn (core ∪ top-K ∪ structural ∪ sticky). No-op
-        # until the catalog exceeds K; fails open to the full schema.
-        selected_defs = (
-            self._tool_retriever.select(message) if self._tool_retriever else self._tool_defs
-        )
-        reduced = bool(self._tool_retriever) and not (
-            selected_defs is self._tool_defs or len(selected_defs) == len(self._tool_defs)
-        )
-        if not reduced:
-            tools_kwarg = self._tool_schema or None
-        else:
-            # PROGRESSIVE DISCLOSURE: nothing is hidden, only the (large) parameter
-            # schemas of the long tail are deferred. Tier 1 = relevant tools' FULL
-            # schemas + the two discovery tools; Tier 2 = a compact name+description
-            # CATALOG of everything else, in a system message. The model can call
-            # tool_schema(name) to expand any catalog tool, or tool_search to rank
-            # by capability — and dispatch via _tool_index works for ANY tool name,
-            # surfaced or not. So the model can never conclude a capability is absent.
-            surfaced = [*selected_defs, self._tool_search_def, self._tool_schema_def]
-            tools_kwarg = tool_definitions_to_openai_schema(surfaced) or None
-            exclude = {getattr(d, "name", "") for d in surfaced}
-            catalog = self._tool_retriever.catalog(exclude=exclude)
-            note = (
-                "[tool catalog] To save context, only the most relevant tools above carry their "
-                "full input schema this turn. Every OTHER available tool is listed below by "
-                'name + description. To use one: call tool_schema("name") to see its inputs, '
-                'then call it — or call tool_search("capability") to rank the catalog. Every '
-                "tool here is fully available; nothing is disabled.\n" + catalog
-            )
+        tools_kwarg, turn_note = self._prepare_turn_tools(message)
+        if turn_note:
             # SYSTEM role: this is runtime metadata, not something the user said.
-            self._messages.append({"role": "system", "content": note})
-            logger.debug(
-                "native: tier-1 %d/%d tools (+tool_search,+tool_schema); catalog=%d tools",
-                len(selected_defs),
-                len(self._tool_defs),
-                len(self._tool_defs) - len(selected_defs),
-            )
+            self._messages.append({"role": "system", "content": turn_note})
         agg_in = agg_out = 0
         agg_cost = 0.0
         turns = 0
@@ -655,6 +817,92 @@ class NativeAgentRuntime(AgentProvider):
             event_count=agg_events,
             tool_call_count=agg_tool_calls,
         )
+
+    def _prepare_turn_tools(self, message: str) -> tuple[list[dict] | None, str]:
+        """Decide this turn's ``tools`` kwarg + any runtime note to inject.
+
+        Two composable reductions, in order:
+
+        * **GROUPS** (§5) — inactive groups' schemas are out of ``_active_defs``
+          already (assembly-time); each contributes ONE stub line instead.
+        * **RETRIEVAL** (TR2) — within the active set, surface the relevant
+          projection this turn and defer the long tail's parameter schemas to a
+          name+description catalog.
+
+        Both fail open and neither touches ``_tool_index``, so every tool stays
+        callable regardless of what this returns. When no grouping is in effect
+        and retrieval doesn't reduce, the result is exactly ``_tool_schema`` — the
+        byte-identical no-groups path.
+        """
+        grouped = self._active_groups is not None
+        pool = self._active_defs if grouped else self._tool_defs
+        stub_lines = self._group_stub_lines()
+        # A group change from last turn announces itself here, at the boundary
+        # where the rewritten tool block actually reaches the model.
+        pending, self._pending_group_note = self._pending_group_note, ""
+
+        # Per-turn tool retrieval (TR2): core ∪ top-K ∪ structural ∪ sticky, scoped
+        # to the ACTIVE groups — retrieval composes with grouping rather than
+        # competing, so the K budget is spent only on tools whose schemas can ride
+        # this turn. No-op until the pool exceeds K; fails open to the full pool.
+        restrict = {getattr(d, "name", "") for d in pool} if grouped else None
+        selected_defs = (
+            self._tool_retriever.select(message, restrict=restrict)
+            if self._tool_retriever
+            else pool
+        )
+        reduced = bool(self._tool_retriever) and len(selected_defs) < len(pool)
+
+        notes: list[str] = []
+        if pending:
+            notes.append(pending)
+        if not reduced:
+            # No retrieval reduction: the assembled (group-filtered) schema stands.
+            surfaced_defs = list(pool)
+            if grouped:
+                surfaced_defs.append(self._reset_tools_def)
+                tools_kwarg = tool_definitions_to_openai_schema(surfaced_defs) or None
+            else:
+                tools_kwarg = self._tool_schema or None
+        else:
+            # PROGRESSIVE DISCLOSURE: nothing is hidden, only the (large) parameter
+            # schemas of the long tail are deferred. Tier 1 = relevant tools' FULL
+            # schemas + the discovery tools; Tier 2 = a compact name+description
+            # CATALOG of everything else, in a system message. The model can call
+            # tool_schema(name) to expand any catalog tool, or tool_search to rank
+            # by capability — and dispatch via _tool_index works for ANY tool name,
+            # surfaced or not. So the model can never conclude a capability is absent.
+            surfaced = [*selected_defs, self._tool_search_def, self._tool_schema_def]
+            if grouped:
+                surfaced.append(self._reset_tools_def)
+            tools_kwarg = tool_definitions_to_openai_schema(surfaced) or None
+            exclude = {getattr(d, "name", "") for d in surfaced}
+            if grouped:
+                # Only ACTIVE-group tools belong in the deferred-schema catalog;
+                # inactive groups are represented by their stub lines instead.
+                exclude |= {n for n in self._group_of_name if n not in (restrict or set())}
+            catalog = self._tool_retriever.catalog(exclude=exclude)
+            notes.append(
+                "[tool catalog] To save context, only the most relevant tools above carry their "
+                "full input schema this turn. Every OTHER available tool is listed below by "
+                'name + description. To use one: call tool_schema("name") to see its inputs, '
+                'then call it — or call tool_search("capability") to rank the catalog. Every '
+                "tool here is fully available; nothing is disabled.\n" + catalog
+            )
+            logger.debug(
+                "native: tier-1 %d/%d tools (+tool_search,+tool_schema); catalog=%d tools",
+                len(selected_defs),
+                len(pool),
+                len(pool) - len(selected_defs),
+            )
+        if stub_lines:
+            notes.append(
+                "[inactive tool groups] These capabilities exist but their schemas are not "
+                "loaded this turn, to save context. Activate the ones you need in ONE "
+                "reset_tools call (it takes final state — list every group you want active); "
+                "or just call a tool by name, which still works.\n" + "\n".join(stub_lines)
+            )
+        return tools_kwarg, "\n\n".join(notes)
 
     async def _execute_tool(self, call: AgentEvent) -> AsyncIterator[AgentEvent]:
         """Run one tool call: deny-list → PreToolUse hook → approval → invoke.
@@ -864,7 +1112,20 @@ class NativeAgentRuntime(AgentProvider):
             )
             if not hits:
                 return "No tools matched. Try broader terms; all tools remain callable by name."
-            lines = [f"- {h['name']}: {h['description']}" for h in hits]
+            # tool_search deliberately ranks the FULL catalog — including tools in
+            # INACTIVE groups — and names the activation step for those, so search
+            # is the discovery path INTO a group (§5.3 fail-open triad).
+            lines = []
+            for h in hits:
+                suffix = ""
+                if self._active_groups is not None:
+                    grp = self._group_of_name.get(h["name"], "")
+                    if grp and grp not in self._active_groups:
+                        suffix = (
+                            f" [in INACTIVE group '{grp}' — still callable by name, or "
+                            f'reset_tools({{"{grp}": true}}) to load its schemas]'
+                        )
+                lines.append(f"- {h['name']}: {h['description']}{suffix}")
             return (
                 "Matching tools (call tool_schema(name) for inputs, or call by name):\n"
                 + "\n".join(lines)
@@ -893,6 +1154,10 @@ class NativeAgentRuntime(AgentProvider):
                 },
                 indent=2,
             )
+        # reset_tools (group activation): answered by the runtime — it changes the
+        # schema block, not any external state, so no provider and no gate.
+        if tool_name == "reset_tools":
+            return self._reset_tools(args)
         prov = self._tool_index.get(tool_name)
         if prov is None:
             return f"Error: unknown tool {tool_name!r}"
@@ -960,7 +1225,7 @@ class NativeAgentRuntime(AgentProvider):
     # discovery answered by the runtime itself → never gated, never dispatched to a
     # provider. Without this they fall through to the `return True` default and the
     # loop parks on the approval gate forever.
-    _META_TOOLS = frozenset({"tool_search", "tool_schema"})
+    _META_TOOLS = frozenset({"tool_search", "tool_schema", "reset_tools"})
 
     def _requires_approval(self, tool_name: str) -> bool:
         if tool_name in self._META_TOOLS:
@@ -1105,6 +1370,10 @@ class NativeAgentRuntime(AgentProvider):
     @property
     def agent_name(self) -> str:
         return self._definition.name or ""
+
+
+def _n_tools(n: int) -> str:
+    return f"{n} tool" if n == 1 else f"{n} tools"
 
 
 def _short_json(value: Any) -> str:

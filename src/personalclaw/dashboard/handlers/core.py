@@ -467,6 +467,9 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # Context Economy §4 — background compression feature flags (runtime-editable).
     "tools.bg_compress_enabled": {"type": "bool"},
     "tools.bg_compress_idle_days": {"type": "float", "min": 0.0, "max": 365.0},
+    # Context Economy §5 — dynamic tool-group activation (runtime-editable). Takes
+    # effect for sessions created after the change (activation state is per-runtime).
+    "tools.groups_enabled": {"type": "bool"},
     "feedback.enabled": {"type": "bool"},
     "feedback.retire_threshold": {"type": "float", "min": 0.1, "max": 0.9},
     "feedback.min_n": {"type": "int", "min": 3, "max": 50},
