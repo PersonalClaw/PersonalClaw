@@ -68,6 +68,17 @@ PROPOSAL_THRESHOLD = 3
 # Context snippet budget around a mention, per side.
 _CONTEXT_CHARS = 100
 
+# The graph arm's ranking weight (§2.1's β) — scales with how connected the entity is.
+GRAPH_BOOST_BETA = 0.1
+
+# Floor for a record linked to an entity the query NAMED BY NAME. β·log1p(inbound)
+# alone lands around 0.07 for a lightly-linked entity, which loses to the ~0.1 an
+# unrelated record picks up from incidental word overlap ("is", "on") — so the record
+# that actually concerns the person asked about ranked below noise. Naming an entity is
+# a strong, deliberate signal and has to clear that floor. Still well under the 0.3+ a
+# real keyword match earns, so typed words continue to win.
+GRAPH_BOOST_FLOOR = 0.25
+
 _WORD = re.compile(r"[0-9a-z]+(?:'[a-z]+)?", re.IGNORECASE)
 
 
@@ -497,6 +508,62 @@ class MemoryGraph:
                 )
         self.db.commit()
         return int(cur.rowcount or 0)
+
+    def resolve_query(self, text: str, index: "AliasIndex | None" = None) -> list[str]:
+        """Entity ids named in ``text`` — the graph arm's entry point (§2.1).
+
+        Uses the SAME matcher as write time, so a query resolves exactly the way the
+        record that mentioned it did. Without that symmetry the arm would find records
+        it never linked.
+        """
+        matcher = index if index is not None else self.build_index()
+        seen: list[str] = []
+        for mention in matcher.find(text or ""):
+            if mention.entity_id not in seen:
+                seen.append(mention.entity_id)
+        return seen
+
+    def recall_evidence(self, text: str, *, index: "AliasIndex | None" = None) -> dict:
+        """``{from_ref: [entity names]}`` — WHY the graph surfaced each record (§2.2).
+
+        The debuggability contract: a recall hit whose relevance came from a link
+        should be able to say which entity connected it, or "the graph found it" is an
+        unfalsifiable claim.
+        """
+        out: dict[str, list[str]] = {}
+        by_id = {e.id: e.name for e in self.entities()}
+        for entity_id in self.resolve_query(text, index):
+            name = by_id.get(entity_id, entity_id)
+            for link in self.backlinks(entity_id, limit=60):
+                out.setdefault(link["from_ref"], [])
+                if name not in out[link["from_ref"]]:
+                    out[link["from_ref"]].append(name)
+        return out
+
+    def recall_refs(self, text: str, *, index: "AliasIndex | None" = None, limit: int = 60) -> dict:
+        """Record refs reachable from the entities named in ``text``.
+
+        Returns ``{from_ref: boost}`` — `β·log1p(inbound_count)`, floored at
+        `GRAPH_BOOST_FLOOR` because the query NAMED the entity. Bounded on both sides:
+        the floor clears the incidental keyword noise an unrelated record earns from
+        stopword overlap, while the magnitude stays under what a genuine keyword match
+        scores, so words the user typed still win.
+        """
+        import math
+
+        entity_ids = self.resolve_query(text, index)
+        if not entity_ids:
+            return {}
+        boosts: dict[str, float] = {}
+        for entity_id in entity_ids:
+            inbound = int(self.stats(entity_id).get("inbound_count", 0) or 0)
+            weight = max(GRAPH_BOOST_FLOOR, GRAPH_BOOST_BETA * math.log1p(inbound))
+            for link in self.backlinks(entity_id, limit=limit):
+                ref = link["from_ref"]
+                # A record linked to several named entities is more relevant than one
+                # linked to a single match, so boosts accumulate.
+                boosts[ref] = boosts.get(ref, 0.0) + weight
+        return boosts
 
     def stats(self, entity_id: str) -> dict:
         row = self.db.execute(
