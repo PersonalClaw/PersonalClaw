@@ -1,6 +1,8 @@
 # Plan: Context Economy — Reversible Compression + Dynamic Tool-Group Activation
 
-**Status:** PROPOSED (created 2026-07-13 from research synthesis, promoted from backlog)
+**Status:** DONE — all six sessions shipped 2026-07-26/28 (S1 projection core, S2 type-routed
+compressors, S3 background compression, S4-S5 tool groups, S6 codebase graph + `code_map`).
+Created 2026-07-13 from research synthesis, promoted from backlog.
 **Created:** 2026-07-13
 **Wave:** 0-1 — the compressor library, retrieval hardening, savings accounting, background compression service, and tool-group lifecycle are all v2-INDEPENDENT (they extend shipped subsystems: TokenJuice, the native runtime toolset assembly, the consolidation cadence). The workflow-node consumers (§2.5, §5.4) land WITH the engine (WORKFLOWS-V2 Slices 0-3) and are speced here only as adapters.
 **Depends on:** nothing for Sessions 1-4. Session 5's template-declared groups consume WORKFLOWS-V2's spec format when it exists; until then per-surface defaults carry the value.

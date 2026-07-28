@@ -1,6 +1,10 @@
 # Plan: Platform Legibility Pack — Self-Description Manifest, First-Party Skill, App Auto Tool-Surfacing, WHAT/WHY/FIX Errors
 
-**Status:** PROPOSED — created 2026-07-13 from research synthesis, promoted from backlog
+**Status:** DONE — all five sessions shipped 2026-07-24/25 (S1 manifest + drift, S2 WHAT/WHY/FIX
+errors, S3 `pclaw-api` skill + offline reference, S4 app legibility, S5 UI docs + Discover hub +
+context provider). Created 2026-07-13 from research synthesis, promoted from backlog. §6 shipped
+reshaped by owner direction — see the 2026-07-25 DEVIATION entry in the Execution log and Success
+Criterion #7 below.
 **Created:** 2026-07-13
 **Wave:** 0 — every slice is v2-independent and shippable piecemeal; the manifest + error envelope (Sessions 1-2) pay off every subsequent roadmap session (contributed apps, code loops, workflow authoring) and should land before the build-heavy waves that consume them.
 **Depends on:** nothing hard. Federates (does not rebuild) WORKFLOWS-V2's `workflow_manifest` (WF2-R12) when that lands; §7's MCP `get_context` is exposed *externally* only when NEW-10's hardened MCP server ships (in-process today).
@@ -221,7 +225,7 @@ Each session ships independently; Sessions 1-2 alone make every subsequent roadm
 4. Installing/enabling an app whose `app.json` declares skills results in those skills scanned, locked (`.pclaw-lock.json`), and live in the skill index; disabling removes exactly them; a user-edited same-name skill survives untouched; a DANGEROUS-verdict skill is refused with the app still enabling.
 5. With Growth's manifest declaring its route table, `app_growth_list_artifacts`-style tools appear in `list_all_tools()` and `/api/manifest`, a hook can fire `call-app-route` against a declared op, `/update` resyncs a changed route table, and a declared-but-dead route produces a drift warning notification — the manifest-vs-UI dead-path class is caught by machinery, not by audit sessions.
 6. An app-building agent can `ui_search("header buttons overflow")` → get a budgeted brief with a follow-up hint → `ui_get("HeaderActions")` → receive props + the ordering tenet as machine-readable bestPractices; the FE drift test fails if a `ui/` primitive ships without a doc object.
-7. The dashboard shows one untouched-capability power-up with a working "try it" deep link; dismissing it persists; disabling `legibility.power_ups` removes the widget; nothing is ever auto-enabled.
+7. ~~The dashboard shows one untouched-capability power-up with a working "try it" deep link; dismissing it persists; disabling `legibility.power_ups` removes the widget; nothing is ever auto-enabled.~~ **SUPERSEDED by the owner-directed §6 reshape (2026-07-25).** The tool-derived power-up widget and its `legibility.power_ups` flag were deleted outright — the tool surface is an implementation detail users are never meant to drive by hand, so "you haven't called `knowledge_add` yet" is noise. As shipped: a **Discover page** (`#/discover`, reachable from the command palette) lists hand-authored tips for user-facing *areas*, each deep-linking to the page that owns it, with a rotating spotlight on the dashboard linking in. Tips hide on explicit dismiss (forever) and auto-hide once the area is used. Nothing is ever auto-enabled — that part held. Full rationale in the Execution log.
 8. For an opted-in project, a marker-fenced PClaw block appears in the project dir's CLAUDE.md with rules top / L0 unloaded-catalog bottom, regenerates in place without duplicating, and never modifies content outside the markers; the in-process `get_context` tool returns rules + tiered memories + the unloaded list, with memory-derived and knowledge-derived content under distinct headings (boundary preserved).
 
 ---

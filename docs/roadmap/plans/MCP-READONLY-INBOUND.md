@@ -1,6 +1,8 @@
 # Plan: MCP Read-Only Inbound — The Curated Query Surface, Extracted and Landed Early
 
-**Status:** DESIGNED — deepened 2026-07-18 with code recon (initial PROPOSED 2026-07-18; owner-approved extraction from EXTERNAL-ACCESS)
+**Status:** IN PROGRESS — Session 1 (transport + auth + caps + audit, empty tool table) shipped
+2026-07-28; Session 2 (the five curated read-only tools) not started. Deepened 2026-07-18 with
+code recon (initial PROPOSED 2026-07-18; owner-approved extraction from EXTERNAL-ACCESS)
 **Created:** 2026-07-18
 **Wave:** 0/1 — pulled forward from Wave 3. "Point your IDE / other agents at your assistant" must not wait behind the five-dialect inbound program.
 **Depends on:** nothing hard (AUTONOMY-GUARDRAILS' incident flag is honored if present; a config kill switch suffices until it lands). EXTERNAL-ACCESS inherits this substrate rather than building its §1.

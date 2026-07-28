@@ -1,6 +1,8 @@
 # Plan: Memory Graph & Readable Vault — Typed Entity Linking, Push-Context, Slots
 
-**Status:** PROPOSED (rev 2 — research-integrated 2026-07-12)  
+**Status:** IN PROGRESS — Session 1 (graph data model + write-time linker) shipped 2026-07-28;
+Sessions 2-5 (recall arm + push reflex, formation, two-way vault, slots + FE) not started.
+rev 2 — research-integrated 2026-07-12  
 **Created:** 2026-07-12  
 **Depends on:** nothing hard. Pairs with WORKFLOWS-V2-LEARNING-FLYWHEEL (which owns lesson/skill lifecycle — this plan owns the *store structure* under it) and with the git-snapshot work (NEW-4) for vault versioning  
 **Scope:** memory.db data-model change (typed entity graph, zero-LLM write-time linking, graph recall arm, Extract→Decide formation, holder attribution) + memory UX primitives (editable Markdown vault, memory citations, memory slots incl. a self-model slot). Knowledge.db is *enriched* (denser mentions, shared alias resolution), never restructured — it already has the graph tables this plan gives memory.
