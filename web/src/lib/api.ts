@@ -792,6 +792,29 @@ export interface ToolsSavings {
   rows: unknown[]
 }
 
+/** Tool GROUPS (Context Economy §5) — the provider-grain partition of the tool
+ *  surface. Activation is per-session runtime state (the agent drives it via
+ *  reset_tools); what's configurable is `enabled` + the per-surface defaults. */
+export interface ToolGroupInfo {
+  name: string
+  display: string
+  alwaysOn: boolean
+  toolCount: number
+  tools: string[]
+  capability: string
+  /** False when the group's declared capability doesn't resolve — its tools are
+   *  hidden entirely rather than offered in a state where they'd fail. */
+  offerable: boolean
+  instructions: string
+}
+
+export interface ToolGroupsData {
+  enabled: boolean
+  groups: ToolGroupInfo[]
+  /** surface → group names that start ACTIVE. An empty array means "all groups". */
+  surfaceDefaults: Record<string, string[]>
+}
+
 export interface SystemAgentStats {
   messages_received: number; messages_success: number; messages_failed: number
   tool_approvals: number; tool_denials: number; tool_auto_approved: number
@@ -2080,6 +2103,11 @@ export const api = {
   // TokenJuice savings (counterfactual) summary — estimated tokens saved by output
   // projection this month, top compressor, per-compressor breakdown (§1.3).
   toolsSavings: () => get<ToolsSavings>('/api/tools/savings'),
+  // Tool groups (Context Economy §5): the derived partition + per-surface
+  // activation defaults. Read-only — the flag and defaults are config writes.
+  toolGroups: () => get<ToolGroupsData>('/api/tools/groups'),
+  setToolGroupsEnabled: (enabled: boolean) =>
+    patch<Record<string, any>>('/api/config/personalclaw', { path: 'tools.groups_enabled', value: enabled }),
   // Feedback Signal (plan 58): 👍/👎 on AI judgment outputs + per-producer accuracy.
   recordFeedback: (body: FeedbackRecordBody) => post<{ ok: boolean; id: string; verdict: string }>('/api/feedback', body),
   feedbackTarget: (kind: FeedbackTargetKind, id: string) =>

@@ -17,9 +17,10 @@ import { confirm } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
 import { useQueryParam, useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
-import { api, type ToolItem, type McpServer, type ImportableMcpServer, type ToolLoadFailure, type McpPoolStats } from '../../lib/api'
+import { api, type ToolItem, type McpServer, type ImportableMcpServer, type ToolLoadFailure, type McpPoolStats, type ToolGroupsData } from '../../lib/api'
 import { schemaProps } from './schema'
 import { ToolInspector } from './ToolInspector'
+import { ToolGroupsTile } from './ToolGroupsTile'
 
 /** Tools = the capability catalog agents invoke. Grouped by provider — native
  *  built-in providers plus connected MCP servers (shown with health + inline
@@ -39,6 +40,7 @@ interface Group {
   server?: McpServer        // present for mcp groups
   providerDisabled?: boolean  // whole native provider turned off
   providerLocked?: boolean    // platform provider — not toggleable/removable
+  group?: string              // activation group (Context Economy §5); unset when grouping is off
 }
 
 function serverHealth(s: McpServer): { state: string; tone: string; detail?: string } {
@@ -54,23 +56,27 @@ interface ToolsIndexData {
   servers: McpServer[]
   importable: ImportableMcpServer[]
   poolStats: McpPoolStats
+  groups: ToolGroupsData | null
 }
 
 export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQuery'>) {
   const { data, refresh } = useCachedData<ToolsIndexData>('tools:index', async () => {
-    const [idx, servers, importable, poolStats] = await Promise.all([
+    const [idx, servers, importable, poolStats, groups] = await Promise.all([
       api.toolsIndex().catch(() => ({ tools: [], load_failures: [] as ToolLoadFailure[] })),
       api.mcpServers().catch(() => [] as McpServer[]),
       api.importableMcp().catch(() => [] as ImportableMcpServer[]),
       api.mcpPoolStats().catch(() => ({ available: false } as McpPoolStats)),
+      api.toolGroups().catch(() => null),
     ])
-    return { tools: idx.tools, loadFailures: idx.load_failures ?? [], servers, importable, poolStats }
+    return { tools: idx.tools, loadFailures: idx.load_failures ?? [], servers, importable, poolStats, groups }
   }, { persist: true })
   const tools = data?.tools ?? null
   const loadFailures = data?.loadFailures ?? []
   const servers = data?.servers ?? []
   const importable = data?.importable ?? []
   const poolStats = data?.poolStats ?? null
+  const groupsInfo = data?.groups ?? null
+  const groupsEnabled = !!groupsInfo?.enabled
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
   // Risk filter (tool risk taxonomy): let a security-conscious user narrow to
   // "what can do caution/destructive things". URL-param so it's shareable, like q.
@@ -139,6 +145,23 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
 
   const groups = useMemo<Group[] | null>(() => {
     if (!tools) return null
+    // The activation group a provider's tools belong to — shown as a badge only
+    // when grouping is ON (off, every group is loaded, so naming one is noise).
+    // Providers are group-grain by construction, so the provider's tools agree;
+    // a core-locked tool can differ (it's always `core`), so take the majority
+    // rather than the first, and show nothing if it's genuinely mixed.
+    const groupOf = (list: ToolItem[]): string | undefined => {
+      if (!groupsEnabled) return undefined
+      const counts = new Map<string, number>()
+      for (const t of list) {
+        if (!t.group) continue
+        counts.set(t.group, (counts.get(t.group) ?? 0) + 1)
+      }
+      let best: string | undefined
+      let bestCount = 0
+      for (const [name, count] of counts) if (count > bestCount) { best = name; bestCount = count }
+      return best
+    }
     const needle = q.trim().toLowerCase()
     // A "narrowing" filter is active when there's a search needle OR a risk filter
     // — both hide empty native groups (an empty group only shows in the unfiltered
@@ -165,18 +188,19 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
       if (filtered.length || !active) out.push({
         key: p, label: p, kind: 'native', tools: filtered,
         providerDisabled: provOff, providerLocked: p === LOCKED_NATIVE_PROVIDER,
+        group: groupOf(list),
       })
     }
     out.sort((a, b) => a.label.localeCompare(b.label))
     // MCP servers configured in PersonalClaw (shown even at 0 tools / errored)
     for (const s of servers) {
       const list = (byProvider.get(s.name) ?? []).filter(match)
-      out.push({ key: s.name, label: s.name, kind: 'mcp', tools: list, server: s })
+      out.push({ key: s.name, label: s.name, kind: 'mcp', tools: list, server: s, group: groupOf(byProvider.get(s.name) ?? []) })
     }
     // With a filter active, drop groups with no matching tools — including MCP
     // groups (an errored/0-tool server is only worth showing in the browse view).
     return out.filter((g) => g.tools.length > 0 || (g.kind === 'mcp' && !active) || !active)
-  }, [tools, servers, q, risk])
+  }, [tools, servers, q, risk, groupsEnabled])
 
   const open = tools?.find((t) => t.name === openName) ?? null
   const openServer = open ? servers.find((s) => s.name === open.provider) : undefined
@@ -225,6 +249,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
           ) : (
             <div className="flex flex-col gap-2xl">
               {!filtered && loadFailures.length > 0 && <LoadFailures failures={loadFailures} />}
+              {!filtered && groupsInfo && <ToolGroupsTile data={groupsInfo} onChanged={load} />}
               {!filtered && <McpPoolTile stats={poolStats} />}
               {groups?.map((g) => <GroupBlock key={g.key} g={g} onOpen={setOpenName} onToggleServer={toggleServer} onRemoveServer={removeServer} onToggleTool={toggleTool} onToggleProvider={toggleProvider} onReconnect={reconnectServer} reconnecting={reconnecting} />)}
               {!filtered && importable.length > 0 && <ImportSuggestions servers={importable} onImported={() => setTimeout(load, 300)} />}
@@ -284,6 +309,17 @@ function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, o
           ? <span className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-low text-[0.75rem]">{g.providerLocked ? 'platform' : 'built-in'}</span>
           : health && <span className="inline-flex items-center gap-1 text-[0.75rem]" style={{ color: health.tone }} title={health.detail}><Circle size={7} fill="currentColor" stroke="none" /> {health.state}</span>}
         <span className="text-on-surface-low text-[0.75rem]">· {g.tools.length}</span>
+        {/* Which activation GROUP these tools belong to (Context Economy §5) — the
+            page already groups by provider, which IS the group grain, so this just
+            names it. Only shown when grouping is on, since it's meaningless off. */}
+        {g.group && (
+          <span className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-low text-[0.75rem]"
+            title={g.group === 'core'
+              ? 'Always loaded — the primitives an agent cannot work without'
+              : `Group "${g.group}" — loaded on demand; a session that doesn't need it doesn't pay for its schemas`}>
+            {g.group === 'core' ? 'always loaded' : `group: ${g.group}`}
+          </span>
+        )}
         {g.server && (
           <div className="ml-auto flex items-center gap-1">
             {/* Reconnect just THIS server (re-probe) — recover a timed-out/errored

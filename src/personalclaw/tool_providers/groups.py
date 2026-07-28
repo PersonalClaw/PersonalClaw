@@ -209,10 +209,75 @@ def partition(defs: list[Any], *, provider_of: dict[str, str] | None = None) -> 
                 display=_GROUP_DISPLAY.get(name, name.replace("-", " ").replace(":", ": ").title()),
                 instructions=_GROUP_INSTRUCTIONS.get(name, ""),
                 always_on=(name == CORE_GROUP),
+                capability=_GROUP_CAPABILITY.get(name, ""),
                 tools=tuple(buckets[name]),
             )
         )
     return out
+
+
+# ── per-capability gating (§5.5) ────────────────────────────────────────────
+# A group may declare the capability its tools NEED to do anything. When that
+# capability doesn't resolve, the group is not OFFERABLE: it is neither active nor
+# stub-listed, so the model is never shown tools that cannot work.
+#
+# Two probe kinds, both cheap and side-effect-free (this runs at assembly time and
+# again on refresh_toolset()):
+#   * "model:<use_case>" — a model-shaped capability, via the no-instantiate
+#     `provider_bridge.can_resolve_use_case` probe (the same one behind the
+#     onboarding "needs a model" nudge, so the two never disagree).
+#   * "tool_provider:<name>" / "search_provider:<name>" — registry presence.
+#
+# Deliberately sparse: only groups whose tools are genuinely inert without a
+# binding. A group with no entry is always offerable. `memory` is NOT gated — its
+# lesson store works without an embedder (recall degrades, it doesn't break).
+_GROUP_CAPABILITY: dict[str, str] = {
+    # Subagent spawns inference through a ModelProvider; with no model resolvable
+    # every spawn fails at the first turn, so the tools are worse than useless.
+    "subagents": "model:orchestration",
+}
+
+
+def capability_available(capability: str) -> bool:
+    """Whether a group's declared ``capability`` resolves right now.
+
+    Fail-OPEN on every uncertainty (unknown probe kind, probe error, empty
+    capability): an unavailable group merely costs context, but a wrongly-hidden
+    group is the capability regression this whole module promises not to cause.
+    """
+    spec = (capability or "").strip()
+    if not spec:
+        return True
+    kind, _, value = spec.partition(":")
+    try:
+        if kind == "model":
+            from personalclaw.providers.provider_bridge import can_resolve_use_case
+
+            return bool(can_resolve_use_case(value or "chat"))
+        if kind in ("tool_provider", "search_provider"):
+            if kind == "tool_provider":
+                from personalclaw.tool_providers.registry import get_provider
+
+                return get_provider(value) is not None
+            from personalclaw.search_providers.registry import get_provider as get_search
+
+            return get_search(value) is not None
+    except Exception:
+        logger.debug("groups: capability probe %r failed — treating as available", spec)
+        return True
+    logger.debug("groups: unknown capability probe kind %r — treating as available", kind)
+    return True
+
+
+def offerable(group: ToolGroup) -> bool:
+    """Whether ``group`` may be activated or stub-listed at all (§5.5).
+
+    An always-on group is always offerable — ``core`` holds the primitives an
+    agent can't recover from losing, so no probe may remove it.
+    """
+    if group.always_on:
+        return True
+    return capability_available(group.capability)
 
 
 # ── per-surface defaults (§5.4) ─────────────────────────────────────────────

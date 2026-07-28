@@ -187,3 +187,51 @@ async def test_savings_endpoint_empty_is_safe(tmp_path, monkeypatch):
     resp = await tools_mod.api_tools_savings(_DummyRequest())
     payload = json.loads(resp.body.decode())
     assert payload["saved_chars"] == 0 and payload["top_compressor"] is None
+
+
+@pytest.mark.asyncio
+async def test_groups_endpoint_reports_the_partition(monkeypatch):
+    """GET /api/tools/groups reports the SAME provider-grain partition the runtime
+    assembles, with core always-on and offerability resolved."""
+    import json
+
+    from personalclaw.tool_providers.base import ToolDefinition
+
+    async def _tools():
+        return [
+            ToolDefinition(name="schedule_add", description="d", provider="personalclaw-schedule"),
+            ToolDefinition(name="subagent_run", description="d", provider="personalclaw-subagents"),
+        ]
+
+    monkeypatch.setattr("personalclaw.tool_providers.registry.list_all_tools", _tools)
+    # No model resolvable → the subagents group is not offerable (§5.5).
+    monkeypatch.setattr(
+        "personalclaw.providers.provider_bridge.can_resolve_use_case", lambda _u: False
+    )
+
+    resp = await tools_mod.api_tool_groups(_DummyRequest())
+    payload = json.loads(resp.body.decode())
+    by_name = {g["name"]: g for g in payload["groups"]}
+    assert by_name["schedule"]["toolCount"] == 1
+    assert by_name["schedule"]["offerable"] is True
+    assert by_name["subagents"]["offerable"] is False  # capability unmet
+    assert by_name["subagents"]["capability"] == "model:orchestration"
+    # core is present (the platform provider is enumerated separately) and always-on.
+    assert by_name["core"]["alwaysOn"] is True
+    # Per-surface defaults are reported; chat's empty list means "every group".
+    assert "chat" in payload["surfaceDefaults"]
+    assert isinstance(payload["enabled"], bool)
+
+
+@pytest.mark.asyncio
+async def test_groups_endpoint_survives_a_broken_registry(monkeypatch):
+    """A provider that explodes must not 500 the page — the endpoint degrades."""
+    import json
+
+    async def _boom():
+        raise RuntimeError("registry down")
+
+    monkeypatch.setattr("personalclaw.tool_providers.registry.list_all_tools", _boom)
+    resp = await tools_mod.api_tool_groups(_DummyRequest())
+    payload = json.loads(resp.body.decode())
+    assert "groups" in payload  # still a well-formed answer
