@@ -19,6 +19,30 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Point your IDE at your assistant: a read-only MCP endpoint.** PersonalClaw can
+  now answer questions from a local MCP client (your IDE, an MCP inspector) over
+  `POST /mcp` — JSON-RPC 2.0, with `initialize`, `tools/list` and `tools/call`.
+  It is **off until you deliberately turn it on**, and turning it on takes two
+  separate steps that are both re-checked on every request:
+
+  ```bash
+  personalclaw inbound token create mcp        # printed once — copy it now
+  personalclaw config set inbound.mcp.enabled true
+  ```
+
+  Because both are checked per request, `inbound.mcp.enabled false` is an immediate
+  kill switch — no restart. The surface answers **loopback callers only** unless you
+  explicitly declare a public URL and opt into remote access in the config file;
+  neither of those knobs is editable from the dashboard, so widening your network
+  exposure can't be one mis-click in a browser. Requests are capped on every
+  dimension an outside caller controls (body size, rate, concurrency, result size),
+  refused requests come back with a real JSON-RPC error, and every request — allowed
+  or refused — is recorded in `<home>/inbound_audit.jsonl`, with refusals also
+  landing in the security event log. This release ships the surface with **no tools
+  yet**: a client can connect and see an empty table. The five curated read-only
+  tools (memory, knowledge, tasks, sessions, status) follow next, and by
+  construction they can only ever read — there is no path from an inbound request to
+  a write.
 - **Tool groups: the agent loads the tools it needs, not all of them.** Every tool
   provider is now an activatable **group** (`schedule`, `artifacts`, `memory`, one
   per MCP server or app, …), and a session can run with only the groups it needs —

@@ -470,6 +470,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # Context Economy §5 — dynamic tool-group activation (runtime-editable). Takes
     # effect for sessions created after the change (activation state is per-runtime).
     "tools.groups_enabled": {"type": "bool"},
+    # MCP-READONLY-INBOUND §C4 — the kill switch is runtime-editable so turning the
+    # surface OFF takes effect on the next request without a restart. `allow_remote`
+    # and `public_url` are deliberately NOT here: widening a network surface should
+    # be a deliberate config-file edit, not a one-click PATCH.
+    "inbound.mcp.enabled": {"type": "bool"},
     "feedback.enabled": {"type": "bool"},
     "feedback.retire_threshold": {"type": "float", "min": 0.1, "max": 0.9},
     "feedback.min_n": {"type": "int", "min": 3, "max": 50},

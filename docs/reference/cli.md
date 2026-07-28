@@ -185,6 +185,35 @@ Security audit and deny list.
 | `personalclaw backup export [OUT_DIR] [--incremental]` | Export state as **deterministic shards** — canonical JSONL per store plus a SHA-256 manifest, byte-identical for identical state (so it diffs cleanly and syncs without re-uploading unchanged data). Defaults to `<home>/shards`. `--incremental` re-exports only the stores whose content changed. Secrets are never exported. |
 | `personalclaw backup validate [SHARD_DIR]` | Verify an export end to end: the manifest parses, every declared shard exists, and each one's byte length, row count, and SHA-256 re-derive — plus every row re-parses. **Exits non-zero on any problem**, so it works as a cron/CI check. A backup nobody has verified is a hope, not a backup. |
 
+## Inbound surfaces
+
+PersonalClaw can expose a **read-only MCP endpoint** at `POST /mcp` so a local MCP
+client (your IDE, an MCP inspector) can ask it questions. It is off by default and
+stays off until you both mint a token and flip the flag — and it only answers
+loopback callers.
+
+| Command | What it does |
+|---|---|
+| `personalclaw inbound token create mcp [--rotate]` | Mint the surface's bearer token, stored `0600` at `<home>/.inbound_mcp_token`. **Printed once** — copy it into your client immediately. `--rotate` replaces an existing token, which immediately invalidates the old one. |
+| `personalclaw inbound token show mcp` | Report whether a usable token is configured, and why not if it isn't. Deliberately never prints the value: a credential the CLI can re-read is one an unattended process can exfiltrate. Lost it? Rotate. |
+
+Minting a token is not enough on its own — enable the surface too:
+
+```bash
+personalclaw inbound token create mcp        # copy the printed bearer token
+personalclaw config set inbound.mcp.enabled true
+```
+
+Both conditions are checked on every request, so setting `inbound.mcp.enabled false`
+is an immediate kill switch — no restart needed. When the surface refuses to mount,
+the gateway log carries one line naming the exact reason. Every request (allowed or
+refused) is recorded in `<home>/inbound_audit.jsonl`, and refusals also land in the
+security event log.
+
+Remote access (`inbound.mcp.allow_remote` + `inbound.public_url`) exists but is
+**discouraged** until the hardened external-access layer lands. Neither knob is
+editable from the dashboard — they are config-file-only on purpose.
+
 ## Other commands
 
 | Command | What it does |

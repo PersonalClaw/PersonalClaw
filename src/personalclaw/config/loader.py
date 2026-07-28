@@ -320,6 +320,29 @@ def _guard_flag(value: object) -> bool:
     return True
 
 
+# Exposure-flag spellings that ENABLE a surface. The inverse polarity of
+# ``_GUARD_FALSE``: for anything that opens an attack surface, ambiguity must fail
+# OFF, so ONLY these exact spellings turn it on. `bool("false")` is True in Python,
+# which is precisely the trap this avoids.
+_EXPOSE_TRUE = frozenset({"1", "true", "yes", "on", "enable", "enabled", "y", "t"})
+
+
+def _expose_flag(value: object) -> bool:
+    """Parse an exposure flag fail-CLOSED: missing/unknown/garbage ⇒ ``False``.
+
+    Use for any flag whose ``True`` opens a network surface or widens access. The
+    mirror of :func:`_guard_flag`, which fails ON because a guard's ambiguity must
+    keep protecting.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value == 1
+    if isinstance(value, str):
+        return value.strip().lower() in _EXPOSE_TRUE
+    return False
+
+
 _BOT_NAME_MAX = 50
 _BOT_NAME_RE = _re.compile(r"[^a-zA-Z0-9 _\-.]")
 
@@ -1774,6 +1797,53 @@ class ProjectionRuleConfig:
 
 
 @dataclass
+class InboundSurfaceConfig:
+    """One inbound surface's switches (MCP-READONLY-INBOUND §C4).
+
+    Both default to the CLOSED position. `enabled` in particular is fail-closed by
+    design: a missing or corrupt value reads False, because an inbound network
+    surface that turns itself on when config is unreadable fails in the wrong
+    direction. Do not "fix" this to be lenient."""
+
+    enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Enabled",
+            "Expose this read-only inbound surface. Off by default; also requires a "
+            "surface token (personalclaw inbound token create mcp). Loopback-only "
+            "unless allow_remote is on AND inbound.public_url is set.",
+        ),
+    )
+    allow_remote: bool = field(
+        default=False,
+        metadata=_meta(
+            "Allow remote",
+            "Permit non-loopback callers. Requires inbound.public_url, and the "
+            "request's Host must match it exactly. Discouraged until the hardened "
+            "inbound layer lands — prefer an SSH tunnel to loopback.",
+        ),
+    )
+
+
+@dataclass
+class InboundConfig:
+    """Curated read-only ways IN (MCP-READONLY-INBOUND). Off unless configured."""
+
+    mcp: InboundSurfaceConfig = field(
+        default_factory=InboundSurfaceConfig,
+        metadata=_meta("MCP surface", "POST /mcp — JSON-RPC read-only tool surface."),
+    )
+    public_url: str = field(
+        default="",
+        metadata=_meta(
+            "Public URL",
+            "The URL this instance answers to (e.g. https://pc.example.com). Required "
+            "for any non-loopback inbound access; the request Host must match it.",
+        ),
+    )
+
+
+@dataclass
 class FeedbackConfig:
     """Feedback Signal (plan 58) — 👍/👎 capture on AI judgment outputs + the
     deterministic per-producer accuracy thresholds. No LLM anywhere; zero telemetry."""
@@ -1961,6 +2031,10 @@ class AppConfig:
         default_factory=FeedbackConfig,
         metadata=_meta("Feedback", "👍/👎 capture on AI judgments + accuracy thresholds."),
     )
+    inbound: InboundConfig = field(
+        default_factory=InboundConfig,
+        metadata=_meta("Inbound", "Curated read-only inbound surfaces (off by default)."),
+    )
     agents_routing: AgentsRoutingConfig = field(
         default_factory=AgentsRoutingConfig,
         metadata=_meta("Agent Routing", "Suggest-first specialist routing."),
@@ -2074,6 +2148,7 @@ class AppConfig:
         if not isinstance(tools_data, dict):
             tools_data = {}
         feedback_data = data.get("feedback", {})
+        inbound_data = data.get("inbound", {}) or {}
         if not isinstance(feedback_data, dict):
             feedback_data = {}
         agents_routing_data = data.get("agents_routing", {})
@@ -2322,6 +2397,15 @@ class AppConfig:
                 min_n=int(feedback_data.get("min_n", 5)),
                 window_days=int(feedback_data.get("window_days", 90)),
             ),
+            inbound=InboundConfig(
+                # Fail-CLOSED via `_expose_flag`: only an explicit true-spelling opens
+                # the surface. Plain `bool()` would read the string "false" as True.
+                mcp=InboundSurfaceConfig(
+                    enabled=_expose_flag((inbound_data.get("mcp") or {}).get("enabled")),
+                    allow_remote=_expose_flag((inbound_data.get("mcp") or {}).get("allow_remote")),
+                ),
+                public_url=str(inbound_data.get("public_url", "") or ""),
+            ),
             agents_routing=AgentsRoutingConfig(
                 enabled=bool(agents_routing_data.get("enabled", True)),
                 min_confidence=float(agents_routing_data.get("min_confidence", 0.62)),
@@ -2562,6 +2646,7 @@ class AppConfig:
             "inbox": asdict(self.inbox),
             "tools": asdict(self.tools),
             "feedback": asdict(self.feedback),
+            "inbound": asdict(self.inbound),
             "agents_routing": asdict(self.agents_routing),
             "loops": asdict(self.loops),
             "skills": asdict(self.skills),

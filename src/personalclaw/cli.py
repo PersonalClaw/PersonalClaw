@@ -452,6 +452,22 @@ Examples:
         "--force", action="store_true", help="Restore even if gateway is running"
     )
 
+    # inbound — read-only inbound surfaces (MCP-READONLY-INBOUND)
+    inbound_parser = sub.add_parser(
+        "inbound", help="Manage read-only inbound surfaces (e.g. the MCP tool surface)"
+    )
+    inbound_sub = inbound_parser.add_subparsers(dest="inbound_command")
+    inbound_token = inbound_sub.add_parser("token", help="Create or inspect a surface token")
+    inbound_token.add_argument(
+        "token_action", choices=("create", "show"), nargs="?", default="create"
+    )
+    inbound_token.add_argument("surface", nargs="?", default="mcp", help="Surface name (mcp)")
+    inbound_token.add_argument(
+        "--rotate",
+        action="store_true",
+        help="Replace an existing token (the old one stops working)",
+    )
+
     # backup — deterministic shard export + verification (DURABILITY §2)
     backup_parser = sub.add_parser(
         "backup", help="Export state as deterministic shards, and verify an export"
@@ -889,6 +905,10 @@ Examples:
         rc = restore_main(parsed=args)
         if rc:
             raise SystemExit(rc)
+    elif args.command == "inbound":
+        rc = _inbound_cmd(args)
+        if rc:
+            raise SystemExit(rc)
     elif args.command == "backup":
         rc = _backup_cmd(args)
         if rc:
@@ -934,6 +954,7 @@ from personalclaw.cli_setup import (  # noqa: E402
     _setup,
 )
 from personalclaw.durability.shards import backup_cmd as _backup_cmd  # noqa: E402
+from personalclaw.inbound.auth import inbound_cmd as _inbound_cmd  # noqa: E402
 
 
 def _handle_skills(args) -> None:  # noqa: ANN001

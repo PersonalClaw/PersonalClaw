@@ -365,6 +365,18 @@ async def start_dashboard(
     # WebSocket (multiplexed real-time events)
     app.router.add_get("/api/ws", ws.api_ws)
 
+    # Inbound read-only MCP surface (MCP-READONLY-INBOUND). Mounts ONLY when
+    # enablement passes (config flag + a valid dedicated token); a refusal logs one
+    # line naming the failing condition and /mcp simply 404s. Registered here so it
+    # sits outside the dashboard's cookie-auth world — it carries its own bearer
+    # credential and its own loopback rail.
+    try:
+        from personalclaw.inbound.mcp_http import mount as _mount_inbound_mcp
+
+        _mount_inbound_mcp(app)
+    except Exception:  # noqa: BLE001 — an inbound fault must never block startup
+        logging.getLogger(__name__).warning("inbound: /mcp mount failed", exc_info=True)
+
     # Status / system
     app.router.add_get("/api/healthz", handlers.api_healthz)
     app.router.add_get("/api/status", handlers.api_status)
