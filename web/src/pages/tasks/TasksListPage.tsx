@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Plus, List, LayoutGrid, GitFork, Columns3, MessageSquare, FolderKanban, X, RotateCcw, ListChecks, Target, Code2, Check, CheckCircle2, Trash2 } from 'lucide-react'
+import { Plus, List, LayoutGrid, GitFork, Columns3, MessageSquare, FolderKanban, X, RotateCcw, ListChecks, Target, Code2, Check, CheckCircle2, Trash2, Users, UserRound } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
@@ -45,6 +45,20 @@ const SCOPE_ALL = ''
 const SCOPE_GOALS = '__goals__'
 const SCOPE_CODING = '__coding__'
 const GOAL_LOOPS_PROJECT = 'Goal Loops'
+const ASSIGNED_EVERYONE = ''
+const ASSIGNED_MINE = 'mine'
+
+/** Whether a task is the owner's work — mirrors `Task.belongs_to` on the backend.
+ *  Assignee decides when set; otherwise the author does, because an unassigned task
+ *  I wrote is still mine. An unattributed task belongs to nobody in particular, so
+ *  it counts as the owner's (that's how every pre-attribution task reads). */
+const isMine = (t: TaskItem, owner: string) => {
+  if (!owner) return true
+  const assignee = (t.assignee ?? '').trim().toLowerCase()
+  if (assignee) return assignee === owner.toLowerCase()
+  const author = (t.author ?? '').trim().toLowerCase()
+  return !author || author === owner.toLowerCase()
+}
 const PRIORITY_RANK: Record<string, number> = { critical: 5, high: 4, medium: 3, low: 2, trivial: 1 }
 const _dueTs = (t: TaskItem) => { const v = t.due ? Date.parse(t.due) : NaN; return Number.isNaN(v) ? Infinity : v }  // no due → last
 const _updTs = (t: TaskItem) => Date.parse(t.updated_at || t.created_at || '') || 0
@@ -66,6 +80,19 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   // invalidates + revalidates the cache.
   const { data: cachedTasks, refresh } = useCachedData('tasks', () => api.tasks().then((d) => d.tasks).catch(() => [] as TaskItem[]), { persist: false })
   const [tasks, setTasks] = useState<TaskItem[] | null>(null)
+  // The configured username, so a row can say whether it's mine or someone else's.
+  // Only meaningful once a shared provider actually returns other people's work, so
+  // the "Assigned" filter below stays hidden until that happens.
+  const [owner, setOwner] = useState('')
+  // Mine-vs-everyone selection. Local rather than URL-backed: it's a viewing lens on
+  // a shared board, not a shareable address (the scope/status filters that ARE worth
+  // sharing live in the URL).
+  const [assigned, setAssigned] = useState(ASSIGNED_EVERYONE)
+  useEffect(() => {
+    let alive = true
+    api.tasks({ limit: 1 }).then((d) => { if (alive) setOwner(d.owner ?? '') }).catch(() => {})
+    return () => { alive = false }
+  }, [])
   // The "Ready" filter pulls startable tasks from the server (dependency-aware)
   // rather than filtering the loaded list, so it's kept in its own slice.
   const [ready, setReady] = useState<TaskItem[] | null>(null)
@@ -218,12 +245,23 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
       title: 'Status', value: filter, defaultKey: 'all', onChange: setFilter,
       options: FILTERS.map((f) => ({ key: f.key, label: f.label, count: statusCount(f.key) })),
     })
+    // "Mine vs everyone" (TEAM-SHARED-ENTITIES §2.1). Hidden on a single-user
+    // install: with no username, or no task belonging to anyone else, the filter
+    // would be a control that can only ever be a no-op.
+    const foreign = owner ? (tasks ?? []).filter((t) => !isMine(t, owner)).length : 0
+    if (owner && foreign > 0) sections.push({
+      title: 'Assigned', value: assigned, defaultKey: ASSIGNED_EVERYONE, onChange: setAssigned,
+      options: [
+        { key: ASSIGNED_EVERYONE, label: 'Everyone', icon: Users, count: tasks?.length },
+        { key: ASSIGNED_MINE, label: 'Mine', icon: UserRound, count: (tasks?.length ?? 0) - foreign },
+      ],
+    })
     if (showSort) sections.push({
       title: 'Sort by', value: sortBy, defaultKey: 'recent', onChange: setSortBy,
       options: SORTS.map((s) => ({ key: s.key, label: s.label })),
     })
     return sections
-  }, [tasks, ready, projects, codingProjectNames, scope, filter, sortBy, showStatus, showSort])
+  }, [tasks, ready, projects, codingProjectNames, scope, filter, sortBy, showStatus, showSort, owner, assigned])
 
   const filtered = useMemo(() => {
     let base: TaskItem[] | null
@@ -234,6 +272,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
 
     if (base) base = base.filter(inScope)
     if (base && listFilter) base = base.filter((t) => t.task_list_id === listFilter.id)
+    if (base && owner && assigned === ASSIGNED_MINE) base = base.filter((t) => isMine(t, owner))
 
     // Sort: terminal tasks always sink to the bottom; within each group, by the
     // chosen key (recent updates / soonest due / highest priority first).
@@ -430,9 +469,22 @@ function MetaLine({ t, onProject }: { t: TaskItem; onProject?: (p: string) => vo
   const pm = priorityMeta(t.priority)
   const due = dueMeta(t.due)
   const exit = t.exit_criteria ?? []
+  // Whose work this is, on a shared board (TEAM-SHARED-ENTITIES §2.1). Shown only
+  // when someone is named — on a single-user install every task is the owner's, and
+  // "@you" on every row is noise. Rendered here because both the list row and the
+  // card use this line, so one edit covers both views.
+  const who = (t.assignee ?? '').trim() || (t.author ?? '').trim()
   return (
     <div className="mt-1 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
       <span style={{ color: pm.tone }}>{pm.label}</span>
+      {who && (
+        <span
+          className="inline-flex items-center gap-1"
+          title={(t.assignee ?? '').trim() ? `Assigned to ${who}` : `Created by ${who}`}
+        >
+          <UserRound size={11} /> {who}
+        </span>
+      )}
       {t.project && <TextLink onClick={(e) => { e.stopPropagation(); onProject?.(t.project!) }}
         icon={FolderKanban} iconSize={11} title={`Filter by project “${t.project}”`}>{t.project}</TextLink>}
       {due && <span style={{ color: due.tone }}>· {due.label}</span>}

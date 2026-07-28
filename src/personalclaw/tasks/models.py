@@ -228,6 +228,27 @@ class Task:
         # full task set); callers that want it call attach_block_reason().
         return d
 
+    def belongs_to(self, username: str) -> bool:
+        """Whether this task is ``username``'s work (TEAM-SHARED-ENTITIES §2.1).
+
+        Assignee decides when there is one; an UNASSIGNED task falls back to its
+        author, because "I wrote it and nobody picked it up" is still my work.
+
+        With no username configured every task belongs to the owner — a single-user
+        install must behave exactly as it does today, and that is also the honest
+        answer: with no identity there is nobody else for a task to belong to.
+        """
+        owner = (username or "").strip().lower()
+        if not owner:
+            return True
+        assignee = (self.assignee or "").strip().lower()
+        if assignee:
+            return assignee == owner
+        author = (self.author or "").strip().lower()
+        # Unattributed-and-unassigned tasks are the owner's: they predate
+        # attribution, so treating them as foreign would empty the counters.
+        return not author or author == owner
+
     def can_mark_complete(self) -> bool:
         """A task may be completed only when every exit criterion is complete
         (a task with no exit criteria is freely completable)."""
