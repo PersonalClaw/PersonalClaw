@@ -25,6 +25,12 @@ async def api_tasks_list(request: web.Request) -> web.Response:
     limit = int(request.query.get("limit", "50"))
     offset = int(request.query.get("offset", "0"))
 
+    # `mine=1` — the "mine vs everyone" view (TEAM-SHARED-ENTITIES §2.1). Resolved
+    # server-side from the configured username rather than taking a name from the
+    # client, and it means "assigned to me, or authored by me and unassigned" —
+    # which the `assignee` filter alone cannot express.
+    mine = str(request.query.get("mine", "")).strip().lower() in ("1", "true", "yes")
+
     tasks, total = await registry.list_all_tasks(
         status=status,
         assignee=assignee,
@@ -34,6 +40,15 @@ async def api_tasks_list(request: web.Request) -> web.Response:
         limit=limit,
         offset=offset,
     )
+    if mine:
+        from personalclaw.identity import current_username
+
+        owner = current_username()
+        if owner:
+            tasks = [t for t in tasks if t.belongs_to(owner)]
+            # `total` describes the filtered set now; reporting the provider's count
+            # would make the UI show "12 of 40" for a list holding 12.
+            total = len(tasks)
     task_map = {t.id: t for t in tasks}
     return web.json_response(
         {
@@ -41,8 +56,19 @@ async def api_tasks_list(request: web.Request) -> web.Response:
             "total": total,
             "limit": limit,
             "offset": offset,
+            "owner": _owner_username(),
         }
     )
+
+
+def _owner_username() -> str:
+    """The configured username, so the frontend can label rows as mine vs theirs."""
+    try:
+        from personalclaw.identity import current_username
+
+        return current_username()
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 async def api_tasks_graph(request: web.Request) -> web.Response:
@@ -52,10 +78,18 @@ async def api_tasks_graph(request: web.Request) -> web.Response:
 
 
 async def api_tasks_ready(request: web.Request) -> web.Response:
-    """GET /api/tasks/ready — tasks startable now (no unfinished prerequisites)."""
+    """GET /api/tasks/ready — tasks startable now (no unfinished prerequisites).
+
+    Owner-scoped by default (TEAM-SHARED-ENTITIES §2.1): a shared provider's tasks
+    assigned to other people are never the owner's ready work. `everyone=1` opts into
+    the unfiltered view for a shared board.
+    """
     project = request.query.get("project")
     task_list = request.query.get("task_list") or request.query.get("task_list_id")
-    tasks = await registry.ready_tasks(project=project, task_list_id=task_list)
+    everyone = str(request.query.get("everyone", "")).strip().lower() in ("1", "true", "yes")
+    tasks = await registry.ready_tasks(
+        project=project, task_list_id=task_list, mine_only=not everyone
+    )
     task_map = {t.id: t for t in tasks}
     return web.json_response({"tasks": [_with_block_reason(t, task_map) for t in tasks]})
 

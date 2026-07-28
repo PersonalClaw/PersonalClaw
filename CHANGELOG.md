@@ -19,6 +19,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **On a shared task board, your assistant only works on *your* tasks.** If tasks come
+  from somewhere other people also write to, task rows now show who a task belongs to,
+  and you can switch between "Mine" and "Everyone" — the filter appears only when
+  someone else's work is actually there, so nothing changes for a solo setup.
+
+  The part that matters most is invisible: ready-task counts, the "what should I do
+  next" picker, and the agent's own work selection all count and choose **only your
+  tasks**. Someone else's task can never quietly become something your assistant picks
+  up. Dependencies are still honored across everyone, so a task of yours blocked by a
+  colleague's unfinished work is correctly *not* ready rather than falsely startable.
 - **Backups now happen on their own, and they get checked.** PersonalClaw takes a
   full snapshot nightly and exports whatever changed every hour, so how much you can
   lose is bounded by an hour rather than by when you last remembered to run

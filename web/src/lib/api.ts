@@ -365,6 +365,8 @@ export interface BlockReason { is_blocked?: boolean; blocking_task_ids?: string[
 export interface TaskItem {
   id: string; title: string; status: string; description?: string
   provider?: string; project?: string; assignee?: string; priority?: string
+  // WHO created it (TEAM-SHARED-ENTITIES §1) — distinct from assignee, who does it.
+  author?: string
   labels?: string[]; depends_on?: string[]; due?: string; url?: string
   created_at?: string; updated_at?: string
   // rich / forward-looking (may be absent from the backend today)
@@ -1783,14 +1785,18 @@ export const api = {
   triggerVariables: () => get<TriggerVariables>('/api/triggers/variables'),
 
   // tasks
-  tasks: (opts: { project?: string; task_list?: string; status?: string; limit?: number } = {}) => {
+  // `mine` narrows to the owner's work (assigned to them, or authored by them and
+  // unassigned) — resolved server-side from the configured username. `owner` comes
+  // back on every response so rows can be labelled mine vs someone else's.
+  tasks: (opts: { project?: string; task_list?: string; status?: string; limit?: number; mine?: boolean } = {}) => {
     const qs = new URLSearchParams()
     if (opts.project) qs.set('project', opts.project)
     if (opts.task_list) qs.set('task_list', opts.task_list)
     if (opts.status) qs.set('status', opts.status)
     if (opts.limit) qs.set('limit', String(opts.limit))
+    if (opts.mine) qs.set('mine', '1')
     const s = qs.toString()
-    return get<{ tasks: TaskItem[]; total: number }>(`/api/tasks${s ? `?${s}` : ''}`)
+    return get<{ tasks: TaskItem[]; total: number; owner?: string }>(`/api/tasks${s ? `?${s}` : ''}`)
   },
   task: (id: string, provider?: string) => get<TaskItem>(`/api/tasks/${encodeURIComponent(id)}${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
   taskGraph: (provider?: string) => get<TaskGraphData>(`/api/tasks/graph${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
