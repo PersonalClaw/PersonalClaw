@@ -23,15 +23,22 @@ interface ViewerProps {
   // newSessionTarget (a fresh chat session per comment); a host inside an active
   // chat would pass a sameSessionTarget. When omitted, the comment layer is off.
   commentTarget?: CommentTarget
+  // Library detail polish (ARTIFACTS S2): open pinned to a historical version
+  // (the ?v=N deep-link) and report version picks so the host can write the URL.
+  initialVersion?: number
+  onVersionChange?: (v: number | null) => void
+  // Open with the details rail (versions + tags + timeline) expanded.
+  defaultDetailsOpen?: boolean
 }
 
-export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, commentTarget }: ViewerProps) {
+export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, commentTarget, initialVersion, onVersionChange, defaultDetailsOpen = false }: ViewerProps) {
   const [art, setArt] = useState<Artifact | null>(null)
   const [versions, setVersions] = useState<number[]>([])
   const [events, setEvents] = useState<ArtifactEvent[]>([])
-  const [selVersion, setSelVersion] = useState<number | null>(null)  // null = current
+  const [selVersion, setSelVersionRaw] = useState<number | null>(initialVersion ?? null)  // null = current
+  const setSelVersion = (v: number | null) => { setSelVersionRaw(v); onVersionChange?.(v) }
   const [viewContent, setViewContent] = useState('')
-  const [metaOpen, setMetaOpen] = useState(false)  // sticky bottom metadata panel
+  const [metaOpen, setMetaOpen] = useState(defaultDetailsOpen)  // sticky bottom metadata panel
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   // The artifact couldn't be loaded (e.g. deleted in another session / stale deep-link).
@@ -39,7 +46,7 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
   // on an infinite loading spinner.
   const [loadError, setLoadError] = useState('')
 
-  const reload = async () => {
+  const reload = async (opts?: { keepVersion?: boolean }) => {
     setLoading(true); setLoadError('')
     try {
       const [a, v, e] = await Promise.all([
@@ -48,14 +55,17 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
         api.artifactEvents(slug).catch(() => ({ slug, events: [] })),
       ])
       setArt(a); setVersions(v.versions); setEvents(e.events)
-      setSelVersion(null); setViewContent(a.content ?? '')
+      // keepVersion: the first load honors a ?v=N deep-link pin; every LATER
+      // reload (save/snapshot/revert) returns to the current version as before.
+      if (!opts?.keepVersion) setSelVersion(null)
+      setViewContent(a.content ?? '')
     } catch (err) {
       setLoadError(String((err as Error)?.message || err))
     } finally {
       setLoading(false)
     }
   }
-  useEffect(() => { reload() }, [slug])
+  useEffect(() => { reload({ keepVersion: initialVersion != null }) }, [slug])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load a historical version's immutable content when one is picked.
   useEffect(() => {

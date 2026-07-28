@@ -19,6 +19,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **The artifacts library: live previews, search, and collections.** The new
+  Artifacts page is now a real library: a responsive grid where every card renders
+  a **live preview** — widgets/HTML/React/documents/SVG in the same sandboxed,
+  theme-injected frame chat widgets use (scaled down, inert, never re-implemented),
+  images from their raw bytes, prose as an excerpt. Previews mount lazily as cards
+  approach the viewport and at most a dozen live frames exist at once (older ones
+  quietly demote to placeholders), so a 200-artifact library scrolls smoothly. The
+  toolbar filters by text, kind, source, and **collection** — all URL-backed, so a
+  filtered view is shareable — plus Recent/Name/Kind sort. Opening a card gives the
+  full-page detail (version rail, events timeline, edit/snapshot/revert) with
+  `?v=N` deep-linking a historical snapshot read-only, and a header control to
+  assign the artifact to a collection. File-backed cards show a "source changed"
+  drift badge.
 - **Artifacts get their own page.** Artifacts — the named, versioned outputs agents
   produce — moved out of the Files page into their own top-level **Artifacts** nav
   entry (`#/artifacts`, deep-linkable per slug). Files now shows only your raw file
