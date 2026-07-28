@@ -17,8 +17,16 @@ R / B / S per the lifecycle doctrine:
 - R (reversible): no persisted-state or stable-surface change.
 - B (behavioral): changes a stable surface (API/CLI/config) or persisted state.
 - S (structural/schema): changes a stored schema or a Tier-S contract.
-Until LIFECYCLE-DOCTRINE (plan 31) lands, class-B/S changes ship as clean breaks
-under the pre-1.0 banner — say so here.
+
+LIFECYCLE-DOCTRINE (plan 31) is deliberately deferred to late in the roadmap, so
+there is no gate/migration machinery to use yet.
+- Maintainer, on a roadmap task: class-B/S ships as a clean break under the
+  pre-1.0 banner — say so here, add a CHANGELOG entry, advise `personalclaw
+  snapshot` in release notes.
+- Contributor: aim for class R. If your change is B/S, describe the break here
+  rather than building compatibility shims or migration helpers — the maintainer
+  decides whether to take it, reshape it additively, or schedule it. See
+  CONTRIBUTING.md#breaking-changes.
 -->
 
 Class: <!-- R | B | S -->

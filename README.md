@@ -48,13 +48,22 @@ along behind compatibility shims. The upshot for you as an early user:
   archive first (restore with `personalclaw restore`), and keep the archive somewhere safe.
 - **Don't make this your only system of record yet.** Treat anything you put in
   PersonalClaw as reproducible or backed up elsewhere until backward compatibility becomes
-  the default posture — which is exactly what the post-1.0
+  the default posture — which is exactly what the
   [lifecycle doctrine](docs/roadmap/plans/LIFECYCLE-DOCTRINE.md) introduces (gated,
   migration-backed changes). Until then, run it as a power-user's second machine, not your
   primary driver.
+- **This is expected to last a while.** Migration-backed change discipline is scheduled
+  deliberately *late* — it lands once the architecture has stopped moving, near the end of
+  the current [roadmap](docs/roadmap/roadmap.md), because freezing compatibility around a
+  half-built architecture is worse than breaking it honestly now. Plan for breaking 0.x
+  updates as the norm, not the exception, for the foreseeable future.
 
-This warning will be relaxed once migration-backed change discipline lands and 0.x
-stabilizes. We'd rather tell you plainly now than surprise you on an update.
+This warning is relaxed only when that discipline lands — not on a date. We'd rather tell
+you plainly now than surprise you on an update.
+
+**Contributing?** None of this asks *you* to break compatibility: contributor changes stay
+additive, and breaking changes are the maintainer's call. See
+[CONTRIBUTING.md → Breaking changes](CONTRIBUTING.md#breaking-changes).
 
 ---
 

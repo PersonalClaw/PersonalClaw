@@ -154,6 +154,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   can be model-summarized with a guaranteed deterministic fallback (never wired into
   the synchronous tool path).
 
+### Changed
+
+- **Breaking-change policy is now written down, and it distinguishes maintainer from
+  contributor.** During 0.x the maintainer keeps making backward-incompatible
+  clean-break architectural changes with no migrations — that stays true, and the
+  README now says plainly that this is expected to last a while, because
+  migration-backed discipline (the lifecycle doctrine) is scheduled deliberately late,
+  once the architecture stops moving. What's new is the other half: **contributors are
+  not expected to make breaking changes.** Contributor guidance stays
+  lifecycle-doctrine-shaped — additive by default, no hand-rolled gate or migration
+  machinery, and surface a needed break in an issue or PR description instead of
+  shipping it, so the maintainer decides whether to take it, reshape it, or schedule
+  it. See [CONTRIBUTING.md](CONTRIBUTING.md#breaking-changes); the PR template's change
+  class now spells out both paths.
+
 Forward-looking work is tracked in [docs/roadmap/](docs/roadmap/roadmap.md).
 
 ## [0.1.2] — 2026-07-26

@@ -188,6 +188,33 @@ jobs:
             --notes-file release-notes.md \
             $([ "${GITHUB_REF_NAME}" != "${GITHUB_REF_NAME%rc*}" ] && echo --prerelease)
 
+  website-follow:
+    # A published core release is an OBLIGATION on personalclaw.dev: the website
+    # publishes a released version, so its pins and its own version must follow
+    # this tag. Nudge that repo's release-follow workflow so the obligation is
+    # raised immediately instead of waiting for its daily schedule.
+    #
+    # Best-effort by design (`continue-on-error`): the website is a separate repo
+    # with its own enforcement (a strict parity job on every PR/push plus the daily
+    # watchdog), so a missing token or a dispatch hiccup must never fail or hold up
+    # a core release. Requires a PAT with `actions: write` on personalclaw.dev in
+    # the `WEBSITE_DISPATCH_TOKEN` secret; without it this logs and moves on.
+    needs: [notes]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Ask personalclaw.dev to re-check release parity
+        env:
+          GH_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "No WEBSITE_DISPATCH_TOKEN configured — skipping the website nudge."
+            echo "personalclaw.dev still catches this via its daily release-follow watchdog."
+            exit 0
+          fi
+          gh workflow run release-follow.yml --repo PersonalClaw/personalclaw.dev \
+            || echo "Dispatch failed; the website's daily watchdog will still catch it."
+
   attest:
     # Build-provenance attestations on the wheel (zero key management — GitHub OIDC).
     needs: [build, notes]
