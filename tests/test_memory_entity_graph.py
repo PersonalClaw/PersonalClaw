@@ -987,3 +987,152 @@ class TestSqliteDriverParity:
             store.db.execute("CREATE TABLE uniq_probe (x TEXT PRIMARY KEY)")
             store.db.execute("INSERT INTO uniq_probe VALUES ('a')")
             store.db.execute("INSERT INTO uniq_probe VALUES ('a')")
+
+
+# ── The graph recall arm (Session 2, §2.1–2.2) ───────────────────────────────
+
+
+class TestGraphRecallArm:
+    def test_query_resolves_entities_with_the_write_time_matcher(self, store, graph):
+        """Symmetry matters: a query must resolve the way the record that mentioned
+        the entity did, or the arm looks for links it never made."""
+        project, person = _seeded(store, graph)
+        assert graph.resolve_query("what about pclaw?", store.alias_index) == [project]
+        assert graph.resolve_query("ask @keyur", store.alias_index) == [person]
+
+    def test_unresolvable_query_yields_no_boosts(self, store, graph):
+        _seeded(store, graph)
+        assert graph.recall_refs("nothing recognizable here", index=store.alias_index) == {}
+
+    def test_boost_reaches_the_linked_record(self, store, graph):
+        _seeded(store, graph)
+        store.set_semantic("user.note.a", "Keyur Golani likes terse replies", 0.9, "user_explicit")
+        boosts = graph.recall_refs("@keyur", index=store.alias_index)
+        assert "user.note.a" in boosts
+        assert boosts["user.note.a"] > 0
+
+    def test_boost_accumulates_across_named_entities(self, store, graph):
+        """A record linked to two entities the query names beats one linked to one."""
+        _seeded(store, graph)
+        store.set_semantic("project.claw.both", "Keyur Golani works on pclaw", 0.9, "user_explicit")
+        store.set_semantic("user.note.one", "Keyur Golani alone", 0.9, "user_explicit")
+        boosts = graph.recall_refs("pclaw and @keyur", index=store.alias_index)
+        assert boosts["project.claw.both"] > boosts["user.note.one"]
+
+    def test_boost_stays_small(self, store, graph):
+        """β is deliberately small — connection breaks near-ties, it does not outrank
+        a record that matches the words the user typed."""
+        _seeded(store, graph)
+        store.set_semantic("user.note.a", "Keyur Golani", 0.9, "user_explicit")
+        boost = graph.recall_refs("@keyur", index=store.alias_index)["user.note.a"]
+        assert boost < 0.5
+
+    def test_recall_finds_what_similarity_cannot(self, store, graph):
+        """The whole point of the arm: a nickname sharing NO characters with the
+        stored text resolves only through the graph."""
+        graph.upsert_entity("Ana Ortiz", "person", aliases=["Sparrow"])
+        store.invalidate_alias_index()
+        store.set_semantic(
+            "user.note.a", "Ana Ortiz owns the billing rewrite", 0.9, "user_explicit"
+        )
+        store.set_semantic("user.note.b", "quarterly budget review", 0.9, "user_explicit")
+
+        query = "what is Sparrow working on"
+        store.graph_enabled = False
+        without = store.get_semantic_context(query_text=query, cap=800)
+        store.graph_enabled = True
+        with_graph = store.get_semantic_context(query_text=query, cap=800)
+        assert "billing" not in without
+        assert "billing" in with_graph
+
+    def test_word_queries_are_unaffected(self, store, graph):
+        """The arm ADDS recall; it must not change what plain keyword search finds."""
+        _seeded(store, graph)
+        store.set_semantic(
+            "user.note.pipe", "the deploy pipeline uses actions", 0.9, "user_explicit"
+        )
+        store.graph_enabled = False
+        without = store.get_semantic_context(query_text="deploy pipeline", cap=800)
+        store.graph_enabled = True
+        with_graph = store.get_semantic_context(query_text="deploy pipeline", cap=800)
+        assert "pipeline" in without and "pipeline" in with_graph
+
+    def test_disabled_graph_contributes_nothing(self, store, graph):
+        _seeded(store, graph)
+        store.set_semantic("user.note.a", "Keyur Golani", 0.9, "user_explicit")
+        store.graph_enabled = False
+        assert store._graph_boosts("@keyur") == {}
+
+    def test_a_broken_graph_degrades_instead_of_failing_recall(self, store, graph, monkeypatch):
+        """Recall must never fail because the graph is unhappy."""
+        _seeded(store, graph)
+        store.set_semantic("user.note.a", "Keyur Golani", 0.9, "user_explicit")
+
+        def _boom(*a, **k):
+            raise RuntimeError("graph exploded")
+
+        monkeypatch.setattr(type(graph), "recall_refs", _boom)
+        assert store._graph_boosts("@keyur") == {}
+        # And the surrounding retrieval still works.
+        assert store.get_semantic_context(query_text="Keyur", cap=800)
+
+    def test_empty_query_costs_nothing(self, store, graph):
+        _seeded(store, graph)
+        assert store._graph_boosts("") == {}
+
+    def test_evidence_names_the_connecting_entity(self, store, graph):
+        _seeded(store, graph)
+        store.set_semantic("user.note.a", "Keyur Golani prefers terse", 0.9, "user_explicit")
+        evidence = graph.recall_evidence("@keyur", index=store.alias_index)
+        assert evidence["user.note.a"] == ["Keyur Golani"]
+
+    def test_evidence_is_empty_without_a_match(self, store, graph):
+        _seeded(store, graph)
+        assert graph.recall_evidence("unrelated words", index=store.alias_index) == {}
+
+    def test_service_exposes_evidence_and_degrades(self, store, graph):
+        from personalclaw.memory_service import MemoryService
+
+        _seeded(store, graph)
+        store.set_semantic("user.note.a", "Keyur Golani", 0.9, "user_explicit")
+        service = MemoryService.over_vector_store(store)
+        assert service.graph_recall_evidence("@keyur")
+        assert service.graph_recall_evidence("") == {}
+        store.graph_enabled = False
+        assert service.graph_recall_evidence("@keyur") == {}
+
+    def test_graph_hits_ride_the_existing_recall_counter(self, store, graph):
+        """§2.1 step 4: the graph feeds `heat()` through record_recall — it must not
+        add a parallel promotion path."""
+        _seeded(store, graph)
+        store.set_semantic("user.note.a", "Keyur Golani", 0.9, "user_explicit")
+        before = store.get_semantic("user.note.a")["recall_count"]
+        store.record_recall(["user.note.a"])
+        assert store.get_semantic("user.note.a")["recall_count"] == before + 1
+
+    def test_a_named_entity_outranks_incidental_word_overlap(self, store, graph):
+        """Found by driving real recall: the boost was β·log1p(inbound) ≈ 0.07, which
+        LOST to the ~0.1 an unrelated record earns from stopword overlap ("is", "on").
+        The record about the person asked about ranked third. Naming an entity is a
+        deliberate signal and must clear that noise floor."""
+        graph.upsert_entity("Ana Ortiz", "person", aliases=["Sparrow"])
+        store.invalidate_alias_index()
+        store.set_semantic(
+            "user.note.a", "Ana Ortiz owns the billing rewrite", 0.9, "user_explicit"
+        )
+        store.set_semantic("user.note.z", "coffee machine is on floor three", 0.9, "user_explicit")
+
+        block = store.get_semantic_context(query_text="what is Sparrow working on", cap=900)
+        lines = [ln for ln in block.splitlines() if ln.startswith("user.note")]
+        assert lines and "billing" in lines[0], f"expected the linked record first, got {lines}"
+
+    def test_a_real_keyword_match_still_beats_the_graph(self, store, graph):
+        """The floor must not invert the priority: typed words win."""
+        graph.upsert_entity("Ana Ortiz", "person", aliases=["Sparrow"])
+        store.invalidate_alias_index()
+        store.set_semantic("user.note.a", "Ana Ortiz owns billing", 0.9, "user_explicit")
+        store.set_semantic("user.note.z", "coffee machine on floor three", 0.9, "user_explicit")
+
+        block = store.get_semantic_context(query_text="coffee machine floor", cap=900)
+        lines = [ln for ln in block.splitlines() if ln.startswith("user.note")]
+        assert lines and "coffee" in lines[0]

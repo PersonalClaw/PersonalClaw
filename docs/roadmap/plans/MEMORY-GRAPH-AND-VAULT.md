@@ -455,3 +455,55 @@ errors or tracebacks in the gateway log.
 `test_memory_record.py` (the new capability field) and regenerated the offline
 agent reference (`manifest_reference`) for the five new routes. Full suite 8505
 passed in 48.5s (baseline); lint clean; web typecheck/tests/build clean.
+
+### 2026-07-28 — Session 2 (partial): the graph recall arm (§2.1–2.2) — DONE
+
+The third retrieval arm. `MemoryGraph.resolve_query` / `recall_refs` /
+`recall_evidence`, wired into the hybrid scorer in `get_semantic_context` through
+`VectorMemoryStore._graph_boosts`, plus `MemoryService.graph_recall_evidence`.
+
+**Entity resolution uses the SAME matcher as write time.** Without that symmetry the
+arm would go looking for links the linker never made — the query has to resolve
+exactly the way the record that mentioned the entity did.
+
+**Boosted AND admitted.** A record linked to an entity the query names enters the
+candidate set even when it shares no words with the question. That is the recall
+similarity search structurally cannot reach, and it is the whole point of the arm.
+
+**A REAL RANKING BUG, found by driving recall rather than by unit tests.** §2.1
+specifies the boost as `β·log1p(inbound_count)` with β≈0.1. Implemented literally, a
+lightly-linked entity yields ≈0.069 — which LOSES to the ~0.1 an unrelated record
+earns from incidental stopword overlap ("is", "on"). Asking "what is Sparrow working
+on" returned the record about Sparrow **third**, behind a note about a coffee machine.
+The arm was working and the ranking made it useless. Added `GRAPH_BOOST_FLOOR = 0.25`:
+naming an entity is a deliberate, high-signal act and must clear that noise floor,
+while staying well under what a genuine keyword match scores so typed words still win.
+Both directions are now test-locked
+(`test_a_named_entity_outranks_incidental_word_overlap`,
+`test_a_real_keyword_match_still_beats_the_graph`).
+
+Worth recording as a class: a ranking weight specified in the abstract can be
+arithmetically correct and behaviorally wrong. The only way to find that is to run a
+real query against a real store and look at the ORDER.
+
+**§2.1 step 4 needs no new code** — graph-arm hits flow through the existing
+`record_recall`, so a well-linked record accrues `heat()` and becomes
+`promote_by_heat`-eligible through the normal path. The graph feeds the existing
+promotion math rather than adding a parallel one, which is what the plan asks for.
+
+**§2.2 evidence tags** ship as `recall_evidence` → `{record: [entity names]}`,
+answering "why did recall show me this?". A graph hit that cannot name the entity that
+connected it is an unfalsifiable claim.
+
+Degradation is total and tested: graph off, empty, or raising → `{}` boosts and
+today's vector+keyword behavior exactly.
+
+**NOT in this session:** the push-context reflex (§3), the knowledge-pipeline alias
+pre-pass (§1.3's knowledge side), and the volunteer-stats table — the rest of Session
+2. This slice is the retrieval win and stands alone; the reflex is a separate
+opt-in surface with its own config and restricted-session rules.
+
+Tests: 26 new cases in `tests/test_memory_entity_graph.py` (113 total). Validated as a
+user on an isolated gateway: `/api/memory/recall?q=what+is+Sparrow+working+on` returns
+the linked record FIRST via a nickname sharing no characters with the stored text,
+while `q=coffee+machine+floor` still ranks by words. Full suite 8712 passed; lint clean.

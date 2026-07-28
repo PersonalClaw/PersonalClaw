@@ -718,6 +718,20 @@ class VectorMemoryStore(MemoryProvider):
         """Call after any entity/alias change so the next match sees it."""
         self._alias_generation += 1
 
+    def _graph_boosts(self, query_text: str) -> dict:
+        """Per-record graph boosts for a query, or ``{}`` (MEMORY-GRAPH-AND-VAULT §2.1).
+
+        Best-effort by contract: recall must never fail because the graph is off,
+        empty, or broken — it degrades to today's vector+keyword behavior.
+        """
+        if not query_text or not self.graph_enabled:
+            return {}
+        try:
+            return self.graph.recall_refs(query_text, index=self.alias_index)
+        except Exception:  # noqa: BLE001
+            logger.debug("graph recall arm unavailable", exc_info=True)
+            return {}
+
     def link_written_record(
         self,
         *,
@@ -1315,6 +1329,12 @@ class VectorMemoryStore(MemoryProvider):
                 "WHERE is_deleted = 0 AND " + _NON_FACT_KEY_CLAUSE
             ).fetchall()
 
+            # The graph arm (MEMORY-GRAPH-AND-VAULT §2.1): records linked to entities
+            # the query NAMES. Deterministic, microseconds, and no LLM — its job is to
+            # answer "what do I know about X?" by traversal, catching records whose
+            # wording shares nothing with the question.
+            graph_boosts = self._graph_boosts(query_text)
+
             scored_rows: list[tuple[float, dict]] = []
             for r in all_rows:
                 # Keyword score (always available)
@@ -1343,6 +1363,12 @@ class VectorMemoryStore(MemoryProvider):
                     )
                 else:
                     score = kw_score
+
+                # Graph arm: boost, and ADMIT. A record linked to an entity the query
+                # names is relevant even when it shares no words with it — which is
+                # exactly the recall similarity search cannot reach.
+                boost = graph_boosts.get(r["key"], 0.0)
+                score += boost
 
                 if score > 0:
                     scored_rows.append((score, dict(r)))

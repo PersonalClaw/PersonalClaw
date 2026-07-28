@@ -382,6 +382,20 @@ class MemoryService:
         vs = self._graph_store()
         return vs.graph.reject_proposal(name) if vs else False
 
+    def graph_recall_evidence(self, query_text: str) -> dict:
+        """Which entities connected each graph-surfaced record (§2.2).
+
+        Answers "why did recall show me this?" for the inspect/recall surfaces — a
+        graph hit that can't name its link is an unfalsifiable claim.
+        """
+        vs = self._graph_store()
+        if vs is None or not query_text:
+            return {}
+        try:
+            return vs.graph.recall_evidence(query_text, index=vs.alias_index)
+        except Exception:  # noqa: BLE001
+            return {}
+
     def graph_seed(self) -> dict:
         """Seed entities from facts + knowledge, then link the whole store."""
         vs = self._graph_store()
