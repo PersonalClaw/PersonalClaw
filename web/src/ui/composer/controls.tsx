@@ -65,7 +65,7 @@ export function AgentPill({ data, value, onSelect, openSignal }: { data?: Compos
     .filter(([, agents]) => agents.length > 0)
   const noMatches = nq && native.length === 0 && discovered.length === 0
   return (
-    <Popover width={280} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={<Bot size={16} strokeWidth={2} />} label={value || 'Agent'} open={open} toggle={toggle} />}>
+    <Popover portal width={280} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={<Bot size={16} strokeWidth={2} />} label={value || 'Agent'} open={open} toggle={toggle} />}>
       {(close) => (
         <div className="flex max-h-[340px] flex-col">
           {showSearch && (
@@ -129,7 +129,7 @@ export function ModelPill({ data, agent, value, onSelect, contextPct, openSignal
     ? 'Auto'
     : (data?.models ?? []).find((m) => m.name === value)?.model_name || value
   return (
-    <Popover width={280} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={dot} label={pillLabel} open={open} toggle={toggle} />}>
+    <Popover portal width={280} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={dot} label={pillLabel} open={open} toggle={toggle} />}>
       {(close) => (
         <div className="max-h-[320px] overflow-y-auto">
           <MenuRow icon={<Cpu size={16} />} label="Auto" hint="Use-case chain (Settings → Models)" selected={!value || value === 'Auto'} onClick={() => { onSelect('Auto'); close() }} />
@@ -154,7 +154,7 @@ export function ModelPill({ data, agent, value, onSelect, contextPct, openSignal
 export function ApprovalPill({ value, onSelect }: { value: ApprovalMode; onSelect: (m: ApprovalMode) => void }) {
   const cur = APPROVAL.find((a) => a.id === value) ?? APPROVAL[0]
   return (
-    <Popover width={240} trigger={(open, toggle) => <PillButton icon={<ShieldCheck size={16} strokeWidth={2} />} label={cur.label} open={open} toggle={toggle} />}>
+    <Popover portal width={240} trigger={(open, toggle) => <PillButton icon={<ShieldCheck size={16} strokeWidth={2} />} label={cur.label} open={open} toggle={toggle} />}>
       {(close) => APPROVAL.map((a) => (
         <MenuRow key={a.id} label={a.label} hint={a.hint} selected={a.id === value} onClick={() => { onSelect(a.id); close() }} />
       ))}
@@ -176,7 +176,7 @@ export function ReasoningPill({ value, efforts, onSelect, openSignal }: {
   const rows = [{ value: '', label: 'Default' }, ...efforts]
   const cur = rows.find((e) => e.value === value) ?? rows[0]
   return (
-    <Popover width={180} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={<Gauge size={16} strokeWidth={2} />} label={cur.label} open={open} toggle={toggle} />}>
+    <Popover portal width={180} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={<Gauge size={16} strokeWidth={2} />} label={cur.label} open={open} toggle={toggle} />}>
       {(close) => rows.map((e) => (
         <MenuRow key={e.value || 'default'} label={e.label} selected={e.value === value} onClick={() => { onSelect(e.value as ReasoningEffort); close() }} />
       ))}
@@ -214,7 +214,7 @@ export function PlusMenu({ onAttach, onOpenPrompts, extra }: {
     )
   }
   return (
-    <Popover width={240} trigger={(open, toggle) => (
+    <Popover portal width={240} trigger={(open, toggle) => (
       <button type="button" onClick={toggle} aria-label="Add to message" title="Add"
         aria-expanded={open}
         className={cx('inline-flex items-center justify-center size-10 rounded-pill transition-colors',
