@@ -176,6 +176,26 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   says so plainly instead of quietly doing nothing. New `GET /api/tools/groups` reports
   the partition for anything else that needs it.
 
+### Fixed
+
+- **`personalclaw snapshot` was not backing up everything — and could copy a live
+  database unsafely.** Two real problems, both closed. Your **tasks, projects,
+  autonomous runs, artifacts, prompts, workflows, agents, installed apps, and
+  per-entity settings were in no backup at all** — the snapshot carried a
+  hand-written file list that had drifted from what the app actually stores, so a
+  "full backup" could silently omit your entire task board. And only two of the
+  five databases were copied with SQLite's safe backup API; the rest
+  (knowledge, lexicon, autonomous-run records) were copied as plain files while
+  the gateway held them open, which can capture a half-written database. In a
+  reproduction of that case, a raw copy lost **2000 of 4000 rows**; the fixed path
+  captures all of them.
+  There is now one declared inventory of every store, which the snapshot and the
+  portable export both read — plus a test that fails the build the moment a new
+  store or database is added without being declared, so this can't drift again.
+- **Snapshots of a non-default home no longer land in your real home.** With
+  `PERSONALCLAW_HOME` set, the archive went to `~/.personalclaw/snapshots` anyway,
+  mixing two installs' backups in the directory that retention pruning walks.
+
 ### Changed
 
 - **Breaking-change policy is now written down, and it distinguishes maintainer from

@@ -43,7 +43,14 @@ def _data_filter(info: tarfile.TarInfo, _dest: str = "") -> tarfile.TarInfo | No
 
 
 def _default_snapshot_dir() -> str:
-    """Return snapshot directory from config, falling back to ~/.personalclaw/snapshots."""
+    """The snapshot output directory: config's ``snapshot_dir``, else
+    ``<home>/snapshots``.
+
+    The fallback resolves the ACTIVE home (``PERSONALCLAW_HOME`` when set), not a
+    hardcoded ``~/.personalclaw``. Without that, snapshotting an isolated home
+    wrote its archive into the real one — surprising, and it mixes two installs'
+    backups in the directory that retention pruning then walks.
+    """
     try:
         from personalclaw.config.loader import AppConfig
 
@@ -52,7 +59,7 @@ def _default_snapshot_dir() -> str:
             return str(Path(d).expanduser())
     except Exception:
         pass
-    return str(Path.home() / ".personalclaw" / "snapshots")
+    return str(_pc_dir() / "snapshots")
 
 
 def _audit(event_type: str, resources: str) -> None:
@@ -86,6 +93,76 @@ CORE_FILES: dict[str, tuple[str, ...]] = {
     "notifications": ("notifications.jsonl",),
     "security": ("sel_hmac.key", "telemetry_salt"),
 }
+
+
+def _declared_db_paths() -> tuple[str, ...]:
+    """Home-relative paths of every database the inventory declares.
+
+    A live sqlite database must be copied with the backup API, never by a
+    filesystem copy: the gateway holds these open in WAL mode, so `copy2`/
+    `copytree` can capture a torn page set. Before the inventory, only the two
+    files in ``CORE_FILES["memory"]`` got the safe path — `knowledge.db`,
+    `lexicon.db`, and `loops.db` were inside tree copies and got raw-copied.
+    """
+    try:
+        from personalclaw.durability import inventory as inv
+
+        return tuple(e.path for e in inv.sqlite_entries())
+    except Exception:  # noqa: BLE001 — snapshot must work even if this import breaks
+        return ("memory.db", "memory_index.db")
+
+
+def _safe_copy_db(src: Path, dst: Path) -> bool:
+    """Copy one sqlite file consistently via the backup API. False if it isn't a
+    readable database (caller falls back to a plain copy)."""
+    from contextlib import closing
+
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        with (
+            closing(sqlite3.connect(str(src))) as src_conn,
+            closing(sqlite3.connect(str(dst))) as dst_conn,
+        ):
+            src_conn.backup(dst_conn)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️  sqlite backup failed for {src.name} ({exc}); falling back to a file copy")
+        return False
+
+
+def _tree_ignore_dbs(db_names: set[str]):
+    """A copytree `ignore` that skips database files, so a tree copy never
+    raw-copies a live DB — the safe backup-API pass handles those separately."""
+
+    def _ignore(directory: str, contents: list[str]) -> set[str]:
+        return {n for n in contents if n in db_names or n.endswith((".db-wal", ".db-shm"))}
+
+    return _ignore
+
+
+def _everything_paths(pc: Path) -> list[str]:
+    """Home-relative paths the ``everything`` component adds (DURABILITY §1).
+
+    Derived from :mod:`personalclaw.durability.inventory` — the single manifest of
+    what PersonalClaw's state IS — minus what the named components already stage
+    and minus rebuildable indexes. Before the inventory existed, nine real store
+    directories (tasks, projects, loop, artifacts, prompts, workflows, agents,
+    apps, entity_settings) were covered by NEITHER snapshot nor export; this is
+    the projection that closes that gap without a second hand-written allowlist.
+    """
+    from personalclaw.durability import inventory as inv
+
+    already = {f for files in CORE_FILES.values() for f in files}
+    already |= {"workspace", "plan_memory", "skills"}  # staged as trees below
+    out: list[str] = []
+    for entry in inv.backup_entries():
+        top = entry.path.split("/", 1)[0]
+        if top in already or entry.path in out:
+            continue
+        if (pc / entry.path).exists():
+            out.append(entry.path)
+    return out
+
 
 COMPONENT_HELP = {
     "memory": "memory.db, memory_index.db (semantic, episodic, knowledge graph)",
@@ -200,18 +277,21 @@ def snapshot_main(
         if total_mb > 500:
             print(f"⚠️  ~/.personalclaw is {total_mb:.0f} MB — snapshot may be large and slow")
 
-    # WAL checkpoint
-    if (pc / "memory.db").is_file():
-        try:
-            from contextlib import closing
+    # WAL checkpoint every DECLARED database, not just memory.db. The inventory is
+    # the source of truth for which files are databases, so a store added later is
+    # checkpointed automatically instead of being missed.
+    for _db in _declared_db_paths():
+        if (pc / _db).is_file():
+            try:
+                from contextlib import closing
 
-            with closing(sqlite3.connect(str(pc / "memory.db"))) as c:
-                c.execute("PRAGMA wal_checkpoint(TRUNCATE);")
-        except Exception:
-            print(
-                "⚠️  WAL checkpoint failed (DB may be locked by gateway). "
-                "The backup API still produces a consistent copy."
-            )
+                with closing(sqlite3.connect(str(pc / _db))) as c:
+                    c.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            except Exception:
+                print(
+                    f"⚠️  WAL checkpoint failed for {_db} (may be locked by the "
+                    "gateway). The backup API still produces a consistent copy."
+                )
 
     with tempfile.TemporaryDirectory() as work:
         stage = Path(work) / name
@@ -237,13 +317,35 @@ def snapshot_main(
                     else:
                         shutil.copy2(str(src), str(stage / f))
 
-        # Workspace (exclude hygiene_data, insert_facts*.py)
+        # Every DECLARED database, copied consistently via the sqlite backup API.
+        # This runs BEFORE the tree copies (which skip *.db, see _tree_ignore_dbs)
+        # so a live database is never captured as a raw file. Fixes the
+        # knowledge.db / lexicon.db / loops.db raw-copy hazard.
+        _db_paths = _declared_db_paths()
+        _db_names = {PurePosixPath(p).name for p in _db_paths}
+        for _db in _db_paths:
+            _src_db = pc / _db
+            if not _src_db.is_file() or os.path.islink(_src_db):
+                continue
+            if not _safe_copy_db(_src_db, stage / _db):
+                (stage / _db).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(_src_db), str(stage / _db))
+
+        # Workspace (exclude hygiene_data, insert_facts*.py, and any database —
+        # those were staged above through the backup API).
         if (pc / "workspace").is_dir():
+            _pattern_ignore = shutil.ignore_patterns("hygiene_data", "insert_facts*.py")
+
+            def _ws_ignore(directory: str, contents: list[str]) -> set[str]:
+                return set(_pattern_ignore(directory, contents)) | _tree_ignore_dbs(_db_names)(
+                    directory, contents
+                )
+
             _copytree_safe(
                 pc / "workspace",
                 stage / "workspace",
                 dirs_exist_ok=True,
-                ignore=shutil.ignore_patterns("hygiene_data", "insert_facts*.py"),
+                ignore=_ws_ignore,
             )
 
         # Plan memory
@@ -253,6 +355,27 @@ def snapshot_main(
         # Skills
         if (pc / "skills").is_dir():
             _copytree_safe(pc / "skills", stage / "skills", dirs_exist_ok=True)
+
+        # THE GAP CLOSURE (DURABILITY §1): every remaining inventory entry. Before
+        # this, tasks/, projects/, loop/, artifacts/, prompts/, workflows/,
+        # agents/, apps/ and entity_settings/ were in NEITHER the snapshot nor the
+        # export — a "full backup" that silently dropped a user's whole task board.
+        # Driven off the inventory so a store added later is captured by default.
+        staged_extra: list[str] = []
+        for rel in _everything_paths(pc):
+            src = pc / rel
+            if os.path.islink(src):
+                print(f"⚠️  Skipping symlinked state path: {rel}")
+                continue
+            if src.is_dir():
+                _copytree_safe(
+                    src, stage / rel, dirs_exist_ok=True, ignore=_tree_ignore_dbs(_db_names)
+                )
+                staged_extra.append(rel)
+            elif src.is_file():
+                (stage / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(src), str(stage / rel))
+                staged_extra.append(rel)
 
         # Manifest
         ws_files = sum(1 for _ in (stage / "workspace").rglob("*") if _.is_file())
