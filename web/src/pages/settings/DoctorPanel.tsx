@@ -3,6 +3,7 @@ import { RefreshCw, ChevronRight, CheckCircle2, AlertTriangle, XCircle, Wrench }
 import { api, type DoctorReport, type DoctorCapability, type DoctorProbe, type RemediationSnapshot } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { confirm } from '../../ui/dialog'
+import { InvestigateButton } from '../../ui/InvestigateButton'
 import { PanelHeader, Section } from './settingsUI'
 import { Button } from '../../ui/Button'
 import { FormSkeleton } from '../../ui/ListScaffold'
@@ -159,6 +160,12 @@ function CapabilityCard({ name, cap, onFixed }: { name: string; cap: DoctorCapab
         {!cap.ok && (
           <span className="text-on-surface-low text-[0.75rem]">· failed at tier {cap.tier}</span>
         )}
+        {/* Investigate (plan 60): re-runs this capability's read-only probes and
+            opens a chat with the findings + any offered fix's dry-run preview —
+            discussing a fix, never applying one. */}
+        <span className="ml-auto">
+          <InvestigateButton kind="doctor_finding" id={name} backLink="#/settings/doctor" size={28} />
+        </span>
       </div>
       <div className="mt-2 flex flex-col gap-1.5">
         {cap.probes.map((p) => <ProbeRow key={p.id} probe={p} onFixed={onFixed} />)}

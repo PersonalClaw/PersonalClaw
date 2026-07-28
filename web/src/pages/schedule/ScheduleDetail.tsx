@@ -4,6 +4,7 @@ import { Button } from '../../ui/Button'
 import { FormFooter } from '../../ui/FormFooter'
 import { TextLink } from '../../ui/TextLink'
 import { Toggle } from '../../ui/Toggle'
+import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { confirmDelete } from '../../ui/dialog'
 import { api, type ScheduleJob, type ScheduleRun } from '../../lib/api'
@@ -275,6 +276,16 @@ function RunHistory({ jobId, reloadKey = 0 }: { jobId: string; reloadKey?: numbe
                 {r.trigger === 'replay' && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-info text-[0.75rem]">dry run</span>}
                 <span className="shrink-0 text-on-surface-low text-[0.75rem]">{relPast(r.started_at ?? r.finished_at)}</span>
               </button>
+              {/* Investigate (plan 60) — "why did this run fail?" with the job's
+                  cadence + action + this run's trace already in context. Only for
+                  rows carrying a real run_id: legacy rows fall back to the array
+                  index, which addresses nothing server-side. */}
+              {r.run_id && (
+                <div className="flex justify-end px-m pb-1.5" onClick={(e) => e.stopPropagation()}>
+                  <InvestigateButton kind="schedule_run" id={`${jobId}:${r.run_id}`}
+                    backLink={`#/triggers?open=schedule:${jobId}`} size={28} />
+                </div>
+              )}
               {expanded && <RunTrace jobId={jobId} runId={id} preview={r} />}
             </div>
           )

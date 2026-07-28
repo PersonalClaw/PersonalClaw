@@ -154,6 +154,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   can be model-summarized with a guaranteed deterministic fallback (never wired into
   the synchronous tool path).
 
+- **"Investigate in chat" is now on everything worth asking about.** The affordance
+  that shipped for inbox items and loop findings now covers eleven more kinds:
+  notifications, tasks, schedule runs, triggers, loop cycles, knowledge items, memory
+  records and lessons, Doctor findings, crash reports, and audit events. One click opens
+  a read-only chat already carrying that entity's context, with the question already
+  written for you.
+  Failures get the richest context, which is the point: investigating a failed cron or
+  loop notification pulls in **the run it's about** — its task, status, latest finding,
+  the job's cadence and consecutive-failure count — and asks "why did this fail?".
+  A Doctor finding re-runs its probes and brings the offered fix's *dry-run preview*
+  (never applying it). A learned lesson brings its provenance and the chain of beliefs
+  it replaced, and asks "why do you believe this?". An audit entry brings the other
+  entries from the same approval flow, so one decision reads as one story.
 - **Tool groups are now visible, and they hide what can't work.** The Tools page shows
   the group partition — every group with its tool count, which ones are always loaded,
   and what each kind of session starts with — plus the switch to turn grouping on or

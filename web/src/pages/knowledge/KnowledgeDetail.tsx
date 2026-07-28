@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Pencil, Trash2, Check, X, ExternalLink, Sparkles, Layers, Loader2, Pin, Archive, Download, Target, Maximize2, Wand2, ChevronDown, WifiOff, RefreshCw } from 'lucide-react'
+import { Pencil, Trash2, Check, X, ExternalLink, Sparkles, Layers, Loader2, Pin, Archive, Download, Target, Maximize2, Wand2, ChevronDown, WifiOff, RefreshCw, MessageCircleQuestion } from 'lucide-react'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
+import { investigate } from '../../lib/investigate'
 import { Markdown } from '../../ui/Markdown'
 import { ChipInput } from '../../ui/forms'
 import type { KnowledgeItem, IntentOutcome, IntentOutcomeField } from '../../lib/api'
@@ -190,6 +191,11 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
       ) : (
         <HeaderControl icon={Pencil} label="Edit" variant="primary" priority="primary" onClick={startEdit} />
       )}
+      {/* Investigate (plan 60) — the shared primitive, rendered as a HeaderControl
+          so it inherits this header's 4-tier responsive collapse (an icon button
+          here would sit outside the overflow logic). */}
+      <HeaderControl icon={MessageCircleQuestion} label="Investigate in chat" priority="low"
+        onClick={() => { void investigate('knowledge_item', full.id, { backLink: `#/knowledge/item/${full.id}` }) }} />
       <HeaderControl icon={Pin} label={full.is_pinned ? 'Pinned' : 'Pin'} active={full.is_pinned} onClick={() => toggleFlag('is_pinned')} />
       <HeaderControl icon={Archive} label={full.is_archived ? 'Archived' : 'Archive'} active={full.is_archived} onClick={() => toggleFlag('is_archived')} />
       {onShowDetails && (

@@ -16,6 +16,7 @@ import { ListSkeleton, FormSkeleton } from '../../ui/ListScaffold'
 import { TextInput } from '../../ui/forms'
 import { SearchField } from '../../ui/SearchField'
 import { SquareIconButton } from '../../ui/SquareIconButton'
+import { InvestigateButton } from '../../ui/InvestigateButton'
 import { TextLink } from '../../ui/TextLink'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
@@ -365,6 +366,15 @@ function StudioInspector({ item, onDelete, onSaved }: { item: StudioItem; onDele
       <div className="flex items-center gap-2 border-b border-outline-variant/30 px-3 py-2.5">
         <Icon size={14} className="shrink-0 text-primary" />
         <span className="min-w-0 flex-1 truncate font-mono text-on-surface text-[0.8125rem]">{item.title}</span>
+        {/* Investigate (plan 60): "why do you believe this?" for a lesson (its
+            provenance + supersession chain), "is this still true?" for a record.
+            Docs are editable markdown, not stored memories — nothing to resolve. */}
+        {(item.kind === 'lesson' || item.kind === 'fact' || item.kind === 'episodic') && (
+          <InvestigateButton
+            kind={item.kind === 'lesson' ? 'memory_lesson' : 'memory_record'}
+            id={item.kind === 'lesson' ? (item.lesson?.rule ?? '') : (item.fact?.key ?? item.episodic?.id ?? '')}
+            backLink="#/settings/memory" size={28} />
+        )}
         {item.kind !== 'doc' && (
           <SquareIconButton icon={Trash2} iconSize={13} tone="danger" label="Delete" onClick={onDelete} className="shrink-0" />
         )}

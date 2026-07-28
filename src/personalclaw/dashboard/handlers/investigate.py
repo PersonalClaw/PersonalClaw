@@ -41,7 +41,7 @@ async def api_investigate(request: web.Request) -> web.Response:
             {"error": {"code": "bad_request", "message": "kind + id required"}}, status=400
         )
     try:
-        ctx = inv.resolve(kind, entity_id, state)
+        ctx = await inv.resolve(kind, entity_id, state)
     except KeyError:
         return web.json_response(
             {

@@ -4,6 +4,7 @@ import { Bell, Check, CheckCheck, Trash2, Undo2, X, Target } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
+import { InvestigateButton } from '../../ui/InvestigateButton'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { SidePanel } from '../../ui/SidePanel'
@@ -176,6 +177,9 @@ function Row({ n, index, now, onOpen, onAck, onUnack, onDelete }: { n: Notificat
         <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{firstLine(n.body)}</p>
       </div>
       <div className="shrink-0 flex items-center opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+        {/* Investigate (plan 60): a failure notification carries the link to what
+            failed, so the chat opens with the run/job state already resolved. */}
+        <InvestigateButton kind="notification" id={n.ts} backLink="#/notifications" size={34} />
         {n.acked
           ? <IconButton icon={Undo2} label="Mark unread" size={34} onClick={onUnack} />
           : <IconButton icon={Check} label="Mark read" size={34} onClick={onAck} />}
