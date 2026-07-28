@@ -55,6 +55,10 @@ to them.
   `apps/` bundles) — the core stays provider-agnostic. Port features from other
   tools as end-behavior native to PersonalClaw's entity/provider model, not as
   translations. The `web/` app is the only frontend for new UI.
+  **Who breaks what** — clean break is a *maintainer* license, not a contributor
+  expectation. See [Breaking changes](#breaking-changes) below: during 0.x the
+  maintainer will land breaking, backward-incompatible architectural changes
+  without migrations; a contributor PR is not expected to, and shouldn't need to.
 - **Implementation owns product too** — user flows, UX, and look-and-feel are
   in scope for every change, not just function. A feature isn't done when the
   endpoint works; it's done when a user can find it, use it, and understand it.
@@ -69,6 +73,51 @@ to them.
 - **Judge by code truth, not banners** — status text in plans and docs goes
   stale; verify against the actual code before deciding something is or isn't
   done.
+
+## <a name="breaking-changes"></a>Breaking changes: who makes them, and what you should do
+
+PersonalClaw is pre-1.0 and deliberately still moving its architecture. Two
+different standards apply depending on who is making the change — this is the
+one place in the doctrine where maintainer and contributor expectations differ,
+so it's worth stating plainly.
+
+**The maintainer will make breaking changes.** While the project works through
+the roadmap's architectural program, the maintainer lands backward-incompatible
+clean breaks where a better design requires one: state shapes change, stores get
+rewritten, endpoints and config fields are replaced outright, and there is **no
+automatic migration** of existing `~/.personalclaw` data. Release notes advise
+`personalclaw snapshot`, and the README carries the standing pre-1.0 warning.
+This is a decision, not an oversight: carrying compatibility shims through a
+half-built architecture is how projects calcify around designs they meant to
+replace. The migration-backed regime — gate → dual-path → migrate → cleanup —
+arrives with the [lifecycle doctrine](docs/roadmap/plans/LIFECYCLE-DOCTRINE.md),
+which is **deliberately scheduled near the end of the roadmap**, once the
+architecture is stable. Until it lands, assume no plan file's gate/migration
+machinery exists yet.
+
+**You are not expected to make breaking changes.** Nothing about the above asks
+a contributor to break compatibility, and a PR that does will usually be asked
+to change course. Write your contribution as though the lifecycle doctrine were
+already in force:
+
+- **Additive by default.** New config fields get defaults; new endpoints sit
+  beside existing ones; a missing persisted field reads as today's behavior.
+- **Don't invent gate or migration machinery.** There is no `lifecycle/` package
+  yet, and hand-rolled versioning/migration helpers will be rejected — they'd
+  have to be removed when the real mechanism lands. If a change seems to *need*
+  one, that's the signal to stop and ask.
+- **Flag it instead of doing it.** If the clean fix genuinely requires changing
+  a persisted shape, a public route contract, or a stored credential/state
+  format, say so in an issue (or in the PR description under a clear
+  "breaking change" heading) and let the maintainer decide whether to take it as
+  a clean break, reshape it additively, or schedule it. Surfacing the tension is
+  the contribution; you don't need to resolve it alone.
+- **A rejected breaking change is not a rejected idea.** The usual outcome is
+  that the maintainer lands the breaking part on their side and your PR keeps
+  the rest.
+
+If you're unsure which side of the line a change falls on, open an issue first —
+that costs one round trip and saves a rewrite.
 
 ## Development setup
 
