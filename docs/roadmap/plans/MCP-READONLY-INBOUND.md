@@ -222,3 +222,67 @@ tools.
 transport, peer policy, caps, fencing, audit, config wiring). Named for the surface
 rather than the plan's suggested `test_inbound_auth.py` since it covers all six
 modules. Full suite green; lint clean.
+
+### 2026-07-28 — Session 2 (T2.1–T2.5, V2 partial): DONE
+
+The six-tool table (`memory_recall`, `knowledge_search`, `tasks_list`, `task_get`,
+`sessions_search`, `status`) on the Session-1 substrate. Read-only by CONSTRUCTION:
+every handler calls a read path and returns text, there is no dispatcher to a generic
+tool surface, so no inbound request can reach a write, an install, or a config change.
+
+**T2.1 — the memory restriction gate: located, and it does NOT apply here.** The plan
+says "verify the gate location and reuse it". Verified: the temporary/incognito
+restriction is not inside `recall_with_provenance` — it is `_blocks_reads_session` at
+the dashboard endpoint, which reads an `X-Session-Key` header and asks whether *that
+session* may read memory. It is strictly per-session (a temporary session is denied its
+own context so the thread starts blank), not an instance-wide memory lock. An inbound
+MCP call is a separate caller with no session, so no session's restriction can apply.
+Blocking inbound recall whenever some unrelated temporary chat happened to be open
+would misread the mechanism and make an IDE's lookups fail for invisible reasons. What
+gates this surface is its own switch: the endpoint is unmounted unless the owner enabled
+it and minted a token. Recorded in the handler docstring, because "the gate is honored"
+and "the gate does not apply" look identical in a diff.
+
+**T2.3 — a REAL credential leak, found by the redaction test.** `sessions_search`
+correctly routes through `redact_credentials`… which did not recognize LLM provider API
+keys at all. Its pattern set covered AWS, Slack and PEM blocks; an `sk-ant-api03-…` key
+pasted into a chat passed straight through. Added Anthropic, OpenAI (classic + project),
+GitHub and Google patterns to `_CREDENTIAL_PATTERNS` in `security.py`. This fixes every
+surface that redacts on the way out, not just this one — the same function guards
+session-archive reads and dashboard titles. Verified all five new shapes redact, the
+pre-existing AWS/Slack ones still do, and benign text plus short strings are untouched.
+
+**Two of my own tests were wrong before the code was.** Both "leak" assertions searched
+for a word that also appears in the ECHOED QUERY (`No conversations matched
+'pineapple'.`), so they would have passed or failed for the wrong reason. Rewritten to
+assert on the session key and to require the session actually be FOUND first —
+a redaction test that passes because nothing matched proves nothing.
+
+**T2.5 fencing meta-test** iterates the REAL `TOOLS` table rather than a fixture list,
+so a tool added later that bypassed `wrap_result` fails it. A companion test asserts the
+arg table covers every registered tool, so a new tool cannot be silently skipped by the
+meta-test itself.
+
+**Arg validation (§C3):** unknown args are NAMED and refused (a typo'd `quesry` that
+silently returned everything looks like a bug in the answer, not the call); wrong types
+refused, including `True` for a limit, since bool is an int in Python and a
+flag-by-mistake should be told; out-of-range limits CLAMP, because optimism is not an
+error and the cap is ours to enforce anyway.
+
+**T2.4 boundary descriptions:** the memory/knowledge tools each name the other, so a
+model reaching for "the user's documents" does not get the assistant's internal recall.
+Test-locked.
+
+**V2 status:** exercised over the real transport end-to-end with `curl` — `tools/list`
+advertises all six, `status`/`memory_recall`/`sessions_search`/`tasks_list` return real
+fenced data, and bad args come back as JSON-RPC `-32602`. The plan's V2 also asks for a
+real MCP *client* (an IDE or inspector) to drive it; that needs an interactive client
+this session cannot install, so it stays an owner task — the protocol surface itself is
+proven.
+
+**T2.6 (`docs/guides/use-from-your-ide.md`) NOT written** — it documents connecting a
+real client, and writing client-config instructions nobody has executed would be
+guessing. It belongs with the owner's V2 client validation.
+
+Tests: 30 new cases in `tests/test_inbound_mcp.py` (82 total). Full suite 8731 passed
+(no fallout from the shared `security.py` change); lint clean.
