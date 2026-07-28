@@ -561,10 +561,28 @@ def dirty_entries(home: Path, state_path: Path) -> list[str]:
 
 
 def _fingerprint(path: Path) -> str:
-    """A cheap change fingerprint: newest mtime + total size beneath ``path``."""
+    """A cheap change fingerprint: newest mtime + total size beneath ``path``.
+
+    For a SQLite file the ``-wal`` and ``-shm`` sidecars are folded in. Every store
+    here runs in WAL mode, where a committed write lands in the sidecar and may not
+    touch the main file for a long time — so fingerprinting the ``.db`` alone reports
+    "unchanged" through an entire session of writes, and the incremental export
+    silently backs up nothing. Found by writing a fact and watching the fingerprint
+    not move.
+    """
     if path.is_file():
         stat = path.stat()
-        return f"{stat.st_mtime_ns}:{stat.st_size}"
+        newest = stat.st_mtime_ns
+        total = stat.st_size
+        for suffix in ("-wal", "-shm"):
+            sidecar = path.with_name(path.name + suffix)
+            try:
+                side_stat = sidecar.stat()
+            except OSError:
+                continue
+            newest = max(newest, side_stat.st_mtime_ns)
+            total += side_stat.st_size
+        return f"{newest}:{total}"
     newest = 0
     total = 0
     count = 0

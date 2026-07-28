@@ -1808,6 +1808,45 @@ class ProjectionRuleConfig:
 
 
 @dataclass
+class DurabilityConfig:
+    """Scheduled backup + retention + drills (DURABILITY-AND-SYNC §3)."""
+
+    auto_backup: bool = field(
+        default=True,
+        metadata=_meta(
+            "Automatic backups",
+            "Take a nightly snapshot and an hourly incremental export in the "
+            "background, so losing work never depends on remembering to run a "
+            "backup. Off means backups only happen when you run them by hand.",
+        ),
+    )
+    keep_daily: int = field(
+        default=14,
+        metadata=_meta(
+            "Keep daily snapshots",
+            "How many days of nightly snapshots to retain before thinning to " "weeklies.",
+        ),
+    )
+    keep_weekly: int = field(
+        default=8,
+        metadata=_meta("Keep weekly snapshots", "How many weeks to keep one snapshot each."),
+    )
+    keep_monthly: int = field(
+        default=12,
+        metadata=_meta("Keep monthly snapshots", "How many months to keep one snapshot each."),
+    )
+    restore_drills: bool = field(
+        default=True,
+        metadata=_meta(
+            "Monthly restore drill",
+            "Once a month, restore the newest snapshot into a temporary directory "
+            "and verify it — a backup nobody has restored is a hope, not a backup. "
+            "Never touches live data; reports pass or fail.",
+        ),
+    )
+
+
+@dataclass
 class InboundSurfaceConfig:
     """One inbound surface's switches (MCP-READONLY-INBOUND §C4).
 
@@ -2112,6 +2151,10 @@ class AppConfig:
             "Defaults to ~/.personalclaw/snapshots if empty.",
         ),
     )
+    durability: "DurabilityConfig" = field(
+        default_factory=lambda: DurabilityConfig(),
+        metadata=_meta("Durability", "Scheduled backups, retention, and restore drills."),
+    )
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -2160,6 +2203,7 @@ class AppConfig:
             tools_data = {}
         feedback_data = data.get("feedback", {})
         inbound_data = data.get("inbound", {}) or {}
+        durability_data = data.get("durability", {}) or {}
         if not isinstance(feedback_data, dict):
             feedback_data = {}
         agents_routing_data = data.get("agents_routing", {})
@@ -2361,6 +2405,15 @@ class AppConfig:
             auto_update=data.get("auto_update", True),
             timezone=data.get("timezone", ""),
             snapshot_dir=data.get("snapshot_dir", ""),
+            durability=DurabilityConfig(
+                # Guard polarity: losing scheduled backups because a value was
+                # unreadable is the failure this whole plan exists to prevent.
+                auto_backup=_guard_flag(durability_data.get("auto_backup")),
+                keep_daily=_safe_int(durability_data.get("keep_daily"), 14),
+                keep_weekly=_safe_int(durability_data.get("keep_weekly"), 8),
+                keep_monthly=_safe_int(durability_data.get("keep_monthly"), 12),
+                restore_drills=_guard_flag(durability_data.get("restore_drills")),
+            ),
             inbox=InboxConfig(
                 enabled=bool(inbox_data.get("enabled", False)),
                 user_id=str(inbox_data.get("user_id", "")),
@@ -2670,6 +2723,7 @@ class AppConfig:
             "timezone": self.timezone,
             "auto_update": self.auto_update,
             "snapshot_dir": self.snapshot_dir,
+            "durability": asdict(self.durability),
             # Channel-agnostic observe-buffer sizing — top-level keys (Slack config
             # lives in the slack-channel app's own store, not here).
             "observe_max_messages": self.observe_max_messages,

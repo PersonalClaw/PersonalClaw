@@ -800,6 +800,8 @@ class DashboardState:
         self._approval_futures: dict[str, asyncio.Future] = {}  # type: ignore[type-arg]
         self._flush_task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._upload_sweep_task: asyncio.Task | None = None  # type: ignore[type-arg]
+        # Scheduled-backup service (DURABILITY-AND-SYNC §3); held to prevent GC.
+        self._durability_svc: object | None = None
         self._engagement_store: "EngagementStore | None" = None  # lazily built (inbox ranking)
         # Update progress tracking (shared across all connected clients)
         self._update_progress: dict[str, str] | None = None  # {step, detail}

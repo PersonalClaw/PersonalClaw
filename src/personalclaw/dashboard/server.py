@@ -384,6 +384,12 @@ async def start_dashboard(
     app.router.add_get("/api/auth-status", handlers.api_auth_status)
     app.router.add_get("/api/onboarding", handlers.api_onboarding)
     # Doctor — tiered read-only health probes (PLATFORM-RESILIENCE §1)
+    # DURABILITY-AND-SYNC §3 — scheduled-backup status, the archive list with its
+    # retention plan, and on-demand jobs. Restore is deliberately NOT here (see the
+    # handler module docstring).
+    app.router.add_get("/api/durability/status", handlers.api_durability_status)
+    app.router.add_get("/api/durability/snapshots", handlers.api_durability_snapshots)
+    app.router.add_post("/api/durability/run", handlers.api_durability_run)
     app.router.add_get("/api/doctor", handlers.api_doctor)
     # Specific GET sub-paths BEFORE the {capability} catch-all (aiohttp matches in
     # registration order — otherwise "fixes"/"crash"/"remediation" bind as a capability).
@@ -1604,6 +1610,18 @@ async def start_dashboard(
     # Sweep abandoned resumable-upload session dirs (partial parts) so a never-
     # finished large upload can't pin disk forever.
     state._upload_sweep_task = asyncio.create_task(_upload_sweep_loop())  # prevent GC
+
+    # Scheduled backups (DURABILITY-AND-SYNC §3): nightly snapshot with tiered
+    # retention, hourly incremental shard export, monthly restore drill. Started
+    # here so durability never depends on remembering to run a command; the drill
+    # reports through state.notify so a FAILED one is a warning the user sees.
+    try:
+        from personalclaw.durability.service import DurabilityService
+
+        state._durability_svc = DurabilityService(notifier=state.notify)  # prevent GC
+        await state._durability_svc.start()
+    except Exception:
+        logger.warning("Durability service failed to start", exc_info=True)
 
     # Start periodic flush loop for crash protection (saves dirty sessions every 5s)
     state.start_flush_loop()
