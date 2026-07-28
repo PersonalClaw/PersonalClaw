@@ -1386,7 +1386,9 @@ export const api = {
   deleteLesson: (rule: string) => fetch('/api/lessons', { method: 'DELETE', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ rule }) }).then(j<{ ok: boolean }>),
 
   // ── Full-text conversation search (over persisted JSONL content) ──
-  sessionsSearch: (q: string) => get<{ sessions: Array<{ key: string; title?: string; messages?: number }> }>(`/api/sessions/search?q=${encodeURIComponent(q)}`).then((d) => d.sessions),
+  // `snippet` carries the matching passage with `<<`/`>>` around the matched terms
+  // (present on FTS-index hits; absent when the linear-scan fallback answered).
+  sessionsSearch: (q: string) => get<{ sessions: Array<{ key: string; title?: string; messages?: number; snippet?: string }>; source?: string }>(`/api/sessions/search?q=${encodeURIComponent(q)}`).then((d) => d.sessions),
 
   // ── Background subagents monitor (spawned by crons / loops / Slack) ──
   spawnedAgents: () => get<{ agents: SpawnedAgent[] }>('/api/spawn').then((d) => d.agents),

@@ -93,3 +93,79 @@ GET /api/chat/sessions/{session}/export?format=md|json   # credential-redacted (
 - **Search-index build cost** on a large existing history — `reindex_all` runs incrementally on the heartbeat (not a boot-blocking sweep); a fixture with thousands of sessions is the test.
 - **Redaction completeness on export** — reuses `history.py`'s existing redaction (the same path session-archive reads use); a seeded-secret fixture proves it.
 - **Open:** whether templates should capture *loaded skills/knowledge context* too — defer to a v2 (starters cover the 80%); DISCOVERY-file if demand appears.
+
+---
+
+## Execution log
+
+### 2026-07-28 — Session 1 (T1.1, T1.2 + V1): DONE. T1.3 re-scoped — see below.
+
+New `session_search.py`: an FTS5 index over session transcripts with `index_turn` on
+turn-write, `search_sessions`, and an incremental `reindex_all` on the heartbeat.
+Replaces a linear scan that read up to 500 transcript files per query and silently
+stopped finding anything past that window.
+
+**DEVIATION (E1) — `sqlite_compat` does not exist.** §C1 specifies "FTS5 via
+`sqlite_compat` per plan 39". That module has never been written: it appears only as
+aspirational text in PLATFORM-REACH and in this plan's own §C1/§C3. Rather than
+build a compat layer this plan doesn't own, availability is handled the way the rest
+of the repo already handles it — `except sqlite3.OperationalError` around table
+creation and queries, returning empty so the caller falls back. Verified by
+simulating an FTS5-less SQLite build in a test. When PLATFORM-REACH lands
+`sqlite_compat`, this is a one-line swap.
+
+**DEVIATION — a session-grained index, not a turn-grained one.** §C1's `index_turn`
+signature is preserved, but the turn's own text is not what gets stored: the whole
+transcript is re-read and the session's single row replaced. Reason:
+`_save_session_to_history` REWRITES the entire JSONL on every turn, so appending
+per-turn rows would drift out of sync with the file it's supposed to mirror. One row
+per session also makes `snippet()` return the best-matching passage from the whole
+conversation instead of an arbitrary turn.
+
+**Restricted-session exclusion is enforced at three points**, not one: when indexing
+(the persisted `memory_mode` and the live registry), when re-indexing (a
+now-restricted session is purged), and again at READ time. The read-time check is
+what makes a session hidden the instant it's reclassified, rather than at the next
+sweep.
+
+**T1.3 (sidebar windowing) — RE-SCOPED, and the premise was wrong.** The task says
+"the sidebar gains a search box… the list is already ListScaffold-based — verify +
+add windowing". **There is no chat sidebar**: `ChatPage.tsx:350` documents "No left
+sidebar" explicitly. The session list lives in `ChatHistoryPage` (a dedicated
+`#/chat/history` page), which already HAS a search box wired to
+`/api/sessions/search` with a 300ms debounce — so T1.2's "add a search box" was
+already built. What was missing is *why* a result matched: the page discarded
+everything but the keys. It now renders the index's snippet under the title with the
+matched terms marked. Windowing is deferred to Session 2 with a measurement first —
+the page renders plain rows and the honest answer is that nobody has shown it janks;
+adding virtualization to an un-profiled list is speculative work, and Session 2
+already owns that page for bulk actions.
+
+**Two bugs found by driving a real gateway with 120 seeded sessions** (neither
+visible to unit tests):
+
+1. **A fresh install had no index for five minutes.** `HeartbeatService._tick` starts
+   at 1, so `_tick % 5 == 0` first fires on tick 5 — exactly the window where a new
+   user tries search and finds the narrow scan. The sweep now also runs on tick 1.
+   (Worth noting the same off-by-cadence affects the pre-existing tick-15 FTS
+   rebuild; left alone as out of scope, but it's the same shape.)
+2. **The fallback scan leaked restricted sessions.** `ConversationLog.search_sessions`
+   checked only the persisted `memory_mode`, so a session marked incognito AFTER some
+   lines were written — its metadata still saying "persistent" — was returned in
+   content search. This is a PRE-EXISTING gap, not introduced here, but the new
+   endpoint made it observable: the index correctly excluded the session while the
+   scan surfaced it. Both paths now consult the live registry too.
+
+**V1 validated as a user** (isolated dev home, 120 seeded sessions + a needle):
+first-tick index build; `source: index` with a `<<pomegranate>>`-marked snippet in
+**31ms**; a session marked incognito after the fact refused by BOTH the index and the
+scan; zero errors in the gateway log. The endpoint now reports which path answered
+(`source: index|scan`), which is what made the leak visible in the first place.
+
+**Snippets are rendered as parsed parts, never HTML** — the text is user-authored
+transcript content, so `<<`/`>>` markers are split into marked spans rather than
+injected as markup; an unpaired marker degrades to plain text.
+
+Tests: `tests/test_session_search.py`, 56 cases. Full suite 8631 passed; lint clean;
+web typecheck + 268 vitest + build green. **Remaining: Sessions 2-4** (organization/
+bulk/auto-archive, templates, export) — separate clean sub-scopes, not started.

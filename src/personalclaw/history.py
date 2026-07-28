@@ -45,6 +45,23 @@ _TITLE_BOOST = 10  # field-boost multiplier for title matches in search_sessions
 _SEARCH_SCAN_WINDOW = 500  # cap files scanned per search to bound I/O
 
 
+def _live_restricted(session_key: str) -> bool:
+    """Whether the in-process registry currently marks this session restricted.
+
+    Complements the persisted `memory_mode`: a session marked incognito after some
+    of its lines were written still reads as "persistent" on disk, so checking only
+    the metadata would let content search surface it.
+    """
+    if not session_key:
+        return False
+    try:
+        from personalclaw import session_restrictions
+
+        return bool(session_restrictions.is_restricted(session_key))
+    except Exception:  # noqa: BLE001 — an unavailable registry must not open the gate
+        return False
+
+
 def _sessions_dir() -> Path:
     return config_dir() / SESSIONS_DIR_NAME
 
@@ -427,7 +444,13 @@ class ConversationLog:
         for rank, meta in enumerate(self.list_sessions()[:_SEARCH_SCAN_WINDOW]):
             # Restricted (incognito/temporary) sessions promise to stay out of
             # history — they must not be discoverable through content search.
+            # Both sources are consulted: the persisted mode survives a restart,
+            # while the live registry knows about a session marked restricted AFTER
+            # its transcript lines were already written (the metadata still says
+            # "persistent" in that window, so the mode alone would leak it).
             if meta.get("memory_mode") in ("incognito", "temporary"):
+                continue
+            if _live_restricted(meta.get("key", "")):
                 continue
             path = self._path(meta["key"])
             content_hits = 0

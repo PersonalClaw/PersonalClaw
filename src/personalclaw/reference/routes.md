@@ -388,7 +388,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/sessions/retag-all` — the current/last job (for UI hydration).
 - `POST /api/sessions/retag-all` — start (or return) the batch re-tag job.
 - `POST /api/sessions/retag-all/cancel` — cancel the in-flight job.
-- `GET /api/sessions/search` — content search over session JSONL files.
+- `GET /api/sessions/search` — content search across session transcripts.
 - `GET /api/sessions/{id}/agents` — list sub-agent results for a session.
 - `GET /api/sessions/{id}/agents/{agent_id}` — read sub-agent result.
 - `GET /api/sessions/{id}/agents/{agent_id}/stream` — SSE stream of result file.
