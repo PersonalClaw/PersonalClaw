@@ -105,6 +105,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   > **Note (0.x clean break):** this adds tables to `memory.db` (schema v7). Old
   > stores upgrade in place on first run with no data loss and nothing to migrate;
   > consider `personalclaw snapshot` beforehand, per the pre-1.0 banner.
+- **Your IDE can now actually ask your assistant things.** The MCP endpoint ships with
+  six read-only tools: recall what the assistant remembers, search your saved documents,
+  list or read a task, search past conversations by what was said, and check what the
+  instance can currently do. Every answer is wrapped as data rather than instructions,
+  conversation results are credential-redacted, and temporary or incognito chats are
+  never searchable. There is no path from any of these to a write — the tool list is
+  short and hand-written precisely so that stays true.
+
+  **Security fix found while building it:** credential redaction did not recognize LLM
+  provider API keys. Anthropic, OpenAI, GitHub, and Google keys pasted into a chat were
+  invisible to the redactor, so they could survive into anything that strips secrets on
+  the way out — session-search results and conversation titles included. All of those
+  key shapes are now redacted everywhere redaction applies.
 - **Point your IDE at your assistant: a read-only MCP endpoint.** PersonalClaw can
   now answer questions from a local MCP client (your IDE, an MCP inspector) over
   `POST /mcp` — JSON-RPC 2.0, with `initialize`, `tools/list` and `tools/call`.

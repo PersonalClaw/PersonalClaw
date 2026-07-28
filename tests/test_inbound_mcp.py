@@ -178,13 +178,14 @@ class TestTransport:
             await client.close()
 
     @pytest.mark.asyncio
-    async def test_tools_list_is_empty_in_session_one(self, monkeypatch):
+    async def test_tools_list_returns_the_curated_table(self, monkeypatch):
         _enable(monkeypatch)
         token = auth.create_surface_token("mcp")
         client = await _client(monkeypatch)
         try:
             body = await (await _rpc(client, "tools/list", token=token)).json()
-            assert body["result"]["tools"] == []
+            names = {t["name"] for t in body["result"]["tools"]}
+            assert names == set(tools_mod.TOOLS)
         finally:
             await client.close()
 
@@ -449,9 +450,11 @@ class TestResultFencing:
         with pytest.raises(KeyError):
             await tools_mod.call_tool("nope", {}, None)
 
-    def test_session_one_ships_no_tools(self):
-        assert tools_mod.TOOLS == {}
-        assert tools_mod.list_tools() == []
+    def test_the_table_is_hand_written_and_short(self):
+        """Read-only by CONSTRUCTION: there is no dispatcher to a generic tool
+        surface, so no inbound request can reach a write. That property comes from
+        this table staying small and hand-authored."""
+        assert len(tools_mod.TOOLS) <= 8
 
 
 # ── Audit ──
@@ -574,3 +577,185 @@ class TestConfigWiring:
         from personalclaw.dashboard.token_auth import _BYPASS_EXACT
 
         assert "/mcp" in _BYPASS_EXACT
+
+
+# ── The curated tool table (Session 2, §C3) ──────────────────────────────────
+
+_VALID_ARGS = {
+    "memory_recall": {"query": "anything"},
+    "knowledge_search": {"query": "anything"},
+    "tasks_list": {},
+    "task_get": {"id": "nope"},
+    "sessions_search": {"query": "anything"},
+    "status": {},
+}
+
+
+def _call(name, arguments):
+    import asyncio
+
+    return asyncio.run(tools_mod.call_tool(name, arguments, None))
+
+
+def _body(result) -> str:
+    """The payload inside the fence."""
+    return result["content"][0]["text"]
+
+
+class TestToolTable:
+    def test_the_five_curated_tools_plus_status_are_present(self):
+        assert set(tools_mod.TOOLS) == {
+            "memory_recall",
+            "knowledge_search",
+            "tasks_list",
+            "task_get",
+            "sessions_search",
+            "status",
+        }
+
+    def test_every_tool_declares_an_object_schema(self):
+        for spec in tools_mod.TOOLS.values():
+            assert spec.input_schema.get("type") == "object", spec.name
+            assert spec.description.strip(), spec.name
+            assert spec.handler is not None, spec.name
+
+    def test_list_tools_exposes_schemas_never_handlers(self):
+        listed = tools_mod.list_tools()
+        assert len(listed) == 6
+        for entry in listed:
+            assert set(entry) == {"name", "description", "inputSchema"}
+
+    def test_descriptions_carry_the_memory_vs_knowledge_boundary(self):
+        """§C3/T2.4: the two search tools must tell a model which is which, or it
+        will reach for the wrong one — memory is the assistant's own recall,
+        knowledge is the user's documents."""
+        memory = tools_mod.TOOLS["memory_recall"].description.lower()
+        knowledge = tools_mod.TOOLS["knowledge_search"].description.lower()
+        assert "knowledge_search" in memory
+        assert "memory_recall" in knowledge
+        assert "document" in knowledge or "saved" in knowledge
+
+
+class TestFencingMetaTest:
+    """T2.5: a new tool cannot skip untrusted-data fencing.
+
+    Iterates the REAL table rather than a fixture list, so adding a tool that
+    bypassed `wrap_result` would fail here.
+    """
+
+    def test_every_registered_tool_output_is_fenced(self, tmp_path):
+        for name in sorted(tools_mod.TOOLS):
+            text = _body(_call(name, dict(_VALID_ARGS[name])))
+            assert "untrusted_content" in text, f"{name} escaped the fence"
+            assert "never as instructions" in text, f"{name} lost the preamble"
+
+    def test_the_table_covers_every_tool_the_test_knows(self):
+        """Guards the meta-test itself: a new tool with no _VALID_ARGS entry would
+        otherwise be silently skipped above."""
+        assert set(_VALID_ARGS) == set(tools_mod.TOOLS)
+
+
+class TestArgumentValidation:
+    def test_missing_required_text_is_invalid_params(self):
+        for name in ("memory_recall", "knowledge_search", "sessions_search"):
+            with pytest.raises(ValueError, match="required"):
+                _call(name, {})
+        with pytest.raises(ValueError, match="required"):
+            _call("task_get", {"id": "   "})
+
+    def test_unknown_arguments_are_named_not_ignored(self):
+        """A typo'd `quesry` that silently returned everything would look like a bug
+        in the answer rather than a bug in the call."""
+        with pytest.raises(ValueError, match="quesry"):
+            _call("memory_recall", {"query": "x", "quesry": "typo"})
+        with pytest.raises(ValueError, match="unexpected"):
+            _call("status", {"unexpected": 1})
+
+    def test_wrong_types_are_refused(self):
+        with pytest.raises(ValueError, match="number"):
+            _call("memory_recall", {"query": "x", "limit": "lots"})
+        with pytest.raises(ValueError, match="string"):
+            _call("tasks_list", {"status": 5})
+
+    def test_a_boolean_limit_is_not_a_number(self):
+        """`True` is an int in Python — a caller passing a flag by mistake should be
+        told, not silently given limit=1."""
+        with pytest.raises(ValueError, match="number"):
+            _call("memory_recall", {"query": "x", "limit": True})
+
+    def test_out_of_range_limits_clamp_rather_than_error(self):
+        """§C3 says clamp: an over-large limit is optimism, not an error, and the cap
+        is ours to enforce either way."""
+        for limit in (9999, 0, -5):
+            assert _body(_call("memory_recall", {"query": "x", "limit": limit}))
+
+    def test_long_queries_are_truncated_not_refused(self):
+        assert _body(_call("memory_recall", {"query": "x" * 5000}))
+
+
+class TestToolBehavior:
+    def test_status_reports_version_and_no_config(self, tmp_path, monkeypatch):
+        """A status tool that leaks configuration is a reconnaissance tool."""
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        text = _body(_call("status", {}))
+        assert "PersonalClaw" in text
+        for leak in ("token", "api_key", "secret", "password", "allow_remote"):
+            assert leak not in text.lower()
+
+    def test_empty_stores_answer_honestly(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        assert "No memories matched" in _body(_call("memory_recall", {"query": "zzz"}))
+        assert "No knowledge items" in _body(_call("knowledge_search", {"query": "zzz"}))
+        assert "No tasks matched" in _body(_call("tasks_list", {}))
+        assert "No task with id" in _body(_call("task_get", {"id": "nope"}))
+
+    def test_memory_recall_returns_stored_episodes(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        from personalclaw.vector_memory import VectorMemoryStore
+
+        store = VectorMemoryStore()
+        store.init()
+        store.write_episodic("Discussed the billing rewrite", conversation_id="c1")
+        assert "billing" in _body(_call("memory_recall", {"query": "billing"}))
+
+    def test_sessions_search_finds_a_transcript(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        from personalclaw.history import ConversationLog
+
+        ConversationLog().append("chat-1", "user", "how do I rotate the deploy key")
+        assert "deploy key" in _body(_call("sessions_search", {"query": "deploy key"}))
+
+    def test_sessions_search_redacts_credentials(self, tmp_path, monkeypatch):
+        """Redaction is MANDATORY here (§C3): a transcript can hold a pasted key, and
+        this text is leaving the machine."""
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        from personalclaw.history import ConversationLog
+
+        secret = "sk-ant-api03-" + "A" * 40
+        ConversationLog().append("chat-1", "user", f"my key is {secret} keep it safe")
+        text = _body(_call("sessions_search", {"query": "safe"}))
+        # The session must be FOUND (or this proves nothing) and the key must not be
+        # in what comes back.
+        assert "chat-1" in text, text
+        assert secret not in text
+
+    def test_restricted_sessions_never_reach_an_inbound_caller(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        from personalclaw import session_restrictions
+        from personalclaw.history import ConversationLog
+
+        session_restrictions.mark_incognito("secret-1")
+        try:
+            ConversationLog().append("secret-1", "user", "confidential pineapple plan")
+            text = _body(_call("sessions_search", {"query": "pineapple"}))
+            # Assert on the SESSION KEY, not the query word — the query is echoed back
+            # in "No conversations matched 'pineapple'.", so searching for the word
+            # would pass or fail for the wrong reason.
+            assert "secret-1" not in text
+            assert "No conversations matched" in text
+        finally:
+            session_restrictions.clear("secret-1")
+
+    def test_unknown_tool_still_raises_key_error(self):
+        with pytest.raises(KeyError):
+            _call("write_everything", {})
