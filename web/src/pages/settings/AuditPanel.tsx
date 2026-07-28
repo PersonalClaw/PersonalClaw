@@ -3,6 +3,7 @@ import { Search, RefreshCw, ShieldCheck, ShieldAlert, KeyRound, Loader2 } from '
 import { api, type SelEvent, type SelVerify } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { confirm } from '../../ui/dialog'
+import { InvestigateButton } from '../../ui/InvestigateButton'
 import { PanelHeader } from './settingsUI'
 import { Button } from '../../ui/Button'
 import { ListSkeleton } from '../../ui/ListScaffold'
@@ -100,12 +101,19 @@ function EventRow({ ev }: { ev: SelEvent }) {
         <span className="shrink-0 text-on-surface-low text-[0.75rem]">{fmtTime(ev.timestamp)}</span>
       </button>
       {open && (
-        <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5 border-t border-outline-variant/30 pt-1.5 text-[0.75rem]">
-          <Kv k="caller" v={ev.caller_identity} /><Kv k="agent" v={ev.agent} />
-          <Kv k="source" v={ev.source} /><Kv k="tool kind" v={ev.tool_kind} />
-          {ev.resources && <Kv k="resources" v={ev.resources} span />}
-          {ev.error && <Kv k="error" v={ev.error} span />}
-        </div>
+        <>
+          <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5 border-t border-outline-variant/30 pt-1.5 text-[0.75rem]">
+            <Kv k="caller" v={ev.caller_identity} /><Kv k="agent" v={ev.agent} />
+            <Kv k="source" v={ev.source} /><Kv k="tool kind" v={ev.tool_kind} />
+            {ev.resources && <Kv k="resources" v={ev.resources} span />}
+            {ev.error && <Kv k="error" v={ev.error} span />}
+          </div>
+          {/* Investigate (plan 60): opens a chat with this entry AND the others from
+              the same approval flow, so one decision reads as one story. */}
+          <div className="mt-1 flex justify-end">
+            <InvestigateButton kind="audit_event" id={ev.event_id} backLink="#/settings/security" size={28} />
+          </div>
+        </>
       )}
     </div>
   )

@@ -14,6 +14,7 @@ import { TextLink } from '../../ui/TextLink'
 import { Button } from '../../ui/Button'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { QuietButton } from '../../ui/QuietButton'
+import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Spark } from '../../ui/Spark'
 import { Markdown } from '../../ui/Markdown'
 import { SidePanel } from '../../ui/SidePanel'
@@ -822,7 +823,15 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                  : (() => {
                      const f = findings.find((x) => x.cycle === selected.cycle)
                      if (!f) return <p className="text-on-surface-low text-[0.8125rem]">Cycle not found.</p>
-                     return <CycleDetail f={f} verdict={verdictByCycle.get(f.cycle)} nudges={byCycle.get(f.cycle) ?? []} activity={running && c.total_cycles === f.cycle ? activity : []} />
+                     return (<>
+                       {/* Investigate (plan 60): "what happened on this cycle?" —
+                           the finding, its judge verdict, and any nudge, in run context. */}
+                       <div className="mb-s flex justify-end">
+                         <InvestigateButton kind="loop_cycle" id={`${c.id}:${f.cycle}`}
+                           backLink={`#/loops/${c.id}`} size={28} />
+                       </div>
+                       <CycleDetail f={f} verdict={verdictByCycle.get(f.cycle)} nudges={byCycle.get(f.cycle) ?? []} activity={running && c.total_cycles === f.cycle ? activity : []} />
+                     </>)
                    })()
              )}
            </SidePanel>

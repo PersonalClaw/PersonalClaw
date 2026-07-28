@@ -4,6 +4,7 @@ import { Pencil, Trash2, Check, X, ExternalLink, Lock, CornerDownRight, Send, Al
 import { Button } from '../../ui/Button'
 import { FormFooter } from '../../ui/FormFooter'
 import { TextLink } from '../../ui/TextLink'
+import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { confirm } from '../../ui/dialog'
 import { api, type TaskItem, type TaskComment, type TaskNote } from '../../lib/api'
@@ -100,6 +101,11 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
           </>
         )}
         {task.url && <TextLink href={task.url} external icon={ExternalLink} size="sm" className="ml-auto">Open</TextLink>}
+        {/* Investigate (plan 60): opens a chat carrying the criteria, plan, notes,
+            and the derived reason this task is blocked. */}
+        <span className={task.url ? '' : 'ml-auto'}>
+          <InvestigateButton kind="task" id={task.id} backLink="#/tasks" />
+        </span>
       </div>
 
       {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
