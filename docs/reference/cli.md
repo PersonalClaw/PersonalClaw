@@ -182,6 +182,8 @@ Security audit and deny list.
 |---|---|
 | `personalclaw snapshot [OUTPUT_DIR] [--keep N] [--list]` | Create a portable backup of PersonalClaw state (keeps the N most recent, default 7; `--list` shows existing snapshots). |
 | `personalclaw restore [SNAPSHOT] [--mode replace\|merge] [--dry-run] [--components LIST] [--list-components] [--force]` | Restore state from a snapshot `.tar.gz`. `--force` restores even while the gateway runs. |
+| `personalclaw backup export [OUT_DIR] [--incremental]` | Export state as **deterministic shards** — canonical JSONL per store plus a SHA-256 manifest, byte-identical for identical state (so it diffs cleanly and syncs without re-uploading unchanged data). Defaults to `<home>/shards`. `--incremental` re-exports only the stores whose content changed. Secrets are never exported. |
+| `personalclaw backup validate [SHARD_DIR]` | Verify an export end to end: the manifest parses, every declared shard exists, and each one's byte length, row count, and SHA-256 re-derive — plus every row re-parses. **Exits non-zero on any problem**, so it works as a cron/CI check. A backup nobody has verified is a hope, not a backup. |
 
 ## Other commands
 

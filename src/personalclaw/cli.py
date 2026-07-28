@@ -452,6 +452,29 @@ Examples:
         "--force", action="store_true", help="Restore even if gateway is running"
     )
 
+    # backup — deterministic shard export + verification (DURABILITY §2)
+    backup_parser = sub.add_parser(
+        "backup", help="Export state as deterministic shards, and verify an export"
+    )
+    backup_sub = backup_parser.add_subparsers(dest="backup_command")
+    backup_export = backup_sub.add_parser(
+        "export", help="Export state to canonical JSONL shards + a SHA manifest"
+    )
+    backup_export.add_argument(
+        "out_dir", nargs="?", default=None, help="Shard directory (default: <home>/shards)"
+    )
+    backup_export.add_argument(
+        "--incremental",
+        action="store_true",
+        help="Export only entries whose content changed since the last export",
+    )
+    backup_validate = backup_sub.add_parser(
+        "validate", help="Verify an export: manifest, sizes, row counts, sha256, parseability"
+    )
+    backup_validate.add_argument(
+        "shard_dir", nargs="?", default=None, help="Shard directory (default: <home>/shards)"
+    )
+
     # security
     sec_parser = sub.add_parser("security", help="Security audit and deny list")
 
@@ -866,6 +889,10 @@ Examples:
         rc = restore_main(parsed=args)
         if rc:
             raise SystemExit(rc)
+    elif args.command == "backup":
+        rc = _backup_cmd(args)
+        if rc:
+            raise SystemExit(rc)
     elif args.command == "agent":
         _handle_agent(args)
     elif args.command == "skills":
@@ -906,6 +933,7 @@ from personalclaw.cli_server import (  # noqa: E402
 from personalclaw.cli_setup import (  # noqa: E402
     _setup,
 )
+from personalclaw.durability.shards import backup_cmd as _backup_cmd  # noqa: E402
 
 
 def _handle_skills(args) -> None:  # noqa: ANN001
