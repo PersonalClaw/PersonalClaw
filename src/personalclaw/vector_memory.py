@@ -33,6 +33,7 @@ from personalclaw.config.loader import config_dir
 from personalclaw.memory_providers.base import MemoryProvider
 
 if TYPE_CHECKING:
+    from personalclaw.memory_graph import AliasIndex, MemoryGraph
     from personalclaw.memory_record import (
         MemoryCapabilities,
         MemoryRecord,
@@ -381,6 +382,44 @@ def _migrate_v6(db: sqlite3.Connection) -> None:
     db.execute("CREATE INDEX IF NOT EXISTS idx_episodic_scope ON episodic_memories(scope)")
 
 
+def _migrate_v7(db: sqlite3.Connection) -> None:
+    """Add the typed entity graph (MEMORY-GRAPH-AND-VAULT §1).
+
+    Three tables plus a proposal tally, all inside memory.db — the graph is the
+    memory store's skeleton, not a sidecar, so a link write shares the record
+    write's connection and transaction.
+
+    The plan also asks this migration to audit legacy ``knowledge_facts`` /
+    ``knowledge_edges`` tables and adopt-or-drop them. **Those tables do not exist**
+    in any schema this ladder has ever produced (v1-v6 create exactly
+    semantic_memory / episodic_memories / memory_events / schema_version), and the
+    real store confirms it. Rather than carry a no-op DROP for tables we never
+    made, the audit runs as an assertion: if a future store ever does surface one,
+    the orphan lint reports it instead of this migration silently dropping data.
+    See the plan's Execution log (2026-07-28) for the premise correction.
+
+    Idempotent — every statement is IF NOT EXISTS.
+    """
+    from personalclaw.memory_graph import SCHEMA_V7
+
+    db.executescript(SCHEMA_V7)
+    legacy = [
+        r[0]
+        for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
+            "('knowledge_facts', 'knowledge_edges')"
+        ).fetchall()
+    ]
+    if legacy:
+        # Never auto-dropped: unexpected tables in a user's store are evidence of
+        # something we don't understand yet, and dropping is not reversible.
+        logger.warning(
+            "memory.db carries unexpected legacy table(s) %s — left untouched; "
+            "the graph uses mem_* names. Report this if you see it.",
+            ", ".join(legacy),
+        )
+
+
 _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], None] | None"]] = [
     (1, _SCHEMA_V1, None),
     (2, "", _migrate_v2),
@@ -388,6 +427,7 @@ _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], None] | None"]
     (4, "", _migrate_v4),
     (5, "", _migrate_v5),
     (6, "", _migrate_v6),
+    (7, "", _migrate_v7),
 ]
 
 _MAX_BACKFILLS_PER_CALL = 5  # cap lazy embedding backfills to bound latency
@@ -407,6 +447,27 @@ _NON_FACT_KEY_CLAUSE = (
 
 def _now_iso() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
+
+
+def _linkable_text(value: object) -> str:
+    """The human-readable text inside a semantic value, for entity matching.
+
+    Semantic values are heterogeneous: a plain string, or a payload dict (facets
+    carry the readable claim in ``text``). Falling back to the JSON dump would let
+    key names and structural noise produce matches, so a dict without a known text
+    field contributes only its string leaves.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for field_name in ("text", "rule", "value", "description"):
+            candidate = value.get(field_name)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate
+        return " ".join(v for v in value.values() if isinstance(v, str))
+    if isinstance(value, (list, tuple)):
+        return " ".join(v for v in value if isinstance(v, str))
+    return "" if value is None else str(value)
 
 
 def _contains_injection(text: str) -> bool:
@@ -520,6 +581,16 @@ class VectorMemoryStore(MemoryProvider):
         # lightweight LLM completion). None → no judging (fail-safe: keep both).
         self.contradiction_judge: Callable[[str, str], bool] | None = None
         self._ollama_manager: object | None = None
+        # Entity graph (MEMORY-GRAPH-AND-VAULT §1). None = read `memory.graph_enabled`
+        # live, so flipping the toggle takes effect on the next write instead of
+        # needing a gateway restart. Assigning a bool pins it (tests, or a caller
+        # that wants the graph off regardless of config).
+        self._graph_enabled: bool | None = None
+        self._graph: MemoryGraph | None = None
+        self._alias_index: AliasIndex | None = None
+        # Bumped on entity/alias change so the cached matcher rebuilds lazily.
+        self._alias_generation = 0
+        self._alias_index_gen = -1
 
     def init(self) -> None:
         """Create DB, apply migrations, set permissions."""
@@ -583,7 +654,100 @@ class VectorMemoryStore(MemoryProvider):
             transactional_batch=True,
             event_log=True,
             full_text_search=True,
+            entity_graph=self.graph_enabled,
         )
+
+    # ── Entity graph (MEMORY-GRAPH-AND-VAULT §1) ──────────────────────────────
+
+    @property
+    def graph_enabled(self) -> bool:
+        """Whether entity linking is on (``memory.graph_enabled``).
+
+        Read live from config when not explicitly pinned, so the Settings toggle is
+        a real switch rather than a boot-time decision. Fail-SAFE: a config problem
+        reads as ENABLED, because linking is deterministic and free — silently
+        losing it would be a worse surprise than doing it.
+        """
+        if self._graph_enabled is not None:
+            return self._graph_enabled
+        try:
+            from personalclaw.config.loader import AppConfig
+
+            return bool(AppConfig.load().memory.graph_enabled)
+        except Exception:  # noqa: BLE001
+            logger.debug("graph: config unreadable — leaving linking on", exc_info=True)
+            return True
+
+    @graph_enabled.setter
+    def graph_enabled(self, value: bool | None) -> None:
+        self._graph_enabled = None if value is None else bool(value)
+
+    @property
+    def graph(self) -> "MemoryGraph":
+        """The typed entity graph over this store's tables.
+
+        Shares this store's connection on purpose — the graph is part of memory.db,
+        so a link can never commit independently of the record it describes. Link
+        writes go through ``_log_event``, which is the same reversible WAL record
+        writes use, so ``undo_event`` covers the graph for free.
+        """
+        from personalclaw.memory_graph import MemoryGraph
+
+        cached = getattr(self, "_graph", None)
+        if cached is None:
+            cached = MemoryGraph(self.db, log_event=self._log_event)
+            self._graph = cached
+        return cached
+
+    @property
+    def alias_index(self) -> "AliasIndex":
+        """The compiled matcher, cached until the entity set changes.
+
+        Rebuilt lazily rather than on every write: at personal scale the rebuild is
+        microseconds, but doing it per write would make a consolidation batch
+        quadratic for no benefit.
+        """
+        cached = getattr(self, "_alias_index", None)
+        if cached is None or self._alias_generation != getattr(self, "_alias_index_gen", -1):
+            cached = self.graph.build_index()
+            self._alias_index = cached
+            self._alias_index_gen = self._alias_generation
+        return cached
+
+    def invalidate_alias_index(self) -> None:
+        """Call after any entity/alias change so the next match sees it."""
+        self._alias_generation += 1
+
+    def link_written_record(
+        self,
+        *,
+        from_kind: str,
+        from_ref: str,
+        text: str,
+        key: str = "",
+        batch_ref: str | None = None,
+    ) -> None:
+        """Run the deterministic linker for a record that was just written.
+
+        Best-effort by contract: a linking failure must degrade to "no links", never
+        to a rejected memory write. The caller has already committed the record.
+        """
+        if not self.graph_enabled:
+            return
+        try:
+            from personalclaw.memory_linker import link_record
+
+            link_record(
+                self.graph,
+                self.alias_index,
+                from_kind=from_kind,
+                from_ref=from_ref,
+                text=text,
+                key=key,
+                batch_ref=batch_ref,
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("write-time linking failed for %s/%s", from_kind, from_ref, exc_info=True)
 
     # ── v2 MemoryProvider contract (L2 seam) ──────────────────────────────────
     # Thin adapters over the rich typed methods below — they ARE the swappable
@@ -925,6 +1089,13 @@ class VectorMemoryStore(MemoryProvider):
         if conflict is not None:
             logger.info("Semantic write rejected for %r: %s", key, conflict)
             return (SemanticRejectCode.CONFLICT, conflict)
+        # Write-time entity linking (MEMORY-GRAPH-AND-VAULT §1.1). Hooked HERE
+        # rather than in each typed writer because every semantic write — facts,
+        # facets, lessons, personas — funnels through this one method, so a new
+        # record class gets linked without anyone remembering to add a call.
+        self.link_written_record(
+            from_kind="semantic", from_ref=key, key=key, text=_linkable_text(value)
+        )
         return None
 
     def _write_semantic(
@@ -1327,6 +1498,11 @@ class VectorMemoryStore(MemoryProvider):
         ev = dict(row)
         if ev.get("undone_at"):
             return (True, "already undone")
+        # Graph edges are reversible too (MEMORY-GRAPH-AND-VAULT §1): the event
+        # carries the whole edge, so add and remove are exact inverses. Handled
+        # before the semantic-only guard below.
+        if ev.get("memory_type") == "link":
+            return self._undo_link_event(ev, event_id)
         if ev.get("memory_type") != "semantic":
             return (False, f"{ev.get('memory_type')} events are not reversible")
         etype = ev["event_type"]
@@ -1366,6 +1542,59 @@ class VectorMemoryStore(MemoryProvider):
         self._log_event("undo", "semantic", key, None, f"undo:{etype}#{event_id}", "undo")
         logger.info("Undid memory event %d (%s on %s)", event_id, etype, key)
         return (True, f"undid {etype} on {key}")
+
+    def _undo_link_event(self, ev: dict, event_id: int) -> tuple[bool, str]:
+        """Reverse a graph edge event (MEMORY-GRAPH-AND-VAULT §1).
+
+        ``link_add`` → delete the edge; ``link_remove`` → re-insert it. The event's
+        payload carries the full edge, so neither direction needs the graph to still
+        be in any particular state.
+        """
+        etype = ev["event_type"]
+        payload_raw = ev.get("new_value") if etype == "link_add" else ev.get("old_value")
+        try:
+            edge = json.loads(payload_raw or "{}")
+        except (json.JSONDecodeError, TypeError):
+            return (False, "link event payload is unreadable")
+        if not edge.get("from_ref") or not edge.get("link_type"):
+            return (False, "link event payload is incomplete")
+        now = _now_iso()
+        if etype == "link_add":
+            self.db.execute(
+                "DELETE FROM mem_links WHERE from_kind = ? AND from_ref = ? "
+                "AND IFNULL(to_entity, '') = ? AND IFNULL(to_ref, '') = ? AND link_type = ?",
+                (
+                    edge.get("from_kind", ""),
+                    edge["from_ref"],
+                    edge.get("to_entity") or "",
+                    edge.get("to_ref") or "",
+                    edge["link_type"],
+                ),
+            )
+            if edge.get("to_entity"):
+                self.db.execute(
+                    "UPDATE mem_link_stats SET inbound_count = MAX(0, inbound_count - 1) "
+                    "WHERE entity_id = ?",
+                    (edge["to_entity"],),
+                )
+        elif etype == "link_remove":
+            try:
+                self.graph.add_link(
+                    from_kind=edge.get("from_kind", "semantic"),
+                    from_ref=edge["from_ref"],
+                    to_entity=edge.get("to_entity"),
+                    to_ref=edge.get("to_ref"),
+                    link_type=edge["link_type"],
+                    source="undo",
+                )
+            except ValueError as exc:
+                return (False, f"cannot restore link: {exc}")
+        else:
+            return (False, f"event type {etype!r} is not reversible")
+        self.db.execute("UPDATE memory_events SET undone_at = ? WHERE id = ?", (now, event_id))
+        self.db.commit()
+        logger.info("Undid link event %d (%s)", event_id, etype)
+        return (True, f"undid {etype} on {edge['from_ref']}")
 
     def rotate_events(self, max_rows: int = _MAX_EVENTS) -> int:
         """Delete oldest events if over limit. Returns count deleted."""
@@ -1629,6 +1858,15 @@ class VectorMemoryStore(MemoryProvider):
                 self.save_faiss_index()
 
         self._log_event("create", "episodic", mem_id, None, text[:200], source)
+        # Write-time entity linking (MEMORY-GRAPH-AND-VAULT §1.1). The
+        # conversation id doubles as the batch ref, so episodic rows learned in one
+        # conversation earn temporal_proximity edges to each other.
+        self.link_written_record(
+            from_kind="episodic",
+            from_ref=mem_id,
+            text=text,
+            batch_ref=conversation_id or None,
+        )
         has_vec = embedding_blob is not None
         logger.debug(
             "Episodic written: id=%s src=%s imp=%.2f vec=%s text=%s…",

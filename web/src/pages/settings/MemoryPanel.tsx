@@ -8,12 +8,14 @@ import {
   api, type MemorySettings, type SemanticEntry,
   type EpisodicEntry, type MemoryEvent, type MemoryVaultStatus, type DailyDigest,
   type MemoryLint, type MemoryObservability, type Lesson, type MemoryStats,
+  type MemoryEntitiesResponse, type MemoryEntity, type MemoryEntityType,
+  type MemoryGraphSummary, type MemoryLink,
 } from '../../lib/api'
 import { PanelHeader, Section, Field, Row, Toggle, SavedToast } from './settingsUI'
 import { confirm, confirmDelete } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
 import { ListSkeleton, FormSkeleton } from '../../ui/ListScaffold'
-import { TextInput } from '../../ui/forms'
+import { TextInput, Select, ChipInput } from '../../ui/forms'
 import { SearchField } from '../../ui/SearchField'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { InvestigateButton } from '../../ui/InvestigateButton'
@@ -718,6 +720,8 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
         </div>
       </Section>
 
+      <EntityGraphSection onChanged={reload} />
+
       {/* observability */}
       {obs && (
         <Section title="Observability" hint="What the memory system is doing under the hood.">
@@ -745,6 +749,165 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
           </div>
         </Section>
       )}
+    </div>
+  )
+}
+
+// ── Entity graph (MEMORY-GRAPH-AND-VAULT §1) ────────────────────────────────
+// Lives in Health because that's where "is my memory in good shape?" already
+// lives, and the graph's own signals (orphans, phantom entities, proposals) come
+// through the same lint report rendered above.
+
+const ENTITY_TYPE_OPTIONS: { value: MemoryEntityType; label: string }[] = [
+  { value: 'person', label: 'Person' },
+  { value: 'project', label: 'Project' },
+  { value: 'tool', label: 'Tool' },
+  { value: 'org', label: 'Organization' },
+  { value: 'topic', label: 'Topic' },
+  { value: 'place', label: 'Place' },
+]
+
+function EntityGraphSection({ onChanged }: { onChanged: () => void }) {
+  const { data, refresh } = useCachedData<MemoryEntitiesResponse | null>(
+    'settings:memory-entities', () => api.memoryEntities().catch(() => null), { persist: false },
+  )
+  const [name, setName] = useState('')
+  const [kind, setKind] = useState<MemoryEntityType>('person')
+  const [aliases, setAliases] = useState<string[]>([])
+  const [busy, setBusy] = useState('')
+  const [msg, setMsg] = useState('')
+  const [openEntity, setOpenEntity] = useState<MemoryEntity | null>(null)
+
+  const reload = () => { invalidateCache('settings:memory-entities'); refresh(); onChanged() }
+
+  const add = async () => {
+    const clean = name.trim()
+    if (!clean) return
+    setBusy('add'); setMsg('')
+    try {
+      await api.memoryEntityCreate({ name: clean, entity_type: kind, aliases })
+      setName(''); setAliases([])
+      setMsg(`Added ${clean} — existing memories that mention it are now linked.`)
+      reload()
+    } catch (e) { setMsg(e instanceof Error ? e.message : 'Could not add that entity.') }
+    setBusy('')
+  }
+
+  const rebuild = async () => {
+    setBusy('rebuild'); setMsg('')
+    try {
+      const r = await api.memoryGraphRebuild()
+      const seeded = (r.seeded?.from_facts ?? 0) + (r.seeded?.from_knowledge ?? 0)
+      setMsg(`Linked ${r.records_processed} record${r.records_processed === 1 ? '' : 's'} → ${r.after.links} link${r.after.links === 1 ? '' : 's'} across ${r.after.entities} entit${r.after.entities === 1 ? 'y' : 'ies'}${seeded ? ` (${seeded} seeded automatically)` : ''}.`)
+      reload()
+    } catch (e) { setMsg(e instanceof Error ? e.message : 'Rebuild failed.') }
+    setBusy('')
+  }
+
+  if (data === undefined) return <ListSkeleton rows={3} />
+  if (data && !data.enabled) {
+    return (
+      <Section title="Entity graph" hint="Off — memory recall falls back to search alone.">
+        <p className="text-on-surface-low text-[0.8125rem]">
+          Turn on <span className="text-on-surface-var">Entity graph</span> in Settings to link
+          memories to the people, projects and tools they mention.
+        </p>
+      </Section>
+    )
+  }
+  const entities = data?.entities ?? []
+  const summary = (data?.summary ?? {}) as MemoryGraphSummary
+
+  return (
+    <Section
+      title="Entity graph"
+      hint="Memories linked to the people, projects and tools they name — so “what do I know about X?” follows links instead of hoping search finds everything. Matching is exact-name and costs nothing to run."
+    >
+      <div className="flex items-center gap-2">
+        <Button size="sm" variant="ghost" onClick={rebuild} disabled={busy === 'rebuild'}>
+          {busy === 'rebuild' ? <><Loader2 size={14} className="animate-spin" /> Linking…</> : <><Share2 size={14} /> Rebuild links</>}
+        </Button>
+        <span className="text-on-surface-low text-[0.75rem]">
+          {summary.links ?? 0} link{(summary.links ?? 0) === 1 ? '' : 's'} · {summary.linked_records ?? 0} linked record{(summary.linked_records ?? 0) === 1 ? '' : 's'}
+        </span>
+      </div>
+      {msg && <p className="mt-2 text-ok text-[0.75rem]">{msg}</p>}
+
+      <div className="mt-3 flex flex-col gap-1.5">
+        {entities.length === 0 ? (
+          <p className="text-on-surface-low text-[0.8125rem] italic">
+            No entities yet. Add the people and projects you talk about, or rebuild to seed them from what's already stored.
+          </p>
+        ) : entities.map((e) => (
+          <div key={e.id} className="rounded-lg bg-surface-container px-3 py-2">
+            <Button
+              variant="ghost"
+              size="xs"
+              shape="squircle"
+              onClick={() => setOpenEntity(openEntity?.id === e.id ? null : e)}
+              className="!h-auto w-full !justify-between !px-0 py-0.5 text-left"
+              title={`Show the memories linked to ${e.name}`}
+            >
+              <span className="min-w-0">
+                <span className="text-on-surface text-[0.8125rem]">{e.name}</span>
+                <span className="ml-2 rounded-pill bg-surface-high px-2 py-0.5 text-[0.6875rem] uppercase tracking-wide text-on-surface-low">{e.entity_type}</span>
+                {e.aliases.length > 0 && (
+                  <span className="ml-2 text-on-surface-low text-[0.75rem]">also {e.aliases.join(', ')}</span>
+                )}
+              </span>
+              <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">
+                {e.inbound_count} memor{e.inbound_count === 1 ? 'y' : 'ies'}
+              </span>
+            </Button>
+            {openEntity?.id === e.id && <EntityBacklinks entity={e} />}
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 border-t border-outline-variant/30 pt-3">
+        <Field label="Add an entity" hint="Aliases let a nickname or @handle resolve to the same person or project.">
+          <div className="flex flex-wrap items-center gap-2">
+            <TextInput value={name} onChange={setName} placeholder="Name" size="sm" ariaLabel="Entity name" />
+            <Select value={kind} onChange={(v) => setKind(v as MemoryEntityType)} options={ENTITY_TYPE_OPTIONS} />
+            <Button size="sm" onClick={add} disabled={!name.trim() || busy === 'add'}>
+              {busy === 'add' ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add
+            </Button>
+          </div>
+          <div className="mt-2">
+            <ChipInput values={aliases} onChange={setAliases} placeholder="Alias, then Enter" max={10} />
+          </div>
+        </Field>
+      </div>
+    </Section>
+  )
+}
+
+function EntityBacklinks({ entity }: { entity: MemoryEntity }) {
+  const [links, setLinks] = useState<MemoryLink[] | null>(null)
+  useEffect(() => {
+    let live = true
+    api.memoryEntityBacklinks(entity.id)
+      .then((r) => { if (live) setLinks(r.links) })
+      .catch(() => { if (live) setLinks([]) })
+    return () => { live = false }
+  }, [entity.id])
+  if (links === null) return <div className="mt-2 text-on-surface-low text-[0.75rem]">Loading…</div>
+  if (links.length === 0) {
+    return (
+      <div className="mt-2 text-on-surface-low text-[0.75rem] italic">
+        Nothing links here yet — rebuild links, or this entity may be worth removing.
+      </div>
+    )
+  }
+  return (
+    <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
+      {links.map((l) => (
+        <div key={l.id} className="text-[0.75rem]">
+          <span className="rounded bg-surface-high px-1.5 py-0.5 uppercase tracking-wide text-on-surface-low">{l.link_type.replace(/_/g, ' ')}</span>
+          <span className="ml-2 font-mono text-on-surface-var">{l.from_ref}</span>
+          {l.context && <div className="mt-0.5 text-on-surface-low">{l.context}</div>}
+        </div>
+      ))}
     </div>
   )
 }
@@ -844,6 +1007,9 @@ function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | un
         </Row>
         <Row label="Proactive check-ins" hint="Experimental: let the agent infer future check-ins from conversation and deliver one natural reminder per window via the heartbeat. Off by default; high-confidence only, capped per day, one-tap dismiss.">
           <Toggle on={Boolean(s.proactive_commitments)} onChange={(v) => patch({ proactive_commitments: v })} label="Proactive check-ins" />
+        </Row>
+        <Row label="Entity graph" hint="Link each memory to the people, projects and tools it names, so “what do I know about X?” can follow those links instead of relying on search alone. Costs no tokens — matching is exact-name. Off = recall behaves as it does today; existing links are kept.">
+          <Toggle on={s.graph_enabled !== false} onChange={(v) => patch({ graph_enabled: v })} label="Entity graph" />
         </Row>
         <div className="mt-2"><SavedToast show={saved} /></div>
       </Section>

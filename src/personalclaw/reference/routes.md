@@ -273,12 +273,17 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/memory/embedding-models` — list local embedding models + download status.
 - `GET /api/memory/embedding-status` — embedding system status + setup progress.
 - `POST /api/memory/enable-embeddings` — build the FAISS vector store for the active native model.
+- `GET /api/memory/entities` — the entity set with inbound-link counts.
+- `POST /api/memory/entities` — declare an entity, then re-link the store.
+- `POST /api/memory/entities/proposals` — accept or reject a proposed entity.
+- `GET /api/memory/entities/{entity_id}/backlinks` — what mentions this entity.
 - `GET /api/memory/episodic` — paginated list of episodic memories.
 - `GET /api/memory/episodic/search` — search episodic memories.
 - `DELETE /api/memory/episodic/{id}` — tombstone an episodic memory.
 - `GET /api/memory/events` — paginated audit trail.
 - `POST /api/memory/events/{event_id}/undo` — reverse a logged memory mutation.
 - `GET /api/memory/graph` — return all memory as nodes + edges for graph visualization.
+- `POST /api/memory/graph/rebuild` — seed entities, then link every record.
 - `GET /api/memory/history` — recent daily summaries.
 - `PUT /api/memory/history` — recent daily summaries.
 - `POST /api/memory/import` — import memory from JSON (export format).

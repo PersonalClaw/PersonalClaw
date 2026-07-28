@@ -129,7 +129,13 @@ async def api_memory_settings(request: web.Request) -> web.Response:
             # Behavior toggles (booleans) — the injection + proactive-memory
             # controls the agent's memory uses. proactive_commitments is the M5e
             # opt-in for inferred check-ins (off by default).
-            for flag in ("l1_manifest", "active_recall", "proactive_commitments", "vault_enabled"):
+            for flag in (
+                "l1_manifest",
+                "active_recall",
+                "proactive_commitments",
+                "vault_enabled",
+                "graph_enabled",
+            ):
                 if flag in body:
                     mem[flag] = bool(body[flag])
             # Vault path (string): where the markdown mirror is written. Empty
@@ -154,6 +160,7 @@ async def api_memory_settings(request: web.Request) -> web.Response:
             "proactive_commitments": cfg.memory.proactive_commitments,
             "vault_enabled": cfg.memory.vault_enabled,
             "vault_path": cfg.memory.vault_path,
+            "graph_enabled": cfg.memory.graph_enabled,
         }
     )
 
@@ -1171,3 +1178,116 @@ async def api_memory_graph(request: web.Request) -> web.Response:
             session_key="dashboard", tool_name="memory_graph", outcome="failure"
         )
         return web.json_response({"error": "failed to build memory graph"}, status=500)
+
+
+# ── Entity graph (MEMORY-GRAPH-AND-VAULT §1) ─────────────────────────────────
+# Distinct from `api_memory_graph` above, which renders a *visualization* of
+# records+lessons. These serve the typed entity graph in memory.db: the entities
+# themselves, what links to them, and the proposal queue.
+
+
+async def api_memory_entities(request: web.Request) -> web.Response:
+    """GET /api/memory/entities — the entity set with inbound-link counts."""
+    svc = _get_service(request.app["state"])
+    loop = asyncio.get_event_loop()
+    entities, summary = await asyncio.gather(
+        loop.run_in_executor(None, svc.graph_entities),
+        loop.run_in_executor(None, svc.graph_summary),
+    )
+    return web.json_response({"entities": entities, "summary": summary, "enabled": svc.has_graph})
+
+
+async def api_memory_entity_create(request: web.Request) -> web.Response:
+    """POST /api/memory/entities — declare an entity, then re-link the store."""
+    svc = _get_service(request.app["state"])
+    if not svc.has_graph:
+        return web.json_response({"error": "the memory entity graph is disabled"}, status=409)
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response({"error": "body must be JSON"}, status=400)
+    name = str(body.get("name", "") or "").strip()
+    entity_type = str(body.get("entity_type", "") or "").strip().lower()
+    if not name:
+        return web.json_response({"error": "name is required"}, status=400)
+    from personalclaw.memory_graph import ENTITY_TYPES
+
+    if entity_type not in ENTITY_TYPES:
+        return web.json_response(
+            {"error": f"entity_type must be one of: {', '.join(ENTITY_TYPES)}"}, status=400
+        )
+    aliases = body.get("aliases") or []
+    if not isinstance(aliases, list) or any(not isinstance(a, str) for a in aliases):
+        return web.json_response({"error": "aliases must be a list of strings"}, status=400)
+    loop = asyncio.get_event_loop()
+    entity_id = await loop.run_in_executor(
+        None, lambda: svc.graph_add_entity(name, entity_type, aliases=aliases)
+    )
+    return web.json_response({"ok": True, "id": entity_id})
+
+
+async def api_memory_entity_backlinks(request: web.Request) -> web.Response:
+    """GET /api/memory/entities/{entity_id}/backlinks — what mentions this entity."""
+    svc = _get_service(request.app["state"])
+    entity_id = request.match_info.get("entity_id", "")
+    loop = asyncio.get_event_loop()
+    links = await loop.run_in_executor(None, lambda: svc.graph_backlinks(entity_id))
+    for link in links:
+        if link.get("context"):
+            link["context"] = _redact_memory_field(link["context"])
+    return web.json_response({"links": links})
+
+
+async def api_memory_entity_proposals(request: web.Request) -> web.Response:
+    """POST /api/memory/entities/proposals — accept or reject a proposed entity.
+
+    Propose-don't-write applied to the graph itself: recurring unknown names are
+    surfaced here rather than silently becoming entities.
+    """
+    svc = _get_service(request.app["state"])
+    if not svc.has_graph:
+        return web.json_response({"error": "the memory entity graph is disabled"}, status=409)
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response({"error": "body must be JSON"}, status=400)
+    name = str(body.get("name", "") or "").strip()
+    action = str(body.get("action", "") or "").strip().lower()
+    if not name:
+        return web.json_response({"error": "name is required"}, status=400)
+    loop = asyncio.get_event_loop()
+    if action == "reject":
+        ok = await loop.run_in_executor(None, lambda: svc.graph_reject_proposal(name))
+        return web.json_response({"ok": ok})
+    if action != "accept":
+        return web.json_response({"error": "action must be 'accept' or 'reject'"}, status=400)
+    entity_type = str(body.get("entity_type", "") or "").strip().lower()
+    from personalclaw.memory_graph import ENTITY_TYPES
+
+    if entity_type not in ENTITY_TYPES:
+        return web.json_response(
+            {"error": f"entity_type must be one of: {', '.join(ENTITY_TYPES)}"}, status=400
+        )
+    entity_id = await loop.run_in_executor(
+        None, lambda: svc.graph_accept_proposal(name, entity_type)
+    )
+    return web.json_response({"ok": True, "id": entity_id})
+
+
+async def api_memory_graph_rebuild(request: web.Request) -> web.Response:
+    """POST /api/memory/graph/rebuild — seed entities, then link every record.
+
+    Idempotent: re-linking drops and re-derives each record's edges, so running
+    this twice changes nothing. Returns before/after counts so the effect is
+    visible rather than asserted.
+    """
+    svc = _get_service(request.app["state"])
+    if not svc.has_graph:
+        return web.json_response({"error": "the memory entity graph is disabled"}, status=409)
+    loop = asyncio.get_event_loop()
+    seeded = await loop.run_in_executor(None, svc.graph_seed)
+    result = await loop.run_in_executor(None, svc.graph_backfill)
+    _sel().log_tool_invocation(
+        session_key="dashboard", tool_name="memory_graph_rebuild", outcome="success"
+    )
+    return web.json_response({"ok": True, "seeded": seeded, **result})
