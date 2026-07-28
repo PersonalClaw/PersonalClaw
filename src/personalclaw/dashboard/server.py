@@ -559,6 +559,15 @@ async def start_dashboard(
     app.router.add_get("/api/memory/observability", handlers.api_memory_observability)
     app.router.add_get("/api/memory/graph", handlers.api_memory_graph)
     app.router.add_post("/api/memory/promote", handlers.api_memory_promote)
+    # MEMORY-GRAPH-AND-VAULT §1 — the typed entity graph (distinct from
+    # /api/memory/graph, which renders the record visualization).
+    app.router.add_get("/api/memory/entities", handlers.api_memory_entities)
+    app.router.add_post("/api/memory/entities", handlers.api_memory_entity_create)
+    app.router.add_post("/api/memory/entities/proposals", handlers.api_memory_entity_proposals)
+    app.router.add_get(
+        "/api/memory/entities/{entity_id}/backlinks", handlers.api_memory_entity_backlinks
+    )
+    app.router.add_post("/api/memory/graph/rebuild", handlers.api_memory_graph_rebuild)
 
     # Crons, lessons, spawn, send-message, notifications
     # are registered via _register_mcp_routes() above.

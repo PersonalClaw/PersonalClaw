@@ -335,3 +335,121 @@ Graph viz polish and static-site export are the designated slip items if session
 8. A memory-backed chat answer renders `[Memory N]` chips deep-linking to the exact record, and a question the store can't answer gets an explicit "I don't have that in memory" rather than confabulation.
 9. All new config fields survive a load/save round trip (four-point wiring verified by the schema tests) and the runtime-editable ones toggle live via PATCH from the settings tab.
 10. With `graph_enabled: false` (or a foreign memory provider bound), every surface degrades to today's behavior — no errors, no dead UI.
+
+---
+
+## Execution log
+
+### 2026-07-28 — Session 1 (graph data model + write-time linker): DONE
+
+Migration **v7** adds `mem_entities` / `mem_links` / `mem_link_stats` (plus
+`mem_entity_proposals`, see below) to memory.db, with a deterministic zero-LLM
+linker on the write paths, three-source alias seeding, an idempotent backfill, and
+graph checks in the existing lint. Per the owner's ruling this extends memory.db's
+own `_MIGRATIONS` ladder (v1–v6 house style) rather than waiting on the deferred
+`lifecycle/` machinery. Class-B clean break under the pre-1.0 banner.
+
+**E1 — PREMISE CORRECTION (logged, not guessed).** §1's "memory.db already carries
+legacy `knowledge_facts`/`knowledge_edges` tables — a naming collision waiting to
+bite… Migration v7 audits them: adopt-and-rename if populated, drop if empty."
+**Those tables do not exist.** The v1–v6 ladder creates exactly `schema_version`,
+`semantic_memory`, `episodic_memories`, `memory_events`; the owner's real store
+(`~/.personalclaw/memory.db`, schema v6) carries only those plus
+`sqlite_sequence`. The adopt-or-drop deliverable is a no-op, so v7 does not carry a
+DROP for tables we never created. Instead it *warns* if one ever appears and leaves
+it alone — an unexpected table in a user's store is evidence of something we don't
+understand, and dropping is not reversible. Success Criterion #6's "a
+`knowledge_*`-named table no longer exists in memory.db" holds vacuously and is now
+test-asserted.
+
+**Second premise correction:** §1 and the Session-1 line say the backfill links "the
+existing 334 semantic + 234 episodic rows". The real store has **0 active rows in
+both tables** (the counts are stale). The backfill is therefore validated against a
+seeded fixture store rather than the live one; it is correct and idempotent, but
+nobody should read the shipped numbers as evidence about the owner's data.
+
+**Aho-Corasick → hand-rolled TOKEN TRIE.** No new dependency, following the
+`SimpleDiGraph` precedent (which replaced networkx by hand in
+`knowledge/store.py`). Tokenizing the text *and* the aliases gives word-boundary
+matching for free — "Ann" cannot match inside "Announcement" because they are
+different tokens, where a character automaton would need explicit boundary checks
+at every hit. Longest match wins, so "Keyur Golani" beats a bare "Keyur".
+Single-token aliases shorter than 3 chars are refused outright: "AI"/"ML" as bare
+words generate far more false links than true ones, and a false link pollutes
+ranking for every future query.
+
+**DEVIATION — a fourth table (`mem_entity_proposals`).** §1.1 specifies the
+notability gate as "unknown-mention counts accumulate in a scratch tally". A tally
+that must survive restarts and count *distinct records* is a table; keeping it in
+memory would reset the count on every gateway restart and never reach the
+threshold. It counts distinct `from_ref`s, not mentions — one chatty record
+repeating a name ten times is not evidence that the name matters (test-asserted).
+
+**Reversibility.** Every link add/remove appends a `memory_events` row and
+`undo_event` gained a `link` branch, so graph writes undo through the machinery
+that already exists. The event payload carries the whole edge, so add and remove
+are exact inverses regardless of current state. Verified end-to-end through
+`POST /api/memory/events/{id}/undo` on a running gateway.
+
+**Deferred to Session 2 by design:** the graph *recall arm* — this session ships the
+skeleton and the writes, not the retrieval fusion, backlink ranking boost, or
+evidence tags. `graph_backlinks()` already answers "what do I know about X?"
+structurally and is what S2's arm will consume.
+
+**Fold-in from TEAM-SHARED-ENTITIES S1:** the deferred memory contributor stamp
+(`holder` column) is NOT in this change after all. It belongs to §4.2's holder
+attribution, which is Session 3's scope, and adding a column nothing reads or
+writes would be dead schema. Re-deferred to the session that actually implements
+attribution — noted so it isn't lost a second time.
+
+**Four validation findings (all found by driving the real API, none by unit tests):**
+
+1. **Health-tab noise.** With no entities declared, *every* record is trivially
+   unlinked, so the lint reported an orphan flag per record — technically true,
+   completely unactionable, and it buried the one useful signal. The graph checks
+   now stay quiet until at least one entity exists; the proposal queue is what
+   surfaces in that state.
+2. **Stale proposals.** After seeding created "Dana Whitfield" as an entity, the
+   health tab still asked the user to accept her as a proposal. `proposals()` now
+   filters (and prunes) names that have since become an entity or an alias —
+   filtered at READ time rather than requiring all four entity-creation paths to
+   remember to clear the tally.
+3. **Lowercase entity names.** Record keys are lowercase slugs, so seeding
+   `project.personalclaw.stack` produced an entity literally named
+   "personalclaw". The seeder now recovers the author's capitalization from the
+   record's own text ("PersonalClaw runs on aiohttp…" → "PersonalClaw"), falling
+   back to the slug when the text offers no evidence.
+4. **The kill switch wasn't live.** The store captured `graph_enabled` at
+   construction, so flipping the Settings toggle updated config.json while the
+   running gateway kept linking. `graph_enabled` is now a live-reading property
+   (the `tools.groups_enabled` house pattern), fail-SAFE to ON — losing free
+   deterministic linking is a worse surprise than doing it. Verified OFF→ON→OFF on
+   a running gateway with no restart.
+
+**Config:** `memory.graph_enabled` (default true) wired four-point — dataclass +
+`_meta`, `load()` via `_guard_flag` (guard polarity: ambiguity keeps it ON),
+`to_dict()`, `_EDITABLE_CONFIG` PATCH allowlist — plus the `/api/memory/settings`
+PUT allowlist (a SEPARATE list from the PATCH one; missing it was a real bug in
+TEAM-SHARED-ENTITIES S1 and was wired here from the start) and a Settings → Memory
+toggle. `MemoryCapabilities` gained the advisory `entity_graph` flag; a foreign
+`MemoryProvider` or the flag off degrades every surface to today's behavior
+(test-asserted).
+
+**Product surface:** `GET/POST /api/memory/entities`,
+`GET /api/memory/entities/{id}/backlinks`, `POST /api/memory/entities/proposals`,
+`POST /api/memory/graph/rebuild`, and an Entity-graph section in the Memory panel's
+Health tab (entity list with inbound counts, expandable backlinks, add-with-aliases,
+rebuild with a before/after report).
+
+**Validated as a user** on an isolated dev home seeded with 3 semantic + 3 episodic
+records: rebuild seeded 2 entities from facts and linked 6/6 records → 6 links, 0
+orphans; "what do I know about PersonalClaw?" returned all three edge types
+correctly typed (`about` for the persona record, `same_project` for the
+project-keyed one, `mentions` for the episode); manual add + all three input
+validations; the kill switch both directions; undo removing exactly one link. No
+errors or tracebacks in the gateway log.
+
+**Tests:** `tests/test_memory_entity_graph.py`, 97 cases. Also updated
+`test_memory_record.py` (the new capability field) and regenerated the offline
+agent reference (`manifest_reference`) for the five new routes. Full suite 8505
+passed in 48.5s (baseline); lint clean; web typecheck/tests/build clean.

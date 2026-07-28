@@ -704,6 +704,17 @@ class MemoryConfig:
             "the PersonalClaw config dir (~/.personalclaw); absolute paths are used as-is.",
         ),
     )
+    graph_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Entity Graph",
+            "Link memories to the people, projects and tools they mention, so "
+            "'what do I know about X?' can be answered by following links instead "
+            "of hoping similarity search finds everything. Matching is exact-name "
+            "and costs no tokens or LLM calls. Off = every graph surface falls back "
+            "to today's search behavior.",
+        ),
+    )
 
 
 @dataclass
@@ -2311,6 +2322,7 @@ class AppConfig:
                 # the behavior flags above, else a saved toggle reads its default.
                 vault_enabled=memory_data.get("vault_enabled", False),
                 vault_path=memory_data.get("vault_path", "memory-vault"),
+                graph_enabled=_guard_flag(memory_data.get("graph_enabled")),
             ),
             dashboard=DashboardConfig(
                 url=dashboard_data.get("url", ""),

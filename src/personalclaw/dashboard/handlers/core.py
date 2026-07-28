@@ -475,6 +475,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # and `public_url` are deliberately NOT here: widening a network surface should
     # be a deliberate config-file edit, not a one-click PATCH.
     "inbound.mcp.enabled": {"type": "bool"},
+    # MEMORY-GRAPH-AND-VAULT §1 — entity linking. Runtime-editable: turning it off
+    # stops new links immediately (existing links are kept, so re-enabling doesn't
+    # need a backfill).
+    "memory.graph_enabled": {"type": "bool"},
     "feedback.enabled": {"type": "bool"},
     "feedback.retire_threshold": {"type": "float", "min": 0.1, "max": 0.9},
     "feedback.min_n": {"type": "int", "min": 3, "max": 50},

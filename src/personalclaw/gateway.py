@@ -646,6 +646,8 @@ class GatewayOrchestrator:
             episodic_max=self._cfg.memory.episodic_max_count,
             episodic_limit=self._cfg.memory.episodic_max_results,
         )
+        # graph_enabled is deliberately NOT pinned here — the store reads
+        # `memory.graph_enabled` live so the Settings toggle works without a restart.
         self.vector_memory.init()
         memory.vector_store = self.vector_memory
 

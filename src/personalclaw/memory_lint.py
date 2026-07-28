@@ -149,5 +149,61 @@ def lint_memory(vs, *, now: datetime | None = None, judge=None) -> LintReport:
                     "lint: contradiction judge failed for %s/%s", key_a, key_b, exc_info=True
                 )
 
+    # ── Flag: graph health (MEMORY-GRAPH-AND-VAULT §2.3) ──
+    # All deterministic, all flag-only. An orphan usually means the entity set has a
+    # gap, so "fixing" it by deleting the record would destroy the evidence.
+    _lint_graph(vs, report)
+
     logger.info("memory lint: auto-fixed %s, %d flags", report.auto_fixed, len(report.flags))
     return report
+
+
+def _lint_graph(vs, report: LintReport) -> None:
+    """Add entity-graph checks. Silent no-op when the graph is off or unavailable."""
+    if not getattr(vs, "graph_enabled", False):
+        return
+    try:
+        graph = vs.graph
+        summary = graph.summary()
+    except Exception:  # noqa: BLE001 — lint must never fail on an optional check
+        logger.debug("lint: graph checks unavailable", exc_info=True)
+        return
+    counts = summary
+    # With no entities declared, EVERY record is trivially unlinked — reporting
+    # that would bury the health tab in noise that says nothing actionable. The
+    # proposal queue below is the useful signal in that state.
+    if summary["entities"] == 0:
+        for proposal in graph.proposals():
+            report.add_flag(
+                "proposed_entity",
+                proposal["name"],
+                f"mentioned in {proposal['mention_count']} records but not a known entity — "
+                "accept it to start linking, or reject it",
+            )
+        return
+    if counts["semantic_orphans"]:
+        report.add_flag(
+            "graph_orphans",
+            "semantic",
+            f"{counts['semantic_orphans']} semantic record(s) link to no entity",
+        )
+    if counts["episodic_orphans"]:
+        report.add_flag(
+            "graph_orphans",
+            "episodic",
+            f"{counts['episodic_orphans']} episodic record(s) link to no entity",
+        )
+    if counts["phantom_entities"]:
+        report.add_flag(
+            "phantom_entity",
+            "entities",
+            f"{counts['phantom_entities']} entit(y/ies) have no inbound links — "
+            "candidates for merge or removal",
+        )
+    for proposal in graph.proposals():
+        report.add_flag(
+            "proposed_entity",
+            proposal["name"],
+            f"mentioned in {proposal['mention_count']} records but not a known entity — "
+            "accept it to start linking, or reject it",
+        )

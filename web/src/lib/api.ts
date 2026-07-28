@@ -697,7 +697,7 @@ export interface NotificationSettings {
   mute_all: boolean; quiet_hours_enabled: boolean; quiet_hours_start: string; quiet_hours_end: string
   min_severity: string
 }
-export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_enabled?: boolean; vault_path?: string }
+export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_enabled?: boolean; vault_path?: string; graph_enabled?: boolean }
 export interface MemoryVaultStatus { enabled: boolean; path: string; files: number; exists: boolean }
 export interface MemoryVaultSyncResult { records: number; files: number; written: number; pruned: number; path: string }
 export interface DailyDigest { day: string; text: string; created_at: string }
@@ -719,6 +719,51 @@ export interface MemoryContextPreview { semantic_context: string; episodic_conte
 // Memory health lint: auto-fixed counts + per-flag advisories (near-dup / stale / orphan / contradiction).
 export interface MemoryLintFlag { check: string; key: string; detail: string }
 export interface MemoryLint { auto_fixed: Record<string, number>; flags: MemoryLintFlag[]; flag_count: number }
+// Entity graph (MEMORY-GRAPH-AND-VAULT §1). The type set is closed server-side.
+export type MemoryEntityType = 'person' | 'project' | 'tool' | 'org' | 'topic' | 'place'
+export interface MemoryEntity {
+  id: string
+  name: string
+  entity_type: MemoryEntityType
+  aliases: string[]
+  source: string
+  inbound_count: number
+  last_linked_at?: string | null
+}
+export interface MemoryLink {
+  id: number
+  from_kind: string
+  from_ref: string
+  to_entity: string | null
+  to_ref: string | null
+  link_type: string
+  provenance: string
+  confidence: number
+  context: string | null
+  created_at: string
+}
+export interface MemoryGraphSummary {
+  entities: number
+  links: number
+  linked_records: number
+  proposals: number
+  semantic_orphans: number
+  episodic_orphans: number
+  phantom_entities: number
+}
+export interface MemoryEntitiesResponse {
+  entities: MemoryEntity[]
+  summary: MemoryGraphSummary | Record<string, never>
+  enabled: boolean
+}
+export interface MemoryGraphRebuild {
+  ok: boolean
+  seeded: { from_facts: number; from_knowledge: number }
+  records_processed: number
+  links_created: number
+  before: MemoryGraphSummary
+  after: MemoryGraphSummary
+}
 // Memory observability: live counts, injection-rejection reasons, and the injected-context preview.
 export interface MemoryObservability {
   stats: Record<string, number>
@@ -1321,6 +1366,15 @@ export const api = {
   memoryObservability: () => get<MemoryObservability>('/api/memory/observability'),
   memoryRecall: (q: string) => get<{ result: string; query: string; deep: boolean }>(`/api/memory/recall?q=${encodeURIComponent(q)}`),
   memoryPromote: () => post<{ ok: boolean; promoted: number }>('/api/memory/promote'),
+  // Entity graph (MEMORY-GRAPH-AND-VAULT §1) — the typed links under recall.
+  memoryEntities: () => get<MemoryEntitiesResponse>('/api/memory/entities'),
+  memoryEntityCreate: (body: { name: string; entity_type: MemoryEntityType; aliases?: string[] }) =>
+    post<{ ok: boolean; id: string }>('/api/memory/entities', body),
+  memoryEntityBacklinks: (id: string) =>
+    get<{ links: MemoryLink[] }>(`/api/memory/entities/${encodeURIComponent(id)}/backlinks`),
+  memoryEntityProposal: (body: { name: string; action: 'accept' | 'reject'; entity_type?: MemoryEntityType }) =>
+    post<{ ok: boolean; id?: string }>('/api/memory/entities/proposals', body),
+  memoryGraphRebuild: () => post<MemoryGraphRebuild>('/api/memory/graph/rebuild'),
   // Raw markdown memory files (preferences / projects / history) — GET+PUT {content}.
   memoryDoc: (which: 'preferences' | 'projects' | 'history') => get<{ content: string }>(`/api/memory/${which}`).then((d) => d.content),
   saveMemoryDoc: (which: 'preferences' | 'projects' | 'history', content: string) => put<{ ok: boolean }>(`/api/memory/${which}`, { content }),

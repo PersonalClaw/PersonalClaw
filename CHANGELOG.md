@@ -19,6 +19,28 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Memory now knows what it's *about*.** Every memory is linked to the people,
+  projects and tools it names, so asking "what do I know about Ana?" follows those
+  links instead of hoping a similarity search surfaces everything. A memory about a
+  standup, a stored fact about a repo, and a lesson from last month finally connect
+  when they concern the same thing.
+
+  Linking happens the moment a memory is written and **costs nothing** — no tokens,
+  no model call, just exact-name matching against the people and projects you've
+  named. Links are typed, so the graph distinguishes a memory that's *about* you
+  from one that merely mentions a project.
+
+  Unknown names are **proposed, never invented**: a name that shows up across three
+  separate memories appears in Memory → Health for one-click accept, because a junk
+  entity quietly degrades every future search. Everything is reversible through the
+  existing memory undo. Find it under **Settings → Memory → Health**, where
+  *Rebuild links* seeds entities from what you've already stored and links your
+  whole history in one pass. `memory.graph_enabled` turns it off — existing links
+  are kept, so turning it back on needs no rebuild.
+
+  > **Note (0.x clean break):** this adds tables to `memory.db` (schema v7). Old
+  > stores upgrade in place on first run with no data loss and nothing to migrate;
+  > consider `personalclaw snapshot` beforehand, per the pre-1.0 banner.
 - **Point your IDE at your assistant: a read-only MCP endpoint.** PersonalClaw can
   now answer questions from a local MCP client (your IDE, an MCP inspector) over
   `POST /mcp` — JSON-RPC 2.0, with `initialize`, `tools/list` and `tools/call`.

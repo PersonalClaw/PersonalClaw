@@ -354,6 +354,9 @@ class MemoryCapabilities:
     transactional_batch: bool = False  # atomic multi-record put
     event_log: bool = False  # append/read the reversible WAL
     full_text_search: bool = True  # keyword/FTS query
+    # Advisory: typed entity linking + graph recall (MEMORY-GRAPH-AND-VAULT §1).
+    # Native-store functionality; a foreign provider declares it to opt in.
+    entity_graph: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -361,4 +364,5 @@ class MemoryCapabilities:
             "transactional_batch": self.transactional_batch,
             "event_log": self.event_log,
             "full_text_search": self.full_text_search,
+            "entity_graph": self.entity_graph,
         }

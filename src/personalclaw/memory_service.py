@@ -308,6 +308,101 @@ class MemoryService:
 
         return lint_memory(vs).to_dict()
 
+    # ── entity graph (MEMORY-GRAPH-AND-VAULT §1) ──────────────────────────────
+    # Every method degrades to an empty answer when the backing store has no graph
+    # (a foreign MemoryProvider, or `memory.graph_enabled: false`) — the same
+    # posture as every other capability-gated op on this service.
+
+    def _graph_store(self):
+        """The backing store IF it offers a usable entity graph, else None.
+
+        One helper instead of a `has_graph` check plus a separate `_vs` read at
+        every call site: two lookups can disagree, and the narrowed return is what
+        lets the callers below be straight-line code.
+        """
+        vs = self._vs
+        if vs is None or not getattr(vs, "graph_enabled", False):
+            return None
+        return vs
+
+    @property
+    def has_graph(self) -> bool:
+        return self._graph_store() is not None
+
+    def graph_summary(self) -> dict:
+        """Graph size + orphan counts, for the health surface."""
+        vs = self._graph_store()
+        return vs.graph.summary() if vs else {}
+
+    def graph_entities(self) -> list[dict]:
+        vs = self._graph_store()
+        if vs is None:
+            return []
+        return [
+            {
+                "id": e.id,
+                "name": e.name,
+                "entity_type": e.entity_type,
+                "aliases": list(e.aliases),
+                "source": e.source,
+                **vs.graph.stats(e.id),
+            }
+            for e in vs.graph.entities()
+        ]
+
+    def graph_backlinks(self, entity_id: str, *, limit: int = 100) -> list[dict]:
+        """Records linking to an entity — 'what do I know about X?'."""
+        vs = self._graph_store()
+        return vs.graph.backlinks(entity_id, limit=limit) if vs else []
+
+    def graph_add_entity(
+        self, name: str, entity_type: str, *, aliases: "list[str] | None" = None
+    ) -> str:
+        """Create an entity by hand and re-link the store against it.
+
+        Re-linking matters: adding "Ana" should immediately connect the memories
+        that already mention her, not just future ones.
+        """
+        vs = self._graph_store()
+        if vs is None:
+            return ""
+        eid = vs.graph.upsert_entity(name, entity_type, aliases=aliases, source="user")
+        vs.invalidate_alias_index()
+        return eid
+
+    def graph_accept_proposal(self, name: str, entity_type: str) -> str:
+        vs = self._graph_store()
+        if vs is None:
+            return ""
+        eid = vs.graph.accept_proposal(name, entity_type)
+        vs.invalidate_alias_index()
+        return eid
+
+    def graph_reject_proposal(self, name: str) -> bool:
+        vs = self._graph_store()
+        return vs.graph.reject_proposal(name) if vs else False
+
+    def graph_seed(self) -> dict:
+        """Seed entities from facts + knowledge, then link the whole store."""
+        vs = self._graph_store()
+        if vs is None:
+            return {}
+        from personalclaw.memory_linker import seed_all
+
+        seeded = seed_all(vs.graph)
+        vs.invalidate_alias_index()
+        return seeded
+
+    def graph_backfill(self) -> dict:
+        """Link every existing record. Idempotent — safe to re-run."""
+        vs = self._graph_store()
+        if vs is None:
+            return {}
+        from personalclaw.memory_linker import backfill
+
+        vs.invalidate_alias_index()
+        return backfill(vs.graph)
+
     # ── session working memory (M5c — §3.5) ───────────────────────────────────
     # An always-injected, bounded, continuously-distilled running summary of THE
     # SESSION (tier=working, scope=session). Unlike active recall / L1 (relevance-
