@@ -150,6 +150,13 @@ _state: TokenStateManager = TokenStateManager(max_concurrent_nonces=MAX_CONCURRE
 
 _BYPASS_PREFIXES = ("/assets/", "/fonts/", "/sprites/", "/vendor/")
 _BYPASS_EXACT = {"/claw.svg", "/api/token/local", "/api/healthz"}
+# The inbound MCP surface authenticates ITSELF (MCP-READONLY-INBOUND §T1.1): it
+# carries a dedicated bearer token plus its own loopback rail, so it must bypass
+# the DASHBOARD's cookie auth rather than be reachable with a dashboard session.
+# Exempting it here does not make it open — inbound/mcp_http.py refuses every
+# request that fails enablement, peer, or token checks, and only mounts the route
+# at all when a valid dedicated token exists.
+_BYPASS_EXACT.add("/mcp")
 
 # Link click window — URL must be opened within this time.
 # 24 hours for local installs; the URL only works on loopback anyway.

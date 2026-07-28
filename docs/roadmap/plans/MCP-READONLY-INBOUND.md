@@ -128,3 +128,95 @@ Mount only if: `load_surface_token("mcp")` ≥32 bytes AND `inbound.mcp.enabled`
 
 - **Protocol drift:** MCP streamable-HTTP evolves; the three-method subset is stable core. If a client demands SSE, that's EXTERNAL-ACCESS's generalization — E6, not scope creep here.
 - **Open:** per-client identity is deliberately absent (single token). If the owner wants two clients distinguishable in audit before EXTERNAL-ACCESS lands, the audit line's UA field is the interim answer — noted in the guide.
+
+---
+
+## Execution log
+
+### 2026-07-28 — Session 1 (T1.1–T1.6, V1): DONE
+
+The substrate landed with an empty tool table, as Session 1 intends: transport,
+auth, caps, audit and the kill switch are all provable on their own, so Session 2's
+five tools arrive on ground already verified.
+
+**T1.1 — auth exemption mechanism (as instructed: extended, not forked).** The
+precedent is `token_auth.py`'s `_BYPASS_EXACT` set — the same set that exempts
+`POST /api/hooks/agent`. Added `/mcp` to it with an in-code comment citing this
+plan. The route is exempt from the *dashboard* token, not from authentication: it
+authenticates itself with its own surface bearer token, checked per request.
+
+**T1.2 — `inbound/auth.py`.** Two independent gates, both required: a valid surface
+bearer token AND an allowed peer. Kept separate deliberately — a peer check is not
+authentication (a local port forwarder makes remote traffic arrive as 127.0.0.1),
+and a token alone would make the surface reachable from anywhere the port is.
+`hmac.compare_digest` for the compare; the peer address comes from the transport's
+peername and never from a header, since `X-Forwarded-For` is attacker-settable on a
+directly-reachable port. Refusals return a *reason string* rather than a bool, so a
+refusal can name its failing condition.
+
+**T1.3 — config, and a fail-open bug caught by writing the test.** Wired
+`inbound.mcp.{enabled,allow_remote}` + `inbound.public_url` through the full
+round-trip contract. The first draft used `bool(...)` and carried a comment claiming
+it was fail-closed. It wasn't: `bool("false")` is `True`, so a config value of the
+*string* `"false"` — or any other garbage — would have turned an inbound network
+surface ON. Added `_expose_flag()` next to the existing `_guard_flag()`: same idea,
+opposite polarity. A guard's ambiguity must fail ON (keep protecting); an exposure
+flag's ambiguity must fail OFF. Only an explicit true-spelling opens the surface,
+proven by a 13-case parametrized test. `allow_remote` and `public_url` are
+deliberately absent from the PATCH allowlist — widening network exposure should not
+be one mis-click in a browser.
+
+**T1.4 — caps + audit.** Token bucket (1 rps sustained, burst 20) so an IDE panel
+that fires several calls at once isn't punished for a trivial average rate;
+`Retry-After` is floored at 1 second because `Retry-After: 0` invites a retry storm.
+Result truncation is *visible* — a silent cut would let a caller believe it had the
+whole answer. Audit is its own JSONL rather than a slice of the SEL: the SEL answers
+"what was refused", this answers "what did that client actually do yesterday",
+including the boring successful reads. Refusals write to both.
+
+**T1.5 — transport.** `POST /mcp` with `initialize`/`tools/list`/`tools/call`; `GET`
+405s (no SSE — a long-lived stream is a second lifecycle for no v1 benefit, and the
+spec permits POST-only); batches refused outright rather than half-supported, since
+one authenticated batch multiplies into N handler invocations and complicates every
+cap. Check order is enablement → peer → token → rate → concurrency → body → parse.
+Enablement is re-read per request, which is what makes the config flag a real kill
+switch instead of a boot-time decision.
+
+**T1.6 — CLI.** `personalclaw inbound token create|show mcp [--rotate]`. The token
+prints once at creation and `show` never reveals it — a bearer credential the CLI
+can re-read is one an unattended process can also exfiltrate, and rotation is cheap.
+
+**V1 — validated as a user against a real gateway** (isolated dev home, port 10027):
+
+| Checked | Result |
+|---|---|
+| token present, flag OFF | `POST /mcp` → **404**; mount refusal logged naming `inbound.mcp.enabled is off` |
+| flag ON, valid bearer | `initialize` round-tripped: protocol `2024-11-05`, serverInfo `personalclaw 0.1.2` |
+| no / wrong bearer | **401** both |
+| `GET /mcp` | **405** |
+| batch / malformed JSON / unknown method / unknown tool | JSON-RPC `-32600` / `-32700` / `-32601` / `-32601` |
+| burst of 26 | exactly 20 × 200 then 429 with `Retry-After: 1` |
+| kill switch flipped mid-flight | next request 404 — **no restart** |
+| audit + SEL | 37 audit rows, every refusal carrying its reason; all 15 refusals mirrored to the SEL |
+| reusing `.local_secret` as the token | refused (`token must not equal the dashboard/internal secret`) |
+
+**DISCOVERY (logging).** The refusal line is emitted at INFO on
+`personalclaw.inbound.mcp_http`, which the gateway's configured level filters out of
+its log file. The line is correct and test-asserted via `caplog`, but an operator
+running the packaged gateway will not see it. Left as-is rather than promoting the
+level unilaterally: the *observable* refusal an operator needs is already there (the
+404 plus the audited reason), and log-level policy is a gateway-wide decision, not
+this surface's to make. Worth a deliberate pass if the gateway ever gains a
+per-logger level map.
+
+**Deferred to Session 2, by design:** the five tools. `TOOLS` is empty and
+`tools/list` returns `[]`. The fencing wrapper (`wrap_result`) is already in place
+and already the *only* representable way a result reaches a caller — handlers return
+text and the dispatcher does the wrapping — so a Session 2 tool cannot skip
+untrusted-data fencing even by accident. T2.5's meta-test still lands with the
+tools.
+
+**Tests:** `tests/test_inbound_mcp.py`, 63 cases (token lifecycle, mount gating,
+transport, peer policy, caps, fencing, audit, config wiring). Named for the surface
+rather than the plan's suggested `test_inbound_auth.py` since it covers all six
+modules. Full suite green; lint clean.
