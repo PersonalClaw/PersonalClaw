@@ -1,6 +1,8 @@
 # Plan: Multi-Tenant Entity Readiness — The Harness as a Good Citizen of Shared Stores
 
-**Status:** PROPOSED (rescoped 2026-07-14 — harness-side scope)
+**Status:** IN PROGRESS — Session 1 (username identity + author attribution) shipped 2026-07-28;
+Sessions 2-3 (mine-vs-everyone filters, contributor provenance + weighted ranking) not started.
+Rescoped 2026-07-14 — harness-side scope
 **Created:** 2026-07-14
 **Wave:** 0+3 — Sessions 1-3 (owner identity + per-entity multi-user tolerance) have no dependencies and can start today; Sessions 4-5 (trigger-store provider seam + proof-of-concept trigger-provider app) gate on AUTOMATION-SUBSTRATE steps 1-3 (`triggers.json` + one `TriggerService` — build one seam, not four).
 **Depends on:** AUTOMATION-SUBSTRATE steps 1-3 (Sessions 4-5 only). Sessions 1-3 depend on nothing.

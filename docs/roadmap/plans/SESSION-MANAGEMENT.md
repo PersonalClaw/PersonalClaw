@@ -1,6 +1,9 @@
 # Plan: Session Management — Organize, Find, and Curate Conversations at Scale
 
-**Status:** DESIGNED — created 2026-07-18 (roadmap rev 10; owner ask: chat session management improvements)
+**Status:** IN PROGRESS — Session 1 (FTS5 cross-session search + match snippets) shipped 2026-07-28;
+Sessions 2-4 (organization + bulk + auto-archive, templates, export) not started. T1.3's sidebar
+windowing was re-scoped — there is no chat sidebar; see the Execution log. Created 2026-07-18
+(roadmap rev 10; owner ask: chat session management improvements)
 **Created:** 2026-07-18
 **Wave:** 2 (S1-2: search + organization) + 3 (S3: lifecycle + templates)
 **Depends on:** nothing hard (builds on the shipped session model). Coordinates with ONBOARDING-UX (43 — progressive disclosure of session features), DESIGN-SYSTEM-CONSISTENCY (51 — the chat sidebar is a flagship surface), INBOX-NOTIFICATIONS-UNIFICATION (42 — sessions surface needs-input items), CONTEXT-ECONOMY (12 — long-session compaction is upstream).
