@@ -588,6 +588,34 @@ TOOL_META: dict[str, dict[str, Any]] = {
         ],
     },
     # ── personalclaw-ui-docs ─────────────────────────────────────────────────
+    "code_map": {
+        "response_type": "code.map.symbol",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Find where a function is defined and what calls it",
+                "args": {"symbol": "parse_source"},
+            },
+            {
+                "summary": "Outline one file's imports and definitions",
+                "args": {"file": "src/personalclaw/codegraph/parse.py"},
+            },
+            {
+                "summary": "Re-index a tree changed outside the session, then look up",
+                "args": {"symbol": "CodeGraphIndex", "refresh": True},
+            },
+        ],
+    },
+    "code_map_overview": {
+        "response_type": "code.map.overview",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Get the shape of an unfamiliar codebase before exploring it",
+                "args": {},
+            },
+        ],
+    },
     "ui_search": {
         "response_type": "ui.search.results",
         "error_codes": [],

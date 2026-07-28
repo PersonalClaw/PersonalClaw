@@ -53,6 +53,14 @@ dependencies = [
     "openpyxl>=3.1,<4",
     # Knowledge media thumbnails (media.py): downscale uploaded images to WebP.
     "Pillow>=10,<13",
+    # Codebase graph (codegraph/): tree-sitter parsers for the code index the agent
+    # queries instead of grepping blind. CORE (owner decision 2026-07-28) rather than
+    # an extra, so `code_map` is simply present everywhere — an accelerator that half
+    # the installs lack is one nobody can rely on. The language pack ships prebuilt
+    # wheels, so there's no compiler requirement. Indexing still fails SOFT: no
+    # parser, no graph, and everything falls back to grep/read.
+    "tree-sitter>=0.21,<1",
+    "tree-sitter-language-pack>=1.0,<2",
     # NOTE — openai / anthropic are NOT core deps (plan 34 T1.4). Their provider
     # adapters (llm/openai.py, llm/anthropic.py, stt/tts openai_provider.py) import
     # the SDK LAZILY and raise MissingSDKError naming the exact remedy when absent.
