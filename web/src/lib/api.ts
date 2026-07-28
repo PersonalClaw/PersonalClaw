@@ -945,6 +945,9 @@ export interface DashboardConfig {
   // user-tagged or incognito/temporary sessions)
   auto_tag_sessions: boolean
   widget_density: 'more' | 'less'; user_name: string
+  // Attribution handle stamped onto records you create (TEAM-SHARED-ENTITIES §1).
+  // A label, not a credential; '' = writes carry no attribution.
+  username: string
   // server-stored message display prefs (consistent across browsers)
   send_on_enter: boolean; show_timestamps: boolean; show_thinking_inline: boolean
   simplified_tool_names: boolean; confirm_close_session: boolean

@@ -176,6 +176,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   says so plainly instead of quietly doing nothing. New `GET /api/tools/groups` reports
   the partition for anything else that needs it.
 
+- **A username, so your contributions stay attributable.** Settings → Account now takes
+  a short handle (Settings suggests one from your name), and PersonalClaw stamps it onto
+  things you create — tasks and task comments carry an author. It's a label, not a login:
+  nothing signs in with it, and leaving it empty keeps records unattributed exactly as
+  before. Renaming it affects future writes only; existing records keep the name they
+  were written with, because rewriting them would falsify the very history attribution
+  exists to preserve.
+
 - **Backups you can actually read and verify: `personalclaw backup`.** Alongside the
   opaque snapshot tarball, state can now be exported as **deterministic shards** —
   one canonical JSONL file per store plus a SHA-256 manifest. Identical state always

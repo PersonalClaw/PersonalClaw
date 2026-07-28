@@ -282,6 +282,21 @@ def _meta(label: str, help: str, **kwargs: object) -> dict:
     return {"label": label, "help": help, **kwargs}
 
 
+def _slug_username(value: object) -> str:
+    """Normalize ``dashboard.username`` on load (TEAM-SHARED-ENTITIES §1).
+
+    Imported lazily so the config loader keeps no module-level dependency on
+    anything that might import it back, and degrades to "" rather than raising —
+    an unreadable handle must not stop the whole config from loading.
+    """
+    try:
+        from personalclaw.identity import slugify_username
+
+        return slugify_username(str(value or ""))
+    except Exception:
+        return ""
+
+
 # Guard-flag spellings that DISABLE a guard; anything else (missing/unknown/typo)
 # stays ENABLED. Mirrors ``guardrails.flags.guard_flag`` but is defined locally to
 # keep the config loader free of a guardrails import (avoids an import cycle).
@@ -698,6 +713,18 @@ class DashboardConfig:
             "How the system addresses the operator. Set during first-run onboarding; "
             "instance-level (single-user, self-hosted) so it follows the user across "
             "browsers/machines. Empty = onboarding not yet completed.",
+        ),
+    )
+    username: str = field(
+        default="",
+        metadata=_meta(
+            "Username",
+            "Short attribution handle stamped onto records you create (tasks, "
+            "comments, memories) — lowercase letters, digits, '-' and '_'. It is a "
+            "label, NOT a credential: nothing authenticates or authorizes against "
+            "it. Suggested from your operator name at first run. Renaming affects "
+            "future writes only; existing records keep the name they were written "
+            "with. Empty = writes carry no attribution (the default behavior).",
         ),
     )
     merge_queued_messages: bool = field(
@@ -2215,6 +2242,9 @@ class AppConfig:
                 restore_sessions=dashboard_data.get("restore_sessions", False),
                 restore_window_minutes=dashboard_data.get("restore_window_minutes", 30),
                 user_name=dashboard_data.get("user_name", ""),
+                # Normalized on READ as well as write, so a hand-edited config.json
+                # can't introduce a non-canonical handle that then lands in records.
+                username=_slug_username(dashboard_data.get("username", "")),
                 merge_queued_messages=dashboard_data.get("merge_queued_messages", False),
                 auto_tag_sessions=dashboard_data.get("auto_tag_sessions", True),
                 mcp_probe_timeout_secs=_safe_int(

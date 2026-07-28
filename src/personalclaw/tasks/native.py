@@ -34,6 +34,17 @@ def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def _current_username() -> str:
+    """The owner's attribution handle, or ``""``. Never raises — attribution
+    decorates a write, so it must never be the reason one fails."""
+    try:
+        from personalclaw.identity import current_username
+
+        return current_username()
+    except Exception:
+        return ""
+
+
 class NativeTaskProvider(TaskProvider):
     """Filesystem task provider — one JSON file per task."""
 
@@ -184,6 +195,10 @@ class NativeTaskProvider(TaskProvider):
                 project=self._derive_project_label(task_list_id),
                 task_list_id=task_list_id,
                 dependencies=dependencies,
+                # Attribution (TEAM-SHARED-ENTITIES §1): an explicit author wins;
+                # otherwise stamp the owner's handle. Unset handle → "" → today's
+                # behavior (no attribution).
+                author=fields.get("author") or _current_username(),
                 assignee=fields.get("assignee", ""),
                 priority=TaskPriority.normalize(fields.get("priority", "medium")),
                 labels=fields.get("labels", []),
@@ -355,7 +370,9 @@ class NativeTaskProvider(TaskProvider):
                 data = []
             comment = {
                 "id": f"c-{uuid.uuid4().hex[:8]}",
-                "author": author or "user",
+                # Attribution: explicit author, else the owner's handle, else the
+                # historical "user" placeholder so existing readers see no change.
+                "author": author or _current_username() or "user",
                 "body": body,
                 "created_at": _now_iso(),
             }

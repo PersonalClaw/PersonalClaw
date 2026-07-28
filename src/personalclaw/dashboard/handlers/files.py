@@ -2676,6 +2676,7 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             "auto_tag_sessions",
             "widget_density",
             "user_name",
+            "username",  # attribution handle (TEAM-SHARED-ENTITIES §1)
             # server-stored message display prefs (consistent across browsers)
             "send_on_enter",
             "show_timestamps",
@@ -2755,6 +2756,19 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             # Operator name — trimmed + length-capped. Empty string is valid
             # (clears the name → re-triggers onboarding).
             cfg.dashboard.user_name = val.strip()[:80]
+        if "username" in body:
+            val = body["username"]
+            if not isinstance(val, str):
+                _sel().log_tool_invocation(
+                    session_key="dashboard", tool_name="dashboard_config_write", outcome="failure"
+                )
+                return web.json_response({"error": "username must be a string"}, status=400)
+            # Attribution handle — normalized at the boundary so what lands in
+            # records is always canonical, whatever the client sent. Empty is
+            # valid: it means "no attribution" (TEAM-SHARED-ENTITIES §1).
+            from personalclaw.identity import slugify_username
+
+            cfg.dashboard.username = slugify_username(val)
         # message display prefs + auto-tagging — all booleans
         for _bool_field in (
             "send_on_enter",
@@ -2806,6 +2820,7 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             "auto_tag_sessions": cfg.dashboard.auto_tag_sessions,
             "widget_density": cfg.dashboard.widget_density,
             "user_name": cfg.dashboard.user_name,
+            "username": cfg.dashboard.username,
             "send_on_enter": cfg.dashboard.send_on_enter,
             "show_timestamps": cfg.dashboard.show_timestamps,
             "show_thinking_inline": cfg.dashboard.show_thinking_inline,

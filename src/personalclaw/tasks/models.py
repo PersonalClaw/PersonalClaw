@@ -180,6 +180,11 @@ class Task:
     project: str = ""  # denormalized project-id label (grouping/filter)
     task_list_id: str = ""  # structural parent (Project → TaskList → Task)
     dependencies: list[TaskDependency] = field(default_factory=list)
+    # WHO created this task, as an attribution handle (TEAM-SHARED-ENTITIES §1).
+    # Additive with an empty default: pre-existing task JSON has no such key and
+    # reads back as "" — no attribution, i.e. today's behavior. Distinct from
+    # `assignee`, which is who should DO it.
+    author: str = ""
     assignee: str = ""
     priority: TaskPriority = TaskPriority.MEDIUM
     labels: list[str] = field(default_factory=list)
@@ -267,6 +272,7 @@ class Task:
             project=d.get("project", ""),
             task_list_id=d.get("task_list_id", ""),
             dependencies=dependencies,
+            author=d.get("author", ""),  # absent in pre-attribution task files
             assignee=d.get("assignee", ""),
             priority=TaskPriority.normalize(d.get("priority", "medium")),
             labels=d.get("labels", []),
