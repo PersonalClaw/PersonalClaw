@@ -290,3 +290,85 @@ Folded into **Session 2** (which already owns the restore endpoints + `backup va
   **BUG FOUND AND FIXED DURING VALIDATION:** an `--incremental` export rewrote `manifest.json` with only the changed entries' shards, orphaning the rest — so a perfectly good export failed `validate` with "present on disk but not declared". `_merged_shard_records()` now carries forward untouched entries' records (dropping any whose file has since vanished). Regression-tested.
   **MEASURED on the real home:** 22 entries / 24 shards / **50,205 rows** exported and validated clean. **Determinism proven twice** — two independent exports of live state produced byte-identical shards (every sha256 equal), and a re-export of an unchanged dev home left **zero** changed shard files. **Reviewability proven:** adding one task yields exactly ONE added line in the shard diff (`+{"data":{...},"id":"t-readable"}`). Corruption detection proven for all four modes (tampered content → sha mismatch, deleted shard, undeclared stray file, unparseable row). 28 tests in `test_durability_shards.py`. Gate: `make lint` green (518 files), `make test` **8314 passed** (51.5s — no regression). Docs: `docs/reference/cli.md` gained both subcommands.
   **DEFERRED to S2b (deliberate scope split, not an omission):** the §3 boot-started snapshot SERVICE (nightly tar + hourly incremental + hourly git commit), rolling retention tiers, the `POST /api/durability/restore` + `GET /api/durability/snapshots` endpoints, the monthly restore drill, and the T2-M1/M2/M3 inventory-driven merge amendment (merge dispatch on `StateEntry.merge`, `dry_run` merge plan, non-empty-home auto-detect). Each is independently valuable and independently completable; shipping the format + verification first means the service has something verified to schedule.
+
+---
+
+## Execution log — Session 2b (scheduled snapshot service)
+
+### 2026-07-28 — §3 service + tiered retention + drills: DONE. Restore endpoint + T2-M1..M3 NOT in this session (see below).
+
+New `durability/retention.py` (pure tier math) and `durability/service.py` (the
+boot-started loop), plus `dashboard/handlers/durability.py` and three routes.
+Durability stops depending on remembering to run a command.
+
+**What landed**
+
+- **Tiered retention** replacing `--keep N`. `keep N` on a nightly schedule means a
+  week of history and nothing older, which is the wrong shape: corruption you notice
+  immediately needs yesterday, corruption you notice in April needs January. N daily
+  + M weekly + Y monthly, one promoted snapshot per period, tiers as UNIONS not
+  slices. Measured: 400 nightly snapshots thin to **30 files spanning 12 months**.
+  Idempotent, and it only ever deletes files whose names it positively recognizes.
+- **The loop**: hourly incremental shard export (bounds a loss to one hour), nightly
+  full snapshot + retention, monthly restore drill. Elapsed-time scheduling rather
+  than wall-clock, so a laptop asleep at 03:00 gets its snapshot on the next wake
+  instead of silently skipping the night. Every job is `single_flight`-guarded across
+  processes, runs on an executor thread, and swallows its own failure into an audited
+  report — a backup service that can kill a gateway is worse than none.
+- **Restore drills**: extract the newest snapshot to a temp dir, `PRAGMA
+  integrity_check` every SQLite copy, and report PASS/FAIL through
+  `DashboardState.notify` — a FAILURE is `warning`, not `info`, so minimum-severity
+  and quiet-hours filters can't hide it. Never touches live state. A failed drill is
+  still time-stamped so it warns once instead of every tick.
+- **Config** `durability.{auto_backup,keep_daily,keep_weekly,keep_monthly,restore_drills}`
+  wired dataclass + `_meta` → `load()` (via `_guard_flag`, so ambiguity keeps backups
+  RUNNING) → `to_dict()`. Fail-safe direction throughout: losing scheduled backups to
+  an unreadable config value is the exact failure this plan exists to prevent.
+- **Endpoints**: `GET /api/durability/status`, `GET /api/durability/snapshots` (the
+  archive list WITH the retention plan, so the policy is inspectable before it
+  deletes anything), `POST /api/durability/run {job}` for "back up before I do
+  something risky".
+
+**Two real bugs found by running it, not by reading it**
+
+1. **Retention matched nothing.** The filename regex assumed
+   `personalclaw-snapshot-YYYYmmdd-HHMMSS`; `snapshot.py` actually writes
+   `%Y%m%dT%H%M%SZ`. Consequence was silent and total — every file was unrecognized,
+   so retention kept all of them while reporting success. Now verified against the
+   real output and test-locked.
+2. **The incremental export never noticed a memory write.** Every store runs in WAL
+   mode, so a committed write lands in the `-wal` sidecar and `memory.db`'s own mtime
+   does not move — `_fingerprint` reported "unchanged" through an entire session of
+   writes, meaning the hourly job backed up nothing. `_fingerprint` now folds in the
+   `-wal`/`-shm` sidecars. **This bug predates this session** (S2a shipped
+   `_fingerprint`), and it defeated the single most valuable property of the whole
+   plan, so it is worth remembering as a class: fingerprinting a SQLite file means
+   fingerprinting its sidecars.
+
+Also corrected: the job reported `len(result.shards)` — the MERGED manifest, which
+carries untouched shards forward — making an idle hour look like a full backup. It
+now reports entries actually re-exported. And `export_shards(entries=[])` reads the
+empty list as falsy and exports EVERYTHING, so the nothing-changed case must return
+before that call.
+
+**NOT in this session, deliberately:**
+
+- **`POST /api/durability/restore`.** Replace-restore refuses to run while the
+  gateway is up (`_is_gateway_running`), so a useful endpoint needs the
+  staged-swap-on-next-boot machinery §3 describes (staged dir + marker file the
+  startup path applies before opening stores). Half of that is worse than none — an
+  endpoint that appears to restore and doesn't is a trap — so restore stays
+  `personalclaw restore` until the staging lands. The handler docstring says so.
+- **T2-M1/M2/M3** (inventory-driven merge dispatch, merge-plan dry-run, non-empty-home
+  auto-detect). These are `snapshot.py` merge-path work, independent of the schedule,
+  and folding them in would have made one unreviewable change. Next Durability
+  session.
+- The hourly **git commit** of the memory markdown tree (§3's `state-history/` repo).
+  Independent of the schedule loop; belongs with the §5 time-travel work that owns the
+  git surface.
+
+Tests: `tests/test_durability_service.py`, 49 cases. Validated as a user on an
+isolated dev home: the service ran unattended at boot (snapshot + shards + drill
+verifying 4 databases), the snapshots endpoint showed the tier plan without deleting
+anything, on-demand jobs and both input validations behaved, the drill notification
+was delivered, and the gateway log was clean. Full suite 8679 passed; lint clean.

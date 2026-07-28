@@ -19,6 +19,26 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Backups now happen on their own, and they get checked.** PersonalClaw takes a
+  full snapshot nightly and exports whatever changed every hour, so how much you can
+  lose is bounded by an hour rather than by when you last remembered to run
+  `personalclaw snapshot`.
+
+  Retention keeps a *spread* instead of a window — two weeks of daily snapshots, then
+  weekly, then monthly — so a year of history costs about 30 files and you can still
+  reach back to January. Settings → shows exactly which snapshots the policy would
+  keep and which it would remove, before it removes anything.
+
+  Once a month it also runs a **restore drill**: the newest snapshot is unpacked into
+  a temporary directory and every database inside it is integrity-checked, then you
+  get a pass/fail notification. A backup nobody has restored is a hope, not a backup —
+  and a failure is reported as a warning, so it isn't hidden by quiet hours.
+  `durability.auto_backup` turns the schedule off if you'd rather do it by hand.
+
+  Fixed while building it: the incremental export had been unable to notice memory
+  changes at all. Databases run in WAL mode, so a saved change lands in a companion
+  file and the main database's timestamp never moves — the export saw "nothing
+  changed" through an entire session of work.
 - **Find any chat by what was said in it.** Chat search now runs against a real
   full-text index of your transcripts instead of scanning the 500 most recent files,
   so a conversation from months ago is as findable as yesterday's — and each result
