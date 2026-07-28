@@ -105,14 +105,20 @@ async def api_sessions(request: web.Request) -> web.Response:
 
 
 async def api_sessions_search(request: web.Request) -> web.Response:
-    """GET /api/sessions/search — content search over session JSONL files.
+    """GET /api/sessions/search — content search across session transcripts.
+
+    Served from the FTS5 index when it has an answer (SESSION-MANAGEMENT §C1),
+    which also yields a highlighted ``snippet`` showing why each session matched.
+    Falls back to the linear transcript scan when the index is unavailable, empty,
+    or genuinely finds nothing — the scan reads a bounded window of recent
+    sessions, so it stays a correct-but-narrower answer rather than a wrong one.
 
     Query params:
       - ``q``: search string (min 2 chars; empty returns no results)
       - ``limit``: max results (default 50, max 200)
 
-    Returns ``{sessions}`` — same metadata shape as:func:`api_sessions`.
-    Session titles may be LLM-generated and are redacted before return.
+    Returns ``{sessions, source}`` — session metadata as in :func:`api_sessions`,
+    plus which path answered. Titles may be LLM-generated and are redacted.
     """
     state: DashboardState = request.app["state"]
     if not state.conversation_log:
@@ -124,9 +130,24 @@ async def api_sessions_search(request: web.Request) -> web.Response:
         limit = max(1, min(int(request.query.get("limit", "50")), 200))
     except (TypeError, ValueError):
         limit = 50
-    sessions = await asyncio.get_running_loop().run_in_executor(
-        None, state.conversation_log.search_sessions, q, limit
-    )
+
+    loop = asyncio.get_running_loop()
+    source = "index"
+    sessions: list = []
+    try:
+        from personalclaw import session_search
+
+        sessions = await loop.run_in_executor(
+            None, lambda: session_search.search_sessions(q, limit=limit)
+        )
+    except Exception:  # noqa: BLE001 — the scan below is the designed fallback
+        logger.debug("session search index unavailable", exc_info=True)
+        sessions = []
+    if not sessions:
+        source = "scan"
+        sessions = await loop.run_in_executor(
+            None, state.conversation_log.search_sessions, q, limit
+        )
     for s in sessions:
         title = s.get("title")
         if title:
@@ -135,7 +156,15 @@ async def api_sessions_search(request: web.Request) -> web.Response:
             title, _ = _h.redact_exfiltration_urls(title)
             title, _ = _h.redact_credentials(title)
             s["title"] = title
-    return web.json_response({"sessions": sessions})
+        # A snippet is transcript text, so it gets the same redaction the title does.
+        snippet = s.get("snippet")
+        if snippet:
+            import personalclaw.dashboard.handlers as _h  # noqa: F811
+
+            snippet, _ = _h.redact_exfiltration_urls(snippet)
+            snippet, _ = _h.redact_credentials(snippet)
+            s["snippet"] = snippet
+    return web.json_response({"sessions": sessions, "source": source})
 
 
 def _path_home_pclaw():

@@ -3034,6 +3034,27 @@ function LedgerRow({ icon: Icon, label, children }: { icon: LucideIcon; label: s
   )
 }
 
+/** Split a search snippet on the index's `<<`/`>>` match markers.
+ *
+ *  Returned as parts rather than HTML on purpose: the snippet is transcript text
+ *  the user typed, so rendering it as markup would be an injection sink. Any
+ *  unpaired marker degrades to plain text.
+ */
+function snippetParts(snippet: string): { text: string; hit: boolean }[] {
+  const parts: { text: string; hit: boolean }[] = []
+  let rest = snippet
+  while (rest) {
+    const open = rest.indexOf('<<')
+    if (open < 0) { parts.push({ text: rest, hit: false }); break }
+    const close = rest.indexOf('>>', open + 2)
+    if (close < 0) { parts.push({ text: rest, hit: false }); break }
+    if (open > 0) parts.push({ text: rest.slice(0, open), hit: false })
+    parts.push({ text: rest.slice(open + 2, close), hit: true })
+    rest = rest.slice(close + 2)
+  }
+  return parts
+}
+
 /** Dedicated sessions LIST page (#/chat/history) — search, manage, open. */
 function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) => void; query: Record<string, string>; setQuery: RouteProps['setQuery'] }) {
   // Instant-paint cache: sessions revalidate often (in-memory, persist:false);
@@ -3128,6 +3149,9 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   // keys in. Debounced; keys normalized (the search returns dashboard_-prefixed
   // keys, the list uses the stripped form).
   const [contentKeys, setContentKeys] = useState<Set<string> | null>(null)
+  // The matching passage per key, so a content-only hit can show WHY it matched
+  // rather than looking like an unexplained result (the FTS index returns one).
+  const [contentSnippets, setContentSnippets] = useState<Map<string, string>>(new Map())
   // List-view drag-to-folder: the chat key being dragged + the folder group hovered
   // (id, or '' for the ungrouped group → clears the folder). Mirrors the Board's
   // tag drag, reusing setFolder as the drop action.
@@ -3135,13 +3159,17 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   const [overFolder, setOverFolder] = useState<string | null>(null)
   useEffect(() => {
     const query = q.trim()
-    if (query.length < 2) { setContentKeys(null); return }
+    if (query.length < 2) { setContentKeys(null); setContentSnippets(new Map()); return }
     let alive = true
     const t = window.setTimeout(() => {
       api.sessionsSearch(query).then((rows) => {
         if (!alive) return
-        setContentKeys(new Set(rows.map((r) => r.key.replace(/^dashboard[_:]/, ''))))
-      }).catch(() => { if (alive) setContentKeys(null) })
+        const strip = (k: string) => k.replace(/^dashboard[_:]/, '')
+        setContentKeys(new Set(rows.map((r) => strip(r.key))))
+        setContentSnippets(new Map(
+          rows.filter((r) => r.snippet).map((r) => [strip(r.key), r.snippet as string]),
+        ))
+      }).catch(() => { if (alive) { setContentKeys(null); setContentSnippets(new Map()) } })
     }, 300)
     return () => { alive = false; clearTimeout(t) }
   }, [q])
@@ -3272,6 +3300,18 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
       </span>
       <div className="min-w-0 flex-1">
         <div className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{s.title || s.key}</div>
+        {/* Why this chat matched: the passage from the transcript, with the matched
+            terms marked. Only for content hits — a title match is already visible
+            above, so repeating it would be noise. */}
+        {contentSnippets.get(s.key) && (
+          <div className="mt-0.5 truncate text-on-surface-var text-[0.8125rem]">
+            {snippetParts(contentSnippets.get(s.key) as string).map((part, i) => (
+              part.hit
+                ? <mark key={i} className="rounded bg-primary/25 px-0.5 text-on-surface">{part.text}</mark>
+                : <span key={i}>{part.text}</span>
+            ))}
+          </div>
+        )}
         <div className="flex items-center gap-1.5 flex-wrap text-on-surface-low text-[0.8125rem]">
           <span>{s.messages} message{s.messages === 1 ? '' : 's'}{s.running ? ' · running' : ''}{s.model ? ` · ${s.model}` : ''}</span>
           {/* Origin chip on worker chats — names the loop / code project and opens its

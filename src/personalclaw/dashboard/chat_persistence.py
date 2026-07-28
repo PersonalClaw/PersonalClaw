@@ -612,6 +612,18 @@ def _save_session_to_history(
         atomic_write(path, "".join(lines), fsync=True)
         state.conversation_log._invalidate_cache(history_key)
         state.conversation_log.invalidate_tab_id_cache()
+        # Keep cross-session search current (SESSION-MANAGEMENT §C1). Runs after the
+        # cache invalidation so the re-read sees the file we just wrote, and after
+        # the write so a search-index failure can never cost a transcript.
+        # Restricted sessions are refused inside index_turn.
+        try:
+            from personalclaw import session_search
+
+            session_search.index_turn(
+                history_key, "", "", memory_mode=getattr(session, "memory_mode", "")
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("session search index skipped for %s", history_key, exc_info=True)
     except Exception:
         logger.error("Failed to save session %s to history", session.key, exc_info=True)
         raise
