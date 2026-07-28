@@ -1312,6 +1312,14 @@ BUNDLED_SNIPPETS: tuple[BundledSnippet, ...] = (
         filename="persona-lumon.md",
         description="The Lumon persona, appended on first turn for the 'lumon' dashboard theme.",
     ),
+    BundledSnippet(
+        name="persona-retro-terminal",
+        filename="persona-retro-terminal.md",
+        description=(
+            "The terse terminal-operator persona, appended on first turn for the "
+            "'retro-terminal' personality."
+        ),
+    ),
     # ── loop per-cycle directives (prepended to a worker's cycle nudge) ──
     BundledSnippet(
         name="loop-code-stage-directive",

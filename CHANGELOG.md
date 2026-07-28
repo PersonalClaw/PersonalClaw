@@ -176,6 +176,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   says so plainly instead of quietly doing nothing. New `GET /api/tools/groups` reports
   the partition for anything else that needs it.
 
+- **Personalities: themes that carry an identity, not just a palette.** Settings → Design
+  now offers a **personality** — one switch that sets the color scheme, the wordmark, the
+  browser tab title, and the interface density together, and can offer the assistant a
+  matching name. Two are included as starting points (a mono-green **Retro Terminal** with
+  a terse operator voice, and **Claw Arcade**), alongside the default PersonalClaw identity.
+  Renaming the assistant is **offered, never assumed**: activating a personality shows a
+  toggle naming the exact setting it would change, and declining it switches the look while
+  leaving your configuration alone. Switching back restores everything, including the name.
+  Every personality's palette goes through the same accessibility contrast checks as the
+  built-in schemes, so a personality can't ship an unreadable theme.
+
 - **A username, so your contributions stay attributable.** Settings → Account now takes
   a short handle (Settings suggests one from your name), and PersonalClaw stamps it onto
   things you create — tasks and task comments carry an author. It's a label, not a login:
