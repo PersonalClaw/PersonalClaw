@@ -176,6 +176,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   says so plainly instead of quietly doing nothing. New `GET /api/tools/groups` reports
   the partition for anything else that needs it.
 
+- **Backups you can actually read and verify: `personalclaw backup`.** Alongside the
+  opaque snapshot tarball, state can now be exported as **deterministic shards** —
+  one canonical JSONL file per store plus a SHA-256 manifest. Identical state always
+  produces identical bytes, so the export diffs cleanly (adding one task shows up as
+  exactly one added line — `git log` over your shards becomes a readable history of
+  what the assistant learned) and a future sync never re-uploads data that didn't
+  change. `personalclaw backup validate` re-derives every shard's size, row count and
+  checksum, re-parses every row, and **exits non-zero** on any problem, so you can run
+  it from cron: a backup nobody has verified is a hope, not a backup. `--incremental`
+  re-exports only what changed. Secrets are never included — shards are the
+  representation that leaves your machine.
+
 ### Fixed
 
 - **`personalclaw snapshot` was not backing up everything — and could copy a live
