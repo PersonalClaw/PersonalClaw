@@ -148,11 +148,55 @@ def _llm_embed_fn(provider_name: str, model_id: str) -> Callable[[str], list[flo
     at construction, so ``embed()`` needs no per-call model input and no
     vendor-specific hardcoded default.
     """
-    from personalclaw.llm.registry import get_default_registry
+    from personalclaw.llm.registry import ProviderResolutionError, get_default_registry
 
     try:
         registry = get_default_registry()
         provider = registry.build(provider_name, embedding_model=model_id)
+    except ProviderResolutionError:
+        # The entry isn't in the registry yet. Config-defined `providers[]` entries are
+        # replayed into the process-wide registry by `sync_entries_from_config()`, which
+        # only the GATEWAY boot path calls — so any other entry point (a CLI command, a
+        # worker, a test, a background pass that ran before boot finished) sees an empty
+        # `_entries` and the embed silently returns None forever. Chat never hit this
+        # because chat resolution runs after boot; the knowledge/memory embed pass does.
+        #
+        # The sync is idempotent (`register_entry` no-ops on a duplicate name) and reads
+        # one JSON file, so replaying it here self-heals rather than failing. Retried
+        # ONCE: a genuinely unknown provider must still fail loudly instead of looping.
+        try:
+            from personalclaw.llm.registry import sync_entries_from_config
+
+            synced = sync_entries_from_config()
+        except Exception:
+            logger.warning(
+                "Could not build embedding provider %r and config sync failed",
+                provider_name,
+                exc_info=True,
+            )
+            return None
+        if not synced:
+            logger.warning(
+                "Embedding provider %r is not a configured provider entry "
+                "(config.json providers[] has nothing to sync)",
+                provider_name,
+            )
+            return None
+        logger.info(
+            "Replayed %d config provider entr%s to resolve embedding provider %r",
+            synced,
+            "y" if synced == 1 else "ies",
+            provider_name,
+        )
+        try:
+            provider = registry.build(provider_name, embedding_model=model_id)
+        except Exception:
+            logger.warning(
+                "Could not build embedding provider %r after config sync",
+                provider_name,
+                exc_info=True,
+            )
+            return None
     except Exception:
         logger.warning(
             "Could not build embedding provider %r from LLM registry", provider_name, exc_info=True

@@ -332,6 +332,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Knowledge and memory could never embed with a config-defined provider.** With an
+  embedding model bound to a provider you configured yourself (an Ollama endpoint, say),
+  ingested knowledge items sat at "processing" with no embedding **forever** — no error,
+  no notification, just nothing. Semantic search and the entity graph had nothing to work
+  with, and memory's semantic layer could not embed at all. Chat through the very same
+  provider worked, which made it look like embedding was broken rather than unavailable.
+  The cause: configured providers are replayed into the model registry during gateway
+  startup, but the background embed pass could run before or outside that path and then
+  saw an empty registry. It now replays the configured providers itself when a lookup
+  misses, so the embed succeeds instead of silently returning nothing — and a provider
+  that genuinely is not configured still reports that plainly rather than retrying. (#47)
 - **Binding a model can no longer fail silently.** `PUT /api/models/active/{use_case}`
   answered "ok" in two cases where the binding had not actually taken. A request whose
   body never mentioned `models` — an automation or a person reasonably guessing the key
