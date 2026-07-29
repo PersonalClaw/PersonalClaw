@@ -764,6 +764,72 @@ def _inject_knowledge_content(state: "DashboardState", session: _ChatSession, me
     return f"{header}{chr(10).join(blocks)}\n\n---\n\n{message}"
 
 
+def _inject_artifact_content(state: "DashboardState", session: _ChatSession, message: str) -> str:
+    """Prepend @-mentioned artifact content to *message* for this turn.
+
+    Mirrors :func:`_inject_knowledge_content`: slugs arrive on the most-recent user
+    message's ``meta.artifacts``. The CURRENT version's body is what gets grounded —
+    referencing an artifact means "what it is now", not a pinned snapshot.
+
+    Also records a ``referenced`` event carrying the session id, so an artifact's
+    timeline shows where it was used. That recorder is idempotent per session, so a
+    long conversation about one artifact leaves one impression rather than a turn-by-
+    turn flood.
+    """
+    slugs: list[str] = []
+    for m in reversed(session.messages):
+        if m.get("role") == "user":
+            meta = m.get("meta") or {}
+            raw = meta.get("artifacts")
+            if isinstance(raw, list):
+                slugs = [str(x) for x in raw if isinstance(x, str) and x]
+            break
+    if not slugs:
+        return message
+
+    from personalclaw.artifacts import registry
+    from personalclaw.security import redact_credentials, redact_exfiltration_urls
+
+    try:
+        prov = registry.get_provider("native")
+    except Exception:  # noqa: BLE001 — a broken artifact store must not kill the turn
+        logger.debug("artifact provider unavailable", exc_info=True)
+        prov = None
+    if prov is None:
+        return message
+
+    blocks: list[str] = []
+    for slug in slugs:
+        try:
+            art = prov.get(slug)
+        except Exception:  # noqa: BLE001
+            art = None
+        if art is None:
+            continue
+        label = f"### Artifact `{art.slug}` — {art.name} (v{art.version}, {art.kind})"
+        if art.kind in ("image",):
+            # A binary body is a raw URL; the bytes must never enter the prompt.
+            blocks.append(f"{label}\n\n(Binary artifact; body at {art.content or 'n/a'}.)")
+        else:
+            body = str(art.content or "")
+            body, _ = redact_credentials(body)
+            body, _ = redact_exfiltration_urls(body)
+            blocks.append(f"{label}\n\n{body}" if body.strip() else f"{label}\n\n(Empty.)")
+        try:
+            prov.record_impression(slug, by="user", session_id=session.key)
+        except Exception:  # noqa: BLE001 — a timeline entry must never break a turn
+            logger.debug("artifact impression failed for %s", slug, exc_info=True)
+
+    if not blocks:
+        return message
+    header = (
+        "The user referenced the following artifact(s). The CURRENT content of each is "
+        "included below — use it to answer, and if you change one, call artifact_update "
+        "on that same slug so the change lands as a new version.\n\n"
+    )
+    return f"{header}{chr(10).join(blocks)}\n\n---\n\n{message}"
+
+
 def _inject_investigate_context(
     state: "DashboardState", session: _ChatSession, message: str
 ) -> str:
@@ -941,6 +1007,10 @@ async def _run_chat(
             message = _inject_knowledge_content(state, session, message)
         except Exception:
             logger.warning("knowledge content injection failed", exc_info=True)
+        try:
+            message = _inject_artifact_content(state, session, message)
+        except Exception:
+            logger.warning("artifact content injection failed", exc_info=True)
         try:
             message = _inject_investigate_context(state, session, message)
         except Exception:

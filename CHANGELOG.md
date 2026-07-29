@@ -19,6 +19,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Hand an artifact to the agent, or point at one mid-conversation.** An artifact — a
+  widget, a document, a chart — can now be opened straight into a chat set up to *change*
+  it: the agent starts with the current version in front of it and a prompt that names the
+  artifact, so a revision lands as a new version of that artifact instead of a
+  near-duplicate beside it. And in any chat you can now reference artifacts from the
+  composer's **+** menu, which grounds the reply in whatever those artifacts say *right
+  now*. Each reference is recorded on the artifact's own timeline, so you can see where it
+  got used and jump back to that conversation.
 - **Shelves for your knowledge library — including ones that fill themselves.** Saved
   documents, notes and links were one flat list. You can now group them onto
   **collections**: a *manual* shelf holds whatever you put on it, and a **smart** shelf
