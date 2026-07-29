@@ -332,6 +332,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Settings and the Store no longer blink to a loading skeleton when you touch
+  anything.** Clicking "Check" for updates, flipping a toggle, rotating a key, adding a
+  lexicon entry, or finishing an app install tore the whole panel (or the entire apps
+  grid) down to a skeleton and rebuilt it — reading as a jarring full-page refresh even
+  though the data had barely changed. One shared cause: the stale-while-revalidate cache
+  dropped its value the instant a panel asked to reload, so every panel's "no data yet →
+  show a skeleton" branch fired on the way to fresh data that was already in flight.
+  Reloading now *holds* what is on screen and swaps in the new data when it lands, which
+  is what stale-while-revalidate was supposed to mean. Switching to a genuinely different
+  resource still clears, so one page's rows can never paint under another's filter. The
+  fix is in the shared data hook, so all **88 reload sites across 32 panels** are covered
+  at once. (#52)
 - **Installing an app and updating PersonalClaw both failed on a `uv` virtualenv.**
   A `uv venv` ships no `pip` module — uv is the installer — but four separate code
   paths hardcoded `python -m pip install`, so each died with `No module named pip`
