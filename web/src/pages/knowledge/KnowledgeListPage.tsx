@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import { BookOpen, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers } from 'lucide-react'
+import { BookOpen, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -138,6 +138,12 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
   }, [peekId])
 
   const [showArchived, setShowArchived] = useState(false)
+  // Curation filter (KNOWLEDGE-LIBRARY S2, T2.1): '' | 'unread' | 'reading' | 'read'
+  // | 'favorites'. Client-side like the type/provider/tag filters, so the full item set
+  // stays loaded and the chips can gate themselves on what's actually present.
+  // Without this, favoriting was WRITE-ONLY — you could star an item and then had no
+  // way to see your stars.
+  const [curationFilter, setCurationFilter] = useState('')
   // Multi-select for bulk curation (KNOWLEDGE-LIBRARY S2, T2.3). Deliberately NOT
   // URL-backed: a transient selection isn't meaningfully deep-linkable, and restoring
   // one on reload would re-arm a destructive-feeling state the user didn't ask for
@@ -327,9 +333,25 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
     () => (items ?? []).filter((it) =>
       (!typeFilter || resolveType(it).key === typeFilter) &&
       (!providerFilter || (it.provider || 'native') === providerFilter) &&
-      (!tagFilter || (it.tags ?? []).includes(tagFilter))),
-    [items, typeFilter, providerFilter, tagFilter],
+      (!tagFilter || (it.tags ?? []).includes(tagFilter)) &&
+      // A NULL read_state normalizes to 'unread' server-side, but be tolerant here too
+      // so a pre-curation item can't slip past the unread filter it belongs in.
+      (!curationFilter || (curationFilter === 'favorites'
+        ? !!it.favorited
+        : (it.read_state || 'unread') === curationFilter))),
+    [items, typeFilter, providerFilter, tagFilter, curationFilter],
   )
+  // Chips appear only when the state they filter is actually present — an always-on
+  // "Favorites (0)" chip is a dead end that teaches the user nothing.
+  const curationCounts = useMemo(() => {
+    const base = items ?? []
+    return {
+      unread: base.filter((i) => (i.read_state || 'unread') === 'unread').length,
+      reading: base.filter((i) => i.read_state === 'reading').length,
+      read: base.filter((i) => i.read_state === 'read').length,
+      favorites: base.filter((i) => !!i.favorited).length,
+    }
+  }, [items])
   const empty = stats && stats.items === 0
 
   return (
@@ -424,6 +446,28 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
                   {typesPresent.length > 1 && typesPresent.map((t) => { const tm = resolveType({ type: t as never }); return <FilterChip key={t} active={typeFilter === t} onClick={() => setTypeFilter(t)} tone={tm.tone}><tm.icon size={12} /> {tm.label}</FilterChip> })}
                   {providersPresent.length > 1 && <FilterChip active={providerFilter === ''} onClick={() => setProviderFilter('')}><Database size={12} /> All providers</FilterChip>}
                   {providersPresent.length > 1 && providersPresent.map((p) => <FilterChip key={p} active={providerFilter === p} onClick={() => setProviderFilter(p)}>{p === 'native' ? 'PersonalClaw' : p}</FilterChip>)}
+                  {/* Curation chips: only for states actually present, and only once
+                      the library is big enough for filtering to be the point. */}
+                  {(items?.length ?? 0) > 1 && curationCounts.reading > 0 && (
+                    <FilterChip active={curationFilter === 'reading'} onClick={() => setCurationFilter(curationFilter === 'reading' ? '' : 'reading')}>
+                      <BookOpen size={12} /> Reading {curationCounts.reading}
+                    </FilterChip>
+                  )}
+                  {(items?.length ?? 0) > 1 && curationCounts.unread > 0 && curationCounts.unread !== (items?.length ?? 0) && (
+                    <FilterChip active={curationFilter === 'unread'} onClick={() => setCurationFilter(curationFilter === 'unread' ? '' : 'unread')}>
+                      Unread {curationCounts.unread}
+                    </FilterChip>
+                  )}
+                  {(items?.length ?? 0) > 1 && curationCounts.read > 0 && (
+                    <FilterChip active={curationFilter === 'read'} onClick={() => setCurationFilter(curationFilter === 'read' ? '' : 'read')}>
+                      Read {curationCounts.read}
+                    </FilterChip>
+                  )}
+                  {curationCounts.favorites > 0 && (
+                    <FilterChip active={curationFilter === 'favorites'} onClick={() => setCurationFilter(curationFilter === 'favorites' ? '' : 'favorites')} tone="var(--color-primary)">
+                      <Star size={12} /> Favorites {curationCounts.favorites}
+                    </FilterChip>
+                  )}
                   <FilterChip active={showArchived} onClick={() => setShowArchived((v) => !v)}><Archive size={12} /> {showArchived ? 'Showing archived' : 'Show archived'}</FilterChip>
                   {tagFilter && <FilterChip active onClick={() => setTagFilter('')}># {tagFilter} <X size={11} /></FilterChip>}
                 </div>
@@ -521,7 +565,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
                           onSelect: () => cycleReadState(it),
                         },
                         {
-                          icon: <Pin size={15} />,
+                          icon: <Star size={15} />,
                           label: it.favorited ? 'Remove favorite' : 'Favorite',
                           onSelect: () => toggleFavorite(it),
                         },
@@ -559,7 +603,20 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-s">
                               {it.is_pinned && <Pin size={12} className="shrink-0 text-primary" style={{ fill: 'currentColor' }} />}
-                              <span className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{it.title || it.url_title || '(untitled)'}</span>
+                              {/* Favorite gets its OWN glyph. It shared the Pin icon
+                                  before, which made two deliberately distinct concepts
+                                  (pin = float to the top of the list; favorite = a
+                                  personal mark) indistinguishable on the row. */}
+                              {it.favorited && <Star size={12} className="shrink-0 text-primary" style={{ fill: 'currentColor' }} aria-label="Favorite" />}
+                              {/* Unread is the DEFAULT state, so it gets no marker —
+                                  badging every fresh item would make the list noise.
+                                  Only the two states a reader deliberately set show. */}
+                              {it.read_state === 'reading' && (
+                                <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-[0.75rem] text-primary" title="You're partway through this">
+                                  <BookOpen size={10} /> reading
+                                </span>
+                              )}
+                              <span className={`truncate text-[0.9375rem] ${it.read_state === 'read' ? 'text-on-surface-var' : 'text-on-surface'}`} style={fvs(it.read_state === 'read' ? 400 : 500)}>{it.title || it.url_title || '(untitled)'}</span>
                               {(it.processing_status === 'queued' || it.processing_status === 'processing') && (
                                 <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-primary text-[0.75rem]"><Loader2 size={10} className="animate-spin" /> Enriching</span>
                               )}

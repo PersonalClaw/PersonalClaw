@@ -1,6 +1,6 @@
 # Plan: Knowledge Library — Collections, Curation, and Reading
 
-**Status:** IN PROGRESS — Session 1 (collections + item curation) shipped 2026-07-29; S2 T2.3 (bulk ops) shipped 2026-07-29; T2.1 remainder is FE-only, T2.2 (tags taxonomy) needs an owner re-scope — see the S2 log. Created as DESIGNED — created 2026-07-18 (roadmap rev 10; owner ask: more library-management capabilities for knowledge articles)
+**Status:** IN PROGRESS — Session 1 (collections + item curation) shipped 2026-07-29; S2 T2.1 + T2.3 shipped 2026-07-29 (curation display/filters + bulk ops); T2.2 (tags taxonomy) needs an owner re-scope — see the S2 log. Created as DESIGNED — created 2026-07-18 (roadmap rev 10; owner ask: more library-management capabilities for knowledge articles)
 **Created:** 2026-07-18
 **Wave:** 2 (S1-2: collections + curation) + 3 (S3: reading experience + saved views)
 **Depends on:** nothing hard (builds on the shipped knowledge store). Coordinates with KNOWLEDGE-SYNTHESIS (5 — synthesis nodes produce library items), WATCHED-SOURCES (15 — watched sources land in collections), DESIGN-SYSTEM-CONSISTENCY (51 — the library UI is a flagship consistency surface), MEMORY-GRAPH-AND-VAULT (14 — knowledge-side graph is distinct: knowledge.db = the user's items).
@@ -288,3 +288,49 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
   user-authored tags by **list-equality on the JSON shape**. Recommend re-scoping to a
   derived tag registry (counts + hierarchy, JSON stays authoritative) — additive, no
   migration, and it satisfies the stated done-when. Owner ruling needed before starting.
+- 2026-07-29 — **DONE (S2: T2.1 remainder).** S1 shipped the store API, routes and
+  context-menu verbs for read state and favorites; **neither state rendered anywhere**,
+  which made favoriting **write-only** — you could star an item and then had no way to
+  find your stars. This closes the display and filter half.
+
+  **Row affordances.** Favorite gets its **own glyph** (a star). It shared the `Pin`
+  icon before, which made two deliberately distinct concepts indistinguishable on the
+  row — pin floats an item to the top of the list, favorite is a personal mark with no
+  ordering effect. A `reading` badge marks the in-progress state, and a read item's
+  title drops to a lighter weight and a dimmer tone. **Unread deliberately gets NO
+  marker:** it is the default state, and badging every fresh item would turn the whole
+  library into noise. Only states a reader actually set are shown.
+
+  **Filter chips** for Reading / Unread / Read / Favorites, client-side like the
+  existing type/provider/tag filters (keeping the full item set loaded, per the
+  page's own stated convention). Each chip appears **only when the state it filters is
+  present** — an always-visible "Favorites 0" is a dead end that teaches nothing — and
+  the Unread chip additionally hides when *everything* is unread, since filtering to
+  "all of it" is not a filter. Counts ride on the chips.
+
+  **Reader controls.** The dedicated item page gained a read-state cycle and a favorite
+  toggle beside Pin/Archive, with self-describing labels ("Mark as reading" →
+  "Reading — mark read" → "Read — mark unread"). A **cycle rather than a toggle** because
+  the middle state is the one a reading list exists to represent. Both route through the
+  dedicated curation endpoints, **not** `updateKnowledge`: these are non-touching writes,
+  and going through the generic update path would bump `updated_at` and reshuffle a
+  recency-sorted library. Verified live — after cycling and favoriting one item, its
+  `updated_at` was still the original second while its siblings' had moved.
+
+  **Premise correction carried from the audit:** the plan's T2.1 done-when says "verify
+  weighting unaffected" for favorite-vs-pin. **There is no retrieval weighting to
+  affect.** `is_pinned` appears only in the no-query list branch's `ORDER BY`
+  (`handlers/knowledge.py:201`); nothing in `knowledge/retrieval.py` reads it, so pin
+  affects neither searched results nor agent retrieval. Favorite was therefore already
+  fully distinct from pin; the verification is satisfied by inspection, not by code.
+
+  Validated as a user on an isolated dev home (port 10735): seeded four items with one
+  reading / one read / one favorited, confirmed the chips render with correct counts
+  (Reading 1 · Unread 2 · Read 1 · Favorites 1), and confirmed **every filter returns
+  exactly the right item(s)** and toggling off restores all four. Drove the reader's full
+  read-state cycle and favorite toggle, confirmed both persisted, and confirmed the
+  non-touching guarantee. Zero console errors. Gate: `make lint` green · `make test`
+  **8912 passed** · web typecheck + 283 vitest + build green.
+
+  **T2.1 is now complete.** Remaining in S2: **T2.2 (tags taxonomy)**, which still needs
+  the owner re-scope ruling recorded in the T2.3 log above.

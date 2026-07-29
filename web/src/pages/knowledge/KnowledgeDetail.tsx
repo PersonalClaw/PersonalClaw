@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Pencil, Trash2, Check, X, ExternalLink, Sparkles, Layers, Loader2, Pin, Archive, Download, Target, Maximize2, Wand2, ChevronDown, WifiOff, RefreshCw, MessageCircleQuestion } from 'lucide-react'
+import { Pencil, Trash2, Check, X, ExternalLink, Sparkles, Layers, Loader2, Pin, Star, BookOpen, Archive, Download, Target, Maximize2, Wand2, ChevronDown, WifiOff, RefreshCw, MessageCircleQuestion } from 'lucide-react'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { investigate } from '../../lib/investigate'
 import { Markdown } from '../../ui/Markdown'
@@ -159,6 +159,28 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
     try { await updateKnowledge(item.id, { [flag]: next }); onChanged() }
     catch { setFull((f) => ({ ...f, [flag]: !next })); setErr('Update failed') }
   }
+  /** Cycle unread → reading → read → unread. A cycle rather than a toggle because the
+   *  MIDDLE state is the one a reading list exists to represent. Routed through the
+   *  dedicated endpoint, NOT `updateKnowledge`: marking something read is a
+   *  non-touching write, so it must not bump `updated_at` and reshuffle a
+   *  recency-sorted library. */
+  async function cycleReadState() {
+    const cur = full.read_state || 'unread'
+    const next = cur === 'reading' ? 'read' : cur === 'read' ? 'unread' : 'reading'
+    setFull((f) => ({ ...f, read_state: next }))  // optimistic
+    try { await api.setKnowledgeReadState(item.id, next); onChanged() }
+    catch { setFull((f) => ({ ...f, read_state: cur })); setErr('Update failed') }
+  }
+
+  /** Star / unstar. Distinct from Pin: pin floats an item to the top of the list,
+   *  favorite is a personal mark with no ordering effect. Also non-touching. */
+  async function toggleFavorite() {
+    const next = !full.favorited
+    setFull((f) => ({ ...f, favorited: next }))  // optimistic
+    try { await api.setKnowledgeFavorited(item.id, next); onChanged() }
+    catch { setFull((f) => ({ ...f, favorited: !next })); setErr('Update failed') }
+  }
+
   // The user kept their own title, so the AI title was only stored as a backup. This
   // promotes it to the displayed title on demand (the magic-wand affordance).
   async function applyAiTitle() {
@@ -196,6 +218,12 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
           here would sit outside the overflow logic). */}
       <HeaderControl icon={MessageCircleQuestion} label="Investigate in chat" priority="low"
         onClick={() => { void investigate('knowledge_item', full.id, { backLink: `#/knowledge/item/${full.id}` }) }} />
+      <HeaderControl icon={BookOpen}
+        label={(full.read_state || 'unread') === 'reading' ? 'Reading — mark read'
+          : full.read_state === 'read' ? 'Read — mark unread' : 'Mark as reading'}
+        active={(full.read_state || 'unread') !== 'unread'} onClick={cycleReadState} />
+      <HeaderControl icon={Star} label={full.favorited ? 'Favorited' : 'Favorite'}
+        active={!!full.favorited} onClick={toggleFavorite} />
       <HeaderControl icon={Pin} label={full.is_pinned ? 'Pinned' : 'Pin'} active={full.is_pinned} onClick={() => toggleFlag('is_pinned')} />
       <HeaderControl icon={Archive} label={full.is_archived ? 'Archived' : 'Archive'} active={full.is_archived} onClick={() => toggleFlag('is_archived')} />
       {onShowDetails && (
