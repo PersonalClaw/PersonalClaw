@@ -1819,6 +1819,92 @@ async def set_item_favorited(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "favorited": store.get_item(iid)["favorited"]})
 
 
+# A selection larger than this is a client bug rather than an intent, and a runaway
+# bulk write over an entire library is worth refusing rather than serving. Mirrors
+# `session_bulk._MAX_KEYS`.
+_BULK_MAX_ITEMS = 500
+
+
+async def bulk_items(request: web.Request) -> web.Response:
+    """POST /api/knowledge/bulk — apply one curation op to many items.
+
+    Body: ``{"op": "collect", "item_ids": [...], ...op args}``.
+
+    Per-item best-effort with per-item results (``changed``/``unchanged``/``missing``),
+    following `session_bulk.py`: a selection can go stale between the click and the
+    request, so "38 shelved, 2 not found" beats a wholesale failure. Argument problems
+    are a typed 400 — a caller that forgot `collection_id` should hear about it rather
+    than get a silent no-op across the whole selection.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be an object"}, status=400)
+
+    store = _store(request)
+    op = str(body.get("op") or "")
+    if op not in store.BULK_OPS:
+        return web.json_response(
+            {
+                "error": {
+                    "code": "unknown_op",
+                    "message": f"op must be one of {sorted(store.BULK_OPS)}",
+                    "received": op,
+                }
+            },
+            status=400,
+        )
+    raw = body.get("item_ids")
+    if not isinstance(raw, list) or not raw:
+        return web.json_response(
+            {
+                "error": {
+                    "code": "item_ids_required",
+                    "message": "item_ids must be a non-empty list of knowledge item ids",
+                }
+            },
+            status=400,
+        )
+    if len(raw) > _BULK_MAX_ITEMS:
+        return web.json_response(
+            {
+                "error": {
+                    "code": "too_many_items",
+                    "message": f"at most {_BULK_MAX_ITEMS} items per bulk call",
+                    "received": len(raw),
+                }
+            },
+            status=400,
+        )
+
+    args = {k: v for k, v in body.items() if k not in ("op", "item_ids")}
+    try:
+        result = store.bulk_apply(op, [str(i) for i in raw], **args)
+    except ValueError as exc:
+        # `smart_collection_immutable` is a typed code the frontend keys on; the rest
+        # are argument problems whose message names the missing/invalid field.
+        code = str(exc)
+        return web.json_response(
+            {
+                "error": {
+                    "code": code if code == "smart_collection_immutable" else "invalid_bulk_args",
+                    "message": code,
+                }
+            },
+            status=400,
+        )
+
+    _sel_log(
+        f"bulk.{op}",
+        changed=len(result["changed"]),
+        unchanged=len(result["unchanged"]),
+        missing=len(result["missing"]),
+    )
+    return web.json_response({"ok": True, "op": op, **result})
+
+
 def setup_knowledge_routes(app: web.Application) -> None:
     # One ingestion path: the node-graph queue. Every item (typed-create, file
     # upload, bookmark) is created via the native provider and enqueued here;
@@ -1846,6 +1932,7 @@ def setup_knowledge_routes(app: web.Application) -> None:
     app.router.add_delete("/api/knowledge/collections/{id}", delete_collection)
     app.router.add_post("/api/knowledge/items/{id}/read-state", set_item_read_state)
     app.router.add_post("/api/knowledge/items/{id}/favorite", set_item_favorited)
+    app.router.add_post("/api/knowledge/bulk", bulk_items)
     app.router.add_get("/api/knowledge/items", list_items)
     app.router.add_post("/api/knowledge/items", create_item)
     app.router.add_get("/api/knowledge/tags", list_tags)
