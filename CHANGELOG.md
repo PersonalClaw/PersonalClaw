@@ -67,6 +67,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   tasks**. Someone else's task can never quietly become something your assistant picks
   up. Dependencies are still honored across everyone, so a task of yours blocked by a
   colleague's unfinished work is correctly *not* ready rather than falsely startable.
+- **Your reading state and favorites are now visible, and filterable.** Marking a saved
+  item as reading, read, or a favorite already worked — but nothing showed it anywhere,
+  so favoriting was effectively write-only: you could star something and then had no way
+  to find it again. Items now carry a **star** for favorites and a **reading** badge, a
+  read item's title dims, and chips let you filter to Reading, Unread, Read or Favorites
+  (each appearing only when there's something to show, with a count).
+
+  Favorites finally have their own mark instead of borrowing the pin icon — pinning
+  floats an item to the top of the list, favoriting is a personal bookmark, and they read
+  as different things now. The reader gained the same two controls beside Pin and
+  Archive. Unread items stay unbadged on purpose: it's the default state, and marking
+  every new item would just be noise.
+
 - **Curate a whole shelf of saved items in one action.** Working through a knowledge
   library one item at a time is what makes nobody do it. Select many items and **mark
   read or unread, favorite, add to a shelf, or archive** them together. Each action
