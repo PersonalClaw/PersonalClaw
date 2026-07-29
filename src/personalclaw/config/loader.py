@@ -1373,12 +1373,13 @@ class ResilienceConfig:
         metadata=_meta(
             "Mid-Turn Message Policy",
             "What happens to a follow-up message sent while a turn is still "
-            "generating: 'queue' (deliver it next turn — the default, safe behavior) "
-            "or 'cancel_and_replace' (cancel the in-flight answer and start fresh with "
-            "the new message). Applies to interactive turns only; unattended work "
-            "(loops, cron, subagents) always queues. A per-channel override wins over "
-            "this platform default.",
-            enum=["queue", "cancel_and_replace"],
+            "generating: 'queue' (deliver it next turn — the default, safe behavior), "
+            "'steer' (inject it into the answer being written, when the running agent "
+            "supports that — otherwise it queues), or 'cancel_and_replace' (cancel the "
+            "in-flight answer and start fresh with the new message). Applies to "
+            "interactive turns only; unattended work (loops, cron, subagents) always "
+            "queues. A per-channel override wins over this platform default.",
+            enum=["queue", "steer", "cancel_and_replace"],
         ),
     )
     cancel_replace_min_interval_secs: float = field(
@@ -2558,7 +2559,7 @@ class AppConfig:
                 mid_turn_policy=(
                     str(resilience_data.get("mid_turn_policy", "queue"))
                     if resilience_data.get("mid_turn_policy", "queue")
-                    in ("queue", "cancel_and_replace")
+                    in ("queue", "steer", "cancel_and_replace")
                     else "queue"
                 ),
                 cancel_replace_min_interval_secs=max(

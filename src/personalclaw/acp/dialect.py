@@ -90,6 +90,14 @@ class ACPDialect:
     #: the second session's dispatcher.
     supports_concurrent_sessions: bool = False
 
+    #: Whether this backend SERVICES a `session/prompt` that arrives while a turn is
+    #: already generating — i.e. whether mid-turn steering reaches the running answer.
+    #: Default **False** (safe), same discipline as `supports_concurrent_sessions`: no
+    #: dialect is assumed capable until a live spike proves the interleaved prompt is
+    #: serviced rather than queued-or-clobbered. A False here routes a mid-turn message
+    #: to the normal queue, which is visible (a `queue_push` event) instead of silent.
+    supports_mid_turn_prompt: bool = False
+
     # ── handshake ──
     def protocol_version(self) -> object:
         """Value sent as ``initialize.protocolVersion`` (date-string or int)."""

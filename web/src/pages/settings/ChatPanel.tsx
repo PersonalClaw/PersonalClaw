@@ -21,6 +21,7 @@ export function ChatPanel() {
   const [cfg, setCfg] = useState<DashboardConfig | null>(null)
   const [session, setSession] = useState<Record<string, unknown> | null>(null)
   const [routing, setRouting] = useState<Record<string, unknown> | null>(null)
+  const [resilience, setResilience] = useState<Record<string, unknown> | null>(null)
   const { options: agentOptions, discovered } = useAgentCatalog()
 
   // Stale-while-revalidate + persist: paint instantly on revisit/reload from a
@@ -35,14 +36,18 @@ export function ChatPanel() {
       cfg: dash,
       session: (plaw.session ?? {}) as Record<string, unknown>,
       routing: (plaw.agents_routing ?? {}) as Record<string, unknown>,
+      resilience: (plaw.resilience ?? {}) as Record<string, unknown>,
     }
   }, { persist: true })
 
   useEffect(() => {
-    if (data) { setCfg(data.cfg); setSession(data.session); setRouting(data.routing) }
+    if (data) {
+      setCfg(data.cfg); setSession(data.session); setRouting(data.routing)
+      setResilience(data.resilience)
+    }
   }, [data])
 
-  if (!data || !cfg || !session || !routing) return <FormSkeleton sections={3} />
+  if (!data || !cfg || !session || !routing || !resilience) return <FormSkeleton sections={3} />
 
   return (
     <div>
@@ -50,9 +55,54 @@ export function ChatPanel() {
 
       <SessionsSection cfg={cfg} setCfg={setCfg} />
       <MessagesSection cfg={cfg} setCfg={setCfg} />
+      <MidTurnSection resilience={resilience} setResilience={setResilience} />
       <RoutingSection routing={routing} setRouting={setRouting} />
       <LifecycleSection session={session} setSession={setSession} agentOptions={agentOptions} discovered={discovered} />
     </div>
+  )
+}
+
+const MID_TURN_POLICIES = [
+  { key: 'queue', label: 'Queue' },
+  { key: 'steer', label: 'Steer' },
+  { key: 'cancel_and_replace', label: 'Replace' },
+] as const
+
+// ── Mid-turn messages (personalclaw config: resilience.mid_turn_policy) ──────
+// The field shipped with PLATFORM-RESILIENCE S3 but had no frontend control, so
+// the config round-trip contract's fifth point was unmet — file-editable only.
+function MidTurnSection({ resilience, setResilience }: {
+  resilience: Record<string, unknown>; setResilience: (r: Record<string, unknown>) => void
+}) {
+  const [saved, flash] = useSavedFlash()
+  const policy = String(resilience.mid_turn_policy ?? 'queue')
+  const patch = (value: string) => {
+    const prev = resilience.mid_turn_policy
+    setResilience({ ...resilience, mid_turn_policy: value })
+    api.patchConfig('resilience.mid_turn_policy', value).then(flash).catch((e) => {
+      setResilience({ ...resilience, mid_turn_policy: prev })
+      notify(`Couldn't save mid-turn policy: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+  return (
+    <Section title="Mid-turn messages" hint="What happens when you send something while an answer is still being written.">
+      <div className="rounded-lg bg-surface-container px-4 py-1">
+        <Row label="Default handling"
+          hint="Queue: deliver it as the next turn. Steer: fold it into the answer being written, where the running agent supports that — otherwise it queues. Replace: stop the current answer and start over with the new message. Unattended work (loops, cron, subagents) always queues.">
+          <div className="flex items-center gap-2">
+            <SavedToast show={saved} />
+            <SegPills value={policy} onChange={patch} options={[...MID_TURN_POLICIES]} />
+          </div>
+        </Row>
+        {policy === 'steer' && (
+          <p className="pb-3 text-[0.75rem] text-on-surface-low">
+            Steering reaches the running answer on the built-in agent. Connected CLI
+            agents (ACP) don't expose a mid-turn seam yet, so a message there queues
+            instead — either way it appears above the composer, never dropped.
+          </p>
+        )}
+      </div>
+    </Section>
   )
 }
 

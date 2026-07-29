@@ -370,6 +370,25 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **The "Steer" button never steered.** Typing while an answer was streaming showed a
+  button labelled *"Steer — send into the running turn"*, and clicking it queued the
+  message for *after* that turn instead — then displayed a card reading "1 queued · sent
+  one at a time as each turn finishes", contradicting the button you had just pressed. The
+  message was never lost, but it never did what the label promised. Steering now actually
+  reaches the answer being written, and the message appears above the composer marked as
+  steered rather than queued.
+
+  Four independent faults each guaranteed the failure, which is why it survived: the
+  frontend asked for `followup` regardless of the button; the lookup used a session key the
+  session manager never registers, so the steer path could not match a session *at all*;
+  the drain lived only after a tool batch, so a plain-prose turn — the most common kind —
+  ran past it and discarded the message; and the confirmation event was filtered out as
+  status noise, so even a successful steer was invisible. A steer sent to a runtime with
+  no delivery path used to be buffered and silently dropped while the API answered
+  `{"steered": true}`, growing an unread backlog for the life of the process; it now
+  queues visibly instead. Mid-turn handling also gained a **Steer** option in
+  Settings → Chat, alongside Queue and Replace — the policy field shipped earlier with no
+  control at all.
 - **Knowledge and memory could never embed with a config-defined provider.** With an
   embedding model bound to a provider you configured yourself (an Ollama endpoint, say),
   ingested knowledge items sat at "processing" with no embedding **forever** — no error,

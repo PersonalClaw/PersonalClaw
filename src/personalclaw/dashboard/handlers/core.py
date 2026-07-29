@@ -456,7 +456,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "guardrails.scan_mode": {"type": "enum", "values": ["warn", "redact", "block"]},
     "resilience.doctor_enabled": {"type": "bool"},
     "resilience.degraded_indicator": {"type": "bool"},
-    "resilience.mid_turn_policy": {"type": "enum", "values": ["queue", "cancel_and_replace"]},
+    "resilience.mid_turn_policy": {
+        "type": "enum",
+        "values": ["queue", "steer", "cancel_and_replace"],
+    },
     "resilience.cancel_replace_min_interval_secs": {"type": "float", "min": 0.0, "max": 60.0},
     "resilience.remediation.enabled": {"type": "bool"},
     "resilience.remediation.target_score": {"type": "int", "min": 0, "max": 100},

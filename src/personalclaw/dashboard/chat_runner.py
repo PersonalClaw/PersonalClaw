@@ -1618,12 +1618,31 @@ async def _run_chat(
 
         # Queue-steering (#37): wire the native loop's steer source so mid-turn
         # messages buffered on the session (steer mode) drain at the next model
-        # boundary. Native runtime only (the ACP CLIs don't expose the seam).
+        # boundary. Native runtime only (the ACP CLIs don't expose the seam), so
+        # `set_steer_drains` records the capability for THIS turn — `add_steer`
+        # refuses without it rather than buffering into a deque nothing drains
+        # (PLATFORM-RESILIENCE S6.1/S6.2).
+        #
+        # NOTE the key: SessionManager registers under the NAMESPACED `session_key`
+        # (`dashboard:<id>`), not the bare `session.key`. Passing the bare key here
+        # made every lookup miss, which is why steering never reached any runtime.
+        #
+        # The flag tracks a WIRED DRAIN SOURCE, never a declared intention. That is
+        # the invariant that makes the silent drop impossible: `steer_drains` is True
+        # only where a callable now exists to pull the deque. An ACP provider may
+        # declare `steer_capable()` (its dialect's `supports_mid_turn_prompt`), but
+        # declaring capability is NECESSARY AND NOT SUFFICIENT — ACP exposes no
+        # tool-boundary hook to drain AT, so until that delivery path is built a
+        # capable dialect still routes to the visible queue. Flipping the dialect flag
+        # alone must not be able to resurrect the drop.
+        _steerable = False
         if hasattr(client, "set_steer_source"):
             try:
-                client.set_steer_source(lambda: state.sessions.drain_steers(session.key))
+                client.set_steer_source(lambda: state.sessions.drain_steers(session_key))
+                _steerable = True
             except Exception:
                 logger.debug("steer source wiring skipped", exc_info=True)
+        state.sessions.set_steer_drains(session_key, _steerable)
 
         # Slash commands use _vendor.dev/commands/execute for full native output;
         # regular messages use session/prompt.
@@ -2888,6 +2907,11 @@ async def _run_chat(
             except Exception:
                 logger.debug("Stream cleanup failed", exc_info=True)
         if _acquired:
+            # The turn is over: the runtime is no longer pulling, so a steer sent
+            # from here on must queue rather than buffer (S6.1). Clearing also drops
+            # anything the loop never got to, which is preferable to it surfacing
+            # inside an unrelated later turn.
+            state.sessions.set_steer_drains(session_key, False)
             if needs_session_reset:
                 try:
                     await state.sessions.reset(session_key)
