@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, fireEvent } from '@testing-library/react'
-import { TextInput, TextArea, Select, NumberField, Field } from './forms'
+import { render, fireEvent, screen } from '@testing-library/react'
+import { TextInput, TextArea, Select, NumberField, Field, Checkbox } from './forms'
 
 // ── Standard-field scale invariant (design-system consistency S2/T2.3) ──────
 // The form family grew a principled size (sm/md/lg) × surface (container/high/
@@ -219,5 +219,39 @@ describe('NumberField', () => {
     expect(input.getAttribute('aria-label')).toBeNull()
     // Attribute selector, not `#id`: useId() ids contain colons (invalid in a #selector).
     expect(container.querySelector(`[id="${labelledby}"]`)?.textContent).toBe('Warm pool size')
+  })
+})
+
+// ── Checkbox ──────────────────────────────────────────────────────────────────
+// The propagation guard is the whole reason this is a primitive: these live inside
+// clickable list rows, and a tick that also activates the row is a bug every call
+// site would otherwise have to remember not to write.
+
+describe('Checkbox', () => {
+  it('reports the next boolean', () => {
+    const onChange = vi.fn()
+    render(<Checkbox checked={false} onChange={onChange} ariaLabel="Select the thing" />)
+    fireEvent.click(screen.getByLabelText('Select the thing'))
+    expect(onChange).toHaveBeenCalledWith(true)
+  })
+
+  it('does not activate the clickable row it sits inside', () => {
+    const rowClick = vi.fn()
+    const onChange = vi.fn()
+    render(
+      <div onClick={rowClick}>
+        <Checkbox checked={false} onChange={onChange} ariaLabel="Select row" />
+      </div>,
+    )
+    fireEvent.click(screen.getByLabelText('Select row'))
+    expect(onChange).toHaveBeenCalled()
+    expect(rowClick).not.toHaveBeenCalled()
+  })
+
+  it('carries an accessible name', () => {
+    render(<Checkbox checked onChange={() => {}} ariaLabel="Select chat about pears" />)
+    const box = screen.getByLabelText('Select chat about pears') as HTMLInputElement
+    expect(box.type).toBe('checkbox')
+    expect(box.checked).toBe(true)
   })
 })

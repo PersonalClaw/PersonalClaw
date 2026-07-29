@@ -40,6 +40,10 @@ _BG_COMPRESS_TICKS = 60
 # deleted outside the app, and a first run over pre-existing history. Incremental
 # by mtime, so an up-to-date index costs one listing.
 _SESSION_INDEX_TICKS = 5
+# Session auto-archive (SESSION-MANAGEMENT S2 T2.3) — hourly. The rule's unit is DAYS,
+# so a tighter cadence buys nothing; hourly means a session that crosses the threshold
+# is out of the list within the hour rather than at the next restart.
+_SESSION_ARCHIVE_TICKS = 60
 # Ceiling per pass so the very first sweep over a large history can't monopolize a
 # tick; the remainder lands on subsequent passes.
 _SESSION_INDEX_MAX_PER_PASS = 200
@@ -57,6 +61,12 @@ def heartbeat_path() -> Path:
 class HeartbeatService:
     """Periodic wake-up that runs background maintenance tasks."""
 
+    # Class-level default so an instance built to drive one beat in isolation
+    # (``__new__`` + a couple of attributes, which the tests do deliberately) still
+    # has every optional callback defined. An added optional hook must never make a
+    # partially-constructed service raise on an unrelated tick.
+    _on_auto_archive: Callable[[], Coroutine] | None = None
+
     def __init__(
         self,
         memory: MemoryStore,
@@ -64,6 +74,7 @@ class HeartbeatService:
         interval: int = _DEFAULT_INTERVAL,
         consolidator: "HistoryConsolidator | None" = None,
         on_due_commitments: Callable[[], Coroutine] | None = None,
+        on_auto_archive: Callable[[], Coroutine] | None = None,
     ) -> None:
         self._memory = memory
         self._on_task = on_task
@@ -73,6 +84,10 @@ class HeartbeatService:
         # scan due commitments and deliver/dismiss them. None when the gateway
         # didn't wire it (e.g. no dashboard). Invoked once per tick, guarded.
         self._on_due_commitments = on_due_commitments
+        # SESSION-MANAGEMENT S2 T2.3 — session auto-archive. A coroutine the gateway
+        # wires because the heartbeat has no DashboardState (and should not grow one);
+        # None when there is no dashboard. Guarded per tick.
+        self._on_auto_archive = on_auto_archive
         self._tick = 0
         self._processing = False
         self._task: asyncio.Task | None = None  # type: ignore[type-arg]
@@ -181,6 +196,15 @@ class HeartbeatService:
                     logger.debug("session search: indexed %d session(s)", indexed)
             except Exception:
                 logger.debug("session search reindex failed", exc_info=True)
+
+        # Session auto-archive (SESSION-MANAGEMENT S2 T2.3). Hourly; the rule's unit is
+        # days so nothing tighter is useful. Guarded — decluttering the chat list is
+        # never worth a dead heartbeat.
+        if self._on_auto_archive is not None and self._tick % _SESSION_ARCHIVE_TICKS == 0:
+            try:
+                await self._on_auto_archive()
+            except Exception:
+                logger.debug("session auto-archive pass failed", exc_info=True)
 
         # Proactive commitment delivery (M5e — O-A4): deliver any due check-ins
         # the agent inferred, at most once per window (the callback dismisses on

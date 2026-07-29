@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { fvs, withWeight } from '../design/fontWeight'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, type LucideIcon } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, type LucideIcon } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
 import { TopBar } from '../ui/TopBar'
 import { SidePanel } from '../ui/SidePanel'
 import { Button } from '../ui/Button'
+import { Checkbox } from '../ui/forms'
 import { QuietButton } from '../ui/QuietButton'
 import { SelectionToolbar } from '../ui/SelectionPill'
 import { TextLink } from '../ui/TextLink'
@@ -3059,7 +3060,14 @@ function snippetParts(snippet: string): { text: string; hit: boolean }[] {
 function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) => void; query: Record<string, string>; setQuery: RouteProps['setQuery'] }) {
   // Instant-paint cache: sessions revalidate often (in-memory, persist:false);
   // folders/tags rarely change so they survive a hard reload (persist:true).
-  const { data: cachedSessions, refresh: refreshSessions } = useCachedData<ChatSessionSummary[]>('chat:sessions', () => api.chatSessions().catch(() => []), { persist: false })
+  // NB: the cache key carries the archived flag. Sharing one key across both views
+  // would paint the active list while the archive loaded (and vice versa).
+  const archivedView = (query.archived ?? '') === '1'
+  const { data: cachedSessions, refresh: refreshSessions } = useCachedData<ChatSessionSummary[]>(
+    archivedView ? 'chat:sessions:archived' : 'chat:sessions',
+    () => api.chatSessions(archivedView).catch(() => []),
+    { persist: false },
+  )
   const { data: foldersData, refresh: refreshFolders } = useCachedData<ChatFolder[]>('chat:folders', () => api.chatFolders().catch(() => []), { persist: true })
   const { data: tagsData, refresh: refreshTags } = useCachedData<ChatTag[]>('chat:tags', () => api.chatTags().catch(() => []), { persist: true })
   const folders = foldersData ?? []
@@ -3093,9 +3101,61 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   const origin: 'manual' | 'loop' | 'code' | 'channel' | 'all' =
     originRaw === 'loop' || originRaw === 'code' || originRaw === 'channel' || originRaw === 'all' ? originRaw : 'manual'
   const setOrigin = (o: 'manual' | 'loop' | 'code' | 'channel' | 'all') => setOriginRaw(o)
+  // Archived view (SESSION-MANAGEMENT S2). Rides the URL like every other filter, so
+  // the archive is deep-linkable. The ACTIVE/ARCHIVED split is enforced server-side —
+  // the client asks for one or the other rather than fetching everything and hiding
+  // rows, so "archived" can't leak into a surface that forgot to filter.
+  const [archivedRaw, setArchivedRaw] = useQueryParam(query, setQuery, 'archived', '', { replace: true })
+  const showArchived = archivedRaw === '1'
+  const setShowArchived = (v: boolean) => setArchivedRaw(v ? '1' : '')
+  // Multi-select for bulk ops. Deliberately NOT in the URL: a selection is transient
+  // work-in-progress, and deep-linking "these 12 chats are selected" is meaningless
+  // once the list changes underneath it.
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkNote, setBulkNote] = useState('')
+  const selecting = selected.size > 0
+  const toggleSelected = (key: string) => {
+    setBulkNote('')   // a fresh selection supersedes the last action's result
+    setSelected((prev) => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+  }
+  // Clears the selection ONLY. The outcome note deliberately survives: the
+  // selection bar unmounts the moment the selection empties, so a note living
+  // inside it would flash and vanish — the user would never read the result of the
+  // action they just took.
+  const clearSelection = () => setSelected(new Set())
+
+  // One runner for every bulk op. Reports per-key outcomes because a selection can
+  // go stale between the click and the request — 38-of-40 is a useful answer, a bare
+  // failure is not.
+  const runBulk = async (op: 'archive' | 'restore' | 'never_archive', args: { value?: boolean } = {}) => {
+    if (!selected.size || bulkBusy) return
+    setBulkBusy(true); setBulkNote('')
+    try {
+      const res = await api.bulkSessions(op, [...selected], args)
+      const verb = op === 'archive' ? 'Archived' : op === 'restore' ? 'Restored' : 'Updated'
+      const parts = [`${verb} ${res.changed.length}`]
+      if (res.unchanged.length) parts.push(`${res.unchanged.length} already set`)
+      if (res.missing.length) parts.push(`${res.missing.length} not found`)
+      setBulkNote(parts.join(' · '))
+      clearSelection()
+      load()
+    } catch {
+      setBulkNote('Bulk action failed — nothing was changed.')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
 
   const load = useCallback(() => {
+    // Both keys: an archive/restore moves a session BETWEEN the two lists, so the
+    // one we're not looking at is stale too.
     invalidateCache('chat:sessions')
+    invalidateCache('chat:sessions:archived')
     refreshSessions(); refreshFolders(); refreshTags()
   }, [refreshSessions, refreshFolders, refreshTags])
 
@@ -3255,6 +3315,18 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
     setSessions((prev) => prev && prev.map((x) => (x.key === key ? { ...x, tags: arr } : x)))
     await api.setSessionTags(key, arr).catch(() => load())
   }
+  // Single-row lifecycle. Optimistic then reconciled by load(), matching togglePin:
+  // an archive should feel instant even though the list has to re-fetch (the row is
+  // moving between two server-filtered lists).
+  async function setLifecycle(key: string, lifecycle: 'active' | 'archived') {
+    setSessions((prev) => prev && prev.map((x) => (x.key === key ? { ...x, lifecycle } : x)))
+    await api.setSessionLifecycle(key, { lifecycle }).catch(() => {})
+    load()
+  }
+  async function setNeverArchive(key: string, value: boolean) {
+    setSessions((prev) => prev && prev.map((x) => (x.key === key ? { ...x, never_archive: value } : x)))
+    await api.setSessionLifecycle(key, { never_archive: value }).catch(() => load())
+  }
   async function createFolder() {
     const name = await promptInput({ title: 'New folder', label: 'Folder name', placeholder: 'e.g. Research', confirmLabel: 'Create' })
     if (!name) return
@@ -3279,6 +3351,14 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
       { icon: <Pin size={15} />, label: s.pinned ? 'Unpin' : 'Pin to top', onSelect: () => togglePin(s.key, !s.pinned) },
       ...(s.folder_id ? [{ icon: <Folder size={15} />, label: 'Remove from folder', onSelect: () => setFolder(s.key, null) }] : []),
       ...folders.filter((f) => f.id !== s.folder_id).map((f) => ({ icon: <Folder size={15} />, label: `Move to ${f.name}`, onSelect: () => setFolder(s.key, f.id) })),
+      ...(s.lifecycle === 'archived'
+        ? [{ icon: <ArchiveRestore size={15} />, label: 'Restore from archive', onSelect: () => setLifecycle(s.key, 'active') }]
+        : [{ icon: <Archive size={15} />, label: 'Archive', onSelect: () => setLifecycle(s.key, 'archived') }]),
+      {
+        icon: <Pin size={15} />,
+        label: s.never_archive ? 'Allow auto-archive' : 'Never auto-archive',
+        onSelect: () => setNeverArchive(s.key, !s.never_archive),
+      },
       { icon: <Trash2 size={15} />, label: 'Delete', danger: true, onSelect: () => del(s) },
     ]
     return (
@@ -3295,6 +3375,11 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
       onDragEnd={() => { setFolderDragKey(null); setOverFolder(null) }}
       className="group relative flex cursor-grab active:cursor-grabbing select-none items-center gap-3 rounded-xl bg-surface-container px-4 py-3 transition-colors hover:bg-surface-high">
       <GripVertical size={13} className="pointer-events-none absolute left-0.5 top-1/2 -translate-y-1/2 text-on-surface-low opacity-0 group-hover:opacity-100 transition-opacity" />
+      {/* Selection tick. The primitive owns stopPropagation, so ticking a row never
+          also opens the peek panel — two intents on one click target. */}
+      <Checkbox checked={selected.has(s.key)} onChange={() => toggleSelected(s.key)}
+        ariaLabel={`Select ${s.title || s.key}`}
+        className={`transition-opacity ${selecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}`} />
       <span className="grid size-9 shrink-0 place-items-center rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}>
         <MessageSquare size={17} className="text-primary" />
       </span>
@@ -3408,6 +3493,47 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
               <SearchField value={q} onChange={setQ} placeholder="Search chats — title or anything said"
                 ariaLabel="Search chats" autoFocus />
             </div>
+            {/* Active / Archived. Archived chats keep their transcript AND stay
+                searchable — the copy says so, because an "archive" that people read as
+                "delete" is one they never use. */}
+            <div className="mb-m flex items-center gap-2">
+              <Segmented ariaLabel="Chat lifecycle" value={showArchived ? 'archived' : 'active'}
+                onChange={(v) => { clearSelection(); setShowArchived(v === 'archived') }}
+                options={[{ key: 'active', label: 'Active' }, { key: 'archived', label: 'Archived' }]} />
+              {showArchived && (
+                <span className="text-on-surface-low text-[0.75rem]">
+                  Archived chats stay searchable — restore any of them at any time.
+                </span>
+              )}
+            </div>
+            {/* Selection bar — appears only while something is selected, so the
+                default list stays uncluttered. */}
+            {selecting && (
+              <div className="mb-m flex flex-wrap items-center gap-2 rounded-lg bg-surface-low px-m py-2 ring-1 ring-outline-variant/40">
+                <span data-type="label-l" className="text-on-surface">{selected.size} selected</span>
+                {showArchived ? (
+                  <Button variant="tonal" size="xs" disabled={bulkBusy} onClick={() => runBulk('restore')}>
+                    <ArchiveRestore size={13} /> Restore
+                  </Button>
+                ) : (
+                  <Button variant="tonal" size="xs" disabled={bulkBusy} onClick={() => runBulk('archive')}>
+                    <Archive size={13} /> Archive
+                  </Button>
+                )}
+                <Button variant="ghost" size="xs" disabled={bulkBusy}
+                  onClick={() => runBulk('never_archive', { value: true })}
+                  title="Exempt these chats from auto-archive">
+                  <Pin size={13} /> Never archive
+                </Button>
+                <Button variant="ghost" size="xs" onClick={clearSelection}>Clear</Button>
+              </div>
+            )}
+            {/* The outcome of the last bulk action, OUTSIDE the selection bar so it
+                survives the bar unmounting — "38 archived · 2 not found" is the
+                answer to what just happened and must stay readable. */}
+            {bulkNote && !selecting && (
+              <div role="status" className="mb-m text-on-surface-var text-[0.8125rem]">{bulkNote}</div>
+            )}
             {tags.length > 0 && (
               <div className="mb-m flex flex-wrap items-center gap-1.5">
                 <span className="text-on-surface-low text-[0.75rem] mr-1">Filter:</span>
