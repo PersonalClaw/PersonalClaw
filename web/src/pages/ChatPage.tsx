@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { fvs, withWeight } from '../design/fontWeight'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, type LucideIcon } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, type LucideIcon } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -523,6 +523,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // shown above the composer; the backend dispatches them one-by-one as each turn
   // finishes. Driven by the queue_push / queue_pop / queue_cancel WS events.
   const [queued, setQueued] = useState<{ id: string; content: string }[]>([])
+  // Messages the server confirmed it STEERED into the running turn (S6.3). Distinct
+  // from `queued`: a steered message has no queue id and nothing to cancel — it is
+  // already inside the answer being written. Shown so a steer isn't invisible (the
+  // backend's "Steering: …" activity_event is deliberately filtered as status noise),
+  // and cleared when the turn ends since it belongs to that turn.
+  const [steered, setSteered] = useState<string[]>([])
   // Async subagents (fire-and-forget) spawned this turn — live cards driven by
   // the subagent_spawn / subagent_tool / subagent_done WS events. Their final
   // output posts to the transcript as a "[Subagent completion event]" message
@@ -875,6 +881,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       case 'chat_done': {
         coalescer.flushNow()  // fully reveal any buffered tail before the turn closes
         breakText.current = true; markStreaming(false); setStatusText(''); setLatestActivity(null)
+        setSteered([])  // steers belong to the turn they were injected into
         // Cancel-and-replace (PLATFORM-RESILIENCE §6.3): this turn was superseded by a
         // rapid follow-up. The replacement was queued server-side and the next turn
         // auto-runs; surface a brief note so the truncated answer doesn't read as a
@@ -1313,13 +1320,22 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // /optimize), use it; otherwise the Sparkles preview path leaves the optimized
     // text in the input with `preOptimize` holding what the user first typed.
     const original = opts?.original ?? (preOptimize !== null && preOptimize.trim() !== t ? preOptimize.trim() : undefined)
-    // Mid-run send → QUEUE it server-side (FIFO). The backend dispatches queued
-    // messages one-by-one as each turn finishes, and echoes queue_push so the
-    // strip above the composer shows it (with a cancel affordance). The optimistic
-    // input clear + the queue_push echo keep the UI responsive.
+    // Mid-run send → ask to STEER (inject into the answer being written). The
+    // composer's mid-stream button is labelled "Steer", so it must actually try to
+    // steer; it previously sent `followup`, which always queued, making the label a
+    // lie (PLATFORM-RESILIENCE S6.3).
+    //
+    // The server decides and says which it did: `{steered:true}` when the running
+    // turn has a live drain path, `{queued:true}` when it does not (an ACP-backed
+    // turn, or a turn that just ended). Either way nothing is dropped — a queued
+    // message still echoes `queue_push`, so the strip above the composer shows it
+    // with its cancel affordance. We render the outcome rather than assuming one.
     if (isStreaming) {
       setInput('')
-      ensureSession().then((s) => api.sendChat(t, s, undefined, 'followup')).catch(() => {})
+      ensureSession()
+        .then((s) => api.sendChat(t, s, undefined, 'steer'))
+        .then((r) => { if (r?.steered) setSteered((prev) => [...prev, t]) })
+        .catch(() => {})
       return
     }
     // The bubble keeps the prompt as typed (paste markers shown as chips); the
@@ -1944,6 +1960,24 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           className="mb-2 gap-1.5 px-2.5 text-[0.75rem] text-on-surface-var">
           <Repeat size={12} className="shrink-0" /> Optimized — revert to original
         </Button>
+      )}
+      {/* Steered messages — already injected into the answer being written, so
+          unlike a queued item there is nothing to cancel or reorder. Rendered so a
+          steer is visible: the backend broadcasts a "Steering: …" activity_event, but
+          activity_event drops `kind === 'status'` as thinking-indicator noise, which
+          left a successful steer with no UI at all (S6.3). */}
+      {steered.length > 0 && (
+        <div className="mb-2 flex flex-col gap-1" aria-live="polite">
+          {steered.map((s, i) => (
+            <div key={`${i}-${s.slice(0, 24)}`}
+              className="flex items-start gap-1.5 text-[0.75rem] text-on-surface-var">
+              <CornerDownLeft size={12} className="mt-0.5 shrink-0" aria-hidden />
+              <span className="min-w-0 flex-1 truncate">
+                Steered into this answer: {s}
+              </span>
+            </div>
+          ))}
+        </div>
       )}
       {/* Queued messages (typed mid-stream) — the backend sends them one-by-one as
           each turn finishes; each can be cancelled while still pending. */}

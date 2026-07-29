@@ -162,11 +162,20 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
             if _cr is not None:
                 return _cr
         # Mid-run handling (#37) — 4 modes:
-        #   steer (default): inject at the next model boundary of the RUNNING turn
-        #     (native loop only); followup: queue for after the turn; collect: queue
-        #     (coalesced later); interrupt: handled by /interrupt, not here.
-        mode = str(body.get("queue_mode") or "steer").strip().lower()
-        if message and mode == "steer" and state.sessions.add_steer(session.key, message):
+        #   steer: inject at the next model boundary of the RUNNING turn (only when
+        #     that turn's runtime exposes the drain seam); followup: queue for after
+        #     the turn; collect: queue (coalesced later); interrupt: /interrupt.
+        #
+        # The request wins over the policy (owner ruling): an explicit `queue_mode`
+        # is honored as sent, and `mid_turn_policy` only supplies the DEFAULT for a
+        # request that doesn't state one. So the platform default is a floor, never
+        # an override (PLATFORM-RESILIENCE S6.1).
+        mode = str(body.get("queue_mode") or _default_mid_turn_mode()).strip().lower()
+        if (
+            message
+            and mode == "steer"
+            and state.sessions.add_steer(_history_key_for(session.key), message)
+        ):
             _c, _ = redact_exfiltration_urls(message)
             _c, _ = redact_credentials(_c)
             state.broadcast_ws(
@@ -307,6 +316,27 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         session.drain()
         session._has_reader = False
     return resp
+
+
+def _default_mid_turn_mode() -> str:
+    """The `queue_mode` a mid-turn message gets when the request doesn't state one.
+
+    Derived from `resilience.mid_turn_policy`: policy ``steer`` defaults to steering,
+    everything else defaults to queueing. Historically this was hardcoded to
+    ``"steer"``, which meant the platform policy had no say over the webui's own
+    behavior. An explicit `queue_mode` in the request still wins (owner ruling) —
+    this only supplies the default.
+
+    Best-effort: any config failure falls back to ``"queue"``, the safe behavior
+    (never drop, never cancel).
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return "steer" if AppConfig.load().resilience.mid_turn_policy == "steer" else "queue"
+    except Exception:
+        logger.debug("mid_turn_policy read failed; defaulting to queue", exc_info=True)
+        return "queue"
 
 
 async def _maybe_cancel_and_replace(

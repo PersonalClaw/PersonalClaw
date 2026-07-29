@@ -1,6 +1,6 @@
 # Plan: Platform Resilience — Doctor, No-Model Degraded Mode, Mid-Turn Message Handling
 
-**Status:** DONE — all 5 sessions landed 2026-07-25. S1 Doctor core (§1) · S2 no-model degraded contract (§5) · S3 mid-turn message handling (§6) · S4 confirm-gated fixes + trust simulators + crash capture (§2/§3.1/§3.2/§6.5) · S5 health-scored remediation engine (§4). Deferred-as-future-infra (E6, recorded per session): §3.3 automation would-execute (AUTOMATION-SUBSTRATE), the richer §3.2 memory-pipeline alarm + judgment-lane remediation jobs (LEARN-R19/KNOW-R17 flywheel infra), and the AUTOMATION-SUBSTRATE trigger-form for the engine's cadence (it runs off the heartbeat until then). Created 2026-07-13 from research synthesis, promoted from backlog.
+**Status:** DONE — all 6 sessions landed (S1-S5 2026-07-25; S6 mid-turn steering 2026-07-29). S1 Doctor core (§1) · S2 no-model degraded contract (§5) · S3 mid-turn message handling (§6) · S4 confirm-gated fixes + trust simulators + crash capture (§2/§3.1/§3.2/§6.5) · S5 health-scored remediation engine (§4). Deferred-as-future-infra (E6, recorded per session): §3.3 automation would-execute (AUTOMATION-SUBSTRATE), the richer §3.2 memory-pipeline alarm + judgment-lane remediation jobs (LEARN-R19/KNOW-R17 flywheel infra), and the AUTOMATION-SUBSTRATE trigger-form for the engine's cadence (it runs off the heartbeat until then). Created 2026-07-13 from research synthesis, promoted from backlog.
 **Created:** 2026-07-13
 **Wave:** split — §1-§3 (doctor probes + read-only surface) and §5 (degraded contract) are Wave 0/1 invariants (every existing surface touches models; offline behavior must be designed before the engine multiplies unattended runs); §6 (mid-turn handling) is Wave 1, independent; §4 (remediation engine) is Wave 3 — it consumes AUTONOMY-GUARDRAILS budgets (SpendMeter, §1.1 there) and should land after them.
 **Depends on:** nothing for §1-§3/§5/§6 (Wave-0-compatible). §4 depends on AUTONOMY-GUARDRAILS (SpendMeter + model-call audit for cost caps) and prefers AUTOMATION-SUBSTRATE (runs as an adaptive-cadence trigger once triggers.json exists; hangs off the heartbeat until then).
@@ -587,3 +587,88 @@ Sessions 1-4 each ship independently; Session 1 alone is a Wave-0 win (the symli
 | S6.1 | `steer` joins the `mid_turn_policy` enum (5-point wiring + PATCH values + roundtrip `_SPECIAL`); chat_handlers resolves policy→mode: steer→`add_steer` when capable, else queue; capability check in `add_steer` (no buffering against non-draining turns) | `config/loader.py`, `dashboard/handlers/core.py`, `dashboard/chat_handlers.py`, `session.py` | policy round-trips; steer policy on a native turn injects at the next tool boundary; same policy on a non-capable turn queues with `queue_push`; no steer buffer survives into a later turn |
 | S6.2 | ACP capability gate: `ACPDialect.supports_mid_turn_prompt` (default False) + per-dialect probe note; steer path consults it before `add_steer`; fallback queue is loud (WS event), never silent | `acp/dialect.py`, `dashboard/chat_runner.py`, `dashboard/chat_handlers.py` | ACP-backed session under steer policy queues gracefully; flag flip on a fixture dialect routes to steer; zero behavior change for existing dialects |
 | S6.3 | FE steer affordance: composer steer control while a turn runs (policy+capability-gated), steered messages render as distinct inline chips; as-a-user validation on webui | `web/src/pages/ChatPage.tsx`, chat composer component, `lib/api.ts` | mid-turn steer visibly lands inside the SAME answer; steered message visually distinct from queued; reduced-motion/theme checks pass |
+
+## Execution log — Session 6 (mid-turn steering)
+
+- [2026-07-29][S6] **DONE (S6.1 + S6.2 + S6.3).** `steer` joins `mid_turn_policy`, the
+  capability gate lands, and the composer's steer button finally does what it says.
+
+  **E1 — the amendment's central premise was WRONG, in a way that changes the fix.** It
+  states the ACP failure mode is that "`add_steer` returns True and the buffer silently
+  drains into the NEXT turn." It does not. `session.steers` is cleared by exactly ONE
+  function (`drain_steers`), which had exactly ONE caller (the native-only lambda in
+  `chat_runner`), and there was no turn-end reset anywhere. So on an ACP-backed session a
+  steer was buffered and **never read** — a permanent silent drop, with the deque growing
+  unbounded for the life of the process, while the HTTP caller was told
+  `{"steered": true}`. (A *later native* turn on a mixed-runtime session would have
+  drained the stale buffer into an unrelated answer — so the amendment's leak was
+  reachable, just as a second-order effect rather than the primary one.) Fixed by keying
+  `add_steer` on a wired drain source and clearing at turn end, which closes both.
+
+  **THREE MORE DEFECTS, none in the plan, each independently fatal.** The amendment scoped
+  one bug; steering was broken four ways, which is why the mechanism shipped in #37 and had
+  never once worked:
+  1. **The lookup key never matched.** `chat_handlers` passed the BARE `session.key` while
+     `SessionManager` registers under the namespaced `dashboard:<id>`
+     (`chat_runner.py:971` → `get_or_create(session_key)`). `_sessions.get(bare)` returned
+     `None`, so `add_steer` returned False and every steer fell through to the queue — on
+     **every runtime, native included**. The drain lambda had the same bug symmetrically.
+     Proven with a standalone probe before fixing: bare key → False, namespaced → True.
+  2. **The drain sat past an early return.** It lived only at step 3b, *after* the tool
+     batch, but step 2 `return`s the turn when the model made no tool calls. A plain-prose
+     turn — the most common shape by far — therefore ran past the drain and discarded the
+     steer. Extracted to `_drain_steers_into_history()` and called at BOTH boundaries; a
+     pending steer now continues the turn for one more inference instead of ending it.
+     Pinned structurally by a test asserting the drain precedes the no-tool-call return.
+  3. **The frontend opted out of its own feature.** `ChatPage` sent
+     `queue_mode: 'followup'` unconditionally, while the button rendered
+     *"Steer — send into the running turn"*. The backend already defaulted to `steer`, so
+     the FE was actively overriding it. And `ChatPage.tsx`'s `activity_event` handler
+     breaks on `kind === 'status'` — precisely the kind the backend's "Steering: …"
+     broadcast uses — so a successful steer had no UI either. Now sends `steer`, renders
+     the server's own `{steered}`/`{queued}` answer, and shows a steered strip.
+
+  **DEVIATION from S6.2.** The plan has the steer path consult `supports_mid_turn_prompt`
+  before `add_steer`. Implemented the flag and `AcpAgentProvider.steer_capable()`, but
+  deliberately did **not** let a declaration alone enable buffering: `steer_drains` tracks
+  a WIRED DRAIN CALLABLE, never a declared intention. ACP exposes no tool-boundary hook to
+  drain at, so a dialect flipping the flag would re-create the exact silent drop this
+  session fixed. A test pins that invariant. Making a capable dialect actually steer needs
+  the ACP delivery path built first, and validating it needs an authenticated ACP CLI
+  (owner-blocked) — recorded as the stop point rather than faked.
+
+  **DEVIATION on the policy default.** The webui's mid-turn default was hardcoded to
+  `"steer"`, so `mid_turn_policy` could not express "queue" for the dashboard at all. Now
+  derived from the policy via `_default_mid_turn_mode()`, honoring the owner ruling that
+  **an explicit `queue_mode` in the request still wins** — policy is a floor, not an
+  override. Because the key bug made the steer branch unreachable, today's observable
+  behavior (queueing) is preserved exactly for anyone who doesn't opt in.
+
+  **Also closed:** `mid_turn_policy` had no frontend control (the 5-point config
+  contract's fifth leg was unmet — the field was file-editable only). Added a Settings →
+  Chat "Mid-turn messages" section with the three policies, plus an honest note that
+  steering reaches only the built-in agent today.
+
+  **Validated as a user** on an isolated dev home (port 10731, never the owner's :10000),
+  against a real Bedrock-backed model: PATCH `resilience.mid_turn_policy=steer`
+  round-tripped and persisted; a bogus value was rejected with all three valid values
+  enumerated; a mid-flight steer returned `{"ok":true,"steered":true}` (the branch that
+  was previously unreachable); and **the steer landed inside the SAME assistant message**
+  — an essay-in-progress ended with the answer to the steered question appended, and a
+  counting task ended with the steered keyword. Both re-run after the drain fix; before
+  it, the same test returned `steered:true` and the model never saw the message, which is
+  what exposed defect 2. Two transient Bedrock `InternalServerException`s occurred during
+  setup and were confirmed environmental (identical requests succeeded after).
+
+  Tests: 22 new cases in `tests/test_mid_turn_steer.py` — steering previously had **zero
+  test coverage**, which is how four defects shipped in one path. All 22 verified failing
+  against the pre-fix tree and passing after. Gate: `make lint` green (1032 files, mypy
+  538 sources) · `make test` **8881 passed** · web typecheck + 283 vitest + build green.
+  The one red test (`test_cron.py::test_is_due_spring_forward_skipped_hour`, a `croniter`
+  DST-gap behavior assertion) was confirmed **pre-existing on clean `main`** by stashing
+  this work and re-running — unrelated to steering, not introduced here.
+
+  **NOT done in this session:** the ACP mid-turn delivery path (needs the seam plus an
+  authenticated ACP CLI to validate) and a distinct visual chip in the transcript body —
+  the steered strip renders above the composer instead, which keeps it beside the queued
+  strip it must be distinguished from.

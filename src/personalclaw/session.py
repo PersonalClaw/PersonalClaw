@@ -159,6 +159,12 @@ class _Session:
     # Queue-steering (#37): mid-turn messages in `steer` mode buffer here and the
     # native loop drains them at the next model boundary (vs `queue` = followup).
     steers: deque[str] = field(default_factory=deque)
+    # Set by the dispatcher for the duration of a turn when that turn's runtime
+    # actually exposes the drain seam (`set_steer_source`). Buffering against a
+    # turn with no drain path is a silent permanent drop — `steers` is cleared
+    # ONLY by `drain_steers`, whose sole caller is the native-runtime lambda — so
+    # `add_steer` refuses unless this is True (PLATFORM-RESILIENCE S6.1).
+    steer_drains: bool = False
     # Set when this session's last turn was cancelled via soft-stop.
     # ACP agent discards cancelled turns from its conversation log, so callers
     # must re-inject the cancelled turn (user prompt + partial assistant) as a
@@ -1425,15 +1431,47 @@ class SessionManager:
         return None
 
     def add_steer(self, key: str, text: str) -> bool:
-        """Buffer a mid-turn steering message (#37). Returns True if a turn is
-        in-flight (so the loop will drain it); else the caller should queue it."""
+        """Buffer a mid-turn steering message (#37). Returns True only when the
+        message will actually reach the running turn; False means the caller must
+        queue it instead.
+
+        Both conditions are required, and the second one is the fix for a real
+        silent-drop bug (PLATFORM-RESILIENCE S6.1):
+
+        * a turn must be in-flight (the semaphore is held) — otherwise there is
+          nothing to steer and the message belongs in the normal queue;
+        * that turn's runtime must expose the drain seam (``steer_drains``, set by
+          the dispatcher via :meth:`set_steer_drains`). ``steers`` is cleared ONLY
+          by :meth:`drain_steers`, whose sole caller is the native runtime's pull
+          lambda, so buffering against an ACP-backed turn dropped the message
+          permanently AND grew the deque without bound — while the HTTP caller was
+          told ``{"steered": true}``.
+        """
         session = self._sessions.get(key)
         if not session or not text.strip():
             return False
         if not session.semaphore.locked():
             return False  # nothing in-flight to steer — caller queues normally
+        if not session.steer_drains:
+            return False  # no drain path this turn — caller queues (never buffer blind)
         session.steers.append(text.strip())
         return True
+
+    def set_steer_drains(self, key: str, value: bool) -> None:
+        """Declare whether the CURRENT turn on *key* can drain steers.
+
+        Called by the dispatcher: True when it wires ``set_steer_source`` for this
+        turn, False when the turn ends (so a steer sent between turns is queued
+        rather than buffered against a runtime that is no longer pulling).
+        """
+        session = self._sessions.get(key)
+        if session is None:
+            return
+        session.steer_drains = bool(value)
+        if not value:
+            # Turn over: anything still buffered will never be drained. Drop it here
+            # rather than letting it surface inside an unrelated later turn.
+            session.steers.clear()
 
     def drain_steers(self, key: str) -> list[str]:
         """Pop all buffered steering messages for a session (the loop's pull source)."""

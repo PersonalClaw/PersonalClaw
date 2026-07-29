@@ -774,7 +774,16 @@ class NativeAgentRuntime(AgentProvider):
             # Record the assistant turn (text + any tool calls) into history.
             self._messages.append(self._assistant_msg(assistant_text, tool_calls))
 
-            # 2) STOP — a model turn with no tool calls ends the agent turn.
+            # 2) STOP — a model turn with no tool calls ends the agent turn…
+            #    …UNLESS the user steered while that text was streaming. The steer
+            #    drain used to live only at 3b (after the tool batch), so a turn that
+            #    called NO tools — plain prose, the most common shape — returned here
+            #    and the steer was silently discarded even though the API had already
+            #    answered {"steered": true}. Draining here keeps the turn alive for one
+            #    more inference so the steer lands inside the SAME answer, which is the
+            #    entire promise of steering (PLATFORM-RESILIENCE S6.1).
+            if tool_calls == [] and not self._cancelled and self._drain_steers_into_history():
+                continue
             if not tool_calls or self._cancelled:
                 # If we're stopping with tool calls still pending (cancelled
                 # mid-turn — watchdog wedged-turn recovery / circuit-breaker),
@@ -815,24 +824,10 @@ class NativeAgentRuntime(AgentProvider):
             #     inference sees. Capped per turn so a flood can't extend one turn
             #     forever. Steer mode only; followup/collect/interrupt are handled
             #     by the runner before the turn even reaches the loop.
-            if self._pull_steer is not None and self._steers_injected < _MAX_STEERS_PER_TURN:
-                try:
-                    steers = self._pull_steer()
-                except Exception:
-                    steers = []
-                for s in steers:
-                    if self._steers_injected >= _MAX_STEERS_PER_TURN:
-                        break
-                    self._messages.append(
-                        {
-                            "role": "user",
-                            "content": f"[Steering — the user added this mid-task]\n{s}",
-                        }
-                    )
-                    self._steers_injected += 1
-                    yield AgentEvent(
-                        kind=EVENT_TEXT_CHUNK, text=""
-                    )  # keep stream warm; UI shows the steer via activity
+            if self._drain_steers_into_history():
+                yield AgentEvent(
+                    kind=EVENT_TEXT_CHUNK, text=""
+                )  # keep stream warm; UI shows the steer via activity
             # 4) REPEAT — re-infer with tool results now in context.
 
         # max_turns exhausted
@@ -1385,6 +1380,43 @@ class NativeAgentRuntime(AgentProvider):
         """Wire the queue-steering source (#37): a callable the loop drains at each
         model boundary for mid-turn user messages. None disables steering."""
         self._pull_steer = pull
+
+    def _drain_steers_into_history(self) -> bool:
+        """Append any pending steers to history as fresh user input.
+
+        Returns True if at least one steer was appended, which tells the loop to run
+        another inference so the steer affects the answer already in progress.
+
+        Called at BOTH model boundaries — after a tool batch, and before a no-tool-call
+        turn would end. The second call site is the one that matters in practice: most
+        turns are plain prose and never execute a tool, and with the drain only after
+        the tool batch those steers were dropped after the API had already reported
+        success.
+
+        Capped by ``_MAX_STEERS_PER_TURN`` so a flood cannot extend one turn forever;
+        once the cap is hit this returns False and the turn ends normally, leaving any
+        remainder for the session's turn-end clear.
+        """
+        if self._pull_steer is None or self._steers_injected >= _MAX_STEERS_PER_TURN:
+            return False
+        try:
+            steers = self._pull_steer()
+        except Exception:
+            logger.debug("steer drain failed", exc_info=True)
+            return False
+        appended = False
+        for s in steers:
+            if self._steers_injected >= _MAX_STEERS_PER_TURN:
+                break
+            self._messages.append(
+                {
+                    "role": "user",
+                    "content": f"[Steering — the user added this mid-task]\n{s}",
+                }
+            )
+            self._steers_injected += 1
+            appended = True
+        return appended
 
     def set_approval_policy(self, policy: str) -> None:
         self._approval_policy = policy or ""
