@@ -359,3 +359,74 @@ Deliberately NOT added: a `learn` mega-tool, template auto-run-on-accept, any mo
 8. The staging tier makes silent capture failure impossible: every extraction pass leaves a FLUSH_OK / FLUSH_ERROR / proposal-id outcome record, and the observability panel shows a week of pipeline activity at a glance.
 9. An accepted change is accountable: after N runs it carries an EFFECTIVE…HARMFUL verdict computed from ledger outcomes, and a HARMFUL verdict has auto-filed a revert proposal.
 10. Preference-facet/voice capture is gated: an incognito or temporary session writes NO memory-side artifact through any cadence (the chat_runner:150 gap is closed and regression-tested).
+
+---
+
+## Amendment (2026-07-29 — owner-approved: skill resource tier, agentic authoring, and approval-gated write-back)
+
+**Provenance.** A competitive gap analysis (Genspark + Manus, 2026-07-28/29) plus a code audit surfaced three items the owner approved for planning. **Two of the three are narrower than the competitive framing implied**, and this amendment says so rather than restating the vendor pitch — §2.4 already owns a more sophisticated version of one of them.
+
+### (a) Skills progressive disclosure — we have 2 of 3 levels; only the RESOURCE tier is missing
+
+**What Manus ships** (verified from their docs): a three-level load model — L1 metadata (name+description, always loaded, ~100 tokens/skill), L2 instructions (the `SKILL.md` body, loaded on slash-command trigger, <5k tokens), L3 resources (scripts, reference files, assets, loaded only when referenced). They adopted **Anthropic's Agent Skills open standard** (`SKILL.md` + YAML frontmatter) rather than inventing a format.
+
+**What PersonalClaw already has — the framing "we have 1 of 3" was wrong:**
+- **L1 exists.** `SkillsLoader.get_context()` documents it in its own docstring: "Always-loaded skills: full content included. Other skills: summary with instruction to load via bash when needed." Surfacing is embedding-ranked with a keyword-union fallback (`skills/surfacing.py`, threshold 0.55, mtime+model-keyed embedding cache in `.skill_embeddings.json`), capped by `skills.max_triggered`.
+- **L2 exists.** `skill_invoke` loads the full body on demand (`mcp_core.py:575` → `loader.load_skill(name)`, frontmatter stripped, usage recorded so the curator sees on-demand invocations), and its tool description explicitly steers the model to prefer it over reading the file.
+- **L3 does NOT exist.** A skill's bundled scripts/reference files/assets have no addressable, on-demand load path — the agent must discover and read them as ordinary files, which means they are either absent from consideration or pulled in wholesale.
+- **§2.4 of this plan already designs something stronger than Manus's fixed three levels:** persisted L0/L1/L2 tiers per entity, a *ranked slot allocator* that degrades tier before dropping items, L2 gated at ≥0.9·top_score with a hard cap of ~3 full-detail items, and an L0 catalog of unloaded near-misses. **Do not replace that design with Manus's simpler one.** This amendment adds the missing resource tier *underneath* it.
+
+**The contract addition** (an executor must implement exactly this, not a parallel scheme):
+
+```
+A skill directory may carry resources beside SKILL.md:
+  ~/.personalclaw/skills/<name>/SKILL.md
+                              /scripts/*        # executable helpers
+                              /reference/*      # docs the skill cites
+Frontmatter gains an optional declaration so resources are addressable without a directory walk:
+  resources:
+    - path: reference/api-notes.md
+      description: field-by-field notes on the vendor payload
+```
+- `skill_invoke` returns the body **plus an L0 catalog of declared resources** (path + one-line description) — never their contents.
+- A new `skill_resource(skill, path)` tool loads ONE declared resource on demand. It resolves **only** against the declared list (no arbitrary path read), rejects traversal, and is size-capped with a truncate-with-notice — the same discipline `investigate.py`'s snapshot cap uses.
+- Resource loads are **usage-recorded** like `skill_invoke`, so the curator (§2.3) can age unused resources.
+- **Security note (load-bearing):** resources are agent- and third-party-authored content. A resource load routes through the same fencing discipline as any untrusted read, and a *script* resource is never executed by this tool — `skill_resource` reads, it does not run. Execution stays on the normal, denylist-screened, sandbox-wrapped command path.
+
+**Format alignment (owner decision, §Owner tasks):** both competitors converged on Anthropic's `SKILL.md` + YAML-frontmatter standard, and PersonalClaw already uses `SKILL.md` with YAML frontmatter (`skills/loader.py:65` serializes frontmatter lines; `_parse_frontmatter` reads them). Worth an explicit conformance check so imported third-party skills work unmodified — cheap interoperability on a format we already substantially share.
+
+### (b) Agent-authored + retroactively-promoted skills — check before building
+
+**What exists:** `skill_remember` (`mcp_core.py`) already captures a user-taught skill as a **session-live draft** — active immediately for the rest of the chat, with an end-of-chat prompt to save permanently (to this agent or all agents) or forget. `skills/proposals.py` provides the full propose/accept/reject queue (`enqueue`/`list_pending`/`accept`/`reject`, with `kind="new"` and a `refine_target` for refinements). `skills/curator.py` ages `auto/` skills active→stale→archived by last use. `skills/ephemeral.py` exists for the session-live tier.
+
+**So the gap is not "agent can't author a skill" — it is narrower:**
+1. **Retroactive promotion of a completed run/conversation** into a skill. Both competitors ship this ("save this process as a Skill" after a successful task); PersonalClaw captures at the moment the user *teaches*, not retrospectively from *what worked*. §3.2 of this plan ("repeated ad-hoc work → suggested templates") is the adjacent mechanism and the natural home — promotion should feed **its** proposal queue rather than a second path.
+2. **Agent-initiated authoring** (the agent proposing a skill unprompted, having noticed it repeated itself) — must land as a **proposal**, never a silent write, per this plan's propose-don't-write doctrine.
+3. **GitHub-repo import** of a skill (Manus's community-distribution path). Note the existing install rail is not bypassable: skills install through the supply-chain scanner at the source's trust tier (`skills/marketplace.py:117` — "payload to quarantine, scans it at this marketplace's trust tier, and commits the exact scanned bytes"), with a **non-overridable DANGEROUS floor**. Any import path must ride that rail, unchanged.
+
+### (c) Self-updating project context with an approval gate
+
+**What Manus ships:** you ask it to review a conversation; it proposes updates to the project's instructions, files, and skills, explains what and why, and **"Project context is not updated without authorization."** Prompt-triggered, not automatic — notably, their own docs show no evidence of an automatic cross-session personal memory that learns unasked.
+
+**Why it fits here cleanly:** this is exactly this plan's `Capture → Stage → Propose → Curate` pipeline (§2), with the "project" as the target entity. It also matches the platform's existing discipline elsewhere: `memory_lint.py` has **exactly one** auto-fix (purging superseded rows past 90 days) and everything judgmental is **flagged, not changed**; `memory_service` uses **supersession-by-pointer** rather than lossy deletion. The mechanism is already the house style — what's missing is the project-scoped target and the review-this-conversation entry point.
+
+**Contract:** a `project_context_review` capability that (1) reads a conversation or run, (2) emits proposals of kind `project_instruction` / `project_file` / `project_skill` into the existing §2.2 queue with a rationale per item, (3) **writes nothing** until accepted, and (4) records the decision in decision memory (§2.2) so the same rejected suggestion doesn't re-surface. Prompt-triggered by default; if a cadence is added later it must remain propose-only.
+
+### Amendment task table (extends this plan; run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+
+| ID | Task | Files | Done when |
+|---|---|---|---|
+| E1.1 | Skill resource tier: optional `resources:` frontmatter declaration; `skill_invoke` returns body + an L0 resource catalog (never contents); new `skill_resource(skill, path)` tool resolving ONLY declared paths, traversal-rejecting, size-capped with truncate-notice, usage-recorded, read-never-execute | `src/personalclaw/skills/loader.py`, `src/personalclaw/mcp_core.py`, tests | a skill with resources exposes a catalog at ~one line each; loading one returns just that file; an undeclared or traversal path is refused; an oversized resource truncates with a visible notice; a script resource is read, never run |
+| E1.2 | `SKILL.md` frontmatter conformance check against the Agent Skills standard (per the owner's ruling in Owner tasks): document the delta, and accept a conformant third-party skill unmodified through the EXISTING scanner rail | `skills/loader.py`, `docs/reference/`, tests | a standard-conformant skill imports and runs unmodified; the scanner rail is unchanged (DANGEROUS floor still non-overridable — test it) |
+| E1.3 | Verify-then-build promotion: audit what `skill_remember` + `proposals.py` + §3.2 already cover, then add ONLY the missing retroactive path — "promote this completed run/conversation into a skill" feeding §3.2's existing proposal queue (no second queue) | `skills/proposals.py`, the §3.2 seam, tests | a successful run can be promoted to a skill proposal; the agent may propose unprompted but never writes; a rejected proposal is remembered in decision memory and does not re-surface |
+| E1.4 | `project_context_review`: read a conversation/run → typed proposals (`project_instruction`/`project_file`/`project_skill`) with per-item rationale into the §2.2 queue; nothing written without acceptance; decision recorded | the learning pipeline modules, tests | reviewing a conversation yields reviewable proposals; declining changes nothing; accepting applies exactly the accepted items; a second review does not re-propose a rejected item |
+| VE | Validation as a user: author a skill with a script + reference resource, confirm the catalog appears and one resource loads on demand while the other does not; import a third-party standard-format skill and confirm the scanner gate still applies; complete a real task, promote it to a skill proposal, accept it, and confirm it surfaces on a later relevant turn; run a project-context review, decline it (verify no change), then accept it (verify exactly the accepted items applied); full local gate | — | holds |
+
+### Owner tasks (real world)
+1. **Rule on `SKILL.md` standard conformance** (blocks E1.2): adopt the Agent Skills standard's frontmatter keys exactly where they differ from ours, or document the delta and stay divergent. Both competitors adopted it; the interoperability upside is that third-party skills work unmodified, and `anthropics/skills` is where the community publishes.
+2. **Confirm prompt-triggered-only for (c).** The plan makes project-context review manual, matching Manus. A cadence could be added later, but must stay propose-only.
+
+### Risks
+- **Duplicating §2.4.** The single largest risk in this amendment. §2.4's ranked slot allocator with L0/L1/L2 degradation is the authority for *how much of an entity* reaches a prompt; E1.1 adds only a **new, deeper tier for skill resources**. A task that reimplements tiering in `skills/` is out of scope and should be refused (escalation E6).
+- **Resource sprawl.** A skill with many resources re-creates the tool-explosion problem one level down. Mitigated by the L0 catalog being one line per resource and by curator aging of unused resources — and worth watching in real use.
+- **Promotion noise.** Retroactive promotion could flood the proposal queue. §2.2's decision memory and §2.3's curator already bound this; the amendment deliberately reuses them rather than adding a second gate.

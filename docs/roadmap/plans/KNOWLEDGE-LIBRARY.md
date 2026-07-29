@@ -154,3 +154,67 @@ def merge_items(keep_id, drop_id) -> None: ...    # redirects mentions + collect
   - **NOT taken:** T1.2's `bulk_apply` / `find_duplicates` / `merge_items` belong to
     S2 (curation + dedup) per the plan's own session split; this slice is collections
     + read state + favorites, which is what T1.1-T1.3 name.
+
+---
+
+## Amendment (2026-07-29 — owner-approved: indexing depth, the layer under the library)
+
+**Provenance.** A competitive gap analysis (Genspark + Manus) plus a code audit found that PersonalClaw's *retrieval machinery* is genuinely strong while the *index underneath it* is thin — and that the owner's question ("should this be fixed by the knowledge tools implementation?") resolves to **no**: it is neither a tools problem nor a library-management problem. It lands here because this plan owns `knowledge/store.py`, but it is a distinct sub-scope from S1-S3's curation work and should be sequenced independently.
+
+### The three limits, each verified
+
+1. **No chunking — one vector per item, over a truncated body.** `knowledge/embedder.py:17-30::compose_item_text` embeds `title + summary`, topped up with **`content[:1000]`** *and only when the summary is shorter than 80 characters*. So a well-summarized 40-page PDF is represented by title+summary alone; a summary-less one gets its first ~1000 characters. The schema comment states the absence plainly: there is **no `sources` table and no `chunk_index`**. The ingest pipeline's "chunk+embed" naming is therefore aspirational.
+   **Consequence:** semantic recall degrades exactly where a knowledge base earns its keep — long documents where the answer is on page 12. Keyword (FTS5) still finds it, so the failure is *partial and quiet*: the vector arm contributes nothing useful for long items, and the hybrid fusion silently leans on one leg.
+2. **Brute-force vector search.** `knowledge/retrieval.py:257` issues `SELECT id, embedding FROM items WHERE embedding IS NOT NULL AND status = 'active'` and scores **every row in Python** per query (`:262`). No ANN index anywhere in `knowledge/` (verified: no faiss/hnsw/IndexFlat usage). Fine at hundreds of items; linear in library size thereafter, on the request path.
+3. **One connector.** `knowledge/connectors/web_url.py` is the only ingestion connector — no Gmail, Notion, Drive, GitHub, Slack, or Confluence. **Explicitly NOT this amendment's scope:** WATCHED-SOURCES (15) owns making the source-provider seam real, and EMAIL-INBOX-AND-TRIGGERS owns mail. Named here only so the reader knows the thin index is not the whole ingestion story.
+
+**What must NOT change — the machinery above the index is good and is not the problem.** `HybridRetriever.search` fuses three arms with **RRF (k=60)**: FTS5 keyword (with prefix-OR sanitization so conversational queries match), graph traversal (entity resolution at word/bigram/trigram granularity, neighbor expansion to depth 2), and vector (cosine, `_VECTOR_MIN_SIMILARITY = 0.25`, skipping dimension-mismatched vectors). Post-fusion: title boost in RRF-score units, recency tie-break, and `relevance_cliff_cut` (gap 0.30) returning the natural relevant cluster instead of a fixed top-K. Every hit carries `match_type` and citation locators (`source_type`, `section` from the nearest heading/slide/sheet, 1-based `line_range`, `deep_link`) — **and honestly returns `null` for structureless items rather than fabricating a locator.** An executor must treat all of this as fixed: this amendment feeds it better inputs, it does not redesign fusion.
+
+### Design
+
+- **(a) Chunking with citation fidelity preserved.** Add a `chunks` table (`id, item_id, chunk_index, text, embedding, section, line_start, line_end`) with the item row keeping its whole-item embedding for cheap title/summary matching. Ingest chunks long items on **structural boundaries first** (headings, slides, sheets — the readers already extract these, which is what makes the existing `section`/`line_range` locators possible) with a size fallback and modest overlap. Retrieval's vector arm searches chunks, then **rolls chunk hits up to their item** before RRF so the fusion contract and the returned shape are unchanged — a chunk hit simply carries a *better* `section`/`line_range` than a whole-item hit could. **The citation locators must get more precise, never less**; a test should assert a chunk hit's locator is at least as specific as today's item-level one.
+- **(b) An ANN index, behind the existing arm.** Introduce an approximate index for the chunk vectors with an exact-scan fallback, chosen so the request path stops being linear. **Dependency: RESOLVED by owner ruling 2026-07-29 — add `sqlite-vec` as a CORE dependency** (see §Dependency ruling below). Keep it **inside** the vector arm: `search()`'s signature, the RRF fusion, the cliff-cut, and `_VECTOR_MIN_SIMILARITY` are untouched. Correctness bar: for a fixed corpus and query set, ANN results must match exact-scan results within a stated recall tolerance, and the test asserts it — an index that silently loses relevant items is worse than a slow one.
+
+### Dependency ruling (owner, 2026-07-29) — `sqlite-vec`, and why NOT faiss
+
+```toml
+# pyproject.toml, CORE `dependencies`. Comment must say WHY it is core, matching the
+# neighbouring blocks' style (see the codegraph rationale at pyproject.toml:57-60).
+"sqlite-vec>=0.1,<1",
+```
+
+**Why `sqlite-vec` and not `faiss`** — this is the load-bearing part of the ruling, and an executor must not "simplify" it back to faiss on the grounds that faiss is already in the tree:
+- **`faiss` is deliberately EXCLUDED from the desktop bundle** — `personalclaw-backend.spec:182` lists `"faiss"` under "Heavy optional deps," and `pyproject.toml:111` says so explicitly ("faiss stays here — excluded from the desktop bundle, degrades to SQLite-only"). It is also only an **extra** (`[embeddings]`), not core. Promoting it to core would either bloat the desktop bundle or hand desktop users a knowledge search that silently degrades to a full-table scan — precisely the "accelerator half the installs lack" failure the codegraph decision rejected.
+- **`sqlite-vec` fits the store's existing shape.** The knowledge store is SQLite-first (`items` + FTS5 `items_fts` + the graph tables in one DB); a vector index as a SQLite extension keeps the index in the **same file and the same transaction** as the rows it indexes, so a chunk write and its vector write cannot diverge. faiss would add a second on-disk artifact needing its own consistency story — exactly the split-brain that `memory_graph.py` deliberately avoided by installing `SCHEMA_V7` *inside* `memory.db` rather than a sidecar.
+- **It is small and pure-wheel**, so unlike faiss it passes the desktop-bundle bar the doc-reader block sets (`pyproject.toml:42-43`).
+- **`faiss` stays exactly where it is** — the `[embeddings]` extra, serving `vector_memory.py`'s optional `memory.faiss` index (`vector_memory.py:55-59`, `:78`). This plan does not touch memory-side vector search, and the two subsystems keep separate indexes by design.
+
+**Runtime-availability clause (required, not optional):** SQLite extension loading is not universally available — it depends on how the interpreter's SQLite was built, and the repo already special-cases SQLite capability (`pysqlite3-binary` is a conditional core dep at `pyproject.toml:41`, and PLATFORM-REACH owns a `sqlite_features()` contract). So the implementation MUST:
+1. probe `enable_load_extension` availability once and cache it;
+2. **fail soft to the existing exact scan** when the extension cannot load — never raise into a search, and log the degradation once at INFO with the reason;
+3. surface the degraded state in Doctor as a capability line (the honest-degradation pattern `resilience/degraded.py` already models), so a user on a stripped SQLite knows why search is slower rather than assuming it is broken.
+Reuse PLATFORM-REACH's `sqlite_features()` contract for the probe if it has landed; if not, the probe lands here and that plan consumes it (record which happened in the execution log).
+- **(c) Re-embed as a migration concern.** Existing items have whole-item vectors and no chunks. Chunking is a **class-B** change: it lands as a plain clean break under the pre-1.0 banner (no gate/migration machinery, per the workspace doctrine), but it needs a **backfill** that is resumable, batched, and progress-reporting — the store already has a batch re-embed path (`reembed_all`) and an ingest queue with `recover_pending()` restart recovery to model it on. A library with a half-built chunk table must degrade to whole-item vectors, not to zero results.
+
+### Amendment task table (extends this plan; run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+
+Sequence these **independently of S1-S3** — they touch the store's indexing layer, not the library UI.
+
+| ID | Task | Files | Done when |
+|---|---|---|---|
+| H1.1 | `chunks` table + structural-first chunker (headings/slides/sheets, size fallback, overlap); item row keeps its whole-item embedding; unit tests per source structure | `knowledge/store.py`, a new `knowledge/chunking.py`, tests | a long markdown/PDF/pptx item chunks on real structural boundaries; a structureless item chunks by size; chunk `section`/`line_start`/`line_end` are populated |
+| H1.2 | Embed chunks in the ingest pipeline; **retire `compose_item_text`'s 1000-char top-up for long items** in favor of chunk vectors (clean break — no dual path), keeping title+summary embedding for the item row | `knowledge/embedder.py:17-30`, the ingest pipeline, tests | a long item's semantic recall no longer depends on a 1000-char slice (test retrieves content from deep in a long document, which fails before the change); no dead top-up path remains |
+| H1.3 | Vector arm searches chunks and rolls up to items before RRF; fusion, cliff-cut, thresholds, and the returned shape unchanged; locators come from the winning chunk | `knowledge/retrieval.py:238-262`, tests | a chunk hit returns an item-shaped result with a MORE specific locator than today (asserted); RRF/cliff-cut behavior is unchanged on a fixed corpus |
+| H1.4 | Add `sqlite-vec>=0.1,<1` to core `dependencies` per the Dependency ruling (with the WHY comment); ANN index for chunk vectors inside the vector arm; **cached extension-availability probe with fail-soft to the existing exact scan** + a one-time INFO log + a Doctor capability line; recall-tolerance test against exact scan on a fixed corpus + query set. **Do not touch faiss or the `[embeddings]` extra** | `pyproject.toml`, `knowledge/retrieval.py`, index module, `resilience/doctor.py` (capability line), tests | queries stop scanning the full table; ANN-vs-exact recall meets the stated tolerance; with extension loading force-disabled the search still returns correct results via exact scan (test proves the fail-soft, not just the happy path); Doctor reports the degraded state; `faiss` remains an extra and untouched |
+| H1.5 | Resumable batched backfill (progress-reporting, restart-recoverable, modeled on `reembed_all` + the ingest queue's `recover_pending`); a partially-chunked library degrades to whole-item vectors | the store's re-embed path, tests | interrupting the backfill and restarting resumes without duplicating or skipping; mid-backfill search returns sensible results, never zero |
+| VH | Validation as a user: ingest a genuinely long document (a 30+ page PDF and a long markdown file); ask a question whose answer is deep in the middle and confirm it is now retrieved **and cited to the right section** (confirm it fails on `main` before the change); measure search latency on a large seeded library before/after the ANN index; interrupt and resume the backfill; full local gate | — | holds |
+
+### Owner tasks (real world)
+1. ~~Rule on the ANN dependency.~~ **RESOLVED 2026-07-29:** `sqlite-vec` approved as a core dependency, with faiss explicitly NOT promoted (it is desktop-excluded at `personalclaw-backend.spec:182` and stays in the `[embeddings]` extra). See §Dependency ruling for the full rationale and the mandatory fail-soft clause.
+2. **Confirm the chunking clean break.** The plan retires the 1000-char top-up rather than keeping both paths. Under the pre-1.0 banner that is the house style, and release notes should advise `personalclaw snapshot` before upgrading.
+
+### Risks & open questions
+- **Storage growth.** Chunk rows plus per-chunk vectors multiply the DB. Bounded by chunk size and by embedding dimension; worth measuring on a real library during VH rather than estimating.
+- **Silent recall regression from ANN** is the sharpest risk — an approximate index that drops relevant items looks like a working search. This is why H1.4's tolerance test is a required gate and not an optimization check.
+- **Do not redesign fusion.** The RRF + graph + cliff-cut + honest-null-locator machinery is a strength; every task above feeds it better inputs. A task proposing to retune thresholds or fusion weights is out of scope (escalation E6) unless a measurement demands it.
+- **Open:** whether the graph arm should also index chunks (entity mentions currently resolve at item granularity). Deferred — item-level entity resolution is coherent, and chunk-level mentions would multiply the graph without a demonstrated need.

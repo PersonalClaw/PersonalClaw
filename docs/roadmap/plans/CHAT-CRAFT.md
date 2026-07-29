@@ -195,3 +195,57 @@ One task row, landing in **S4** (the polish session); **no count change**.
   regenerated for the new route. **S4 deferred** (Wave 3 — screen-snip + polish + T4.5
   optimizer). Class-B `rewound` field lands as a plain clean break under the pre-1.0
   banner (tolerant reads, no migration; CHANGELOG note + snapshot advice).
+
+---
+
+## Amendment (2026-07-29 — owner-approved: Branch, and the plan gate for ordinary chat)
+
+**Provenance.** Competitive gap analysis (Genspark + Manus, 2026-07-28/29). Two mechanics were approved for planning: Manus's **Branch** (fork a session at any message with isolated inherited context) and its **Plan Mode** (a plan-then-act gate). Both turn out to be **much closer to done than the competitive framing suggested**, and one of them **directly contradicts an explicit non-goal in this plan's S1**. This amendment resolves that contradiction rather than silently overriding it.
+
+### (a) Branch — reopening a closed decision, deliberately
+
+**S1's stated non-goal (line 99):** *"no timeline-branching UI (tail restore = fork)"*, with the S1 design reasoning *"no in-place timeline branching UI; one active timeline per slot, history preserved."* That was a sound call for the *rewind* mechanic — a rewound tail is superseded content, and offering an in-place branch UI over it would have muddied "one active timeline per slot."
+
+**Why it is worth reopening as a separate mechanic:** Branch is not rewind. Rewind *replaces* a timeline (the old tail becomes superseded); Branch *duplicates* one (both timelines stay live and equal). Manus's framing is the useful part: *"Branch treats that understanding as a reusable asset… you can spend the same context many times without depleting it."* The documented use pattern is a long-running "record" thread as living project memory, with branches spun off to produce individual deliverables — which is a genuinely different workflow from correcting a mistake.
+
+**What already exists (verified — this is a small change, not a subsystem):**
+- `dashboard/chat_fork.py` (303 LOC) — `POST /api/chat/sessions/{session}/fork` **already forks at `at_message_index` (inclusive)** into a new session, copying messages with redaction applied, setting `forked_from`, SEL-audited, app-ownership-checked, and guarded by `_MAX_SESSIONS_FOR_FORK` (429 when at cap).
+- `POST /api/chat/sessions/{session}/fork-rewound` (`chat_fork.py:202`) — S1 already added tail-restore-as-fork.
+- So the backend primitive for Branch **is the shipped fork endpoint**. The gap is purely the **frontend affordance and the lineage breadcrumb**.
+
+**Contract (deliberately minimal):**
+- A **branch icon on hover of any past message** (not just user turns — branching from an assistant answer is the common case: "take this analysis in two directions"), calling the existing fork endpoint with that message's index.
+- A **"Session branched" confirmation**, and a **"Branched from" breadcrumb** on the child linking to its origin. `forked_from` is already persisted — the breadcrumb is a read of existing state.
+- **Branch-a-branch works for free** (a fork of a fork is just another fork) and **the same message may be branched repeatedly** — both are properties of the existing endpoint; the tasks only need to not prevent them.
+- **Isolation is already correct:** the fork copies messages into a new session with its own key, so each branch has its own provider session and context. No new isolation work.
+- **Explicit non-goals retained:** no tree/graph visualization, no cross-branch diffing, no merge. One active timeline per slot still holds — a branch is a *new slot*, which is exactly why it doesn't violate S1's principle. **This amendment does not change rewind's semantics at all.**
+- **Note the competitor's own limitation** for honesty: Manus's Branch is unsupported in their Web Builder sessions. Ours should degrade the same way where a session type can't be meaningfully copied (app-scoped and non-persistent sessions already refuse forking — reuse those refusals rather than inventing new ones).
+
+### (b) Plan Mode for ordinary chat — the gate exists but is loop-bound
+
+**What exists, and it is good:** `src/personalclaw/planning/` implements a stepwise gated walkthrough — ordered `PlanStep`s, a `StepStatus` state machine (`planning/session.py:25-42`: `awaiting_review` → **approve** advances, **comment** returns it to `running` for a re-draft), `PlanComment` accumulating across re-drafts, and the final approved step projecting into execution. Its own docstring: *"blocks on a user gate: the user approves it (advance) or comments (re-run the step with the feedback)."*
+
+**The gap, precisely:** it is reachable **only** through loop routes — `POST /api/loops/{id}/plan/start|retry|approve|comment|edit` and `GET /api/loops/{id}/plan-session` (`dashboard/handlers/loop_routes.py:734-790`). There is **no chat entry point**. So a user in ordinary chat cannot say "plan this before you touch anything," which is exactly where Manus put it.
+
+**What Manus specified that is worth copying** (their version is unusually well-specified, and these clauses are the substance):
+1. The plan is an **editable Markdown document** — "a full Markdown document with goals, steps, and constraints" — that the user can rewrite by hand or ask to be revised, and once confirmed **"that plan becomes the source of truth."**
+2. A **hard no-execute guarantee**, stated twice in their docs: *"Manus will not start building until you confirm or dismiss the plan"* / *"Q: Will Manus start building before I approve? A: **Never**."*
+3. **Manual-only, by design** — *"Q: Does Plan Mode activate automatically? A: No. It's manual-only. Your quick tasks stay quick."*
+4. **Mid-task re-planning:** activate it while work is in flight and the agent stops, plans the next phase, and waits.
+
+**Contract:** a chat-side entry to the **existing** planning walkthrough — not a second planner. Composer affordance (a mode/slash entry beside the existing task-mode pills), the plan rendered as an editable Markdown artifact, approve/comment reusing `planning/session.py`'s state machine verbatim, manual-only activation, and the no-execute guarantee enforced by the **existing** task-mode gate (`plan` mode is already read-only and enforced at the tool gate — `task_modes.py`), not by prompt instruction. **Do not build a new gate; bind the existing one to chat.**
+
+### Amendment task table (extends this plan; run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+
+| ID | Task | Files | Done when |
+|---|---|---|---|
+| F1.1 | Branch affordance: hover branch icon on ANY past message (user or assistant) → existing `POST .../fork` with that index; "Session branched" confirmation; navigate to the child | `web/src/pages/ChatPage.tsx`, `web/src/pages/chat/MessageActions.tsx`, `web/src/lib/api.ts` | branching from a user AND an assistant message both work; the same message branches repeatedly; a branch of a branch works; no primitive-adoption ratchet trips (use existing `ui/` primitives) |
+| F1.2 | "Branched from" breadcrumb on a forked session (reads the already-persisted `forked_from`), linking to the origin; degrade cleanly for app-scoped/non-persistent sessions using the fork endpoint's EXISTING refusals | `web/src/pages/ChatPage.tsx` (session header), tests | the child shows its origin and the link lands on it; a session at the fork cap surfaces the existing 429 as a readable message; a non-forkable session hides the affordance rather than erroring |
+| F1.3 | Chat entry to the EXISTING planning walkthrough: composer affordance, plan rendered as an editable Markdown artifact, approve/comment routed through `planning/session.py`'s state machine, **manual-only**, no-execute enforced by the existing `plan` task mode | `web/src/pages/ChatPage.tsx` composer, a chat-side planning route beside `loop_routes.py`'s pattern, `src/personalclaw/planning/` (wiring only — no new state machine), tests | a chat plan can be edited by hand, revised by request, approved, and only then executes; a mutating tool is denied while awaiting approval (test asserts the gate, not the prompt); quick tasks are unaffected (no auto-activation) |
+| F1.4 | Mid-task re-planning: activating the plan gate during an in-flight turn stops at the next safe boundary and waits for approval, reusing the existing soft-stop/steer machinery rather than a new interrupt path | the chat runner's existing stop/steer seam, tests | activating mid-turn parks the run awaiting approval without losing the transcript; approving resumes |
+| VF | Validation as a user: branch a long conversation from an assistant message, take the two branches in different directions, confirm the breadcrumb on each and that the original is untouched; branch a branch; then plan-gate a fresh request — edit the plan markdown by hand, approve, confirm execution follows the edited plan and that a mutating tool was denied before approval; activate the gate mid-task; full local gate incl. web typecheck/test/build | — | holds |
+
+### Risks
+- **Reopening an explicit non-goal.** Documented above rather than glossed: Branch is admitted as a *distinct mechanic on a new slot*, and rewind's "one active timeline per slot" principle is untouched. If an executor finds themselves adding timeline-branching UI *within* a slot, that is out of scope (escalation E6).
+- **Session proliferation.** Cheap branching plus `_MAX_SESSIONS_FOR_FORK` means users will hit the cap. The cap is existing behavior and stays; F1.2 only requires the refusal be *readable*. SESSION-MANAGEMENT (50) owns lifecycle/archival — if branching makes the cap a real irritant, that is a DISCOVERY for that plan, not a cap raise here.
+- **Two planners is the failure mode for (b).** The planning package is the authority; the chat entry is wiring. Any task that adds plan state, a second state machine, or a prompt-enforced (rather than tool-gate-enforced) no-execute guarantee is defective.
