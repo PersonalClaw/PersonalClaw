@@ -74,8 +74,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
   Retention keeps a *spread* instead of a window — two weeks of daily snapshots, then
   weekly, then monthly — so a year of history costs about 30 files and you can still
-  reach back to January. Settings → shows exactly which snapshots the policy would
-  keep and which it would remove, before it removes anything.
+  reach back to January. Settings → **Backups** is where all of this lives: when each
+  job last ran, a button to run one now, how long each tier is kept, and the snapshot
+  list marking exactly which files the current settings would remove — before anything
+  is removed. Restoring stays a command-line action, and the screen says so, because a
+  restore has to replace live state while the gateway is stopped.
 
   Once a month it also runs a **restore drill**: the newest snapshot is unpacked into
   a temporary directory and every database inside it is integrity-checked, then you

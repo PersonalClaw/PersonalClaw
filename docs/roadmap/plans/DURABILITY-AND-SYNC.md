@@ -1,6 +1,6 @@
 # Plan: Durability & Sync — Deterministic Shards, Scheduled Snapshots, User-Owned Transport
 
-**Status:** IN PROGRESS — Session 1 (inventory + audit) and Session 2 shipped 2026-07-27/28
+**Status:** IN PROGRESS — Session 1 (inventory + audit) and Session 2 (2a shards / 2b service / 2c settings surface) shipped 2026-07-27/29
 (S2a deterministic shards + `backup export|validate`; S2b scheduled snapshot service, tiered
 retention, restore drills). Remaining in S2: the restore endpoint + T2-M1/M2/M3 merge path.
 Sessions 3-5 (sync core, transports, time travel) not started.
@@ -376,3 +376,64 @@ isolated dev home: the service ran unattended at boot (snapshot + shards + drill
 verifying 4 databases), the snapshots endpoint showed the tier plan without deleting
 anything, on-demand jobs and both input validations behaved, the drill notification
 was delivered, and the gateway log was clean. Full suite 8679 passed; lint clean.
+
+## Execution log — Session 2c (the backups settings surface)
+
+- [2026-07-29][S2c] **DONE.** Closed the frontend leg of §3. S2a/S2b shipped the shard
+  format, the scheduled service, tiered retention, restore drills and three endpoints —
+  with **no frontend at all**, which left a data-protection surface entirely invisible.
+
+  **The gap was wider than "no control for 5 fields."** `durability.*` had its dataclass,
+  `_meta`, `load()` and `to_dict()` legs wired but **no PATCH allowlist entry**, so the
+  five shipped fields were file-editable only. And `grep -rn "api/durability" web/src`
+  returned **zero** — the `status`, `snapshots` and `run` endpoints had no reader either,
+  so a user could not see what the schedule had produced, let alone change it. Both halves
+  are now closed: the five dot-paths joined `_EDITABLE_CONFIG` and a new Settings →
+  **Backups** panel consumes all three endpoints.
+
+  **`snapshot_dir` is deliberately NOT patchable.** Repointing where backups are written
+  is a filesystem decision (permissions, mount points, free space) and a bad value silently
+  redirects every future backup. It stays a config-file edit; a test pins that the
+  allowlist matches the dataclass *minus* that one field, so neither a new field nor a
+  stray entry drifts unnoticed.
+
+  **BUG FOUND BY DRIVING THE REAL ENDPOINT** (unit tests could not have caught it): I
+  typed `JobResult.skipped` as `boolean` in `api.ts`, but it is a **reason string**
+  (`service.py:55`, e.g. `"another export is already running"`, `"no snapshot to drill
+  yet"`). Empty-string is falsy so the truthiness check happened to work, but the type was
+  wrong and the panel was throwing away the server's own explanation in favour of a
+  generic "skipped". Now typed `string` and the reason is surfaced verbatim. A skip is
+  reported as success, not error — a healthy single-flight race is not a failure.
+
+  **Restore is deliberately absent from the panel**, matching the handler module's own
+  stated reasoning: replace-restore refuses to run while the gateway is up, so a useful
+  restore endpoint needs staged-swap-on-next-boot machinery that does not exist, and a
+  button that appears to restore and doesn't is a trap. The panel says restore is
+  `personalclaw restore` rather than leaving a user hunting for it.
+
+  Retention caps are bounded rather than open-ended (0 disables a tier; ceilings of
+  365/260/120) so a typo cannot budget a decade of archives.
+
+  **Validated as a user** on an isolated dev home (port 10732, never the owner's :10000),
+  in a real browser: all five fields PATCHed and persisted to `config.json`; an
+  out-of-range value was rejected (`must be between 0 and 365`); `snapshot_dir` was
+  refused (`field not editable`); a real snapshot ran from the panel's button
+  (`kept 1, pruned 1`) and appeared in the list with its size and the isolated-home path;
+  the snapshot list reflected the tiers I had just PATCHed (3/0/1); **clicking the
+  "Automatic backups" switch flipped `auto_backup` to `true` on disk** — the full
+  five-point round trip proven through the UI, not just the API; the settings-home bento
+  card surfaced under a search for "retention" showing live data ("1 snapshot kept",
+  "Nightly + hourly, automatic"); zero console errors or warnings.
+
+  Tests: 6 new cases in `test_durability_service.py::TestConfigContract` (54 in that
+  file), including an allowlist-matches-dataclass assertion and a save+load round trip
+  that pins **`False`** surviving — the interesting direction, since `_guard_flag` keeps
+  backups ON for an unreadable value, so a deliberate opt-out must not be read back as
+  True. Gate: `make lint` green · `make test` **8888 passed, 0 failed** · web typecheck +
+  283 vitest + build green.
+
+  **Pre-existing gap NOT closed here** (recorded, not fixed): `model_calls.jsonl` and
+  `spend.json` are both unclaimed by `durability/inventory.py`, so neither is in a
+  snapshot or an export. `audit_home()` does not catch them because it has **zero runtime
+  callers** and its test builds a synthetic 5-path fixture home. That is a guardrails-store
+  question, out of scope for a settings surface.
