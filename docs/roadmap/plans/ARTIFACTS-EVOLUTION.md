@@ -1,6 +1,6 @@
 # Plan: Artifacts Evolution — From a Files Tab to a First-Class Creative Library
 
-**Status:** DESIGNED — created 2026-07-26 (roadmap rev 13; owner ask: sibling-platform gap analysis round 2)
+**Status:** IN PROGRESS — S1a/S1b/S2 shipped; **S3 T3.1 + T3.4 shipped 2026-07-29** (resolver + @-references); T3.2/T3.3 (iterate panel + version compare) next. Created 2026-07-26 (roadmap rev 13; owner ask: sibling-platform gap analysis round 2)
 **Created:** 2026-07-26
 **Wave:** 2 (S1: the split + store hardening; S2: the library surface) + 3 (S3: iterate-with-agent + diffs + chat references)
 **Depends on:** nothing hard for S1-2 (builds on the shipped `artifacts/` package, WidgetFrame/ReactWidgetFrame, and the Files page). S3 has a hard dep on **INVESTIGATE-ANYWHERE (60)** — the iterate panel consumes its primitive (registers an `artifact` resolver against plan 60's registry; reuse, don't duplicate). Coordinates with DESIGN-SYSTEM-CONSISTENCY (51, shipped — the library grid uses the primitives/tokens), FLUID-MOTION (52 — grid/preview motion inherits its tiers when it lands), WORKFLOWS-V2 program (loop/cron provenance already flows in via `source`; no engine coupling), APP-PLATFORM-EVOLUTION (48 — apps read artifacts only via existing SDK/API surfaces).
@@ -218,3 +218,53 @@ def _inject_artifact_content(state, session, message) -> str: ...
   throughout. Gate: web typecheck + 251 vitest + build green, `make lint` green, full
   backend suite green. **Remaining: S3 (Wave 3 — iterate-with-agent via the investigate
   registry, version diffs, @-artifact chat references).**
+
+- 2026-07-29 — **DONE (S3, T3.1 + T3.4).** The iterate *entry point* and @-artifact chat
+  references. T3.2 (split-view panel) and T3.3 (version compare) are the next slice —
+  this one is the backend contract plus the chat surface, which is the atomically
+  completable half.
+  - **T3.1 resolver.** `_resolve_artifact` in `investigate.py`, registered as `artifact`.
+    Snapshot carries kind/version/description/tags, the version list, and the CURRENT
+    body; a file-backed artifact names its live source (the agent must edit THAT, or the
+    next read reverts its work); a binary artifact contributes a raw-URL reference, never
+    bytes.
+  - **OWNER RULING APPLIED (2026-07-29): `suggested_task_mode="agent"`.** I had
+    recommended `build` as least-privilege; the owner rejected that — *"The iteration may
+    need the agent to search internet or read knowledge files or run commands or
+    investigate project, etc. So only minimum permission mode doesn't really seem to be
+    prudent choice here."* This is the ONLY resolver that suggests `agent`, and a test
+    pins `InvestigateContext.suggested_task_mode`'s default at `ask` so the exception
+    can't become the platform default by drift.
+  - **DEVIATION (file placement):** plan C4 says "artifacts side (registered at boot)",
+    but S1's own logged deviation put every resolver in `investigate.py`. Followed the
+    shipped convention rather than the plan text — one registry, one file.
+  - **T3.4 references.** `_inject_artifact_content` in `chat_runner.py` beside
+    `_inject_knowledge_content`; composer `+`-menu row + `ArtifactContextPicker` +
+    `meta.artifacts`. Grounds in the CURRENT version (referencing an artifact means
+    "what it is now"), redacts credentials on the way in, and records a `referenced`
+    event via the EXISTING `record_impression` — which is idempotent per session, so a
+    long conversation about one artifact leaves one impression, not a per-turn flood.
+  - **BUG FOUND IN OWN WORK:** the injection resolved the provider unguarded, so a
+    broken artifact store would have raised into the turn. Now caught and degraded. The
+    test that found it asserts the injection returns the message unchanged when the
+    provider raises.
+  - **TEST-ISOLATION BUG FOUND (worth recording — it will bite the next artifact test).**
+    `artifacts/registry._providers` is a MODULE-LEVEL cache and
+    `NativeArtifactProvider.__init__` resolves `config_dir()` EAGERLY. Patching
+    `registry.get_provider` is therefore not enough: under xdist, a provider constructed
+    by an earlier test in the same worker wins, and one test read another's artifact. Fix:
+    `monkeypatch.setitem(registry._providers, "native", ...)` with an EXPLICIT
+    `root=tmp_path`. Confirmed stable across 3 consecutive full-file runs.
+  - **Design-system:** the ratchet rejected two raw `<button>`s in the new picker; rows
+    now use the existing `MenuRow` primitive and chips use `Button`.
+  - **Validated as a user** on an isolated dev home: `POST /api/investigate`
+    `{kind: "artifact"}` created a real session staged with `agent` mode, the
+    `#/artifacts/<slug>` back-link, and a slug+tool-naming opening prompt; after a
+    version bump the resolver staged **v2 and not the stale v1**; the injection grounded
+    in v2 and the artifact's timeline gained exactly one `referenced` event with the
+    session id; the composer's "Reference an artifact" row opened a picker listing
+    `widget · v2 · sales-dashboard` and selecting it produced a chip. 0 console errors,
+    0 gateway tracebacks.
+  - **Gates:** `make lint` clean (mypy 538 files) · backend **8859 passed** (20 new) ·
+    web **283 passed** + typecheck + build.
+  - Pre-existing/unrelated: `test_cron.py`'s spring-forward test (core issue #85).

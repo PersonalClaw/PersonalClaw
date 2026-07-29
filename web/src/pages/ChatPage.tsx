@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { fvs, withWeight } from '../design/fontWeight'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, type LucideIcon } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, type LucideIcon } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -480,6 +480,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // the backend inlines each item's content for the turn.
   const [mentionedKnowledge, setMentionedKnowledge] = useState<{ id: string; name: string }[]>([])
   const [knowledgePickerOpen, setKnowledgePickerOpen] = useState(false)  // "Add knowledge to prompt" picker
+  // @-mentioned artifacts (slug+name) → threaded into send meta.artifacts; the backend
+  // inlines each one's CURRENT version for the turn (referencing an artifact means
+  // "what it is now", not a pinned snapshot) and records a `referenced` event.
+  const [mentionedArtifacts, setMentionedArtifacts] = useState<{ slug: string; name: string }[]>([])
+  const [artifactPickerOpen, setArtifactPickerOpen] = useState(false)
   const [pasteBlocks, setPasteBlocks] = useState<PasteBlock[]>([])
   // uploaded-attachment workspace paths (threaded into send meta.files, B0) +
   // composer extras: prompt history (↑/↓), context-usage %, optimize-in-flight,
@@ -1335,6 +1340,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     setTurns((prev) => [...prev, userTurn(original ?? t, clientTs, turnPastes.length ? turnPastes : undefined, files, original ? t : undefined)])
     setPromptHistory((prev) => { const h = original ?? t; return (prev[prev.length - 1] === h ? prev : [...prev, h]).slice(-50) })
     const knowledgeIds = mentionedKnowledge.map((k) => k.id)
+    const artifactSlugs = mentionedArtifacts.map((a) => a.slug)
     // breakText=TRUE: a fresh send must open a NEW coalesced text run. A follow-up in
     // an existing chat streams in right after the prior turn — the backend does NOT
     // always emit a chat_done/chat_segment boundary between turns (esp. YOLO/queued
@@ -1344,11 +1350,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // is a no-op). We add the user turn locally above, so the next chat_chunk's
     // reset() lands the fresh assistant turn beneath it.
     setInput(''); setPreOptimize(null); markStreaming(true); breakText.current = true
-    setPasteBlocks([]); setMentionedFiles([]); setAttachedPaths([]); setMentionedKnowledge([])
+    setPasteBlocks([]); setMentionedFiles([]); setAttachedPaths([]); setMentionedKnowledge([]); setMentionedArtifacts([])
     try {
       const meta: Record<string, unknown> = { client_ts: clientTs }
       if (files.length) meta.files = files
       if (knowledgeIds.length) meta.knowledge = knowledgeIds
+      if (artifactSlugs.length) meta.artifacts = artifactSlugs
       // persist paste blocks so chips survive reload — hydrateTurns re-collapses
       // the expanded content back to [Paste #N] markers using these.
       if (turnPastes.length) meta.pastes = turnPastes
@@ -1965,6 +1972,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             onSend={(t) => { const full = input.trim() ? `${input}\n${t}` : t; setInput(''); void send(full) }}
             onClose={() => setPromptPaletteOpen(false)} />
         )}
+        {artifactPickerOpen && (
+          <ArtifactContextPicker
+            attached={mentionedArtifacts}
+            onPick={(a) => setMentionedArtifacts((prev) => (prev.some((x) => x.slug === a.slug) ? prev : [...prev, a]))}
+            onRemove={(slug) => setMentionedArtifacts((prev) => prev.filter((a) => a.slug !== slug))}
+            onClose={() => setArtifactPickerOpen(false)} />
+        )}
         {knowledgePickerOpen && (
           <KnowledgeContextPicker
             attached={mentionedKnowledge}
@@ -1993,6 +2007,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           plusMenuExtra={(close) => (
             <>
               <MenuRow icon={<BookText size={16} />} label="Add knowledge" hint="Search the library → attach to the prompt" onClick={() => { close(); setKnowledgePickerOpen(true) }} />
+              <MenuRow icon={<Boxes size={16} />} label="Reference an artifact" hint="Ground the reply in an artifact's current version" onClick={() => { close(); setArtifactPickerOpen(true) }} />
               {isMac && <MenuRow icon={<Camera size={16} />} label="Capture screenshot" hint="Snip a region → attach" onClick={() => { close(); void captureScreenshot() }} />}
               {started && sessionRef.current && <AutoNudgeMenuItem session={sessionRef.current!} onOpen={close} />}
             </>
@@ -2406,6 +2421,63 @@ function MentionChips({ paths, onRemove, onOpen }: { paths: string[]; onRemove: 
  *  result's token cost against a budget, so the user can attach relevant context
  *  without blowing the window. Selecting toggles the item into mentionedKnowledge
  *  (the same pipeline as an @-mention); the backend inlines it at send. */
+/** Pick artifacts to ground the next turn in. Unlike the knowledge picker there is no
+ *  token budget meter: an artifact is one whole document the user names deliberately,
+ *  not a set of search fragments competing for a context allowance. The list is the
+ *  library itself, filtered client-side — an artifact library is small enough that a
+ *  server round-trip per keystroke would be the slower option. */
+function ArtifactContextPicker({ attached, onPick, onRemove, onClose }: {
+  attached: { slug: string; name: string }[]
+  onPick: (a: { slug: string; name: string }) => void
+  onRemove: (slug: string) => void
+  onClose: () => void
+}) {
+  const [q, setQ] = useState('')
+  const { data, loading } = useCachedData('chat:artifact-picker', () => api.artifacts().catch(() => []))
+  const all = data ?? []
+  const attachedSlugs = new Set(attached.map((a) => a.slug))
+  const n = q.trim().toLowerCase()
+  const shown = (n ? all.filter((a) => `${a.name} ${a.slug} ${a.kind}`.toLowerCase().includes(n)) : all).slice(0, 40)
+  return (
+    <Modal title="Reference an artifact" icon={<Boxes size={18} className="text-primary" />} onClose={onClose}>
+      <div className="flex flex-col gap-m" style={{ minWidth: 420 }}>
+        <SearchField value={q} onChange={setQ} autoFocus placeholder="Search your artifacts…"
+          ariaLabel="Search your artifacts"
+          trailingSlot={loading ? <Loader2 size={15} className="animate-spin text-on-surface-low" /> : undefined} />
+        {attached.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {attached.map((a) => (
+              <Button key={a.slug} variant="ghost" size="xs" onClick={() => onRemove(a.slug)}
+                title="Remove from this prompt">
+                <Boxes size={11} /> {a.name} <X size={11} />
+              </Button>
+            ))}
+          </div>
+        )}
+        {all.length === 0 && !loading ? (
+          <p className="text-on-surface-low text-[0.8125rem]">
+            No artifacts yet. Ask in chat for a widget or a document and it lands here.
+          </p>
+        ) : (
+          <div className="flex max-h-80 flex-col gap-1 overflow-y-auto">
+            {shown.map((a) => {
+              const on = attachedSlugs.has(a.slug)
+              return (
+                <MenuRow key={a.slug} icon={<Boxes size={14} />} label={a.name}
+                  hint={`${a.kind} · v${a.version} · ${a.slug}`} selected={on}
+                  onClick={() => (on ? onRemove(a.slug) : onPick({ slug: a.slug, name: a.name }))} />
+              )
+            })}
+            {n && shown.length === 0 && (
+              <p className="px-2 py-2 text-on-surface-low text-[0.8125rem]">No artifact matches that.</p>
+            )}
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
 function KnowledgeContextPicker({ attached, onPick, onRemove, onClose }: {
   attached: { id: string; name: string }[]
   onPick: (item: { id: string; name: string }) => void
