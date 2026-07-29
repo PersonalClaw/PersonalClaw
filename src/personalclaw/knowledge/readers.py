@@ -32,6 +32,35 @@ except ImportError:
     _load_workbook = None  # type: ignore[assignment]
 
 
+def _render_docx_table(table) -> list[str]:
+    """One .docx table → markdown rows. Empty list when the table holds nothing.
+
+    Merged cells repeat their text in python-docx (the same cell object appears at each
+    covered position); de-duplicating adjacent repeats keeps a merged header from reading
+    as "Q1 | Q1 | Q1" without inventing a colspan notation markdown cannot express.
+    """
+    rows: list[list[str]] = []
+    for row in table.rows:
+        cells: list[str] = []
+        for cell in row.cells:
+            text = " ".join(cell.text.split())
+            # Pipes would break the markdown table structure.
+            text = text.replace("|", "\\|")
+            if cells and text and text == cells[-1]:
+                continue  # a merged cell repeating itself
+            cells.append(text)
+        if any(c for c in cells):
+            rows.append(cells)
+    if not rows:
+        return []
+    width = max(len(r) for r in rows)
+    out = ["| " + " | ".join((rows[0] + [""] * width)[:width]) + " |"]
+    out.append("| " + " | ".join(["---"] * width) + " |")
+    for row in rows[1:]:
+        out.append("| " + " | ".join((row + [""] * width)[:width]) + " |")
+    return out
+
+
 class FileReader:
     # Note: .pdf/.pptx require optional runtime dependencies (pdfplumber, python-pptx)
     # not declared in setup.cfg. .docx requires python-docx (pip install python-docx).
@@ -205,10 +234,27 @@ class FileReader:
                     lines.append(f'{"#" * level} {text}')
                 else:
                     lines.append(text)
+            # Tables were previously DROPPED ENTIRELY: this only walked
+            # `doc.paragraphs`, and python-docx keeps table content out of that
+            # collection. Any table in an ingested Word document — often the densest
+            # information in it — was silently invisible to search, embedding and the
+            # agent. Rendered as markdown tables to match how the xlsx/csv readers
+            # already present tabular data, so downstream consumers see one shape.
+            #
+            # Appended after the prose rather than interleaved: python-docx exposes no
+            # ordering between paragraphs and tables without walking the underlying XML
+            # body, and appending is the honest option — losing POSITION is a far
+            # smaller defect than losing the content.
+            for table in doc.tables:
+                rendered = _render_docx_table(table)
+                if rendered:
+                    lines.append("")
+                    lines.extend(rendered)
             return "\n".join(lines), {
                 "format": "docx",
                 "content_type": "markdown",
                 "paragraph_count": len(doc.paragraphs),
+                "table_count": len(doc.tables),
             }
         except Exception as e:
             return f"Error reading file: {e}", {"format": "error", "error": str(e)}

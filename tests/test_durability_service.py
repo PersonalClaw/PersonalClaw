@@ -557,3 +557,89 @@ class TestServiceLoop:
         await svc.start()
         assert svc._task is first
         svc.stop()
+
+
+class TestConfigContract:
+    """The five `durability.*` fields must complete the config round-trip.
+
+    They shipped with the dataclass + `_meta` + `load()` + `to_dict()` legs wired but
+    NO write path and NO frontend — so retention and drills were file-editable only,
+    on a data-protection surface. These pin the two missing legs so the gap can't
+    silently reopen.
+    """
+
+    _FIELDS = (
+        "auto_backup",
+        "keep_daily",
+        "keep_weekly",
+        "keep_monthly",
+        "restore_drills",
+    )
+
+    def test_every_field_is_patchable(self):
+        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+        for name in self._FIELDS:
+            assert f"durability.{name}" in _EDITABLE_CONFIG, name
+
+    def test_the_allowlist_matches_the_dataclass_exactly(self):
+        """No allowlist entry for a field that doesn't exist, and none missing.
+
+        `snapshot_dir` is deliberately absent: repointing where backups are written
+        is a filesystem decision, not a one-click PATCH.
+        """
+        import dataclasses
+
+        from personalclaw.config.loader import DurabilityConfig
+        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+        declared = {f.name for f in dataclasses.fields(DurabilityConfig)}
+        allowlisted = {k.split(".", 1)[1] for k in _EDITABLE_CONFIG if k.startswith("durability.")}
+        assert allowlisted <= declared, f"allowlists a non-field: {allowlisted - declared}"
+        assert allowlisted == set(self._FIELDS)
+
+    def test_retention_specs_are_bounded_and_allow_disabling_a_tier(self):
+        """0 must be reachable (disable a tier) and the ceiling must be finite (a
+        typo shouldn't budget a decade of archives)."""
+        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+        for name in ("keep_daily", "keep_weekly", "keep_monthly"):
+            spec = _EDITABLE_CONFIG[f"durability.{name}"]
+            assert spec["type"] == "int"
+            assert spec["min"] == 0, name
+            assert 0 < spec["max"] <= 365, name
+
+    def test_the_two_switches_are_bools(self):
+        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+        for name in ("auto_backup", "restore_drills"):
+            assert _EDITABLE_CONFIG[f"durability.{name}"] == {"type": "bool"}
+
+    def test_fields_survive_a_save_load_round_trip(self, tmp_path, monkeypatch):
+        """A non-default value must come back unchanged after a real save+load.
+
+        `False` is the interesting direction for the two bools: `_guard_flag` keeps
+        backups ON when a value is unreadable (losing scheduled backups is the very
+        failure the plan exists to prevent), so a DELIBERATE False has to survive the
+        round trip rather than being read back as True.
+        """
+        from personalclaw.config.loader import AppConfig, DurabilityConfig
+
+        path = tmp_path / "config.json"
+        path.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: path)
+
+        cfg = AppConfig.load()
+        cfg.durability = DurabilityConfig(
+            auto_backup=False,
+            keep_daily=3,
+            keep_weekly=0,
+            keep_monthly=1,
+            restore_drills=False,
+        )
+        cfg.save()
+        reloaded = AppConfig.load().durability
+
+        assert reloaded.auto_backup is False
+        assert reloaded.restore_drills is False
+        assert (reloaded.keep_daily, reloaded.keep_weekly, reloaded.keep_monthly) == (3, 0, 1)

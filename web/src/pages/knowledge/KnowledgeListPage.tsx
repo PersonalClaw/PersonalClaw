@@ -1,16 +1,18 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import { BookOpen, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers } from 'lucide-react'
+import { BookOpen, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Tag as TagIcon } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { Button } from '../../ui/Button'
 import { EmptyState, ListRow, ListSkeleton } from '../../ui/ListScaffold'
+import { Checkbox } from '../../ui/forms'
+import { TagManager } from './TagManager'
 import { SidePanel } from '../../ui/SidePanel'
 import { ListControls } from '../../ui/ListControls'
 import { IconButton } from '../../ui/IconButton'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { Segmented } from '../../ui/forms'
-import { api, type KnowledgeIntent, type IntentOutcome, type KnowledgeItem, type KnowledgeCollection } from '../../lib/api'
+import { api, type KnowledgeIntent, type IntentOutcome, type KnowledgeItem, type KnowledgeCollection, type KnowledgeBulkOp } from '../../lib/api'
 import { resolveType, relTime, fmtBytes, typeLabel } from './knowledgeMeta'
 import { listKnowledge, knowledgeStats, getKnowledge } from './knowledgeStore'
 import { KnowledgeDetail } from './KnowledgeDetail'
@@ -19,7 +21,7 @@ import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { confirm, promptInput } from '../../ui/dialog'
 
-type View = 'library' | 'graph' | 'intents'
+type View = 'library' | 'graph' | 'intents' | 'tags'
 
 function StatChip({ icon: Icon, label, value }: { icon: typeof Database; label: string; value: number | string }) {
   return (
@@ -137,6 +139,26 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
   }, [peekId])
 
   const [showArchived, setShowArchived] = useState(false)
+  // Curation filter: '' | 'unread' | 'reading' | 'read'
+  // | 'favorites'. Client-side like the type/provider/tag filters, so the full item set
+  // stays loaded and the chips can gate themselves on what's actually present.
+  // Without this, favoriting was WRITE-ONLY — you could star an item and then had no
+  // way to see your stars.
+  const [curationFilter, setCurationFilter] = useState('')
+  // Multi-select for bulk curation. Deliberately NOT
+  // URL-backed: a transient selection isn't meaningfully deep-linkable, and restoring
+  // one on reload would re-arm a destructive-feeling state the user didn't ask for
+  // (the same call ChatPage's session selection makes).
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkNote, setBulkNote] = useState('')
+  const selecting = selected.size > 0
+  const clearSelection = () => setSelected(new Set())
+  const toggleSelected = (id: string) => setSelected((prev) => {
+    const next = new Set(prev)
+    next.has(id) ? next.delete(id) : next.add(id)
+    return next
+  })
   // Stale-while-revalidate: revisiting Knowledge shows the last items instantly and
   // refetches in the background (no "Loading…" flash except the genuine first load).
   // Type is filtered CLIENT-side (like provider/tag) so the full item set
@@ -163,6 +185,33 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
   const items = itemsData ?? null
   const stats = statsData ?? null
   const load = () => { refreshItems(); refreshStats(); refreshCollections() }
+
+  /** Apply one curation op to the selection. Reports per-item outcomes rather than a
+   *  bare ok: a selection can go stale between the click and the request, and
+   *  "38 shelved · 2 not found" is a useful answer where a wholesale failure is not. */
+  const runBulk = async (op: KnowledgeBulkOp, args: Record<string, unknown> = {}, verb = 'Updated') => {
+    if (!selected.size || bulkBusy) return
+    setBulkBusy(true); setBulkNote('')
+    try {
+      const res = await api.knowledgeBulk(op, [...selected], args)
+      const parts = [`${verb} ${res.changed.length}`]
+      if (res.unchanged.length) parts.push(`${res.unchanged.length} already set`)
+      if (res.missing.length) parts.push(`${res.missing.length} not found`)
+      setBulkNote(parts.join(' · '))
+      clearSelection()
+      load()
+    } catch (e) {
+      // The endpoint refuses argument problems with a typed code — surface the real
+      // reason instead of a generic failure, since "smart shelves resolve from their
+      // query" is actionable and "bulk failed" is not.
+      const msg = String((e as Error)?.message || e)
+      setBulkNote(msg.includes('smart_collection_immutable')
+        ? "A smart shelf fills itself from its query — items can't be added by hand."
+        : 'Bulk action failed — nothing was changed.')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
 
   // Shelf management. A smart shelf is created by naming a query, which is why the
   // prompt asks for one rather than offering a kind toggle with an empty box — a
@@ -285,9 +334,25 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
     () => (items ?? []).filter((it) =>
       (!typeFilter || resolveType(it).key === typeFilter) &&
       (!providerFilter || (it.provider || 'native') === providerFilter) &&
-      (!tagFilter || (it.tags ?? []).includes(tagFilter))),
-    [items, typeFilter, providerFilter, tagFilter],
+      (!tagFilter || (it.tags ?? []).includes(tagFilter)) &&
+      // A NULL read_state normalizes to 'unread' server-side, but be tolerant here too
+      // so a pre-curation item can't slip past the unread filter it belongs in.
+      (!curationFilter || (curationFilter === 'favorites'
+        ? !!it.favorited
+        : (it.read_state || 'unread') === curationFilter))),
+    [items, typeFilter, providerFilter, tagFilter, curationFilter],
   )
+  // Chips appear only when the state they filter is actually present — an always-on
+  // "Favorites (0)" chip is a dead end that teaches the user nothing.
+  const curationCounts = useMemo(() => {
+    const base = items ?? []
+    return {
+      unread: base.filter((i) => (i.read_state || 'unread') === 'unread').length,
+      reading: base.filter((i) => i.read_state === 'reading').length,
+      read: base.filter((i) => i.read_state === 'read').length,
+      favorites: base.filter((i) => !!i.favorited).length,
+    }
+  }, [items])
   const empty = stats && stats.items === 0
 
   return (
@@ -302,7 +367,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
           left={<span data-type="title-l" className="text-on-surface">Knowledge</span>}
           right={
             <div className="flex items-center gap-s">
-              <Segmented options={[{ key: 'library', label: 'Library', icon: Library }, { key: 'graph', label: 'Graph', icon: Network }, { key: 'intents', label: 'Intents', icon: Target }]} value={view} onChange={(v) => setView(v as View)} />
+              <Segmented options={[{ key: 'library', label: 'Library', icon: Library }, { key: 'graph', label: 'Graph', icon: Network }, { key: 'intents', label: 'Intents', icon: Target }, { key: 'tags', label: 'Tags', icon: TagIcon }]} value={view} onChange={(v) => setView(v as View)} />
               {view === 'library' && (items?.length ?? 0) > 0 && (
                 <IconButton icon={Sparkles} size={40}
                   label="Regenerate intelligence (items missing insights)"
@@ -373,6 +438,8 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
         {items === null ? (itemsLoading ? <ListSkeleton /> : null) : empty ? (
               <EmptyState icon={BookOpen} title="Knowledge base is empty" hint="Add notes, code gists, bookmarks, documents, images, audio, and video. Content is extracted, entities surfaced, and everything indexed for agents to retrieve." action={{ label: 'Add knowledge', onClick: onCreate, icon: Plus }} />
+            ) : view === 'tags' ? (
+              <TagManager onChanged={load} />
             ) : view === 'intents' ? (
               <IntentsView selectedId={selectedIntent?.id ?? null} onSelect={setSelectedIntent} reloadKey={intentsReloadKey} />
             ) : (
@@ -382,6 +449,28 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
                   {typesPresent.length > 1 && typesPresent.map((t) => { const tm = resolveType({ type: t as never }); return <FilterChip key={t} active={typeFilter === t} onClick={() => setTypeFilter(t)} tone={tm.tone}><tm.icon size={12} /> {tm.label}</FilterChip> })}
                   {providersPresent.length > 1 && <FilterChip active={providerFilter === ''} onClick={() => setProviderFilter('')}><Database size={12} /> All providers</FilterChip>}
                   {providersPresent.length > 1 && providersPresent.map((p) => <FilterChip key={p} active={providerFilter === p} onClick={() => setProviderFilter(p)}>{p === 'native' ? 'PersonalClaw' : p}</FilterChip>)}
+                  {/* Curation chips: only for states actually present, and only once
+                      the library is big enough for filtering to be the point. */}
+                  {(items?.length ?? 0) > 1 && curationCounts.reading > 0 && (
+                    <FilterChip active={curationFilter === 'reading'} onClick={() => setCurationFilter(curationFilter === 'reading' ? '' : 'reading')}>
+                      <BookOpen size={12} /> Reading {curationCounts.reading}
+                    </FilterChip>
+                  )}
+                  {(items?.length ?? 0) > 1 && curationCounts.unread > 0 && curationCounts.unread !== (items?.length ?? 0) && (
+                    <FilterChip active={curationFilter === 'unread'} onClick={() => setCurationFilter(curationFilter === 'unread' ? '' : 'unread')}>
+                      Unread {curationCounts.unread}
+                    </FilterChip>
+                  )}
+                  {(items?.length ?? 0) > 1 && curationCounts.read > 0 && (
+                    <FilterChip active={curationFilter === 'read'} onClick={() => setCurationFilter(curationFilter === 'read' ? '' : 'read')}>
+                      Read {curationCounts.read}
+                    </FilterChip>
+                  )}
+                  {curationCounts.favorites > 0 && (
+                    <FilterChip active={curationFilter === 'favorites'} onClick={() => setCurationFilter(curationFilter === 'favorites' ? '' : 'favorites')} tone="var(--color-primary)">
+                      <Star size={12} /> Favorites {curationCounts.favorites}
+                    </FilterChip>
+                  )}
                   <FilterChip active={showArchived} onClick={() => setShowArchived((v) => !v)}><Archive size={12} /> {showArchived ? 'Showing archived' : 'Show archived'}</FilterChip>
                   {tagFilter && <FilterChip active onClick={() => setTagFilter('')}># {tagFilter} <X size={11} /></FilterChip>}
                 </div>
@@ -417,6 +506,45 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
                     <Button variant="ghost" size="xs" onClick={() => removeCollection(activeCollection)}>Delete shelf</Button>
                   </div>
                 )}
+                {selecting && (
+                  <div className="mb-m flex flex-wrap items-center gap-2 rounded-lg bg-surface-container px-3 py-2">
+                    <span className="text-on-surface text-[0.8125rem]" style={fvs(500)}>
+                      {selected.size} selected
+                    </span>
+                    <Button variant="tonal" size="xs" disabled={bulkBusy}
+                      onClick={() => runBulk('read_state', { state: 'read' }, 'Marked read')}>
+                      Mark read
+                    </Button>
+                    <Button variant="tonal" size="xs" disabled={bulkBusy}
+                      onClick={() => runBulk('read_state', { state: 'unread' }, 'Marked unread')}>
+                      Mark unread
+                    </Button>
+                    <Button variant="tonal" size="xs" disabled={bulkBusy}
+                      onClick={() => runBulk('favorite', { value: true }, 'Favorited')}>
+                      Favorite
+                    </Button>
+                    {/* Only MANUAL shelves: a smart shelf resolves membership from its
+                        query, so adding by hand would be a write its own reads ignore. */}
+                    {collections.filter((c) => c.kind === 'manual').map((c) => (
+                      <Button key={c.id} variant="tonal" size="xs" disabled={bulkBusy}
+                        onClick={() => runBulk('collect', { collection_id: c.id }, `Added to ${c.name}:`)}>
+                        Add to {c.name}
+                      </Button>
+                    ))}
+                    <Button variant="tonal" size="xs" disabled={bulkBusy}
+                      onClick={() => runBulk(showArchived ? 'restore' : 'archive', {}, showArchived ? 'Restored' : 'Archived')}>
+                      {showArchived ? 'Restore' : 'Archive'}
+                    </Button>
+                    <Button variant="secondary" size="xs" onClick={clearSelection} className="ml-auto">
+                      Clear
+                    </Button>
+                  </div>
+                )}
+                {/* Outcome note lives OUTSIDE the bar so it survives the bar unmounting
+                    when the selection clears on success. */}
+                {bulkNote && !selecting && (
+                  <div role="status" className="mb-m text-on-surface-var text-[0.8125rem]">{bulkNote}</div>
+                )}
                 {(shown?.length ?? 0) === 0 ? (
                   <EmptyState icon={Search} title="No matching items" hint="Try a different search or filter." />
                 ) : (
@@ -440,7 +568,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
                           onSelect: () => cycleReadState(it),
                         },
                         {
-                          icon: <Pin size={15} />,
+                          icon: <Star size={15} />,
                           label: it.favorited ? 'Remove favorite' : 'Favorite',
                           onSelect: () => toggleFavorite(it),
                         },
@@ -464,13 +592,34 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
                       return (
                         <ContextMenu key={it.id} items={menuItems}>
                         <ListRow index={i} accent={tm.tone} onClick={() => setItemTok(peekId === it.id ? '' : it.id)}>
+                          {/* Selection tick. Hidden until hover or an active selection so
+                              the list stays calm when nobody is curating; a wrapper stops
+                              the click from also opening the item. */}
+                          <span onClick={(e) => e.stopPropagation()}
+                            className={`shrink-0 transition-opacity ${selecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}`}>
+                            <Checkbox checked={selected.has(it.id)} onChange={() => toggleSelected(it.id)}
+                              ariaLabel={`Select ${it.title || it.url_title || 'item'}`} />
+                          </span>
                           {tm.key === 'image' && it.file_path
                             ? <img src={api.knowledgeItemThumbnailUrl(it.id)} alt="" className="shrink-0 size-10 rounded-lg object-cover bg-surface-container" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
                             : <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${tm.tone} 16%, transparent)` }}><tm.icon size={19} style={{ color: tm.tone }} /></span>}
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-s">
                               {it.is_pinned && <Pin size={12} className="shrink-0 text-primary" style={{ fill: 'currentColor' }} />}
-                              <span className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{it.title || it.url_title || '(untitled)'}</span>
+                              {/* Favorite gets its OWN glyph. It shared the Pin icon
+                                  before, which made two deliberately distinct concepts
+                                  (pin = float to the top of the list; favorite = a
+                                  personal mark) indistinguishable on the row. */}
+                              {it.favorited && <Star size={12} className="shrink-0 text-primary" style={{ fill: 'currentColor' }} aria-label="Favorite" />}
+                              {/* Unread is the DEFAULT state, so it gets no marker —
+                                  badging every fresh item would make the list noise.
+                                  Only the two states a reader deliberately set show. */}
+                              {it.read_state === 'reading' && (
+                                <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-[0.75rem] text-primary" title="You're partway through this">
+                                  <BookOpen size={10} /> reading
+                                </span>
+                              )}
+                              <span className={`truncate text-[0.9375rem] ${it.read_state === 'read' ? 'text-on-surface-var' : 'text-on-surface'}`} style={fvs(it.read_state === 'read' ? 400 : 500)}>{it.title || it.url_title || '(untitled)'}</span>
                               {(it.processing_status === 'queued' || it.processing_status === 'processing') && (
                                 <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-primary text-[0.75rem]"><Loader2 size={10} className="animate-spin" /> Enriching</span>
                               )}

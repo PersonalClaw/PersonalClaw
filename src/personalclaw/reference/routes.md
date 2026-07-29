@@ -86,6 +86,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/sessions/auto-archive` — run (or preview) the auto-archive rule.
 - `POST /api/chat/sessions/bulk` — apply one op to many sessions.
 - `POST /api/chat/sessions/cleanup` — bulk-archive inactive sessions to history.
+- `GET /api/chat/sessions/templates` — every saved session starter.
+- `POST /api/chat/sessions/templates` — save a chat setup as a reusable starter.
+- `DELETE /api/chat/sessions/templates/{template}` — remove a starter.
+- `PUT /api/chat/sessions/templates/{template}` — replace a starter's fields.
 - `DELETE /api/chat/sessions/{session}` — stop and remove a UI session.
 - `GET /api/chat/sessions/{session}` — message history for a session.
 - `POST /api/chat/sessions/{session}/acp-agent` — bind a DISCOVERED ACP agent.
@@ -96,6 +100,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/sessions/{session}/context` — inject silent background context.
 - `POST /api/chat/sessions/{session}/drop` — move a session into a column.
 - `POST /api/chat/sessions/{session}/edit-resend` — edit a user message and resend.
+- `GET /api/chat/sessions/{session}/export` — download a transcript.
 - `PATCH /api/chat/sessions/{session}/folder` — assign session to a folder.
 - `POST /api/chat/sessions/{session}/fork` — fork session into a new tab.
 - `POST /api/chat/sessions/{session}/fork-rewound` — restore a rewind tail as a fork.
@@ -191,6 +196,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/incident` — current state; POST /api/incident — activate.
 - `POST /api/incident/resume` — turn incident mode OFF.
 - `POST /api/investigate` — _(no summary)_
+- `POST /api/knowledge/bulk` — apply one curation op to many items.
 - `GET /api/knowledge/collections` — every shelf in rail order.
 - `POST /api/knowledge/collections` — create a manual or smart shelf.
 - `DELETE /api/knowledge/collections/{id}` — remove the shelf, keep the items.
@@ -232,7 +238,11 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/knowledge/regenerate-intelligence` — - re-run the full ingestion
 - `GET /api/knowledge/search-for-context` — _(no summary)_
 - `GET /api/knowledge/stats` — _(no summary)_
+- `GET /api/knowledge/tag-tree` — every tag with its parent and live usage count.
 - `GET /api/knowledge/tags` — - distinct tags (frequency-ordered) for autocomplete.
+- `DELETE /api/knowledge/tags/{id}` — remove a tag from the taxonomy and every item.
+- `PATCH /api/knowledge/tags/{id}` — rename, or re-parent via `parent_id`.
+- `POST /api/knowledge/tags/{id}/merge` — {into} — fold this tag into another.
 - `GET /api/legibility/discover` — the curated Discover tips still worth showing.
 - `POST /api/legibility/discover/dismiss` — hide a Discover tip forever.
 - `DELETE /api/lessons` — remove lessons by substring.
@@ -319,6 +329,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/memory/stats` — memory system statistics.
 - `GET /api/memory/vault` — the markdown-vault mirror status (mem-fs-mirror).
 - `POST /api/memory/vault/sync` — reconcile the vault to the current records.
+- `GET /api/memory/volunteer-stats` — per-arm volunteered-vs-used precision (§3).
 - `GET /api/model-provider-types` — installable model-provider types.
 - `GET /api/model-providers` — list configured model-provider entries.
 - `POST /api/model-providers` — add a new model provider to config.

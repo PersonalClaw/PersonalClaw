@@ -74,6 +74,7 @@ _FM_ORDER = (
     "recall_count",
     "visit_count",
     "source",
+    "contributor",
     "conversation_id",
     "tags",
     "created_at",

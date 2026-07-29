@@ -467,13 +467,13 @@ async def _run_insights(store, item_id: str, content: str, pool) -> bool:
     # `title` is an item field, not an insight category — pull it out of the bundle.
     ai_title = str(insights.pop("title", "") or "").strip()
     prev_insights = dict((item or {}).get("insights") or {})
-    # AI-generated values are identified by matching the PREVIOUS enrichment's output:
-    # insights.topics/summary always reflect the content they were extracted from, so
-    # if the item's current tags/summary still equal those, they're AI-seeded and
-    # untouched → refresh them on a re-ingest. If they differ, the user edited them →
-    # preserve. This keeps a content edit from leaving stale AI tags/summary while
-    # never clobbering user-authored ones.
-    prev_topics = [t for t in (prev_insights.get("topics") or []) if isinstance(t, str)]
+    # An AI-generated SUMMARY is identified by matching the PREVIOUS enrichment's output:
+    # insights.summary always reflects the content it was extracted from, so if the item's
+    # current summary still equals it, it's AI-seeded and untouched → refresh on a
+    # re-ingest. If it differs, the user edited it → preserve. This keeps a content edit
+    # from leaving a stale AI summary while never clobbering a user-authored one.
+    # (TAGS no longer use this inference — their provenance is recorded per membership
+    # row; see the tags block below.)
     prev_summary = str(prev_insights.get("summary") or "")
     merged = dict(prev_insights)
     merged.update(insights)
@@ -517,13 +517,23 @@ async def _run_insights(store, item_id: str, content: str, pool) -> bool:
         if (is_file_type and titled_by_filename) or not cur_title or titled_by_content:
             fields["title"] = ai_title
     # AI tags come from the extracted topics. Set them when the item has none (first
-    # enrichment) OR when its current tags still equal the previous enrichment's topics
-    # (AI-seeded + untouched → refresh on a content edit). User-authored tags (which
-    # differ from prev_topics) are preserved.
-    cur_tags = [t for t in ((item or {}).get("tags") or []) if isinstance(t, str)]
+    # enrichment) OR when every tag it currently carries was written by a previous
+    # enrichment (AI-seeded + untouched → refresh on a content edit). A tag the user
+    # authored is never overwritten.
+    #
+    # Provenance is now RECORDED on the membership row (`item_tags.source`) rather than
+    # INFERRED by comparing the item's tags against the previous run's topics. The old
+    # comparison was an ordered-list equality against a JSON blob, which broke the moment
+    # tags became rows: rows come back in name order, so `["redis","caching"]` vs
+    # `["caching","redis"]` would compare unequal and the refresh branch would silently
+    # stop firing — leaving a content-edited item with stale AI tags forever. Asking the
+    # store who wrote each tag is both correct and order-independent.
     topics = [t for t in (insights.get("topics") or []) if isinstance(t, str) and t.strip()]
-    if topics and (not cur_tags or cur_tags == prev_topics):
+    if topics and store.tags_are_all_ai_authored(item_id):
         fields["tags"] = topics
+        # Mark the refreshed set as AI-authored too, so the NEXT enrichment can still
+        # tell them apart from anything the user adds in the meantime.
+        fields["tag_source"] = "ai"
     store.update_item(item_id, touch=False, **fields)
     store.db.commit()
     return True

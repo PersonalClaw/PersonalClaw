@@ -527,7 +527,9 @@ def test_runner_seeds_ai_tags_from_topics(store):
     pool = _FakePool('{"summary": "s", "topics": ["caching", "redis", "lru"]}')
     status = _run(ingest_item(store, iid, insights_pool=pool))
     assert status == "done"
-    assert store.get_item(iid)["tags"] == ["caching", "redis", "lru"]
+    # Tags are rows now and read back in NAME order, not the order the model listed
+    # them — the set is the contract, the sequence is not.
+    assert store.get_item(iid)["tags"] == ["caching", "lru", "redis"]
 
 
 def test_runner_marks_failed_on_mid_pipeline_error(store, monkeypatch):
@@ -677,7 +679,7 @@ def test_reenrich_refreshes_stale_ai_tags_and_summary(store):
             insights_pool=_FakePool('{"summary": "k8s note", "topics": ["kubernetes", "helm"]}'),
         )
     )
-    assert store.get_item(iid)["tags"] == ["kubernetes", "helm"]
+    assert store.get_item(iid)["tags"] == ["helm", "kubernetes"]  # name-ordered rows
     # Edit content + re-ingest with new enrichment output.
     store.update_item(iid, content="about sourdough bread")
     store.db.commit()
@@ -689,7 +691,7 @@ def test_reenrich_refreshes_stale_ai_tags_and_summary(store):
         )
     )
     item = store.get_item(iid)
-    assert item["tags"] == ["sourdough", "baking"]  # refreshed, not stale
+    assert item["tags"] == ["baking", "sourdough"]  # refreshed, not stale
     assert item["summary"] == "bread note"
 
 
@@ -1131,3 +1133,73 @@ def test_dedup_noop_without_embedder(store):
     assert _dedup(store, thin, None) is None  # no embedder
     assert _dedup(store, thin, _StubEmbedder(available=False)) is None  # unavailable
     assert store.get_item(thin)["is_archived"] is False
+
+
+def test_reenrich_refreshes_when_user_tags_are_a_permutation_of_the_ai_topics(store):
+    """The case that separates "preserved" from "never refreshed".
+
+    The old mechanism inferred provenance by comparing the item's current tags against
+    the previous run's `insights.topics` as ORDERED lists. Once tags became rows they
+    come back name-ordered, so an AI-seeded item whose topics were emitted in a different
+    order would compare unequal — and the refresh branch would silently stop firing,
+    leaving a content-edited item stale forever. Provenance is recorded per membership
+    row now, so ordering is irrelevant: these tags are AI-authored and must refresh.
+
+    Note the two "preserve user tags" tests pass either way — they stay green even if
+    the mechanism degrades into "never refresh". This one is the canary.
+    """
+    ensure_nodes_registered()
+    iid = store.create_typed_item(item_type="note", title="N", content="about redis")
+    # Topics deliberately NOT in name order, so the stored rows (name-ordered) are a
+    # permutation of what the model emitted.
+    _run(
+        ingest_item(
+            store,
+            iid,
+            insights_pool=_FakePool('{"summary": "s", "topics": ["redis", "caching"]}'),
+        )
+    )
+    assert store.get_item(iid)["tags"] == ["caching", "redis"]
+
+    store.update_item(iid, content="about sourdough")
+    store.db.commit()
+    _run(
+        ingest_item(
+            store,
+            iid,
+            insights_pool=_FakePool('{"summary": "s2", "topics": ["baking"]}'),
+        )
+    )
+    assert store.get_item(iid)["tags"] == ["baking"], "AI tags must refresh despite order"
+
+
+def test_a_single_user_tag_protects_the_whole_set_from_refresh(store):
+    """Provenance is per-tag, but the refresh decision is all-or-nothing and
+    conservative: one user-added tag makes the set off-limits.
+
+    Failing to refresh costs a stale tag; overwriting costs the user's own work, so the
+    asymmetry favors preserving.
+    """
+    ensure_nodes_registered()
+    iid = store.create_typed_item(item_type="note", title="N", content="about redis")
+    _run(
+        ingest_item(
+            store,
+            iid,
+            insights_pool=_FakePool('{"summary": "s", "topics": ["redis"]}'),
+        )
+    )
+    # The user adds one of their own alongside the AI's.
+    store.update_item(iid, tags=["redis", "mine"])
+    store.db.commit()
+
+    store.update_item(iid, content="about sourdough")
+    store.db.commit()
+    _run(
+        ingest_item(
+            store,
+            iid,
+            insights_pool=_FakePool('{"summary": "s2", "topics": ["baking"]}'),
+        )
+    )
+    assert store.get_item(iid)["tags"] == ["mine", "redis"], "user tag must veto refresh"

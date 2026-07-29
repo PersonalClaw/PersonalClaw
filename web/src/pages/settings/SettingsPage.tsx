@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import {
   Palette, Plug, Bell, Cpu, Shield, ShieldAlert, Database, User, MessageSquare, Bot, Inbox,
   FolderSync, ScrollText, Archive, AudioLines, DownloadCloud, FileText, ChevronRight, Search, Blocks, Activity, Scissors, Compass, Stethoscope, ThumbsUp,
+  HardDriveDownload,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -22,6 +23,7 @@ import { InboxSettingsPanel } from './InboxSettingsPanel'
 import { AuditPanel } from './AuditPanel'
 import { ArchivePanel } from './ArchivePanel'
 import { PortabilityPanel } from './PortabilityPanel'
+import { DurabilityPanel } from './DurabilityPanel'
 import { VoicePanel } from './VoicePanel'
 import { UpdatesPanel } from './UpdatesPanel'
 import { DiagnosticsPanel } from './DiagnosticsPanel'
@@ -75,6 +77,7 @@ const SUBPAGES: SubPage[] = [
   { id: 'legibility', label: 'Legibility', icon: Compass, render: () => <LegibilityPanel /> },
   { id: 'archive', label: 'Archive', icon: Archive, render: () => <ArchivePanel /> },
   { id: 'portability', label: 'Import / Export', icon: FolderSync, render: () => <PortabilityPanel /> },
+  { id: 'durability', label: 'Backups', icon: HardDriveDownload, render: () => <DurabilityPanel /> },
   { id: 'updates', label: 'Updates', icon: DownloadCloud, render: () => <UpdatesPanel /> },
 ]
 

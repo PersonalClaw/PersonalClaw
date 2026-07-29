@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import {
   Clock, RotateCcw, Loader2, Trash2, FileSymlink, History, Tag, Download, ChevronUp, FileWarning,
+  GitCompare,
 } from 'lucide-react'
 import { api, type Artifact, type ArtifactEvent } from '../../lib/api'
 import { notify } from '../../app/appSdk'
@@ -12,6 +13,7 @@ import { downloadText, safeFilename } from '../../lib/download'
 import { artifactKindMeta, relTime } from '../files/fileMeta'
 import { ContentSurface } from '../../ui/content/ContentSurface'
 import { resolveContentType } from '../../ui/content/contentTypes'
+import { ArtifactCompare } from './ArtifactCompare'
 import type { CommentTarget } from '../../ui/content/commentTarget'
 
 interface ViewerProps {
@@ -39,6 +41,9 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
   const setSelVersion = (v: number | null) => { setSelVersionRaw(v); onVersionChange?.(v) }
   const [viewContent, setViewContent] = useState('')
   const [metaOpen, setMetaOpen] = useState(defaultDetailsOpen)  // sticky bottom metadata panel
+  // Compare mode (S3 T3.3): replaces the body with a two-version diff. Reset on slug
+  // change so navigating to another artifact never opens mid-comparison.
+  const [comparing, setComparing] = useState(false)
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   // The artifact couldn't be loaded (e.g. deleted in another session / stale deep-link).
@@ -65,7 +70,7 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
       setLoading(false)
     }
   }
-  useEffect(() => { reload({ keepVersion: initialVersion != null }) }, [slug])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setComparing(false); reload({ keepVersion: initialVersion != null }) }, [slug])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load a historical version's immutable content when one is picked.
   useEffect(() => {
@@ -201,9 +206,14 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
 
         {/* body — the ONE registry-driven render/edit surface (was the kind
             if/else + EDITABLE_KINDS/IFRAME_KINDS Sets + inline Monaco + manual
-            CommentLayer). The artifact keeps only its chrome above/below. */}
+            CommentLayer). The artifact keeps only its chrome above/below.
+            Compare REPLACES the body rather than sitting beside it: the question
+            "what changed between these two?" wants the whole width, and stacking a
+            diff under a live preview leaves neither readable. */}
         <div className="min-h-0 flex-1">
-          {ctype && (
+          {comparing
+            ? <ArtifactCompare art={art} versions={versions} />
+            : ctype && (
             <ContentSurface
               key={`${art.slug}:${selVersion ?? 'cur'}`}
               type={ctype}
@@ -238,6 +248,16 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
                 <option value="current">Current · v{art.version}</option>
                 {versions.slice().reverse().filter((v) => v !== art.version).map((v) => <option key={v} value={v}>v{v}</option>)}
               </select>
+              {/* Compare is offered only once there are two versions to compare —
+                  a disabled control on a one-version artifact would just raise the
+                  question of why it's disabled. */}
+              {versions.length > 1 && (
+                <QuietButton onClick={() => setComparing((v) => !v)}
+                  title={comparing ? 'Close the version comparison' : 'Compare two versions of this artifact'}
+                  className="mt-1.5">
+                  <GitCompare size={13} /> {comparing ? 'Close compare' : 'Compare versions'}
+                </QuietButton>
+              )}
             </div>
 
             <div>

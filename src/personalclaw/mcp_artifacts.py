@@ -8,9 +8,12 @@ through one path. Tools operate the artifact provider in-process (no HTTP hop),
 attributed as the agent so updates snapshot + emit lifecycle events.
 """
 
+import logging
 from typing import Any
 
 from personalclaw.mcp_core import _resolve_session_key
+
+logger = logging.getLogger(__name__)
 
 
 def _current_project_id() -> str:
@@ -239,6 +242,129 @@ def _list_tools() -> list[dict[str, Any]]:
                 "required": ["prompt"],
             },
         },
+        {
+            "name": "document_create",
+            "description": (
+                "Generate a real Word document (.docx) from MARKDOWN and save it as a "
+                "versioned artifact the user can download. Write ordinary markdown — "
+                "headings, paragraphs, bullet and numbered lists, tables, fenced code, "
+                "`---` for a page break — and it is rendered into the document. Do NOT "
+                "attempt to emit OOXML or base64. Use this when the user wants a file to "
+                "send, print or hand to someone; use artifact_save with kind='markdown' "
+                "or 'document' when they just want to read it in the app. Re-running with "
+                "the same `slug` updates that document and bumps its version instead of "
+                "creating a near-duplicate. Returns the slug and a download URL."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Display name for the document"},
+                    "markdown": {
+                        "type": "string",
+                        "description": "The document body as markdown (the primary input)",
+                    },
+                    "html": {
+                        "type": "string",
+                        "description": "Alternative to markdown: HTML (sanitized before use)",
+                    },
+                    "source": {
+                        "type": "string",
+                        "description": "Instead of markdown: a knowledge item id or TEXT artifact slug to export as a document",  # noqa: E501
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Document title; a leading markdown H1 is used when omitted",  # noqa: E501
+                    },
+                    "format": {
+                        "type": "string",
+                        "description": "Output format (default 'docx'). Call document_formats to see what is available.",  # noqa: E501
+                    },
+                    "slug": {
+                        "type": "string",
+                        "description": "Existing artifact slug to update in place (bumps a version)",  # noqa: E501
+                    },
+                    "description": {"type": "string", "description": "Optional short description"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["name"],
+            },
+        },
+        {
+            "name": "sheet_create",
+            "description": (
+                "Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. "
+                "Supply `sheets` as {sheet name: rows} for multiple tabs, or `rows` for a "
+                "single tab, or `csv` text. Row 0 is treated as the header. KEEP NUMBERS "
+                "AS NUMBERS (not strings) so the result can be summed and charted — that "
+                "is the main reason to produce a spreadsheet rather than a table. Returns "
+                "the slug and a download URL."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Display name for the spreadsheet"},
+                    "sheets": {
+                        "type": "object",
+                        "description": "Map of sheet name → array of row arrays (row 0 = header)",
+                    },
+                    "rows": {
+                        "type": "array",
+                        "description": "Single-sheet rows (array of arrays; row 0 = header)",
+                    },
+                    "csv": {"type": "string", "description": "Single-sheet CSV text"},
+                    "format": {"type": "string", "description": "Output format (default 'xlsx')"},
+                    "slug": {
+                        "type": "string",
+                        "description": "Existing artifact slug to update in place (bumps a version)",  # noqa: E501
+                    },
+                    "description": {"type": "string", "description": "Optional short description"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["name"],
+            },
+        },
+        {
+            "name": "deck_create",
+            "description": (
+                "Generate a real PowerPoint deck (.pptx) from a markdown OUTLINE and save "
+                "it as a versioned artifact. Each `##` heading starts a slide, the lines "
+                "under it become bullets, and `<!-- notes: ... -->` becomes that slide's "
+                "speaker notes. A leading `#` titles the deck. Write an outline, not "
+                "prose — paragraphs on a slide are what makes generated decks unreadable. "
+                "Returns the slug and a download URL."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Display name for the deck"},
+                    "markdown": {
+                        "type": "string",
+                        "description": "Outline: `##` per slide, bullets beneath, `<!-- notes: -->` for notes",  # noqa: E501
+                    },
+                    "slides": {
+                        "type": "array",
+                        "description": "Alternative to markdown: [{title, body:[str], notes}]",
+                    },
+                    "title": {"type": "string", "description": "Deck title slide"},
+                    "format": {"type": "string", "description": "Output format (default 'pptx')"},
+                    "slug": {
+                        "type": "string",
+                        "description": "Existing artifact slug to update in place (bumps a version)",  # noqa: E501
+                    },
+                    "description": {"type": "string", "description": "Optional short description"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["name"],
+            },
+        },
+        {
+            "name": "document_formats",
+            "description": (
+                "List the document formats this instance can actually generate right now. "
+                "Check before promising the user a format."
+            ),
+            "inputSchema": {"type": "object", "properties": {}},
+        },
     ]
 
 
@@ -464,6 +590,16 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 
         if name == "video_generate":
             return _video_generate(prov, args, sk, _audit)
+
+        if name in ("document_create", "sheet_create", "deck_create"):
+            return _document_create(prov, name, args, sk, _audit)
+
+        if name == "document_formats":
+            from personalclaw.documents import available_formats
+
+            fmts = available_formats()
+            _audit("success")
+            return "Available document formats: " + (", ".join(fmts) if fmts else "none")
 
     except (ValueError, PermissionError) as e:
         _audit("error", args.get("slug", ""), str(e))
@@ -768,3 +904,215 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
         session_key="mcp_core",
         downstream_service="personalclaw-artifacts",
     )
+
+
+#: Generated documents share the binary-artifact cap. A writer checks its output BEFORE
+#: calling the store so the user hears "the deck came to 22MB (cap 16MB)" rather than a
+#: store-level failure with no actionable number.
+_DOC_MIME = {
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "pdf": "application/pdf",
+}
+
+
+def _document_create(
+    prov: Any, name: str, args: dict[str, Any], sk: str | None, _audit: Any
+) -> str:
+    """`document_create` / `sheet_create` — render a real file and store it as an artifact.
+
+    The agent supplies markdown (its strongest output) or a declarative model; code does
+    the rendering. It never emits OOXML, and no vendor format string appears outside
+    ``documents/writers/``.
+
+    The reply carries slug + version + the raw URL — NEVER the bytes and never base64.
+    Generated document bytes must not enter a prompt (CONTEXT-ECONOMY); when the agent
+    needs the content back it goes through the existing read path.
+    """
+    from personalclaw.artifacts.models import MAX_BINARY_CONTENT_BYTES
+    from personalclaw.documents import available_formats, get_writer
+    from personalclaw.documents.from_markup import document_from_html, document_from_markdown
+    from personalclaw.documents.model import SheetModel
+
+    _default_fmt = {"sheet_create": "xlsx", "deck_create": "pptx"}.get(name, "docx")
+    fmt = str(args.get("format") or _default_fmt).lower()
+    writer = get_writer(fmt)
+    if writer is None:
+        _audit("denied", error=f"unsupported format {fmt}")
+        return (
+            f"Error: no writer for format {fmt!r}. Available: "
+            f"{', '.join(available_formats()) or 'none'}."
+        )
+
+    # Build the model from whichever input the caller supplied.
+    if name == "deck_create":
+        from personalclaw.documents.from_markup import deck_from_markdown
+        from personalclaw.documents.model import DeckModel, Slide
+
+        markdown = str(args.get("markdown") or "")
+        slides_in = args.get("slides")
+        if markdown.strip():
+            model: Any = deck_from_markdown(markdown, title=str(args.get("title") or ""))
+        elif isinstance(slides_in, list) and slides_in:
+            model = DeckModel(
+                title=str(args.get("title") or ""),
+                slides=[
+                    Slide(
+                        title=str(sl.get("title") or ""),
+                        body=[str(b) for b in (sl.get("body") or [])],
+                        notes=str(sl.get("notes") or ""),
+                        artifact_slug=str(sl.get("artifact_slug") or ""),
+                    )
+                    for sl in slides_in
+                    if isinstance(sl, dict)
+                ],
+            )
+        else:
+            _audit("denied", error="no deck input")
+            return "Error: provide markdown or slides."
+    elif name == "sheet_create":
+        sheets = args.get("sheets")
+        rows = args.get("rows")
+        csv_text = str(args.get("csv") or "")
+        if isinstance(sheets, dict) and sheets:
+            model = SheetModel(sheets={str(k): list(v or []) for k, v in sheets.items()})
+        elif isinstance(rows, list) and rows:
+            model = SheetModel(sheets={"Sheet1": [list(r) for r in rows]})
+        elif csv_text.strip():
+            # Annotated as list[object] rows: SheetModel preserves cell TYPES, so its
+            # row type is invariant-unfriendly to a narrower list[str].
+            parsed: list[list[object]] = [
+                [c.strip() for c in line.split(",")]
+                for line in csv_text.replace("\r\n", "\n").split("\n")
+                if line.strip()
+            ]
+            model = SheetModel(sheets={"Sheet1": parsed})
+        else:
+            _audit("denied", error="no sheet input")
+            return "Error: provide sheets, rows, or csv."
+    else:
+        markdown = str(args.get("markdown") or "")
+        html = str(args.get("html") or "")
+        source = str(args.get("source") or "").strip()
+        if source:
+            # The round-trip: an existing knowledge item or text artifact becomes
+            # a real document. Resolved to markdown here so it flows through the SAME
+            # writer path as everything else — no parallel export pipeline.
+            resolved, title = _resolve_document_source(prov, source)
+            if resolved is None:
+                _audit("denied", error=f"source not found: {source}")
+                return (
+                    f"Error: no knowledge item or text artifact matches {source!r}. "
+                    "Pass a knowledge item id or an artifact slug."
+                )
+            markdown = resolved
+            # Pass NO title when the source body already opens with an H1: the markdown
+            # parser promotes that H1 to the document title itself, so supplying the
+            # item's name as well printed the same heading twice.
+            explicit = str(args.get("title") or "")
+            starts_with_h1 = markdown.lstrip().startswith("# ")
+            model = document_from_markdown(
+                markdown, title=explicit or ("" if starts_with_h1 else title)
+            )
+        elif markdown.strip():
+            model = document_from_markdown(markdown, title=str(args.get("title") or ""))
+        elif html.strip():
+            model = document_from_html(html, title=str(args.get("title") or ""))
+        else:
+            _audit("denied", error="no document input")
+            return "Error: provide markdown, html, or source."
+
+    try:
+        data = writer(model)
+    except Exception as e:  # noqa: BLE001 — a writer failure is a caller-facing refusal
+        _audit("error", error=str(e))
+        return f"Error: could not render the {fmt}: {e}"
+
+    if len(data) > MAX_BINARY_CONTENT_BYTES:
+        mb, cap = len(data) / 1_048_576, MAX_BINARY_CONTENT_BYTES / 1_048_576
+        _audit("denied", error=f"oversized {len(data)}")
+        return (
+            f"Error: the generated {fmt} came to {mb:.1f}MB (cap {cap:.0f}MB). "
+            "Reduce the content or split it across documents."
+        )
+
+    display_name = str(args.get("name") or "").strip() or f"Untitled {fmt}"
+    slug = str(args.get("slug") or "").strip()
+    # Re-generating under an existing slug UPDATES in place and bumps a version rather
+    # than minting a "-2" twin — the same dedup posture artifact_save takes.
+    if slug and prov.get(slug) is not None:
+        # No `snapshot=` argument: update_binary ALWAYS bumps the version and writes a
+        # snapshot (there is no non-snapshotting binary update, because a binary body has
+        # no diffable draft state to hold back). Passing it raised TypeError, so every
+        # attempt to regenerate a document under an existing slug crashed.
+        art = prov.update_binary(
+            slug,
+            data=data,
+            mime=_DOC_MIME.get(fmt, "application/octet-stream"),
+            event_type="iterated",
+            actor="agent",
+            session_id=sk,
+        )
+    else:
+        art = prov.create_binary(
+            name=display_name,
+            data=data,
+            mime=_DOC_MIME.get(fmt, "application/octet-stream"),
+            kind=fmt,
+            source="chat",
+            slug=slug or None,
+            description=str(args.get("description") or ""),
+            tags=args.get("tags") or None,
+            actor="agent",
+            session_id=sk,
+            project_id=_current_project_id(),
+        )
+    _audit("success", art.slug)
+    return (
+        f"Created {fmt}: {art.slug} (v{art.version}, {len(data) / 1024:.0f}KB). "
+        f"Download at /api/artifacts/{art.slug}/raw"
+    )
+
+
+def _resolve_document_source(prov: Any, source: str) -> tuple[str | None, str]:
+    """Resolve a knowledge-item id or text-artifact slug to ``(markdown, title)``.
+
+    Powers the round trip: the platform could already READ these formats, and this is what
+    finally lets something already in the library come back OUT as a real file. Deliberately
+    routed through the existing stores rather than a new export endpoint — the writer path
+    is identical to a fresh generation, so a document exported from knowledge is not a
+    second-class citizen with its own bugs.
+
+    Knowledge is tried first: its ids are uuids while artifact slugs are kebab-case, so the
+    two namespaces don't realistically collide.
+    """
+    try:
+        from personalclaw.knowledge import get_knowledge_store
+
+        item = get_knowledge_store().get_item(source)
+        if item:
+            title = str(item.get("title") or item.get("url_title") or "")
+            body = str(item.get("content") or "")
+            summary = str(item.get("summary") or "")
+            # A knowledge item's summary is genuinely useful context in an exported
+            # document, so lead with it when the body doesn't already start with it.
+            if summary and not body.startswith(summary):
+                body = f"{summary}\n\n{body}"
+            return body, title
+    except Exception:  # noqa: BLE001 — a knowledge miss falls through to artifacts
+        logger.debug("knowledge lookup failed for %r", source, exc_info=True)
+
+    try:
+        art = prov.get(source)
+    except (ValueError, PermissionError):
+        art = None
+    if art is None:
+        return None, ""
+    from personalclaw.artifacts.models import is_binary_kind
+
+    # A binary artifact's `content` is a raw URL, not text — exporting one would write
+    # the URL into the document body. Refuse rather than produce that.
+    if is_binary_kind(art.kind):
+        return None, ""
+    return str(art.content or ""), str(art.name or "")

@@ -1,6 +1,6 @@
 import {
   User, Palette, MessageSquare, Plug, Cpu, FileText, Database, Bot, AudioLines,
-  Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp,
+  Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp, HardDriveDownload,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import {
@@ -60,6 +60,13 @@ const useApps = () => useCachedData('apps', () => api.apps().catch(() => [] as A
 const useNotif = () => useCachedData('settings:notification-settings', () => api.notificationSettings().catch(() => null as NotificationSettings | null), { persist: true })
 const useUpdates = () => useCachedData('settings:update-check', () => api.updateCheck().catch(() => null as UpdateCheck | null), { persist: true })
 const usePromptBindings = () => useCachedData('settings:prompt-bindings', () => api.promptBindings().catch(() => null as PromptBindings | null), { persist: true })
+const useDurability = () => useCachedData('settings:durability-card', async () => {
+  const [status, snaps] = await Promise.all([
+    api.durabilityStatus().catch(() => null),
+    api.durabilitySnapshots().catch(() => null),
+  ])
+  return { status, snaps }
+}, { persist: true })
 const useArchives = () => useCachedData('settings:archives', () => api.sessionArchives().catch(() => [] as SessionArchive[]), { persist: true })
 const useAudit = () => useCachedData('settings:audit-verify', () => api.selVerify().catch(() => null as SelVerify | null), { persist: false })
 const useLogLevel = () => useCachedData('settings:log-level', () => api.logLevel().catch(() => null as string | null), { persist: true }).data
@@ -589,6 +596,32 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
         <BentoCard icon={FolderSync} title="Import / Export" query={query} onClick={() => go('portability')}>
           <div className="text-on-surface-var text-[0.8125rem]">Back up or migrate this instance.</div>
           <div className="mt-1.5 text-on-surface-low text-[0.75rem]">Export a portable archive · import from another instance</div>
+        </BentoCard>
+      )
+    },
+  },
+  {
+    id: 'durability', group: 'System', label: 'Backups', icon: HardDriveDownload, size: 'sm',
+    description: 'Automatic snapshots, how long they are kept, and restore drills.',
+    useSearchText() {
+      const { data: s } = useDurability()
+      return `backups backup durability snapshot snapshots retention restore drill schedule automatic ${
+        s ? (s.status?.enabled ? 'on enabled' : 'off disabled') : ''
+      } ${s?.snaps ? `${s.snaps.snapshots.length} snapshots` : ''}`
+    },
+    render(query, go) {
+      const { data: s } = useDurability()
+      const count = s?.snaps?.snapshots.length
+      return (
+        <BentoCard icon={HardDriveDownload} title="Backups" query={query} onClick={() => go('durability')} loading={s === undefined}>
+          {s && (count === undefined
+            ? <div className="text-on-surface-var text-[0.8125rem]">Snapshot schedule and retention.</div>
+            : <>
+                <BigStat value={count} caption={count === 1 ? 'snapshot kept' : 'snapshots kept'} />
+                <div className="mt-1.5 text-on-surface-low text-[0.75rem]">
+                  {s.status?.enabled ? 'Nightly + hourly, automatic' : 'Automatic backups are off'}
+                </div>
+              </>)}
         </BentoCard>
       )
     },

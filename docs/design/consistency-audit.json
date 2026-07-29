@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-07-28T09:25:31.833Z",
+  "generatedAt": "2026-07-29T18:40:40.271Z",
   "totals": {
     "driftHits": 6,
-    "filesScanned": 384,
+    "filesScanned": 385,
     "filesWithDrift": 5
   },
   "byCategory": {
@@ -217,9 +217,9 @@
   "a11y": {
     "outlineNoneCount": 137,
     "outlineNoneFiles": 60,
-    "localFocusVisibleFiles": 10,
+    "localFocusVisibleFiles": 13,
     "reducedMotionFiles": 8,
-    "animatedFiles": 152,
+    "animatedFiles": 153,
     "hasGlobalReducedMotion": true,
     "hasGlobalFocusRing": true
   },
@@ -306,8 +306,8 @@
       "raw-input": 1,
       "raw-dialog": 0
     },
-    "pages/artifacts/ArtifactList.tsx": {
-      "raw-button": 2,
+    "pages/artifacts/ArtifactCompare.tsx": {
+      "raw-button": 1,
       "raw-input": 0,
       "raw-dialog": 0
     },

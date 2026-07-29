@@ -16,13 +16,35 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 > **Note (0.x clean break):** true rewind adds a `rewound` field to persisted chat
 > messages (the retained discarded tail). Old sessions read cleanly (missing field =
 > today's behavior — no migration); consider `personalclaw snapshot` before upgrading.
+>
+> **Note (0.x clean break):** knowledge-item tags move from a JSON column into their own
+> tables, and the old column is dropped. Opening your library migrates it in place — the
+> upgrade is verified against duplicates, blanks, non-ASCII and malformed values, and
+> refuses to drop the column if any tag would be lost. Consider `personalclaw snapshot`
+> before upgrading, per the pre-1.0 banner.
 
 ### Added
+
+- **Memory records who contributed them.**
+
+- **Memory can now offer itself, not just answer when asked.**
+
+- **Take a conversation with you, and stop rebuilding the same chat setup.**
 
 - **Hand an artifact to the agent, or point at one mid-conversation.**
 - **Shelves for your knowledge library — including ones that fill themselves.**
 - **Clean up a long chat list in one action, and let old chats retire themselves.**
 - **On a shared task board, your assistant only works on *your* tasks.**
+- **Decks and PDFs too — and anything already saved can become a document.**
+
+- **It can make you a Word document or a spreadsheet you can actually send.**
+
+- **Tags are a real taxonomy now — nest them, rename them, merge them.**
+
+- **Your reading state and favorites are now visible, and filterable.**
+
+- **Curate a whole shelf of saved items in one action.**
+- **See what changed between two versions of an artifact.**
 - **Backups now happen on their own, and they get checked.**
 - **Find any chat by what was said in it.**
 - **The agent navigates your code by symbol instead of grepping blind.**
@@ -55,6 +77,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Auto-archive skipped the very chats it existed to tidy — and you couldn't see or change the rule.**
+
+- **The "Steer" button never steered.**
 - **Knowledge and memory could never embed with a config-defined provider.**
 - **Binding a model can no longer fail silently.**
 - **Settings and the Store no longer blink to a loading skeleton when you touch anything.**

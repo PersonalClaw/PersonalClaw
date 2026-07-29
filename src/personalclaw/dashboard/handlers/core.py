@@ -456,13 +456,26 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "guardrails.scan_mode": {"type": "enum", "values": ["warn", "redact", "block"]},
     "resilience.doctor_enabled": {"type": "bool"},
     "resilience.degraded_indicator": {"type": "bool"},
-    "resilience.mid_turn_policy": {"type": "enum", "values": ["queue", "cancel_and_replace"]},
+    "resilience.mid_turn_policy": {
+        "type": "enum",
+        "values": ["queue", "steer", "cancel_and_replace"],
+    },
     "resilience.cancel_replace_min_interval_secs": {"type": "float", "min": 0.0, "max": 60.0},
     "resilience.remediation.enabled": {"type": "bool"},
     "resilience.remediation.target_score": {"type": "int", "min": 0, "max": 100},
     "resilience.remediation.max_cost_usd": {"type": "float", "min": 0.0, "max": 100.0},
     "resilience.remediation.idle_minutes_healthy": {"type": "int", "min": 1, "max": 1440},
     "resilience.remediation.tick_minutes_degraded": {"type": "int", "min": 1, "max": 1440},
+    # The scheduled-backup contract. Runtime-editable
+    # because these are the knobs a user reaches for after seeing what the schedule
+    # actually produced (the snapshot list shows keep-vs-prune before anything is
+    # deleted). Retention caps are bounded, not unbounded: 0 disables a tier, and the
+    # ceilings keep a typo from budgeting a decade of archives.
+    "durability.auto_backup": {"type": "bool"},
+    "durability.keep_daily": {"type": "int", "min": 0, "max": 365},
+    "durability.keep_weekly": {"type": "int", "min": 0, "max": 260},
+    "durability.keep_monthly": {"type": "int", "min": 0, "max": 120},
+    "durability.restore_drills": {"type": "bool"},
     "tools.projection_rules": {"type": "projection_rules"},
     # Context Economy §4 — background compression feature flags (runtime-editable).
     "tools.bg_compress_enabled": {"type": "bool"},
@@ -479,6 +492,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # stops new links immediately (existing links are kept, so re-enabling doesn't
     # need a backfill).
     "memory.graph_enabled": {"type": "bool"},
+    # The push reflex. Both runtime-editable: the reflex
+    # reads them per turn, so a change takes effect on the next message with no restart.
+    "memory.push_context": {"type": "bool"},
+    "memory.push_min_confidence": {"type": "float", "min": 0.0, "max": 1.0},
     "feedback.enabled": {"type": "bool"},
     "feedback.retire_threshold": {"type": "float", "min": 0.1, "max": 0.9},
     "feedback.min_n": {"type": "int", "min": 3, "max": 50},

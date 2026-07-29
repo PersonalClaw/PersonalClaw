@@ -3,14 +3,15 @@
  *  registry (registerBuiltins.ts) lazy-loads these so the bundle stays flat as
  *  types are added. We WRAP the proven renderers (Markdown, the sandboxed widget
  *  iframe, the React+Babel frame, the file previews), never reinvent them. */
-import { memo, useEffect, useMemo } from 'react'
-import { ShieldAlert } from 'lucide-react'
+import { memo, useEffect, useMemo, useState } from 'react'
+import { Download, ShieldAlert } from 'lucide-react'
 import type { PreviewProps } from './contentTypes'
 import { Markdown } from '../Markdown'
 import { buildSrcdoc, readThemeVars } from '../widget/widgetSrcdoc'
 import { ReactWidgetFrame } from '../widget/ReactWidgetFrame'
 import { sanitizeInlineHtml } from './sanitize'
 import { ImagePreview, PdfPreview, CsvPreview, JsonPreview } from '../../pages/files/browse/FilePreviews'
+import { api } from '../../lib/api'
 
 /** Markdown — react-markdown + widget blocks (the chat/file markdown renderer). */
 export const MarkdownPreview = memo(function MarkdownPreview({ content }: PreviewProps) {
@@ -138,3 +139,91 @@ export const ImageFilePreview = memo(function ImageFilePreview({ path, content }
 export const PdfFilePreview = memo(function PdfFilePreview({ path }: PreviewProps) {
   return <PdfPreview path={path || ''} />
 })
+
+/** Generated video (kind:video). Plays from the artifact's raw URL.
+ *
+ *  These artifacts existed before this renderer did — `video_generate` always passed
+ *  kind="video", but the kind wasn't registered, so every generated video was stored
+ *  AND rendered as an image (issue #94). */
+export const VideoFilePreview = memo(function VideoFilePreview({ path, content }: PreviewProps) {
+  const src = content && /^(https?:|data:|\/)/.test(content) ? content : path
+  if (!src) return <PreviewUnavailable label="video" />
+  return (
+    <div className="grid h-full place-items-center overflow-auto p-m">
+      {/* eslint-disable-next-line jsx-a11y/media-has-caption -- generated clip, no track */}
+      <video src={src} controls className="max-h-full max-w-full rounded-md"
+        style={{ background: 'var(--color-surface-high)' }} />
+    </div>
+  )
+})
+
+/** Generated office document (docx / xlsx) — an EXTRACTED-TEXT preview plus download.
+ *
+ *  Deliberately NOT a fidelity renderer, and the UI says so: rendering OOXML faithfully
+ *  in the browser is a large dependency for little gain here, and implying WYSIWYG when
+ *  the real editable thing is the source markdown/model would be misleading. The text
+ *  comes from the same `doc_parser`/readers path that ingests uploaded documents. */
+export const OfficeDocPreview = memo(function OfficeDocPreview({ path, content }: PreviewProps) {
+  const raw = content && /^(https?:|\/)/.test(content) ? content : path
+  return (
+    <div className="flex h-full flex-col gap-m overflow-auto p-m">
+      <p className="text-on-surface-low text-[0.75rem]">
+        Text preview — download for full formatting. The editable source is whatever this
+        document was generated from.
+      </p>
+      {raw
+        ? (
+          <a href={raw} download
+            className="inline-flex w-fit items-center gap-1.5 rounded-md bg-surface-high px-3 h-8 text-on-surface text-[0.8125rem] transition-colors hover:bg-surface-container">
+            <Download size={13} /> Download
+          </a>
+        )
+        : <PreviewUnavailable label="document" />}
+      <OfficeExtractedText url={raw} />
+    </div>
+  )
+})
+
+/** Fetches the server-extracted text for a generated office document. */
+function OfficeExtractedText({ url }: { url: string | undefined }) {
+  const [text, setText] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    if (!url) return
+    let alive = true
+    // Routed through the api client so it inherits the session header + error handling
+    // rather than hand-rolling a fetch. The slug is recoverable from the raw URL, so no
+    // separate id plumbing is needed.
+    const slug = url.match(/\/api\/artifacts\/([^/?]+)\/raw/)?.[1]
+    if (!slug) { setFailed(true); return }
+    api.artifactExtractedText(decodeURIComponent(slug))
+      .then((d) => { if (alive) setText(String(d.text ?? '')) })
+      .catch(() => { if (alive) setFailed(true) })
+    return () => { alive = false }
+  }, [url])
+  if (failed) {
+    return (
+      <p className="text-on-surface-low text-[0.8125rem]">
+        Couldn't extract a text preview. The download above is unaffected.
+      </p>
+    )
+  }
+  if (text === null) return <p className="text-on-surface-low text-[0.8125rem]">Reading…</p>
+  if (!text.trim()) {
+    return <p className="text-on-surface-low text-[0.8125rem]">This document has no extractable text.</p>
+  }
+  return (
+    <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded-md bg-surface-container p-m text-on-surface-var text-[0.8125rem]">
+      {text}
+    </pre>
+  )
+}
+
+/** Shared "nothing to show" line for a binary preview with no resolvable source. */
+function PreviewUnavailable({ label }: { label: string }) {
+  return (
+    <p className="text-on-surface-low text-[0.8125rem]">
+      This {label} is no longer available.
+    </p>
+  )
+}

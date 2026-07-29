@@ -15,7 +15,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.artifacts import registry
-from personalclaw.artifacts.models import Artifact
+from personalclaw.artifacts.models import Artifact, ext_for_mime
 from personalclaw.dashboard.handlers._shared import _is_restricted_session
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
@@ -303,6 +303,63 @@ async def api_artifact_raw(request: web.Request) -> web.Response:
     )
 
 
+#: Extracted-text preview cap. A generated document can be long, and this powers a
+#: PREVIEW beside a download — not the authoritative read path (that is the knowledge
+#: reader, which stores the whole thing).
+_EXTRACT_PREVIEW_CHARS = 20_000
+
+
+async def api_artifact_extract(request: web.Request) -> web.Response:
+    """GET /api/artifacts/{slug}/extract — extracted text for a binary document artifact.
+
+    Backs the honest "text preview — download for full formatting" surface for generated
+    docx/xlsx/pdf. Reuses the SAME reader that ingests uploaded documents rather than a
+    second extraction path, so a generated file is read exactly like a user's own.
+    """
+    prov = _provider(request)
+    if prov is None:
+        return web.json_response({"error": "unknown provider"}, status=400)
+    slug = request.match_info["slug"]
+    try:
+        result = prov.raw_bytes(slug)
+    except ValueError:
+        return web.json_response({"error": "invalid slug"}, status=400)
+    if result is None:
+        return web.json_response({"error": "not found"}, status=404)
+    data, mime = result
+    ext = ext_for_mime(mime or "")
+    if not ext:
+        return web.json_response(
+            {"error": {"code": "not_extractable", "message": f"no reader for {mime!r}"}},
+            status=400,
+        )
+
+    import tempfile
+    from pathlib import Path as _Path
+
+    from personalclaw.knowledge.readers import FileReader
+
+    # The readers take a path, so the bytes land in a temp file that is removed
+    # immediately — the artifact store stays the only durable copy.
+    text = ""
+    with tempfile.TemporaryDirectory() as tmp:
+        scratch = _Path(tmp) / f"artifact.{ext}"
+        scratch.write_bytes(data)
+        try:
+            text, _meta = FileReader().read(str(scratch))
+        except Exception:  # noqa: BLE001 — an unreadable document is a 400, not a 500
+            logger.info("artifact extract failed for %s", slug, exc_info=True)
+            return web.json_response(
+                {"error": {"code": "extract_failed", "message": "could not read the document"}},
+                status=400,
+            )
+    truncated = len(text) > _EXTRACT_PREVIEW_CHARS
+    # Redacted like every other LLM-adjacent text surface: a generated document can
+    # contain whatever was in the prompt that produced it.
+    body, _ = redact_credentials(text[:_EXTRACT_PREVIEW_CHARS])
+    return web.json_response({"slug": slug, "text": body, "truncated": truncated})
+
+
 def _recover_image_gen_args(session_key: str, slug: str) -> dict[str, str] | None:
     """Recover the original image_generate args (prompt/size) for *slug* from a
     session's history — the tool record whose output names this slug.
@@ -504,6 +561,7 @@ def register_artifact_routes(app: web.Application) -> None:
     app.router.add_patch("/api/artifacts/{slug}", api_artifact_update)
     app.router.add_delete("/api/artifacts/{slug}", api_artifact_delete)
     app.router.add_get("/api/artifacts/{slug}/raw", api_artifact_raw)
+    app.router.add_get("/api/artifacts/{slug}/extract", api_artifact_extract)
     app.router.add_post("/api/artifacts/{slug}/regenerate", api_artifact_regenerate)
     app.router.add_get("/api/artifacts/{slug}/versions", api_artifact_versions)
     app.router.add_get("/api/artifacts/{slug}/versions/{version}", api_artifact_version_detail)

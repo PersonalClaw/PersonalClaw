@@ -446,6 +446,22 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
         """Expose the underlying protocol client (for is_ready / readiness checks)."""
         return self._client
 
+    def steer_capable(self) -> bool:
+        """Whether a mid-turn message reaches the turn this provider is running.
+
+        ACP backends differ, and the honest default is No: a `session/prompt` sent
+        while a turn generates may be serviced, queued, or clobbered depending on
+        the CLI. Only a dialect that declares ``supports_mid_turn_prompt`` (proven
+        by a live spike) opts in; everything else routes to the visible queue rather
+        than pretending to steer (PLATFORM-RESILIENCE S6.2).
+        """
+        from personalclaw.acp.dialect import get_dialect
+
+        try:
+            return bool(get_dialect(self._dialect_id).supports_mid_turn_prompt)
+        except Exception:  # pragma: no cover — defensive; a bad id yields the default
+            return False
+
     async def start(self) -> None:
         """Spawn the configured command and run the ACP ``initialize`` handshake.
 

@@ -1819,6 +1819,208 @@ async def set_item_favorited(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "favorited": store.get_item(iid)["favorited"]})
 
 
+# A selection larger than this is a client bug rather than an intent, and a runaway
+# bulk write over an entire library is worth refusing rather than serving. Mirrors
+# `session_bulk._MAX_KEYS`.
+_BULK_MAX_ITEMS = 500
+
+
+# ---------- Tag taxonomy ---------------------------------------
+
+
+def _tag_id(request: web.Request) -> int | None:
+    """Parse the {id} path segment as a tag id. Tag ids are integers (a surrogate key,
+    so a rename is one row) — a non-numeric segment is a 404, not a 500."""
+    try:
+        return int(request.match_info["id"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+async def list_tag_taxonomy(request: web.Request) -> web.Response:
+    """GET /api/knowledge/tag-tree — every tag with its parent and live usage count.
+
+    Distinct from `GET /api/knowledge/tags`, which stays a flat frequency-ordered
+    `list[str]` for the ChipInput autocomplete. This one is the management surface, so it
+    carries ids, parents and counts.
+    """
+    return web.json_response({"tags": _store(request).list_tags()})
+
+
+async def rename_tag(request: web.Request) -> web.Response:
+    """PATCH /api/knowledge/tags/{id} — rename, or re-parent via `parent_id`."""
+    tid = _tag_id(request)
+    if tid is None:
+        return web.json_response({"error": "tag not found"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    store = _store(request)
+    if "name" not in body and "parent_id" not in body:
+        return web.json_response(
+            {
+                "error": {
+                    "code": "nothing_to_update",
+                    "message": "supply name and/or parent_id",
+                }
+            },
+            status=400,
+        )
+    try:
+        if "name" in body:
+            if not store.rename_tag(tid, str(body["name"])):
+                return web.json_response({"error": "tag not found"}, status=404)
+        if "parent_id" in body:
+            raw = body["parent_id"]
+            # null / "" both mean "make this a root tag".
+            parent = None if raw in (None, "") else int(raw)
+            if not store.set_tag_parent(tid, parent):
+                return web.json_response({"error": "tag not found"}, status=404)
+    except (TypeError, ValueError) as exc:
+        code = str(exc)
+        # `tag_cycle` and `tag_name_taken:<name>` are typed codes the frontend keys on;
+        # anything else is a plain argument problem.
+        return web.json_response(
+            {
+                "error": {
+                    "code": (
+                        code.split(":", 1)[0]
+                        if code.startswith(("tag_cycle", "tag_name_taken"))
+                        else "invalid_tag_update"
+                    ),
+                    "message": code,
+                }
+            },
+            status=400,
+        )
+    _sel_log("tag_update", tag_id=tid, fields=sorted(body.keys()))
+    return web.json_response({"ok": True, "tags": store.list_tags()})
+
+
+async def merge_tag(request: web.Request) -> web.Response:
+    """POST /api/knowledge/tags/{id}/merge {into} — fold this tag into another."""
+    tid = _tag_id(request)
+    if tid is None:
+        return web.json_response({"error": "tag not found"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict) or body.get("into") in (None, ""):
+        return web.json_response(
+            {"error": {"code": "into_required", "message": "supply into: <tag id>"}},
+            status=400,
+        )
+    store = _store(request)
+    try:
+        result = store.merge_tags(tid, int(body["into"]))
+    except (TypeError, ValueError) as exc:
+        return web.json_response(
+            {"error": {"code": "invalid_merge", "message": str(exc)}}, status=400
+        )
+    _sel_log("tag_merge", source=tid, target=body["into"], **result)
+    return web.json_response({"ok": True, **result, "tags": store.list_tags()})
+
+
+async def delete_tag(request: web.Request) -> web.Response:
+    """DELETE /api/knowledge/tags/{id} — remove a tag from the taxonomy and every item.
+
+    Children are re-parented to root, not deleted: removing a parent should never
+    silently destroy the branch beneath it.
+    """
+    tid = _tag_id(request)
+    if tid is None:
+        return web.json_response({"error": "tag not found"}, status=404)
+    store = _store(request)
+    if not store.delete_tag(tid):
+        return web.json_response({"error": "tag not found"}, status=404)
+    _sel_log("tag_delete", tag_id=tid)
+    return web.json_response({"ok": True, "tags": store.list_tags()})
+
+
+async def bulk_items(request: web.Request) -> web.Response:
+    """POST /api/knowledge/bulk — apply one curation op to many items.
+
+    Body: ``{"op": "collect", "item_ids": [...], ...op args}``.
+
+    Per-item best-effort with per-item results (``changed``/``unchanged``/``missing``),
+    following `session_bulk.py`: a selection can go stale between the click and the
+    request, so "38 shelved, 2 not found" beats a wholesale failure. Argument problems
+    are a typed 400 — a caller that forgot `collection_id` should hear about it rather
+    than get a silent no-op across the whole selection.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be an object"}, status=400)
+
+    store = _store(request)
+    op = str(body.get("op") or "")
+    if op not in store.BULK_OPS:
+        return web.json_response(
+            {
+                "error": {
+                    "code": "unknown_op",
+                    "message": f"op must be one of {sorted(store.BULK_OPS)}",
+                    "received": op,
+                }
+            },
+            status=400,
+        )
+    raw = body.get("item_ids")
+    if not isinstance(raw, list) or not raw:
+        return web.json_response(
+            {
+                "error": {
+                    "code": "item_ids_required",
+                    "message": "item_ids must be a non-empty list of knowledge item ids",
+                }
+            },
+            status=400,
+        )
+    if len(raw) > _BULK_MAX_ITEMS:
+        return web.json_response(
+            {
+                "error": {
+                    "code": "too_many_items",
+                    "message": f"at most {_BULK_MAX_ITEMS} items per bulk call",
+                    "received": len(raw),
+                }
+            },
+            status=400,
+        )
+
+    args = {k: v for k, v in body.items() if k not in ("op", "item_ids")}
+    try:
+        result = store.bulk_apply(op, [str(i) for i in raw], **args)
+    except ValueError as exc:
+        # `smart_collection_immutable` is a typed code the frontend keys on; the rest
+        # are argument problems whose message names the missing/invalid field.
+        code = str(exc)
+        return web.json_response(
+            {
+                "error": {
+                    "code": code if code == "smart_collection_immutable" else "invalid_bulk_args",
+                    "message": code,
+                }
+            },
+            status=400,
+        )
+
+    _sel_log(
+        f"bulk.{op}",
+        changed=len(result["changed"]),
+        unchanged=len(result["unchanged"]),
+        missing=len(result["missing"]),
+    )
+    return web.json_response({"ok": True, "op": op, **result})
+
+
 def setup_knowledge_routes(app: web.Application) -> None:
     # One ingestion path: the node-graph queue. Every item (typed-create, file
     # upload, bookmark) is created via the native provider and enqueued here;
@@ -1846,6 +2048,14 @@ def setup_knowledge_routes(app: web.Application) -> None:
     app.router.add_delete("/api/knowledge/collections/{id}", delete_collection)
     app.router.add_post("/api/knowledge/items/{id}/read-state", set_item_read_state)
     app.router.add_post("/api/knowledge/items/{id}/favorite", set_item_favorited)
+    app.router.add_post("/api/knowledge/bulk", bulk_items)
+    # Tag taxonomy. `/tag-tree` rather than `/tags` because the flat
+    # `GET /tags` list[str] contract is consumed by the ChipInput autocomplete and by
+    # the agent tools — it stays exactly as it is.
+    app.router.add_get("/api/knowledge/tag-tree", list_tag_taxonomy)
+    app.router.add_patch("/api/knowledge/tags/{id}", rename_tag)
+    app.router.add_post("/api/knowledge/tags/{id}/merge", merge_tag)
+    app.router.add_delete("/api/knowledge/tags/{id}", delete_tag)
     app.router.add_get("/api/knowledge/items", list_items)
     app.router.add_post("/api/knowledge/items", create_item)
     app.router.add_get("/api/knowledge/tags", list_tags)

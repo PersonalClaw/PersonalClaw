@@ -123,6 +123,43 @@ export interface DegradedSurface {
   backlog: number
   use_cases: string[]
 }
+/** One scheduled backup job's last run + whether it's due. */
+export interface DurabilityJob {
+  last_run: number   // epoch seconds; 0 = never run
+  due_in_secs: number
+  due: boolean
+}
+export interface DurabilityStatus {
+  enabled: boolean
+  export: DurabilityJob
+  snapshot: DurabilityJob
+  drill: DurabilityJob
+}
+export interface DurabilitySnapshot {
+  name: string
+  taken_at: string
+  size: number
+  /** False = the CURRENT retention tiers would prune this one on the next pass. */
+  retained: boolean
+}
+export interface DurabilitySnapshots {
+  directory: string
+  snapshots: DurabilitySnapshot[]
+  would_prune: string[]
+  tiers: { daily: number; weekly: number; monthly: number }
+}
+export interface DurabilityJobResult {
+  job: string
+  ok: boolean
+  /** The REASON this job did no work, or `''` if it ran. Non-empty is not a failure —
+   *  usually a concurrent run held the single-flight lock, or there was nothing to do
+   *  (e.g. no snapshot to drill yet). It is a string, not a flag, so the reason can be
+   *  shown instead of a bare "skipped". */
+  skipped: string
+  detail: string
+  duration_secs: number
+  extra?: Record<string, unknown>
+}
 export interface DegradedReport {
   surfaces: DegradedSurface[]
   degraded: string[]
@@ -308,6 +345,30 @@ export interface ChatSessionSummary {
 /** A knowledge shelf. `manual` holds an explicit membership list; `smart` stores a
  *  query re-run on read, so it stays current with no backfill. `item_count` is null
  *  for a smart shelf — counting it would mean a search per shelf on every rail render. */
+/** One tag in the taxonomy: id, parent, and a LIVE usage count (computed from the
+ *  join, scoped to the active non-archived library — so it agrees with the flat
+ *  `knowledgeTags()` autocomplete list and with the corpus overview). */
+export interface KnowledgeTag {
+  id: number
+  name: string
+  parent_id: number | null
+  parent_name: string | null
+  usage_count: number
+}
+/** Curation ops the bulk endpoint accepts. `delete` is deliberately not one of them:
+ *  every op here is reversible, and an irreversible action beside them would be one
+ *  mis-click from data loss (the same exclusion the chat bulk endpoint makes). */
+export type KnowledgeBulkOp =
+  | 'collect' | 'uncollect' | 'read_state' | 'favorite' | 'archive' | 'restore' | 'pin'
+export interface KnowledgeBulkResult {
+  ok: boolean
+  op: KnowledgeBulkOp
+  changed: string[]
+  /** Already in that state — distinct from a failure, so the UI can say
+   *  "8 were already read". */
+  unchanged: string[]
+  missing: string[]
+}
 export interface KnowledgeCollection {
   id: string; name: string; kind: 'manual' | 'smart'; query?: string; icon?: string
   position?: number; item_count?: number | null; created_at?: string; updated_at?: string
@@ -698,6 +759,14 @@ export interface SelVerify { valid: boolean; count?: number; broken_at?: string;
 // An archived chat session file (read-only browse). `key`=session key, `stamp`=
 // archive timestamp slug, `mtime`=epoch seconds.
 export interface SessionArchive { name: string; key: string; stamp: string; size: number; mtime: number }
+
+/** A saved chat starter: the SETUP of a conversation, never its content
+ *  (SESSION-MANAGEMENT S3). Empty agent/model mean "use the default at start time". */
+export interface SessionTemplate {
+  id: string; name: string; agent: string; model: string
+  reasoning_effort: string; first_prompt: string; created_at: number
+}
+export type SessionTemplateInput = Omit<SessionTemplate, 'id' | 'created_at'>
 // Portability (import/export archive). Manifest is the zip's MANIFEST.json;
 // preview validates without applying, import returns what was merged/replaced.
 export interface PortabilityManifest {
@@ -714,7 +783,18 @@ export interface NotificationSettings {
   mute_all: boolean; quiet_hours_enabled: boolean; quiet_hours_start: string; quiet_hours_end: string
   min_severity: string
 }
-export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_enabled?: boolean; vault_path?: string; graph_enabled?: boolean }
+export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_enabled?: boolean; vault_path?: string; graph_enabled?: boolean; push_context?: boolean; push_min_confidence?: number }
+
+/** Per-arm volunteered-vs-used precision for the push reflex
+ *  (MEMORY-GRAPH-AND-VAULT §3). `used` = the record's recall count rose after it
+ *  was volunteered, so precision is measured rather than asserted. */
+export interface VolunteerArmStat { n: number; used: number; precision: number }
+export interface VolunteerStats {
+  arms: Record<string, VolunteerArmStat>
+  overall: VolunteerArmStat
+  enabled: boolean
+  min_confidence: number
+}
 export interface MemoryVaultStatus { enabled: boolean; path: string; files: number; exists: boolean }
 export interface MemoryVaultSyncResult { records: number; files: number; written: number; pruned: number; path: string }
 export interface DailyDigest { day: string; text: string; created_at: string }
@@ -724,7 +804,7 @@ export interface MemoryStats {
 }
 // A semantic memory entry. `value_json` is a JSON-encoded value (often double-
 // encoded) — parse defensively for display.
-export interface SemanticEntry { key: string; value_json?: string; created_at?: string; updated_at?: string; confidence?: number; source?: string; scope?: string; scope_ref?: string; tier?: string; recall_count?: number }
+export interface SemanticEntry { key: string; value_json?: string; created_at?: string; updated_at?: string; confidence?: number; source?: string; scope?: string; scope_ref?: string; tier?: string; recall_count?: number; contributor?: string; is_mine?: boolean }
 export interface EpisodicEntry { id: string; text: string; tags?: string; conversation_id?: string; importance?: number; created_at?: string }
 // One row of the memory audit trail.
 export interface MemoryEvent {
@@ -1358,6 +1438,11 @@ export const api = {
     ),
   // ── No-model degraded mode ──
   degraded: () => get<DegradedReport>('/api/resilience/degraded'),
+  // ── Scheduled backups ──
+  durabilityStatus: () => get<DurabilityStatus>('/api/durability/status'),
+  durabilitySnapshots: () => get<DurabilitySnapshots>('/api/durability/snapshots'),
+  durabilityRun: (job: 'export' | 'snapshot' | 'drill') =>
+    post<DurabilityJobResult>('/api/durability/run', { job }),
   // ── Confirm-gated fixes + surfacing simulator ──
   doctorFixes: () => get<{ fixes: DoctorFix[] }>('/api/doctor/fixes'),
   doctorFixApply: (fixId: string) =>
@@ -1630,6 +1715,19 @@ export const api = {
     post<{ ok: boolean; op: string; changed: string[]; unchanged: string[]; missing: string[] }>('/api/chat/sessions/bulk', { op, keys, ...args }),
   autoArchiveSessions: (opts: { dry_run?: boolean; active_session?: string } = {}) =>
     post<{ ok: boolean; enabled: boolean; days: number; keys: string[]; count: number }>('/api/chat/sessions/auto-archive', opts),
+  // ── session templates + export ──
+  sessionTemplates: () =>
+    get<{ templates: SessionTemplate[] }>('/api/chat/sessions/templates').then((d) => d.templates),
+  createSessionTemplate: (body: SessionTemplateInput) =>
+    post<{ ok: boolean; template: SessionTemplate }>('/api/chat/sessions/templates', body),
+  updateSessionTemplate: (id: string, body: SessionTemplateInput) =>
+    put<{ ok: boolean; template: SessionTemplate }>(`/api/chat/sessions/templates/${encodeURIComponent(id)}`, body),
+  deleteSessionTemplate: (id: string) =>
+    del(`/api/chat/sessions/templates/${encodeURIComponent(id)}`),
+  /** Export URL — a plain link, so the browser downloads via Content-Disposition
+   *  rather than this client buffering the transcript in memory. */
+  sessionExportUrl: (key: string, format: 'md' | 'json') =>
+    `/api/chat/sessions/${encodeURIComponent(key)}/export?format=${format}`,
   createChatSession: (opts: { name?: string; agent?: string; model?: string; memory_mode?: MemoryMode; mode?: string; project_id?: string } = {}) =>
     post<ChatSession>('/api/chat/sessions', opts),
   setSessionAgent: (session: string, agent: string) => post(`/api/chat/sessions/${session}/agent`, { agent }),
@@ -2094,6 +2192,30 @@ export const api = {
     post<{ ok: boolean; read_state: string }>(`/api/knowledge/items/${encodeURIComponent(id)}/read-state`, { state }),
   setKnowledgeFavorited: (id: string, value: boolean) =>
     post<{ ok: boolean; favorited: boolean }>(`/api/knowledge/items/${encodeURIComponent(id)}/favorite`, { value }),
+  // One curation op over many items. Per-item results, because a selection can go
+  // stale between the click and the request — the UI reports "38 shelved, 2 not found"
+  // rather than treating a partial success as a failure.
+  knowledgeBulk: (op: KnowledgeBulkOp, itemIds: string[], args?: Record<string, unknown>) =>
+    post<KnowledgeBulkResult>('/api/knowledge/bulk', { op, item_ids: itemIds, ...(args ?? {}) }),
+  // Extracted text for a generated office document — powers the honest text preview
+  // (never a fidelity render) beside the download.
+  artifactExtractedText: (slug: string) =>
+    get<{ slug: string; text: string; truncated: boolean }>(
+      `/api/artifacts/${encodeURIComponent(slug)}/extract`),
+  // ── Tag taxonomy ──
+  // Distinct from knowledgeTags() above, which stays a flat frequency-ordered string
+  // list for ChipInput autocomplete. Every mutation returns the WHOLE tree so the
+  // management surface never has to guess what a rename/merge/delete did to parents.
+  knowledgeTagTree: () =>
+    get<{ tags: KnowledgeTag[] }>('/api/knowledge/tag-tree').then((d) => d.tags),
+  renameKnowledgeTag: (id: number, body: { name?: string; parent_id?: number | null }) =>
+    patch<{ ok: boolean; tags: KnowledgeTag[] }>(`/api/knowledge/tags/${id}`, body),
+  mergeKnowledgeTag: (id: number, into: number) =>
+    post<{ ok: boolean; moved: number; already: number; tags: KnowledgeTag[] }>(
+      `/api/knowledge/tags/${id}/merge`, { into }),
+  // `del` is void-typed repo-wide, so the caller re-reads the tree rather than this
+  // one method inventing a generic DELETE.
+  deleteKnowledgeTag: (id: number) => del(`/api/knowledge/tags/${id}`),
   knowledgeEmbeddingStatus: () => get<{ enabled: boolean; available?: boolean; model?: string; total_items?: number; embedded_items?: number; stale_items?: number }>('/api/knowledge/embedding/status'),
   generateKnowledgeEmbeddings: (rebuild = false) => post<{ ok?: boolean; embedded?: number }>('/api/knowledge/embedding/generate', { rebuild }),
   // Every uploaded file → ONE logical-document item run through its node-graph.
@@ -2174,6 +2296,9 @@ export const api = {
   saveNotificationSettings: (s: Partial<NotificationSettings>) => put<{ settings: NotificationSettings }>('/api/notifications/settings', s),
   memorySettings: () => get<MemorySettings>('/api/memory/settings'),
   saveMemorySettings: (s: Partial<MemorySettings>) => put<MemorySettings>('/api/memory/settings', s),
+  /** The push reflex's report card. */
+  memoryVolunteerStats: (windowDays?: number) =>
+    get<VolunteerStats>(`/api/memory/volunteer-stats${windowDays ? `?window_days=${windowDays}` : ''}`),
   memoryStats: () => get<MemoryStats>('/api/memory/stats'),
   // memory vault (Obsidian markdown mirror) — status + on-demand sync.
   memoryVaultStatus: () => get<MemoryVaultStatus>('/api/memory/vault'),

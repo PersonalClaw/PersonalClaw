@@ -725,6 +725,27 @@ class MemoryConfig:
             "to today's search behavior.",
         ),
     )
+    push_context: bool = field(
+        default=False,
+        metadata=_meta(
+            "Volunteer Related Memory",
+            "When a message mentions someone or something the entity graph knows, "
+            "offer up to 3 linked memories for that turn — even when they share no "
+            "words with what you typed. Costs no tokens or LLM calls beyond the small "
+            "block it adds. Off by default because it puts context in front of the "
+            "model you didn't ask for; the Health tab reports how often what it "
+            "volunteered actually got used.",
+        ),
+    )
+    push_min_confidence: float = field(
+        default=0.7,
+        metadata=_meta(
+            "Volunteer Confidence",
+            "How sure the match must be before memory is volunteered. Higher = only "
+            "explicit aliases and exact names; lower also admits looser matches "
+            "(more offered, more of it irrelevant).",
+        ),
+    )
 
 
 @dataclass
@@ -1373,12 +1394,13 @@ class ResilienceConfig:
         metadata=_meta(
             "Mid-Turn Message Policy",
             "What happens to a follow-up message sent while a turn is still "
-            "generating: 'queue' (deliver it next turn — the default, safe behavior) "
-            "or 'cancel_and_replace' (cancel the in-flight answer and start fresh with "
-            "the new message). Applies to interactive turns only; unattended work "
-            "(loops, cron, subagents) always queues. A per-channel override wins over "
-            "this platform default.",
-            enum=["queue", "cancel_and_replace"],
+            "generating: 'queue' (deliver it next turn — the default, safe behavior), "
+            "'steer' (inject it into the answer being written, when the running agent "
+            "supports that — otherwise it queues), or 'cancel_and_replace' (cancel the "
+            "in-flight answer and start fresh with the new message). Applies to "
+            "interactive turns only; unattended work (loops, cron, subagents) always "
+            "queues. A per-channel override wins over this platform default.",
+            enum=["queue", "steer", "cancel_and_replace"],
         ),
     )
     cancel_replace_min_interval_secs: float = field(
@@ -2378,6 +2400,14 @@ class AppConfig:
                 vault_enabled=memory_data.get("vault_enabled", False),
                 vault_path=memory_data.get("vault_path", "memory-vault"),
                 graph_enabled=_guard_flag(memory_data.get("graph_enabled")),
+                # Opt-in, so a plain read defaulting False — NOT `_guard_flag`, which
+                # fails ON and would silently enable volunteering for every existing
+                # user on upgrade. Same shape as `vault_enabled` above. `_expose_flag`
+                # is reserved for flags that open a network surface; this one doesn't.
+                push_context=bool(memory_data.get("push_context", False)),
+                push_min_confidence=max(
+                    0.0, min(1.0, float(memory_data.get("push_min_confidence", 0.7) or 0.7))
+                ),
             ),
             dashboard=DashboardConfig(
                 url=dashboard_data.get("url", ""),
@@ -2558,7 +2588,7 @@ class AppConfig:
                 mid_turn_policy=(
                     str(resilience_data.get("mid_turn_policy", "queue"))
                     if resilience_data.get("mid_turn_policy", "queue")
-                    in ("queue", "cancel_and_replace")
+                    in ("queue", "steer", "cancel_and_replace")
                     else "queue"
                 ),
                 cancel_replace_min_interval_secs=max(
