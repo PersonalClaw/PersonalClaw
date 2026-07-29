@@ -67,6 +67,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   tasks**. Someone else's task can never quietly become something your assistant picks
   up. Dependencies are still honored across everyone, so a task of yours blocked by a
   colleague's unfinished work is correctly *not* ready rather than falsely startable.
+- **See what changed between two versions of an artifact.** An artifact keeps every
+  version, but the only way to tell what actually moved between two of them was to open
+  each in turn and compare by eye. **Compare versions** now shows a real side-by-side
+  diff — for images, the two versions themselves, before and after. It opens on the two
+  most recent versions, since "what changed in the last pass?" is usually the question,
+  and you can pick any pair or swap which side is which.
+
+  Whitespace-only changes are shown rather than hidden: an agent re-rendering a widget
+  often re-indents it, and reporting "nothing changed" would be a lie.
 - **Backups now happen on their own, and they get checked.** PersonalClaw takes a
   full snapshot nightly and exports whatever changed every hour, so how much you can
   lose is bounded by an hour rather than by when you last remembered to run
