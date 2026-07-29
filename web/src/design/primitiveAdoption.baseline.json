@@ -1,6 +1,6 @@
 {
   "_comment": "Primitive-adoption ratchet baseline (design-system consistency C1/T3.4). These are the counts of bespoke chrome (raw <button>/<input>/<textarea>/<select> outside web/src/ui/) at the ratchet's introduction. The test in primitiveAdoption.test.ts asserts the live counts may only be <= these \u2014 a NEW bespoke element turns CI red. As S2 migrations replace raw chrome with the shell primitives (Button/IconButton, the shared form family Field/TextInput/TextArea/Select, Modal), RATCHET THESE DOWN (edit this file to the new lower number in the same commit). The numbers may only shrink.",
-  "rawButton": 278,
+  "rawButton": 277,
   "rawInput": 149,
   "rawDialog": 0,
   "inlineFontWeight": 7

@@ -1,6 +1,6 @@
 # Plan: Artifacts Evolution — From a Files Tab to a First-Class Creative Library
 
-**Status:** IN PROGRESS — S1a/S1b/S2 shipped; **S3 T3.1 + T3.4 shipped 2026-07-29** (resolver + @-references); T3.2/T3.3 (iterate panel + version compare) next. Created 2026-07-26 (roadmap rev 13; owner ask: sibling-platform gap analysis round 2)
+**Status:** IN PROGRESS — S1a/S1b/S2 shipped; **S3 T3.1 + T3.4 + T3.3 shipped 2026-07-29** (resolver + @-references + version compare); T3.2 (iterate panel) blocked on a ChatEmbed host bridge / artifact WS event — see the S3b log. Created 2026-07-26 (roadmap rev 13; owner ask: sibling-platform gap analysis round 2)
 **Created:** 2026-07-26
 **Wave:** 2 (S1: the split + store hardening; S2: the library surface) + 3 (S3: iterate-with-agent + diffs + chat references)
 **Depends on:** nothing hard for S1-2 (builds on the shipped `artifacts/` package, WidgetFrame/ReactWidgetFrame, and the Files page). S3 has a hard dep on **INVESTIGATE-ANYWHERE (60)** — the iterate panel consumes its primitive (registers an `artifact` resolver against plan 60's registry; reuse, don't duplicate). Coordinates with DESIGN-SYSTEM-CONSISTENCY (51, shipped — the library grid uses the primitives/tokens), FLUID-MOTION (52 — grid/preview motion inherits its tiers when it lands), WORKFLOWS-V2 program (loop/cron provenance already flows in via `source`; no engine coupling), APP-PLATFORM-EVOLUTION (48 — apps read artifacts only via existing SDK/API surfaces).
@@ -268,3 +268,84 @@ def _inject_artifact_content(state, session, message) -> str: ...
   - **Gates:** `make lint` clean (mypy 538 files) · backend **8859 passed** (20 new) ·
     web **283 passed** + typecheck + build.
   - Pre-existing/unrelated: `test_cron.py`'s spring-forward test (core issue #85).
+
+- [2026-07-29][S3b] DONE (T3.3 — version compare) + the dead-code sweep S2 left behind.
+  **T3.3 version diff.** New `ArtifactCompare.tsx`, opened from a "Compare versions"
+  action beside the version picker and REPLACING the body rather than sitting beside it
+  (the question "what changed between these two?" wants the full width; a diff stacked
+  under a live preview leaves neither readable). Defaults to the two most recent
+  versions, since "what changed in the last iteration?" is the question the surface
+  exists for. Offered only when there are ≥2 versions — a disabled control on a
+  one-version artifact just raises the question of why it's disabled.
+
+  **How each kind renders is decided by the CONTENT-TYPE REGISTRY, not a local kind
+  list** (the rule the viewer already follows, so a newly registered kind behaves
+  sensibly here without editing this file): `binary` → the two versions side by side,
+  because a pixel diff of a rendered image is noise and before/after is what a person
+  wants; everything else → a real text diff. Visual kinds (widget/html/svg) ARE text
+  underneath and their source is what changed; comparing two sandboxed iframes would
+  be prettier and far less useful.
+
+  **Reused the Monaco `DiffEditor` ELEMENT from `pages/code/DiffView.tsx`, not the
+  component** — that one fetches its own git content and is file/git-specific. Copied
+  its options verbatim, including **`ignoreTrimWhitespace: false`**: the default `true`
+  silently hides whitespace-only changes, and an agent re-rendering a widget often
+  re-indents it, so "nothing changed" would be a lie. Monaco is locally bundled
+  (`monacoSetup.ts`), never a CDN.
+
+  **PREMISE CORRECTION (E1-lite):** both T3.2 and T3.3 refer to "the version rail".
+  There is no rail — the version picker is a `Segmented`/dropdown inside the
+  collapsible bottom **Details** panel (`ArtifactViewer.tsx:225-240`). Built the
+  Compare affordance there rather than inventing a rail, which would have been a third
+  piece of unlisted work.
+
+  **API GOTCHA, worth remembering:** `GET /versions/{n}` returns the artifact's
+  **CURRENT** version number, not the requested one (`native.py:376-399` swaps only
+  `content`). Every label in this component is built from the REQUESTED number; reading
+  it off the payload would mislabel every diff pane.
+
+  **TWO BUGS FOUND BY DRIVING IT IN A REAL BROWSER** — neither reachable from unit
+  tests, and the first invisible to typecheck, lint and vitest alike:
+  1. **The diff rendered as a blank panel.** I used `flex min-h-0 flex-1` on the root,
+     but the host is a plain block wrapper, not a flex column, so `flex-1` resolved to
+     zero height and Monaco (which needs a sized container) drew a one-pixel strip.
+     `h-full` fixes it — which is exactly what `DiffView` uses, and now the comment says
+     why.
+  2. **Monaco threw on every version switch:** `TextModel got disposed before
+     DiffEditorWidget model got reset`. My loading state cleared `bodies` to `null`,
+     which swapped the mounted diff for a spinner and tore the editor down while its
+     text models were still attached. Now the previous diff stays on screen until the
+     next pair arrives — no teardown, and it reads better (content updates in place
+     instead of flashing empty). Verified with five rapid switches: zero console errors.
+
+  **Dead-code sweep:** deleted `pages/artifacts/ArtifactList.tsx` (85 lines, zero
+  importers). S2's card grid orphaned it and left it behind — a clean-break violation,
+  and it was a functional duplicate one generation behind on both design system and
+  features. Ratcheted `primitiveAdoption.baseline.json` **278 → 277** in the same commit
+  per the ratchet's own rule (the file carried 2 raw buttons; Compare's swap button adds
+  1), and regenerated `consistency-audit.json`.
+
+  **RATCHET LANDMINE (bit me, second time in this repo's history):** the
+  primitive-adoption scanner is a **regex over source TEXT and counts matches inside
+  COMMENTS**. My docstring explaining that the picker avoids a raw dropdown named the
+  element in angle brackets — and tripped the ratchet at 150 > 149. The prose now
+  deliberately avoids naming it, with a note saying why. Also: the version picker uses
+  the shared `Segmented` primitive (`size="sm"`, `collapse="menu"`) rather than a
+  bespoke dropdown, so a 40-version artifact collapses to one pill instead of
+  overflowing the toolbar.
+
+  Validated as a user on an isolated dev home (port 10733, never the owner's :10000):
+  seeded a 3-version widget, opened Compare, confirmed v2↔v3 renders with per-token
+  highlighting on the changed digits, switched to v1↔v3 (2 lines vs 3, added line
+  visible), exercised the swap (selections AND pane contents both flipped), and
+  confirmed the "same version on both sides" hint appears when they match. Gate:
+  `make lint` green · `make test` **8888 passed** · web typecheck + 283 vitest + build
+  green.
+
+  **NOT done: T3.2** (the split-view iterate panel). It is blocked on a real gap rather
+  than effort: `ChatEmbed` is a bare iframe in a separate document with **no
+  postMessage bridge**, and there is **no `artifact_*` WS event at all**, so the host
+  page cannot learn from the embed that `artifact_update` landed a new version. The
+  cheapest correct trigger is a host-side `useChatSocket` filtered on `tool_call` where
+  `tool === 'artifact_update'`; adding a new WS event would be shared-contract scope
+  creep (INTEGRATION-ARCHITECTURE territory). Recorded as the stop point.
