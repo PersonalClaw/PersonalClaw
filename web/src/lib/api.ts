@@ -345,6 +345,20 @@ export interface ChatSessionSummary {
 /** A knowledge shelf. `manual` holds an explicit membership list; `smart` stores a
  *  query re-run on read, so it stays current with no backfill. `item_count` is null
  *  for a smart shelf — counting it would mean a search per shelf on every rail render. */
+/** Curation ops the bulk endpoint accepts. `delete` is deliberately not one of them:
+ *  every op here is reversible, and an irreversible action beside them would be one
+ *  mis-click from data loss (the same exclusion the chat bulk endpoint makes). */
+export type KnowledgeBulkOp =
+  | 'collect' | 'uncollect' | 'read_state' | 'favorite' | 'archive' | 'restore' | 'pin'
+export interface KnowledgeBulkResult {
+  ok: boolean
+  op: KnowledgeBulkOp
+  changed: string[]
+  /** Already in that state — distinct from a failure, so the UI can say
+   *  "8 were already read". */
+  unchanged: string[]
+  missing: string[]
+}
 export interface KnowledgeCollection {
   id: string; name: string; kind: 'manual' | 'smart'; query?: string; icon?: string
   position?: number; item_count?: number | null; created_at?: string; updated_at?: string
@@ -2136,6 +2150,11 @@ export const api = {
     post<{ ok: boolean; read_state: string }>(`/api/knowledge/items/${encodeURIComponent(id)}/read-state`, { state }),
   setKnowledgeFavorited: (id: string, value: boolean) =>
     post<{ ok: boolean; favorited: boolean }>(`/api/knowledge/items/${encodeURIComponent(id)}/favorite`, { value }),
+  // One curation op over many items. Per-item results, because a selection can go
+  // stale between the click and the request — the UI reports "38 shelved, 2 not found"
+  // rather than treating a partial success as a failure.
+  knowledgeBulk: (op: KnowledgeBulkOp, itemIds: string[], args?: Record<string, unknown>) =>
+    post<KnowledgeBulkResult>('/api/knowledge/bulk', { op, item_ids: itemIds, ...(args ?? {}) }),
   knowledgeEmbeddingStatus: () => get<{ enabled: boolean; available?: boolean; model?: string; total_items?: number; embedded_items?: number; stale_items?: number }>('/api/knowledge/embedding/status'),
   generateKnowledgeEmbeddings: (rebuild = false) => post<{ ok?: boolean; embedded?: number }>('/api/knowledge/embedding/generate', { rebuild }),
   // Every uploaded file → ONE logical-document item run through its node-graph.

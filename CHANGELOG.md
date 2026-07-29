@@ -67,6 +67,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   tasks**. Someone else's task can never quietly become something your assistant picks
   up. Dependencies are still honored across everyone, so a task of yours blocked by a
   colleague's unfinished work is correctly *not* ready rather than falsely startable.
+- **Curate a whole shelf of saved items in one action.** Working through a knowledge
+  library one item at a time is what makes nobody do it. Select many items and **mark
+  read or unread, favorite, add to a shelf, or archive** them together. Each action
+  reports what actually happened — "38 shelved · 2 already there" — because a selection
+  can go stale between the click and the request, and a partial success is not a failure.
+
+  Marking a backlog read deliberately does *not* count as editing those items, so
+  catching up won't reshuffle a library sorted by recency. Bulk **delete** is not
+  offered beside these: everything here is reversible, and an irreversible action
+  shouldn't sit one mis-click away from a safe one.
 - **See what changed between two versions of an artifact.** An artifact keeps every
   version, but the only way to tell what actually moved between two of them was to open
   each in turn and compare by eye. **Compare versions** now shows a real side-by-side

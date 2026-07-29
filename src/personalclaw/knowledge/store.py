@@ -1356,5 +1356,113 @@ class KnowledgeStore:
         self.update_item(item_id, touch=False, favorited=1 if value else 0)
         return True
 
+    # ── Bulk curation ────────────────────────────────────────────────────────
+
+    #: Ops :meth:`bulk_apply` accepts. ``delete`` is deliberately absent — see the
+    #: method docstring.
+    BULK_OPS = (
+        "collect",
+        "uncollect",
+        "read_state",
+        "favorite",
+        "archive",
+        "restore",
+        "pin",
+    )
+
+    def bulk_apply(self, op: str, item_ids: list[str], **args) -> dict:
+        """Apply one curation op to many items, reporting per-item outcomes.
+
+        Returns ``{"changed": [...], "unchanged": [...], "missing": [...]}``. Every op
+        is per-item best-effort: a selection can go stale between the click and the
+        request, and 38-of-40 is a useful answer where a wholesale failure is not.
+        ``unchanged`` means the item already had that state — worth distinguishing from
+        a failure so the UI can say "8 were already read".
+
+        ``delete`` is NOT an op here, mirroring the deliberate exclusion in the chat
+        bulk endpoint (``dashboard/session_bulk.py``): every op above is reversible,
+        and putting an irreversible one beside them is a mis-click away from data loss.
+        Deleting stays the single-item path with its own confirmation.
+
+        Ops and their args:
+          * ``collect`` / ``uncollect`` — ``collection_id``
+          * ``read_state`` — ``state`` (one of :attr:`VALID_READ_STATES`)
+          * ``favorite`` / ``pin`` / ``archive`` / ``restore`` — ``value`` (bool;
+            ``archive``/``restore`` ignore it, the op name carries the direction)
+
+        Raises ``ValueError`` for an unknown op or a missing/invalid arg, so a caller
+        that forgot an argument gets a typed refusal rather than a silent no-op over
+        every selected item.
+        """
+        if op not in self.BULK_OPS:
+            raise ValueError(f"unknown bulk op {op!r}; expected one of {list(self.BULK_OPS)}")
+
+        collection_id = str(args.get("collection_id") or "")
+        if op in ("collect", "uncollect"):
+            if not collection_id:
+                raise ValueError(f"{op} requires collection_id")
+            coll = self.get_collection(collection_id)
+            if coll is None:
+                raise ValueError(f"no such collection: {collection_id}")
+            # A smart shelf resolves its membership from a query at read time, so a
+            # stored row would be ignored by its own reads. Refuse loudly rather than
+            # writing rows that do nothing (the same rule the single-item route uses).
+            if coll.get("kind") == "smart":
+                raise ValueError("smart_collection_immutable")
+
+        state = str(args.get("state") or "")
+        if op == "read_state" and state not in self.VALID_READ_STATES:
+            raise ValueError(
+                f"read_state requires state in {list(self.VALID_READ_STATES)}; got {state!r}"
+            )
+        value = bool(args.get("value", True))
+
+        changed: list[str] = []
+        unchanged: list[str] = []
+        missing: list[str] = []
+
+        for item_id in item_ids:
+            row = self.db.execute(
+                "SELECT read_state, favorited, is_archived, is_pinned FROM items WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+            if row is None:
+                missing.append(item_id)
+                continue
+
+            did = False
+            if op == "collect":
+                # add_to_collection is idempotent (INSERT OR IGNORE), so ask first
+                # whether this is genuinely a change — otherwise re-shelving 40 items
+                # would report 40 changes and no-ops alike.
+                already = self.db.execute(
+                    "SELECT 1 FROM collection_items WHERE collection_id = ? AND item_id = ?",
+                    (collection_id, item_id),
+                ).fetchone()
+                did = not already and self.add_to_collection(collection_id, item_id)
+            elif op == "uncollect":
+                did = self.remove_from_collection(collection_id, item_id)
+            elif op == "read_state":
+                did = (row["read_state"] or "unread") != state and self.set_read_state(
+                    item_id, state
+                )
+            elif op == "favorite":
+                did = bool(row["favorited"]) != value and self.set_favorited(item_id, value)
+            elif op in ("archive", "restore"):
+                want = op == "archive"
+                if bool(row["is_archived"]) != want:
+                    # A touching write, unlike read-state/favorite: archiving IS a
+                    # change to the item's standing in the library, not a reading note.
+                    self.update_item(item_id, is_archived=1 if want else 0)
+                    did = True
+            elif op == "pin":
+                if bool(row["is_pinned"]) != value:
+                    self.update_item(item_id, is_pinned=1 if value else 0)
+                    did = True
+
+            (changed if did else unchanged).append(item_id)
+
+        return {"changed": changed, "unchanged": unchanged, "missing": missing}
+
     def close(self):
         self.db.close()

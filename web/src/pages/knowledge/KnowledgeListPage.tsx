@@ -5,12 +5,13 @@ import { fvs } from '../../design/fontWeight'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { Button } from '../../ui/Button'
 import { EmptyState, ListRow, ListSkeleton } from '../../ui/ListScaffold'
+import { Checkbox } from '../../ui/forms'
 import { SidePanel } from '../../ui/SidePanel'
 import { ListControls } from '../../ui/ListControls'
 import { IconButton } from '../../ui/IconButton'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { Segmented } from '../../ui/forms'
-import { api, type KnowledgeIntent, type IntentOutcome, type KnowledgeItem, type KnowledgeCollection } from '../../lib/api'
+import { api, type KnowledgeIntent, type IntentOutcome, type KnowledgeItem, type KnowledgeCollection, type KnowledgeBulkOp } from '../../lib/api'
 import { resolveType, relTime, fmtBytes, typeLabel } from './knowledgeMeta'
 import { listKnowledge, knowledgeStats, getKnowledge } from './knowledgeStore'
 import { KnowledgeDetail } from './KnowledgeDetail'
@@ -137,6 +138,20 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
   }, [peekId])
 
   const [showArchived, setShowArchived] = useState(false)
+  // Multi-select for bulk curation (KNOWLEDGE-LIBRARY S2, T2.3). Deliberately NOT
+  // URL-backed: a transient selection isn't meaningfully deep-linkable, and restoring
+  // one on reload would re-arm a destructive-feeling state the user didn't ask for
+  // (the same call ChatPage's session selection makes).
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkNote, setBulkNote] = useState('')
+  const selecting = selected.size > 0
+  const clearSelection = () => setSelected(new Set())
+  const toggleSelected = (id: string) => setSelected((prev) => {
+    const next = new Set(prev)
+    next.has(id) ? next.delete(id) : next.add(id)
+    return next
+  })
   // Stale-while-revalidate: revisiting Knowledge shows the last items instantly and
   // refetches in the background (no "Loading…" flash except the genuine first load).
   // Type is filtered CLIENT-side (like provider/tag) so the full item set
@@ -163,6 +178,33 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
   const items = itemsData ?? null
   const stats = statsData ?? null
   const load = () => { refreshItems(); refreshStats(); refreshCollections() }
+
+  /** Apply one curation op to the selection. Reports per-item outcomes rather than a
+   *  bare ok: a selection can go stale between the click and the request, and
+   *  "38 shelved · 2 not found" is a useful answer where a wholesale failure is not. */
+  const runBulk = async (op: KnowledgeBulkOp, args: Record<string, unknown> = {}, verb = 'Updated') => {
+    if (!selected.size || bulkBusy) return
+    setBulkBusy(true); setBulkNote('')
+    try {
+      const res = await api.knowledgeBulk(op, [...selected], args)
+      const parts = [`${verb} ${res.changed.length}`]
+      if (res.unchanged.length) parts.push(`${res.unchanged.length} already set`)
+      if (res.missing.length) parts.push(`${res.missing.length} not found`)
+      setBulkNote(parts.join(' · '))
+      clearSelection()
+      load()
+    } catch (e) {
+      // The endpoint refuses argument problems with a typed code — surface the real
+      // reason instead of a generic failure, since "smart shelves resolve from their
+      // query" is actionable and "bulk failed" is not.
+      const msg = String((e as Error)?.message || e)
+      setBulkNote(msg.includes('smart_collection_immutable')
+        ? "A smart shelf fills itself from its query — items can't be added by hand."
+        : 'Bulk action failed — nothing was changed.')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
 
   // Shelf management. A smart shelf is created by naming a query, which is why the
   // prompt asks for one rather than offering a kind toggle with an empty box — a
@@ -417,6 +459,45 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
                     <Button variant="ghost" size="xs" onClick={() => removeCollection(activeCollection)}>Delete shelf</Button>
                   </div>
                 )}
+                {selecting && (
+                  <div className="mb-m flex flex-wrap items-center gap-2 rounded-lg bg-surface-container px-3 py-2">
+                    <span className="text-on-surface text-[0.8125rem]" style={fvs(500)}>
+                      {selected.size} selected
+                    </span>
+                    <Button variant="tonal" size="xs" disabled={bulkBusy}
+                      onClick={() => runBulk('read_state', { state: 'read' }, 'Marked read')}>
+                      Mark read
+                    </Button>
+                    <Button variant="tonal" size="xs" disabled={bulkBusy}
+                      onClick={() => runBulk('read_state', { state: 'unread' }, 'Marked unread')}>
+                      Mark unread
+                    </Button>
+                    <Button variant="tonal" size="xs" disabled={bulkBusy}
+                      onClick={() => runBulk('favorite', { value: true }, 'Favorited')}>
+                      Favorite
+                    </Button>
+                    {/* Only MANUAL shelves: a smart shelf resolves membership from its
+                        query, so adding by hand would be a write its own reads ignore. */}
+                    {collections.filter((c) => c.kind === 'manual').map((c) => (
+                      <Button key={c.id} variant="tonal" size="xs" disabled={bulkBusy}
+                        onClick={() => runBulk('collect', { collection_id: c.id }, `Added to ${c.name}:`)}>
+                        Add to {c.name}
+                      </Button>
+                    ))}
+                    <Button variant="tonal" size="xs" disabled={bulkBusy}
+                      onClick={() => runBulk(showArchived ? 'restore' : 'archive', {}, showArchived ? 'Restored' : 'Archived')}>
+                      {showArchived ? 'Restore' : 'Archive'}
+                    </Button>
+                    <Button variant="secondary" size="xs" onClick={clearSelection} className="ml-auto">
+                      Clear
+                    </Button>
+                  </div>
+                )}
+                {/* Outcome note lives OUTSIDE the bar so it survives the bar unmounting
+                    when the selection clears on success. */}
+                {bulkNote && !selecting && (
+                  <div role="status" className="mb-m text-on-surface-var text-[0.8125rem]">{bulkNote}</div>
+                )}
                 {(shown?.length ?? 0) === 0 ? (
                   <EmptyState icon={Search} title="No matching items" hint="Try a different search or filter." />
                 ) : (
@@ -464,6 +545,14 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
                       return (
                         <ContextMenu key={it.id} items={menuItems}>
                         <ListRow index={i} accent={tm.tone} onClick={() => setItemTok(peekId === it.id ? '' : it.id)}>
+                          {/* Selection tick. Hidden until hover or an active selection so
+                              the list stays calm when nobody is curating; a wrapper stops
+                              the click from also opening the item. */}
+                          <span onClick={(e) => e.stopPropagation()}
+                            className={`shrink-0 transition-opacity ${selecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}`}>
+                            <Checkbox checked={selected.has(it.id)} onChange={() => toggleSelected(it.id)}
+                              ariaLabel={`Select ${it.title || it.url_title || 'item'}`} />
+                          </span>
                           {tm.key === 'image' && it.file_path
                             ? <img src={api.knowledgeItemThumbnailUrl(it.id)} alt="" className="shrink-0 size-10 rounded-lg object-cover bg-surface-container" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
                             : <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${tm.tone} 16%, transparent)` }}><tm.icon size={19} style={{ color: tm.tone }} /></span>}

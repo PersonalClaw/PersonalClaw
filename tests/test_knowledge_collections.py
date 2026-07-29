@@ -287,3 +287,139 @@ def test_favoriting_does_not_bump_updated_at(store):
 def test_curating_a_missing_item_reports_false(store):
     assert store.set_read_state("nope", "read") is False
     assert store.set_favorited("nope", True) is False
+
+
+# ── bulk curation (S2, T2.3) ──────────────────────────────────────────────────
+
+
+def test_bulk_reports_changed_unchanged_and_missing_separately(store):
+    """The whole reason the endpoint returns per-item results.
+
+    A selection can go stale between the click and the request, and "already read" is
+    not a failure — collapsing all three into one ok/error would make "38 of 40" and
+    "everything broke" look identical to the UI.
+    """
+    a, b = _item(store, "A"), _item(store, "B")
+    store.set_read_state(b, "read")  # already in the target state
+
+    res = store.bulk_apply("read_state", [a, b, "ghost"], state="read")
+
+    assert res["changed"] == [a]
+    assert res["unchanged"] == [b]
+    assert res["missing"] == ["ghost"]
+
+
+def test_bulk_read_state_actually_persists(store):
+    a, b = _item(store, "A"), _item(store, "B")
+    store.bulk_apply("read_state", [a, b], state="reading")
+    assert store.get_item(a)["read_state"] == "reading"
+    assert store.get_item(b)["read_state"] == "reading"
+
+
+def test_bulk_rejects_an_invalid_read_state_before_touching_anything(store):
+    """A bad arg must be a typed refusal, not a silent no-op over the whole selection."""
+    a = _item(store, "A")
+    with pytest.raises(ValueError, match="read_state requires state"):
+        store.bulk_apply("read_state", [a], state="skimmed")
+    assert store.get_item(a)["read_state"] == "unread"
+
+
+def test_bulk_favorite_and_unfavorite(store):
+    a = _item(store, "A")
+    assert store.bulk_apply("favorite", [a], value=True)["changed"] == [a]
+    assert store.get_item(a)["favorited"] is True
+    # Re-running is unchanged, not changed — the count a user sees stays honest.
+    assert store.bulk_apply("favorite", [a], value=True)["unchanged"] == [a]
+    assert store.bulk_apply("favorite", [a], value=False)["changed"] == [a]
+    assert store.get_item(a)["favorited"] is False
+
+
+def test_bulk_collect_shelves_many_items_at_once(store):
+    a, b = _item(store, "A"), _item(store, "B")
+    shelf = store.create_collection(name="Reading")
+
+    res = store.bulk_apply("collect", [a, b], collection_id=shelf)
+
+    assert sorted(res["changed"]) == sorted([a, b])
+    assert {i["id"] for i in store.resolve_collection(shelf)} == {a, b}
+
+
+def test_bulk_collect_is_idempotent_and_says_so(store):
+    """`add_to_collection` uses INSERT OR IGNORE, so a repeat silently succeeds. The
+    bulk path checks membership first, or re-shelving 40 items would report 40
+    changes and no-ops indistinguishably."""
+    a = _item(store, "A")
+    shelf = store.create_collection(name="Reading")
+    store.bulk_apply("collect", [a], collection_id=shelf)
+
+    res = store.bulk_apply("collect", [a], collection_id=shelf)
+
+    assert res["changed"] == []
+    assert res["unchanged"] == [a]
+
+
+def test_bulk_uncollect_removes_membership_only(store):
+    a = _item(store, "A")
+    shelf = store.create_collection(name="Reading")
+    store.bulk_apply("collect", [a], collection_id=shelf)
+
+    res = store.bulk_apply("uncollect", [a], collection_id=shelf)
+
+    assert res["changed"] == [a]
+    assert store.resolve_collection(shelf) == []
+    assert store.get_item(a) is not None  # the item itself survives
+
+
+def test_bulk_collect_refuses_a_smart_shelf(store):
+    """A smart shelf resolves membership from its query at read time, so a stored row
+    would be ignored by its own reads. Refuse loudly rather than write dead rows."""
+    a = _item(store, "A")
+    smart = store.create_collection(name="All notes", kind="smart", query="note")
+
+    with pytest.raises(ValueError, match="smart_collection_immutable"):
+        store.bulk_apply("collect", [a], collection_id=smart)
+
+
+def test_bulk_collect_requires_a_real_collection(store):
+    a = _item(store, "A")
+    with pytest.raises(ValueError, match="no such collection"):
+        store.bulk_apply("collect", [a], collection_id="nope")
+    with pytest.raises(ValueError, match="requires collection_id"):
+        store.bulk_apply("collect", [a])
+
+
+def test_bulk_archive_and_restore_round_trip(store):
+    a = _item(store, "A")
+    assert store.bulk_apply("archive", [a])["changed"] == [a]
+    assert store.get_item(a)["is_archived"] is True
+    assert store.bulk_apply("archive", [a])["unchanged"] == [a]
+    assert store.bulk_apply("restore", [a])["changed"] == [a]
+    assert store.get_item(a)["is_archived"] is False
+
+
+def test_bulk_pin(store):
+    a = _item(store, "A")
+    assert store.bulk_apply("pin", [a], value=True)["changed"] == [a]
+    assert store.get_item(a)["is_pinned"] is True
+
+
+def test_bulk_refuses_an_unknown_op(store):
+    with pytest.raises(ValueError, match="unknown bulk op"):
+        store.bulk_apply("obliterate", [_item(store, "A")])
+
+
+def test_delete_is_not_a_bulk_op(store):
+    """Deliberate exclusion, mirroring the chat bulk endpoint: every op here is
+    reversible, and an irreversible one beside them is a mis-click from data loss."""
+    assert "delete" not in store.BULK_OPS
+
+
+def test_bulk_read_state_does_not_reorder_a_recency_sorted_library(store):
+    """Marking a backlog read must not masquerade as editing every item — that would
+    reshuffle a library sorted by `updated_at` out from under the user."""
+    a = _item(store, "A")
+    before = store.get_item(a)["updated_at"]
+
+    store.bulk_apply("read_state", [a], state="read")
+
+    assert store.get_item(a)["updated_at"] == before
