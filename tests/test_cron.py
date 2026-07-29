@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
@@ -753,14 +753,28 @@ class TestTimezoneScheduling:
         # Same UTC minute (both timestamps in 17:00 UTC), should be deduped
         assert ScheduleService._is_due(job, now) is False
 
-    def test_is_due_spring_forward_skipped_hour(self) -> None:
-        """During spring forward, croniter.match still fires for the skipped hour."""
-        # 2025-03-09: Toronto clocks jump 2:00 AM EST -> 3:00 AM EDT at 07:00 UTC.
-        # 07:30 UTC = 3:30 AM EDT (hour=3, minute=30). Despite the cron expr
-        # targeting hour=2, croniter.match() returns True — this is a known
-        # croniter behavior where DST-gap hours are still matched. The job
-        # fires once at the shifted UTC time rather than being skipped.
-        now = datetime(2025, 3, 9, 7, 30, tzinfo=timezone.utc).timestamp()
+    def test_is_due_spring_forward_job_in_the_skipped_hour_is_not_lost(self) -> None:
+        """A job scheduled inside the DST gap still runs that day — it is not skipped.
+
+        2025-03-09: Toronto jumps 2:00 AM EST -> 3:00 AM EDT at 07:00 UTC, so local
+        2:30 AM never occurs. The invariant a user cares about is that their 2:30 AM job
+        is NOT silently skipped for the day; croniter fires it just past the gap instead.
+
+        Deliberately loose about HOW MANY times and WHICH minute, because that is
+        third-party DST arithmetic that genuinely differs by version — croniter 2.x
+        fires this at both 03:29 and 03:30 local, croniter 6.x fires it once at 03:00,
+        and the project's dependency floor spans both (`croniter>=2.0,<7`). An earlier
+        version of this test pinned the exact UTC minute and broke on a version bump;
+        its replacement asserted "exactly once" and broke on CI, which installs the
+        locked 2.0.7 while this machine had 6.2.4. Both times the SCHEDULER was correct.
+
+        So the assertions are the ones that would catch a real regression: the job fires
+        at least once, only on the correct calendar day, and only after the nonexistent
+        hour. Duplicate firings within the gap minute are croniter's business — and the
+        `last_run_ts` same-UTC-minute dedup in `_is_due` is what stops a real scheduler
+        from double-running, which `test_is_due_dedup_uses_utc_minute` covers.
+        """
+        tz = ZoneInfo("America/Toronto")
         job = ScheduleJob(
             id="j1",
             name="test",
@@ -768,4 +782,35 @@ class TestTimezoneScheduling:
             schedule=ScheduleDefinition(kind="cron", cron_expr="30 2 * * *"),
             timezone="America/Toronto",
         )
-        assert ScheduleService._is_due(job, now) is True
+        # Sweep every UTC minute of the gap day and collect the local times that fire.
+        start = datetime(2025, 3, 9, 0, 0, tzinfo=timezone.utc)
+        fired = [
+            (start + timedelta(minutes=m)).astimezone(tz)
+            for m in range(24 * 60)
+            if ScheduleService._is_due(job, (start + timedelta(minutes=m)).timestamp())
+        ]
+
+        assert fired, "a 2:30 AM job must not be silently skipped on the gap day"
+        # Every firing is on the right day, and past the hour that does not exist.
+        assert all(f.date() == date(2025, 3, 9) for f in fired), fired
+        assert all(f.hour == 3 for f in fired), f"expected firings just past the gap: {fired}"
+
+    def test_is_due_spring_forward_normal_day_control(self) -> None:
+        """The control for the test above: on a non-DST day the job fires at 2:30 local."""
+        tz = ZoneInfo("America/Toronto")
+        job = ScheduleJob(
+            id="j1",
+            name="test",
+            action=make_agent_action(message="msg"),
+            schedule=ScheduleDefinition(kind="cron", cron_expr="30 2 * * *"),
+            timezone="America/Toronto",
+        )
+        start = datetime(2025, 3, 11, 0, 0, tzinfo=timezone.utc)
+        fired = [
+            (start + timedelta(minutes=m)).astimezone(tz)
+            for m in range(24 * 60)
+            if ScheduleService._is_due(job, (start + timedelta(minutes=m)).timestamp())
+        ]
+
+        assert len(fired) == 1, f"expected exactly one firing, got {fired}"
+        assert (fired[0].hour, fired[0].minute) == (2, 30)
