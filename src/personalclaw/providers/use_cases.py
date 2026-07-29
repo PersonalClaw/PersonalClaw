@@ -203,7 +203,17 @@ def _known_provider_names() -> set[str] | None:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return None
-    providers = data.get("providers") if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        return None
+    # A MISSING `providers` key is not an unreadable config — a fresh install simply
+    # has no configured providers yet, and the answer there is "only the bundled +
+    # dynamic ones exist", exactly like the no-config-file case above. Returning None
+    # here conflated "I can't tell" with "there are none", and every caller treats
+    # None as skip-validation — so on a fresh home an unknown-provider ref was stored
+    # unchallenged instead of being rejected at bind time.
+    if "providers" not in data:
+        return bundled
+    providers = data.get("providers")
     if not isinstance(providers, list):
         return None
     names = {str(p.get("name", "")) for p in providers if isinstance(p, dict) and p.get("name")}
