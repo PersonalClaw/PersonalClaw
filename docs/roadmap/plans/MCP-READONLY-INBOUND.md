@@ -286,3 +286,39 @@ guessing. It belongs with the owner's V2 client validation.
 
 Tests: 30 new cases in `tests/test_inbound_mcp.py` (82 total). Full suite 8731 passed
 (no fallout from the shared `security.py` change); lint clean.
+
+---
+
+## Amendment (2026-07-29 — owner-approved: protocol-revision currency)
+
+**Provenance.** A competitive/ecosystem research pass (2026-07-28/29) found that MCP revision **`2026-07-28` makes the protocol stateless, deleting `Mcp-Session-Id`** — and that at least one shipping vendor (Manus, via an undocumented `mcp.manus.im` endpoint) negotiates `2025-06-18` **with** session IDs and is therefore on the wrong side of that change.
+
+**The good news, verified against code: PersonalClaw is already on the right side by construction.** This surface is stateless today, not by luck but by an explicit design decision recorded in its own module docstring:
+- **No session IDs at all.** `grep -rn "Mcp-Session-Id" src/` returns **zero**. Nothing in this surface issues, reads, or persists a session identifier.
+- **POST-only, no SSE stream.** `inbound/mcp_http.py:6` — *"**No SSE stream** (`GET /mcp` → 405). The spec permits a POST-only server"* — implemented at `:78-81` returning a typed 405 explaining the posture.
+
+So the stateless-spec transition costs this plan **nothing structural**. What it does expose is a currency problem:
+
+**`PROTOCOL_VERSION = "2024-11-05"`** (`inbound/mcp_http.py:34`), returned in the `initialize` result at `:191`. That revision is now several behind. A client negotiating a modern revision may either refuse or silently degrade, and the value is a **wire contract** — per INTEGRATION-ARCHITECTURE §4.3 the inbound dialect wire contracts are **Tier S**, so this is a deliberate, tested bump rather than an edit.
+
+**Why bump now:** the surface is deliberately minimal (six read-only tools, no SSE, no sessions), which is the cheapest this will ever be to verify. Conformance work grows with surface area, and EXTERNAL-ACCESS (24) is specified to *widen* this same `inbound/` package — bumping before it widens means one conformance pass instead of two.
+
+**Contract for the bump (an executor must not improvise these):**
+- Advertise a revision this surface **actually conforms to**, verified clause-by-clause against the published spec for the chosen revision — not the newest string available. If a mandatory clause of the newest revision is unimplementable within this plan's read-only scope, advertise the newest revision that IS fully satisfied and record the reason in the execution log.
+- **Preserve every existing security property**: fail-closed enablement, the dedicated token that must differ from the dashboard token, loopback-only unless `allow_remote` + `public_url`, read-only by construction, and `fence_untrusted` on every result. A protocol bump is not a licence to touch the auth or fencing posture (that would be escalation **E4**).
+- **Stay stateless.** Do not add session handling to satisfy an older client. The absence of `Mcp-Session-Id` is now aligned with where the spec is going; re-introducing it would be a regression dressed as compatibility.
+- Keep the POST-only posture and its typed 405. The spec permits it and `mcp_http.py:6` documents the choice.
+- Version negotiation must **fail legibly**: a client requesting an unsupported revision gets a typed error naming what this surface speaks, not a silent partial handshake.
+
+### Amendment task table (extends this plan; run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+
+| ID | Task | Files | Done when |
+|---|---|---|---|
+| G1.1 | Clause-by-clause conformance review of the current surface against the target revision(s); record the chosen revision + any deliberately-unmet clause and its reason in the execution log | `docs/roadmap/plans/MCP-READONLY-INBOUND.md` (log), notes | the chosen revision is justified in writing, with any gap named rather than discovered later by a client |
+| G1.2 | Bump `PROTOCOL_VERSION` to the reviewed revision and align the `initialize` result; **no session handling added**; POST-only + typed 405 preserved | `src/personalclaw/inbound/mcp_http.py:34`, `:191`, tests | `initialize` advertises the reviewed revision; `grep Mcp-Session-Id src/` still returns zero (regression test); `GET /mcp` still 405s |
+| G1.3 | Version-negotiation error path: an unsupported requested revision returns a typed JSON-RPC error naming the supported revision(s), per §2.2's stable-code discipline | `inbound/mcp_http.py`, tests | a request for an unsupported revision (older or newer) fails legibly, never with a partial handshake |
+| G1.4 | Regression-lock the security posture across the bump: existing fail-closed enablement, token-distinctness, loopback-gating, read-only, and `fence_untrusted` tests all still pass unmodified — **if a test needed editing to accommodate the bump, stop (E4)** | `tests/test_inbound_mcp.py` | the full existing inbound test suite passes with zero edits to security assertions |
+| VG | Validation as a user: with the surface enabled on an isolated dev home, connect a real modern MCP client end-to-end, list the six tools, invoke each, and confirm results arrive fenced; confirm a client requesting an unsupported revision gets the typed error; confirm remote access is still refused without `allow_remote` + `public_url` | — | holds |
+
+### Note for EXTERNAL-ACCESS (24)
+Plan 24 widens this `inbound/` package rather than re-designing it (INTEGRATION-ARCHITECTURE §1.3 landmine 3). It should **inherit the revision chosen here** rather than negotiating its own, so every dialect on the shared substrate speaks one protocol revision.
