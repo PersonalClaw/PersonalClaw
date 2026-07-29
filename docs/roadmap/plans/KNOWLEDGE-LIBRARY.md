@@ -1,6 +1,6 @@
 # Plan: Knowledge Library — Collections, Curation, and Reading
 
-**Status:** DESIGNED — created 2026-07-18 (roadmap rev 10; owner ask: more library-management capabilities for knowledge articles)
+**Status:** IN PROGRESS — Session 1 (collections + item curation) shipped 2026-07-29; Sessions 2-4 not started. Created as DESIGNED — created 2026-07-18 (roadmap rev 10; owner ask: more library-management capabilities for knowledge articles)
 **Created:** 2026-07-18
 **Wave:** 2 (S1-2: collections + curation) + 3 (S3: reading experience + saved views)
 **Depends on:** nothing hard (builds on the shipped knowledge store). Coordinates with KNOWLEDGE-SYNTHESIS (5 — synthesis nodes produce library items), WATCHED-SOURCES (15 — watched sources land in collections), DESIGN-SYSTEM-CONSISTENCY (51 — the library UI is a flagship consistency surface), MEMORY-GRAPH-AND-VAULT (14 — knowledge-side graph is distinct: knowledge.db = the user's items).
@@ -91,3 +91,66 @@ def merge_items(keep_id, drop_id) -> None: ...    # redirects mentions + collect
 - **Tag-migration reconciliation** (JSON → table) is the one delicate step — dual-path (both readable) until the migration verifies, per plan 31; a fixture with messy tags is the test.
 - **Open:** annotations as `mentions` vs a dedicated `annotations` table — default: reuse `mentions` (already links entities↔items); promote to its own table only if reading-notes need richer structure (revisit in S3).
 - **Open:** whether smart collections should be materializable (cached) for large libraries — defer until a real library shows the query cost (bottleneck-gated).
+
+## Execution log
+
+- 2026-07-29 — **DONE (S1: T1.1 + T1.2 + T1.3).** Collections (manual + smart), item
+  curation (read state + favorites), the HTTP surface, and the Knowledge-page rail.
+  - **T1.1 store + migration.** Two tables (`collections`, `collection_items`) and two
+    item columns (`read_state`, `favorited`) added via the store's OWN additive ladder
+    (`_NEW_ITEM_COLUMNS` + `_migrate`) and its `CREATE TABLE IF NOT EXISTS` schema.
+  - **DEVIATION (E1, premise mismatch) — the plan's `lifecycle/` tasks are STALE.** T1.1
+    names `lifecycle/migrations/m_*_knowledge_library.py` and a `knowledge_library`
+    gate, but **`src/personalclaw/lifecycle/` does not exist** (Lifecycle-Doctrine is
+    owner-deferred). knowledge.db has a store-native additive ladder, so this went
+    store-native — the same ruling the owner already made for Memory-Graph S1's v7. No
+    gate, no migration file. Verified with a hand-built PRE-collections DB: opening the
+    store adds both columns + both tables, the existing item survives, its NULL
+    `read_state` normalizes to `unread`, and a second open is a no-op.
+  - **Also stale: the plan's "needs a bound provider key" assumption.** Collections and
+    curation touch zero LLM paths, and knowledge search degrades cleanly with no
+    embedder (`retrieval.py:73-76` returns None from `_vector_search`; RRF fuses
+    keyword+graph). Smart shelves resolve through hybrid retrieval either way. The
+    earlier skip-ruling rested on a false premise.
+  - **T1.2 store API (C2).** `create_collection` / `list_collections` /
+    `get_collection` / `update_collection` / `delete_collection` /
+    `add_to_collection` / `remove_from_collection` / `collections_for_item` /
+    `resolve_collection` / `set_read_state` / `set_favorited`.
+    - A **smart shelf with no query is refused** at create AND at kind-switch — it
+      would match nothing forever and read as broken.
+    - `list_collections` reports `item_count: None` for smart shelves **deliberately**:
+      counting them means one search per shelf on every rail render.
+    - `resolve_collection` re-reads each smart hit as a **full item**, so a smart and a
+      manual shelf hand the UI the same shape (a retrieval hit is a search projection).
+    - Read-state / favorite are **non-touching** writes (`touch=False`): marking
+      something read is not editing it, and bumping `updated_at` would silently
+      reorder a recency-sorted library while the user reads through a backlog.
+    - Deleting a shelf keeps its items — a shelf is a view, not a container.
+    - Archived items never appear on a shelf (an archive is "not in my active library").
+  - **T1.3 routes (C3) + UI.** 9 routes; literal `collections` paths registered before
+    the `{id}` patterns. Frontend: a collections rail on the Knowledge page (URL-backed
+    `?collection=`, so a shelf is deep-linkable), create/rename/delete, per-row
+    add-to-shelf / remove-from-shelf / read-state cycle / favorite. A selected shelf
+    **replaces the item source** rather than filtering the loaded list — a smart shelf's
+    membership is server-resolved and isn't derivable client-side.
+    - Adding to a **smart** shelf returns a typed 400 (`smart_collection_immutable`)
+      rather than silently accepting a row its reads ignore.
+    - `add_collection_items` reports per-item `added`/`missing`, so shelving 30 items
+      doesn't fail wholesale because one was deleted in another tab.
+  - **Design-system note:** the primitive-adoption ratchet rejected a raw `<button>` for
+    "New shelf"; it now reuses the rail's own `FilterChip`, which is also the right
+    reading (it lives in the chip row).
+  - **V1 validated as a user** on an isolated dev home: created 3 items, a manual shelf
+    (shelved 1 of 2 ids — the bogus one reported `missing`, batch survived), and a smart
+    shelf; the rail rendered both kinds with the manual count and smart-as-unknown; each
+    shelf deep-linked and resolved correctly; **a brand-new matching item appeared on
+    the smart shelf with no backfill** (the live-ness claim, confirmed in the browser);
+    the smart shelf refused a membership write. 0 gateway tracebacks; the one console
+    error was my own probe hitting a wrong config path, not the feature.
+  - **Gates:** `make lint` clean (mypy 538 files) · backend **8839 passed** (30 new) ·
+    web **283 passed** (32 files) + typecheck + build. Offline agent reference
+    regenerated for the 9 new routes.
+  - Pre-existing/unrelated: `test_cron.py`'s spring-forward test (core issue #85).
+  - **NOT taken:** T1.2's `bulk_apply` / `find_duplicates` / `merge_items` belong to
+    S2 (curation + dedup) per the plan's own session split; this slice is collections
+    + read state + favorites, which is what T1.1-T1.3 name.

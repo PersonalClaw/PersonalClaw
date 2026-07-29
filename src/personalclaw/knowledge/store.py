@@ -206,11 +206,41 @@ class KnowledgeStore:
                 provider TEXT DEFAULT 'native',
                 -- ingestion node-graph lifecycle (#30)
                 processing_status TEXT DEFAULT '', processing_error TEXT,
+                -- library curation (KNOWLEDGE-LIBRARY S1)
+                read_state TEXT DEFAULT 'unread', favorited INTEGER DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_items_status ON items(status);
+
+            -- Collections (KNOWLEDGE-LIBRARY S1). A shelf is either MANUAL (an explicit
+            -- membership list) or SMART (a saved query re-run on read), which is why the
+            -- query lives on the collection rather than membership rows existing for it.
+            CREATE TABLE IF NOT EXISTS collections (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'manual',   -- manual | smart
+                query TEXT DEFAULT '',                 -- smart only
+                icon TEXT DEFAULT '',
+                position INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            -- Membership. The composite PK makes add-twice a no-op rather than a
+            -- duplicate row, and ON DELETE CASCADE means deleting a shelf never leaves
+            -- orphan rows pointing at it.
+            CREATE TABLE IF NOT EXISTS collection_items (
+                collection_id TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                added_at TEXT NOT NULL,
+                PRIMARY KEY (collection_id, item_id),
+                FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_collection_items_item ON collection_items(item_id);
+            CREATE INDEX IF NOT EXISTS idx_collections_position ON collections(position);
 
             CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
                 title, content, tags, content=items, content_rowid=rowid
@@ -312,6 +342,11 @@ class KnowledgeStore:
         # Ingestion node-graph lifecycle (#30): queued|processing|done|failed|partial.
         ("processing_status", "TEXT DEFAULT ''"),
         ("processing_error", "TEXT"),
+        # Library curation (KNOWLEDGE-LIBRARY S1). Read state is a THREE-value cycle,
+        # not a boolean: "reading" is the state a reading list exists to represent, and
+        # collapsing it into unread/read is what makes such lists useless.
+        ("read_state", "TEXT DEFAULT 'unread'"),
+        ("favorited", "INTEGER DEFAULT 0"),
     )
 
     def _migrate(self):
@@ -674,8 +709,11 @@ class KnowledgeStore:
                     d[key] = [] if key == "tags" else {}
             elif val is None:
                 d[key] = [] if key == "tags" else {}
-        for key in ("is_pinned", "is_archived"):
+        for key in ("is_pinned", "is_archived", "favorited"):
             d[key] = bool(d.get(key))
+        # An item written before the curation columns landed reads NULL; the API
+        # contract is the three-value enum, so normalize rather than leaking None.
+        d["read_state"] = d.get("read_state") or "unread"
         d.setdefault("provider", "native")
         return d
 
@@ -707,6 +745,9 @@ class KnowledgeStore:
         # ingestion node-graph lifecycle (#30)
         "processing_status",
         "processing_error",
+        # library curation (KNOWLEDGE-LIBRARY S1)
+        "read_state",
+        "favorited",
     }
 
     def update_item(self, item_id, *, touch: bool = True, **fields):
@@ -1124,6 +1165,196 @@ class KnowledgeStore:
             "GROUP BY je.value ORDER BY COUNT(*) DESC, je.value"
         ).fetchall()
         return [r["tag"] for r in rows if r["tag"]]
+
+    # ── Collections (KNOWLEDGE-LIBRARY S1, contract C2) ──────────────────────
+
+    VALID_READ_STATES = ("unread", "reading", "read")
+    VALID_COLLECTION_KINDS = ("manual", "smart")
+
+    def create_collection(
+        self, *, name: str, kind: str = "manual", query: str = "", icon: str = ""
+    ) -> str:
+        """Create a shelf. Returns its id.
+
+        A MANUAL collection holds an explicit membership list; a SMART one stores a
+        query re-run on every read, so it stays current as items arrive without any
+        backfill. A smart collection with no query would silently match nothing, so
+        that is rejected rather than created as a shelf that looks broken.
+        """
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("collection name is required")
+        if kind not in self.VALID_COLLECTION_KINDS:
+            raise ValueError(
+                f"unknown collection kind {kind!r}; expected one of "
+                f"{list(self.VALID_COLLECTION_KINDS)}"
+            )
+        if kind == "smart" and not (query or "").strip():
+            raise ValueError("a smart collection requires a query")
+        cid = str(uuid4())
+        now = datetime.now().isoformat()
+        # New shelves land at the end of the rail rather than the top: the user's
+        # existing order is theirs, and silently reshuffling it on every create is
+        # the kind of "helpful" the ordering column exists to prevent.
+        nxt = self.db.execute("SELECT COALESCE(MAX(position), -1) + 1 AS p FROM collections")
+        position = int(nxt.fetchone()["p"])
+        self.db.execute(
+            "INSERT INTO collections (id, name, kind, query, icon, position, created_at, "
+            "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (cid, name, kind, (query or "").strip(), icon or "", position, now, now),
+        )
+        self.db.commit()
+        return cid
+
+    def list_collections(self) -> list[dict]:
+        """Every shelf in rail order, each with its item count.
+
+        A smart collection's count is deliberately NOT computed here: it would mean
+        running one search per shelf on every list call. The rail shows manual counts
+        and resolves a smart shelf when the user opens it.
+        """
+        rows = self.db.execute(
+            "SELECT c.*, ("
+            "  SELECT COUNT(*) FROM collection_items ci WHERE ci.collection_id = c.id"
+            ") AS item_count "
+            "FROM collections c ORDER BY c.position, c.created_at"
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            if d.get("kind") == "smart":
+                d["item_count"] = None  # unknown until resolved; see the docstring
+            out.append(d)
+        return out
+
+    def get_collection(self, collection_id: str) -> dict | None:
+        row = self.db.execute("SELECT * FROM collections WHERE id = ?", (collection_id,)).fetchone()
+        return dict(row) if row else None
+
+    def update_collection(self, collection_id: str, **fields) -> bool:
+        """Rename / re-icon / re-query / reorder a shelf. Returns False if absent."""
+        allowed = {"name", "kind", "query", "icon", "position"}
+        sets = {k: v for k, v in fields.items() if k in allowed}
+        if not sets:
+            return False
+        if "kind" in sets and sets["kind"] not in self.VALID_COLLECTION_KINDS:
+            raise ValueError(f"unknown collection kind {sets['kind']!r}")
+        # Guard the combination, not just each field: switching an existing shelf to
+        # smart without a query (stored or supplied) would leave it permanently empty.
+        if sets.get("kind") == "smart" and not (sets.get("query") or "").strip():
+            existing = self.get_collection(collection_id) or {}
+            if not (existing.get("query") or "").strip():
+                raise ValueError("a smart collection requires a query")
+        sets["updated_at"] = datetime.now().isoformat()
+        cols = ", ".join(f"{k} = ?" for k in sets)
+        cur = self.db.execute(
+            f"UPDATE collections SET {cols} WHERE id = ?",  # noqa: S608 — keys allowlisted
+            (*sets.values(), collection_id),
+        )
+        self.db.commit()
+        return cur.rowcount > 0
+
+    def delete_collection(self, collection_id: str) -> bool:
+        """Remove a shelf. Membership rows go with it; the ITEMS are untouched —
+        a shelf is a view onto the library, not a container that owns its contents."""
+        self.db.execute("DELETE FROM collection_items WHERE collection_id = ?", (collection_id,))
+        cur = self.db.execute("DELETE FROM collections WHERE id = ?", (collection_id,))
+        self.db.commit()
+        return cur.rowcount > 0
+
+    def add_to_collection(self, collection_id: str, item_id: str) -> bool:
+        """Shelve an item. Idempotent (the composite PK absorbs a repeat).
+
+        Returns False when the shelf or item doesn't exist — a membership row pointing
+        at a missing item would surface as a phantom entry in the shelf view.
+        """
+        if not self.get_collection(collection_id):
+            return False
+        if not self.db.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone():
+            return False
+        self.db.execute(
+            "INSERT OR IGNORE INTO collection_items (collection_id, item_id, added_at) "
+            "VALUES (?, ?, ?)",
+            (collection_id, item_id, datetime.now().isoformat()),
+        )
+        self.db.commit()
+        return True
+
+    def remove_from_collection(self, collection_id: str, item_id: str) -> bool:
+        cur = self.db.execute(
+            "DELETE FROM collection_items WHERE collection_id = ? AND item_id = ?",
+            (collection_id, item_id),
+        )
+        self.db.commit()
+        return cur.rowcount > 0
+
+    def collections_for_item(self, item_id: str) -> list[dict]:
+        """Every MANUAL shelf holding this item. One item can sit on many shelves."""
+        rows = self.db.execute(
+            "SELECT c.* FROM collections c JOIN collection_items ci ON ci.collection_id = c.id "
+            "WHERE ci.item_id = ? ORDER BY c.position, c.created_at",
+            (item_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def resolve_collection(self, collection_id: str, limit: int = 50) -> list[dict]:
+        """The items on a shelf.
+
+        Manual: the membership join, newest-shelved first. Smart: the stored query run
+        through hybrid retrieval, so the shelf reflects the library as it is now — that
+        live-ness is the whole point of a smart collection, and it is also why this is a
+        read-time resolve rather than a materialized list.
+
+        Archived items are excluded from both kinds: an archive is the user saying "not
+        in my active library", and a shelf is an active-library view.
+        """
+        coll = self.get_collection(collection_id)
+        if not coll:
+            return []
+        if coll.get("kind") == "smart":
+            query = (coll.get("query") or "").strip()
+            if not query:
+                return []
+            from personalclaw.knowledge.retrieval import HybridRetriever
+
+            hits = HybridRetriever(self).search(query, limit=limit)
+            # Re-read each hit as a full item so a smart shelf and a manual one hand
+            # the UI the SAME shape; a retrieval hit is a search projection, not an item.
+            out = []
+            for h in hits:
+                item = self.get_item(h.get("id"))
+                if item and not item.get("is_archived"):
+                    out.append(item)
+            return out
+        rows = self.db.execute(
+            "SELECT i.* FROM items i JOIN collection_items ci ON ci.item_id = i.id "
+            "WHERE ci.collection_id = ? AND COALESCE(i.is_archived, 0) = 0 "
+            "ORDER BY ci.added_at DESC LIMIT ?",
+            (collection_id, limit),
+        ).fetchall()
+        return [self._serialize_item(r) for r in rows]
+
+    # ── Item curation ────────────────────────────────────────────────────────
+
+    def set_read_state(self, item_id: str, state: str) -> bool:
+        """Set an item's read state. Enrichment-style write: does NOT touch
+        `updated_at`, because marking something read is not editing it and would
+        otherwise reorder a recency-sorted library out from under the user."""
+        if state not in self.VALID_READ_STATES:
+            raise ValueError(
+                f"unknown read state {state!r}; expected one of {list(self.VALID_READ_STATES)}"
+            )
+        if not self.db.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone():
+            return False
+        self.update_item(item_id, touch=False, read_state=state)
+        return True
+
+    def set_favorited(self, item_id: str, value: bool) -> bool:
+        """Star / unstar. Also a non-touching write, for the same reason."""
+        if not self.db.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone():
+            return False
+        self.update_item(item_id, touch=False, favorited=1 if value else 0)
+        return True
 
     def close(self):
         self.db.close()

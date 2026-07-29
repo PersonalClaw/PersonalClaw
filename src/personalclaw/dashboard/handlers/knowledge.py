@@ -1638,6 +1638,187 @@ async def stream_item_ingest(request: web.Request) -> web.StreamResponse:
     )
 
 
+# ---------- Collections (KNOWLEDGE-LIBRARY S1, contract C3) ----------
+
+
+async def list_collections(request: web.Request) -> web.Response:
+    """GET /api/knowledge/collections — every shelf in rail order."""
+    return web.json_response({"collections": _store(request).list_collections()})
+
+
+async def create_collection(request: web.Request) -> web.Response:
+    """POST /api/knowledge/collections — create a manual or smart shelf."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    try:
+        cid = _store(request).create_collection(
+            name=str(body.get("name") or ""),
+            kind=str(body.get("kind") or "manual"),
+            query=str(body.get("query") or ""),
+            icon=str(body.get("icon") or ""),
+        )
+    except ValueError as exc:
+        # The store's own validation is the single source of truth for what a valid
+        # shelf is; the handler surfaces it rather than duplicating the rules.
+        return web.json_response({"error": str(exc)}, status=400)
+    coll = _store(request).get_collection(cid)
+    return web.json_response({"ok": True, "collection": coll}, status=201)
+
+
+async def update_collection(request: web.Request) -> web.Response:
+    """PATCH /api/knowledge/collections/{id} — rename / re-icon / re-query / reorder."""
+    cid = request.match_info["id"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    store = _store(request)
+    if not store.get_collection(cid):
+        return web.json_response({"error": "collection not found"}, status=404)
+    fields = {k: v for k, v in body.items() if k in ("name", "kind", "query", "icon", "position")}
+    if not fields:
+        return web.json_response(
+            {
+                "error": {
+                    "code": "nothing_to_update",
+                    "message": "supply at least one of name, kind, query, icon, position",
+                }
+            },
+            status=400,
+        )
+    try:
+        store.update_collection(cid, **fields)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response({"ok": True, "collection": store.get_collection(cid)})
+
+
+async def delete_collection(request: web.Request) -> web.Response:
+    """DELETE /api/knowledge/collections/{id} — remove the shelf, keep the items."""
+    cid = request.match_info["id"]
+    if not _store(request).delete_collection(cid):
+        return web.json_response({"error": "collection not found"}, status=404)
+    return web.json_response({"ok": True})
+
+
+async def get_collection_items(request: web.Request) -> web.Response:
+    """GET /api/knowledge/collections/{id}/items — resolve the shelf.
+
+    Manual shelves join their membership; smart shelves run their stored query, so the
+    result reflects the library right now.
+    """
+    cid = request.match_info["id"]
+    store = _store(request)
+    coll = store.get_collection(cid)
+    if not coll:
+        return web.json_response({"error": "collection not found"}, status=404)
+    try:
+        limit = min(200, max(1, int(request.query.get("limit", 50))))
+    except ValueError:
+        return web.json_response({"error": "invalid limit"}, status=400)
+    items = store.resolve_collection(cid, limit=limit)
+    return web.json_response({"collection": coll, "items": items, "count": len(items)})
+
+
+async def add_collection_items(request: web.Request) -> web.Response:
+    """POST /api/knowledge/collections/{id}/items — shelve one or many items.
+
+    Per-item results, so shelving 30 items doesn't fail wholesale because one was
+    deleted in another tab.
+    """
+    cid = request.match_info["id"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    store = _store(request)
+    coll = store.get_collection(cid)
+    if not coll:
+        return web.json_response({"error": "collection not found"}, status=404)
+    if coll.get("kind") == "smart":
+        # Adding to a smart shelf is a category error: its contents come from its
+        # query, so a membership row would be silently ignored on every read.
+        return web.json_response(
+            {
+                "error": {
+                    "code": "smart_collection_immutable",
+                    "message": (
+                        "A smart collection's contents come from its query — edit the "
+                        "query instead of adding items."
+                    ),
+                }
+            },
+            status=400,
+        )
+    raw = body.get("item_ids")
+    if raw is None and body.get("item_id"):
+        raw = [body["item_id"]]
+    if not isinstance(raw, list) or not raw:
+        return web.json_response(
+            {"error": {"code": "item_ids_required", "message": "supply item_ids: [...]"}},
+            status=400,
+        )
+    added: list[str] = []
+    missing: list[str] = []
+    for iid in (str(x) for x in raw):
+        (added if store.add_to_collection(cid, iid) else missing).append(iid)
+    return web.json_response({"ok": True, "added": added, "missing": missing})
+
+
+async def remove_collection_item(request: web.Request) -> web.Response:
+    """DELETE /api/knowledge/collections/{id}/items/{item_id} — unshelve one item."""
+    cid = request.match_info["id"]
+    iid = request.match_info["item_id"]
+    if not _store(request).remove_from_collection(cid, iid):
+        return web.json_response({"error": "not on that collection"}, status=404)
+    return web.json_response({"ok": True})
+
+
+async def set_item_read_state(request: web.Request) -> web.Response:
+    """POST /api/knowledge/items/{id}/read-state — unread | reading | read."""
+    iid = request.match_info["id"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict) or "state" not in body:
+        return web.json_response(
+            {"error": {"code": "state_required", "message": "supply state: unread|reading|read"}},
+            status=400,
+        )
+    store = _store(request)
+    try:
+        ok = store.set_read_state(iid, str(body["state"]))
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    if not ok:
+        return web.json_response({"error": "item not found"}, status=404)
+    return web.json_response({"ok": True, "read_state": store.get_item(iid)["read_state"]})
+
+
+async def set_item_favorited(request: web.Request) -> web.Response:
+    """POST /api/knowledge/items/{id}/favorite — star or unstar."""
+    iid = request.match_info["id"]
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    store = _store(request)
+    if not store.set_favorited(iid, bool(body.get("value", True))):
+        return web.json_response({"error": "item not found"}, status=404)
+    return web.json_response({"ok": True, "favorited": store.get_item(iid)["favorited"]})
+
+
 def setup_knowledge_routes(app: web.Application) -> None:
     # One ingestion path: the node-graph queue. Every item (typed-create, file
     # upload, bookmark) is created via the native provider and enqueued here;
@@ -1656,6 +1837,15 @@ def setup_knowledge_routes(app: web.Application) -> None:
         except Exception:
             logger.debug("knowledge ingest queue wiring skipped", exc_info=True)
 
+    app.router.add_get("/api/knowledge/collections", list_collections)
+    app.router.add_post("/api/knowledge/collections", create_collection)
+    app.router.add_get("/api/knowledge/collections/{id}/items", get_collection_items)
+    app.router.add_post("/api/knowledge/collections/{id}/items", add_collection_items)
+    app.router.add_delete("/api/knowledge/collections/{id}/items/{item_id}", remove_collection_item)
+    app.router.add_patch("/api/knowledge/collections/{id}", update_collection)
+    app.router.add_delete("/api/knowledge/collections/{id}", delete_collection)
+    app.router.add_post("/api/knowledge/items/{id}/read-state", set_item_read_state)
+    app.router.add_post("/api/knowledge/items/{id}/favorite", set_item_favorited)
     app.router.add_get("/api/knowledge/items", list_items)
     app.router.add_post("/api/knowledge/items", create_item)
     app.router.add_get("/api/knowledge/tags", list_tags)

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import { BookOpen, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff } from 'lucide-react'
+import { BookOpen, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -10,13 +10,14 @@ import { ListControls } from '../../ui/ListControls'
 import { IconButton } from '../../ui/IconButton'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { Segmented } from '../../ui/forms'
-import { api, type KnowledgeIntent, type IntentOutcome, type KnowledgeItem } from '../../lib/api'
+import { api, type KnowledgeIntent, type IntentOutcome, type KnowledgeItem, type KnowledgeCollection } from '../../lib/api'
 import { resolveType, relTime, fmtBytes, typeLabel } from './knowledgeMeta'
 import { listKnowledge, knowledgeStats, getKnowledge } from './knowledgeStore'
 import { KnowledgeDetail } from './KnowledgeDetail'
 import { KnowledgeGraph } from './KnowledgeGraph'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
-import { useCachedData } from '../../lib/useCachedData'
+import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { confirm, promptInput } from '../../ui/dialog'
 
 type View = 'library' | 'graph' | 'intents'
 
@@ -141,13 +142,97 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
   // Type is filtered CLIENT-side (like provider/tag) so the full item set
   // stays loaded — otherwise selecting a type would leave only that type present and
   // the type chips (gated on >1 present) would vanish, trapping the user.
-  const itemsKey = `knowledge:items:${submitted}:${showArchived ? 'arch' : ''}`
+  // Collections (KNOWLEDGE-LIBRARY S1). URL-backed so a shelf is deep-linkable.
+  const [collectionTok, setCollectionTok] = useQueryParam(query, setQuery, 'collection', '', { replace: true })
+  const { data: collectionsData, refresh: refreshCollections } =
+    useCachedData<KnowledgeCollection[]>('knowledge:collections', () => api.knowledgeCollections().catch(() => []))
+  const collections = collectionsData ?? []
+  const activeCollection = collectionTok ? collections.find((c) => c.id === collectionTok) ?? null : null
+
+  // A selected shelf REPLACES the item source rather than filtering the loaded list:
+  // a smart shelf's membership comes from a server-side query, so it isn't derivable
+  // from whatever the library happened to have fetched.
+  const itemsKey = collectionTok
+    ? `knowledge:collection-items:${collectionTok}`
+    : `knowledge:items:${submitted}:${showArchived ? 'arch' : ''}`
   const { data: itemsData, loading: itemsLoading, refresh: refreshItems } =
-    useCachedData(itemsKey, () => listKnowledge({ q: submitted || undefined, includeArchived: showArchived }))
+    useCachedData(itemsKey, () => (collectionTok
+      ? api.knowledgeCollectionItems(collectionTok, 200).then((r) => r.items).catch(() => [])
+      : listKnowledge({ q: submitted || undefined, includeArchived: showArchived })))
   const { data: statsData, refresh: refreshStats } = useCachedData('knowledge:stats', () => knowledgeStats())
   const items = itemsData ?? null
   const stats = statsData ?? null
-  const load = () => { refreshItems(); refreshStats() }
+  const load = () => { refreshItems(); refreshStats(); refreshCollections() }
+
+  // Shelf management. A smart shelf is created by naming a query, which is why the
+  // prompt asks for one rather than offering a kind toggle with an empty box — a
+  // smart shelf without a query matches nothing and reads as broken.
+  async function createCollection() {
+    const name = await promptInput({ title: 'New shelf', label: 'Shelf name', placeholder: 'e.g. Reading list', confirmLabel: 'Create' })
+    if (!name) return
+    const q = await promptInput({
+      title: 'Smart shelf?',
+      label: 'Search that fills it (leave empty for a manual shelf)',
+      placeholder: 'e.g. rust ownership',
+      confirmLabel: 'Create shelf',
+    })
+    try {
+      const res = await api.createKnowledgeCollection(q ? { name, kind: 'smart', query: q } : { name })
+      invalidateCache('knowledge:collections')
+      refreshCollections()
+      setCollectionTok(res.collection.id)
+    } catch { /* the rail just doesn't gain a shelf */ }
+  }
+
+  async function shelveItem(c: KnowledgeCollection, it: KnowledgeItem) {
+    await api.addToKnowledgeCollection(c.id, [it.id]).catch(() => {})
+    invalidateCache('knowledge:collections')
+    refreshCollections()
+  }
+
+  async function unshelveItem(c: KnowledgeCollection, it: KnowledgeItem) {
+    await api.removeFromKnowledgeCollection(c.id, it.id).catch(() => {})
+    invalidateCache(itemsKey)
+    invalidateCache('knowledge:collections')
+    refreshItems(); refreshCollections()
+  }
+
+  async function cycleReadState(it: KnowledgeItem) {
+    const next = it.read_state === 'reading' ? 'read' : it.read_state === 'read' ? 'unread' : 'reading'
+    await api.setKnowledgeReadState(it.id, next).catch(() => {})
+    invalidateCache(itemsKey)
+    refreshItems()
+  }
+
+  async function toggleFavorite(it: KnowledgeItem) {
+    await api.setKnowledgeFavorited(it.id, !it.favorited).catch(() => {})
+    invalidateCache(itemsKey)
+    refreshItems()
+  }
+
+  async function renameCollection(c: KnowledgeCollection) {
+    const name = await promptInput({ title: 'Rename shelf', label: 'Shelf name', initial: c.name, confirmLabel: 'Rename' })
+    if (!name || name === c.name) return
+    await api.updateKnowledgeCollection(c.id, { name }).catch(() => {})
+    invalidateCache('knowledge:collections')
+    refreshCollections()
+  }
+
+  async function removeCollection(c: KnowledgeCollection) {
+    // Deleting a shelf keeps its items — say so, because "delete" next to a list of
+    // documents reads as destructive and this one isn't.
+    const ok = await confirm({
+      title: `Delete "${c.name}"?`,
+      body: 'The shelf goes away. The items on it stay in your library.',
+      confirmLabel: 'Delete shelf',
+      danger: true,
+    })
+    if (!ok) return
+    await api.deleteKnowledgeCollection(c.id).catch(() => {})
+    invalidateCache('knowledge:collections')
+    refreshCollections()
+    setCollectionTok('')
+  }
 
   // Re-run the ingestion node-graph over items that never got enriched (e.g. created
   // while the model was unavailable). Refreshes the list so badges update as they drain.
@@ -300,6 +385,38 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
                   <FilterChip active={showArchived} onClick={() => setShowArchived((v) => !v)}><Archive size={12} /> {showArchived ? 'Showing archived' : 'Show archived'}</FilterChip>
                   {tagFilter && <FilterChip active onClick={() => setTagFilter('')}># {tagFilter} <X size={11} /></FilterChip>}
                 </div>
+                {/* Collections rail. A shelf REPLACES the item source (a smart shelf's
+                    membership is server-resolved), so selecting one also parks the
+                    search/type chips above — they describe the library, not the shelf. */}
+                <div className="mb-m flex flex-wrap items-center gap-1.5">
+                  <FilterChip active={!collectionTok} onClick={() => setCollectionTok('')}>
+                    <Library size={12} /> All items
+                  </FilterChip>
+                  {collections.map((c) => (
+                    <FilterChip key={c.id} active={collectionTok === c.id} onClick={() => setCollectionTok(c.id)}>
+                      {c.kind === 'smart' ? <Sparkles size={12} /> : <Layers size={12} />}
+                      {' '}{c.name}
+                      {c.kind === 'manual' && typeof c.item_count === 'number' ? ` ${c.item_count}` : ''}
+                    </FilterChip>
+                  ))}
+                  {/* Reuses the rail's own chip rather than a bespoke button — it
+                      lives in the chip row and should read as one of them. */}
+                  <FilterChip active={false} onClick={createCollection}>
+                    <Plus size={12} /> New shelf
+                  </FilterChip>
+                </div>
+                {activeCollection && (
+                  <div className="mb-m flex flex-wrap items-center gap-2">
+                    <span data-type="label-l" className="text-on-surface">{activeCollection.name}</span>
+                    <span className="text-on-surface-low text-[0.75rem]">
+                      {activeCollection.kind === 'smart'
+                        ? `Smart shelf — everything matching "${activeCollection.query}", kept current automatically.`
+                        : 'Manual shelf — the items you put here.'}
+                    </span>
+                    <Button variant="ghost" size="xs" onClick={() => renameCollection(activeCollection)}>Rename</Button>
+                    <Button variant="ghost" size="xs" onClick={() => removeCollection(activeCollection)}>Delete shelf</Button>
+                  </div>
+                )}
                 {(shown?.length ?? 0) === 0 ? (
                   <EmptyState icon={Search} title="No matching items" hint="Try a different search or filter." />
                 ) : (
@@ -310,9 +427,39 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
                       // opens an item (no delete/archive is wired here), so it's a
                       // single-item menu — still worth it for discoverability, and it
                       // calls the SAME handler as the row click.
+                      const manualShelves = collections.filter((c) => c.kind === 'manual')
                       const menuItems: ContextMenuItem[] = [
                         { icon: <FileText size={15} />, label: 'Peek', onSelect: () => setItemTok(it.id) },
                         { icon: <Library size={15} />, label: 'Open full page', onSelect: () => onOpenItem(it.id) },
+                        // Read state as an explicit cycle rather than a toggle — the
+                        // middle state is the one a reading list exists for.
+                        {
+                          icon: <BookOpen size={15} />,
+                          label: it.read_state === 'reading' ? 'Mark as read'
+                            : it.read_state === 'read' ? 'Mark as unread' : 'Mark as reading',
+                          onSelect: () => cycleReadState(it),
+                        },
+                        {
+                          icon: <Pin size={15} />,
+                          label: it.favorited ? 'Remove favorite' : 'Favorite',
+                          onSelect: () => toggleFavorite(it),
+                        },
+                        // Only MANUAL shelves are offered: a smart shelf's contents come
+                        // from its query, so "add to" there would be silently ignored.
+                        ...manualShelves
+                          .filter((c) => c.id !== collectionTok)
+                          .map((c) => ({
+                            icon: <Layers size={15} />,
+                            label: `Add to ${c.name}`,
+                            onSelect: () => shelveItem(c, it),
+                          })),
+                        ...(activeCollection && activeCollection.kind === 'manual'
+                          ? [{
+                            icon: <X size={15} />,
+                            label: `Remove from ${activeCollection.name}`,
+                            onSelect: () => unshelveItem(activeCollection, it),
+                          }]
+                          : []),
                       ]
                       return (
                         <ContextMenu key={it.id} items={menuItems}>

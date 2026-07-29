@@ -305,6 +305,13 @@ export interface ChatSessionSummary {
   last_activity_at?: number
   never_archive?: boolean
 }
+/** A knowledge shelf. `manual` holds an explicit membership list; `smart` stores a
+ *  query re-run on read, so it stays current with no backfill. `item_count` is null
+ *  for a smart shelf — counting it would mean a search per shelf on every rail render. */
+export interface KnowledgeCollection {
+  id: string; name: string; kind: 'manual' | 'smart'; query?: string; icon?: string
+  position?: number; item_count?: number | null; created_at?: string; updated_at?: string
+}
 export interface ChatFolder { id: string; name: string; order?: number; collapsed?: boolean; parent_id?: string }
 export interface ChatTag { id: string; name: string; color?: string; order?: number; status?: boolean }
 // Magic re-tag batch job (POST/GET /api/sessions/retag-all). status 'idle' only
@@ -592,6 +599,9 @@ export interface KnowledgeItem {
   item_type?: string; tags?: string[]
   provider?: string; status?: string
   is_pinned?: boolean; is_archived?: boolean
+  // library curation (KNOWLEDGE-LIBRARY S1). read_state is a three-value cycle, not a
+  // boolean — "reading" is the state a reading list exists to represent.
+  read_state?: 'unread' | 'reading' | 'read'; favorited?: boolean
   created_at?: string; updated_at?: string
   _score?: number; _match_type?: string
   // vision fields (may be absent from the PClaw backend today)
@@ -2065,6 +2075,25 @@ export const api = {
   knowledgeProviders: () => get<{ providers: Array<{ name: string; display_name: string; always_on: boolean; kind: string }> }>('/api/knowledge/providers').then((d) => d.providers),
   // Distinct tags (frequency-ordered) for tag-input autocomplete.
   knowledgeTags: () => get<{ tags: string[] }>('/api/knowledge/tags').then((d) => d.tags),
+  // ── Knowledge collections (KNOWLEDGE-LIBRARY S1) ──
+  knowledgeCollections: () =>
+    get<{ collections: KnowledgeCollection[] }>('/api/knowledge/collections').then((d) => d.collections),
+  createKnowledgeCollection: (body: { name: string; kind?: 'manual' | 'smart'; query?: string; icon?: string }) =>
+    post<{ ok: boolean; collection: KnowledgeCollection }>('/api/knowledge/collections', body),
+  updateKnowledgeCollection: (id: string, body: { name?: string; kind?: 'manual' | 'smart'; query?: string; icon?: string; position?: number }) =>
+    patch<{ ok: boolean; collection: KnowledgeCollection }>(`/api/knowledge/collections/${encodeURIComponent(id)}`, body),
+  deleteKnowledgeCollection: (id: string) =>
+    del(`/api/knowledge/collections/${encodeURIComponent(id)}`),
+  knowledgeCollectionItems: (id: string, limit = 50) =>
+    get<{ collection: KnowledgeCollection; items: KnowledgeItem[]; count: number }>(`/api/knowledge/collections/${encodeURIComponent(id)}/items?limit=${limit}`),
+  addToKnowledgeCollection: (id: string, itemIds: string[]) =>
+    post<{ ok: boolean; added: string[]; missing: string[] }>(`/api/knowledge/collections/${encodeURIComponent(id)}/items`, { item_ids: itemIds }),
+  removeFromKnowledgeCollection: (id: string, itemId: string) =>
+    del(`/api/knowledge/collections/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}`),
+  setKnowledgeReadState: (id: string, state: 'unread' | 'reading' | 'read') =>
+    post<{ ok: boolean; read_state: string }>(`/api/knowledge/items/${encodeURIComponent(id)}/read-state`, { state }),
+  setKnowledgeFavorited: (id: string, value: boolean) =>
+    post<{ ok: boolean; favorited: boolean }>(`/api/knowledge/items/${encodeURIComponent(id)}/favorite`, { value }),
   knowledgeEmbeddingStatus: () => get<{ enabled: boolean; available?: boolean; model?: string; total_items?: number; embedded_items?: number; stale_items?: number }>('/api/knowledge/embedding/status'),
   generateKnowledgeEmbeddings: (rebuild = false) => post<{ ok?: boolean; embedded?: number }>('/api/knowledge/embedding/generate', { rebuild }),
   // Every uploaded file → ONE logical-document item run through its node-graph.
