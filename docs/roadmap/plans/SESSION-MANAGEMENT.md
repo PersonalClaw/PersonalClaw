@@ -1,7 +1,8 @@
 # Plan: Session Management — Organize, Find, and Curate Conversations at Scale
 
 **Status:** IN PROGRESS — Session 1 (FTS5 cross-session search + match snippets) shipped 2026-07-28;
-Sessions 2-4 (organization + bulk + auto-archive, templates, export) not started. T1.3's sidebar
+Session 2 T2.2/T2.3 (bulk ops + lifecycle + auto-archive) shipped 2026-07-29 — **T2.1 (suggested
+organization) is BLOCKED**, see the Execution log; Sessions 3-4 (templates, export) not started. T1.3's sidebar
 windowing was re-scoped — there is no chat sidebar; see the Execution log. Created 2026-07-18
 (roadmap rev 10; owner ask: chat session management improvements)
 **Created:** 2026-07-18
@@ -172,3 +173,53 @@ injected as markup; an unpaired marker degrades to plain text.
 Tests: `tests/test_session_search.py`, 56 cases. Full suite 8631 passed; lint clean;
 web typecheck + 268 vitest + build green. **Remaining: Sessions 2-4** (organization/
 bulk/auto-archive, templates, export) — separate clean sub-scopes, not started.
+
+- 2026-07-29 — **DONE (S2, T2.2 + T2.3).** Bulk session ops + the session lifecycle
+  (archive / restore / never-archive) + the auto-archive rule, end to end.
+  - **Backend:** new `dashboard/session_lifecycle.py` (the pure rule: `stale_session_keys`
+    previews, `run_auto_archive` applies, `set_lifecycle` transitions) and
+    `dashboard/session_bulk.py` (`POST /api/chat/sessions/bulk`,
+    `POST /api/chat/sessions/auto-archive`, `PATCH /api/chat/sessions/{session}/lifecycle`).
+    Three fields on `_ChatSession` (`lifecycle`, `last_activity_at`, `never_archive`)
+    wired through `__slots__`, `to_dict()`, and **all three** `chat_persistence` meta
+    sites. `session.auto_archive_days` (default 30, 0=off) wired through the full
+    round-trip contract incl. `_EDITABLE_CONFIG`. Hourly heartbeat pass via a new
+    `on_auto_archive` callback (the heartbeat has no `DashboardState` and shouldn't grow
+    one, so the gateway injects it like `on_due_commitments`).
+  - **Frontend:** Active/Archived segmented view (server-filtered via `?archived=1`, URL-
+    backed so the archive is deep-linkable), row multi-select + a selection bar
+    (Archive / Restore / Never archive), per-row context-menu lifecycle actions, and a
+    persistent outcome note ("Archived 38 · 2 not found").
+  - **New primitive:** `ui/forms.tsx` gains **`Checkbox`** (+ `.doc.ts` + 3 tests). The
+    primitive-adoption ratchet correctly rejected a raw `<input type="checkbox">`, and
+    there was no checkbox primitive; it owns the `stopPropagation` guard that clickable
+    list rows need, so no call site can forget it.
+  - **DEVIATION — T2.1 (suggested organization) NOT taken; it is BLOCKED.** Its spec
+    requires `emit_attention_item(kind="proposal")`, which **does not exist**: the only
+    occurrence in the tree is a forward-looking comment at `feedback.py:379`, and
+    `InboxItem` has no `kind` field at all (`inbox.py:62-88`; `Classification` is
+    needs_reply/fyi/noise). Building it means inventing the attention contract that
+    **INBOX-NOTIFICATIONS-UNIFICATION owns** — a guaranteed rewrite. Deferred to after
+    that plan lands. (Note `chat_retag.py` already covers much of T2.1's user value.)
+  - **BUG FOUND IN OWN WORK, during as-a-user validation:** rehydration replays a
+    transcript through `_ChatSession.append()`, so the un-archive-on-use rule fired on
+    LOAD — an archived chat silently un-archived itself just by being opened, or by a
+    restart restoring it. Fixed by using `ts` as the live-vs-replay discriminator (a live
+    turn passes none; replay passes each message's stored ts). Test added.
+  - **Upgrade safety:** `last_activity_at == 0.0` (every session predating the field)
+    reads as **not stale**. Treating unknown as ancient would archive a user's entire
+    history on first run. Also: default-valued sessions write **no** new meta keys, so
+    existing meta lines stay byte-identical.
+  - **Deliberate omission:** `delete` is NOT a bulk op. Bulk deletion is irreversible and
+    must not sit one mis-click from archive, which is reversible.
+  - **Validated as a user** on an isolated dev home: bulk-archived 2 of 3 (one bogus key
+    reported `missing` without failing the batch); active/archived lists split correctly;
+    restore round trip returned all rows; `never_archive` set; the config kill switch
+    (`0` → `enabled:false`) verified through the real PATCH route; multi-select →
+    Archive → outcome note observed stably across 8 samples with the row count dropping;
+    0 console errors, 0 gateway tracebacks.
+  - **Gates:** `make lint` clean (mypy 538 files) · backend **8809 passed** · web
+    **283 passed** (32 files) + typecheck + build. The offline agent reference was
+    regenerated (`python -m personalclaw.manifest_reference`) since three routes are new —
+    its drift test caught that, as designed.
+  - Pre-existing/unrelated: `test_cron.py`'s spring-forward test (core issue #85).

@@ -500,6 +500,9 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "session.pool_size": {"type": "int", "min": 0, "max": 10},
     "session.pool_agent": {"type": "str", "values_fn": _agent_values},
     "session.pool_ttl_secs": {"type": "int", "min": 0, "max": 7200},
+    # 0 = off; the ceiling is generous on purpose (a year) since "archive rarely"
+    # is a legitimate preference and archiving is non-destructive.
+    "session.auto_archive_days": {"type": "int", "min": 0, "max": 3650},
     "auto_update": {"type": "bool"},
     "dashboard.mcp_probe_timeout_secs": {"type": "int", "min": 5, "max": 120},
     # P25: opt-in tmux-backed terminal persistence (survives a gateway restart). Read as a

@@ -324,6 +324,16 @@ def _rehydrate_session_from_history(
     raw_tags = meta.get("tags")
     if isinstance(raw_tags, list):
         session.tags = [str(t) for t in raw_tags if isinstance(t, str) and t]
+    # Session lifecycle (S2). Tolerant: an old session has none of these keys and
+    # reads as an active, never-yet-touched, non-exempt session.
+    _lc = meta.get("lifecycle")
+    if isinstance(_lc, str) and _lc in ("active", "archived"):
+        session.lifecycle = _lc
+    _la = meta.get("last_activity_at")
+    if isinstance(_la, (int, float)):
+        session.last_activity_at = float(_la)
+    if meta.get("never_archive"):
+        session.never_archive = True
     mm = meta.get("memory_mode", "persistent")
     session.memory_mode = mm
     if mm != "persistent":
@@ -450,6 +460,16 @@ def restore_recent_sessions(
         raw_tags = meta.get("tags")
         if isinstance(raw_tags, list):
             session.tags = [str(t) for t in raw_tags if isinstance(t, str) and t]
+        # Session lifecycle (S2). Tolerant: an old session has none of these keys and
+        # reads as an active, never-yet-touched, non-exempt session.
+        _lc = meta.get("lifecycle")
+        if isinstance(_lc, str) and _lc in ("active", "archived"):
+            session.lifecycle = _lc
+        _la = meta.get("last_activity_at")
+        if isinstance(_la, (int, float)):
+            session.last_activity_at = float(_la)
+        if meta.get("never_archive"):
+            session.never_archive = True
         mm = meta.get("memory_mode", "persistent")
         session.memory_mode = mm
         if mm != "persistent":
@@ -549,6 +569,15 @@ def _save_session_to_history(
             meta_line["color_theme"] = session.color_theme
         if session.tags:
             meta_line["tags"] = list(session.tags)
+        # Lifecycle (S2). Written only when non-default, matching every field above —
+        # an active, untouched, non-exempt session adds no keys, so existing meta lines
+        # are byte-identical and the rollout is invisible until something changes.
+        if session.lifecycle and session.lifecycle != "active":
+            meta_line["lifecycle"] = session.lifecycle
+        if session.last_activity_at:
+            meta_line["last_activity_at"] = session.last_activity_at
+        if session.never_archive:
+            meta_line["never_archive"] = True
         if session.forked_from is not None:
             meta_line["forked_from"] = session.forked_from
         # Persist the side-chat buffer attached to the session (so it reloads with

@@ -299,6 +299,11 @@ export interface ChatSessionSummary {
   // friendly label so the history list can tag + link them and default-hide them.
   origin?: 'manual' | 'loop' | 'code' | 'campaign' | 'channel'
   source_id?: string; source_label?: string
+  // Session lifecycle (SESSION-MANAGEMENT S2). 'archived' leaves the active list but
+  // stays fully searchable and restorable — archiving is never deletion.
+  lifecycle?: 'active' | 'archived'
+  last_activity_at?: number
+  never_archive?: boolean
 }
 export interface ChatFolder { id: string; name: string; order?: number; collapsed?: boolean; parent_id?: string }
 export interface ChatTag { id: string; name: string; color?: string; order?: number; status?: boolean }
@@ -1580,7 +1585,8 @@ export const api = {
   // blocked commands + supplies one-line hints).
   slashCommands: () => get<{ name: string; description: string }[]>('/api/slash-commands'),
   // sessions
-  chatSessions: () => get<ChatSessionSummary[]>('/api/chat/sessions'),
+  chatSessions: (archived = false) =>
+    get<ChatSessionSummary[]>(`/api/chat/sessions${archived ? '?archived=1' : ''}`),
   pinChatSession: (session: string, pinned: boolean) => patch(`/api/chat/sessions/${encodeURIComponent(session)}/pin`, { pinned }),
   // ── chat organization: folders, tags, kanban tag-columns (backend already
   //    persists folder_id/tags/color_index per session; legacy web exposes these) ──
@@ -1607,6 +1613,13 @@ export const api = {
   dropSessionToColumn: (session: string, columnId: string) => post(`/api/chat/sessions/${encodeURIComponent(session)}/drop`, { column_id: columnId }),
   chatSessionDetail: (key: string) => get<{ key: string; title: string; messages: ChatHistoryMsg[]; running?: boolean; pending_approval?: boolean; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string }[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null }>(`/api/chat/sessions/${encodeURIComponent(key)}`),
   deleteChatSession: (key: string) => del(`/api/chat/sessions/${encodeURIComponent(key)}`),
+  // ── session lifecycle + bulk (SESSION-MANAGEMENT S2) ──
+  setSessionLifecycle: (session: string, body: { lifecycle?: 'active' | 'archived'; never_archive?: boolean }) =>
+    patch<{ ok: boolean; lifecycle: string; never_archive: boolean }>(`/api/chat/sessions/${encodeURIComponent(session)}/lifecycle`, body),
+  bulkSessions: (op: 'archive' | 'restore' | 'tag' | 'untag' | 'folder' | 'never_archive', keys: string[], args: { tag_id?: string; folder_id?: string; value?: boolean } = {}) =>
+    post<{ ok: boolean; op: string; changed: string[]; unchanged: string[]; missing: string[] }>('/api/chat/sessions/bulk', { op, keys, ...args }),
+  autoArchiveSessions: (opts: { dry_run?: boolean; active_session?: string } = {}) =>
+    post<{ ok: boolean; enabled: boolean; days: number; keys: string[]; count: number }>('/api/chat/sessions/auto-archive', opts),
   createChatSession: (opts: { name?: string; agent?: string; model?: string; memory_mode?: MemoryMode; mode?: string; project_id?: string } = {}) =>
     post<ChatSession>('/api/chat/sessions', opts),
   setSessionAgent: (session: string, agent: string) => post(`/api/chat/sessions/${session}/agent`, { agent }),

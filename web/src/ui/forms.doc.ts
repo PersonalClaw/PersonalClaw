@@ -147,6 +147,24 @@ const docs: UiDoc[] = [
     ],
     anatomy: ['flex-wrap container (focus-within ring)', 'chip pills (label + × remove)', 'draft <input> (Enter/comma to add, Backspace to pop)', 'optional <datalist> suggestions'],
   },
+  {
+    name: 'Checkbox',
+    keywords: ['checkbox', 'tick', 'select', 'selection', 'multi-select', 'bulk', 'boolean', 'form'],
+    description:
+      'A single boolean tick, for row selection and inline opt-ins. Distinct from Switch: a Switch applies a SETTING immediately and reads as on/off state, whereas a Checkbox marks a SELECTION the user then acts on (the multi-select bars behind bulk actions want the latter). Click/change propagation is stopped inside the primitive, so a tick inside a clickable list row never also activates the row.',
+    props: [
+      { name: 'checked', description: 'Current state (controlled).' },
+      { name: 'onChange', description: 'Fires with the next boolean. Propagation is already stopped for you.' },
+      { name: 'ariaLabel', description: 'Required in practice — a bare tick has no accessible name of its own, so name what it selects (e.g. `Select ${title}`).' },
+      { name: 'className', description: 'Extra classes for visibility rules (e.g. reveal-on-hover inside a list row).' },
+    ],
+    bestPractices: [
+      { guidance: true, description: 'Reach for Checkbox for multi-select in a list rather than a raw <input type="checkbox"> — it carries the accent tone, the focus-visible ring, and the propagation guard that clickable rows need.' },
+      { guidance: true, description: 'Use Switch instead when the control applies a setting on the spot; use Checkbox when the user is marking things to act on afterwards.' },
+      { guidance: false, description: 'Do not re-add onClick={e => e.stopPropagation()} at the call site — the primitive owns it, and duplicating it hides the contract.' },
+    ],
+    anatomy: ['native <input type="checkbox"> (accent-primary, focus-visible ring, propagation-guarded)'],
+  },
 ]
 
 export default docs

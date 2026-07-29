@@ -511,6 +511,16 @@ class SessionConfig:
             "Max age in seconds for pooled processes. Stale processes are discarded at claim time. 0 disables.",  # noqa: E501
         ),
     )
+    auto_archive_days: int = field(
+        default=30,
+        metadata=_meta(
+            "Auto-Archive After",
+            "Days of inactivity after which a conversation moves to Archived. "
+            "Archived chats leave the active list but stay fully searchable and can "
+            "be restored at any time — nothing is deleted. 0 turns auto-archive off. "
+            "Pin a chat with 'never archive' to exempt it.",
+        ),
+    )
 
 
 @dataclass
@@ -2334,6 +2344,7 @@ class AppConfig:
                 pool_size=int(session_data.get("pool_size", 0)),
                 pool_agent=str(session_data.get("pool_agent", "")),
                 pool_ttl_secs=int(session_data.get("pool_ttl_secs", 1800)),
+                auto_archive_days=_safe_int(session_data.get("auto_archive_days"), 30),
             ),
             loops=LoopsConfig(
                 max_cycles_hard_cap=loops_data.get("max_cycles_hard_cap", 100),

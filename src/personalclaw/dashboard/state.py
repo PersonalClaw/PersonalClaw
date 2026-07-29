@@ -230,6 +230,9 @@ class _ChatSession:
         "folder_id",
         "pinned",
         "tags",
+        "lifecycle",
+        "last_activity_at",
+        "never_archive",
         "_pending_subagent_failures",
         "_recovery_retrigger_count",
         "_prompt_busy_retries",
@@ -372,6 +375,19 @@ class _ChatSession:
         self.folder_id: str = ""  # project folder assignment
         self.pinned: bool = False  # pinned to top of sidebar
         self.tags: list[str] = []  # assigned tag ids (see DashboardState._tags)
+        # Session LIFECYCLE (distinct from history JSONL rotation, which is storage):
+        # "active" | "archived". Archiving declutters the list without deleting or
+        # de-indexing anything — an archived session stays fully searchable, which is
+        # what makes it safe to auto-archive on a timer.
+        self.lifecycle: str = "active"
+        # Wall-clock of the last real turn, driving the auto-archive rule. 0.0 means
+        # "never recorded" (an old session, or one that has not been used since the
+        # field landed) and is treated as not-yet-stale rather than instantly archivable.
+        self.last_activity_at: float = 0.0
+        # User pin against the lifecycle: never auto-archive this one. Independent of
+        # `pinned` (sidebar ordering) on purpose — wanting a session at the top and
+        # wanting it exempt from cleanup are different intents.
+        self.never_archive: bool = False
         self._pending_subagent_failures: list[str] = []
         self._recovery_retrigger_count: int = 0
         self._prompt_busy_retries: int = 0
@@ -442,6 +458,23 @@ class _ChatSession:
             msg["meta"] = meta
         self.messages.append(msg)
         self.total_messages += 1
+        # Stamp real activity for the auto-archive rule. Only user/assistant turns
+        # count: `chunk`/`done` are stream bookkeeping that would keep a session
+        # "active" for its own streaming, and system notices are not the user using
+        # it. Recording here — the one canonical append — means every producer
+        # (web, channel, resume) is covered without touching any of them.
+        #
+        # `ts` is the live-vs-replay discriminator. A live turn passes no timestamp
+        # (it is "now"); history REPLAY passes each message's stored ts. Without this
+        # check, rehydrating an archived session would replay its transcript through
+        # here and un-archive it on load — so an archived chat would silently
+        # un-archive itself just by being opened, or by a restart restoring it.
+        if role in ("user", "assistant") and not ts:
+            self.last_activity_at = time.time()
+            # A real turn un-archives: using an archived chat is the clearest possible
+            # signal that it is active again.
+            if self.lifecycle == "archived":
+                self.lifecycle = "active"
         self._dirty = True
         self._pending.append(msg)
         self.event.set()
@@ -671,6 +704,9 @@ class _ChatSession:
             "folder_id": self.folder_id,
             "pinned": self.pinned,
             "tags": list(self.tags),
+            "lifecycle": self.lifecycle,
+            "last_activity_at": self.last_activity_at,
+            "never_archive": self.never_archive,
             "color_index": self.color_index,
             "color_theme": self.color_theme,
             "memory_mode": self.memory_mode,
