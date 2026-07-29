@@ -123,6 +123,43 @@ export interface DegradedSurface {
   backlog: number
   use_cases: string[]
 }
+/** One scheduled backup job's last run + whether it's due (DURABILITY-AND-SYNC §3). */
+export interface DurabilityJob {
+  last_run: number   // epoch seconds; 0 = never run
+  due_in_secs: number
+  due: boolean
+}
+export interface DurabilityStatus {
+  enabled: boolean
+  export: DurabilityJob
+  snapshot: DurabilityJob
+  drill: DurabilityJob
+}
+export interface DurabilitySnapshot {
+  name: string
+  taken_at: string
+  size: number
+  /** False = the CURRENT retention tiers would prune this one on the next pass. */
+  retained: boolean
+}
+export interface DurabilitySnapshots {
+  directory: string
+  snapshots: DurabilitySnapshot[]
+  would_prune: string[]
+  tiers: { daily: number; weekly: number; monthly: number }
+}
+export interface DurabilityJobResult {
+  job: string
+  ok: boolean
+  /** The REASON this job did no work, or `''` if it ran. Non-empty is not a failure —
+   *  usually a concurrent run held the single-flight lock, or there was nothing to do
+   *  (e.g. no snapshot to drill yet). It is a string, not a flag, so the reason can be
+   *  shown instead of a bare "skipped". */
+  skipped: string
+  detail: string
+  duration_secs: number
+  extra?: Record<string, unknown>
+}
 export interface DegradedReport {
   surfaces: DegradedSurface[]
   degraded: string[]
@@ -1358,6 +1395,11 @@ export const api = {
     ),
   // ── No-model degraded mode (PLATFORM-RESILIENCE §5) ──
   degraded: () => get<DegradedReport>('/api/resilience/degraded'),
+  // ── Scheduled backups (DURABILITY-AND-SYNC §3) ──
+  durabilityStatus: () => get<DurabilityStatus>('/api/durability/status'),
+  durabilitySnapshots: () => get<DurabilitySnapshots>('/api/durability/snapshots'),
+  durabilityRun: (job: 'export' | 'snapshot' | 'drill') =>
+    post<DurabilityJobResult>('/api/durability/run', { job }),
   // ── Confirm-gated fixes + surfacing simulator (PLATFORM-RESILIENCE §2/§3.1) ──
   doctorFixes: () => get<{ fixes: DoctorFix[] }>('/api/doctor/fixes'),
   doctorFixApply: (fixId: string) =>

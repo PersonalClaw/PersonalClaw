@@ -466,6 +466,16 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "resilience.remediation.max_cost_usd": {"type": "float", "min": 0.0, "max": 100.0},
     "resilience.remediation.idle_minutes_healthy": {"type": "int", "min": 1, "max": 1440},
     "resilience.remediation.tick_minutes_degraded": {"type": "int", "min": 1, "max": 1440},
+    # DURABILITY-AND-SYNC §3 — the scheduled-backup contract. Runtime-editable
+    # because these are the knobs a user reaches for after seeing what the schedule
+    # actually produced (the snapshot list shows keep-vs-prune before anything is
+    # deleted). Retention caps are bounded, not unbounded: 0 disables a tier, and the
+    # ceilings keep a typo from budgeting a decade of archives.
+    "durability.auto_backup": {"type": "bool"},
+    "durability.keep_daily": {"type": "int", "min": 0, "max": 365},
+    "durability.keep_weekly": {"type": "int", "min": 0, "max": 260},
+    "durability.keep_monthly": {"type": "int", "min": 0, "max": 120},
+    "durability.restore_drills": {"type": "bool"},
     "tools.projection_rules": {"type": "projection_rules"},
     # Context Economy §4 — background compression feature flags (runtime-editable).
     "tools.bg_compress_enabled": {"type": "bool"},
