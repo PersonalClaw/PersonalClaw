@@ -38,7 +38,62 @@ from personalclaw.sel import sel as _sel_fn
 
 logger = logging.getLogger(__name__)
 
-_SECRET = os.urandom(32)
+# The signing key is loaded LAZILY, not at import: this module is imported long before
+# PERSONALCLAW_HOME is necessarily settled (CLI parsing, test collection), and reading the key
+# at import time would bind it to whichever home happened to be current — the same class of bug
+# as the SEL singleton pinning its directory to the first caller's home.
+#
+# `None` means "not yet loaded". `_ephemeral_secret` is the deliberate opt-out for tests and
+# `--test-mode`, where persisting a key to a real home would be a side effect.
+_SECRET: bytes | None = None
+_EPHEMERAL_SECRET: bytes | None = None
+
+
+def _secret() -> bytes:
+    """The HMAC signing key — persistent across restarts (REMOTE-USER-AUTH S1).
+
+    This used to be `os.urandom(32)` at module scope, so **every gateway restart invalidated
+    every token**: on a local box you re-ran `personalclaw token`, and off-network you were
+    locked out entirely because minting a URL requires being on the machine.
+    """
+    global _SECRET
+    if _EPHEMERAL_SECRET is not None:
+        return _EPHEMERAL_SECRET
+    if _SECRET is None:
+        from personalclaw.dashboard.session_store import load_or_create_key
+
+        _SECRET = load_or_create_key()
+    return _SECRET
+
+
+def use_ephemeral_secret(value: bytes | None = None) -> None:
+    """Sign with a fresh in-memory key instead of the persisted one.
+
+    For tests and `--test-mode`, where writing a key into a real home would be a side effect.
+    Explicit rather than a swallowed failure, so nothing accidentally runs on an ephemeral key
+    and silently re-introduces the logged-out-on-restart bug.
+
+    Pass a key to use it; pass nothing to generate one. Call `use_persistent_secret()` to go
+    back to the on-disk key — deliberately a SEPARATE function, because overloading ``None``
+    to mean both "generate one for me" and "turn this off" is how the first version of this
+    got it backwards, enabling ephemeral mode when a test asked to disable it.
+    """
+    global _EPHEMERAL_SECRET, _SECRET
+    _EPHEMERAL_SECRET = value if value is not None else os.urandom(32)
+    _SECRET = None
+
+
+def use_persistent_secret() -> None:
+    """Go back to the on-disk signing key, dropping any ephemeral override."""
+    global _EPHEMERAL_SECRET, _SECRET
+    _EPHEMERAL_SECRET = None
+    _SECRET = None
+
+
+def reset_secret_cache() -> None:
+    """Drop the cached key so the next sign/verify re-reads it (rotation, tests)."""
+    global _SECRET
+    _SECRET = None
 
 
 class TokenStateManager:
@@ -74,17 +129,42 @@ class TokenStateManager:
     def is_nonce_valid(self, nonce: str) -> tuple[bool, str]:
         """Check if nonce is valid. Returns (valid, reason).
 
-        Deny-by-default: rejects if no nonces registered or nonce not in set.
-        Refreshes the nonce's eviction position on each successful check so
-        that actively-used sessions are not evicted by newer token grants.
+        Deny-by-default: rejects if the nonce is in neither the in-memory set nor the durable
+        store. Refreshes the nonce's eviction position on each successful check so that
+        actively-used sessions are not evicted by newer token grants.
+
+        **The durable fallback is what makes a persisted signing key useful** (S1). With the
+        key alone, a token minted before a restart would verify its signature and then be
+        rejected here as "no active sessions" — the user would still be logged out, just with
+        a more confusing reason. A signature check without a live session record is not
+        enough to authorize; a session record is the second half of the same fix.
         """
         with self._lock:
-            if not self._nonces:
-                return False, "no active sessions"
-            if nonce not in self._nonces:
-                return False, "token superseded"
+            if nonce in self._nonces:
+                self._nonces.move_to_end(nonce)
+                return True, ""
+
+        # Not in memory: consult the durable store before refusing. A hit means this process
+        # restarted (or never saw the mint), NOT that the session is invalid.
+        try:
+            from personalclaw.dashboard.session_store import load_sessions
+
+            stored = load_sessions()
+        except Exception:  # noqa: BLE001 — an unreadable store means "no session", fail closed
+            logger.debug("session store unreadable during nonce check", exc_info=True)
+            stored = {}
+        expiry = stored.get(nonce)
+        if expiry is None:
+            with self._lock:
+                return False, "no active sessions" if not self._nonces else "token superseded"
+        if expiry <= time.time():
+            return False, "session expired"
+        # Adopt it into memory so subsequent checks are lock-only, and so eviction ordering
+        # treats a restored session like any other active one.
+        with self._lock:
+            self._nonces[nonce] = expiry
             self._nonces.move_to_end(nonce)
-            return True, ""
+        return True, ""
 
     def bind_ip(self, token: str, ip: str, session_exp: float) -> None:
         """Bind a token to a client IP address."""
@@ -165,6 +245,19 @@ LINK_WINDOW_SECS = 24 * 3600
 # The cookie is re-issued on every page load via the session renewal path so
 # the clock only matters for completely idle browsers.
 MAX_SESSION_TTL_SECS = 365 * 24 * 3600  # 1 year
+
+# Default BROWSER session lifetime (owner ruling, REMOTE-USER-AUTH S1).
+#
+# Sessions used to be minted at the 1-year cap because they were ephemeral in practice — a
+# restart wiped them, so the number never really applied. Now that they survive restarts, a
+# 1-year default would mean a browser cookie that outlives the reason it was issued, and a
+# stolen one stays good for a year. 30 days is long enough that a daily-driven instance never
+# prompts you, short enough that an abandoned session ages out.
+#
+# The 1-year cap REMAINS reachable, but only when a caller asks for it explicitly — that is
+# the CLI/automation token case (`personalclaw token`), where re-minting is manual and the
+# user chose the lifetime.
+DEFAULT_BROWSER_SESSION_TTL_SECS = 30 * 24 * 3600  # 30 days
 
 _403_HTML = (
     "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><meta name='viewport' "
@@ -258,7 +351,7 @@ def _b64url_decode(s: str) -> bytes:
 
 
 def _sign(payload: bytes) -> str:
-    return _b64url_encode(hmac.new(_SECRET, payload, hashlib.sha256).digest())
+    return _b64url_encode(hmac.new(_secret(), payload, hashlib.sha256).digest())
 
 
 def generate_token(user_id: str, ttl_seconds: int = 3600, *, app: str = "") -> str:
@@ -280,6 +373,19 @@ def generate_token(user_id: str, ttl_seconds: int = 3600, *, app: str = "") -> s
     session_ttl = min(ttl_seconds, MAX_SESSION_TTL_SECS)
 
     evicted = _state.register_nonce(nonce, now + session_ttl)
+    # Persist the session so it survives a restart (S1). Best-effort: a store that cannot be
+    # written must not fail the mint — the token still works for this process's lifetime,
+    # which is strictly better than refusing to issue one at all.
+    try:
+        from personalclaw.dashboard.session_store import forget_session, remember_session
+
+        remember_session(nonce, now + session_ttl)
+        if evicted:
+            # Keep the durable store in step with the in-memory eviction, or the file would
+            # accumulate sessions the running process has already forgotten.
+            forget_session(evicted)
+    except Exception:  # noqa: BLE001
+        logger.debug("could not persist the minted session", exc_info=True)
     if evicted:
         _sel_fn().log_api_access(
             caller=user_id,
@@ -396,6 +502,14 @@ def revoke_all_sessions() -> None:
     """Revoke all active dashboard sessions (also used for test isolation).
 
     Emits a SEL audit event before clearing state so the revocation is recorded.
+
+    **Clears the DURABLE store too, not just memory** (S1). This is the security half of
+    persisting sessions: with only the in-memory clear, a revoked token would be rejected
+    until the next restart and then accepted again, because `is_nonce_valid` would find its
+    nonce still recorded on disk. "Revoke" that un-revokes itself on reboot is worse than no
+    revoke at all — you would believe you had cut access off. Caught by
+    `test_token_rejected_when_no_nonces_registered`, which is exactly the assertion that
+    should notice.
     """
     _sel_fn().log_api_access(
         caller="system",
@@ -405,6 +519,12 @@ def revoke_all_sessions() -> None:
         resources="action=revoke_all",
     )
     _state.clear_all()
+    try:
+        from personalclaw.dashboard.session_store import clear_sessions
+
+        clear_sessions()
+    except Exception:  # noqa: BLE001
+        logger.warning("could not clear the durable session store during revoke", exc_info=True)
 
 
 def parse_duration(s: str) -> int | None:
