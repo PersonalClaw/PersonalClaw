@@ -43,6 +43,7 @@ ALLOWED_KINDS = {
     # it round-trips as text and needs no binary body.
     "docx",
     "xlsx",
+    "pptx",
     "pdf",
     "csv",
     # `video_generate` has always passed kind="video", but the kind was in neither set,
@@ -58,7 +59,7 @@ ALLOWED_EVENT_TYPES = {"created", "edited", "iterated", "referenced", "reverted"
 # endpoint) rather than text. For these the ``content`` field carries a reference
 # (the raw URL) — never the bytes themselves (no base64-in-content: it inflates
 # context + payload). A kind added here MUST also be in ALLOWED_KINDS.
-BINARY_KINDS = {"image", "video", "docx", "xlsx", "pdf"}
+BINARY_KINDS = {"image", "video", "docx", "xlsx", "pptx", "pdf"}
 
 # Mapping from an image MIME type to the on-disk file extension. The default
 # (png) covers gpt-image / FAL output; svg is already a TEXT kind, so it's absent.

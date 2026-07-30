@@ -331,6 +331,10 @@ TOOL_META: dict[str, dict[str, Any]] = {
         "error_codes": [],
         "examples": [
             {
+                "summary": "Export an existing knowledge item as a Word document",
+                "args": {"name": "Saved research", "source": "<knowledge item id>"},
+            },
+            {
                 "summary": "Turn markdown into a downloadable Word document",
                 "args": {
                     "name": "Q3 Review",
@@ -348,6 +352,19 @@ TOOL_META: dict[str, dict[str, Any]] = {
                 "args": {
                     "name": "Regional sales",
                     "sheets": {"Sales": [["Region", "Q1"], ["EMEA", 120]]},
+                },
+            },
+        ],
+    },
+    "deck_create": {
+        "response_type": "artifact.detail",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Turn a markdown outline into a PowerPoint deck",
+                "args": {
+                    "name": "Q3 Strategy",
+                    "markdown": "# Q3 Strategy\n\n## Where we are\n\n- Revenue up 18%\n",
                 },
             },
         ],

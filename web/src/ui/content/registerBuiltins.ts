@@ -7,7 +7,7 @@
  *  Babel, Mermaid, AntV all dynamic-import already). */
 import { lazy } from 'react'
 import {
-  Box, Globe, Hash, Image, Braces, Code2, FileText, Table, FileCode, BarChart3, ScrollText, Film, type LucideIcon,
+  Box, Globe, Hash, Image, Braces, Code2, FileText, Table, FileCode, BarChart3, ScrollText, Film, Presentation, type LucideIcon,
 } from 'lucide-react'
 import { registerContentType, type PreviewProps } from './contentTypes'
 import type { ComponentType } from 'react'
@@ -202,6 +202,15 @@ export function registerBuiltinContentTypes(): void {
     id: 'xlsx', label: 'Spreadsheet', icon: Table, tone: tone('#1e7145'),
     kinds: ['xlsx'], exts: ['xlsx', 'xls'],
     mimes: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+    preview: { render: OfficeDocPreview },
+    commentable: false,
+    binary: true,
+  })
+
+  registerContentType({
+    id: 'pptx', label: 'Deck', icon: Presentation, tone: tone('#d24726'),
+    kinds: ['pptx'], exts: ['pptx'],
+    mimes: ['application/vnd.openxmlformats-officedocument.presentationml.presentation'],
     preview: { render: OfficeDocPreview },
     commentable: false,
     binary: true,

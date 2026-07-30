@@ -73,6 +73,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   tasks**. Someone else's task can never quietly become something your assistant picks
   up. Dependencies are still honored across everyone, so a task of yours blocked by a
   colleague's unfinished work is correctly *not* ready rather than falsely startable.
+- **Decks and PDFs too — and anything already saved can become a document.**
+  **deck_create** turns a markdown outline into a real PowerPoint deck: each `##` is a
+  slide, the lines under it become bullets, and `<!-- notes: ... -->` becomes that slide's
+  speaker notes. PDF generation works on every install rather than depending on whatever
+  converter happens to be on the machine.
+
+  And the library now works in both directions: point `document_create` at a saved
+  knowledge item or a note you already have, and it comes back out as a Word document you
+  can send. Same generator, so an exported document is no different from a freshly
+  written one.
+
 - **It can make you a Word document or a spreadsheet you can actually send.**
   PersonalClaw could read .docx, .xlsx, .pptx and .pdf but could not produce a single
   one — everything it generated stayed inside the app. Ask for a document now and you get
