@@ -134,8 +134,16 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
       if (draft.summary !== (full.summary ?? '')) fields.summary = draft.summary
       if (draft.item_type !== (full.item_type ?? full.type)) { fields.type = draft.item_type; fields.item_type = draft.item_type }
       if ((draft.item_type === 'gist') && draft.gist_language !== (full.gist_language ?? '')) fields.gist_language = draft.gist_language
-      // Tags: compare as ordered lists.
-      if (JSON.stringify(draft.tags) !== JSON.stringify(full.tags ?? [])) fields.tags = draft.tags
+      // Tags: compare as SETS, not ordered lists. Tags are stored as rows and read back
+      // in name order, so the order the user typed them in is not preserved — an ordered
+      // comparison would see every save as a change and fire a pointless PATCH (which,
+      // because a tag write re-syncs the search index, is not free).
+      const sameTags = (a: string[], b: string[]) => {
+        if (a.length !== b.length) return false
+        const sortedB = [...b].sort()
+        return [...a].sort().every((t, i) => t === sortedB[i])
+      }
+      if (!sameTags(draft.tags ?? [], full.tags ?? [])) fields.tags = draft.tags
       if (Object.keys(fields).length === 0) { setEditing(false); return }
       // Re-ingest control: when off, tell the backend NOT to re-run enrichment even
       // though content changed (a quick fix that shouldn't burn a model pass).

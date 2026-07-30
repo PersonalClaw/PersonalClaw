@@ -423,3 +423,271 @@ def test_bulk_read_state_does_not_reorder_a_recency_sorted_library(store):
     store.bulk_apply("read_state", [a], state="read")
 
     assert store.get_item(a)["updated_at"] == before
+
+
+# ── tag taxonomy (S2, T2.2) ───────────────────────────────────────────────────
+
+
+def _tag_ids(store) -> dict:
+    return {t["name"]: t["id"] for t in store.list_tags()}
+
+
+def test_tags_round_trip_as_a_plain_list_of_strings(store):
+    """Storage moved to rows; the API shape did NOT. Every consumer — the agent tool
+    schemas, the HTTP layer, the whole frontend — still gets `list[str]`."""
+    iid = store.create_typed_item(item_type="note", title="N", content="c", tags=["b", "a"])
+    # Name-ordered, because rows have no insertion order to preserve.
+    assert store.get_item(iid)["tags"] == ["a", "b"]
+
+
+def test_write_paths_drop_blanks_and_duplicates(store):
+    iid = store.create_typed_item(
+        item_type="note", title="N", content="c", tags=["x", "  ", "x", "", "y"]
+    )
+    assert store.get_item(iid)["tags"] == ["x", "y"]
+
+
+def test_update_replaces_tags_rather_than_merging(store):
+    iid = store.create_typed_item(item_type="note", title="N", content="c", tags=["a", "b"])
+    store.update_item(iid, tags=["z"])
+    assert store.get_item(iid)["tags"] == ["z"]
+
+
+def test_usage_counts_exclude_archived_items(store):
+    """Counts come from the join so they can respect the live-library scope. A stored
+    counter could not: archiving an item would have to decrement every one of its tags."""
+    live = store.create_typed_item(item_type="note", title="L", content="c", tags=["shared"])
+    gone = store.create_typed_item(item_type="note", title="G", content="c", tags=["shared"])
+    assert {t["name"]: t["usage_count"] for t in store.list_tags()}["shared"] == 2
+
+    store.update_item(gone, is_archived=1)
+
+    assert {t["name"]: t["usage_count"] for t in store.list_tags()}["shared"] == 1
+    assert store.get_item(live)["tags"] == ["shared"]
+
+
+def test_hierarchy_reparents_and_reports_the_parent_name(store):
+    store.create_typed_item(item_type="note", title="N", content="c", tags=["rust", "async"])
+    ids = _tag_ids(store)
+    assert store.set_tag_parent(ids["async"], ids["rust"]) is True
+    by_name = {t["name"]: t for t in store.list_tags()}
+    assert by_name["async"]["parent_name"] == "rust"
+    assert by_name["rust"]["parent_id"] is None  # a root
+
+
+def test_hierarchy_refuses_cycles(store):
+    """The chat-folders hierarchy this mirrors has no cycle guard, so A->B->A is
+    constructible there. A cycle here would hang any recursive walk of the taxonomy."""
+    store.create_typed_item(item_type="note", title="N", content="c", tags=["a", "b", "c"])
+    ids = _tag_ids(store)
+    with pytest.raises(ValueError, match="tag_cycle"):
+        store.set_tag_parent(ids["a"], ids["a"])  # self-parent
+    store.set_tag_parent(ids["b"], ids["a"])
+    with pytest.raises(ValueError, match="tag_cycle"):
+        store.set_tag_parent(ids["a"], ids["b"])  # would close a 2-cycle
+    store.set_tag_parent(ids["c"], ids["b"])
+    with pytest.raises(ValueError, match="tag_cycle"):
+        store.set_tag_parent(ids["a"], ids["c"])  # would close a 3-cycle
+
+
+def test_rename_is_one_row_and_refuses_a_collision(store):
+    iid = store.create_typed_item(item_type="note", title="N", content="c", tags=["old", "keep"])
+    ids = _tag_ids(store)
+    assert store.rename_tag(ids["old"], "new") is True
+    assert store.get_item(iid)["tags"] == ["keep", "new"]
+    # Renaming ONTO an existing name is a merge, which is a different, lossier
+    # operation — refuse rather than silently merging.
+    with pytest.raises(ValueError, match="tag_name_taken"):
+        store.rename_tag(_tag_ids(store)["new"], "keep")
+
+
+def test_rename_stops_the_old_term_matching_in_search(store):
+    """The silent-rot path. A plain `DELETE FROM items_fts WHERE rowid = ?` is a NO-OP
+    on an external-content FTS5 table (measured), so a naive resync leaves the renamed
+    tag findable under BOTH names forever."""
+    store.create_typed_item(item_type="note", title="N", content="body", tags=["rust"])
+    assert [h["id"] for h in store.search_items_fts("rust", limit=5)]
+
+    store.rename_tag(_tag_ids(store)["rust"], "rustlang")
+
+    assert store.search_items_fts("rust", limit=5) == [], "stale term still indexed"
+    assert [h["id"] for h in store.search_items_fts("rustlang", limit=5)]
+
+
+def test_merge_moves_memberships_and_clears_the_source_term(store):
+    a = store.create_typed_item(item_type="note", title="A", content="c", tags=["src"])
+    b = store.create_typed_item(item_type="note", title="B", content="c", tags=["src", "dst"])
+    ids = _tag_ids(store)
+
+    result = store.merge_tags(ids["src"], ids["dst"])
+
+    assert result == {"moved": 1, "already": 1}
+    assert store.get_item(a)["tags"] == ["dst"]
+    assert store.get_item(b)["tags"] == ["dst"]
+    assert "src" not in {t["name"] for t in store.list_tags()}
+    assert store.search_items_fts("src", limit=5) == []
+
+
+def test_merge_keeps_the_more_human_provenance(store):
+    """If either side was user-authored the merged membership is, so a merge can never
+    downgrade a user's tag into one enrichment may overwrite."""
+    iid = store.create_typed_item(item_type="note", title="N", content="c", tags=["mine"])
+    store.update_item(iid, tags=["mine", "ai-tag"], tag_source="ai")
+    ids = _tag_ids(store)
+    # Re-assert one as the user's, then merge the AI one into it.
+    store.update_item(iid, tags=["mine", "ai-tag"])  # default source='user'
+    store.merge_tags(ids["ai-tag"], ids["mine"])
+    assert store.tags_are_all_ai_authored(iid) is False
+
+
+def test_merge_reparents_children_of_the_source(store):
+    store.create_typed_item(item_type="note", title="N", content="c", tags=["src", "dst", "kid"])
+    ids = _tag_ids(store)
+    store.set_tag_parent(ids["kid"], ids["src"])
+
+    store.merge_tags(ids["src"], ids["dst"])
+
+    by_name = {t["name"]: t for t in store.list_tags()}
+    assert by_name["kid"]["parent_name"] == "dst", "a child must follow, not be orphaned"
+
+
+def test_delete_reparents_children_to_root_rather_than_cascading(store):
+    """Deleting a parent must not silently destroy the branch beneath it."""
+    store.create_typed_item(item_type="note", title="N", content="c", tags=["parent", "child"])
+    ids = _tag_ids(store)
+    store.set_tag_parent(ids["child"], ids["parent"])
+
+    assert store.delete_tag(ids["parent"]) is True
+
+    remaining = {t["name"]: t for t in store.list_tags()}
+    assert "child" in remaining
+    assert remaining["child"]["parent_id"] is None
+
+
+def test_delete_removes_the_tag_from_items_and_from_search(store):
+    iid = store.create_typed_item(item_type="note", title="Alpha", content="c", tags=["doomed"])
+    store.delete_tag(_tag_ids(store)["doomed"])
+    assert store.get_item(iid)["tags"] == []
+    assert store.search_items_fts("doomed", limit=5) == []
+    # The item itself survives and stays findable by its other text.
+    assert [h["id"] for h in store.search_items_fts("Alpha", limit=5)] == [iid]
+
+
+def test_the_fts_index_survives_a_rebuild(store):
+    """`rebuild` against an external-content table whose source cannot produce every
+    column WIPES THE INDEX AND REPORTS SUCCESS (measured; integrity-check still says
+    ok afterwards). The FTS table sources from a view precisely so this stays safe."""
+    iid = store.create_typed_item(item_type="note", title="Alpha", content="body", tags=["rust"])
+    store.db.execute("INSERT INTO items_fts (items_fts) VALUES ('rebuild')")
+    store.db.commit()
+    assert [h["id"] for h in store.search_items_fts("rust", limit=5)] == [iid]
+    assert [h["id"] for h in store.search_items_fts("Alpha", limit=5)] == [iid]
+
+
+def test_non_ascii_tags_are_searchable(store):
+    """A pre-existing bug this migration fixes: `json.dumps` defaults to
+    ensure_ascii=True, so a tag like 日本語 was stored — and indexed — as escape
+    sequences, making it unfindable. Measured 0 matches before, 1 after."""
+    iid = store.create_typed_item(item_type="note", title="N", content="c", tags=["日本語"])
+    assert store.get_item(iid)["tags"] == ["日本語"]
+    assert [h["id"] for h in store.search_items_fts("日本語", limit=5)] == [iid]
+
+
+def test_the_tag_migration_survives_every_hostile_value(tmp_path):
+    """The unrecoverable step, so it gets the nastiest fixture in the suite.
+
+    Opening the store moves `items.tags` (JSON) into rows and DROPS the column. Once
+    dropped the source is gone — there is no second attempt and, pre-1.0, no migration
+    safety net. So this pins every value shape the column is known to hold:
+
+      * duplicates          — a composite PK collapses them; the count must stay honest
+      * blank / whitespace  — already invisible (`all_tags` filtered falsy names)
+      * non-ASCII           — stored as \\uXXXX escapes by json.dumps; must arrive intact
+      * MALFORMED JSON      — genuinely exists, because `_serialize_item` has always
+                              swallowed JSONDecodeError. SQL `json_each` RAISES on these,
+                              which is exactly why the migration parses per-row in Python
+      * NULL                — pre-dates the `DEFAULT '[]'`
+      * AI-authored         — provenance is inferred once, here, from stored insights
+    """
+    dbp = tmp_path / "legacy.db"
+    con = sqlite3.connect(dbp)
+    con.executescript("""
+        CREATE TABLE items (id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL,
+          item_type TEXT NOT NULL, summary TEXT, tags TEXT DEFAULT '[]', embedding BLOB,
+          status TEXT DEFAULT 'active', insights TEXT DEFAULT '{}',
+          is_archived INTEGER DEFAULT 0,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+        CREATE VIRTUAL TABLE items_fts USING fts5(title, content, tags,
+          content=items, content_rowid=rowid);
+        """)
+    rows = [
+        ("dup", '["rust", "systems", "rust"]', "{}"),
+        ("blank", '["", "  ", "kept"]', "{}"),
+        ("unicode", '["\\u65e5\\u672c\\u8a9e"]', "{}"),
+        ("broken", "not json at all", "{}"),
+        ("nulled", None, "{}"),
+        ("aiauthored", '["caching", "redis"]', '{"topics": ["redis", "caching"]}'),
+    ]
+    for iid, tags, insights in rows:
+        con.execute(
+            "INSERT INTO items (id,title,content,item_type,tags,insights,created_at,updated_at) "
+            "VALUES (?,?,?,'note',?,?,'2026-01-01','2026-01-01')",
+            (iid, f"Title {iid}", f"body {iid}", tags, insights),
+        )
+    con.commit()
+    con.close()
+
+    st = KnowledgeStore(dbp)
+
+    # The column is gone and the tables exist.
+    assert "tags" not in {r[1] for r in st.db.execute("PRAGMA table_info(items)").fetchall()}
+    tables = {
+        r[0] for r in st.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }
+    assert {"tags", "item_tags"} <= tables
+
+    assert st.get_item("dup")["tags"] == ["rust", "systems"]  # duplicate collapsed
+    assert st.get_item("blank")["tags"] == ["kept"]  # blanks dropped
+    assert st.get_item("unicode")["tags"] == ["日本語"]  # escapes decoded
+    assert st.get_item("broken")["tags"] == ["not json at all"]  # salvaged, not lost
+    assert st.get_item("nulled")["tags"] == []
+    assert st.get_item("aiauthored")["tags"] == ["caching", "redis"]
+
+    # Provenance: only the item whose insights.topics match its tags is AI-authored, so
+    # only that one may be refreshed by a later enrichment pass.
+    assert st.tags_are_all_ai_authored("aiauthored") is True
+    assert st.tags_are_all_ai_authored("dup") is False
+
+    # Search works against the migrated index — including the term that was previously
+    # unfindable because json.dumps had escaped it.
+    assert [h["id"] for h in st.search_items_fts("rust", limit=5)] == ["dup"]
+    assert [h["id"] for h in st.search_items_fts("日本語", limit=5)] == ["unicode"]
+
+
+def test_reopening_a_migrated_db_is_idempotent(tmp_path):
+    """The guard is `"tags" in cols` — there is no schema version to gate on (the
+    store's own `IF NOT EXISTS` discipline). Re-opening must not double-insert or
+    re-run the drop."""
+    dbp = tmp_path / "twice.db"
+    con = sqlite3.connect(dbp)
+    con.executescript("""
+        CREATE TABLE items (id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL,
+          item_type TEXT NOT NULL, summary TEXT, tags TEXT DEFAULT '[]', embedding BLOB,
+          status TEXT DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+        CREATE VIRTUAL TABLE items_fts USING fts5(title, content, tags,
+          content=items, content_rowid=rowid);
+        INSERT INTO items VALUES
+          ('i1','N','body','note',NULL,'["a","b"]',NULL,'active','2026-01-01','2026-01-01');
+        """)
+    con.commit()
+    con.close()
+
+    first = KnowledgeStore(dbp)
+    before = first.get_item("i1")["tags"]
+    counts = first.db.execute("SELECT COUNT(*) FROM item_tags").fetchone()[0]
+    first.close()
+
+    second = KnowledgeStore(dbp)
+
+    assert second.get_item("i1")["tags"] == before
+    assert second.db.execute("SELECT COUNT(*) FROM item_tags").fetchone()[0] == counts

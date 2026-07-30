@@ -1,11 +1,12 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import { BookOpen, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers } from 'lucide-react'
+import { BookOpen, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Tag as TagIcon } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { Button } from '../../ui/Button'
 import { EmptyState, ListRow, ListSkeleton } from '../../ui/ListScaffold'
 import { Checkbox } from '../../ui/forms'
+import { TagManager } from './TagManager'
 import { SidePanel } from '../../ui/SidePanel'
 import { ListControls } from '../../ui/ListControls'
 import { IconButton } from '../../ui/IconButton'
@@ -20,7 +21,7 @@ import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { confirm, promptInput } from '../../ui/dialog'
 
-type View = 'library' | 'graph' | 'intents'
+type View = 'library' | 'graph' | 'intents' | 'tags'
 
 function StatChip({ icon: Icon, label, value }: { icon: typeof Database; label: string; value: number | string }) {
   return (
@@ -366,7 +367,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
           left={<span data-type="title-l" className="text-on-surface">Knowledge</span>}
           right={
             <div className="flex items-center gap-s">
-              <Segmented options={[{ key: 'library', label: 'Library', icon: Library }, { key: 'graph', label: 'Graph', icon: Network }, { key: 'intents', label: 'Intents', icon: Target }]} value={view} onChange={(v) => setView(v as View)} />
+              <Segmented options={[{ key: 'library', label: 'Library', icon: Library }, { key: 'graph', label: 'Graph', icon: Network }, { key: 'intents', label: 'Intents', icon: Target }, { key: 'tags', label: 'Tags', icon: TagIcon }]} value={view} onChange={(v) => setView(v as View)} />
               {view === 'library' && (items?.length ?? 0) > 0 && (
                 <IconButton icon={Sparkles} size={40}
                   label="Regenerate intelligence (items missing insights)"
@@ -437,6 +438,8 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
         {items === null ? (itemsLoading ? <ListSkeleton /> : null) : empty ? (
               <EmptyState icon={BookOpen} title="Knowledge base is empty" hint="Add notes, code gists, bookmarks, documents, images, audio, and video. Content is extracted, entities surfaced, and everything indexed for agents to retrieve." action={{ label: 'Add knowledge', onClick: onCreate, icon: Plus }} />
+            ) : view === 'tags' ? (
+              <TagManager onChanged={load} />
             ) : view === 'intents' ? (
               <IntentsView selectedId={selectedIntent?.id ?? null} onSelect={setSelectedIntent} reloadKey={intentsReloadKey} />
             ) : (

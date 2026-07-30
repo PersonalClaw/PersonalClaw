@@ -233,7 +233,11 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/knowledge/regenerate-intelligence` — - re-run the full ingestion
 - `GET /api/knowledge/search-for-context` — _(no summary)_
 - `GET /api/knowledge/stats` — _(no summary)_
+- `GET /api/knowledge/tag-tree` — every tag with its parent and live usage count.
 - `GET /api/knowledge/tags` — - distinct tags (frequency-ordered) for autocomplete.
+- `DELETE /api/knowledge/tags/{id}` — remove a tag from the taxonomy and every item.
+- `PATCH /api/knowledge/tags/{id}` — rename, or re-parent via `parent_id`.
+- `POST /api/knowledge/tags/{id}/merge` — {into} — fold this tag into another.
 - `GET /api/legibility/discover` — the curated Discover tips still worth showing.
 - `POST /api/legibility/discover/dismiss` — hide a Discover tip forever.
 - `DELETE /api/lessons` — remove lessons by substring.

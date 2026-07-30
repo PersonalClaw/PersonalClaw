@@ -345,6 +345,16 @@ export interface ChatSessionSummary {
 /** A knowledge shelf. `manual` holds an explicit membership list; `smart` stores a
  *  query re-run on read, so it stays current with no backfill. `item_count` is null
  *  for a smart shelf — counting it would mean a search per shelf on every rail render. */
+/** One tag in the taxonomy: id, parent, and a LIVE usage count (computed from the
+ *  join, scoped to the active non-archived library — so it agrees with the flat
+ *  `knowledgeTags()` autocomplete list and with the corpus overview). */
+export interface KnowledgeTag {
+  id: number
+  name: string
+  parent_id: number | null
+  parent_name: string | null
+  usage_count: number
+}
 /** Curation ops the bulk endpoint accepts. `delete` is deliberately not one of them:
  *  every op here is reversible, and an irreversible action beside them would be one
  *  mis-click from data loss (the same exclusion the chat bulk endpoint makes). */
@@ -2155,6 +2165,20 @@ export const api = {
   // rather than treating a partial success as a failure.
   knowledgeBulk: (op: KnowledgeBulkOp, itemIds: string[], args?: Record<string, unknown>) =>
     post<KnowledgeBulkResult>('/api/knowledge/bulk', { op, item_ids: itemIds, ...(args ?? {}) }),
+  // ── Tag taxonomy (KNOWLEDGE-LIBRARY S2, T2.2) ──
+  // Distinct from knowledgeTags() above, which stays a flat frequency-ordered string
+  // list for ChipInput autocomplete. Every mutation returns the WHOLE tree so the
+  // management surface never has to guess what a rename/merge/delete did to parents.
+  knowledgeTagTree: () =>
+    get<{ tags: KnowledgeTag[] }>('/api/knowledge/tag-tree').then((d) => d.tags),
+  renameKnowledgeTag: (id: number, body: { name?: string; parent_id?: number | null }) =>
+    patch<{ ok: boolean; tags: KnowledgeTag[] }>(`/api/knowledge/tags/${id}`, body),
+  mergeKnowledgeTag: (id: number, into: number) =>
+    post<{ ok: boolean; moved: number; already: number; tags: KnowledgeTag[] }>(
+      `/api/knowledge/tags/${id}/merge`, { into }),
+  // `del` is void-typed repo-wide, so the caller re-reads the tree rather than this
+  // one method inventing a generic DELETE.
+  deleteKnowledgeTag: (id: number) => del(`/api/knowledge/tags/${id}`),
   knowledgeEmbeddingStatus: () => get<{ enabled: boolean; available?: boolean; model?: string; total_items?: number; embedded_items?: number; stale_items?: number }>('/api/knowledge/embedding/status'),
   generateKnowledgeEmbeddings: (rebuild = false) => post<{ ok?: boolean; embedded?: number }>('/api/knowledge/embedding/generate', { rebuild }),
   // Every uploaded file → ONE logical-document item run through its node-graph.
