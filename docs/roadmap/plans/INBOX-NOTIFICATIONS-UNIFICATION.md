@@ -97,11 +97,14 @@ Every one of the ~10 `notify()` emitters passes a registered `(source, kind)`. T
 ```
 Corrupt/missing → registry defaults + warn (**fail-open**, §2.7). Guarded PUTs beside `providers/entity_routes.py` patterns.
 
-### C3 — Evaluation (inside `notify()`, BEHIND gate `inbox_unification`; gate OFF = byte-identical legacy path)
+### C3 — Evaluation (inside `notify()` — THE delivery path; no gate, per *Change discipline*)
+
+The equivalence the dropped gate would have proven is instead a **regression test on default
+behavior**: with no `notification_rules.json` present, every registered kind must deliver
+exactly as it does today.
 
 ```
 notify(kind_or_(source,kind), title, body, meta):
-  if not gate_enabled("inbox_unification"): <legacy path, unchanged>; return
   if not global_gate_allows(severity): drop(debug); return           # existing min_sev/quiet/mute
   rule = resolve_rule(source, kind)                                    # registry default if unset
   if conditions_match(rule, title, body): rule = escalate(rule)       # keyword/mention → immediate
@@ -135,7 +138,7 @@ def emit_attention_item(*, source: str, kind: str, title: str, body: str,
 
 ### Integration points
 - **Called by:** every `notify()` emitter (~10 sites, T1.2 migrates them to typed kinds); loop watchdog + gateway autopause → `emit_attention_item(kind="needs_input")`; skills `enqueue()` → `emit_attention_item(kind="proposal")` (T4.1); channel trust (plan 40) → `kind="agent_request"`; LEARNING-FLYWHEEL queue registers as `kind="proposal"`.
-- **Calls:** `DashboardState.notify` (unchanged choke point, §3.4), `gate_enabled`, `resolve_kind`, `ChannelDelivery.deliver_notification` (channel_dm target), `skills/proposals.accept/reject` (T4.1), plan-31 migration framework.
+- **Calls:** `DashboardState.notify` (unchanged choke point, §3.4), `resolve_kind`, `ChannelDelivery.deliver_notification` (channel_dm target), `skills/proposals.accept/reject` (T4.1). (No `gate_enabled`, no migration framework — see *Change discipline*.)
 - **Consumed by:** 44 (push target), 45 (native target), 46 (proposal/attribution), 21 (digest is its ambient slice), 40 (channel_dm + agent_request).
 - **Storage owned:** `notification_rules.json`, `digest_queue.jsonl`; **migrates** `inbox.json` alert fields (migration `m_*_inbox_alert_fields_to_rules`) and seeds proposal items (`m_*_pending_skill_proposals_to_inbox`).
 - **Gate:** `inbox_unification` (class B).
@@ -272,3 +275,74 @@ Extends **Session 4** (which already owns the proposal fold-in): T4.1 becomes th
 | T7.1 | C6 Proposal dataclass + apply dispatcher (four apply cases through existing dispatchers; typed failure keeps item PENDING); T4.1's skill path re-expressed as `skill_promotion` | `inbox.py` or new `proposals_contract.py`, inbox handlers, tests | each apply case round-trips on fixtures; a failing apply surfaces the error on the item; skills accept path behavior unchanged |
 | T7.2 | App emission: `permissions.proposals` manifest field + kind registration at enable-time + `POST /api/inbox/proposals` (scoped-token identity, 403 on undeclared kind/foreign callback) | `apps/manifest.py`, `apps/permissions.py`, inbox handlers | fixture app posts a proposal that renders + applies via its callback; undeclared kind rejected; SEL entry per app emission |
 | T7.3 | Proposals lens + same-(provenance,kind) batch-approve with per-item outcomes; edit-then-approve for `editable` payloads | `web/src/pages/inbox/` | batch across mixed kinds impossible in the UI; edited payload is what apply receives; per-item results visible |
+
+---
+
+## Execution log
+
+- 2026-07-30 — **DONE (Session 1: T1.1–T1.4).** Typed kind registry
+  (`notification_kinds.py`, 20 pairs), all 26 emitters migrated to named constants, rules
+  store + evaluation (`notification_rules.py`) wired into `notify()` as THE delivery path,
+  guarded `GET/PUT /api/notifications/rules`, and the digest queue writer.
+
+  **DEVIATION (methodology re-scope, not premise mismatch).** The session's tasks were
+  written in contributor form: T1.3 asked for evaluation "behind the gate (gate OFF → exact
+  legacy path, byte-identical notes)", T1.4 for a `lifecycle/gates.py` registration, and S5's
+  T5.3 for a gate flip + legacy-branch deletion. `src/personalclaw/lifecycle/` does not
+  exist, and per the owner's standing ruling (workspace `AGENTS.md` "You are working as the
+  OWNER", `CONTRIBUTING.md#breaking-changes`) maintainer class-B work is a clean break under
+  the pre-1.0 banner. So: **no gate, no dual path, no cleanup session** — the rules engine
+  replaced the ad-hoc branch in one change. The equivalence the gate-OFF task would have
+  proven is now a regression test on DEFAULT behavior
+  (`test_no_rules_file_delivers_exactly_like_before`). The plan header, the
+  Lifecycle-artifacts section (now *Change discipline*), C3, and five task rows were
+  rewritten to match; the correction was also traced to its source in LIFECYCLE-DOCTRINE and
+  fixed across ROADMAP/CLAUDE/INTEGRATION-ARCHITECTURE/EXECUTION-PROTOCOL.
+
+  **T1.1 inventory (26 call sites, 11 flat kinds).** Built by AST walk, not grep — **two
+  sites pass a DYNAMIC kind** a grep inventory misses (`loop/watchdog.py:159` via
+  `_NOTIFY_EVENTS`, `action_providers/notify_provider.py:59` via config) and a **third**
+  (`watchdog.py:222`) passes a literal `"info"` that my first pass mis-bucketed as dynamic —
+  found by the T1.2 drift test. Sites: gateway ×15 (cron ×5, heartbeat ×5, subagent ×4,
+  warning), watchdog ×2, feedback, inbox, denylist, hooks, messaging, app_routes,
+  send_message, notify_provider.
+
+  **Three behavior changes caught by the new tests before they shipped** — all the same
+  class, *a refactor silently changing what reaches the user with no setting they touched*:
+  (1) `badge` defaults on heartbeat / loop-progress / signal-retirement would have STOPPED
+  delivering three kinds (read as "notifications broke"); (2) ranking cron **failures** as
+  warning would have STARTED delivering them to anyone with `min_severity: warning`, since
+  the old gate ranked that flat string info; (3) same for `app.route.drift`. Every
+  `default_mode` is now `immediate` and every reachable pair keeps its historical severity,
+  both pinned by tests (`test_every_default_mode_is_immediate`,
+  `test_reachable_pairs_preserve_their_old_severity_exactly`). `badge` is opt-in per row.
+
+  **Conditions preserve the surface they generalize.** Keyword/name-mention semantics are
+  lifted verbatim from `inbox.evaluate_alert` (case-insensitive substring; whole-word name
+  parts ≥3 chars), and `test_conditions_match_agrees_with_inbox_evaluate_alert` drives the
+  REAL `evaluate_alert` and the new `Conditions.matches` over the same inputs so S3's
+  backfill cannot change the meaning of alert config users already have. Escalation is
+  capped at `immediate` and deliberately does NOT add targets — a keyword hit means "show me
+  now", not "also DM me off this machine".
+
+  **DISCOVERY (pre-existing, not fixed here):** the SPA's display map
+  (`web/src/pages/notifications/notificationMeta.ts`) has rows for `schedule` and `loop`
+  that **no backend emitter passes**. Mapped to their nearest real registration so
+  notifications persisted by an older build still resolve, and pinned by
+  `test_frontend_display_map_kinds_all_resolve`.
+
+  **Validated as a user** on an isolated dev home (port 10741, never the owner's :10000):
+  `GET /api/notifications/rules` returned a row for all 20 registered kinds with defaults;
+  PUT persisted `never` to disk and the read path honored it; unknown kind / bad mode /
+  unknown target / malformed conditions / bad cron all 400'd; a valid digest schedule
+  round-tripped. Then drove `notify()` against the real store: **never** dropped (0 logged,
+  0 broadcast), **immediate** delivered (1/1), **badge** logged without a toast (1/0,
+  `badge_only: true`), **digest** queued instead of logging (0/0, entry in the queue), and a
+  keyword hit escalated badge→immediate (`escalated_by: "keyword: urgent"`). Confirmed the
+  global gate still wins: `mute_all` beat both an `immediate` and a `digest` rule (nothing
+  delivered, nothing queued), and a corrupt rules file failed **open** (delivered). **0
+  gateway tracebacks.**
+
+  **Gates:** `make lint` clean (mypy 553 files) · `make test` **9249 passed, 0 failed**.
+  Tests: `test_notification_kinds.py` (45), `test_notification_rules.py` (60), +14 route
+  cases in `test_entity_settings_routes.py` (37 in file).

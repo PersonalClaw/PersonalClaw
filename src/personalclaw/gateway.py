@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
-from personalclaw import shutdown_event
+from personalclaw import notification_kinds, shutdown_event
 from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.autonudge import (
     AutoNudgeService,
@@ -913,7 +913,7 @@ class GatewayOrchestrator:
                 if self.dashboard_state is not None:
                     try:
                         self.dashboard_state.notify(
-                            "warning",
+                            notification_kinds.WARNING,
                             "Daily automation budget reached",
                             f"{context} was skipped — {reason}. Unattended runs resume "
                             f"tomorrow, or raise the budget in Settings → Guardrails.",
@@ -1121,7 +1121,7 @@ class GatewayOrchestrator:
                             title, _ = redact_exfiltration_urls(title)
                             title, _ = redact_credentials(title)
                             self.dashboard_state.notify(
-                                "cron",
+                                notification_kinds.CRON,
                                 title,
                                 redacted_for_dash,
                                 meta={"job_id": job.id},
@@ -1152,7 +1152,7 @@ class GatewayOrchestrator:
                     redacted_for_dash, _ = redact_exfiltration_urls(result_text)
                     redacted_for_dash, _ = redact_credentials(redacted_for_dash)
                     self.dashboard_state.notify(
-                        "cron",
+                        notification_kinds.CRON,
                         f"Cron: {job.name}",
                         redacted_for_dash,
                         meta={"job_id": job.id},
@@ -1199,7 +1199,7 @@ class GatewayOrchestrator:
                             exc_msg, _ = redact_exfiltration_urls(str(channel_exc))
                             exc_msg, _ = redact_credentials(exc_msg)
                             self.dashboard_state.notify(
-                                "cron",
+                                notification_kinds.CRON,
                                 f"Cron: {job.name}",
                                 f"Job completed but channel delivery failed: {exc_msg}",
                                 meta={"job_id": job.id},
@@ -1262,7 +1262,7 @@ class GatewayOrchestrator:
                             title, _ = redact_exfiltration_urls(title)
                             title, _ = redact_credentials(title)
                             self.dashboard_state.notify(
-                                "cron",
+                                notification_kinds.CRON,
                                 title,
                                 f"Job failed (suppressed — same error):\n{exc_summary}",
                                 meta={"job_id": job.id, "failure_hash": fh},
@@ -1296,7 +1296,9 @@ class GatewayOrchestrator:
                         alert_title = f"Cron: {job.name}"
                         alert_title, _ = redact_exfiltration_urls(alert_title)
                         alert_title, _ = redact_credentials(alert_title)
-                        self.dashboard_state.notify("cron", alert_title, "Job failed")
+                        self.dashboard_state.notify(
+                            notification_kinds.CRON, alert_title, "Job failed"
+                        )
                 except Exception:
                     logger.debug(
                         "Dashboard notify failed in cron failure alert path", exc_info=True
@@ -1964,7 +1966,7 @@ class GatewayOrchestrator:
                         # queued prompts produce no visible change until dequeued.
                         self.dashboard_state.push_sessions_update()
                         self.dashboard_state.notify(
-                            "heartbeat", title, body, meta={"session": session.key}
+                            notification_kinds.HEARTBEAT, title, body, meta={"session": session.key}
                         )
                     else:
                         logger.info(
@@ -2001,7 +2003,7 @@ class GatewayOrchestrator:
                     session.append("assistant", f"{title}\n\n{result_text}", "msg msg-a")
                     self.dashboard_state.push_sessions_update()
                     self.dashboard_state.notify(
-                        "heartbeat", title, body, meta={"session": session.key}
+                        notification_kinds.HEARTBEAT, title, body, meta={"session": session.key}
                     )
                 else:
                     sel().log_api_access(
@@ -2022,7 +2024,9 @@ class GatewayOrchestrator:
                 session = self.dashboard_state.get_or_create_session()
                 session.append("assistant", f"{title}\n\n{result_text}", "msg msg-a")
                 self.dashboard_state.push_sessions_update()
-                self.dashboard_state.notify("heartbeat", title, body, meta={"session": session.key})
+                self.dashboard_state.notify(
+                    notification_kinds.HEARTBEAT, title, body, meta={"session": session.key}
+                )
             return
 
         # ── channel (no thread) → new channel DM only ──
@@ -2052,7 +2056,7 @@ class GatewayOrchestrator:
             except Exception:
                 logger.exception("Heartbeat channel delivery failed")
             if self.dashboard_state:
-                self.dashboard_state.notify("heartbeat", title, body)
+                self.dashboard_state.notify(notification_kinds.HEARTBEAT, title, body)
             return
 
         # ── default: channel DM + dashboard notification ──
@@ -2064,7 +2068,7 @@ class GatewayOrchestrator:
             except Exception:
                 logger.exception("Heartbeat channel delivery failed")
         if self.dashboard_state:
-            self.dashboard_state.notify("heartbeat", title, body)
+            self.dashboard_state.notify(notification_kinds.HEARTBEAT, title, body)
 
     def _init_mcp_discovery(self) -> None:
         """Log configured MCP servers at startup.
@@ -2354,7 +2358,7 @@ class GatewayOrchestrator:
                             self.dashboard_state.push_sessions_update()
                             logger.info("Subagent %s → queued in %s", info.id, _session_name)
                             self.dashboard_state.notify(
-                                "subagent",
+                                notification_kinds.SUBAGENT,
                                 title,
                                 body,
                                 meta=self._notif_meta(parent_key),
@@ -2398,7 +2402,7 @@ class GatewayOrchestrator:
 
                 # Dashboard notification for the notification panel
                 self.dashboard_state.notify(
-                    "subagent",
+                    notification_kinds.SUBAGENT,
                     title,
                     body,
                     meta=self._notif_meta(parent_key),
@@ -2521,7 +2525,7 @@ class GatewayOrchestrator:
                 # Dashboard notification
                 if self.dashboard_state:
                     self.dashboard_state.notify(
-                        "subagent",
+                        notification_kinds.SUBAGENT,
                         title,
                         body,
                         meta=self._notif_meta(parent_key),
@@ -2620,7 +2624,7 @@ class GatewayOrchestrator:
             # Dashboard notification
             if self.dashboard_state and not info.silent:
                 self.dashboard_state.notify(
-                    "subagent",
+                    notification_kinds.SUBAGENT,
                     title,
                     body,
                     meta=self._notif_meta(parent_key),

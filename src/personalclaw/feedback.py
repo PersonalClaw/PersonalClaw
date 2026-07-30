@@ -33,6 +33,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw import notification_kinds
+
 logger = logging.getLogger(__name__)
 
 # Closed, append-only vocabularies (C1). A new surface must name its kind here
@@ -414,7 +416,7 @@ def check_retire_candidates(state=None) -> list[dict]:
                     else "#/settings/feedback"
                 )
                 state.notify(
-                    "feedback_retire",
+                    notification_kinds.FEEDBACK_RETIRE,
                     f"AI judgment source keeps missing: {c['producer_kind']}:{c['producer_id']}",
                     (
                         f"Wrong {c['downs']} of {c['downs'] + c['ups']} times recently "
