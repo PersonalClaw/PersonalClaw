@@ -73,6 +73,28 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   tasks**. Someone else's task can never quietly become something your assistant picks
   up. Dependencies are still honored across everyone, so a task of yours blocked by a
   colleague's unfinished work is correctly *not* ready rather than falsely startable.
+- **It can make you a Word document or a spreadsheet you can actually send.**
+  PersonalClaw could read .docx, .xlsx, .pptx and .pdf but could not produce a single
+  one — everything it generated stayed inside the app. Ask for a document now and you get
+  a real file: **document_create** turns markdown into a Word document (headings, bullets,
+  numbered lists, tables, code, page breaks) and **sheet_create** builds a spreadsheet
+  with a bold header row and frozen panes.
+
+  Numbers stay numbers, so the result can be summed and charted — a spreadsheet full of
+  text-formatted numbers is the main way generated ones turn out useless. Both land in
+  your Artifacts library with version history, so re-generating one updates it in place
+  instead of leaving a near-duplicate beside it, and each has a download button plus a
+  text preview.
+
+  Verified by opening the output in real applications, not just our own reader: macOS
+  identifies the files as genuine Office documents and renders them correctly.
+
+  Two things this fixed along the way. **Tables in Word documents you upload were being
+  silently dropped** — the reader only looked at paragraphs, so often the densest
+  information in a document was invisible to search and to the agent. And **generated
+  videos were being stored as images**, which made them unplayable; video is now a real
+  artifact type with a working player.
+
 - **Tags are a real taxonomy now — nest them, rename them, merge them.** Tags were a
   flat list of strings stapled to each item, so a typo meant editing every item that
   carried it and there was no way to express that "tokio" is a kind of "rust". The new

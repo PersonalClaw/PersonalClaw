@@ -326,6 +326,37 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "document_create": {
+        "response_type": "artifact.detail",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Turn markdown into a downloadable Word document",
+                "args": {
+                    "name": "Q3 Review",
+                    "markdown": "# Q3 Review\n\nRevenue grew.\n\n- EMEA up 18%\n",
+                },
+            },
+        ],
+    },
+    "sheet_create": {
+        "response_type": "artifact.detail",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Build a spreadsheet with numbers kept numeric",
+                "args": {
+                    "name": "Regional sales",
+                    "sheets": {"Sales": [["Region", "Q1"], ["EMEA", 120]]},
+                },
+            },
+        ],
+    },
+    "document_formats": {
+        "response_type": "text",
+        "error_codes": [],
+        "examples": [{"summary": "Check which formats are available", "args": {}}],
+    },
     # ── personalclaw-memory ──────────────────────────────────────────────────
     "memory_remember": {
         "response_type": "memory.remember.result",

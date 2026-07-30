@@ -7,7 +7,7 @@
  *  Babel, Mermaid, AntV all dynamic-import already). */
 import { lazy } from 'react'
 import {
-  Box, Globe, Hash, Image, Braces, Code2, FileText, Table, FileCode, BarChart3, ScrollText, type LucideIcon,
+  Box, Globe, Hash, Image, Braces, Code2, FileText, Table, FileCode, BarChart3, ScrollText, Film, type LucideIcon,
 } from 'lucide-react'
 import { registerContentType, type PreviewProps } from './contentTypes'
 import type { ComponentType } from 'react'
@@ -31,6 +31,8 @@ const JsonTree = lz(() => import('./renderers'), 'JsonTreePreview')
 const CsvTable = lz(() => import('./renderers'), 'CsvTablePreview')
 const ImageFile = lz(() => import('./renderers'), 'ImageFilePreview')
 const PdfFile = lz(() => import('./renderers'), 'PdfFilePreview')
+const VideoFile = lz(() => import('./renderers'), 'VideoFilePreview')
+const OfficeDocPreview = lz(() => import('./renderers'), 'OfficeDocPreview')
 // Infographic pulls the ~8MB AntV engine — its own chunk, loaded only when one renders.
 const Infographic = lazy(() => import('./InfographicView').then((m) => ({ default: m.InfographicView })))
 
@@ -149,6 +151,9 @@ export function registerBuiltinContentTypes(): void {
   // ── csv/tsv: table preview; editable; split ──
   registerContentType({
     id: 'csv', label: 'CSV', icon: Table, tone: tone('#8a63d2'),
+    // `kinds` added for generated CSV artifacts (DOCUMENT-HANDLING-TOOLS S1). csv is a
+    // TEXT kind, so it keeps the editable/split behavior a file gets.
+    kinds: ['csv'],
     exts: ['csv', 'tsv'], mimes: ['text/csv'],
     preview: { render: CsvTable },
     edit: { language: 'plaintext', split: true },
@@ -171,9 +176,45 @@ export function registerBuiltinContentTypes(): void {
   // ── pdf: binary file preview by path (no edit) ──
   registerContentType({
     id: 'pdf', label: 'PDF', icon: FileText, tone: tone('#e0574f'),
+    // A generated pdf artifact reuses this ALREADY-WORKING PdfFile renderer — do not
+    // register a second pdf type for artifacts.
+    kinds: ['pdf'],
     exts: ['pdf'], mimes: ['application/pdf'],
     preview: { render: PdfFile },
     commentable: false,
+    binary: true,
+  })
+
+  // ── generated office documents (DOCUMENT-HANDLING-TOOLS S1) ──
+  // Binary, non-commentable, no `edit`: the editable thing is the markdown/model the
+  // document was generated FROM, not the rendered file. Preview is an honest
+  // extracted-text view plus a download — not a fidelity renderer.
+  registerContentType({
+    id: 'docx', label: 'Word', icon: FileText, tone: tone('#2b579a'),
+    kinds: ['docx'], exts: ['docx'],
+    mimes: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+    preview: { render: OfficeDocPreview },
+    commentable: false,
+    binary: true,
+  })
+
+  registerContentType({
+    id: 'xlsx', label: 'Spreadsheet', icon: Table, tone: tone('#1e7145'),
+    kinds: ['xlsx'], exts: ['xlsx', 'xls'],
+    mimes: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+    preview: { render: OfficeDocPreview },
+    commentable: false,
+    binary: true,
+  })
+
+  // ── video: kind:video artifacts (issue #94 — these were being stored as images) ──
+  registerContentType({
+    id: 'video', label: 'Video', icon: Film, tone: tone('#d29922'),
+    kinds: ['video'], exts: ['mp4', 'webm', 'mov'],
+    mimes: ['video/'],
+    preview: { render: VideoFile },
+    commentable: false,
+    binary: true,
   })
 
   // ── code: the catch-all editable source type (no rendered preview). Matches

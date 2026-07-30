@@ -1,6 +1,6 @@
 # Plan: Document Handling Tools — Produce the Formats a Person Actually Sends
 
-**Status:** DESIGNED — created 2026-07-29 (owner ask: competitive gap analysis, Genspark + Manus; owner direction: "we will have document handling tools where we have tools for these usecases as well as other formats that are supported by artifacts and knowledge except media formats")
+**Status:** IN PROGRESS — Session 1 (writer seam + docx/xlsx + tools + kinds) shipped 2026-07-29; Session 2 (pptx + pdf + round-trip) not started. Created 2026-07-29 (owner ask: competitive gap analysis, Genspark + Manus; owner direction: "we will have document handling tools where we have tools for these usecases as well as other formats that are supported by artifacts and knowledge except media formats")
 **Created:** 2026-07-29
 **Wave:** 2 (S1: the writer seam + docx/xlsx; S2: pptx/pdf + the artifact/knowledge round-trip)
 **Depends on:** nothing hard. All four libraries are **already core dependencies** (`pyproject.toml:44-53`: `python-docx`, `pdfplumber`, `python-pptx`, `openpyxl`) — used today for *reading only*. Builds on the shipped artifact store (`artifacts/`), the content-type registry (`web/src/ui/content/contentTypes.ts`), and the knowledge readers (`knowledge/readers.py`). Coordinates with ARTIFACTS-EVOLUTION (61 — new artifact kinds land in its library grid + viewer; **read its `create_binary` lesson in §Context before adding a kind**), KNOWLEDGE-LIBRARY (49 — knowledge already *reads* these formats; this plan closes the write half so a knowledge item can round-trip out), WORKFLOWS-V2-KNOWLEDGE-SYNTHESIS (its synthesis nodes gain real deliverable outputs), CONTEXT-ECONOMY (DONE — generated files must never be inlined into context; §C4 states the rule).
@@ -194,3 +194,90 @@ registerContentType({ id: 'docx', label: 'Word', icon: FileText, tone: tone('#2b
 ## Execution log
 
 _(empty — no session has run yet)_
+
+## Execution log
+
+- [2026-07-29][S1] **DONE (T1.1–T1.6).** The writer seam + docx/xlsx + the artifact kinds
+  + the agent tools + the frontend registrations. PersonalClaw can now produce a real
+  Word document and a real spreadsheet.
+
+  **Confirmed the premise before building:** the four libraries were genuinely
+  read-only — the single `Presentation(` in the tree is `knowledge/readers.py`'s pptx
+  READER, and there was no `Workbook()`/`Document()` construction anywhere.
+
+  **The seam.** `documents/` = `model.py` (three declarative models, zero OOXML
+  vocabulary) + `writers/` (one pure `render(model) -> bytes` per format) +
+  `registry.py`. Registration IS the availability check: a writer whose library is
+  missing never registers, so `available_formats()` can't advertise a format that would
+  fail on use, and `document_formats` reports honestly. Writers are pure, so they are
+  unit-testable without a store and cannot half-write.
+
+  **Markdown → model is the primary path, as planned.** `document_from_markdown` handles
+  the shapes an agent actually produces (headings, paragraphs, both list kinds, fenced
+  code, tables, rules) and turns anything unrecognized into a paragraph — no input is
+  silently dropped. A leading H1 becomes the document title rather than a duplicate
+  heading. Code fences are verbatim; inline emphasis is stripped elsewhere. HTML goes
+  through the platform's EXISTING `sanitize_html` + `redact_credentials` (never a second
+  implementation) and then reuses the markdown path — one parser, not two. A test asserts
+  a planted AWS key does not survive into a generated file.
+
+  **TWO REAL BUGS FOUND AND FIXED, both pre-existing:**
+  1. **The docx READER dropped every table.** `_read_docx` walked only `doc.paragraphs`,
+     and python-docx keeps table content out of that collection — so any table in an
+     ingested Word document (often its densest information) was invisible to search,
+     embedding and the agent. Found by round-tripping my own output and noticing the
+     table didn't come back, then confirming the table WAS in the file. Now rendered as
+     markdown tables, matching how the xlsx/csv readers already present tabular data.
+     Appended after the prose rather than interleaved: python-docx exposes no ordering
+     between paragraphs and tables without walking the XML body, and losing POSITION is a
+     far smaller defect than losing the content.
+  2. **`create_binary` silently coerced an unknown kind to `"image"`** — which is why
+     every generated video was stored as an image (issue #94): `kind="video"` was in
+     neither `ALLOWED_KINDS` nor `BINARY_KINDS`, so the else-branch swallowed it. Now a
+     `ValueError`. **That raise turned #94 from silent corruption into a hard
+     requirement**, so `video` is registered as a real kind here (plus a `VideoFilePreview`
+     renderer) rather than left crashing. Issue #94 is fixed as a consequence.
+
+  **Artifact kinds:** `docx`/`xlsx`/`pdf`/`video` in both sets, `csv` as a TEXT kind per
+  the owner ruling. `_MIME_TO_EXT` gained the office/PDF/video mimes — without them the
+  raw endpoint derives the wrong Content-Type and a download arrives unopenable (verified
+  live: both files serve their true OOXML types).
+
+  **New `GET /api/artifacts/{slug}/extract`** backs the honest "text preview — download
+  for full formatting" surface, reusing the SAME reader that ingests uploaded documents
+  rather than a second extraction path. Capped, and redacted like every other
+  LLM-adjacent text surface.
+
+  **Frontend:** `docx`/`xlsx`/`video` content types registered; the EXISTING `pdf` and
+  `csv` types gained `kinds:` rather than duplicate registrations (the `PdfFile` renderer
+  already worked). `OfficeDocPreview` is deliberately an extracted-text view plus a
+  prominent Download, and says so in the UI — implying WYSIWYG when the editable thing is
+  the source markdown would be misleading. Full-fidelity editing is the owner's separate
+  plan.
+
+  **Validated as a user, to the plan's actual bar — opened in a real application, not
+  just our own readers.** Drove the tools on an isolated dev home (port 10737):
+  - A live agent DID discover and call `document_formats`, proving the tools are
+    registered and reachable; its turn then stalled before the second call, which is
+    model behavior, so I exercised all five paths directly (both refusals included).
+  - `file(1)` identifies the outputs as **"Microsoft OOXML"** and **"Microsoft Excel
+    2007+"**, with complete package structure (`[Content_Types].xml`, `word/document.xml`,
+    `xl/workbook.xml`).
+  - **Apple's `textutil`** — an independent implementation — extracted the heading, prose,
+    both bullets and the full table.
+  - **macOS Quick Look** rendered the .docx as a properly formatted document (styled
+    title, blue heading, real bullets, bold table header) and the .xlsx with a bold header
+    row and cell grid.
+  - The extract endpoint returned the text **including the table**, which only works
+    because of fix #1.
+
+  Tests: 30 in `tests/test_documents.py` — registry contracts, every markdown shape, the
+  sanitize/redact assertion, round trips through the real readers, numeric-typing and
+  bool-vs-int preservation, illegal sheet-name sanitization, ragged-row normalization,
+  and the coercion hardening. Gate: `make lint` green · `make test` **8972 passed** · web
+  typecheck + 283 vitest + build green.
+
+  **NOT done (S2, unchanged scope):** pptx + pdf writers (`reportlab` is S2's T2.2 and is
+  deliberately NOT added here), `deck_create`, and the knowledge round-trip export.
+  `deck_from_markdown` IS implemented and tested — the parser landed with the markup
+  module since it shares its machinery; only the pptx writer and the tool are outstanding.
