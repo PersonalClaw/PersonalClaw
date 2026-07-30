@@ -7,13 +7,14 @@ separately by the message-source providers in ``personalclaw.inbox_providers``.
 
 import json
 import logging
-import re
 import time
+import uuid
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from personalclaw import notification_kinds
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import config_dir
 
@@ -27,6 +28,10 @@ __all__ = [
     "InboxItem",
     "InboxState",
     "UserResolver",
+    "ItemKind",
+    "NON_CHANNEL_KINDS",
+    "make_item_id",
+    "emit_attention_item",
     "evaluate_alert",
     "notify_inbox_alert",
 ]
@@ -40,10 +45,61 @@ _USER_CACHE_TTL = 86400  # 24 hours
 
 
 class ItemStatus(str, Enum):
+    """The attention lifecycle: PENDING → SEEN → HANDLED | DISMISSED.
+
+    SENT predates the others and is specific to reply-drafts (a draft was sent at the
+    source); it stays because those items exist on disk and it means something the other
+    four don't.
+    """
+
     PENDING = "pending"
+    SEEN = "seen"  # surfaced to the user but not yet acted on — the read/unread boundary
     SENT = "sent"
     DISMISSED = "dismissed"
     HANDLED = "handled"  # user replied at the source (or via inbox reply routing)
+
+
+class ItemKind(str, Enum):
+    """What kind of thing is asking for attention.
+
+    ``MESSAGE`` is the default so every item written before this existed stays valid —
+    the inbox began as a channel-message surface, and that is exactly what those items are.
+    """
+
+    MESSAGE = "message"
+    MENTION = "mention"
+    EMAIL = "email"
+    AGENT_REQUEST = "agent_request"
+    PROPOSAL = "proposal"
+    NEEDS_INPUT = "needs_input"
+    DIGEST = "digest"
+    SYSTEM = "system"
+
+
+#: Kinds with no channel behind them: no draft, no reply routing, no send affordance.
+#: The UI uses this to decide whether a row gets reply machinery at all.
+NON_CHANNEL_KINDS = frozenset(
+    {
+        ItemKind.AGENT_REQUEST.value,
+        ItemKind.PROPOSAL.value,
+        ItemKind.NEEDS_INPUT.value,
+        ItemKind.DIGEST.value,
+        ItemKind.SYSTEM.value,
+    }
+)
+
+
+def make_item_id(kind: str, *, now: float | None = None) -> str:
+    """An id for a non-channel item: ``{kind}_{uuid8}_{ts}``.
+
+    **The trailing ``_{ts}`` is load-bearing.** ``InboxItem.ts`` rsplits the id on the last
+    underscore, and sorting/retention both read that property — an id without a numeric
+    tail would silently sort as if it had no timestamp. The uuid8 in the middle is what
+    keeps two same-second items of the same kind distinct, which ``{channel}_{ts}`` got for
+    free from the channel's own message ids.
+    """
+    stamp = time.time() if now is None else now
+    return f"{kind}_{uuid.uuid4().hex[:8]}_{stamp:.6f}"
 
 
 class Classification(str, Enum):
@@ -86,6 +142,13 @@ class InboxItem:
     # P11: whether the user favorited this item — a strong positive engagement signal
     # feeding the engagement-ranking multiplier (tolerant from_dict makes it back-compat).
     favorited: bool = False
+    # What kind of attention this item wants. Defaults to `message` so every item written
+    # before the inbox became a general attention store stays valid and unchanged.
+    item_kind: str = ItemKind.MESSAGE.value
+    # Ids of the things this item is ABOUT: {"session":…, "loop":…, "skill_proposal": pid,
+    # "workflow":…}. Deep-linking is what makes a needs_input row actionable rather than a
+    # notification with extra steps.
+    refs: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -263,28 +326,137 @@ class InboxStore:
 # ── Alerts ──
 
 
-def evaluate_alert(item: InboxItem, settings: dict, user_name: str = "") -> str:
+def evaluate_alert(item: InboxItem, user_name: str = "") -> str:
     """Why *item* deserves an immediate notification, or "" if it doesn't.
 
-    Reads the inbox entity settings (``alert_keywords`` — case-insensitive
-    substring match — and ``alert_on_name_mention`` against the operator's
-    name). Called once per NEW item at ingestion (native push + poll paths).
+    Now reads the ``inbox/alert`` notification RULE's conditions rather than the retired
+    ``alert_keywords``/``alert_on_name_mention`` inbox fields (plan 42 S3). The matching
+    semantics are unchanged — `Conditions.matches` was lifted from this function's own
+    body — so a user whose keywords were backfilled sees identical behavior; what changed
+    is that the same conditions are now expressible for every notification kind, not just
+    inbox messages.
+
+    The ``settings`` parameter is gone rather than kept and ignored: a caller still passing
+    a dict of retired fields would silently get no alerts, which is exactly the failure a
+    clean break is supposed to make impossible.
     """
-    text = (item.message or "").lower()
-    if not text:
+    text = item.message or ""
+    if not text.strip():
         return ""
-    for kw in settings.get("alert_keywords") or []:
-        k = str(kw).strip().lower()
-        if k and k in text:
-            return f"keyword: {kw}"
-    if settings.get("alert_on_name_mention") and user_name.strip():
-        # Match name PARTS as whole words ("Jordan Marlow" fires on "hey Jordan")
-        # — messages use first names, not the configured full name. Skip short
-        # fragments (initials, particles) that would false-positive.
-        for part in user_name.strip().lower().split():
-            if len(part) >= 3 and re.search(rf"\b{re.escape(part)}\b", text):
-                return "name mention"
-    return ""
+    try:
+        from personalclaw import notification_rules
+
+        rule = notification_rules.resolve_rule("inbox", "alert")
+    except Exception:  # a policy read must never break ingestion
+        logger.debug("alert rule resolution failed", exc_info=True)
+        return ""
+    return rule.conditions.matches(text, user_name)
+
+
+def emit_attention_item(
+    state: Any,
+    *,
+    source: str,
+    kind: str,
+    title: str,
+    body: str = "",
+    refs: dict | None = None,
+    item_kind: str = "",
+    store: "InboxStore | None" = None,
+    dedup_key: str = "",
+) -> str:
+    """Raise a standing attention item AND deliver one notification for it.
+
+    **The only correct way to raise a durable agent request.** A caller that did
+    ``store.add(...)`` and ``state.notify(...)`` separately would drift the two apart — the
+    common failure being two notifications for one event, or an inbox row with no delivery
+    at all. Routing both through here means the notification is a *view* of the item.
+
+    ``source``/``kind`` are the registered notification pair (delivery policy, S1);
+    ``item_kind`` is the inbox row's own type and defaults to ``kind`` since for the
+    attention kinds they coincide (``needs_input`` is both).
+
+    ``dedup_key`` makes re-emission idempotent: a loop that re-checks every 30s must not
+    stack a hundred identical rows. When supplied, an existing PENDING/SEEN item with the
+    same key is returned untouched and **no second notification fires** — the user was
+    already told.
+
+    Returns the inbox item id ("" only if the store could not be reached, which is logged;
+    a failure to persist must not also lose the notification, so delivery still happens).
+    """
+    resolved_kind = item_kind or kind
+    target = store
+    if target is None:
+        target = InboxStore()
+        try:
+            target.load()
+        except Exception:  # pragma: no cover - load() already swallows OSError
+            logger.warning("attention item: inbox load failed", exc_info=True)
+
+    if dedup_key:
+        existing = _find_open_by_dedup(target, dedup_key)
+        if existing is not None:
+            logger.debug("attention item deduped on %r → %s", dedup_key, existing.id)
+            return existing.id
+
+    now = time.time()
+    item = InboxItem(
+        id=make_item_id(resolved_kind, now=now),
+        channel=source,
+        channel_name=source,
+        thread_ts=None,
+        message=body or title,
+        sender_id=source,
+        sender_name=source,
+        created_at=now,
+        source=source,
+        # Non-channel kinds have nowhere to send a reply; the UI keys its send affordance
+        # off this, so leaving it True would render a Send button that cannot work.
+        can_reply=False,
+        classification=Classification.NEEDS_REPLY.value,
+        confidence=Confidence.HIGH.value,
+        item_kind=resolved_kind,
+        refs=dict(refs or {}),
+    )
+    if dedup_key:
+        item.refs["dedup_key"] = dedup_key
+
+    item_id = ""
+    try:
+        target.add(item)
+        target.flush()
+        item_id = item.id
+    except Exception:
+        logger.warning("attention item: inbox write failed", exc_info=True)
+
+    if state is not None:
+        try:
+            state.notify(
+                notification_kinds.kind_for_legacy_pair(source, kind),
+                title,
+                body,
+                meta={"inbox_item": item_id, "item_kind": resolved_kind, **dict(refs or {})},
+            )
+        except Exception:
+            logger.warning("attention item: notify failed", exc_info=True)
+    return item_id
+
+
+def _find_open_by_dedup(store: "InboxStore", dedup_key: str) -> "InboxItem | None":
+    """An unresolved item carrying ``dedup_key``, newest first.
+
+    Only PENDING/SEEN count as open: once the user has HANDLED or DISMISSED a request, a
+    later re-emission is genuinely new and should surface again rather than be swallowed.
+    """
+    open_states = {ItemStatus.PENDING.value, ItemStatus.SEEN.value}
+    matches = [
+        i
+        for i in store.items.values()
+        if i.refs.get("dedup_key") == dedup_key and i.status in open_states
+    ]
+    if not matches:
+        return None
+    return max(matches, key=lambda i: i.created_at)
 
 
 def notify_inbox_alert(state: Any, item: InboxItem, reason: str) -> None:
@@ -299,7 +471,7 @@ def notify_inbox_alert(state: Any, item: InboxItem, reason: str) -> None:
     msg, _ = redact_exfiltration_urls(item.message)
     msg, _ = redact_credentials(msg)
     state.notify(
-        "inbox_alert",
+        notification_kinds.INBOX_ALERT,
         f"{item.sender_name} in {item.channel_name}",
         f"Alert ({reason}): {msg[:200]}",
         meta={"session": f"inbox:{item.id}"},

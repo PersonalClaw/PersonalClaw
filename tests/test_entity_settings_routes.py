@@ -100,15 +100,14 @@ async def test_put_rejects_non_object_body():
 async def test_inbox_put_rejects_mistyped_values():
     """A known key with a wrong-TYPE value must 400, not persist.
 
-    Regression: `alert_keywords: "urgent"` (a string) persisted, and
-    evaluate_alert() then iterated its CHARACTERS as keywords (every
-    message containing 'u' alerted); `retention_days: true` persisted and
-    int(True) == 1 made maintenance delete everything older than a day."""
+    Regression: `retention_days: true` persisted and int(True) == 1 made maintenance
+    delete everything older than a day. (The `alert_keywords: "urgent"` case that used to
+    live here — a string whose CHARACTERS became keywords — is gone with the field itself;
+    the equivalent guard on the rules PUT is
+    test_rules_put_rejects_malformed_shapes.)"""
     for body in (
-        {"alert_keywords": "oops-a-string"},
         {"retention_days": True},
         {"retention_days": "90"},
-        {"alert_on_name_mention": "yes"},
         {"auto_cleanup_enabled": 1},
     ):
         resp = await er.handle_inbox_settings_put(_req(body))
@@ -258,3 +257,175 @@ async def test_state_notify_respects_gate(monkeypatch, tmp_path):
     er._save_entity_settings("notifications", {"mute_all": False})
     ds.notify("info", "Live", "delivers")
     assert len(ds._notification_log) == 1 and len(broadcasts) == 1 and len(persisted) == 1
+
+
+# ── Notification rules matrix ──
+#
+# The guards here exist because a rules file that fails to parse degrades to
+# registry defaults — which means a REJECTED-at-write value that got persisted
+# anyway becomes silent policy failure: the user sets `never` on a noisy kind,
+# sees it accepted, and keeps getting notified. So the PUT must 400 rather than
+# store anything the read path would later ignore.
+
+
+@pytest.fixture()
+def _isolate_rules(monkeypatch, tmp_path):
+    from personalclaw import notification_rules as nr
+
+    (tmp_path / "entity_settings").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(nr, "config_dir", lambda: tmp_path)
+    return tmp_path
+
+
+@pytest.mark.asyncio
+async def test_rules_get_returns_a_row_per_registered_kind(_isolate_rules):
+    from personalclaw import notification_kinds as nk
+
+    resp = await er.handle_notification_rules_get(MagicMock())
+    data = await _json(resp)
+    assert {r["key"] for r in data["rules"]} == {k.key for k in nk.all_kinds()}
+    assert data["digest"]["schedule"]
+
+
+@pytest.mark.asyncio
+async def test_rules_put_persists_and_takes_effect(_isolate_rules):
+    from personalclaw import notification_rules as nr
+
+    resp = await er.handle_notification_rules_put(
+        _req({"rules": {"heartbeat/status": {"mode": "badge"}}})
+    )
+    data = await _json(resp)
+    assert data["ok"] is True
+    # The effective read path — not just the response echo — must reflect it.
+    assert nr.resolve_rule("heartbeat", "status").mode == "badge"
+
+
+@pytest.mark.asyncio
+async def test_rules_put_merges_rather_than_replacing(_isolate_rules):
+    from personalclaw import notification_rules as nr
+
+    await er.handle_notification_rules_put(_req({"rules": {"heartbeat/status": {"mode": "badge"}}}))
+    await er.handle_notification_rules_put(_req({"rules": {"hook/fired": {"mode": "never"}}}))
+    assert nr.resolve_rule("heartbeat", "status").mode == "badge", "second PUT dropped the first"
+    assert nr.resolve_rule("hook", "fired").mode == "never"
+
+
+@pytest.mark.asyncio
+async def test_rules_put_rejects_unknown_kind(_isolate_rules):
+    resp = await er.handle_notification_rules_put(_req({"rules": {"nope/nada": {"mode": "never"}}}))
+    assert resp.status == 400
+    assert "unknown notification kind" in (await _json(resp))["error"]
+
+
+@pytest.mark.asyncio
+async def test_rules_put_rejects_unknown_mode(_isolate_rules):
+    """A typo'd mode would read back as the default — accept it and policy lies."""
+    resp = await er.handle_notification_rules_put(_req({"rules": {"hook/fired": {"mode": "nevr"}}}))
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_rules_put_rejects_unknown_target(_isolate_rules):
+    resp = await er.handle_notification_rules_put(
+        _req({"rules": {"hook/fired": {"targets": ["hologram"]}}})
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"rules": ["hook/fired"]},
+        {"rules": {"hook/fired": "never"}},
+        {"rules": {"hook/fired": {"targets": "dashboard"}}},
+        {"rules": {"hook/fired": {"conditions": []}}},
+        {"rules": {"hook/fired": {"conditions": {"keywords": "deploy"}}}},
+        {"rules": {"hook/fired": {"conditions": {"keywords": [1, 2]}}}},
+        {"rules": {"hook/fired": {"conditions": {"name_mention": "yes"}}}},
+        {"digest": []},
+        {"digest": {"schedule": "not a cron"}},
+        {"digest": {"schedule": 8}},
+    ],
+)
+async def test_rules_put_rejects_malformed_shapes(_isolate_rules, bad):
+    resp = await er.handle_notification_rules_put(_req(bad))
+    assert resp.status == 400, f"should have rejected {bad!r}"
+
+
+@pytest.mark.asyncio
+async def test_rules_put_rejects_non_object_body(_isolate_rules):
+    resp = await er.handle_notification_rules_put(_req(["not", "an", "object"]))
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_rules_put_persists_a_valid_digest_schedule(_isolate_rules):
+    from personalclaw import notification_rules as nr
+
+    resp = await er.handle_notification_rules_put(_req({"digest": {"schedule": "0 7 * * 1-5"}}))
+    assert resp.status == 200
+    assert nr.digest_settings()["schedule"] == "0 7 * * 1-5"
+
+
+@pytest.mark.asyncio
+async def test_rules_put_stores_conditions_that_escalate(_isolate_rules):
+    from personalclaw import notification_rules as nr
+
+    await er.handle_notification_rules_put(
+        _req(
+            {
+                "rules": {
+                    "hook/fired": {
+                        "mode": "badge",
+                        "conditions": {"keywords": ["deploy"], "name_mention": True},
+                    }
+                }
+            }
+        )
+    )
+    rule = nr.resolve_rule("hook", "fired")
+    assert rule.mode == "badge"
+    assert rule.conditions.matches("please deploy now") == "keyword: deploy"
+    assert rule.escalated().mode == "immediate"
+
+
+@pytest.mark.asyncio
+async def test_inbox_put_no_longer_accepts_the_retired_alert_fields():
+    """The alert fields moved to notification rules (plan 42 S3).
+
+    They are absent from INBOX_DEFAULTS, which is the authoritative allowlist, so a PUT
+    naming them must NOT persist them — otherwise a client written against the old API
+    would keep writing values into a store nothing reads, and the user would think their
+    alerts were configured.
+    """
+    resp = await er.handle_inbox_settings_put(
+        _req({"alert_keywords": ["urgent"], "alert_on_name_mention": True, "retention_days": 30})
+    )
+    settings = (await _json(resp))["settings"]
+    assert "alert_keywords" not in settings
+    assert "alert_on_name_mention" not in settings
+    assert settings["retention_days"] == 30, "the known key still applies"
+
+
+@pytest.mark.asyncio
+async def test_legacy_alert_fields_are_readable_for_the_backfill(tmp_path, monkeypatch):
+    """The backfill needs the RAW values even though load_inbox_settings() drops them."""
+    import json
+
+    monkeypatch.setattr(er, "_entity_settings_path", lambda entity: tmp_path / f"{entity}.json")
+    (tmp_path / "inbox.json").write_text(
+        json.dumps({"alert_keywords": ["deploy"], "alert_on_name_mention": True}), encoding="utf-8"
+    )
+    assert er.legacy_inbox_alert_fields() == {
+        "alert_keywords": ["deploy"],
+        "alert_on_name_mention": True,
+    }
+    # …and the public read path no longer surfaces them.
+    assert "alert_keywords" not in er.load_inbox_settings()
+
+
+@pytest.mark.asyncio
+async def test_legacy_alert_read_is_empty_when_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr(er, "_entity_settings_path", lambda entity: tmp_path / f"{entity}.json")
+    assert er.legacy_inbox_alert_fields() == {}

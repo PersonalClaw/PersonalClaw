@@ -341,21 +341,22 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   // ── Workspace ──────────────────────────────────────────────────────────────
   {
     id: 'inbox', group: 'Workspace', label: 'Inbox', icon: Inbox, size: 'md',
-    description: 'Alert keywords, name-mention alerts, and retention policy.',
-    useSearchText() { const { data: s } = useInbox(); return `inbox alert keywords name mention retention ${(s?.alert_keywords ?? []).join(' ')}` },
+    description: 'Retention policy and automatic cleanup.',
+    useSearchText() { return 'inbox retention auto cleanup' },
     render(query, go) {
+      // Alert keywords moved to the notification rules matrix (plan 42 S3), so this card
+      // now surfaces what the inbox itself still owns: how long items are kept.
       const { data: s, refresh } = useInbox()
       return (
         <BentoCard icon={Inbox} title="Inbox" query={query} onClick={() => go('inbox')} loading={s === undefined} rows={2}>
           {s && <>
             <div className="flex items-baseline gap-1.5">
-              <BigStat value={s.alert_keywords.length} caption={s.alert_keywords.length === 1 ? 'alert keyword' : 'alert keywords'} />
+              <BigStat value={s.retention_days} caption="day retention" />
             </div>
-            {s.alert_keywords.length > 0 && <div className="mt-2"><ChipRow query={query} chips={s.alert_keywords.slice(0, 6).map((k) => ({ label: k, tone: 'muted' as const }))} /></div>}
             <div className="mt-2 flex items-center justify-between gap-2">
-              <span className="text-on-surface-low text-[0.75rem]">Name-mention alerts</span>
-              <Switch on={s.alert_on_name_mention} label="Name-mention alerts"
-                onToggle={(v) => mutate(() => api.saveInboxSettings({ alert_on_name_mention: v }).then(refresh), 'settings:inbox')} />
+              <span className="text-on-surface-low text-[0.75rem]">Auto-cleanup</span>
+              <Switch on={s.auto_cleanup_enabled} label="Auto-cleanup"
+                onToggle={(v) => mutate(() => api.saveInboxSettings({ auto_cleanup_enabled: v }).then(refresh), 'settings:inbox')} />
             </div>
           </>}
         </BentoCard>

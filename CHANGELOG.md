@@ -22,8 +22,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 > upgrade is verified against duplicates, blanks, non-ASCII and malformed values, and
 > refuses to drop the column if any tag would be lost. Consider `personalclaw snapshot`
 > before upgrading, per the pre-1.0 banner.
+>
+> **Note (0.x clean break):** the unread badge now counts unresolved **inbox** items instead
+> of unacknowledged notifications, so **it resets once on upgrade** — any old unacked toasts
+> stop contributing to it. Nothing is lost: the notification list keeps its full history and
+> becomes a delivery audit. The badge is more honest afterwards (dismissing a toast no longer
+> hides work that is still outstanding, and handling something in the inbox actually clears
+> it). Your inbox alert keywords move to notification rules automatically. Consider
+> `personalclaw snapshot` before upgrading, per the pre-1.0 banner.
 
 ### Added
+
+- **One place for everything waiting on you.**
+- **Per-notification-kind delivery rules.**
+- **A daily digest.**
 
 - **Memory records who contributed them.**
 

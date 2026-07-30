@@ -9,6 +9,7 @@ from pathlib import Path
 
 from aiohttp import web
 
+from personalclaw import notification_kinds
 from personalclaw.dashboard.state import DashboardState
 
 logger = logging.getLogger(__name__)
@@ -391,7 +392,9 @@ async def _run_hook_agent(
         name_safe, _ = redact_exfiltration_urls(name)
         name_safe, _ = redact_credentials(name_safe)
         title = f"🪝 {name_safe}"
-        state.notify("hook", title, result_text[:2000], meta={"session_key": session_key})
+        state.notify(
+            notification_kinds.HOOK, title, result_text[:2000], meta={"session_key": session_key}
+        )
         if state.channel_delivery and state.owner_id:
             try:
                 channel = await state.channel_delivery.open_dm(state.owner_id)

@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from personalclaw import notification_kinds
 from personalclaw.action_providers.base import (
     ActionContext,
     ActionProvider,
@@ -78,7 +79,7 @@ class SendMessageActionProvider(ActionProvider):
             # No channel backend — fall back to a dashboard notification so the
             # action is never a silent no-op.
             try:
-                state.notify("info", title or "Agent message", text)
+                state.notify(notification_kinds.INFO, title or "Agent message", text)
             except Exception as exc:  # noqa: BLE001
                 return ActionResult(
                     success=False, error=f"send-message: no channel + notify failed: {exc}"

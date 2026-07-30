@@ -52,6 +52,12 @@ def _ensure_default_providers_registered() -> None:
         from personalclaw.action_providers.send_message_provider import SendMessageActionProvider
 
         register_action_provider(SendMessageActionProvider())
+    if "notification-digest" not in _providers:
+        from personalclaw.action_providers.digest_provider import (
+            NotificationDigestActionProvider,
+        )
+
+        register_action_provider(NotificationDigestActionProvider())
     if "create-task" not in _providers:
         from personalclaw.action_providers.create_task_provider import CreateTaskActionProvider
 

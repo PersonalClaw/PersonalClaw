@@ -102,10 +102,29 @@ already in force:
 
 - **Additive by default.** New config fields get defaults; new endpoints sit
   beside existing ones; a missing persisted field reads as today's behavior.
+- **Assume someone is already running the thing you're changing.** Existing
+  users have live state in `~/.personalclaw` — chats, memory, knowledge,
+  credentials, config — and an upgrade must not lose it or require hand-editing
+  files. Before you change anything persisted, ask what happens to a home
+  directory written by the *previous* release. If the answer is "it breaks" or
+  "they'd have to start over," the change isn't ready as written.
+- **A breaking change needs a migration path, and the path is part of the PR.**
+  If your change alters a persisted shape, a stored format, or a public route
+  contract, it needs a route from old state to new that runs without user
+  intervention: read the old shape and write the new one on first load
+  (idempotently, so re-running is a no-op), keep the old field readable until the
+  data has moved, and only then remove it. A PR that changes a format and leaves
+  existing data stranded will be asked for the migration before anything else.
+  State plainly in the PR what old state you tested against and what happened to
+  it — a fixture home written by the previous release is the cheapest proof.
 - **Don't invent gate or migration machinery.** There is no `lifecycle/` package
-  yet, and hand-rolled versioning/migration helpers will be rejected — they'd
-  have to be removed when the real mechanism lands. If a change seems to *need*
-  one, that's the signal to stop and ask.
+  yet, and hand-rolled versioning frameworks or migration *runners* will be
+  rejected — they'd have to be removed when the real mechanism lands. Prefer the
+  patterns already in the tree: a store's own additive column ladder
+  (`knowledge/store.py`'s `_NEW_ITEM_COLUMNS`, `vector_memory.py`'s
+  `_MIGRATIONS`), `CREATE TABLE IF NOT EXISTS`, tolerant `from_dict` reads, and
+  backfills keyed on inspecting the data rather than on a version number. If your
+  change seems to need machinery none of those cover, stop and ask.
 - **Flag it instead of doing it.** If the clean fix genuinely requires changing
   a persisted shape, a public route contract, or a stored credential/state
   format, say so in an issue (or in the PR description under a clear

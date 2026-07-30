@@ -719,7 +719,13 @@ export interface KnowledgeStats { items: number; entities: number; relations: nu
 // backend InboxItem dataclass (inbox.py).
 export type InboxClassification = 'needs_reply' | 'fyi' | 'noise'
 export type InboxConfidence = 'high' | 'needs_review' | 'escalate'
-export type InboxItemStatus = 'pending' | 'sent' | 'dismissed' | 'handled'
+// 'seen' is the read/unread boundary: surfaced to the user but not yet resolved.
+export type InboxItemStatus = 'pending' | 'seen' | 'sent' | 'dismissed' | 'handled'
+// What kind of attention an item wants. 'message' is the default so every item written
+// before the inbox became a general attention store stays valid.
+export type InboxItemKind =
+  | 'message' | 'mention' | 'email' | 'agent_request'
+  | 'proposal' | 'needs_input' | 'digest' | 'system'
 export interface InboxThreadMsg { sender_name?: string; text?: string; ts?: string }
 export interface InboxItem {
   id: string; channel: string; channel_name: string; thread_ts?: string | null
@@ -734,7 +740,13 @@ export interface InboxItem {
   favorited?: boolean
   // Feedback Signal: per-judgment producer meta the thumbs attribute to.
   feedback_producers?: Record<'classification' | 'draft' | 'digest', FeedbackProducer | undefined>
+  // Attention store: what kind of attention this wants, and the ids of the
+  // things it is ABOUT — refs is what makes a needs_input row deep-link to its loop.
+  item_kind?: InboxItemKind
+  refs?: Record<string, string>
 }
+/** One row of the inbox kind-filter chips: what's present, and how much is unresolved. */
+export interface InboxKindCount { kind: InboxItemKind; total: number; open: number; channel: boolean }
 export interface InboxProvider { name: string; display_name: string; source_name: string }
 export interface InboxHealth { running: boolean; last_poll_at?: number; last_poll_ok?: boolean; last_error?: string; poll_count?: number; stale?: boolean }
 export interface InboxSourceHealth { name: string; active: boolean; kind: 'push' | 'poll'; can_reply: boolean }
@@ -746,7 +758,9 @@ export interface InboxStatus {
   poll_interval_seconds?: number
 }
 export interface InboxSettings {
-  alert_keywords: string[]; alert_on_name_mention: boolean; auto_cleanup_enabled: boolean
+  // alert_keywords / alert_on_name_mention removed in plan 42 S3 — alerting is now a
+  // `conditions` block on a notification rule (see NotificationRuleRow).
+  auto_cleanup_enabled: boolean
   retention_days: number
 }
 // One row of the security-event log (SEL) — the tamper-evident audit chain.
@@ -782,6 +796,31 @@ export interface UpdateCheck { available: boolean; changes: string; checked: boo
 export interface NotificationSettings {
   mute_all: boolean; quiet_hours_enabled: boolean; quiet_hours_start: string; quiet_hours_end: string
   min_severity: string
+}
+// Per-(source, kind) delivery rules. `mode` is what happens when a
+// notification of this kind passes the global gate above; `conditions` ESCALATE a quieter
+// mode to immediate on a keyword or name mention.
+export type NotificationMode = 'never' | 'badge' | 'immediate' | 'digest'
+export type NotificationTarget = 'dashboard' | 'channel_dm' | 'push' | 'native'
+export interface NotificationRuleRow {
+  key: string; source: string; kind: string; label: string; severity: number
+  mode: NotificationMode
+  /** The registry default, so the UI can show "changed from default". */
+  default_mode: NotificationMode
+  /** True when the user has an explicit stored rule for this kind. */
+  configured: boolean
+  targets: NotificationTarget[]
+  conditions: { keywords: string[]; name_mention: boolean }
+}
+export interface NotificationRulesDoc {
+  rules: NotificationRuleRow[]
+  digest: { schedule: string }
+  targets: NotificationTarget[]
+}
+export interface NotificationRulePatch {
+  mode?: NotificationMode
+  targets?: NotificationTarget[]
+  conditions?: { keywords?: string[]; name_mention?: boolean }
 }
 export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_enabled?: boolean; vault_path?: string; graph_enabled?: boolean; push_context?: boolean; push_min_confidence?: number }
 
@@ -2234,7 +2273,15 @@ export const api = {
   },
 
   // inbox — general triage entity over pluggable message-source providers
-  inbox: () => get<InboxItem[]>('/api/inbox'),
+  inbox: (kind?: string) =>
+    get<InboxItem[]>(kind ? `/api/inbox?kind=${encodeURIComponent(kind)}` : '/api/inbox'),
+  // Kinds PRESENT in the store (not the whole enum) — a chip for an empty kind is a dead
+  // control, so the backend drives the chip row from real data.
+  inboxKinds: () => get<{ kinds: InboxKindCount[] }>('/api/inbox/kinds').then((d) => d.kinds),
+  // Advance PENDING → SEEN. Omit both fields to mark everything; a resolved item is never
+  // dragged backwards. Idempotent.
+  markInboxSeen: (body: { ids?: string[]; kind?: string } = {}) =>
+    post<{ ok: boolean; seen: number }>('/api/inbox/seen', body),
   inboxStatus: () => get<InboxStatus>('/api/inbox/status'),
   inboxProviders: () => get<{ providers: InboxProvider[] }>('/api/inbox/providers').then((d) => d.providers),
   updateInboxItem: (id: string, body: Record<string, unknown>) => put<InboxItem>(`/api/inbox/${encodeURIComponent(id)}`, body),
@@ -2294,6 +2341,13 @@ export const api = {
   // settings entities
   notificationSettings: () => get<{ settings: NotificationSettings }>('/api/notifications/settings').then((d) => d.settings),
   saveNotificationSettings: (s: Partial<NotificationSettings>) => put<{ settings: NotificationSettings }>('/api/notifications/settings', s),
+  // The full effective matrix: one row per REGISTERED kind, so a kind nobody has
+  // customized still appears with its default rather than being invisible until edited.
+  notificationRules: () => get<NotificationRulesDoc>('/api/notifications/rules'),
+  // Merges: only the keys named in the body change. Rejects an unknown kind/mode/target
+  // rather than persisting something the read path would silently ignore.
+  saveNotificationRules: (body: { rules?: Record<string, NotificationRulePatch>; digest?: { schedule?: string } }) =>
+    put<NotificationRulesDoc & { ok: boolean }>('/api/notifications/rules', body),
   memorySettings: () => get<MemorySettings>('/api/memory/settings'),
   saveMemorySettings: (s: Partial<MemorySettings>) => put<MemorySettings>('/api/memory/settings', s),
   /** The push reflex's report card. */

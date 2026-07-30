@@ -612,6 +612,11 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # backend route (the ONE app-route action provider; per-app providers can't
         # be enumerated in a static frozenset).
         "call-app-route",
+        # Plan 42 T5.1: drains the queued `digest`-mode notifications into one grouped
+        # inbox item. Registered here because the system cron that runs it goes through
+        # the same trigger validation as a user-authored hook — a registered provider
+        # missing from this set is one the scheduler would refuse to dispatch.
+        "notification-digest",
     }
 )
 

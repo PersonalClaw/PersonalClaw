@@ -45,13 +45,32 @@ def _save_entity_settings(entity: str, settings: dict[str, Any]) -> None:
     atomic_write(path, json.dumps(settings, indent=2) + "\n")
 
 
-# Default schemas for entity settings
+# Default schemas for entity settings.
+#
+# `alert_keywords` / `alert_on_name_mention` were REMOVED here (plan 42 S3): alerting is no
+# longer an inbox-only concept with its own two fields, it is a `conditions` block on any
+# notification rule (Settings → Notifications → Per-kind delivery). The one-time projection
+# of the old values lives in `notification_rules._backfill_inbox_alerts`, which reads them
+# via `legacy_inbox_alert_fields()` below. They are absent from this allowlist, so a PUT
+# naming them is now rejected rather than silently persisted into a store nothing reads.
 INBOX_DEFAULTS: dict[str, Any] = {
-    "alert_keywords": [],
-    "alert_on_name_mention": False,
     "auto_cleanup_enabled": True,
     "retention_days": 90,
 }
+
+#: The retired alert keys, read ONLY by the backfill.
+_LEGACY_ALERT_KEYS = ("alert_keywords", "alert_on_name_mention")
+
+
+def legacy_inbox_alert_fields() -> dict[str, Any]:
+    """The retired alert fields as still stored on disk, for the one-time backfill.
+
+    Reads the RAW entity settings rather than `load_inbox_settings()`, because that function
+    now drops these keys — which is the point of retiring them. Returns ``{}`` when the file
+    is absent or the keys are already gone.
+    """
+    raw = _load_entity_settings("inbox")
+    return {k: raw[k] for k in _LEGACY_ALERT_KEYS if k in raw}
 
 
 def load_inbox_settings() -> dict[str, Any]:
@@ -201,6 +220,8 @@ def register_entity_routes(app: web.Application) -> None:
     app.router.add_put("/api/inbox/settings", handle_inbox_settings_put)
     app.router.add_get("/api/notifications/settings", handle_notifications_settings_get)
     app.router.add_put("/api/notifications/settings", handle_notifications_settings_put)
+    app.router.add_get("/api/notifications/rules", handle_notification_rules_get)
+    app.router.add_put("/api/notifications/rules", handle_notification_rules_put)
 
 
 async def handle_inbox_settings_get(request: web.Request) -> web.Response:
@@ -276,3 +297,102 @@ async def handle_notifications_settings_put(request: web.Request) -> web.Respons
     current.update(known)
     _save_entity_settings("notifications", current)
     return web.json_response({"ok": True, "settings": current})
+
+
+async def handle_notification_rules_get(request: web.Request) -> web.Response:
+    """GET /api/notifications/rules — the effective per-(source, kind) rule matrix.
+
+    Returns a row for EVERY registered kind, not just configured ones: the registry is the
+    row list, so a kind nobody has customized still appears with its default rather than
+    being invisible until someone edits it.
+    """
+    from personalclaw import notification_rules
+
+    return web.json_response(notification_rules.rules_document())
+
+
+async def handle_notification_rules_put(request: web.Request) -> web.Response:
+    """PUT /api/notifications/rules — replace rules for the keys named in the body.
+
+    Guarded to the same standard as the settings PUTs above (bug #22 doctrine): an
+    unknown key, an unknown mode, or a malformed conditions block is REJECTED rather than
+    persisted, because a rules file that silently fails to parse degrades to defaults —
+    the user would set `never` on a noisy kind, see it accepted, and keep getting notified.
+    """
+    from personalclaw import notification_kinds as nk
+    from personalclaw import notification_rules
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "Body must be a JSON object"}, status=400)
+
+    doc = notification_rules.load_rules()
+    stored = doc.get("rules")
+    stored = dict(stored) if isinstance(stored, dict) else {}
+
+    incoming = body.get("rules")
+    if incoming is not None:
+        if not isinstance(incoming, dict):
+            return web.json_response({"error": "'rules' must be an object"}, status=400)
+        known_keys = {k.key for k in nk.all_kinds()}
+        for key, raw in incoming.items():
+            if key not in known_keys:
+                return web.json_response(
+                    {"error": f"unknown notification kind '{key}'"}, status=400
+                )
+            if not isinstance(raw, dict):
+                return web.json_response({"error": f"rule '{key}' must be an object"}, status=400)
+            mode = raw.get("mode")
+            if mode is not None and mode not in nk.MODES:
+                return web.json_response(
+                    {"error": f"mode must be one of {sorted(nk.MODES)}"}, status=400
+                )
+            targets = raw.get("targets")
+            if targets is not None:
+                if not isinstance(targets, list):
+                    return web.json_response(
+                        {"error": f"rule '{key}': targets must be a list"}, status=400
+                    )
+                unknown = [t for t in targets if t not in notification_rules.TARGETS]
+                if unknown:
+                    return web.json_response({"error": f"unknown targets {unknown}"}, status=400)
+            conditions = raw.get("conditions")
+            if conditions is not None:
+                if not isinstance(conditions, dict):
+                    return web.json_response(
+                        {"error": f"rule '{key}': conditions must be an object"}, status=400
+                    )
+                kws = conditions.get("keywords")
+                if kws is not None and (
+                    not isinstance(kws, list) or any(not isinstance(k, str) for k in kws)
+                ):
+                    return web.json_response(
+                        {"error": f"rule '{key}': keywords must be a list of strings"}, status=400
+                    )
+                nm = conditions.get("name_mention")
+                if nm is not None and not isinstance(nm, bool):
+                    return web.json_response(
+                        {"error": f"rule '{key}': name_mention must be a boolean"}, status=400
+                    )
+            stored[key] = raw
+        doc["rules"] = stored
+
+    digest = body.get("digest")
+    if digest is not None:
+        if not isinstance(digest, dict):
+            return web.json_response({"error": "'digest' must be an object"}, status=400)
+        schedule = digest.get("schedule")
+        if schedule is not None:
+            # A malformed schedule would fall back to the default at read time, so the
+            # user would configure 07:00, see it saved, and get an 08:00 digest.
+            if not isinstance(schedule, str) or len(schedule.split()) != 5:
+                return web.json_response(
+                    {"error": "digest schedule must be a 5-field cron expression"}, status=400
+                )
+            doc.setdefault("digest", {})["schedule"] = schedule
+
+    notification_rules.save_rules(doc)
+    return web.json_response({"ok": True, **notification_rules.rules_document()})

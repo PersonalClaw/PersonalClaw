@@ -1,18 +1,15 @@
 import { useEffect, useState } from 'react'
-import { X, Plus } from 'lucide-react'
 import { api, type InboxSettings } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
-import { PanelHeader, Section, Row, Field, Toggle, SavedToast } from './settingsUI'
+import { PanelHeader, Section, Row, Toggle, SavedToast } from './settingsUI'
 import { NumberField } from '../../ui/forms'
-import { SquareIconButton } from '../../ui/SquareIconButton'
 import { FormSkeleton } from '../../ui/ListScaffold'
 
-/** Inbox settings → /api/inbox/settings. Alert keywords + name-mention alerts +
- *  auto-cleanup retention for the unified inbox (messaging/email source items). */
+/** Inbox settings → /api/inbox/settings: auto-cleanup retention for the unified inbox.
+ *  Alerting lives in the notification rules matrix now (plan 42 S3). */
 export function InboxSettingsPanel() {
   const [s, setS] = useState<InboxSettings | null>(null)
   const [saved, setSaved] = useState(false)
-  const [kw, setKw] = useState('')
 
   // Stale-while-revalidate + persist: paint instantly on revisit/reload. The
   // editable form state `s` is seeded/rehydrated from this read-only `data`;
@@ -31,23 +28,12 @@ export function InboxSettingsPanel() {
       <PanelHeader title="Inbox" hint="What gets flagged in the unified inbox, and how long items are kept." />
       <div className="mb-l flex justify-end"><SavedToast show={saved} /></div>
 
-      <Section title="Alerts" hint="When to flag an inbox item for your attention.">
-        <Field label="Alert keywords" hint="Flag items containing any of these words.">
-          <div className="flex flex-wrap items-center gap-1.5">
-            {s.alert_keywords.map((k) => (
-              <span key={k} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2.5 py-1 text-on-surface text-[0.75rem]">
-                {k}
-                <button type="button" onClick={() => patch({ alert_keywords: s.alert_keywords.filter((x) => x !== k) })} aria-label={`Remove ${k}`} className="text-on-surface-low hover:text-on-surface"><X size={12} /></button>
-              </span>
-            ))}
-            <input value={kw} onChange={(e) => setKw(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && kw.trim() && !s.alert_keywords.includes(kw.trim())) { patch({ alert_keywords: [...s.alert_keywords, kw.trim()] }); setKw('') } }}
-              placeholder="Add keyword…" className="h-8 w-36 rounded-md bg-surface-high px-2 text-[0.75rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-            {kw.trim() && <SquareIconButton icon={Plus} iconSize={15} label="Add keyword" onClick={() => { patch({ alert_keywords: [...s.alert_keywords, kw.trim()] }); setKw('') }} />}
-          </div>
-        </Field>
-        <Row label="Alert on name mention" hint="Flag items that mention your name.">
-          <Toggle on={s.alert_on_name_mention} onChange={(v) => patch({ alert_on_name_mention: v })} label="Name-mention alerts" />
+      {/* Alerting moved to Notifications → Per-kind delivery (plan 42 S3): keyword /
+          name-mention escalation is a `conditions` block on ANY notification rule now, so
+          the same rules cover loops and proposals, not just inbox messages. */}
+      <Section title="Alerts" hint="Keyword and name-mention alerts are now per-notification-kind.">
+        <Row label="Where to configure" hint="One place for every kind of notification, not just inbox items.">
+          <a href="#/settings?panel=notifications" className="text-primary text-[0.8125rem] hover:underline">Open notification rules</a>
         </Row>
       </Section>
 

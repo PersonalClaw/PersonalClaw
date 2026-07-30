@@ -1759,10 +1759,12 @@ class InboxConfig:
         default_factory=list,
         metadata=_meta("Style Rules", "Initial communication style rules for drafting."),
     )
-    # NOTE: alert_keywords / alert_on_name_mention / auto_cleanup_enabled /
-    # retention live in the inbox ENTITY settings store
-    # (entity_settings/inbox.json via /api/inbox/settings), not here — one
-    # store, read by alert evaluation + retention maintenance at runtime.
+    # NOTE: auto_cleanup_enabled / retention live in the inbox ENTITY settings
+    # store (entity_settings/inbox.json via /api/inbox/settings), not here —
+    # one store, read by retention maintenance at runtime. Alerting moved OUT
+    # of the inbox entirely in plan 42 S3: it is now a `conditions` block on any
+    # notification rule (entity_settings/notification_rules.json), so the same
+    # keyword/name-mention escalation works for every kind, not just messages.
     test_mode: bool = field(
         default=False,
         metadata=_meta("Test Mode", "Include own messages in inbox (for testing)."),

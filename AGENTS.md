@@ -47,9 +47,20 @@ a red gate with `--no-verify` — that is reserved for owner-declared emergencie
   rejection). Working an owner-assigned roadmap task, a class-B/S clean break is
   expected: execute it, note it in the CHANGELOG, advise `personalclaw snapshot`.
   Working anything else, stay **additive** (defaults on new fields, tolerant
-  reads, routes beside routes) and if the clean fix needs a persisted-shape,
-  route-contract, or credential-format change, **stop and surface it** (E3
-  lifecycle/state ambiguity) instead of improvising compatibility.
+  reads, routes beside routes); if the clean fix needs a persisted-shape,
+  route-contract, or credential-format change, it needs a **migration path** —
+  an unattended, idempotent read-old/write-new on first load — and if you can't
+  see one, **stop and surface it** (E3) instead of improvising compatibility or
+  stranding existing state. Full rules: [CONTRIBUTING.md](CONTRIBUTING.md#breaking-changes).
+- **A plan's gate/migration tasks are methodology, not scope.** Plans written in
+  contributor form ask for `lifecycle/gates.py` registrations, dual paths, and
+  `lifecycle/migrations/m_*.py` files. On maintainer-assigned work those tasks
+  **re-scope, they never block**: drop the gate (the new path is the path), turn
+  the migration into an idempotent backfill keyed on inspecting the data, record a
+  DEVIATION, keep building. A `Depends on: LIFECYCLE-DOCTRINE` header is a claim
+  to verify against code, not a fact — and a plan sentence that conflicts with
+  doctrine is a wording problem, never an unbuildable feature. See
+  [EXECUTION-PROTOCOL §2](docs/roadmap/plans/EXECUTION-PROTOCOL.md).
 - **Provider-agnostic core.** No vendor names or vendor-specific logic in core.
   Vendor integrations are removable app bundles in the separate PersonalClawApps
   repo; apps import core **only** via `personalclaw.sdk.*`.

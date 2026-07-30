@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { api, type NotificationSettings } from '../../lib/api'
-import { useCachedData } from '../../lib/useCachedData'
+import { api, type NotificationSettings, type NotificationRulesDoc } from '../../lib/api'
+import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Field, Toggle, SegPills, SavedToast } from './settingsUI'
 import { FormSkeleton } from '../../ui/ListScaffold'
+import { NotificationRulesMatrix, DigestSchedule } from './NotificationRulesMatrix'
 
 const SEVERITIES = [
   { key: 'info', label: 'All' },
@@ -22,6 +23,14 @@ export function NotificationsPanel() {
     'settings:notification-settings', () => api.notificationSettings().catch(() => null), { persist: true },
   )
   useEffect(() => { if (settingsData) setS(settingsData) }, [settingsData])
+
+  // The per-kind rules matrix. Not persisted to the cache: it's the authoritative view of
+  // policy, and serving a stale copy after an edit would show the user a rule they just
+  // changed back to its old value.
+  const { data: rules, refresh: refreshRules } = useCachedData<NotificationRulesDoc | null>(
+    'settings:notification-rules', () => api.notificationRules().catch(() => null), { persist: false },
+  )
+  const reloadRules = () => { invalidateCache('settings:notification-rules'); refreshRules() }
 
   const patch = (p: Partial<NotificationSettings>) => {
     setS((prev) => prev && { ...prev, ...p })
@@ -57,6 +66,12 @@ export function NotificationsPanel() {
           </Row>
         )}
       </Section>
+
+      {/* Per-kind rules sit BELOW the global controls because that's the order they apply
+          in: the gate above decides whether anything is delivered at all, and these decide
+          how. Rendered only once loaded — an empty matrix would read as "no kinds exist". */}
+      {rules && <NotificationRulesMatrix doc={rules} onSaved={reloadRules} />}
+      {rules && <DigestSchedule schedule={rules.digest.schedule} onSaved={reloadRules} />}
     </div>
   )
 }

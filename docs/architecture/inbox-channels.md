@@ -22,16 +22,21 @@ against core protocols). Paths are relative to
   contribute sources, but none do today by decision: channels are channel
   providers, not inbox sources.
 - **Settings** live solely in
-  `~/.personalclaw/entity_settings/inbox.json` (`alert_keywords`,
-  `alert_on_name_mention`, `auto_cleanup_enabled`, `retention_days`) with
-  type- and range-guarded PUTs in `providers/entity_routes.py`. Name-mention
-  matching treats each name part as a whole word.
+  `~/.personalclaw/entity_settings/inbox.json` (`auto_cleanup_enabled`,
+  `retention_days`) with type- and range-guarded PUTs in
+  `providers/entity_routes.py`. **Alerting is no longer here:** the former
+  `alert_keywords`/`alert_on_name_mention` fields were retired and generalized
+  into per-kind rule `conditions` (below), so the same keyword / name-mention
+  escalation now applies to loop requests and proposals, not just messages.
+  `inbox.evaluate_alert()` reads the `inbox/alert` rule's conditions.
 
 ## Notifications
 
 `DashboardState.notify()` (`dashboard/state.py`) is the **single choke point**
-for user-facing notifications. `notification_allowed()`
-(`providers/entity_routes.py`) gates it:
+for user-facing notifications. Two layers of policy apply, in this order.
+
+**1. The global gate** — `notification_allowed()`
+(`providers/entity_routes.py`), unchanged and outermost:
 
 - severity rank map with `min_severity`;
 - midnight-wrapping quiet hours (severity-3 bypasses);
@@ -40,10 +45,36 @@ for user-facing notifications. `notification_allowed()`
   open (a broken settings file must not silence the system).
 
 Preferences persist in `entity_settings/notifications.json` with enum/HH:MM
-domain-guarded PUTs. Unread counts are *derived* from unacked log entries;
-deletes broadcast `notification_removed`. Notification metadata may carry a
-`channel_link` — built via `ChannelDelivery.build_thread_link`, never by core
-string-formatting a vendor URL.
+domain-guarded PUTs.
+
+**2. The per-kind rule** — `notification_rules.py`. Every notification is a
+registered `(source, kind)` pair (`notification_kinds.py`); each pair resolves
+to a rule:
+
+- **mode** — `never` (drop), `badge` (persist without a toast), `immediate`
+  (deliver), `digest` (batch into `digest_queue.jsonl` for the scheduled
+  summary);
+- **targets** — `dashboard` today; `channel_dm` via
+  `ChannelDelivery.deliver_notification`; `push`/`native` are accepted and
+  persisted but inert until the mobile/desktop plans land;
+- **conditions** — keywords / name-mention that **escalate** a quieter mode to
+  `immediate`. Escalation is capped at `immediate` and never adds targets the
+  user didn't choose.
+
+Rules live in `entity_settings/notification_rules.json` with a guarded
+`PUT /api/notifications/rules`; the matrix is Settings → Notifications →
+Per-kind delivery. **Rules refine delivery for notifications that already
+passed the gate — they can never resurrect a suppressed one**, so `mute_all`
+still means mute. Every failure path (missing file, malformed JSON, unknown
+mode/target) falls back to the registry default, which is `immediate`: a policy
+layer that cannot read its own config must not be able to silence the system.
+An unregistered pair resolves to `system/generic` with a warning rather than
+raising.
+
+Unread counts are *derived* from unacked log entries; deletes broadcast
+`notification_removed`. Notification metadata may carry a `channel_link` —
+built via `ChannelDelivery.build_thread_link`, never by core string-formatting
+a vendor URL.
 
 ## Channels: the two core seams
 

@@ -826,6 +826,62 @@ async def get_entity_items(request: web.Request) -> web.Response:
     return web.json_response([store._serialize_item(r) for r in rows])
 
 
+async def get_item_duplicates(request: web.Request) -> web.Response:
+    """GET /api/knowledge/items/{id}/duplicates — near-duplicates, best match first.
+
+    Surfacing only. Merging is a separate POST, because a merge DELETES one of the two and
+    that must be a deliberate act, never a side effect of looking.
+    """
+    store = _store(request)
+    item_id = request.match_info["id"]
+    if store.get_item(item_id) is None:
+        return web.json_response({"error": "not found"}, status=404)
+    try:
+        limit = min(50, max(1, int(request.query.get("limit", 25) or 25)))
+    except ValueError:
+        return web.json_response({"error": "invalid limit"}, status=400)
+    return web.json_response({"duplicates": store.find_duplicates(item_id, limit=limit)})
+
+
+async def merge_items(request: web.Request) -> web.Response:
+    """POST /api/knowledge/items/{id}/merge — fold another item into this one.
+
+    ``{id}`` is the SURVIVOR and the body names the loser, so the destructive half is never
+    the path parameter a client might reuse from a list view by mistake. ``confirm: true`` is
+    required: this deletes an item, and an accidental double-post shouldn't.
+    """
+    store = _store(request)
+    keep_id = request.match_info["id"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be an object"}, status=400)
+    merge_id = str(body.get("merge_id") or "").strip()
+    if not merge_id:
+        return web.json_response({"error": "merge_id is required"}, status=400)
+    if not body.get("confirm"):
+        return web.json_response(
+            {"error": "merging deletes an item — pass confirm: true"}, status=400
+        )
+    try:
+        moved = store.merge_items(keep_id, merge_id)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    try:
+        sel().log_tool_invocation(
+            session_key="dashboard:knowledge",
+            tool_name="knowledge_merge_items",
+            outcome="success",
+            request_id=keep_id,
+            source="dashboard",
+        )
+    except Exception:
+        logger.warning("SEL audit failed for knowledge merge", exc_info=True)
+    return web.json_response({"ok": True, "kept": keep_id, "merged": merge_id, "moved": moved})
+
+
 async def get_related_items(request: web.Request) -> web.Response:
     """GET /api/knowledge/items/{id}/related -- items sharing entities with given item."""
     store = _store(request)
@@ -2083,6 +2139,8 @@ def setup_knowledge_routes(app: web.Application) -> None:
     app.router.add_post("/api/knowledge/intents/{id}/generate-skill", generate_skill_from_intent)
     app.router.add_get("/api/knowledge/items/{id}/intents", list_item_intents)
     app.router.add_get("/api/knowledge/items/{id}/related", get_related_items)
+    app.router.add_get("/api/knowledge/items/{id}/duplicates", get_item_duplicates)
+    app.router.add_post("/api/knowledge/items/{id}/merge", merge_items)
     app.router.add_get("/api/knowledge/entities/by-name/{name}/items", get_entity_items)
     app.router.add_get("/api/knowledge/entities/by-name/{name}/related", get_entity_related)
     app.router.add_get("/api/knowledge/entities/{id}/graph", get_entity_graph)

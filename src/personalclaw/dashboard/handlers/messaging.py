@@ -10,6 +10,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw import notification_kinds
 from personalclaw.dashboard.chat_persistence import _rehydrate_session_from_history
 from personalclaw.dashboard.chat_utils import _remove_queued_by_id
 from personalclaw.dashboard.state import (
@@ -636,7 +637,7 @@ async def api_send_message(request: web.Request) -> web.Response:
                 safe_name, _ = redact_credentials(safe_name)
                 title = f"⏰ {safe_name}"
                 text += "\n\n_(session closed — delivered as notification)_"
-            state.notify("agent", title, text)
+            state.notify(notification_kinds.AGENT, title, text)
             if state.channel_delivery:
                 try:
                     if target_channel:
