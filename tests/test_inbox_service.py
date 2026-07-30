@@ -231,23 +231,30 @@ def _incoming(**kw):
     return IncomingMessage(**base)
 
 
-def _ingest_svc(tmp_path, monkeypatch, settings=None, operator=""):
+def _ingest_svc(tmp_path, monkeypatch, settings=None, operator="", alert_conditions=None):
+    """An InboxService on an isolated store.
+
+    ``alert_conditions`` writes a real `inbox/alert` RULE (plan 42 S3) — alerting no longer
+    reads inbox entity settings, so a test that set `alert_keywords` there would silently
+    get no alerts. ``settings`` still covers what the inbox DOES own (retention/cleanup).
+    """
     from personalclaw import inbox_service as mod
+    from personalclaw import notification_rules as nr
 
     store = InboxStore(tmp_path / "inbox.json")
     svc = InboxService(state=InboxState(tmp_path / "state.json"), store=store)
     monkeypatch.setattr(
         "personalclaw.providers.entity_routes.load_inbox_settings",
         lambda: {
-            **{
-                "alert_keywords": [],
-                "alert_on_name_mention": False,
-                "auto_cleanup_enabled": True,
-                "retention_days": 90,
-            },
+            **{"auto_cleanup_enabled": True, "retention_days": 90},
             **(settings or {}),
         },
     )
+    rules_home = tmp_path / "rules-home"
+    (rules_home / "entity_settings").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(nr, "config_dir", lambda: rules_home)
+    if alert_conditions:
+        nr.save_rules({"rules": {"inbox/alert": {"conditions": dict(alert_conditions)}}})
     monkeypatch.setattr(InboxService, "_operator_name", staticmethod(lambda: operator))
     monkeypatch.setattr(mod, "_dashboard_state", lambda: None)
     return svc
@@ -258,7 +265,7 @@ def test_ingest_creates_item_and_fires_keyword_alert(tmp_path, monkeypatch):
 
     from personalclaw import inbox_service as mod
 
-    svc = _ingest_svc(tmp_path, monkeypatch, settings={"alert_keywords": ["urgent"]})
+    svc = _ingest_svc(tmp_path, monkeypatch, alert_conditions={"keywords": ["urgent"]})
     dash = MagicMock()
     monkeypatch.setattr(mod, "_dashboard_state", lambda: dash)
     n = svc._ingest([_incoming()])

@@ -758,7 +758,9 @@ export interface InboxStatus {
   poll_interval_seconds?: number
 }
 export interface InboxSettings {
-  alert_keywords: string[]; alert_on_name_mention: boolean; auto_cleanup_enabled: boolean
+  // alert_keywords / alert_on_name_mention removed in plan 42 S3 — alerting is now a
+  // `conditions` block on a notification rule (see NotificationRuleRow).
+  auto_cleanup_enabled: boolean
   retention_days: number
 }
 // One row of the security-event log (SEL) — the tamper-evident audit chain.
@@ -794,6 +796,31 @@ export interface UpdateCheck { available: boolean; changes: string; checked: boo
 export interface NotificationSettings {
   mute_all: boolean; quiet_hours_enabled: boolean; quiet_hours_start: string; quiet_hours_end: string
   min_severity: string
+}
+// Per-(source, kind) delivery rules (plan 42 S1/S3). `mode` is what happens when a
+// notification of this kind passes the global gate above; `conditions` ESCALATE a quieter
+// mode to immediate on a keyword or name mention.
+export type NotificationMode = 'never' | 'badge' | 'immediate' | 'digest'
+export type NotificationTarget = 'dashboard' | 'channel_dm' | 'push' | 'native'
+export interface NotificationRuleRow {
+  key: string; source: string; kind: string; label: string; severity: number
+  mode: NotificationMode
+  /** The registry default, so the UI can show "changed from default". */
+  default_mode: NotificationMode
+  /** True when the user has an explicit stored rule for this kind. */
+  configured: boolean
+  targets: NotificationTarget[]
+  conditions: { keywords: string[]; name_mention: boolean }
+}
+export interface NotificationRulesDoc {
+  rules: NotificationRuleRow[]
+  digest: { schedule: string }
+  targets: NotificationTarget[]
+}
+export interface NotificationRulePatch {
+  mode?: NotificationMode
+  targets?: NotificationTarget[]
+  conditions?: { keywords?: string[]; name_mention?: boolean }
 }
 export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_enabled?: boolean; vault_path?: string; graph_enabled?: boolean; push_context?: boolean; push_min_confidence?: number }
 
@@ -2314,6 +2341,13 @@ export const api = {
   // settings entities
   notificationSettings: () => get<{ settings: NotificationSettings }>('/api/notifications/settings').then((d) => d.settings),
   saveNotificationSettings: (s: Partial<NotificationSettings>) => put<{ settings: NotificationSettings }>('/api/notifications/settings', s),
+  // The full effective matrix: one row per REGISTERED kind, so a kind nobody has
+  // customized still appears with its default rather than being invisible until edited.
+  notificationRules: () => get<NotificationRulesDoc>('/api/notifications/rules'),
+  // Merges: only the keys named in the body change. Rejects an unknown kind/mode/target
+  // rather than persisting something the read path would silently ignore.
+  saveNotificationRules: (body: { rules?: Record<string, NotificationRulePatch>; digest?: { schedule?: string } }) =>
+    put<NotificationRulesDoc & { ok: boolean }>('/api/notifications/rules', body),
   memorySettings: () => get<MemorySettings>('/api/memory/settings'),
   saveMemorySettings: (s: Partial<MemorySettings>) => put<MemorySettings>('/api/memory/settings', s),
   /** The push reflex's report card (MEMORY-GRAPH-AND-VAULT §3). */

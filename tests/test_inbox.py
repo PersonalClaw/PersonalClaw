@@ -245,48 +245,82 @@ def test_inbox_cleanup_by_retention(tmp_path):
 # ── Alert evaluation ──
 
 
-def test_evaluate_alert_keyword_and_name():
+def test_evaluate_alert_reads_the_notification_rule(tmp_path, monkeypatch):
+    """Alerting now comes from the `inbox/alert` RULE's conditions, not inbox fields.
+
+    Same matching semantics as before (they were lifted from this function's own body),
+    but sourced from `notification_rules.json` so the identical escalation is expressible
+    for every notification kind — that generalization is the whole point of S3.
+    """
+    from personalclaw import notification_rules as nr
     from personalclaw.inbox import evaluate_alert
 
-    item = InboxItem(
-        id="C1_1",
+    (tmp_path / "entity_settings").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(nr, "config_dir", lambda: tmp_path)
+
+    def rule(keywords=(), name_mention=False):
+        nr.save_rules(
+            {
+                "rules": {
+                    "inbox/alert": {
+                        "mode": "immediate",
+                        "conditions": {"keywords": list(keywords), "name_mention": name_mention},
+                    }
+                }
+            }
+        )
+
+    def item(text, item_id="C1_1"):
+        return InboxItem(
+            id=item_id,
+            channel="C1",
+            channel_name="#t",
+            thread_ts=None,
+            message=text,
+            sender_id="U1",
+            sender_name="A",
+        )
+
+    rule(keywords=["urgent"])
+    assert evaluate_alert(item("this is URGENT: prod is down")) == "keyword: urgent"
+
+    rule(keywords=["nomatch"])
+    assert evaluate_alert(item("this is URGENT: prod is down")) == ""
+
+    # Full configured name, message uses one part → still fires (word-boundary match per
+    # name part, short particles skipped).
+    rule(name_mention=True)
+    assert evaluate_alert(item("hey Marlow can you look?"), "Jordan Marlow") == "name mention"
+    # A substring inside another word must NOT fire.
+    assert evaluate_alert(item("the marlowe novel arrived"), "Marlow") == ""
+    # No name configured → nothing to match.
+    assert evaluate_alert(item("hey Marlow"), "") == ""
+
+    rule(name_mention=False)
+    assert evaluate_alert(item("hey Marlow can you look?"), "marlow") == ""
+
+    # No rules file at all: no conditions ⇒ no alerts, and no crash.
+    (tmp_path / "entity_settings" / "notification_rules.json").unlink()
+    assert evaluate_alert(item("this is URGENT")) == ""
+
+
+def test_evaluate_alert_ignores_an_empty_message(tmp_path, monkeypatch):
+    from personalclaw import notification_rules as nr
+    from personalclaw.inbox import evaluate_alert
+
+    (tmp_path / "entity_settings").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(nr, "config_dir", lambda: tmp_path)
+    nr.save_rules({"rules": {"inbox/alert": {"conditions": {"keywords": ["x"]}}}})
+    blank = InboxItem(
+        id="C1_9",
         channel="C1",
         channel_name="#t",
         thread_ts=None,
-        message="this is URGENT: prod is down",
+        message="   ",
         sender_id="U1",
         sender_name="A",
     )
-    assert evaluate_alert(item, {"alert_keywords": ["urgent"]}) == "keyword: urgent"
-    assert evaluate_alert(item, {"alert_keywords": ["nomatch"]}) == ""
-    named = InboxItem(
-        id="C1_2",
-        channel="C1",
-        channel_name="#t",
-        thread_ts=None,
-        message="hey Marlow can you look?",
-        sender_id="U1",
-        sender_name="A",
-    )
-    # full configured name; message uses one part → still fires (word-boundary
-    # match per name part, short particles skipped)
-    assert (
-        evaluate_alert(named, {"alert_on_name_mention": True}, user_name="Jordan Marlow")
-        == "name mention"
-    )
-    # substring inside another word must NOT fire
-    inside = InboxItem(
-        id="C1_4",
-        channel="C1",
-        channel_name="#t",
-        thread_ts=None,
-        message="the marlowe novel arrived",
-        sender_id="U1",
-        sender_name="A",
-    )
-    assert evaluate_alert(inside, {"alert_on_name_mention": True}, "Marlow") == ""
-    assert evaluate_alert(named, {"alert_on_name_mention": False}, "marlow") == ""
-    assert evaluate_alert(named, {"alert_on_name_mention": True}, "") == ""
+    assert evaluate_alert(blank) == ""
 
 
 def test_notify_inbox_alert_redacts_and_notifies():

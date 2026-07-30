@@ -169,14 +169,25 @@ def test_reap_orphans_kills_matching_orphan(tmp_path):
 
 def test_reap_orphans_kills_a_whole_pile(tmp_path):
     """The real bug: repeated ungraceful restarts stacked MANY orphans for one
-    app. A single reap must clear the whole pile, not just one."""
-    pids = [_spawn_orphan_proc(tmp_path)[0] for _ in range(4)]
+    app. A single reap must clear the whole pile, not just one.
+
+    **Each orphan is confirmed reparented BEFORE the next is spawned.** Spawning all four
+    and then waiting for four races four independent reparentings against one clock: on a
+    loaded CI runner three land and the fourth is still pointing at its intermediate shell,
+    so `reap_orphans` correctly skips it and the count comes up short. Raising the timeout
+    (this test was already moved 20s → 60s once) only makes that window less likely — it
+    does not remove the race, and a test that passes because the machine was fast is not
+    testing anything. Serializing the waits removes it: N sequential single-process waits
+    have no interleaving to lose.
+    """
     entry = (tmp_path / "apps" / "myapp" / "backend" / "server.py").resolve()
+    pids: list[int] = []
     try:
+        for n in range(1, 5):
+            pids.append(_spawn_orphan_proc(tmp_path)[0])
+            # Assert THIS one is reapable before adding another to the pile.
+            _wait_reapable(entry, n)
         sup = BackendSupervisor()
-        # Wait for all four to be REAPABLE (re-parented), not merely running — see
-        # _wait_reapable. Reaping before reparenting completes skips the stragglers.
-        _wait_reapable(entry, 4)
         reaped = sup.reap_orphans("myapp", entry)
         assert reaped >= 4, f"expected to reap the whole pile, got {reaped}"
         _wait_all_dead(pids)

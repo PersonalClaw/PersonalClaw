@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type InboxSettings } from '../../lib/api'
 import { Loading } from '../../ui/ListScaffold'
-import { ChipInput } from '../../ui/forms'
 import { Row, Field, Toggle, SavedToast } from '../settings/settingsUI'
 
 /** Inbox settings → GET/PUT /api/inbox/settings (alert keywords, name-mention
@@ -63,12 +62,12 @@ export function InboxSettingsPanel() {
           disabled={engagementOn === null} />
       </Row>
 
-      <Field label="Alert keywords" hint="Messages containing these words are flagged for attention.">
-        <ChipInput values={s.alert_keywords} onChange={(v) => patch({ alert_keywords: v })} placeholder="add a keyword, Enter" />
-      </Field>
-
-      <Row label="Alert on name mention" hint="Flag messages that mention you by name.">
-        <Toggle on={s.alert_on_name_mention} onChange={(v) => patch({ alert_on_name_mention: v })} label="Name-mention alerts" />
+      {/* Alerting moved to Settings → Notifications → Per-kind delivery (plan 42 S3):
+          keyword / name-mention escalation is now a `conditions` block on ANY notification
+          rule, not two inbox-only fields. Pointing there beats leaving controls that write
+          to a store nothing reads. */}
+      <Row label="Alerts" hint="Keyword and name-mention alerts are now per-notification-kind, so the same rules cover loops, proposals and messages alike.">
+        <a href="#/settings?panel=notifications" className="text-primary text-[0.8125rem] hover:underline">Open notification rules</a>
       </Row>
 
       <Row label="Auto-cleanup" hint="Automatically prune items past the retention window.">

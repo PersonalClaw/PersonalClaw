@@ -100,15 +100,14 @@ async def test_put_rejects_non_object_body():
 async def test_inbox_put_rejects_mistyped_values():
     """A known key with a wrong-TYPE value must 400, not persist.
 
-    Regression: `alert_keywords: "urgent"` (a string) persisted, and
-    evaluate_alert() then iterated its CHARACTERS as keywords (every
-    message containing 'u' alerted); `retention_days: true` persisted and
-    int(True) == 1 made maintenance delete everything older than a day."""
+    Regression: `retention_days: true` persisted and int(True) == 1 made maintenance
+    delete everything older than a day. (The `alert_keywords: "urgent"` case that used to
+    live here — a string whose CHARACTERS became keywords — is gone with the field itself;
+    the equivalent guard on the rules PUT is
+    test_rules_put_rejects_malformed_shapes.)"""
     for body in (
-        {"alert_keywords": "oops-a-string"},
         {"retention_days": True},
         {"retention_days": "90"},
-        {"alert_on_name_mention": "yes"},
         {"auto_cleanup_enabled": 1},
     ):
         resp = await er.handle_inbox_settings_put(_req(body))
@@ -389,3 +388,44 @@ async def test_rules_put_stores_conditions_that_escalate(_isolate_rules):
     assert rule.mode == "badge"
     assert rule.conditions.matches("please deploy now") == "keyword: deploy"
     assert rule.escalated().mode == "immediate"
+
+
+@pytest.mark.asyncio
+async def test_inbox_put_no_longer_accepts_the_retired_alert_fields():
+    """The alert fields moved to notification rules (plan 42 S3).
+
+    They are absent from INBOX_DEFAULTS, which is the authoritative allowlist, so a PUT
+    naming them must NOT persist them — otherwise a client written against the old API
+    would keep writing values into a store nothing reads, and the user would think their
+    alerts were configured.
+    """
+    resp = await er.handle_inbox_settings_put(
+        _req({"alert_keywords": ["urgent"], "alert_on_name_mention": True, "retention_days": 30})
+    )
+    settings = (await _json(resp))["settings"]
+    assert "alert_keywords" not in settings
+    assert "alert_on_name_mention" not in settings
+    assert settings["retention_days"] == 30, "the known key still applies"
+
+
+@pytest.mark.asyncio
+async def test_legacy_alert_fields_are_readable_for_the_backfill(tmp_path, monkeypatch):
+    """The backfill needs the RAW values even though load_inbox_settings() drops them."""
+    import json
+
+    monkeypatch.setattr(er, "_entity_settings_path", lambda entity: tmp_path / f"{entity}.json")
+    (tmp_path / "inbox.json").write_text(
+        json.dumps({"alert_keywords": ["deploy"], "alert_on_name_mention": True}), encoding="utf-8"
+    )
+    assert er.legacy_inbox_alert_fields() == {
+        "alert_keywords": ["deploy"],
+        "alert_on_name_mention": True,
+    }
+    # …and the public read path no longer surfaces them.
+    assert "alert_keywords" not in er.load_inbox_settings()
+
+
+@pytest.mark.asyncio
+async def test_legacy_alert_read_is_empty_when_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr(er, "_entity_settings_path", lambda entity: tmp_path / f"{entity}.json")
+    assert er.legacy_inbox_alert_fields() == {}
