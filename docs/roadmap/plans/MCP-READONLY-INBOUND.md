@@ -322,3 +322,66 @@ So the stateless-spec transition costs this plan **nothing structural**. What it
 
 ### Note for EXTERNAL-ACCESS (24)
 Plan 24 widens this `inbound/` package rather than re-designing it (INTEGRATION-ARCHITECTURE §1.3 landmine 3). It should **inherit the revision chosen here** rather than negotiating its own, so every dialect on the shared substrate speaks one protocol revision.
+
+- 2026-07-30 — **DONE (amendment G1.1–G1.4): protocol revision bumped `2024-11-05` → `2025-06-18`,
+  with real negotiation.**
+
+  **G1.1 — the conformance review IS the deliverable, so it lives in the code** (a comment block
+  above `PROTOCOL_VERSION`, where the next person to touch the constant will read it) rather than
+  only here. Verified clause by clause against what this surface actually does, per the plan's
+  "advertise a revision this surface conforms to, not the newest string available":
+  - **Streamable HTTP, POST-only** — the spec permits it; `GET` → 405 unchanged.
+  - **Stateless** — no `Mcp-Session-Id` issued or required, which is where the spec is heading.
+  - **`initialize`/`tools/list`/`tools/call`** implemented with the revision's result shapes;
+    `capabilities` advertises only `tools`, which is all this surface has.
+  - **No batching** — 2025-06-18 **removed** JSON-RPC batching, so this surface's long-standing
+    refusal became *conformant* rather than a deviation. That is one of the two reasons this
+    revision is the right target.
+  - **Origin / DNS-rebinding guidance** — satisfied more strictly than asked: `peer_allowed`
+    gates on the TRANSPORT peer (never a forgeable header) and a non-loopback peer additionally
+    needs `allow_remote` **and** an exact `Host` match against the owner-declared `public_url`.
+    An `Origin` check would be strictly weaker.
+
+  **Deliberately unmet clauses of LATER drafts, recorded as the plan requires:** anything needing
+  server→client requests (elicitation, sampling) or a resumable event stream is out of scope for
+  a read-only POST-only surface, and OAuth authorization is expressly this plan's non-goal (the
+  surface uses a dedicated bearer distinct from the dashboard token). Advertising a revision that
+  mandates those would be a false claim — which is what the review exists to prevent.
+
+  **G1.3 — negotiation now fails legibly.** The old handler **ignored** `params.protocolVersion`
+  and returned its own string regardless, so a client pinning an unknown revision got a
+  *successful handshake* and then failed later on a call whose shape it expected to differ. Now:
+  a supported request is **echoed back** (the session runs under the revision the client asked
+  for, not our preference), and an unsupported one — newer or older — returns a typed
+  `-32602` naming what this server speaks. `2024-11-05` stays supported because already-configured
+  clients pin it and the only difference that matters (batching) was never supported here, so
+  honoring it is honest rather than a compatibility shim.
+
+  **G1.4 — the E4 stop condition held: all 82 pre-existing inbound tests pass with ZERO edits.**
+  No security assertion needed accommodating, which was the signal that this bump stays inside its
+  scope. Fail-closed enablement, token distinctness, loopback gating, read-only, and
+  `fence_untrusted` are all untouched.
+
+  **ARCC was NOT queried — the MCP server is unavailable in this session.** Standard practice
+  applied instead: no auth/fencing/exposure code was modified, the change is confined to a version
+  constant plus a negotiation branch INSIDE the already-authenticated handler, and the existing
+  security suite was used as the regression lock.
+
+  **Two test bugs of mine, both caught before commit:** the session-handling grep matched the
+  module's own comment explaining that it has *no* sessions (making the lock unsatisfiable while
+  looking like a real failure — it now scans code lines only), and a duplicate 405 test omitted
+  the token that `mount()` requires. Also renamed a test that overclaimed a "type check": an int
+  `protocolVersion` is rejected because its string form isn't a supported revision, not by a
+  dedicated type guard — the test now says so.
+
+  **Validated as a user** against a live surface (isolated dev home, port 10746, never :10000):
+  handshake with no version → `2025-06-18`; a client pinning `2024-11-05` got `2024-11-05` back
+  (not overridden); `2099-01-01` got `-32602 unsupported protocolVersion '2099-01-01'; this server
+  speaks 2025-06-18, 2024-11-05`; `tools/list` returned all six tools; `GET` → **405**; **zero**
+  session headers on any response. Posture re-verified live: **no token → 401 before any protocol
+  reasoning** (so negotiation can't be an unauthenticated probe), wrong token → 401, a batch →
+  "batch requests are not supported", and a `tools/call` result still arrives wrapped in
+  `<untrusted_content source=inbound:mcp:status>`. **0 gateway tracebacks.**
+
+  **Gates:** `make lint` clean (mypy 554 files) · `make test` **9405 passed, 0 failed**.
+  Tests: +16 revision/negotiation cases in `test_inbound_mcp.py` (98 in file).
