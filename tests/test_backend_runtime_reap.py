@@ -75,7 +75,17 @@ def _kill_quiet(pid: int) -> None:
 # Process-visibility waits. Generous on CI: these poll the OS process table for
 # freshly-spawned children, and a contended runner can take far longer than a laptop
 # to publish them (the failure this budget exists for showed only in CI).
-_WAIT_TIMEOUT_S = 20.0
+#
+# Raised 20s -> 60s after CI still timed out mid-reparent, twice, with the pile only
+# PARTLY orphaned (observed 2-of-4 and 3-of-4 at the deadline). Reparenting to init is
+# asynchronous and unordered: the intermediate shell exits and the kernel re-points each
+# orphan independently, so on a runner executing ~18 xdist workers the tail of a 4-child
+# pile can lag seconds behind the head. The old budget was fine for "is it running" and
+# too tight for "have they ALL been re-parented" — a different, slower event. This costs
+# nothing when the wait succeeds (it returns as soon as the predicate holds) and only
+# lengthens a genuine failure, which is the right trade for a test whose whole job is to
+# prove no orphan escapes.
+_WAIT_TIMEOUT_S = 60.0
 _WAIT_STEP_S = 0.05
 
 

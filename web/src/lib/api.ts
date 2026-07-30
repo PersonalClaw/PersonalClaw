@@ -804,7 +804,7 @@ export interface MemoryStats {
 }
 // A semantic memory entry. `value_json` is a JSON-encoded value (often double-
 // encoded) — parse defensively for display.
-export interface SemanticEntry { key: string; value_json?: string; created_at?: string; updated_at?: string; confidence?: number; source?: string; scope?: string; scope_ref?: string; tier?: string; recall_count?: number }
+export interface SemanticEntry { key: string; value_json?: string; created_at?: string; updated_at?: string; confidence?: number; source?: string; scope?: string; scope_ref?: string; tier?: string; recall_count?: number; contributor?: string; is_mine?: boolean }
 export interface EpisodicEntry { id: string; text: string; tags?: string; conversation_id?: string; importance?: number; created_at?: string }
 // One row of the memory audit trail.
 export interface MemoryEvent {

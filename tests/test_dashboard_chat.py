@@ -5697,11 +5697,28 @@ class TestStopHistoryBanner:
 # ── Tests: AcpProcessDied handler in _run_chat ──
 
 
+# The real `_run_chat` coroutine, captured at import time — before any test in any
+# module can patch `chat_runner._run_chat`. TestAcpProcessDiedRecovery below tests that
+# function's OWN error handling, so it must never receive a mock: reading the module
+# attribute at call time made the class fail on CI whenever xdist co-located it with a
+# module that patches the attribute.
+from personalclaw.dashboard.chat_runner import _run_chat as _REAL_RUN_CHAT  # noqa: E402
+
+
 class TestAcpProcessDiedRecovery:
     """Verify _run_chat handles AcpProcessDied with retry logic, redaction, and session reset."""
 
     def _make_state_and_session(self, tmp_path):
-        from personalclaw.dashboard.chat_runner import _run_chat
+        # Use the function captured at IMPORT time (`_REAL_RUN_CHAT`), not the module
+        # attribute. These tests exercise `_run_chat`'s own AcpProcessDied handling, so
+        # they need the real coroutine — and several other test modules patch
+        # `chat_runner._run_chat`. Reading the attribute here made this class fail on CI
+        # (never locally) with "object MagicMock can't be used in 'await' expression"
+        # whenever xdist placed it on a worker where such a patch was live or leaked.
+        # Binding once at import is immune to that by construction: the reference is
+        # taken before any test can patch anything, and nothing in this class depends on
+        # seeing a patched version.
+        _run_chat = _REAL_RUN_CHAT
 
         state = _make_state(tmp_path)
         state.sessions.get_or_create = AsyncMock(return_value=(MagicMock(), False, False))

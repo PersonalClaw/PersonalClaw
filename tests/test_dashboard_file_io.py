@@ -75,6 +75,23 @@ def home_patch(tmp_path):
         yield tmp_path
 
 
+async def _drain_background(state) -> None:
+    """Await every fire-and-forget task the endpoint spawned.
+
+    `/api/send-message` triggers the agent turn with `asyncio.create_task` and returns
+    without awaiting it (correct: the HTTP caller must not block on a whole turn). A test
+    that patches `_run_chat` therefore has to drain those tasks BEFORE leaving the patch
+    scope, or the task outlives the patch and runs against a partly-restored module.
+    Exceptions are swallowed: the task's behavior is asserted via the mock, and a
+    teardown drain should not turn an unrelated failure into a confusing one.
+    """
+    import asyncio
+
+    tasks = list(getattr(state, "_background_tasks", ()) or ())
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 class TestFileRead:
     @pytest.mark.asyncio
     async def test_read_success(self, tmp_file, mock_sel, home_patch):
@@ -449,6 +466,14 @@ class TestSendMessage:
                 assert "build failed" in call_args[0][1]
                 assert json.loads(call_args[0][2]) == {"cronLabel": "check pipeline"}
                 mock_run.assert_called_once()
+                # Drain the fire-and-forget turn INSIDE the patch scope. The endpoint
+                # spawns `_run_chat` with `create_task` (messaging.py:626) and returns
+                # immediately; leaving that task pending past the `with` block let it run
+                # against a half-unpatched module, which showed up on CI as
+                # `TestAcpProcessDiedRecovery` dying on `await` with a MagicMock — a
+                # cross-file leak that never reproduced locally because it depends on
+                # xdist worker placement.
+                await _drain_background(state)
                 # Should NOT fall back to notify/Slack
                 state.notify.assert_not_called()
 
@@ -553,6 +578,9 @@ class TestSendMessage:
                 assert call_args[0][0] == "inject"
                 assert '[Cron notification from "test-cron"]' in call_args[0][1]
                 assert "update" in call_args[0][1]
+                # Drain the fire-and-forget turn inside the patch scope (see the note on
+                # the origin-session test above).
+                await _drain_background(state)
                 # Message was injected, not sent as a notification.
                 state.notify.assert_not_called()
 

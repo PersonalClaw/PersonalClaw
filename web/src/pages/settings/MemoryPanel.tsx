@@ -394,6 +394,14 @@ function StudioInspector({ item, onDelete, onSaved }: { item: StudioItem; onDele
               ['Confidence', item.fact.confidence != null ? String(item.fact.confidence) : '—'],
               ['Recalled', `${item.fact.recall_count ?? 0}×`],
               ['Updated', item.fact.updated_at ? fmtDate(item.fact.updated_at) : '—'],
+              // Who contributed it (TEAM-SHARED-ENTITIES §2.3). `is_mine` is resolved
+              // server-side, so "yours" covers the owner's own records, unattributed
+              // ones, and the no-username case without this surface re-deriving the
+              // rule. Only rendered when a contributor is actually recorded — on a solo
+              // install echoing your own handle on every fact is noise.
+              ...(item.fact.contributor
+                ? [['Contributor', item.fact.is_mine ? 'you' : item.fact.contributor] as [string, string]]
+                : []),
             ]} />
           </div>
         )}

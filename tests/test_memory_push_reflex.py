@@ -421,3 +421,32 @@ def test_the_migration_is_idempotent(store):
 
     _migrate_v8(store.db)
     _migrate_v8(store.db)
+
+
+# ── The process-global breaker (an xdist-isolation hazard) ────────────────────
+
+
+def test_the_breaker_latches_the_reflex_off_for_the_process():
+    """The counter is deliberately process-global: a slow memory store should not be
+    retried on every turn of a long-lived gateway. That makes it a test-isolation
+    hazard — three timeouts anywhere in an xdist worker would disable the reflex for
+    every later test in that worker, and the symptom is an empty block, not an error.
+    `_reset_context_engine_breakers` in conftest.py clears it around every test; this
+    test documents WHY that fixture has to exist."""
+    import personalclaw.context_engine as ce
+    from personalclaw.context_engine import push_context_block
+
+    assert ce._push_consecutive_timeouts == 0, "the autouse fixture should have cleared it"
+    ce._push_consecutive_timeouts = ce._PUSH_BREAKER_TRIP
+    # Latched open: returns "" without reading config or touching the store.
+    assert push_context_block(None, "anything", cwd=None, memory_store=None) == ""
+
+
+def test_the_breaker_is_clear_at_test_start():
+    """The other half of the pair: if the fixture regressed, the test above would leave
+    the counter latched and this one would fail — so the two together detect a leak in
+    either direction."""
+    import personalclaw.context_engine as ce
+
+    assert ce._push_consecutive_timeouts == 0
+    assert ce._recall_consecutive_timeouts == 0

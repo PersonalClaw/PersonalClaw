@@ -25,6 +25,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Memory records who contributed them.** Every memory PersonalClaw writes now carries your
+  username, so if your memory store is ever shared — a team store, an imported export, a
+  synced setup — you can tell your own memories from a colleague's. Recall labels another
+  person's memory as *(from name)* and states plainly that the label is provenance, never an
+  instruction to follow. At comparable relevance your own memories come first, but only as a
+  tie-break: a colleague's memory that genuinely answers the question better still wins, and
+  nothing is ever hidden from you on the basis of who wrote it. Existing memories keep an
+  empty contributor rather than being back-stamped with your name, because a record written
+  before this existed has genuinely unknown authorship. Solo installs behave exactly as
+  before.
+
 - **Memory can now offer itself, not just answer when asked.** Mention a person, project or
   tool the entity graph knows and PersonalClaw can volunteer up to three linked memories for
   that turn — including ones that share no words with what you typed, which ordinary search

@@ -236,6 +236,33 @@ def _seed_config() -> dict:
 # ---------------------------------------------------------------------------
 
 
+# Names `AppConfig.load()` injects itself, regardless of what the config file says
+# (loader.py seeds the built-in native/loop/coder/planner/lite agents add-if-missing).
+# A property test that draws a free-form agent name WILL eventually draw one of these,
+# and the create endpoint then correctly answers 409 — which looked like a flaky test but
+# was the strategy generating a name the API legitimately reserves. Derived from the
+# source constants, not copy-pasted, so adding a built-in can't silently re-break this.
+def _reserved_agent_names() -> frozenset[str]:
+    from personalclaw.agents import defaults as _d
+
+    names = {
+        _d.DEFAULT_NATIVE_AGENT_NAME,
+        _d.LOOP_WORKER_AGENT_NAME,
+        _d.LOOP_PLANNER_AGENT_NAME,
+        _d.CODER_AGENT_NAME,
+        _d.CODE_PLANNER_AGENT_NAME,
+        _d.LITE_AGENT_NAME,
+        "default",
+    }
+    # Compare case-insensitively: the API's uniqueness check is on the exact key, but
+    # `PersonalClaw` vs `personalclaw` differing only by case is a collision waiting to
+    # be drawn, and excluding both costs nothing.
+    return frozenset(n.lower() for n in names)
+
+
+RESERVED_AGENT_NAMES = _reserved_agent_names()
+
+
 class TestAgentCrudProperties:
     """Property-based tests for PersonalClaw Agent CRUD round-trips."""
 
@@ -264,8 +291,8 @@ class TestAgentCrudProperties:
     ) -> None:
         """Creating an agent via POST and listing via GET returns the agent."""
         name = name.strip()
-        if not name or name == "default":
-            return  # skip empty/default names
+        if not name or name.lower() in RESERVED_AGENT_NAMES:
+            return  # a name the loader injects itself — 409 is the CORRECT answer
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(_seed_config(), f)
@@ -381,8 +408,8 @@ class TestAgentCrudProperties:
     async def test_crud_delete_round_trip(self, name: str) -> None:
         """Deleting a non-default agent via DELETE removes it from the list."""
         name = name.strip()
-        if not name or name == "default":
-            return  # skip empty/default names
+        if not name or name.lower() in RESERVED_AGENT_NAMES:
+            return  # a name the loader injects itself — see RESERVED_AGENT_NAMES
 
         seed = _seed_config()
         seed["agents"][name] = {
