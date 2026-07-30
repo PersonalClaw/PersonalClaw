@@ -264,3 +264,69 @@ Under the pre-1.0 banner this executes as a clean break (no lifecycle gate/migra
 | Overlap with EXTERNAL-ACCESS / MOBILE-COMPANION auth | This plan owns the **human dashboard** login + the durable session store; EXTERNAL-ACCESS owns **inbound API/agent** bearers; MOBILE-COMPANION/COMPANION-APPS **consume** the session store — coordinated, not duplicated (contract index updated in INTEGRATION-ARCHITECTURE §5) |
 | **Open:** passkey/WebAuthn | Noted as a future extension on the same login surface; not built here (password + optional TOTP is the v1) |
 | **Open:** multi-user | Deliberately out of scope — one owner credential. When TEAM-SHARED-ENTITIES tailors to a team, the username graduates to an SSO-provisioned subject (its stated future), reusing this login surface |
+
+## Execution log
+
+- 2026-07-30 — **DONE (S1: the durable session foundation).**
+
+  **The bug, precisely.** `token_auth._SECRET = os.urandom(32)` ran at MODULE SCOPE and the
+  valid-nonce set lived in memory, so **every gateway restart invalidated every token**. Locally
+  that means re-running `personalclaw token` after each restart; off-network it means you are
+  locked out, because minting a fresh URL requires being on the machine. Confirmed by grep in a
+  prior session; now fixed and verified against a real restart.
+
+  **Both halves were required — a persisted key alone would not have fixed it.** With only the
+  key, a pre-restart token verifies its signature and is then refused for having no session
+  record: the same lockout with a more confusing reason. So `session_store.py` persists **two**
+  things — the 0600 signing key (`session_key`) and the session records (`sessions.json`) — and
+  `is_nonce_valid` consults the durable store before refusing, adopting a hit into memory so
+  eviction ordering treats a restored session like any other.
+
+  **A security hole the existing suite caught, and the E4 rule earned its keep.**
+  `test_token_rejected_when_no_nonces_registered` failed: `revoke_all_sessions()` cleared memory
+  only, so with my durable store a revoked token would be rejected until the next restart and
+  then **accepted again**. A revoke that un-revokes itself on reboot is worse than none, because
+  you would believe you had cut access off. Per the contract I did NOT edit the assertion — I
+  fixed the code to clear both stores. **All 208 pre-existing auth tests pass with zero edits.**
+
+  **Owner TTL ruling applied.** `DEFAULT_BROWSER_SESSION_TTL_SECS = 30 days` for the two gateway
+  startup mints (a human opens those URLs); the 1-year `MAX_SESSION_TTL_SECS` cap stays reachable
+  **only** when a caller asks explicitly, which is the `personalclaw token` / automation case.
+  Rationale in-code: sessions were minted at the 1-year cap precisely BECAUSE they were ephemeral
+  — a restart wiped them, so the number never applied. Now that they survive, a 1-year browser
+  cookie would outlive its reason and a stolen one would stay good for a year.
+
+  **A bug of mine, and the lesson.** `use_ephemeral_secret(None)` overloaded `None` to mean both
+  "generate one for me" and "turn this off", so a test calling it to DISABLE ephemeral mode
+  silently enabled it — and the headline "token survives a restart" test failed with "invalid
+  signature", pointing at the persistence code when the fault was in the toggle. Split into
+  `use_ephemeral_secret()` / `use_persistent_secret()`, with a test pinning the distinction.
+
+  **Fail-closed, deliberately against the house default.** `load_or_create_key()` raises rather
+  than falling back to an ephemeral key: a silent fallback looks identical to working until the
+  next restart logs everyone out again — the exact bug being fixed. Ephemeral signing is now an
+  explicit opt-in. The key is 0600 from creation and re-tightened on read (a key another local
+  account can read is one it can mint a session with); `sessions.json` is 0600 too, since it
+  names live nonces. `session_stats()` reports counts only — a nonce in a status payload is a
+  credential.
+
+  **ARCC was NOT queried — the MCP server is unavailable in this session.** Standard practice
+  applied: fail-closed posture, least privilege on both files (0600), no secret in any log or
+  status payload, the existing auth suite used unedited as the regression lock, and revocation +
+  rotation both verified to survive a restart.
+
+  **Validated as a user** on an isolated dev home (port 10747, never :10000) across **three real
+  gateway boots**: a token minted before the restart returned **HTTP 200 after it** (previously a
+  guaranteed 401); `session_key` and `sessions.json` both present at 0600; `revoke_all_sessions()`
+  → the token 403s and **stayed 403 after another restart**; `rotate_key()` changed the key.
+  Confirmed both TTL paths through the real code: a browser mint is **30 days**, an explicit CLI
+  mint is **365**. (`personalclaw token` reported 0.83 days because its own `--ttl` default is
+  20h — an explicit request, not the browser default.) **0 tracebacks across all three boots.**
+
+  **Gates:** `make lint` clean (mypy 555 files) · `make test` **9439 passed, 0 failed**.
+  Tests: `tests/test_session_store.py`, 34 cases.
+
+  **NOT in this session** (S2-S4): the owner credential (`personalclaw auth set-password`), the
+  login front door that mints the session into a cookie, and the public-exposure hardening
+  (Secure cookie / `wss` / trusted-proxy / TOTP). S1 stands alone and is strictly better without
+  them: restart no longer logs you out.

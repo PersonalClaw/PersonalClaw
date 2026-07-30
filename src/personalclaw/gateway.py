@@ -59,7 +59,10 @@ from personalclaw.dashboard.origin import (
     resolve_dashboard_host,
 )
 from personalclaw.dashboard.state import DashboardState
-from personalclaw.dashboard.token_auth import MAX_SESSION_TTL_SECS, generate_token
+from personalclaw.dashboard.token_auth import (
+    DEFAULT_BROWSER_SESSION_TTL_SECS,
+    generate_token,
+)
 from personalclaw.frontend import build_frontend_async
 from personalclaw.heartbeat import HeartbeatService, is_keep_response, strip_keep_sentinel
 from personalclaw.history import ConversationLog, HistoryConsolidator
@@ -3167,7 +3170,9 @@ class GatewayOrchestrator:
         # can read it deterministically with a single readline() in the
         # PERSONALCLAW_READY: prefix matcher.
         if self._json_ready:
-            ready_token = generate_token("local-startup", ttl_seconds=MAX_SESSION_TTL_SECS)
+            ready_token = generate_token(
+                "local-startup", ttl_seconds=DEFAULT_BROWSER_SESSION_TTL_SECS
+            )
             ready_payload = {
                 "port": self._dashboard_port,
                 "token": ready_token,
@@ -3300,7 +3305,9 @@ class GatewayOrchestrator:
             if not self._no_dashboard:
                 host = resolve_dashboard_host(self._local_only, self._configured_host)
                 base_url = f"http://{host}:{self._dashboard_port}"
-                startup_token = generate_token("local-startup", ttl_seconds=MAX_SESSION_TTL_SECS)
+                startup_token = generate_token(
+                    "local-startup", ttl_seconds=DEFAULT_BROWSER_SESSION_TTL_SECS
+                )
                 dashboard_url = build_dashboard_url(
                     base_url, startup_token, local_only=self._local_only
                 )
