@@ -1,6 +1,6 @@
 # Plan: Document Handling Tools — Produce the Formats a Person Actually Sends
 
-**Status:** IN PROGRESS — Session 1 (writer seam + docx/xlsx + tools + kinds) shipped 2026-07-29; Session 2 (pptx + pdf + round-trip) not started. Created 2026-07-29 (owner ask: competitive gap analysis, Genspark + Manus; owner direction: "we will have document handling tools where we have tools for these usecases as well as other formats that are supported by artifacts and knowledge except media formats")
+**Status:** DONE — Session 1 (writer seam + docx/xlsx + tools + kinds) and Session 2 (pptx + pdf + deck_create + round-trip) both shipped 2026-07-29. All four formats generate. Created 2026-07-29 (owner ask: competitive gap analysis, Genspark + Manus; owner direction: "we will have document handling tools where we have tools for these usecases as well as other formats that are supported by artifacts and knowledge except media formats")
 **Created:** 2026-07-29
 **Wave:** 2 (S1: the writer seam + docx/xlsx; S2: pptx/pdf + the artifact/knowledge round-trip)
 **Depends on:** nothing hard. All four libraries are **already core dependencies** (`pyproject.toml:44-53`: `python-docx`, `pdfplumber`, `python-pptx`, `openpyxl`) — used today for *reading only*. Builds on the shipped artifact store (`artifacts/`), the content-type registry (`web/src/ui/content/contentTypes.ts`), and the knowledge readers (`knowledge/readers.py`). Coordinates with ARTIFACTS-EVOLUTION (61 — new artifact kinds land in its library grid + viewer; **read its `create_binary` lesson in §Context before adding a kind**), KNOWLEDGE-LIBRARY (49 — knowledge already *reads* these formats; this plan closes the write half so a knowledge item can round-trip out), WORKFLOWS-V2-KNOWLEDGE-SYNTHESIS (its synthesis nodes gain real deliverable outputs), CONTEXT-ECONOMY (DONE — generated files must never be inlined into context; §C4 states the rule).
@@ -281,3 +281,67 @@ _(empty — no session has run yet)_
   deliberately NOT added here), `deck_create`, and the knowledge round-trip export.
   `deck_from_markdown` IS implemented and tested — the parser landed with the markup
   module since it shares its machinery; only the pptx writer and the tool are outstanding.
+
+- [2026-07-29][S2] **DONE (T2.1–T2.4).** pptx + pdf writers, `deck_create`, and the
+  round-trip export. All four formats now generate: **docx, xlsx, pptx, pdf.**
+
+  **T2.2 dependency, per the owner ruling:** `reportlab>=4,<5` added to core
+  `dependencies` (not an extra), with the WHY comment matching the neighbouring
+  reader block's style. Confirmed it is **not** in `personalclaw-backend.spec`'s excludes
+  (unlike faiss/torch), so the desktop bundle keeps PDF. **`uv.lock` re-locked in the SAME
+  commit** and `uv sync --locked --extra dev` verified green — a stale lock is the failure
+  that reddened 7 PRs on a previous sprint. `pdf` is therefore unconditionally in
+  `available_formats()`, which is the point of making it core: a format that exists on
+  only some installs is one the agent offers and then fails to deliver.
+
+  **THREE BUGS FOUND BY RUNNING IT, all mine, none reachable from unit tests alone:**
+  1. **Every pptx slide title was overwritten by its first bullet.** `_body_placeholder`
+     excluded the title via `shape is slide.shapes.title` — but **python-pptx returns a NEW
+     proxy object on each `shapes.title` access**, so the identity check was False even for
+     the title placeholder itself. Measured directly (`is_title=False` for the TITLE-typed
+     placeholder), then fixed by comparing `placeholder_format.idx`. Caught because the
+     round-trip showed "Slide 2: Revenue up 18%" where "Where we are" belonged.
+  2. **Every PDF bullet extracted as the literal string `(cid:127)`.** reportlab's default
+     bullet is ZapfDingbats char 127, whose CID has no unicode mapping — so any generated
+     PDF later ingested or searched carried that garbage instead of a bullet. Measured four
+     variants: `bulletFontName="Helvetica"` and an explicit `"•"` **both still produce
+     (cid:127)**; only `start="-"` extracts as `-`. A hyphen list is a fair visual trade for
+     text that isn't corrupt.
+  3. **The round-trip printed the title twice.** Passing the source item's name as `title`
+     while its body already opened with an `# H1` produced both, because the markdown parser
+     promotes a leading H1 to the title itself. Now the name is only used when the body
+     doesn't already start with one.
+
+  **T2.4 reuses the writer path rather than adding an endpoint,** as the plan requires: a
+  `source` argument on `document_create` resolves a knowledge-item id or a TEXT artifact
+  slug to markdown, which then flows through the identical writer. So a document exported
+  from the library is not a second-class citizen with its own bugs. Knowledge is tried
+  first (uuid ids vs kebab-case slugs don't realistically collide), and a **binary**
+  artifact is refused — its `content` is a raw URL, so exporting one would write the URL
+  into the document body.
+
+  **T2.3** was already satisfied by S1 for pdf/csv (`kinds:` added to the EXISTING types,
+  no duplicates); this session adds the `pptx` content type, reusing `OfficeDocPreview`.
+
+  **Validated as a user** on an isolated dev home, driving the tools directly and then
+  opening every output in an independent application:
+  - `document_formats` → **docx, pdf, pptx, xlsx**
+  - `file(1)` → `Microsoft OOXML` (pptx, docx), `PDF document, version 1.4`
+  - **Quick Look** rendered the deck as a real 4:3 title slide and the PDF with a centered
+    bold title, body text and hyphen bullets
+  - **Apple `textutil`** read the round-tripped docx correctly, and confirmed the
+    duplicate-title fix (title appears once)
+  - our own pptx reader recovered titles, bodies **and speaker notes**; the pdfplumber
+    reader recovered headings, both list kinds, the table, code and the page break
+  - the bad-source refusal names what to pass instead
+
+  Tests: 43 total in `tests/test_documents.py` (13 new for S2) — pptx title/body/notes
+  round trip, the placeholder-identity regression, empty-body slides, the deck image
+  reference, pdf availability, the pdfplumber round trip, the `(cid:` assertion, markup
+  escaping, the round-trip export, and the binary-export refusal. Gate: `make lint` green ·
+  `make test` **8985 passed** · web typecheck + 283 vitest + build green · `uv sync
+  --locked` green.
+
+  **DOCUMENT-HANDLING-TOOLS is now COMPLETE** (S1 + S2). Deliberately out of scope and
+  unchanged: templates, themes, native OOXML charts, and full-fidelity editing (the owner's
+  separate WYSIWYG plan).

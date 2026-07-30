@@ -140,6 +140,33 @@ List the numbered snapshot versions of an artifact by slug.
 }
 ```
 
+### `deck_create`
+
+Generate a real PowerPoint deck (.pptx) from a markdown OUTLINE and save it as a versioned artifact. Each `##` heading starts a slide, the lines under it become bullets, and `<!-- notes: ... -->` becomes that slide's speaker notes. A leading `#` titles the deck. Write an outline, not prose — paragraphs on a slide are what makes generated decks unreadable. Returns the slug and a download URL.
+
+**Response type:** `artifact.detail`
+
+**Safety:** requires approval, risk: caution
+
+**Parameters:**
+- `description` (string, optional) — Optional short description
+- `format` (string, optional) — Output format (default 'pptx')
+- `markdown` (string, optional) — Outline: `##` per slide, bullets beneath, `<!-- notes: -->` for notes
+- `name` (string, required) — Display name for the deck
+- `slides` (array, optional) — Alternative to markdown: [{title, body:[str], notes}]
+- `slug` (string, optional) — Existing artifact slug to update in place (bumps a version)
+- `tags` (array, optional)
+- `title` (string, optional) — Deck title slide
+
+**Example — Turn a markdown outline into a PowerPoint deck:**
+
+```json
+{
+  "markdown": "# Q3 Strategy\n\n## Where we are\n\n- Revenue up 18%\n",
+  "name": "Q3 Strategy"
+}
+```
+
 ### `document_create`
 
 Generate a real Word document (.docx) from MARKDOWN and save it as a versioned artifact the user can download. Write ordinary markdown — headings, paragraphs, bullet and numbered lists, tables, fenced code, `---` for a page break — and it is rendered into the document. Do NOT attempt to emit OOXML or base64. Use this when the user wants a file to send, print or hand to someone; use artifact_save with kind='markdown' or 'document' when they just want to read it in the app. Re-running with the same `slug` updates that document and bumps its version instead of creating a near-duplicate. Returns the slug and a download URL.
@@ -155,8 +182,18 @@ Generate a real Word document (.docx) from MARKDOWN and save it as a versioned a
 - `markdown` (string, optional) — The document body as markdown (the primary input)
 - `name` (string, required) — Display name for the document
 - `slug` (string, optional) — Existing artifact slug to update in place (bumps a version)
+- `source` (string, optional) — Instead of markdown: a knowledge item id or TEXT artifact slug to export as a document
 - `tags` (array, optional)
 - `title` (string, optional) — Document title; a leading markdown H1 is used when omitted
+
+**Example — Export an existing knowledge item as a Word document:**
+
+```json
+{
+  "name": "Saved research",
+  "source": "<knowledge item id>"
+}
+```
 
 **Example — Turn markdown into a downloadable Word document:**
 

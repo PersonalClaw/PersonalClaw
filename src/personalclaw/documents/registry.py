@@ -55,7 +55,12 @@ def _ensure_registered() -> None:
     if _registered:
         return
     _registered = True
-    for module, fmt in (("docx_writer", "docx"), ("xlsx_writer", "xlsx")):
+    for module, fmt in (
+        ("docx_writer", "docx"),
+        ("xlsx_writer", "xlsx"),
+        ("pptx_writer", "pptx"),
+        ("pdf_writer", "pdf"),
+    ):
         try:
             __import__(f"personalclaw.documents.writers.{module}")
         except Exception:  # noqa: BLE001 — a missing optional lib must not break the rest
