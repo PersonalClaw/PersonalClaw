@@ -22,8 +22,31 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 > upgrade is verified against duplicates, blanks, non-ASCII and malformed values, and
 > refuses to drop the column if any tag would be lost. Consider `personalclaw snapshot`
 > before upgrading, per the pre-1.0 banner.
+>
+> **Note (0.x clean break):** the unread badge now counts unresolved **inbox** items instead
+> of unacknowledged notifications, so **it resets once on upgrade** — any old unacked toasts
+> stop contributing to it. Nothing is lost: the notification list keeps its full history and
+> becomes a delivery audit. The badge is more honest afterwards (dismissing a toast no longer
+> hides work that is still outstanding, and handling something in the inbox actually clears
+> it). Your inbox alert keywords move to notification rules automatically. Consider
+> `personalclaw snapshot` before upgrading, per the pre-1.0 banner.
 
 ### Added
+
+- **One place for everything waiting on you.** The inbox is no longer just messages: a goal
+  loop that needs a decision, a proposed skill, and a tool approval you walked away from all
+  land there as items you can answer in place — instead of a toast that scrolls past while the
+  loop stays stalled. Filter chips show what kind of attention each thing wants, and a row
+  deep-links to the loop or chat it came from.
+- **Per-notification-kind delivery rules.** Settings → Notifications now has a row per kind of
+  notification with four choices: notify, badge (keep it in the list without interrupting),
+  digest (batch it into a daily summary), or never. Previously the only control was a global
+  severity floor, so quietening one noisy kind meant raising the bar for everything. Keyword
+  and name-mention alerts became per-kind conditions, which means they now work for loop
+  requests and proposals too — not just channel messages.
+- **A daily digest.** Anything set to `digest` collects into one grouped summary at a schedule
+  you choose (08:00 by default), grouped by kind so "9 heartbeats" reads as one line. A quiet
+  day produces nothing rather than an empty summary.
 
 - **Memory records who contributed them.** Every memory PersonalClaw writes now carries your
   username, so if your memory store is ever shared — a team store, an imported export, a

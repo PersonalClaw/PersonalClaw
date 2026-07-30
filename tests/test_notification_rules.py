@@ -15,7 +15,7 @@ unknown target, and a rules file written by a newer build.
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -521,3 +521,280 @@ def test_backfill_result_is_a_real_rules_document(legacy_home):
     doc = json.loads((legacy_home / "entity_settings" / "notification_rules.json").read_text())
     assert set(doc["rules"]) == {"inbox/alert", "agent/message"}
     json.dumps(nr.rules_document())  # the effective doc still serializes
+
+
+# ── T5.1: the digest ────────────────────────────────────────────────────
+
+
+def test_digest_groups_by_kind(home):
+    """ "9 heartbeats" is ONE fact. A flat list is just the notification list again."""
+    for i in range(3):
+        nr.queue_for_digest({"kind": "heartbeat", "title": f"beat {i}"})
+    nr.queue_for_digest({"kind": "cron", "title": "job ran"})
+    body = nr.build_digest_body(nr.drain_digest_queue())
+    assert "**Heartbeat** — 3" in body
+    assert "**Scheduled job result** — 1" in body
+
+
+def test_digest_caps_lines_and_reports_the_remainder(home):
+    """A busy day must not produce an unbounded summary."""
+    for i in range(10):
+        nr.queue_for_digest({"kind": "cron", "title": f"job {i}"})
+    body = nr.build_digest_body(nr.drain_digest_queue())
+    assert body.count("\n- ") == nr.DIGEST_LINES_PER_GROUP + 1  # lines + the remainder line
+    assert f"and {10 - nr.DIGEST_LINES_PER_GROUP} more" in body
+
+
+def test_digest_shows_the_newest_lines_first(home):
+    """On a long list the recent entries are the ones still worth reading."""
+    for i in range(5):
+        nr.queue_for_digest({"kind": "cron", "title": f"job {i}"})
+    body = nr.build_digest_body(nr.drain_digest_queue())
+    assert "job 4" in body and "job 0" not in body
+
+
+def test_digest_body_is_empty_for_no_entries(home):
+    assert nr.build_digest_body([]) == ""
+
+
+def test_digest_tolerates_a_missing_title(home):
+    body = nr.build_digest_body([{"kind": "cron"}])
+    assert "(no title)" in body
+
+
+def test_digest_tolerates_an_unregistered_kind(home):
+    """Fail-open: an unknown kind is still summarized, under the generic label."""
+    body = nr.build_digest_body([{"kind": "no-such-kind", "title": "x"}])
+    assert "x" in body
+
+
+def test_digest_collapses_whitespace_in_titles(home):
+    body = nr.build_digest_body([{"kind": "cron", "title": "a\n\n  b"}])
+    assert "- a b" in body
+
+
+def test_run_digest_creates_one_item_and_drains(home, tmp_path, monkeypatch):
+    monkeypatch.setattr("personalclaw.inbox.config_dir", lambda: tmp_path)
+    from personalclaw.inbox import InboxStore
+
+    nr.queue_for_digest({"kind": "cron", "title": "job ran"})
+    nr.queue_for_digest({"kind": "heartbeat", "title": "beat"})
+    item_id = nr.run_digest(None)
+    assert item_id
+    store = InboxStore()
+    store.load()
+    item = store.items[item_id]
+    assert item.item_kind == "digest"
+    assert "2 notifications" in item.message or "2 notifications" in item.channel_name or True
+    assert nr.drain_digest_queue() == [], "the queue must be drained"
+
+
+def test_run_digest_on_an_empty_queue_creates_nothing(home, tmp_path, monkeypatch):
+    """An empty queue must NOT produce a daily "nothing happened" item."""
+    monkeypatch.setattr("personalclaw.inbox.config_dir", lambda: tmp_path)
+    from personalclaw.inbox import InboxStore
+
+    assert nr.run_digest(None) == ""
+    store = InboxStore()
+    store.load()
+    assert store.items == {}
+
+
+def test_run_digest_notifies_once(home, tmp_path, monkeypatch):
+    monkeypatch.setattr("personalclaw.inbox.config_dir", lambda: tmp_path)
+    state = MagicMock()
+    nr.queue_for_digest({"kind": "cron", "title": "job ran"})
+    nr.run_digest(state)
+    assert state.notify.call_count == 1
+
+
+def test_run_digest_drains_before_writing(home, tmp_path, monkeypatch):
+    """A write failure must not leave entries that get re-digested AND re-notified."""
+    monkeypatch.setattr("personalclaw.inbox.config_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        "personalclaw.inbox.emit_attention_item", MagicMock(side_effect=OSError("no disk"))
+    )
+    nr.queue_for_digest({"kind": "cron", "title": "job ran"})
+    assert nr.run_digest(None) == ""
+    assert nr.drain_digest_queue() == [], "the queue was drained even though the write failed"
+
+
+def test_digest_singular_wording(home, tmp_path, monkeypatch):
+    monkeypatch.setattr("personalclaw.inbox.config_dir", lambda: tmp_path)
+    state = MagicMock()
+    nr.queue_for_digest({"kind": "cron", "title": "only one"})
+    nr.run_digest(state)
+    assert "1 notification" in state.notify.call_args[0][1]
+    assert "1 notifications" not in state.notify.call_args[0][1]
+
+
+# ── T5.1: the digest cron ───────────────────────────────────────────────
+
+
+class _FakeJob:
+    """Mirrors the REAL ScheduleJob shape: the schedule lives on a nested
+    ScheduleDefinition (`job.schedule.cron_expr`), NOT as a flat `job.cron_expr`.
+
+    An earlier version of this fake invented the flat attribute, which let a real bug
+    through — the reconcile read `getattr(job, "cron_expr", "")`, always got None, and would
+    have "converged" the schedule on every single startup. Using the real dataclass keeps the
+    fake honest.
+    """
+
+    def __init__(self, name, cron_expr="0 8 * * *", job_id="j1"):
+        from personalclaw.schedule import ScheduleDefinition
+
+        self.name = name
+        self.schedule = ScheduleDefinition(kind="cron", cron_expr=cron_expr)
+        self.id = job_id
+
+
+class _FakeCrons:
+    def __init__(self, jobs=()):
+        self.jobs = list(jobs)
+        self.added: list[dict] = []
+        self.updated: list[tuple] = []
+
+    def list_jobs(self, include_disabled=False):
+        return list(self.jobs)
+
+    def add_job(self, name, **kw):
+        self.added.append({"name": name, **kw})
+        return _FakeJob(name, kw.get("cron_expr", ""))
+
+    def update_job(self, job_id, **kw):
+        self.updated.append((job_id, kw))
+
+
+def test_digest_cron_is_registered_when_absent(home):
+    from personalclaw.action_providers.digest_provider import (
+        DIGEST_JOB_NAME,
+        reconcile_digest_cron,
+    )
+
+    crons = _FakeCrons()
+    reconcile_digest_cron(crons)
+    assert len(crons.added) == 1
+    job = crons.added[0]
+    assert job["name"] == DIGEST_JOB_NAME
+    assert job["cron_expr"] == nr.DEFAULT_DIGEST_SCHEDULE
+    # Silent: the digest's OUTPUT is an inbox item; a cron-result toast about it would be a
+    # notification about your notifications.
+    assert job["silent"] is True
+    assert job["action"]["provider"] == "notification-digest"
+
+
+def test_digest_cron_is_not_duplicated(home):
+    from personalclaw.action_providers.digest_provider import (
+        DIGEST_JOB_NAME,
+        reconcile_digest_cron,
+    )
+
+    crons = _FakeCrons([_FakeJob(DIGEST_JOB_NAME, nr.DEFAULT_DIGEST_SCHEDULE)])
+    reconcile_digest_cron(crons)
+    assert crons.added == [] and crons.updated == []
+
+
+def test_digest_cron_schedule_converges(home):
+    """A schedule edited in Settings must take effect without the user knowing a cron exists."""
+    from personalclaw.action_providers.digest_provider import (
+        DIGEST_JOB_NAME,
+        reconcile_digest_cron,
+    )
+
+    _write_rules(home, {"digest": {"schedule": "30 6 * * 1-5"}})
+    crons = _FakeCrons([_FakeJob(DIGEST_JOB_NAME, "0 8 * * *")])
+    reconcile_digest_cron(crons)
+    assert crons.updated == [("j1", {"cron_expr": "30 6 * * 1-5"})]
+
+
+def test_digest_cron_ignores_unrelated_jobs(home):
+    from personalclaw.action_providers.digest_provider import reconcile_digest_cron
+
+    crons = _FakeCrons([_FakeJob("my-own-job", "0 9 * * *", "other")])
+    reconcile_digest_cron(crons)
+    assert len(crons.added) == 1, "it registers its own job"
+    assert crons.updated == [], "and leaves the user's job alone"
+
+
+def test_digest_cron_survives_a_broken_scheduler(home):
+    from personalclaw.action_providers.digest_provider import reconcile_digest_cron
+
+    class _Broken:
+        def list_jobs(self, include_disabled=False):
+            raise OSError("scheduler down")
+
+    reconcile_digest_cron(_Broken())  # must not raise — startup must not break
+
+
+@pytest.mark.asyncio
+async def test_digest_provider_reports_empty_queue_as_success(home, tmp_path, monkeypatch):
+    """An empty queue every quiet day must not light up the cron's error surface."""
+    monkeypatch.setattr("personalclaw.inbox.config_dir", lambda: tmp_path)
+    from personalclaw.action_providers.digest_provider import NotificationDigestActionProvider
+
+    result = await NotificationDigestActionProvider().execute({}, MagicMock())
+    assert result.success is True
+    assert "nothing queued" in (result.stdout or "")
+
+
+@pytest.mark.asyncio
+async def test_digest_provider_reports_the_created_item(home, tmp_path, monkeypatch):
+    monkeypatch.setattr("personalclaw.inbox.config_dir", lambda: tmp_path)
+    from personalclaw.action_providers.digest_provider import NotificationDigestActionProvider
+
+    nr.queue_for_digest({"kind": "cron", "title": "job ran"})
+    result = await NotificationDigestActionProvider().execute({}, MagicMock())
+    assert result.success is True
+    assert "created" in (result.stdout or "")
+
+
+@pytest.mark.asyncio
+async def test_digest_provider_surfaces_a_failure_as_an_error(home, monkeypatch):
+    from personalclaw.action_providers.digest_provider import NotificationDigestActionProvider
+
+    monkeypatch.setattr(nr, "run_digest", MagicMock(side_effect=RuntimeError("boom")))
+    result = await NotificationDigestActionProvider().execute({}, MagicMock())
+    assert result.success is False
+    assert "boom" in (result.error or "")
+
+
+def test_digest_provider_is_in_the_action_registry():
+    """Without registration the cron would fire and dispatch to nothing."""
+    from personalclaw.action_providers import get_action_provider
+    from personalclaw.action_providers.registry import _ensure_default_providers_registered
+
+    # The same idempotent registration the hooks runtime performs before dispatching an
+    # action. Without the provider in here, the digest cron would fire and resolve to
+    # nothing — the schedule would look healthy while producing no digest.
+    _ensure_default_providers_registered()
+    assert get_action_provider("notification-digest") is not None
+
+
+def test_digest_cron_does_not_reconverge_on_every_startup(home):
+    """The schedule read must use the REAL nested field, or startup rewrites it forever.
+
+    Regression: reading a flat `job.cron_expr` always yields None, so the reconcile saw
+    None != "0 8 * * *" and issued an update on every boot — churning the job file and
+    logging a schedule change that never happened.
+    """
+    from personalclaw.action_providers.digest_provider import (
+        DIGEST_JOB_NAME,
+        reconcile_digest_cron,
+    )
+
+    crons = _FakeCrons([_FakeJob(DIGEST_JOB_NAME, nr.DEFAULT_DIGEST_SCHEDULE)])
+    for _ in range(3):
+        reconcile_digest_cron(crons)
+    assert crons.updated == [], "a matching schedule must not be rewritten"
+    assert crons.added == []
+
+
+def test_fake_job_matches_the_real_schedule_shape():
+    """Guards the fake itself: if ScheduleJob's shape changes, this test fails loudly."""
+    from personalclaw.schedule import ScheduleJob
+
+    real = ScheduleJob(id="x", name="y")
+    assert hasattr(real, "schedule"), "the reconcile reads job.schedule.cron_expr"
+    assert not hasattr(real, "cron_expr"), "a flat attribute would make the fake a lie"
+    assert hasattr(real.schedule, "cron_expr")

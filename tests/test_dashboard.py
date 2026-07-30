@@ -3,6 +3,8 @@
 import json
 from unittest.mock import MagicMock
 
+import pytest
+
 from personalclaw.dashboard.state import (
     DashboardState,
     _fmt_duration,
@@ -166,10 +168,20 @@ class TestNotificationPersistence:
 
 
 class TestUnreadDerived:
-    """unread is DERIVED from the log's acked flags — no cached counter."""
+    """unread is DERIVED from unresolved INBOX items — no cached counter, no log flags.
+
+    Plan 42 T5.2 moved the badge off the notification log's `acked` flags. The two stores had
+    become two answers to one question: the log tracked "was a toast acknowledged", the inbox
+    tracks "is this dealt with". A user who handled a request in the inbox still saw a badge,
+    and dismissing a toast cleared the badge for outstanding work.
+    """
 
     def _state(self, monkeypatch, tmp_path) -> DashboardState:
+        # BOTH config_dir seams: state.py for the notification log, inbox.py for the item
+        # store. Patching only the first let unread_count() read the DEVELOPER'S real inbox
+        # (observed: a count of 39 in a "fresh" test).
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        monkeypatch.setattr("personalclaw.inbox.config_dir", lambda: tmp_path)
         return DashboardState(
             sessions=MagicMock(count=0),
             crons=MagicMock(),
@@ -177,28 +189,80 @@ class TestUnreadDerived:
             start_time=0.0,
         )
 
-    def test_counts_unacked_only(self, monkeypatch, tmp_path) -> None:
+    def _add_item(self, tmp_path, status: str, item_id: str = "") -> str:
+        from personalclaw.inbox import InboxItem, InboxStore
+
+        store = InboxStore(tmp_path / "inbox.json")
+        store.load()
+        item = InboxItem(
+            id=item_id or f"C1_{len(store.items) + 1}.0",
+            channel="C1",
+            channel_name="#t",
+            thread_ts=None,
+            message="m",
+            sender_id="U1",
+            sender_name="A",
+        )
+        item.status = status
+        store.add(item)
+        store.save()
+        return item.id
+
+    def test_counts_pending_inbox_items(self, monkeypatch, tmp_path) -> None:
         state = self._state(monkeypatch, tmp_path)
         assert state.unread_count() == 0
-        state.notify("cron", "A", "a")
-        state.notify("cron", "B", "b")
-        assert state.unread_count() == 2
-        # ack one → decrements (the old cached counter never did)
-        ts = state._notification_log[0]["ts"]
-        assert state.ack_notification(ts)
-        assert state.unread_count() == 1
-        # unack → back up
-        assert state.unack_notification(ts)
+        self._add_item(tmp_path, "pending")
+        self._add_item(tmp_path, "pending")
+        state._inbox_store = None  # force a re-read (a live gateway reloads on write)
         assert state.unread_count() == 2
 
+    def test_seen_does_not_count(self, monkeypatch, tmp_path) -> None:
+        """The badge means "new since you last looked"; opening an item marks it SEEN.
+
+        Counting SEEN would keep the badge lit until everything was RESOLVED, which is what
+        the list itself is for.
+        """
+        state = self._state(monkeypatch, tmp_path)
+        self._add_item(tmp_path, "pending")
+        self._add_item(tmp_path, "seen")
+        state._inbox_store = None
+        assert state.unread_count() == 1
+
+    @pytest.mark.parametrize("resolved", ["handled", "dismissed", "sent"])
+    def test_resolved_items_do_not_count(self, monkeypatch, tmp_path, resolved) -> None:
+        state = self._state(monkeypatch, tmp_path)
+        self._add_item(tmp_path, resolved)
+        state._inbox_store = None
+        assert state.unread_count() == 0
+
+    def test_notifications_no_longer_drive_the_badge(self, monkeypatch, tmp_path) -> None:
+        """THE demotion, asserted directly: a delivered toast is not unresolved work.
+
+        This is the one accepted state break of plan 42 — a user's badge resets once on
+        upgrade because it stops counting unacked log entries.
+        """
+        state = self._state(monkeypatch, tmp_path)
+        state.notify("cron", "A", "a")
+        state.notify("cron", "B", "b")
+        assert len(state._notification_log) == 2, "the log still records the delivery"
+        assert state.unread_count() == 0, "but it does not claim your attention"
+
+    def test_clearing_notifications_does_not_change_the_badge(self, monkeypatch, tmp_path) -> None:
+        """Previously, clearing toasts zeroed the badge — hiding outstanding work."""
+        state = self._state(monkeypatch, tmp_path)
+        self._add_item(tmp_path, "pending")
+        state._inbox_store = None
+        assert state.unread_count() == 1
+        state.clear_notifications()
+        state._inbox_store = None
+        assert state.unread_count() == 1, "clearing the audit must not hide real work"
+
     def test_survives_restart(self, monkeypatch, tmp_path) -> None:
-        """Persisted unacked notifications count as unread on boot (the old
-        counter initialized to 0 regardless of reloaded state)."""
+        """A fresh state object reads the persisted inbox, not an in-memory counter."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        _persist_notification({"kind": "cron", "title": "N1", "body": "x", "ts": "t1"})
-        _persist_notification(
-            {"kind": "cron", "title": "N2", "body": "x", "ts": "t2", "acked": True}
-        )
+        monkeypatch.setattr("personalclaw.inbox.config_dir", lambda: tmp_path)
+        self._add_item(tmp_path, "pending")
+        self._add_item(tmp_path, "handled")
         state = DashboardState(
             sessions=MagicMock(count=0),
             crons=MagicMock(),
@@ -207,11 +271,21 @@ class TestUnreadDerived:
         )
         assert state.unread_count() == 1
 
-    def test_clear_zeroes(self, monkeypatch, tmp_path) -> None:
+    def test_fails_to_zero_rather_than_raising(self, monkeypatch, tmp_path) -> None:
+        """A badge is chrome; a broken read must not break the sessions payload."""
         state = self._state(monkeypatch, tmp_path)
-        state.notify("cron", "A", "a")
-        state.clear_notifications()
+        monkeypatch.setattr("personalclaw.inbox.InboxStore", MagicMock(side_effect=OSError("gone")))
+        state._inbox_store = None
         assert state.unread_count() == 0
+
+    def test_prefers_the_running_services_store(self, monkeypatch, tmp_path) -> None:
+        """A live gateway's in-memory store is authoritative over a fresh disk read."""
+        state = self._state(monkeypatch, tmp_path)
+        self._add_item(tmp_path, "pending")
+        svc = MagicMock()
+        svc.inbox = MagicMock(items={})
+        state._inbox_svc = svc
+        assert state.unread_count() == 0, "the service's store won"
 
     def test_no_cached_counter_attribute(self, monkeypatch, tmp_path) -> None:
         state = self._state(monkeypatch, tmp_path)

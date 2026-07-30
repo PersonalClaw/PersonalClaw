@@ -1192,8 +1192,37 @@ class DashboardState:
             return ""
 
     def unread_count(self) -> int:
-        """Number of notifications not yet acknowledged (derived, never cached)."""
-        return sum(1 for n in self._notification_log if not n.get("acked"))
+        """How many things are actually waiting on you — derived, never cached.
+
+        **This now counts unresolved INBOX items, not unacked notification-log entries**
+        (plan 42 T5.2). The two stores had diverged into two answers to one question: the
+        log tracked "did a toast get acknowledged", the inbox tracks "is this dealt with".
+        A user who handled a request in the inbox still saw a badge, and dismissing a toast
+        cleared the badge for work that was still outstanding. Inbox status is the honest
+        answer, so the log becomes a pure delivery audit.
+
+        Counts PENDING only, not SEEN: the badge means "new since you last looked", and
+        opening an item marks it SEEN. Counting SEEN would leave the badge lit until every
+        item was resolved, which is what the *list* is for.
+
+        Fails to 0 rather than raising — a badge is chrome, and a broken read must not take
+        down every consumer of the sessions payload.
+        """
+        try:
+            from personalclaw.inbox import InboxStore, ItemStatus
+
+            store = getattr(self, "_inbox_store", None)
+            svc = getattr(self, "_inbox_svc", None)
+            if svc is not None:
+                store = svc.inbox
+            elif store is None:
+                store = InboxStore()
+                store.load()
+                self._inbox_store = store
+            return sum(1 for i in store.items.values() if i.status == ItemStatus.PENDING)
+        except Exception:
+            logger.debug("unread_count from inbox failed", exc_info=True)
+            return 0
 
     def loop_sse(self) -> SseRegistry:
         """The per-loop SSE registry (key ``loop:<id>``) — serves every kind, incl. code."""

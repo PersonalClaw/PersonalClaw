@@ -1408,6 +1408,15 @@ class GatewayOrchestrator:
                 reconcile_app_crons(self.cron_svc)
             except Exception:
                 logger.warning("app-cron reconcile failed", exc_info=True)
+            # The notification digest (plan 42 T5.1). Reconciled, not just created, so a
+            # schedule edited in Settings converges without the user knowing a cron exists.
+            # Respects --no-crons by living inside this else-branch.
+            try:
+                from personalclaw.action_providers.digest_provider import reconcile_digest_cron
+
+                reconcile_digest_cron(self.cron_svc)
+            except Exception:
+                logger.warning("digest-cron reconcile failed", exc_info=True)
 
     async def _init_heartbeat(self) -> None:
         """Initialize and start the heartbeat service."""
