@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { fvs, withWeight } from '../design/fontWeight'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, type LucideIcon } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, type LucideIcon } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -47,7 +47,7 @@ import { useIdentity, firstNameOf } from '../app/identity'
 import { useIsMac } from '../app/usePlatform'
 import { notify } from '../app/appSdk'
 import { spring, stagger, listItemEnter, expr } from '../design/motion'
-import { api, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob } from '../lib/api'
+import { api, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate } from '../lib/api'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useStreamCoalescer } from './chat/useStreamCoalescer'
 import { FindBar } from './chat/FindBar'
@@ -144,6 +144,37 @@ function SuggestionChips({ onPick }: { onPick: (s: string) => void }) {
           {s}
         </motion.button>
       ))}
+    </div>
+  )
+}
+
+/** Saved starters on the new-chat screen (SESSION-MANAGEMENT S3 T3.2).
+ *
+ *  Picking one PREFILLS the composer selection (and the prompt, if the template has
+ *  one) instead of creating a session server-side. The plan's §C3 sketched a
+ *  `create_from_template() -> session_key`, but this page mints a session lazily on
+ *  first send — a second server-side creation path would mean two ways a session comes
+ *  into existence, and an abandoned starter would leave an empty chat behind. Prefilling
+ *  reuses the one `ensureSession` path, so a starter the user opens and walks away from
+ *  costs nothing. */
+function StarterChips({ onPick }: { onPick: (t: SessionTemplate) => void }) {
+  const { data } = useCachedData('chat:starters', () => api.sessionTemplates().catch(() => [] as SessionTemplate[]), { persist: true })
+  const items = (data ?? []).slice(0, 6)
+  if (!items.length) return null
+  return (
+    <div className="flex w-full flex-col items-center gap-2">
+      <p className="text-[0.75rem] text-on-surface-low">Your starters</p>
+      <div className="flex flex-wrap justify-center gap-2" style={{ maxWidth: 720 }}>
+        {items.map((t, i) => (
+          <motion.button key={t.id} type="button" onClick={() => onPick(t)}
+            title={t.first_prompt || t.name}
+            initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: 0.04 * i }}
+            className="flex items-center gap-2 rounded-pill border border-primary/30 bg-primary-container/30 px-3.5 py-2 text-left text-[0.8125rem] text-on-surface-var transition-colors hover:border-primary/60 hover:bg-primary-container/50 hover:text-on-surface">
+            <Sparkles size={13} className="shrink-0 text-primary" />
+            {t.name}
+          </motion.button>
+        ))}
+      </div>
     </div>
   )
 }
@@ -1771,6 +1802,48 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     if (patch.reasoning !== undefined) api.setReasoningEffort(s, patch.reasoning as ReasoningEffort).catch(() => {})
   }
 
+  /** Apply a saved starter to the composer (S3 T3.2).
+   *
+   *  Only fields the template actually carries are applied: a template saved with no
+   *  model must not silently reset the user's current pick to "Auto". `applySelection`
+   *  handles the no-session case (it just sets local state), so this works on the
+   *  new-chat screen before any session exists. */
+  function applyTemplate(t: SessionTemplate) {
+    const patch: Partial<ComposerValue> = {}
+    if (t.agent) patch.agent = t.agent
+    if (t.model) patch.model = t.model
+    if (t.reasoning_effort) patch.reasoning = t.reasoning_effort as ReasoningEffort
+    if (Object.keys(patch).length) applySelection(patch)
+    if (t.first_prompt) setInput(t.first_prompt)
+    notify(`Started from "${t.name}".`, 'info')
+  }
+
+  /** Save the current chat's setup as a reusable starter. Captures the SETUP only —
+   *  never the transcript — so sharing or reusing a starter can't leak a conversation. */
+  async function saveAsTemplate() {
+    const name = await promptInput({
+      title: 'Save as starter',
+      body: 'Saves this chat\'s agent, model and reasoning effort — not its messages.',
+      label: 'Starter name',
+      placeholder: 'e.g. Research deep dive',
+      confirmLabel: 'Save',
+    })
+    if (!name) return
+    try {
+      await api.createSessionTemplate({
+        name,
+        agent: selection.agent || '',
+        model: selection.model && selection.model !== 'Auto' ? selection.model : '',
+        reasoning_effort: selection.reasoning || '',
+        first_prompt: '',
+      })
+      invalidateCache('chat:starters')
+      notify(`Saved "${name}" — it'll appear on the new-chat screen.`, 'success')
+    } catch (e) {
+      notify(`Couldn't save this starter: ${String((e as Error)?.message || e)}`, 'error')
+    }
+  }
+
   // TM8: the model proposed a switch out of a restricted mode and the user clicked
   // "Switch to Agent & run it". Flip the session to Agent (UI toggle + backend) and
   // resume the work — the click IS the consent that makes the escalation safe (no
@@ -2155,6 +2228,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             {started && sessionRef.current && (
               <HeaderControl icon={FolderCog} label="Working directory" priority="low" onClick={setWorkspaceDir} />
             )}
+            {started && sessionRef.current && (
+              <HeaderControl icon={Sparkles} label="Save as starter" priority="low" onClick={saveAsTemplate} />
+            )}
             <HeaderControl icon={Edit3} label="New chat" variant="primary" priority="primary" onClick={() => navigate('chat/new')} />
             {started && (
               <HeaderControl icon={PanelRight} label="Activity" active={activityOpen} onClick={() => setActivityOpen(!activityOpen)} />
@@ -2192,6 +2268,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               </motion.div>
               <div className="flex w-full flex-col items-center gap-2xl" style={{ maxWidth: 'var(--content-width)' }}>
                 {stage}
+                <StarterChips onPick={applyTemplate} />
                 <SuggestionChips onPick={(s) => setInput(s)} />
               </div>
             </div>
@@ -3388,6 +3465,19 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
     try { sessionStorage.removeItem(_CHAT_DETAIL_SS + s.key) } catch { /* ignore */ }
     load()
   }
+  /** Download a transcript. Uses a real link click rather than fetch+blob so the
+   *  browser handles Content-Disposition and a long conversation never has to be
+   *  buffered in JS. The export is credential-redacted server-side; say so, because a
+   *  user about to attach this to an email should know what it does and doesn't contain. */
+  function downloadExport(key: string, format: 'md' | 'json') {
+    const a = document.createElement('a')
+    a.href = api.sessionExportUrl(key, format)
+    a.rel = 'noopener'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    notify('Exporting this chat — credentials are redacted from the file.', 'info')
+  }
   async function togglePin(key: string, pinned: boolean) {
     setSessions((prev) => prev && prev.map((s) => (s.key === key ? { ...s, pinned } : s)))
     await api.pinChatSession(key, pinned).catch(() => load())
@@ -3465,6 +3555,11 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
         label: s.never_archive ? 'Allow auto-archive' : 'Never auto-archive',
         onSelect: () => setNeverArchive(s.key, !s.never_archive),
       },
+      // Export navigates to the endpoint rather than fetching: the response carries
+      // Content-Disposition, so the browser saves the file and never renders it, and a
+      // long transcript is streamed instead of buffered through JS.
+      { icon: <Download size={15} />, label: 'Export as Markdown', onSelect: () => downloadExport(s.key, 'md') },
+      { icon: <Download size={15} />, label: 'Export as JSON', onSelect: () => downloadExport(s.key, 'json') },
       { icon: <Trash2 size={15} />, label: 'Delete', danger: true, onSelect: () => del(s) },
     ]
     return (

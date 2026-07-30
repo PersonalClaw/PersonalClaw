@@ -86,6 +86,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/sessions/auto-archive` — run (or preview) the auto-archive rule.
 - `POST /api/chat/sessions/bulk` — apply one op to many sessions.
 - `POST /api/chat/sessions/cleanup` — bulk-archive inactive sessions to history.
+- `GET /api/chat/sessions/templates` — every saved session starter.
+- `POST /api/chat/sessions/templates` — save a chat setup as a reusable starter.
+- `DELETE /api/chat/sessions/templates/{template}` — remove a starter.
+- `PUT /api/chat/sessions/templates/{template}` — replace a starter's fields.
 - `DELETE /api/chat/sessions/{session}` — stop and remove a UI session.
 - `GET /api/chat/sessions/{session}` — message history for a session.
 - `POST /api/chat/sessions/{session}/acp-agent` — bind a DISCOVERED ACP agent.
@@ -96,6 +100,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/sessions/{session}/context` — inject silent background context.
 - `POST /api/chat/sessions/{session}/drop` — move a session into a column.
 - `POST /api/chat/sessions/{session}/edit-resend` — edit a user message and resend.
+- `GET /api/chat/sessions/{session}/export` — download a transcript.
 - `PATCH /api/chat/sessions/{session}/folder` — assign session to a folder.
 - `POST /api/chat/sessions/{session}/fork` — fork session into a new tab.
 - `POST /api/chat/sessions/{session}/fork-rewound` — restore a rewind tail as a fork.
