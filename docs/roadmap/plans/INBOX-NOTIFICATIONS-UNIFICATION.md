@@ -407,3 +407,58 @@ Extends **Session 4** (which already owns the proposal fold-in): T4.1 becomes th
   Tests: +19 backfill/oracle cases in `test_notification_rules.py` (79 in file), +3 in
   `test_entity_settings_routes.py` (40), `test_inbox.py` alert tests rewritten against the
   rule, `test_inbox_service.py` helper now writes a real rule.
+
+- 2026-07-30 — **DONE (Session 4: T4.1–T4.4).** Skill proposals and outlived tool approvals
+  become durable inbox items, answerable in place.
+
+  **T4.1 — proposals surface and resolve.** `enqueue()` raises a `proposal` item deduped by
+  proposal id; the inbox detail panel loads the FULL proposal (the list summary truncates the
+  procedure at 280 chars — approving a body you can't read isn't a review) and runs the same
+  accept/reject endpoints the skills page uses, so there is **one** installation path rather
+  than a second that could drift.
+
+  **The ordering trap worth naming:** `accept()` calls `reject()` internally to clear the
+  queue entry, so the naive wiring leaves an *installed* skill's row reading "dismissed" —
+  the item is the only record of which answer the user gave. Resolution therefore runs
+  DISMISSED in `reject()` and is corrected to HANDLED after, and `_resolve_inbox_item` accepts
+  a terminal→terminal correction while never moving an item backwards into an open state.
+  Tested in both directions.
+
+  **T4.2 — DEVIATION: idempotent backfill, not a `lifecycle/` migration.** Idempotent **by
+  pid** and keyed on data inspection: any item referencing the pid counts as "has one",
+  **including a resolved one**, so a proposal the user already answered is never re-raised —
+  re-asking a decided question is the worst failure available here. Runs from `list_pending()`,
+  the read path both the skills page and the API use, so the first look after an upgrade is
+  already correct.
+
+  **T4.3 — DECISION (the plan offered embed-or-link):** kept `SkillProposals` as the editing
+  surface and **cross-linked** rather than embedding a filtered inbox. The skills page owns
+  the edit-then-approve flow; duplicating that into the inbox would be the second approval UI
+  the task explicitly warns against. The inbox answers "yes/no" and offers "Edit first" →
+  Skills. Both surfaces call the same endpoints and answering either resolves the other.
+
+  **T4.4 — approval mirroring, with a grace period.** An approval prompt is session-modal for
+  latency, and `chat_runner` waits up to **7200s** on it — so a prompt the user walked away
+  from is a standing request they cannot see. It is now mirrored as an `agent_request` item
+  only after `_APPROVAL_MIRROR_GRACE_SECS` (90s), so approving promptly leaves no litter.
+  **`asyncio.shield` is load-bearing here:** without it `wait_for`'s timeout would CANCEL the
+  approval future — the mechanism meant to surface the prompt would destroy it, and the second
+  wait would hang on a dead future. There is a test asserting the shield protects it.
+  Answering in the session resolves the mirror (approved → HANDLED, otherwise DISMISSED).
+
+  **Validated as a user** on an isolated dev home (port 10744, never :10000) seeded as a
+  **PRE-S4 install**: a proposal in its own store with **no** inbox item. `GET
+  /api/skills/proposals` triggered the backfill and the item appeared; accepting over HTTP
+  marked it **handled**; a fresh enqueue→reject marked its item **dismissed**. In a real
+  browser the row rendered with the full procedure, collapsed provenance, and Install /
+  Reject / Edit first — and clicking **Install skill** in the inbox wrote the real skill to
+  `skills/auto/` and flipped the item to handled. Three items ended recording three distinct
+  answers. **0 gateway tracebacks.**
+
+  *(A false alarm worth recording: the first live check showed the backfilled item missing
+  over HTTP while present on disk — a stale in-memory store in a gateway that had been
+  running before the seed, not a bug. Confirmed by restart.)*
+
+  **Gates:** `make lint` clean (mypy 553 files) · `make test` **9359 passed, 0 failed** ·
+  web typecheck + 302 vitest + build + render smoke green.
+  Tests: `tests/test_inbox_proposals.py`, 32 cases.

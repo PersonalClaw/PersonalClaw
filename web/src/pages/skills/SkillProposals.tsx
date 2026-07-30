@@ -23,7 +23,7 @@ export function SkillProposals() {
       <EmptyState
         icon={Lightbulb}
         title="No skill proposals"
-        hint="When the system synthesizes a skill from your sessions, it lands here for your review — it's never installed automatically."
+        hint="When the system synthesizes a skill from your sessions, it lands here and in your inbox for review — it's never installed automatically."
       />
     )
   }
@@ -32,6 +32,10 @@ export function SkillProposals() {
       <p className="text-on-surface-low text-[0.8125rem]">
         {proposals.length} proposal{proposals.length === 1 ? '' : 's'} awaiting review. These were
         synthesized from your sessions — accept to add to your library, or reject.
+        {/* Cross-link, not a second queue: each proposal also appears in the inbox (plan 42
+            S4) so it can't be missed while you're away. Both surfaces call the same
+            accept/reject endpoints, and answering on either resolves the other. */}
+        {' '}They also appear in your <a href="#/inbox?kind=proposal" className="text-primary hover:underline">inbox</a>.
       </p>
       {proposals.map((p) => <ProposalRow key={p.id} proposal={p} onChanged={reload} />)}
     </div>
