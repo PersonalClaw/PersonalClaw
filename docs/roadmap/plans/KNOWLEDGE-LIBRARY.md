@@ -445,3 +445,56 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
 
   **S2 is now COMPLETE** (T2.1 + T2.2 + T2.3). Remaining in the plan: Session 3
   (reading view, dedup/merge, library home).
+
+- 2026-07-30 — **PARTIAL (Session 3: T3.2 backend + API). DEVIATION: scoped to dedup/merge.**
+
+  **What landed:** `find_duplicates` + `merge_items` in the store, plus
+  `GET /api/knowledge/items/{id}/duplicates` and `POST /api/knowledge/items/{id}/merge`.
+
+  **DEVIATION — T3.1 (reading view) and T3.3 (library home) NOT taken.** Both are substantial
+  frontend surfaces (a reading type scale + in-reader highlight→note; a composable home with
+  continue-reading), and T3.3 explicitly wants coordination with AMBIENT-SURFACES' tile registry,
+  which is unbuilt. T3.2 is the one task that is **complete in itself** and unblocks nothing
+  else: a merge is either correct or it destroys data, so it does not want to be half-done
+  beside two unfinished UI surfaces. Recorded per the sprint's decide-and-continue rule; the two
+  remaining tasks stay S3's scope for a session that can do the reading UI justice.
+
+  **Reused rather than re-derived.** `find_duplicates` wraps the existing TIER-2 prefilter +
+  `dedup.resolve_duplicate` scorer instead of inventing a second notion of "duplicate" — the
+  resolver already encodes the real rule (filename/title similarity AND cosine AND same
+  series-date token), and a second heuristic here would disagree with the ingest-time dedup in
+  ways nobody could explain. An item without an embedding returns **no** candidates: it cannot be
+  scored, and guessing from titles alone is how a merge UI proposes destroying two unrelated
+  documents.
+
+  **What a merge must not lose, and why each is tested.** The survivor inherits **both** items'
+  collection memberships, tags and entity mentions — a merge that dropped the losing copy's shelf
+  membership would quietly undo the user's curation. It also keeps the **stronger** signal from
+  either copy (read-state by rank, favorited by OR): merging a read+favorited copy into an unread
+  one must not demote it. Relations discovered FROM the loser are re-attributed so the graph
+  edge's provenance doesn't dangle at a deleted item.
+
+  **The FTS landmine, handled by reuse.** `items_fts` is an EXTERNAL-CONTENT table where a plain
+  `DELETE` is a silent no-op and a mismatched `'delete'` corrupts the posting list without
+  raising. Rather than re-implement that contract, the merge calls `_delete_item_cascade`, which
+  already owns it (reading the indexed values BEFORE `item_tags` rows go away). Two tests assert
+  the loser's title stops being findable and the survivor's still is.
+
+  **Guard rails.** A self-merge raises rather than running the cascade delete on the survivor and
+  destroying the item it was asked to keep. The whole merge is one transaction, so a failure
+  leaves **both** items intact — a partial merge is a corrupted library. The HTTP route takes the
+  survivor as the path parameter and the loser in the body (so the destructive half is never the
+  id a client reuses from a list view), and requires `confirm: true`.
+
+  **Validated as a user** on an isolated dev home (port 10749, never :10000) through the real API:
+  two near-identical notes with different tags merged — the survivor ended with **both** tags, the
+  loser **404s**, and the duplicates endpoint responds. Then, on a second pair, the loser was
+  marked `read` + favorited and merged into an `unread` survivor: the survivor came out
+  **`read_state: read, favorited: true`** — the stronger signal won. `confirm: false` was refused
+  with a typed error. **0 gateway tracebacks.**
+
+  *(A false trail: `read_state` is not PATCH-able — it has dedicated `read-state`/`favorite`
+  routes. My first attempt got a correct 400, not a bug.)*
+
+  **Gates:** `make lint` clean (mypy 556 files) · `make test` **9494 passed, 0 failed**.
+  Tests: `tests/test_knowledge_merge.py`, 29 cases.
