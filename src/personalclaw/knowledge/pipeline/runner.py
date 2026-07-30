@@ -392,10 +392,38 @@ def _persist_structural_metadata(store, item_id: str, item, result) -> None:
 
 
 async def _run_entities_stage(store, item_id: str, content: str, pool) -> None:
-    """Extract entities + relations from the item's consolidated text and write them
-    to the entity graph (entities + mentions + entity_relations). Re-runs cleanly:
-    clears this item's prior mentions/relations first so a re-ingest doesn't dup."""
-    if not content.strip() or pool is None:
+    """Link + extract entities for the item, writing to the entity graph.
+
+    Two passes, deliberately in this order:
+
+    1. **The deterministic alias pre-pass** (MEMORY-GRAPH §1.3) — every entity the graph
+       ALREADY knows whose name or alias literally appears gets a mention. Zero LLM calls,
+       and crucially it runs **even when `pool is None`**: without it, a user with no model
+       bound ingests a document that plainly names a known entity and gets nothing, because
+       the extractor is the only thing that ever linked.
+    2. **LLM extraction** — finds what is NEW (entities the graph has never seen, and the
+       relations between them), which a string matcher structurally cannot.
+
+    They are complementary, not redundant: the model discovers, the trie guarantees. Both
+    write through `add_mention` (`INSERT OR IGNORE`), so an entity both find is one mention.
+
+    Re-runs cleanly: the extraction path clears this item's prior mentions/relations first so
+    a re-ingest doesn't dup — and the pre-pass is re-applied after that clear, so its links
+    survive the very stage that wipes them.
+    """
+    if not content.strip():
+        return
+
+    # Pass 1 runs unconditionally — no model required, and no reason to make linking wait on
+    # one. Best-effort: a failure here must not stop extraction from running.
+    try:
+        from personalclaw.knowledge.alias_prepass import link_known_entities
+
+        link_known_entities(store, item_id, content)
+    except Exception:
+        logger.debug("alias pre-pass failed for %s", item_id, exc_info=True)
+
+    if pool is None:
         return
     try:
         from personalclaw.knowledge.extractor import EntityExtractor
@@ -409,7 +437,41 @@ async def _run_entities_stage(store, item_id: str, content: str, pool) -> None:
     if not entities:
         return
     try:
+        # SNAPSHOT the pre-pass links before clearing, then restore them after.
+        #
+        # `clear_item_entities` does more than drop this item's mentions: it also deletes any
+        # entity left with no mentions and no relations. So on a single-item store the
+        # pre-pass's entity is GONE after the clear, and simply re-running the pre-pass finds
+        # nothing to link to — the index it builds is empty. Measured, not assumed: a
+        # re-link-after-clear returned 0.
+        #
+        # Snapshotting (name, context) survives that deletion because a name can be re-found
+        # or re-created, whereas an id cannot.
+        prepass_links: list[tuple[str, str, str]] = []
+        try:
+            for row in store.db.execute(
+                "SELECT m.entity_id, e.name, e.entity_type, m.context "
+                "FROM mentions m JOIN entities e ON e.id = m.entity_id "
+                "WHERE m.item_id = ?",
+                (item_id,),
+            ).fetchall():
+                prepass_links.append(
+                    (row["name"], row["entity_type"] or "concept", row["context"] or "")
+                )
+        except Exception:
+            logger.debug("alias pre-pass snapshot failed for %s", item_id, exc_info=True)
+
         store.clear_item_entities(item_id)
+
+        # Restore. `find_entity` first, because the extractor may be about to re-create the
+        # same entity and two rows for one name is worse than a lost link.
+        for name, etype, context in prepass_links:
+            try:
+                existing = store.find_entity(name)
+                eid = existing["id"] if existing else store.add_entity(name=name, entity_type=etype)
+                store.add_mention(item_id, eid, context=context or None)
+            except Exception:
+                logger.debug("alias re-link failed for %s → %r", item_id, name, exc_info=True)
         entity_map: dict[str, str] = {}
         for ent in entities:
             name = (ent.get("name") or "").strip()

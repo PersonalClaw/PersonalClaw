@@ -599,3 +599,57 @@ Tests: `tests/test_memory_push_reflex.py`, 46 cases.
 **Still NOT in this session** (the rest of §1.3 / later sessions): the knowledge-pipeline alias
 pre-pass, and Sessions 3-5 (formation, two-way vault, slots + FE). The knowledge-side pre-pass is
 a knowledge-repo-adjacent change with its own ingestion seam and is cleanly separable.
+
+- 2026-07-30 — **DONE (§1.3 remainder: the knowledge-side alias pre-pass).** The piece
+  deliberately left out of the push-reflex session as cleanly separable; this is its own
+  ingestion seam.
+
+  **The gap.** The pipeline's entities stage was **LLM-only**: `EntityExtractor` asks a model
+  what the item is about, and mentions/relations/graph edges all hang off that one call. So with
+  **no model bound, nothing linked at all** — a user running local-only, or between providers,
+  ingests a document that plainly names a known entity and gets zero mentions. The graph looks
+  empty because the extractor never ran, not because the document said nothing. Separately, a
+  model *misses* what a trie hits every time: an entity named once in passing, or written as a
+  declared alias rather than its canonical name.
+
+  **The fix.** `knowledge/alias_prepass.py` walks the item text with the **same `AliasIndex`**
+  the memory store uses (one matcher, so the knowledge graph and the push reflex agree what a
+  mention is — two would drift, and the symptom would be a document that links in one surface
+  and not the other). It runs BEFORE extraction and **unconditionally**, including when
+  `pool is None`. It ADDS only: it can link to entities that already exist, never discover new
+  ones, so extraction still does the discovering. `add_mention` is `INSERT OR IGNORE`, so an
+  entity both stages find is one mention.
+
+  **The bug the tests caught, and it is subtle.** `clear_item_entities` (which the extraction
+  path calls before re-writing, so a re-ingest doesn't dup) deletes this item's mentions **AND
+  any entity left with no mentions and no relations**. So my first shape — re-run the pre-pass
+  after the clear — returned **0**: on a small store the pre-pass's entity had itself been
+  deleted, and the index it rebuilt was empty. Measured, not assumed. The working shape
+  SNAPSHOTS `(name, entity_type, context)` before the clear and restores after, because a name
+  can be re-found or re-created whereas an id cannot. Without this, every item WITH a model
+  would silently lose its deterministic links — the pre-pass would appear to work only in the
+  no-model case, which is the harder failure to notice.
+
+  **A test of mine that would have hidden it.** The regression test first asserted on entity
+  **ids**; the restored entity is a NEW row with a new id, so the test failed on correct
+  behavior. Re-expressed to assert linked **names** — the link is what must survive, not the
+  identifier. An id-based assertion there would have sent the next reader hunting a phantom bug.
+
+  Bounded deliberately: `MAX_INDEXED_ENTITIES` (5000) so a pathological store can't turn every
+  ingest into a pause, and `MAX_MENTIONS_PER_ITEM` (60) so a glossary page can't attach itself to
+  the whole graph and drown the real signal. One mention per DISTINCT entity, since forty hits of
+  one name is forty identical rows the `INSERT OR IGNORE` would collapse anyway.
+
+  **Validated as a user** on an isolated dev home (port 10748, never :10000), through the REAL
+  HTTP ingest with **no model bound**: a note reading "The SPRW cutover is Tuesday" linked the
+  **Sparrow** entity via its declared `SPRW` alias, with the surrounding text recorded as
+  context. Before this change that ingest produced zero mentions.
+
+  *Two false trails worth recording so the next person doesn't repeat them:* (1) the gateway's
+  knowledge store lives at **`workspace/knowledge/knowledge.db`**, not the home root — my first
+  seed went to the wrong file and looked like a failure; (2) a seeded entity with no mentions is
+  an **orphan**, so the next ingest's `clear_item_entities` deletes it before the pre-pass can
+  ever match. A realistic fixture anchors the entity with at least one mention.
+
+  **Gates:** `make lint` clean (mypy 556 files) · `make test` **9465 passed, 0 failed**.
+  Tests: `tests/test_knowledge_alias_prepass.py`, 26 cases.
