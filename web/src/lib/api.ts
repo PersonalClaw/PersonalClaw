@@ -719,7 +719,13 @@ export interface KnowledgeStats { items: number; entities: number; relations: nu
 // backend InboxItem dataclass (inbox.py).
 export type InboxClassification = 'needs_reply' | 'fyi' | 'noise'
 export type InboxConfidence = 'high' | 'needs_review' | 'escalate'
-export type InboxItemStatus = 'pending' | 'sent' | 'dismissed' | 'handled'
+// 'seen' is the read/unread boundary: surfaced to the user but not yet resolved.
+export type InboxItemStatus = 'pending' | 'seen' | 'sent' | 'dismissed' | 'handled'
+// What kind of attention an item wants. 'message' is the default so every item written
+// before the inbox became a general attention store stays valid.
+export type InboxItemKind =
+  | 'message' | 'mention' | 'email' | 'agent_request'
+  | 'proposal' | 'needs_input' | 'digest' | 'system'
 export interface InboxThreadMsg { sender_name?: string; text?: string; ts?: string }
 export interface InboxItem {
   id: string; channel: string; channel_name: string; thread_ts?: string | null
@@ -734,7 +740,13 @@ export interface InboxItem {
   favorited?: boolean
   // Feedback Signal (plan 58): per-judgment producer meta the thumbs attribute to.
   feedback_producers?: Record<'classification' | 'draft' | 'digest', FeedbackProducer | undefined>
+  // Attention store (plan 42 S2): what kind of attention this wants, and the ids of the
+  // things it is ABOUT — refs is what makes a needs_input row deep-link to its loop.
+  item_kind?: InboxItemKind
+  refs?: Record<string, string>
 }
+/** One row of the inbox kind-filter chips: what's present, and how much is unresolved. */
+export interface InboxKindCount { kind: InboxItemKind; total: number; open: number; channel: boolean }
 export interface InboxProvider { name: string; display_name: string; source_name: string }
 export interface InboxHealth { running: boolean; last_poll_at?: number; last_poll_ok?: boolean; last_error?: string; poll_count?: number; stale?: boolean }
 export interface InboxSourceHealth { name: string; active: boolean; kind: 'push' | 'poll'; can_reply: boolean }
@@ -2234,7 +2246,15 @@ export const api = {
   },
 
   // inbox — general triage entity over pluggable message-source providers
-  inbox: () => get<InboxItem[]>('/api/inbox'),
+  inbox: (kind?: string) =>
+    get<InboxItem[]>(kind ? `/api/inbox?kind=${encodeURIComponent(kind)}` : '/api/inbox'),
+  // Kinds PRESENT in the store (not the whole enum) — a chip for an empty kind is a dead
+  // control, so the backend drives the chip row from real data.
+  inboxKinds: () => get<{ kinds: InboxKindCount[] }>('/api/inbox/kinds').then((d) => d.kinds),
+  // Advance PENDING → SEEN. Omit both fields to mark everything; a resolved item is never
+  // dragged backwards. Idempotent.
+  markInboxSeen: (body: { ids?: string[]; kind?: string } = {}) =>
+    post<{ ok: boolean; seen: number }>('/api/inbox/seen', body),
   inboxStatus: () => get<InboxStatus>('/api/inbox/status'),
   inboxProviders: () => get<{ providers: InboxProvider[] }>('/api/inbox/providers').then((d) => d.providers),
   updateInboxItem: (id: string, body: Record<string, unknown>) => put<InboxItem>(`/api/inbox/${encodeURIComponent(id)}`, body),

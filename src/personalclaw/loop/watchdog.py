@@ -138,6 +138,18 @@ class LoopWatchdog:
         "ship_blocked": ("warning", "Completion unconfirmed — output not graduated"),
     }
 
+    #: Events where the loop is WAITING ON THE USER, mapped to their registered attention
+    #: kind. These outlive the moment they happen in, so they get a durable inbox item
+    #: rather than only a toast. Progress/outcome events (complete, failed, stage_advance,
+    #: and the two prove-the-instrument warnings) are deliberately NOT here: they report
+    #: something that already finished, and an inbox row the user must dismiss would be
+    #: busywork rather than attention.
+    _ATTENTION_EVENTS = {
+        "needs_input": "needs_input",
+        "blocked": "needs_input",
+        "stagnant": "needs_input",
+    }
+
     def _publish(self, loop_id: str, event: str, data: Any = None) -> None:
         try:
             self._state.loop_sse().publish(
@@ -156,12 +168,31 @@ class LoopWatchdog:
                 # Carry the loop KIND so the notification deep-links to the right cockpit
                 # (a code loop lives at /#/code/<id>, not /#/loops/<id>). Best-effort.
                 loop = store.get(loop_id)
-                self._state.notify(
-                    kind,
-                    title,
-                    self._loop_name(loop_id),
-                    meta={"loop_id": loop_id, "loop_kind": loop.kind if loop else ""},
-                )
+                if event in self._ATTENTION_EVENTS:
+                    # A loop waiting on the user is a STANDING request, not a moment: a
+                    # toast that scrolls past leaves the loop stalled with no trace. These
+                    # events raise a durable inbox item AND one notification through the
+                    # same helper, deduped per (loop, event) so a watchdog tick that
+                    # re-observes the same wait doesn't stack rows.
+                    from personalclaw.inbox import ItemKind, emit_attention_item
+
+                    emit_attention_item(
+                        self._state,
+                        source="loop",
+                        kind=self._ATTENTION_EVENTS[event],
+                        item_kind=ItemKind.NEEDS_INPUT.value,
+                        title=title,
+                        body=self._loop_name(loop_id),
+                        refs={"loop": loop_id, "loop_kind": loop.kind if loop else ""},
+                        dedup_key=f"loop:{loop_id}:{event}",
+                    )
+                else:
+                    self._state.notify(
+                        kind,
+                        title,
+                        self._loop_name(loop_id),
+                        meta={"loop_id": loop_id, "loop_kind": loop.kind if loop else ""},
+                    )
             except Exception:
                 logger.debug("loop notify failed", exc_info=True)
 

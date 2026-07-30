@@ -183,9 +183,11 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/inbox` — list all inbox items (recency, optionally engagement-weighted).
 - `GET /api/inbox/digest` — on-demand channel digest.
 - `POST /api/inbox/dismiss-all` — dismiss all pending items.
+- `GET /api/inbox/kinds` — item kinds present, with open counts, for the filter chips.
 - `GET /api/inbox/pending` — list pending items only (recency, optionally weighted).
 - `GET /api/inbox/providers` — list registered inbox message source providers.
 - `POST /api/inbox/restart` — stop and reinitialize the inbox service.
+- `POST /api/inbox/seen` — mark items SEEN (the read/unread boundary).
 - `POST /api/inbox/send` — send a reply to an inbox item.
 - `GET /api/inbox/status` — current config status.
 - `PUT /api/inbox/{id}` — update draft, status, etc.

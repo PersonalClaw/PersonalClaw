@@ -183,21 +183,41 @@ def test_reachable_pairs_preserve_their_old_severity_exactly():
     assert not drift, "severity drift on kinds a live emitter still reaches:\n" + "\n".join(drift)
 
 
-def test_new_attention_pairs_are_unreachable_from_legacy_strings():
-    """Pins WHY the pairs above are exempt: nothing emits them yet.
+def test_attention_pairs_have_no_legacy_history():
+    """Pins WHY the attention kinds are exempt from the severity invariant.
 
-    The loop watchdog passes flat `success`/`error`/`warning`/`info` — never `"loop"` — so
-    `loop/needs_input` and friends are reachable only through S2's typed helper. If a later
-    change points a legacy string at one of them, this test fails and the severity
-    invariant above starts (correctly) applying to it.
+    They DO have a wire string (S2 added `_ATTENTION_FLAT`, because `notify()` resolves a
+    rule from the wire value — without one, a "always interrupt me for needs_input" rule
+    would silently do nothing). But they have no entry in `_LEGACY_FLAT`, which is the
+    historical record of what a pre-existing emitter passed. No history ⇒ no severity
+    obligation ⇒ free to carry their honest rank.
+
+    If an attention wire string ever appears in `_LEGACY_FLAT`, that means a real emitter
+    used to pass it, and the invariant above must start applying to it.
     """
-    reachable = set(nk._LEGACY_FLAT.values())
-    for key in ("loop/needs_input", "loop/failed", "loop/stalled", "cron/failed"):
-        source, kind = key.split("/")
-        assert (source, kind) not in reachable, (
-            f"{key} is now reachable from a legacy flat string — it must adopt that "
-            "string's historical severity, or the emitter must move to the typed helper"
+    for flat in nk._ATTENTION_FLAT:
+        assert flat not in nk._LEGACY_FLAT, (
+            f"{flat!r} is in BOTH maps — if a pre-existing emitter passed it, it belongs "
+            "only in _LEGACY_FLAT and must keep that string's historical severity"
         )
+
+
+def test_attention_pairs_round_trip_through_the_wire():
+    """pair → wire → pair must be lossless, or the kind loses its own rule.
+
+    Caught a real bug: `loop/needs_input` and `skills/proposal` had registrations and wire
+    strings but no resolution entry, so `notify()` resolved them to system/generic and
+    every rule configured against them was ignored.
+    """
+    for flat, (source, kind) in nk._ATTENTION_FLAT.items():
+        assert nk.kind_for_legacy_pair(source, kind) == flat
+        assert nk.kind_for_legacy(flat).key == f"{source}/{kind}"
+
+
+def test_legacy_strings_win_a_collision_with_an_attention_kind():
+    """A newly added attention kind must never re-point an existing persisted kind."""
+    for flat, ident in nk._LEGACY_FLAT.items():
+        assert nk._WIRE_TO_PAIR[flat] == ident, f"{flat!r} was re-pointed away from {ident}"
 
 
 # ── drift guard against the real call sites ─────────────────────────────
