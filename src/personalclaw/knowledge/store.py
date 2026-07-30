@@ -794,6 +794,149 @@ class KnowledgeStore:
             out.append(d)
         return out
 
+    def find_duplicates(self, item_id: str, *, limit: int = 25) -> list[dict]:
+        """Near-duplicates of *item_id*, best match first — the surfacing half of T3.2.
+
+        Wraps the existing TIER-2 prefilter + `dedup.resolve_duplicate` scorer rather than
+        inventing a second notion of "duplicate": the resolver already encodes the real rule
+        (filename/title similarity AND cosine AND the same series-date token), and a second
+        heuristic here would disagree with the ingest-time dedup in ways nobody could explain.
+
+        Returns lean dicts (`id`, `title`, `item_type`, `created_at`, `word_count`, `reason`)
+        — never the embedding, which is megabytes of floats no caller needs. Items without an
+        embedding are simply absent: an un-embedded item cannot be scored, and guessing from
+        titles alone is how a merge UI proposes destroying two unrelated documents.
+        """
+        from personalclaw.knowledge.dedup import resolve_duplicate
+
+        anchor_row = self.db.execute(
+            "SELECT id, title, file_path, summary, item_type, word_count, "
+            "processing_status, created_at, embedding FROM items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+        if anchor_row is None:
+            return []
+        from personalclaw.knowledge.embedder import bytes_to_floats
+
+        anchor = dict(anchor_row)
+        anchor["embedding"] = bytes_to_floats(anchor.get("embedding") or b"")
+        if not anchor["embedding"]:
+            return []
+
+        out: list[dict] = []
+        for cand in self.find_fuzzy_dup_candidates(item_id, limit=limit):
+            try:
+                verdict = resolve_duplicate(cand, anchor)
+            except Exception:
+                logger.debug("dup scoring failed for %s", cand.get("id"), exc_info=True)
+                continue
+            if not getattr(verdict, "is_duplicate", False):
+                continue
+            out.append(
+                {
+                    "id": cand["id"],
+                    "title": cand.get("title") or "",
+                    "item_type": cand.get("item_type") or "",
+                    "created_at": cand.get("created_at") or "",
+                    "word_count": cand.get("word_count") or 0,
+                    "reason": getattr(verdict, "reason", "") or "near-duplicate",
+                }
+            )
+        return out
+
+    def merge_items(self, keep_id: str, merge_id: str) -> dict:
+        """Fold *merge_id* into *keep_id*, then delete it. Returns what moved.
+
+        The survivor inherits **both** items' collection memberships, tags and entity
+        mentions — that is the whole point: a merge must not quietly lose the curation a user
+        did on the copy that happens to lose. Mirrors `merge_entities`' shape (delete the rows
+        that would violate the composite PK, then redirect the rest) because sqlite has no
+        `INSERT OR IGNORE … SELECT` that also updates.
+
+        Refuses to merge an item into itself — a self-merge would run the cascade delete on
+        the survivor and destroy the very item it was asked to keep.
+        """
+        if not keep_id or not merge_id or keep_id == merge_id:
+            raise ValueError("merge_items needs two distinct item ids")
+        for iid in (keep_id, merge_id):
+            if self.db.execute("SELECT 1 FROM items WHERE id = ?", (iid,)).fetchone() is None:
+                raise ValueError(f"no such item {iid!r}")
+
+        moved = {"collections": 0, "tags": 0, "mentions": 0}
+        self.db.execute("BEGIN")
+        try:
+            # Collections: drop the pairs the survivor already has, then redirect the rest.
+            self.db.execute(
+                "DELETE FROM collection_items WHERE item_id = ? AND collection_id IN "
+                "(SELECT collection_id FROM collection_items WHERE item_id = ?)",
+                (merge_id, keep_id),
+            )
+            cur = self.db.execute(
+                "UPDATE collection_items SET item_id = ? WHERE item_id = ?", (keep_id, merge_id)
+            )
+            moved["collections"] = cur.rowcount or 0
+
+            self.db.execute(
+                "DELETE FROM item_tags WHERE item_id = ? AND tag_id IN "
+                "(SELECT tag_id FROM item_tags WHERE item_id = ?)",
+                (merge_id, keep_id),
+            )
+            cur = self.db.execute(
+                "UPDATE item_tags SET item_id = ? WHERE item_id = ?", (keep_id, merge_id)
+            )
+            moved["tags"] = cur.rowcount or 0
+
+            self.db.execute(
+                "DELETE FROM mentions WHERE item_id = ? AND entity_id IN "
+                "(SELECT entity_id FROM mentions WHERE item_id = ?)",
+                (merge_id, keep_id),
+            )
+            cur = self.db.execute(
+                "UPDATE mentions SET item_id = ? WHERE item_id = ?", (keep_id, merge_id)
+            )
+            moved["mentions"] = cur.rowcount or 0
+
+            # Relations discovered FROM the merged item now belong to the survivor, so the
+            # graph edge keeps a live provenance link instead of dangling.
+            self.db.execute(
+                "UPDATE entity_relations SET source_item_id = ? WHERE source_item_id = ?",
+                (keep_id, merge_id),
+            )
+
+            # The survivor keeps the STRONGER curation signal from either copy: a merge should
+            # never demote something the user had favorited or already read.
+            keep_row = self.db.execute(
+                "SELECT read_state, favorited FROM items WHERE id = ?", (keep_id,)
+            ).fetchone()
+            merge_row = self.db.execute(
+                "SELECT read_state, favorited FROM items WHERE id = ?", (merge_id,)
+            ).fetchone()
+            rank = {"unread": 0, "reading": 1, "read": 2}
+            best_state = max(
+                (keep_row["read_state"] or "unread", merge_row["read_state"] or "unread"),
+                key=lambda s: rank.get(s, 0),
+            )
+            self.db.execute(
+                "UPDATE items SET read_state = ?, favorited = ? WHERE id = ?",
+                (
+                    best_state,
+                    1 if (keep_row["favorited"] or merge_row["favorited"]) else 0,
+                    keep_id,
+                ),
+            )
+
+            # The cascade owns the FTS 'delete' (it must carry exactly the indexed values,
+            # read BEFORE item_tags rows go away) — reusing it is why this merge can't rot
+            # the search index.
+            self._delete_item_cascade(merge_id)
+            self.db.execute("COMMIT")
+        except Exception:
+            self.db.execute("ROLLBACK")
+            raise
+        self._load_graph()
+        logger.info("merged knowledge item %s into %s: %s", merge_id, keep_id, moved)
+        return moved
+
     # ── Extracted-content pool (node-graph engine, #30) ──
 
     def add_extracted_content(

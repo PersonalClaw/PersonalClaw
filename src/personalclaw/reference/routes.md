@@ -226,6 +226,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/knowledge/items/{id}` — - single item with its entities + relations.
 - `PATCH /api/knowledge/items/{id}` — - update fields.
 - `GET /api/knowledge/items/{id}/content` — - plain text for clipboard.
+- `GET /api/knowledge/items/{id}/duplicates` — near-duplicates, best match first.
 - `GET /api/knowledge/items/{id}/extracted` — - the per-item extracted-content
 - `POST /api/knowledge/items/{id}/favorite` — star or unstar.
 - `GET /api/knowledge/items/{id}/file` — - serve a media item's original bytes.
@@ -233,6 +234,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/knowledge/items/{id}/graph` — - the ingestion node-graph SHAPE for this
 - `GET /api/knowledge/items/{id}/ingest/stream` — - per-item node-graph ingestion
 - `GET /api/knowledge/items/{id}/intents` — - the intents this item contributed to
+- `POST /api/knowledge/items/{id}/merge` — fold another item into this one.
 - `POST /api/knowledge/items/{id}/read-state` — unread | reading | read.
 - `GET /api/knowledge/items/{id}/related` — - items sharing entities with given item.
 - `GET /api/knowledge/items/{id}/thumbnail` — - serve a generated thumbnail (image/webp).
