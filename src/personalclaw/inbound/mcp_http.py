@@ -30,8 +30,46 @@ from personalclaw.inbound import caps as caps_mod
 logger = logging.getLogger(__name__)
 
 SURFACE = "mcp"
+
 # The MCP protocol revision this surface implements.
-PROTOCOL_VERSION = "2024-11-05"
+#
+# **Why 2025-06-18 and not something newer** (the G1.1 conformance review, recorded here
+# because the choice is the deliverable, not the string):
+#
+# The rule is "advertise a revision this surface ACTUALLY conforms to, verified clause by
+# clause — not the newest string available." Checked against what this code does:
+#
+# * **Streamable HTTP, POST-only.** The spec permits a server that only accepts POST and
+#   answers `GET` with 405, which is exactly `handle_mcp_get`. No SSE stream to get right.
+# * **Stateless.** No `Mcp-Session-Id` is issued or required. The spec's own direction is
+#   toward stateless servers, so this is alignment rather than a gap. Re-introducing session
+#   handling to satisfy an older client would be a regression dressed as compatibility.
+# * **`initialize` / `tools/list` / `tools/call`** are implemented with the result shapes the
+#   revision specifies; `capabilities` advertises only `tools`, which is all this surface has.
+# * **No batching.** 2025-06-18 REMOVED JSON-RPC batching, so this surface's long-standing
+#   refusal of batches is now conformant rather than a deliberate deviation — one of the two
+#   reasons this revision is the right target.
+# * **Origin validation / DNS-rebinding guidance.** Satisfied more strictly than the spec
+#   asks: `auth.peer_allowed` gates on the TRANSPORT peer (never a forgeable header), and a
+#   non-loopback peer additionally needs `allow_remote` *and* an exact `Host` match against
+#   the owner-declared `public_url`. An `Origin` check would be strictly weaker than this.
+#
+# **Deliberately unmet clauses of LATER drafts:** anything requiring server→client requests
+# (elicitation, sampling) or a resumable event stream is out of scope for a read-only,
+# POST-only surface, and OAuth-based authorization is expressly this plan's non-goal — the
+# surface uses a dedicated bearer token distinct from the dashboard's. Advertising a revision
+# that mandates those would be a false claim, which is exactly what this review is for.
+PROTOCOL_VERSION = "2025-06-18"
+
+# Revisions this surface can speak. A client asking for one of these gets it echoed back;
+# anything else gets a typed error naming these, rather than a silent partial handshake where
+# both sides believe different rules apply.
+#
+# `2024-11-05` stays supported because it is what this surface advertised before the bump and
+# what already-configured clients pin. The difference that matters between the two — batching —
+# was never supported here, so honoring the older revision is honest: a 2024-11-05 client gets
+# exactly the subset it would have got yesterday.
+SUPPORTED_PROTOCOL_VERSIONS: tuple[str, ...] = ("2025-06-18", "2024-11-05")
 
 # JSON-RPC 2.0 error codes (the spec's reserved range).
 _PARSE_ERROR = -32700
@@ -183,12 +221,36 @@ async def handle_mcp(request: web.Request) -> web.Response:
             return _done(200, _rpc_error(request_id, _INVALID_PARAMS, "params must be an object"))
 
         if method == "initialize":
+            # Version negotiation must fail LEGIBLY (G1.3). Previously any requested
+            # revision was ignored and this surface's own string was returned regardless —
+            # so a client pinning a revision we don't speak got a successful handshake and
+            # then failed later on a call whose shape it expected to differ. A mismatch is
+            # a contract disagreement and has to be said out loud, at the handshake.
+            requested = params.get("protocolVersion")
+            if requested is not None:
+                asked = str(requested)
+                if asked not in SUPPORTED_PROTOCOL_VERSIONS:
+                    return _done(
+                        200,
+                        _rpc_error(
+                            request_id,
+                            _INVALID_PARAMS,
+                            "unsupported protocolVersion "
+                            f"{asked!r}; this server speaks "
+                            f"{', '.join(SUPPORTED_PROTOCOL_VERSIONS)}",
+                        ),
+                    )
+                # Echo the agreed revision, not our preferred one: the client asked for a
+                # revision we do speak, so the session runs under THAT contract.
+                negotiated = asked
+            else:
+                negotiated = PROTOCOL_VERSION
             return _done(
                 200,
                 _rpc_result(
                     request_id,
                     {
-                        "protocolVersion": PROTOCOL_VERSION,
+                        "protocolVersion": negotiated,
                         "capabilities": {"tools": {}},
                         "serverInfo": _server_info(),
                     },

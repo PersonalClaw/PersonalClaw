@@ -759,3 +759,175 @@ class TestToolBehavior:
     def test_unknown_tool_still_raises_key_error(self):
         with pytest.raises(KeyError):
             _call("write_everything", {})
+
+
+# ── Protocol revision + negotiation (MCP-READONLY-INBOUND G1.1–G1.4) ──
+#
+# The bump off 2024-11-05 is a Tier-S wire contract, so the interesting tests are about
+# what a CLIENT experiences: an agreed revision is honored, a disagreement is said out loud
+# at the handshake instead of surfacing as a confusing failure three calls later, and none
+# of it weakens the surface's security posture.
+
+
+class TestProtocolRevision:
+    def test_advertises_the_reviewed_revision(self):
+        assert mcp_http.PROTOCOL_VERSION == "2025-06-18"
+
+    def test_the_advertised_revision_is_in_the_supported_set(self):
+        """A preferred revision the negotiator would then reject is incoherent."""
+        assert mcp_http.PROTOCOL_VERSION in mcp_http.SUPPORTED_PROTOCOL_VERSIONS
+
+    def test_the_previous_revision_stays_supported(self):
+        """Already-configured clients pin 2024-11-05; dropping it would break them.
+
+        Honest to keep: the one difference that matters between the revisions is JSON-RPC
+        batching, which this surface never supported — so a 2024-11-05 client gets exactly
+        the subset it got yesterday.
+        """
+        assert "2024-11-05" in mcp_http.SUPPORTED_PROTOCOL_VERSIONS
+
+    def test_supported_revisions_are_ordered_newest_first(self):
+        """The error message lists these; the preferred one should read first."""
+        assert mcp_http.SUPPORTED_PROTOCOL_VERSIONS[0] == mcp_http.PROTOCOL_VERSION
+
+    @pytest.mark.asyncio
+    async def test_no_session_id_is_issued(self, monkeypatch):
+        """Stateless by design. Re-introducing sessions would be a regression."""
+        _enable(monkeypatch)
+        token = auth.create_surface_token("mcp")
+        client = await _client(monkeypatch)
+        try:
+            resp = await _rpc(client, "initialize", token=token)
+            assert "Mcp-Session-Id" not in resp.headers
+            body = await resp.json()
+            assert "sessionId" not in body["result"]
+        finally:
+            await client.close()
+
+    def test_the_tree_contains_no_session_handling(self):
+        """The regression lock from G1.2: no CODE reads or sets a session header.
+
+        Greps code lines only, skipping comments — the first version of this test matched
+        the module's own comment explaining that it has no sessions, which made the lock
+        unsatisfiable while looking like a genuine failure.
+        """
+        import pathlib
+
+        root = pathlib.Path(mcp_http.__file__).parent
+        hits = []
+        for path in root.rglob("*.py"):
+            for line in path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                if "Mcp-Session-Id" in stripped or "mcp_session_id" in stripped:
+                    hits.append(f"{path.name}: {stripped[:60]}")
+        assert hits == [], f"session handling reappeared in {hits}"
+
+
+class TestProtocolNegotiation:
+    @pytest.mark.asyncio
+    async def test_a_supported_request_is_echoed_back(self, monkeypatch):
+        """The session runs under the revision the CLIENT asked for, not our preference."""
+        _enable(monkeypatch)
+        token = auth.create_surface_token("mcp")
+        client = await _client(monkeypatch)
+        try:
+            resp = await _rpc(client, "initialize", token=token, protocolVersion="2024-11-05")
+            body = await resp.json()
+            assert body["result"]["protocolVersion"] == "2024-11-05"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_the_newest_revision_is_echoed_back(self, monkeypatch):
+        _enable(monkeypatch)
+        token = auth.create_surface_token("mcp")
+        client = await _client(monkeypatch)
+        try:
+            resp = await _rpc(client, "initialize", token=token, protocolVersion="2025-06-18")
+            body = await resp.json()
+            assert body["result"]["protocolVersion"] == "2025-06-18"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_omitting_the_version_uses_our_preferred_one(self, monkeypatch):
+        _enable(monkeypatch)
+        token = auth.create_surface_token("mcp")
+        client = await _client(monkeypatch)
+        try:
+            resp = await _rpc(client, "initialize", token=token)
+            body = await resp.json()
+            assert body["result"]["protocolVersion"] == mcp_http.PROTOCOL_VERSION
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("asked", ["2099-01-01", "2024-01-01", "1.0", "", "nonsense"])
+    async def test_an_unsupported_revision_fails_legibly(self, monkeypatch, asked):
+        """NEWER or older, the answer is a typed error naming what we speak.
+
+        The old behavior returned a successful handshake with OUR string regardless — so a
+        client pinning an unknown revision believed it had agreed on something, then failed
+        later on a call whose shape it expected to differ. That is the bug being fixed.
+        """
+        _enable(monkeypatch)
+        token = auth.create_surface_token("mcp")
+        client = await _client(monkeypatch)
+        try:
+            resp = await _rpc(client, "initialize", token=token, protocolVersion=asked)
+            assert resp.status == 200, "JSON-RPC errors ride a 200"
+            body = await resp.json()
+            assert "result" not in body, "a disagreement must not look like a handshake"
+            assert body["error"]["code"] == -32602
+            # The message must name the supported set so the client can self-correct.
+            for v in mcp_http.SUPPORTED_PROTOCOL_VERSIONS:
+                assert v in body["error"]["message"]
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_a_non_string_version_is_rejected(self, monkeypatch):
+        """`{"protocolVersion": 20250618}` is a client bug and must not handshake.
+
+        Rejected because its string form ("20250618") is not a supported revision — not by a
+        dedicated type check. Worth a test either way: the observable contract is "this
+        doesn't silently succeed", and a future refactor that started coercing loosely (say,
+        by stripping dashes) would break it.
+        """
+        _enable(monkeypatch)
+        token = auth.create_surface_token("mcp")
+        client = await _client(monkeypatch)
+        try:
+            resp = await _rpc(client, "initialize", token=token, protocolVersion=20250618)
+            body = await resp.json()
+            assert "error" in body
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_negotiation_does_not_bypass_the_token(self, monkeypatch):
+        """The version check runs INSIDE the authenticated handler, not ahead of it.
+
+        A negotiation error reachable without a token would turn the handshake into an
+        unauthenticated probe for whether this surface exists.
+        """
+        _enable(monkeypatch)
+        auth.create_surface_token("mcp")
+        client = await _client(monkeypatch)
+        try:
+            resp = await client.post(
+                "/mcp",
+                data=json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {"protocolVersion": "2099-01-01"},
+                    }
+                ),
+            )
+            assert resp.status == 401, "no token ⇒ 401 before any protocol reasoning"
+        finally:
+            await client.close()
