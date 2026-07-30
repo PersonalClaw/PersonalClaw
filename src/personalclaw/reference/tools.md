@@ -140,6 +140,50 @@ List the numbered snapshot versions of an artifact by slug.
 }
 ```
 
+### `document_create`
+
+Generate a real Word document (.docx) from MARKDOWN and save it as a versioned artifact the user can download. Write ordinary markdown — headings, paragraphs, bullet and numbered lists, tables, fenced code, `---` for a page break — and it is rendered into the document. Do NOT attempt to emit OOXML or base64. Use this when the user wants a file to send, print or hand to someone; use artifact_save with kind='markdown' or 'document' when they just want to read it in the app. Re-running with the same `slug` updates that document and bumps its version instead of creating a near-duplicate. Returns the slug and a download URL.
+
+**Response type:** `artifact.detail`
+
+**Safety:** requires approval, risk: caution
+
+**Parameters:**
+- `description` (string, optional) — Optional short description
+- `format` (string, optional) — Output format (default 'docx'). Call document_formats to see what is available.
+- `html` (string, optional) — Alternative to markdown: HTML (sanitized before use)
+- `markdown` (string, optional) — The document body as markdown (the primary input)
+- `name` (string, required) — Display name for the document
+- `slug` (string, optional) — Existing artifact slug to update in place (bumps a version)
+- `tags` (array, optional)
+- `title` (string, optional) — Document title; a leading markdown H1 is used when omitted
+
+**Example — Turn markdown into a downloadable Word document:**
+
+```json
+{
+  "markdown": "# Q3 Review\n\nRevenue grew.\n\n- EMEA up 18%\n",
+  "name": "Q3 Review"
+}
+```
+
+### `document_formats`
+
+List the document formats this instance can actually generate right now. Check before promising the user a format.
+
+**Response type:** `text`
+
+**Safety:** requires approval
+
+**Parameters:**
+- _(no parameters)_
+
+**Example — Check which formats are available:**
+
+```json
+{}
+```
+
 ### `image_generate`
 
 Generate an image from a text prompt (or edit an existing one), using the model bound to the 'image_gen' use-case in Settings → Models. The result is saved as a versioned kind='image' artifact; returns its slug so it can be shown, referenced, or embedded in a document. Pass edit_artifact=<slug> to edit a prior generated image in place (a new version on that artifact) instead of creating a new one. Requires an image_gen model to be configured; if none is, it says so.
@@ -160,6 +204,44 @@ Generate an image from a text prompt (or edit an existing one), using the model 
 {
   "prompt": "a watercolor fox",
   "size": "1024x1024"
+}
+```
+
+### `sheet_create`
+
+Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. Supply `sheets` as {sheet name: rows} for multiple tabs, or `rows` for a single tab, or `csv` text. Row 0 is treated as the header. KEEP NUMBERS AS NUMBERS (not strings) so the result can be summed and charted — that is the main reason to produce a spreadsheet rather than a table. Returns the slug and a download URL.
+
+**Response type:** `artifact.detail`
+
+**Safety:** requires approval, risk: caution
+
+**Parameters:**
+- `csv` (string, optional) — Single-sheet CSV text
+- `description` (string, optional) — Optional short description
+- `format` (string, optional) — Output format (default 'xlsx')
+- `name` (string, required) — Display name for the spreadsheet
+- `rows` (array, optional) — Single-sheet rows (array of arrays; row 0 = header)
+- `sheets` (object, optional) — Map of sheet name → array of row arrays (row 0 = header)
+- `slug` (string, optional) — Existing artifact slug to update in place (bumps a version)
+- `tags` (array, optional)
+
+**Example — Build a spreadsheet with numbers kept numeric:**
+
+```json
+{
+  "name": "Regional sales",
+  "sheets": {
+    "Sales": [
+      [
+        "Region",
+        "Q1"
+      ],
+      [
+        "EMEA",
+        120
+      ]
+    ]
+  }
 }
 ```
 

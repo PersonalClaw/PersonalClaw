@@ -2165,6 +2165,11 @@ export const api = {
   // rather than treating a partial success as a failure.
   knowledgeBulk: (op: KnowledgeBulkOp, itemIds: string[], args?: Record<string, unknown>) =>
     post<KnowledgeBulkResult>('/api/knowledge/bulk', { op, item_ids: itemIds, ...(args ?? {}) }),
+  // Extracted text for a generated office document — powers the honest text preview
+  // (never a fidelity render) beside the download.
+  artifactExtractedText: (slug: string) =>
+    get<{ slug: string; text: string; truncated: boolean }>(
+      `/api/artifacts/${encodeURIComponent(slug)}/extract`),
   // ── Tag taxonomy (KNOWLEDGE-LIBRARY S2, T2.2) ──
   // Distinct from knowledgeTags() above, which stays a flat frequency-ordered string
   // list for ChipInput autocomplete. Every mutation returns the WHOLE tree so the

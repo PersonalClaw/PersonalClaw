@@ -39,6 +39,17 @@ ALLOWED_KINDS = {
     "infographic",
     "document",
     "image",
+    # Generated office/PDF documents (DOCUMENT-HANDLING-TOOLS S1). `csv` is a TEXT kind:
+    # it round-trips as text and needs no binary body.
+    "docx",
+    "xlsx",
+    "pdf",
+    "csv",
+    # `video_generate` has always passed kind="video", but the kind was in neither set,
+    # so `create_binary`'s old else-branch silently stored every generated video AS AN
+    # IMAGE (issue #94). Registering it here is that fix; hardening the coercion into a
+    # raise is what keeps the class from recurring.
+    "video",
 }
 ALLOWED_SOURCES = {"chat", "cron", "subagent", "manual", "import"}
 ALLOWED_EVENT_TYPES = {"created", "edited", "iterated", "referenced", "reverted"}
@@ -46,8 +57,8 @@ ALLOWED_EVENT_TYPES = {"created", "edited", "iterated", "referenced", "reverted"
 # Kinds whose body is BINARY (stored as raw bytes on disk, served via the raw
 # endpoint) rather than text. For these the ``content`` field carries a reference
 # (the raw URL) — never the bytes themselves (no base64-in-content: it inflates
-# context + payload). Today only images; video/audio-gen would join here.
-BINARY_KINDS = {"image"}
+# context + payload). A kind added here MUST also be in ALLOWED_KINDS.
+BINARY_KINDS = {"image", "video", "docx", "xlsx", "pdf"}
 
 # Mapping from an image MIME type to the on-disk file extension. The default
 # (png) covers gpt-image / FAL output; svg is already a TEXT kind, so it's absent.
@@ -56,6 +67,16 @@ _MIME_TO_EXT = {
     "image/jpeg": "jpg",
     "image/webp": "webp",
     "image/gif": "gif",
+    # Generated documents. Without these the raw endpoint derives the wrong
+    # Content-Type from the stored extension and a download arrives unopenable.
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+    "application/pdf": "pdf",
+    # Generated video (issue #94).
+    "video/mp4": "mp4",
+    "video/webm": "webm",
+    "video/quicktime": "mov",
 }
 
 

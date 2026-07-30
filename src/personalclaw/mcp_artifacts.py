@@ -239,6 +239,91 @@ def _list_tools() -> list[dict[str, Any]]:
                 "required": ["prompt"],
             },
         },
+        {
+            "name": "document_create",
+            "description": (
+                "Generate a real Word document (.docx) from MARKDOWN and save it as a "
+                "versioned artifact the user can download. Write ordinary markdown — "
+                "headings, paragraphs, bullet and numbered lists, tables, fenced code, "
+                "`---` for a page break — and it is rendered into the document. Do NOT "
+                "attempt to emit OOXML or base64. Use this when the user wants a file to "
+                "send, print or hand to someone; use artifact_save with kind='markdown' "
+                "or 'document' when they just want to read it in the app. Re-running with "
+                "the same `slug` updates that document and bumps its version instead of "
+                "creating a near-duplicate. Returns the slug and a download URL."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Display name for the document"},
+                    "markdown": {
+                        "type": "string",
+                        "description": "The document body as markdown (the primary input)",
+                    },
+                    "html": {
+                        "type": "string",
+                        "description": "Alternative to markdown: HTML (sanitized before use)",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Document title; a leading markdown H1 is used when omitted",  # noqa: E501
+                    },
+                    "format": {
+                        "type": "string",
+                        "description": "Output format (default 'docx'). Call document_formats to see what is available.",  # noqa: E501
+                    },
+                    "slug": {
+                        "type": "string",
+                        "description": "Existing artifact slug to update in place (bumps a version)",  # noqa: E501
+                    },
+                    "description": {"type": "string", "description": "Optional short description"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["name"],
+            },
+        },
+        {
+            "name": "sheet_create",
+            "description": (
+                "Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. "
+                "Supply `sheets` as {sheet name: rows} for multiple tabs, or `rows` for a "
+                "single tab, or `csv` text. Row 0 is treated as the header. KEEP NUMBERS "
+                "AS NUMBERS (not strings) so the result can be summed and charted — that "
+                "is the main reason to produce a spreadsheet rather than a table. Returns "
+                "the slug and a download URL."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Display name for the spreadsheet"},
+                    "sheets": {
+                        "type": "object",
+                        "description": "Map of sheet name → array of row arrays (row 0 = header)",
+                    },
+                    "rows": {
+                        "type": "array",
+                        "description": "Single-sheet rows (array of arrays; row 0 = header)",
+                    },
+                    "csv": {"type": "string", "description": "Single-sheet CSV text"},
+                    "format": {"type": "string", "description": "Output format (default 'xlsx')"},
+                    "slug": {
+                        "type": "string",
+                        "description": "Existing artifact slug to update in place (bumps a version)",  # noqa: E501
+                    },
+                    "description": {"type": "string", "description": "Optional short description"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["name"],
+            },
+        },
+        {
+            "name": "document_formats",
+            "description": (
+                "List the document formats this instance can actually generate right now. "
+                "Check before promising the user a format."
+            ),
+            "inputSchema": {"type": "object", "properties": {}},
+        },
     ]
 
 
@@ -464,6 +549,16 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 
         if name == "video_generate":
             return _video_generate(prov, args, sk, _audit)
+
+        if name in ("document_create", "sheet_create"):
+            return _document_create(prov, name, args, sk, _audit)
+
+        if name == "document_formats":
+            from personalclaw.documents import available_formats
+
+            fmts = available_formats()
+            _audit("success")
+            return "Available document formats: " + (", ".join(fmts) if fmts else "none")
 
     except (ValueError, PermissionError) as e:
         _audit("error", args.get("slug", ""), str(e))
@@ -767,4 +862,123 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
         _call_tool_inner,
         session_key="mcp_core",
         downstream_service="personalclaw-artifacts",
+    )
+
+
+#: Generated documents share the binary-artifact cap. A writer checks its output BEFORE
+#: calling the store so the user hears "the deck came to 22MB (cap 16MB)" rather than a
+#: store-level failure with no actionable number.
+_DOC_MIME = {
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "pdf": "application/pdf",
+}
+
+
+def _document_create(
+    prov: Any, name: str, args: dict[str, Any], sk: str | None, _audit: Any
+) -> str:
+    """`document_create` / `sheet_create` — render a real file and store it as an artifact.
+
+    The agent supplies markdown (its strongest output) or a declarative model; code does
+    the rendering. It never emits OOXML, and no vendor format string appears outside
+    ``documents/writers/``.
+
+    The reply carries slug + version + the raw URL — NEVER the bytes and never base64.
+    Generated document bytes must not enter a prompt (CONTEXT-ECONOMY); when the agent
+    needs the content back it goes through the existing read path.
+    """
+    from personalclaw.artifacts.models import MAX_BINARY_CONTENT_BYTES
+    from personalclaw.documents import available_formats, get_writer
+    from personalclaw.documents.from_markup import document_from_html, document_from_markdown
+    from personalclaw.documents.model import SheetModel
+
+    fmt = str(args.get("format") or ("xlsx" if name == "sheet_create" else "docx")).lower()
+    writer = get_writer(fmt)
+    if writer is None:
+        _audit("denied", error=f"unsupported format {fmt}")
+        return (
+            f"Error: no writer for format {fmt!r}. Available: "
+            f"{', '.join(available_formats()) or 'none'}."
+        )
+
+    # Build the model from whichever input the caller supplied.
+    if name == "sheet_create":
+        sheets = args.get("sheets")
+        rows = args.get("rows")
+        csv_text = str(args.get("csv") or "")
+        if isinstance(sheets, dict) and sheets:
+            model: Any = SheetModel(sheets={str(k): list(v or []) for k, v in sheets.items()})
+        elif isinstance(rows, list) and rows:
+            model = SheetModel(sheets={"Sheet1": [list(r) for r in rows]})
+        elif csv_text.strip():
+            # Annotated as list[object] rows: SheetModel preserves cell TYPES, so its
+            # row type is invariant-unfriendly to a narrower list[str].
+            parsed: list[list[object]] = [
+                [c.strip() for c in line.split(",")]
+                for line in csv_text.replace("\r\n", "\n").split("\n")
+                if line.strip()
+            ]
+            model = SheetModel(sheets={"Sheet1": parsed})
+        else:
+            _audit("denied", error="no sheet input")
+            return "Error: provide sheets, rows, or csv."
+    else:
+        markdown = str(args.get("markdown") or "")
+        html = str(args.get("html") or "")
+        if markdown.strip():
+            model = document_from_markdown(markdown, title=str(args.get("title") or ""))
+        elif html.strip():
+            model = document_from_html(html, title=str(args.get("title") or ""))
+        else:
+            _audit("denied", error="no document input")
+            return "Error: provide markdown or html."
+
+    try:
+        data = writer(model)
+    except Exception as e:  # noqa: BLE001 — a writer failure is a caller-facing refusal
+        _audit("error", error=str(e))
+        return f"Error: could not render the {fmt}: {e}"
+
+    if len(data) > MAX_BINARY_CONTENT_BYTES:
+        mb, cap = len(data) / 1_048_576, MAX_BINARY_CONTENT_BYTES / 1_048_576
+        _audit("denied", error=f"oversized {len(data)}")
+        return (
+            f"Error: the generated {fmt} came to {mb:.1f}MB (cap {cap:.0f}MB). "
+            "Reduce the content or split it across documents."
+        )
+
+    display_name = str(args.get("name") or "").strip() or f"Untitled {fmt}"
+    slug = str(args.get("slug") or "").strip()
+    # Re-generating under an existing slug UPDATES in place and bumps a version rather
+    # than minting a "-2" twin — the same dedup posture artifact_save takes.
+    if slug and prov.get(slug) is not None:
+        art = prov.update_binary(
+            slug=slug,
+            data=data,
+            mime=_DOC_MIME.get(fmt, "application/octet-stream"),
+            snapshot=True,
+            event_type="iterated",
+            actor="agent",
+            session_id=sk,
+        )
+    else:
+        art = prov.create_binary(
+            name=display_name,
+            data=data,
+            mime=_DOC_MIME.get(fmt, "application/octet-stream"),
+            kind=fmt,
+            source="chat",
+            slug=slug or None,
+            description=str(args.get("description") or ""),
+            tags=args.get("tags") or None,
+            actor="agent",
+            session_id=sk,
+            project_id=_current_project_id(),
+        )
+    _audit("success", art.slug)
+    return (
+        f"Created {fmt}: {art.slug} (v{art.version}, {len(data) / 1024:.0f}KB). "
+        f"Download at /api/artifacts/{art.slug}/raw"
     )

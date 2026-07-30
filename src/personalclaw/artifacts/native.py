@@ -23,6 +23,7 @@ from pathlib import Path
 
 from personalclaw.artifacts.models import (
     ALLOWED_EVENT_TYPES,
+    BINARY_KINDS,
     MAX_BINARY_CONTENT_BYTES,
     MAX_CONTENT_BYTES,
     MAX_DESCRIPTION_LEN,
@@ -454,6 +455,18 @@ class NativeArtifactProvider(ArtifactProvider):
         caller embeds ``/api/artifacts/<slug>/raw`` rather than the bytes.
         """
         name = (name or "").strip()[:MAX_NAME_LEN] or "Untitled"
+        # A non-binary kind reaching here is a PROGRAMMING ERROR, so it raises. This
+        # used to coerce silently to "image" (`normalize_kind(kind) if is_binary_kind(kind)
+        # else "image"`), which is how every generated video ended up stored as an image
+        # (issue #94): `kind="video"` is in neither ALLOWED_KINDS nor BINARY_KINDS, so the
+        # else-branch swallowed it. Failing loudly is what stops that class recurring as
+        # new binary kinds are added.
+        if not is_binary_kind(kind):
+            raise ValueError(
+                f"create_binary got non-binary kind {kind!r}; "
+                f"expected one of {sorted(BINARY_KINDS)} — register the kind in both "
+                "ALLOWED_KINDS and BINARY_KINDS first"
+            )
         with self._lock:
             base = slug.strip() if slug and is_valid_slug(slug.strip()) else slugify(name)
             final_slug = (
@@ -468,7 +481,7 @@ class NativeArtifactProvider(ArtifactProvider):
             art = Artifact(
                 slug=final_slug,
                 name=name,
-                kind=normalize_kind(kind) if is_binary_kind(kind) else "image",
+                kind=normalize_kind(kind),
                 source=normalize_source(source),
                 description=(description or "").strip()[:MAX_DESCRIPTION_LEN],
                 tags=clean_tags(tags),
