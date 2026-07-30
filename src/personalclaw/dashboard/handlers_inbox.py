@@ -6,8 +6,10 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 from personalclaw.inbox import (
+    NON_CHANNEL_KINDS,
     InboxState,
     InboxStore,
+    ItemKind,
     ItemStatus,
 )
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -212,20 +214,116 @@ def _rank_items(state: "DashboardState", items: list) -> list:
 # ── Inbox endpoints ──
 
 
+def _filter_by_kind(items: list, raw: str | None) -> list:
+    """Items whose ``item_kind`` is in the comma-separated *raw* filter.
+
+    An unknown kind name filters to nothing rather than being ignored: silently returning
+    everything for a typo'd filter would read as "the filter doesn't work".
+    """
+    if not raw:
+        return items
+    wanted = {k.strip() for k in raw.split(",") if k.strip()}
+    if not wanted:
+        return items
+    return [i for i in items if (i.item_kind or ItemKind.MESSAGE.value) in wanted]
+
+
 async def api_inbox_list(request: web.Request) -> web.Response:
-    """GET /api/inbox — list all inbox items (recency, optionally engagement-weighted)."""
+    """GET /api/inbox — list all inbox items (recency, optionally engagement-weighted).
+
+    ``?kind=needs_input,proposal`` narrows to those item kinds.
+    """
     state: "DashboardState" = request.app["state"]
     _, inbox = _get_inbox(state)
     items = _rank_items(state, list(inbox.items.values()))
+    items = _filter_by_kind(items, request.query.get("kind"))
     return web.json_response([_redact_item(i.to_dict()) for i in items])
 
 
 async def api_inbox_pending(request: web.Request) -> web.Response:
-    """GET /api/inbox/pending — list pending items only (recency, optionally weighted)."""
+    """GET /api/inbox/pending — list pending items only (recency, optionally weighted).
+
+    ``?kind=`` narrows as on the list endpoint. Note this is PENDING only: an item the
+    user has seen but not resolved is deliberately excluded, because this endpoint feeds
+    the "needs attention now" surfaces.
+    """
     state: "DashboardState" = request.app["state"]
     _, inbox = _get_inbox(state)
     items = _rank_items(state, list(inbox.pending()))
+    items = _filter_by_kind(items, request.query.get("kind"))
     return web.json_response([_redact_item(i.to_dict()) for i in items])
+
+
+async def api_inbox_kinds(request: web.Request) -> web.Response:
+    """GET /api/inbox/kinds — item kinds present, with open counts, for the filter chips.
+
+    Driven by what is actually in the store rather than by the enum: a chip for a kind
+    with nothing behind it is a dead control. ``open`` counts PENDING+SEEN, which is what
+    a chip badge should show — an unresolved request, whether or not it's been glanced at.
+    """
+    state: "DashboardState" = request.app["state"]
+    _, inbox = _get_inbox(state)
+    open_states = {ItemStatus.PENDING.value, ItemStatus.SEEN.value}
+    counts: dict[str, dict[str, int]] = {}
+    for item in inbox.items.values():
+        kind = item.item_kind or ItemKind.MESSAGE.value
+        entry = counts.setdefault(kind, {"total": 0, "open": 0})
+        entry["total"] += 1
+        if item.status in open_states:
+            entry["open"] += 1
+    return web.json_response(
+        {
+            "kinds": [
+                {
+                    "kind": k,
+                    "total": v["total"],
+                    "open": v["open"],
+                    "channel": k not in NON_CHANNEL_KINDS,
+                }
+                for k, v in sorted(counts.items())
+            ]
+        }
+    )
+
+
+async def api_inbox_seen(request: web.Request) -> web.Response:
+    """POST /api/inbox/seen — mark items SEEN (the read/unread boundary).
+
+    Only PENDING items advance. Re-marking is a no-op, and an already-resolved item is
+    never dragged backwards into SEEN — which would resurrect it in every "unresolved"
+    view after the user had dealt with it.
+    """
+    state: "DashboardState" = request.app["state"]
+    _, inbox = _get_inbox(state)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be an object"}, status=400)
+    ids = body.get("ids")
+    if ids is not None and not isinstance(ids, list):
+        return web.json_response({"error": "ids must be a list"}, status=400)
+
+    targets = (
+        [i for i in inbox.items.values() if i.id in set(ids)]
+        if ids is not None
+        else list(inbox.items.values())
+    )
+    kind_filter = body.get("kind")
+    if isinstance(kind_filter, str) and kind_filter:
+        targets = _filter_by_kind(targets, kind_filter)
+
+    changed = []
+    for item in targets:
+        if item.status == ItemStatus.PENDING:
+            item.status = ItemStatus.SEEN.value
+            changed.append(item)
+    if changed:
+        inbox.save()
+        for item in changed:
+            state.broadcast_ws("inbox_item_updated", _redact_item(item.to_dict()))
+    return web.json_response({"ok": True, "seen": len(changed)})
 
 
 async def api_inbox_update(request: web.Request) -> web.Response:

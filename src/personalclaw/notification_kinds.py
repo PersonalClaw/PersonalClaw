@@ -132,6 +132,24 @@ def resolve_kind(source: str, kind: str) -> NotificationKind:
     )
 
 
+def kind_for_legacy_pair(source: str, kind: str) -> str:
+    """The flat wire string for a registered ``(source, kind)``.
+
+    Emitters that know their typed pair (the attention kinds, which never had a legacy flat
+    string) still have to hand ``notify()`` a wire value, since the flat string is what the
+    persisted log and the SPA's display map key on. This is the one place that mapping
+    lives, so a new attention kind cannot invent a second convention.
+
+    Prefers an existing legacy string when one maps to this pair — so ``inbox/alert`` keeps
+    emitting ``inbox_alert`` and its persisted history stays one kind — and otherwise falls
+    back to the bare ``kind``, which is what a brand-new attention kind wants.
+    """
+    for flat, ident in _WIRE_TO_PAIR.items():
+        if ident == (source, kind):
+            return flat
+    return kind
+
+
 def kind_for_legacy(kind: str) -> NotificationKind:
     """Resolve a bare pre-registry ``kind`` string to a registered kind.
 
@@ -141,7 +159,7 @@ def kind_for_legacy(kind: str) -> NotificationKind:
     its registration. Unknown → generic, fail-open.
     """
     flat = (kind or "").strip().lower()
-    ident = _LEGACY_FLAT.get(flat)
+    ident = _WIRE_TO_PAIR.get(flat)
     if ident is None:
         return resolve_kind(GENERIC_SOURCE, flat or GENERIC_KIND)
     return resolve_kind(*ident)
@@ -188,6 +206,16 @@ _KINDS: tuple[NotificationKind, ...] = (
     NotificationKind("system", "session", "Session notice", "immediate", SEV_INFO),
     # learning / feedback
     NotificationKind("learning", "retire", "Retired a learned signal", "immediate", SEV_INFO),
+    # ── Attention kinds (S2+) ────────────────────────────────────────────
+    # These carry a durable inbox item, so `attention=True`. They have NO legacy flat
+    # string — nothing emitted them before `emit_attention_item` existed — which is why
+    # they may carry their honest severity rather than inheriting a historical rank
+    # (see test_new_attention_pairs_are_unreachable_from_legacy_strings).
+    NotificationKind("skills", "proposal", "Skill proposal", "immediate", SEV_INFO, attention=True),
+    NotificationKind(
+        "system", "agent_request", "Agent request", "immediate", SEV_WARNING, attention=True
+    ),
+    NotificationKind("system", "digest", "Daily digest", "immediate", SEV_INFO, attention=True),
     # The synthetic fallback, registered so the rules UI can show a row for it.
     NotificationKind(GENERIC_SOURCE, GENERIC_KIND, "Uncategorized", "immediate", SEV_INFO),
 )
@@ -217,6 +245,29 @@ _LEGACY_FLAT: dict[str, tuple[str, str]] = {
     "feedback_retire": ("learning", "retire"),
     GENERIC_KIND: (GENERIC_SOURCE, GENERIC_KIND),
 }
+
+#: Wire strings introduced BY the attention kinds (S2+), kept separate from the legacy map
+#: above because the two answer different questions.
+#:
+#: `_LEGACY_FLAT` is a historical record: "what did an emitter already in the tree pass?"
+#: Its entries carry a severity obligation — re-ranking one changes min-severity filtering
+#: for a user who never touched a setting, which is why a test walks it against the old
+#: `_KIND_SEVERITY` map. These kinds have no such history (nothing emitted them before
+#: `emit_attention_item` existed), so they are free to carry their honest severity.
+#:
+#: They still need a wire string: it is what `notify()` resolves a rule from and what the
+#: SPA's display map keys on. Without one they resolve to system/generic and lose their own
+#: rule — a user's "always interrupt me for needs_input" would silently do nothing.
+_ATTENTION_FLAT: dict[str, tuple[str, str]] = {
+    "needs_input": ("loop", "needs_input"),
+    "proposal": ("skills", "proposal"),
+    "agent_request": ("system", "agent_request"),
+    "digest": ("system", "digest"),
+}
+
+#: Every wire string this build understands, for resolution. Legacy entries win a collision:
+#: an existing persisted kind must never be re-pointed by a newly added attention kind.
+_WIRE_TO_PAIR: dict[str, tuple[str, str]] = {**_ATTENTION_FLAT, **_LEGACY_FLAT}
 
 for _k in _KINDS:
     register(_k)
@@ -266,6 +317,6 @@ WIRE_CONSTANTS: tuple[str, ...] = (
 # A constant that no longer maps to a registration is a silent downgrade to the generic
 # fallback at every site that imports it — so fail the import instead. Not an `assert`:
 # `python -O` strips those, and this is a correctness invariant, not a debug aid.
-_unmapped = [c for c in WIRE_CONSTANTS if c not in _LEGACY_FLAT]
+_unmapped = [c for c in WIRE_CONSTANTS if c not in _WIRE_TO_PAIR]
 if _unmapped:  # pragma: no cover - import-time guard
     raise RuntimeError(f"notification wire constants missing a registration: {_unmapped}")

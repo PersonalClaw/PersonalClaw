@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Inbox as InboxIcon, CheckCheck, RotateCcw, Circle, Reply, Settings as SettingsIcon, ScrollText, Loader2 } from 'lucide-react'
+import { Inbox as InboxIcon, CheckCheck, RotateCcw, Circle, Reply, Settings as SettingsIcon, ScrollText, Loader2, ExternalLink, LayoutGrid } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { EmptyState, ListRow, ListSkeleton } from '../../ui/ListScaffold'
@@ -13,13 +13,18 @@ import { useQueryParam, useQueryFlag, type RouteProps } from '../../app/useQuery
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { api, type InboxItem, type InboxStatus } from '../../lib/api'
-import { classMeta, confMeta, statusMeta, channelLabel, relPast } from './inboxMeta'
+import { Segmented } from '../../ui/Segmented'
+import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpen, ITEM_KINDS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
 import { InboxDetail } from './InboxDetail'
 import { InboxSettingsPanel } from './InboxSettingsPanel'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 
+// 'open' means unresolved — pending OR seen. It replaces the old 'pending' key, which
+// compared status === 'pending' exactly: once viewing an item marks it SEEN, that filter
+// would make the row VANISH from the list the user is looking at, even though they haven't
+// dealt with it. "Open" is what the user means by their inbox.
 const FILTERS = [
-  { key: 'pending', label: 'Pending' },
+  { key: 'open', label: 'Open' },
   { key: 'needs_reply', label: 'Needs reply' },
   { key: 'all', label: 'All' },
   { key: 'handled', label: 'Done' },
@@ -29,10 +34,11 @@ const FILTERS = [
  *  (filesystem today; Slack/email future). Each item is AI-classified with a
  *  confidence and an optional drafted reply. Header shows source health; rows
  *  triage at a glance; the SidePanel is the full triage workspace. */
-export function InboxPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQuery'>) {
+export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 'setQuery' | 'navigate'>) {
   const { data: items, refresh: refreshItems } = useCachedData<InboxItem[]>('inbox:items', () => api.inbox().catch(() => []), { persist: false })
   const { data: status, refresh: refreshStatus } = useCachedData<InboxStatus | null>('inbox:status', () => api.inboxStatus().catch(() => null), { persist: false })
-  const [filter, setFilter] = useQueryParam(query, setQuery, 'filter', 'pending', { replace: true })
+  const [filter, setFilter] = useQueryParam(query, setQuery, 'filter', 'open', { replace: true })
+  const [kind, setKind] = useQueryParam(query, setQuery, 'kind', '', { replace: true })
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
   const [openIdRaw, setOpenId] = useQueryParam(query, setQuery, 'open', '')
   const openId = openIdRaw || null
@@ -47,9 +53,10 @@ export function InboxPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     if (!items) return null
     const n = q.trim().toLowerCase()
     return items
-      .filter((it) => filter === 'all' ? true : filter === 'pending' ? it.status === 'pending' : filter === 'handled' ? (it.status === 'handled' || it.status === 'sent' || it.status === 'dismissed') : it.classification === filter && it.status === 'pending')
-      .filter((it) => !n || `${it.sender_name} ${it.channel_name} ${it.message}`.toLowerCase().includes(n))
-  }, [items, filter, q])
+      .filter((it) => filter === 'all' ? true : filter === 'open' ? isOpen(it.status) : filter === 'handled' ? (it.status === 'handled' || it.status === 'sent' || it.status === 'dismissed') : it.classification === filter && isOpen(it.status))
+      .filter((it) => !kind || (it.item_kind || 'message') === kind)
+      .filter((it) => !n || `${it.sender_name} ${it.channel_name} ${it.message} ${kindMeta(it.item_kind).label}`.toLowerCase().includes(n))
+  }, [items, filter, kind, q])
   const open = items?.find((it) => it.id === openId) ?? null
 
   // P11: fire the "open" engagement signal when the user opens an item's panel. Once per
@@ -60,6 +67,12 @@ export function InboxPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     if (openId && open && openedRef.current !== openId) {
       openedRef.current = openId
       api.openInboxItem(openId).catch(() => { /* best-effort signal */ })
+      // Opening an item IS having seen it — that is what makes SEEN mean anything. Only
+      // for a still-PENDING item: re-marking a resolved one would drag it backwards, and
+      // the backend refuses that anyway. Scoped to this id so a re-open doesn't re-fire.
+      if (open.status === 'pending') {
+        api.markInboxSeen({ ids: [openId] }).then(() => { refreshItems() }).catch(() => { /* non-fatal */ })
+      }
     }
     if (!openId) openedRef.current = null
   }, [openId, open])
@@ -93,16 +106,30 @@ export function InboxPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
   const health = status?.health
   const disabled = status ? !status.enabled : false
 
-  // Live per-filter counts so the menu shows where items sit.
+  // Live per-filter counts so the menu shows where items sit. Counts respect the active
+  // KIND chip — a count that ignored it would disagree with the list right beside it.
+  const inKind = (it: InboxItem) => !kind || (it.item_kind || 'message') === kind
   const filterCount = (key: string) => {
     if (!items) return undefined
-    if (key === 'all') return items.length
-    if (key === 'pending') return items.filter((it) => it.status === 'pending').length
-    if (key === 'handled') return items.filter((it) => it.status === 'handled' || it.status === 'sent' || it.status === 'dismissed').length
-    return items.filter((it) => it.classification === key && it.status === 'pending').length
+    const scoped = items.filter(inKind)
+    if (key === 'all') return scoped.length
+    if (key === 'open') return scoped.filter((it) => isOpen(it.status)).length
+    if (key === 'handled') return scoped.filter((it) => it.status === 'handled' || it.status === 'sent' || it.status === 'dismissed').length
+    return scoped.filter((it) => it.classification === key && isOpen(it.status)).length
   }
+  // Kind chips are driven by what's PRESENT (kinds with zero items are dead controls), and
+  // the counts are of OPEN items — the chip badge answers "how much is waiting here".
+  const kindChips = useMemo(() => {
+    if (!items) return []
+    const counts = new Map<string, number>()
+    for (const it of items) {
+      const k = it.item_kind || 'message'
+      counts.set(k, (counts.get(k) ?? 0) + (isOpen(it.status) ? 1 : 0))
+    }
+    return ITEM_KINDS.filter((k) => counts.has(k.key)).map((k) => ({ ...k, open: counts.get(k.key) ?? 0 }))
+  }, [items])
   const filterSections: FilterSectionDef[] = [{
-    title: 'Show', value: filter, defaultKey: 'pending', onChange: setFilter,
+    title: 'Show', value: filter, defaultKey: 'open', onChange: setFilter,
     options: FILTERS.map((f) => ({ key: f.key, label: f.label, count: filterCount(f.key) })),
   }]
   return (
@@ -160,7 +187,7 @@ export function InboxPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
         <>
           {open && (
             <SidePanel key={open.id} fillHeight storeKey="inbox-panel-w" urlKey={{ key: 'open', setQuery }} icon={(() => { const cm = classMeta(open.classification); return <cm.icon size={18} style={{ color: cm.tone }} /> })()} title={open.sender_name || open.sender_id || 'Item'} onClose={() => setOpenId("")}>
-              <InboxDetail item={open} onChanged={load} />
+              <InboxDetail item={open} onChanged={load} navigate={navigate} />
             </SidePanel>
           )}
           {settingsOpen && (
@@ -194,37 +221,79 @@ export function InboxPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
       })()}
 
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+        {/* Kind chips. Only rendered once MORE THAN ONE kind is present: on an inbox that
+            only ever receives messages, a single "Messages" chip is a control with nothing
+            to choose. Uses the canonical Segmented so it matches every other pick-one in
+            the app rather than inventing a chip style here. */}
+        {kindChips.length > 1 && (
+          <div className="mb-m">
+            <Segmented
+              size="sm"
+              collapse="scroll"
+              ariaLabel="Filter by kind"
+              value={kind || 'all'}
+              onChange={(k) => setKind(k === 'all' ? '' : k)}
+              options={[
+                { key: 'all', label: 'All', icon: LayoutGrid },
+                ...kindChips.map((k) => ({
+                  key: k.key,
+                  label: k.open > 0 ? `${k.label} ${k.open}` : k.label,
+                  icon: k.icon,
+                  tone: k.tone,
+                  title: `${k.label} — ${k.open} open`,
+                })),
+              ]}
+            />
+          </div>
+        )}
         {filtered === null ? <ListSkeleton rows={6} /> : filtered.length === 0 ? (
-          <EmptyState icon={InboxIcon} title={q || filter !== 'pending' ? 'Nothing here' : 'Inbox zero'} hint={disabled ? 'Inbox collects messages, questions, and notifications from your agents and connected sources (filesystem and Slack; email coming). Enable a source to begin.' : 'Messages your agents and connected sources surface for triage land here. You’re all caught up.'} />
+          <EmptyState icon={InboxIcon} title={q || filter !== 'open' || kind ? 'Nothing here' : 'Inbox zero'} hint={disabled ? 'Inbox collects messages, questions, and notifications from your agents and connected sources (filesystem and Slack; email coming). Enable a source to begin.' : kind ? `No ${kindMeta(kind).label.toLowerCase()} right now.` : 'Messages your agents and connected sources surface for triage land here. You’re all caught up.'} />
         ) : (
           <div className="flex flex-col gap-s">
             {filtered.map((it, i) => {
               const cm = classMeta(it.classification)
               const cf = confMeta(it.confidence)
               const sm = statusMeta(it.status)
-              const pending = it.status === 'pending'
+              const km = kindMeta(it.item_kind)
+              const unread = it.status === 'pending'
+              const open = isOpen(it.status)
+              // A non-channel kind (needs_input, proposal, …) has no sender and no channel:
+              // its `sender_name` is the emitting subsystem. Rendering "Unknown" + a
+              // #channel chip for it would be noise pretending to be provenance, so those
+              // rows lead with the KIND and its own icon instead.
+              const channelBacked = !NON_CHANNEL_ITEM_KINDS.includes(it.item_kind || 'message')
+              const target = refTarget(it)
               // Right-click / long-press → scoped actions. Only "open" is wired at
               // the row level here (triage actions live in the detail panel); reuse
               // the SAME open the row's onClick calls — no duplicated behavior.
               const menuItems: ContextMenuItem[] = [
                 { icon: <InboxIcon size={15} />, label: 'Open', onSelect: () => setOpenId(it.id) },
               ]
+              if (target) menuItems.push({ icon: <ExternalLink size={15} />, label: refLabel(it), onSelect: () => navigate(target) })
+              // The accent rail marks UNREAD only. Keeping it on `seen` would leave every
+              // glanced-at row visually shouting, which is the noise this plan set out to fix.
+              const accentTone = channelBacked ? cm.tone : km.tone
               return (
                 <ContextMenu key={it.id} items={menuItems}>
-                <ListRow index={i} accent={pending ? cm.tone : undefined} onClick={() => setOpenId(it.id)}>
-                  <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${cm.tone} 16%, transparent)` }}><cm.icon size={18} style={{ color: cm.tone }} /></span>
+                <ListRow index={i} accent={unread ? accentTone : undefined} onClick={() => setOpenId(it.id)}>
+                  <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${accentTone} 16%, transparent)` }}>
+                    {channelBacked ? <cm.icon size={18} style={{ color: cm.tone }} /> : <km.icon size={18} style={{ color: km.tone }} />}
+                  </span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-s">
-                      <span className={`truncate text-[0.9375rem] ${pending ? 'text-on-surface' : 'text-on-surface-var'}`} style={fvs(500)}>{it.sender_name || it.sender_id || 'Unknown'}</span>
-                      {channelLabel(it) && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{channelLabel(it)}</span>}
+                      <span className={`truncate text-[0.9375rem] ${open ? 'text-on-surface' : 'text-on-surface-var'}`} style={fvs(500)}>{channelBacked ? (it.sender_name || it.sender_id || 'Unknown') : km.label}</span>
+                      {channelBacked && channelLabel(it) && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{channelLabel(it)}</span>}
+                      {!channelBacked && target && <span className="shrink-0 inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]"><ExternalLink size={11} /> deep link</span>}
                       {it.draft && <span className="shrink-0 inline-flex items-center gap-1 text-ok text-[0.75rem]"><Reply size={11} /> draft</span>}
                     </div>
                     <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{it.message}</p>
                   </div>
                   <div className="hidden sm:flex shrink-0 items-center gap-s">
-                    <span className="inline-flex items-center gap-1 text-[0.75rem]" style={{ color: cf.tone }} title={cf.label}><cf.icon size={12} /></span>
-                    {!pending ? <span className="inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]"><sm.icon size={12} style={{ color: sm.tone }} /> {sm.label}</span> : it.created_at && <span className="text-on-surface-low text-[0.75rem]">{relPast(it.created_at)}</span>}
-                    {pending && <Circle size={7} fill={cm.tone} stroke="none" />}
+                    {/* Confidence is a TRIAGE judgment; a needs_input row was never triaged,
+                        so showing "needs review" against it would invent a verdict. */}
+                    {channelBacked && <span className="inline-flex items-center gap-1 text-[0.75rem]" style={{ color: cf.tone }} title={cf.label}><cf.icon size={12} /></span>}
+                    {!open ? <span className="inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]"><sm.icon size={12} style={{ color: sm.tone }} /> {sm.label}</span> : it.created_at && <span className="text-on-surface-low text-[0.75rem]">{relPast(it.created_at)}</span>}
+                    {unread && <Circle size={7} fill={accentTone} stroke="none" />}
                   </div>
                 </ListRow>
                 </ContextMenu>

@@ -952,6 +952,8 @@ async def start_dashboard(
     # Inbox
     app.router.add_get("/api/inbox", handlers_inbox.api_inbox_list)
     app.router.add_get("/api/inbox/pending", handlers_inbox.api_inbox_pending)
+    app.router.add_get("/api/inbox/kinds", handlers_inbox.api_inbox_kinds)
+    app.router.add_post("/api/inbox/seen", handlers_inbox.api_inbox_seen)
     app.router.add_get("/api/inbox/status", handlers_inbox.api_inbox_status)
     app.router.add_post("/api/inbox/restart", handlers_inbox.api_inbox_restart)
     app.router.add_post("/api/inbox/dismiss-all", handlers_inbox.api_inbox_dismiss_all)
