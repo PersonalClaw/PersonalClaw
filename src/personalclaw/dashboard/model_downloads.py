@@ -174,10 +174,34 @@ def _expected_size_bytes(name: str, model: str) -> int:
 
 
 def _is_downloaded(name: str, model: str) -> bool:
-    """Whether ``model`` is already present locally (skip the fetch if so)."""
+    """Whether ``model`` is already present locally (skip the fetch if so).
+
+    Two sources, provider first: the provider's own ``downloaded`` flag is authoritative when
+    it says yes, because only the provider knows layouts specific to its backend.
+
+    When it says NO, the shared layout probe gets a second opinion
+    (LOCAL-MODEL-MANAGER-V2 §4.4). That asymmetry is the point: a false NO makes the user
+    re-download gigabytes they already have, and it is the common failure — a provider that
+    checks its own `save()` layout misses a model the HF hub fetched into
+    `models--{org}--{name}/`, where the model id never appears literally. A false YES would be
+    worse (a load that fails with no explanation), so the probe only ever ADDS a yes, and only
+    when it finds finished, non-empty bytes.
+    """
     for m in _list_models_for_provider(name):
         if getattr(m, "name", None) == model:
-            return bool(getattr(m, "downloaded", False))
+            if bool(getattr(m, "downloaded", False)):
+                return True
+            break
+    try:
+        from personalclaw.local_models.layouts import is_downloaded as probe
+
+        if probe(_cache_root(name), model):
+            logger.info(
+                "provider %s reports %r not downloaded, but it is present on disk", name, model
+            )
+            return True
+    except Exception:
+        logger.debug("layout probe failed for %s/%s", name, model, exc_info=True)
     return False
 
 
