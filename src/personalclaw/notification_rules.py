@@ -185,7 +185,12 @@ def _coerce_rule(source: str, kind: str, raw: Any, default_mode: str) -> Rule:
 
 
 def load_rules() -> dict[str, Any]:
-    """The raw rules document, or ``{}`` when absent/unreadable (fail-open)."""
+    """The raw rules document, or ``{}`` when absent/unreadable (fail-open).
+
+    Runs the inbox-alert backfill first, so the very first read after an upgrade already
+    reflects the keyword/name-mention alerts the user had configured.
+    """
+    _backfill_inbox_alerts()
     path = _rules_path()
     if not path.is_file():
         return {}
@@ -195,6 +200,58 @@ def load_rules() -> dict[str, Any]:
         logger.warning("notification_rules.json unreadable — using registry defaults")
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _backfill_inbox_alerts() -> None:
+    """Project legacy ``inbox.json`` alert fields onto the channel-message rules, once.
+
+    The inbox used to carry its own two-field alert config (``alert_keywords``,
+    ``alert_on_name_mention``) evaluated at ingestion. Rules generalize exactly that, so
+    those fields move here rather than being dropped — a user who configured "alert me when
+    someone says deploy" must keep that behavior across the upgrade without re-entering it.
+
+    **Idempotent by data inspection, not by a version number** (there is no schema version
+    for entity settings, and inventing one is the machinery the doctrine rejects): the
+    backfill runs only when the rules file is ABSENT and the legacy fields are still
+    present. Writing the rules file is itself the marker that it has run, so a user who
+    later clears their keywords does not get them resurrected.
+
+    Deliberately does NOT delete the legacy fields here — a read path must not mutate a
+    different store. `load_inbox_settings()` stops returning them in the same change, which
+    is what actually retires them.
+    """
+    if _rules_path().is_file():
+        return
+    try:
+        from personalclaw.providers.entity_routes import legacy_inbox_alert_fields
+
+        legacy = legacy_inbox_alert_fields()
+    except Exception:
+        logger.debug("inbox alert backfill: legacy read failed", exc_info=True)
+        return
+    keywords = [str(k).strip() for k in (legacy.get("alert_keywords") or []) if str(k).strip()]
+    name_mention = bool(legacy.get("alert_on_name_mention"))
+    if not keywords and not name_mention:
+        return
+
+    conditions = {"keywords": keywords, "name_mention": name_mention}
+    # Both kinds, because an alert was about the MESSAGE arriving and a mention is the same
+    # event seen from the other side; splitting them would silently narrow what the user set.
+    doc: dict[str, Any] = {
+        "rules": {
+            "inbox/alert": {"mode": "immediate", "conditions": dict(conditions)},
+            "agent/message": {"mode": "immediate", "conditions": dict(conditions)},
+        }
+    }
+    try:
+        save_rules(doc)
+        logger.info(
+            "migrated inbox alert config to notification rules (%d keyword(s), name_mention=%s)",
+            len(keywords),
+            name_mention,
+        )
+    except OSError:
+        logger.warning("inbox alert backfill: write failed", exc_info=True)
 
 
 def save_rules(doc: dict[str, Any]) -> None:

@@ -45,13 +45,32 @@ def _save_entity_settings(entity: str, settings: dict[str, Any]) -> None:
     atomic_write(path, json.dumps(settings, indent=2) + "\n")
 
 
-# Default schemas for entity settings
+# Default schemas for entity settings.
+#
+# `alert_keywords` / `alert_on_name_mention` were REMOVED here (plan 42 S3): alerting is no
+# longer an inbox-only concept with its own two fields, it is a `conditions` block on any
+# notification rule (Settings → Notifications → Per-kind delivery). The one-time projection
+# of the old values lives in `notification_rules._backfill_inbox_alerts`, which reads them
+# via `legacy_inbox_alert_fields()` below. They are absent from this allowlist, so a PUT
+# naming them is now rejected rather than silently persisted into a store nothing reads.
 INBOX_DEFAULTS: dict[str, Any] = {
-    "alert_keywords": [],
-    "alert_on_name_mention": False,
     "auto_cleanup_enabled": True,
     "retention_days": 90,
 }
+
+#: The retired alert keys, read ONLY by the backfill.
+_LEGACY_ALERT_KEYS = ("alert_keywords", "alert_on_name_mention")
+
+
+def legacy_inbox_alert_fields() -> dict[str, Any]:
+    """The retired alert fields as still stored on disk, for the one-time backfill.
+
+    Reads the RAW entity settings rather than `load_inbox_settings()`, because that function
+    now drops these keys — which is the point of retiring them. Returns ``{}`` when the file
+    is absent or the keys are already gone.
+    """
+    raw = _load_entity_settings("inbox")
+    return {k: raw[k] for k in _LEGACY_ALERT_KEYS if k in raw}
 
 
 def load_inbox_settings() -> dict[str, Any]:

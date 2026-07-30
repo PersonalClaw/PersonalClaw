@@ -200,9 +200,6 @@ class InboxService:
         evaluating alerts + broadcasting each new item live. Returns # ingested."""
         if not messages:
             return 0
-        from personalclaw.providers.entity_routes import load_inbox_settings
-
-        settings = load_inbox_settings()
         operator = self._operator_name()
         dash_state = _dashboard_state()
         can_reply = bool(self._provider is not None and self._provider.source_name != "filesystem")
@@ -232,7 +229,7 @@ class InboxService:
             )
             self.inbox.add(item)
             count += 1
-            reason = evaluate_alert(item, settings, operator)
+            reason = evaluate_alert(item, operator)
             # Dev-only event-trace tap (Self-Verification §2.1): one event per NEWLY
             # ingested item (past the dedup/mute/self filters), keyed by channel, carrying
             # the alert decision — so replay can assert inbox dedup + alert-once. No-op

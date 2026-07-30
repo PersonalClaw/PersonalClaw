@@ -7,7 +7,6 @@ separately by the message-source providers in ``personalclaw.inbox_providers``.
 
 import json
 import logging
-import re
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -29,6 +28,10 @@ __all__ = [
     "InboxItem",
     "InboxState",
     "UserResolver",
+    "ItemKind",
+    "NON_CHANNEL_KINDS",
+    "make_item_id",
+    "emit_attention_item",
     "evaluate_alert",
     "notify_inbox_alert",
 ]
@@ -323,28 +326,31 @@ class InboxStore:
 # ── Alerts ──
 
 
-def evaluate_alert(item: InboxItem, settings: dict, user_name: str = "") -> str:
+def evaluate_alert(item: InboxItem, user_name: str = "") -> str:
     """Why *item* deserves an immediate notification, or "" if it doesn't.
 
-    Reads the inbox entity settings (``alert_keywords`` — case-insensitive
-    substring match — and ``alert_on_name_mention`` against the operator's
-    name). Called once per NEW item at ingestion (native push + poll paths).
+    Now reads the ``inbox/alert`` notification RULE's conditions rather than the retired
+    ``alert_keywords``/``alert_on_name_mention`` inbox fields (plan 42 S3). The matching
+    semantics are unchanged — `Conditions.matches` was lifted from this function's own
+    body — so a user whose keywords were backfilled sees identical behavior; what changed
+    is that the same conditions are now expressible for every notification kind, not just
+    inbox messages.
+
+    The ``settings`` parameter is gone rather than kept and ignored: a caller still passing
+    a dict of retired fields would silently get no alerts, which is exactly the failure a
+    clean break is supposed to make impossible.
     """
-    text = (item.message or "").lower()
-    if not text:
+    text = item.message or ""
+    if not text.strip():
         return ""
-    for kw in settings.get("alert_keywords") or []:
-        k = str(kw).strip().lower()
-        if k and k in text:
-            return f"keyword: {kw}"
-    if settings.get("alert_on_name_mention") and user_name.strip():
-        # Match name PARTS as whole words ("Jordan Marlow" fires on "hey Jordan")
-        # — messages use first names, not the configured full name. Skip short
-        # fragments (initials, particles) that would false-positive.
-        for part in user_name.strip().lower().split():
-            if len(part) >= 3 and re.search(rf"\b{re.escape(part)}\b", text):
-                return "name mention"
-    return ""
+    try:
+        from personalclaw import notification_rules
+
+        rule = notification_rules.resolve_rule("inbox", "alert")
+    except Exception:  # a policy read must never break ingestion
+        logger.debug("alert rule resolution failed", exc_info=True)
+        return ""
+    return rule.conditions.matches(text, user_name)
 
 
 def emit_attention_item(

@@ -346,3 +346,64 @@ Extends **Session 4** (which already owns the proposal fold-in): T4.1 becomes th
   **Gates:** `make lint` clean (mypy 553 files) · `make test` **9249 passed, 0 failed**.
   Tests: `test_notification_kinds.py` (45), `test_notification_rules.py` (60), +14 route
   cases in `test_entity_settings_routes.py` (37 in file).
+
+- 2026-07-30 — **DONE (Session 3: T3.1–T3.3).** The notifications settings page gains the
+  per-(source, kind) rules matrix + digest schedule; the inbox's own alert fields are
+  retired and backfilled into rule conditions; docs rewritten.
+
+  **T3.1 — the matrix.** `NotificationRulesMatrix` renders one row per REGISTERED kind
+  (the registry is the row list, so an uncustomized kind still appears with its default
+  rather than being invisible until edited), grouped **by source** because "quieten
+  everything from heartbeat" is the common ask and shouldn't require finding four rows. Mode
+  via the canonical `SegPills`; targets/conditions behind a per-row disclosure so the common
+  case stays one line. A `reset` control appears **only** when the user has actually diverged
+  from the default — a "default" tag on every untouched row is noise on the common case.
+  `push`/`native` targets are labelled "(mobile app required)" rather than hidden: the
+  setting persists for when those plans land, but the label doesn't promise delivery today.
+
+  **T3.2 — the backfill (DEVIATION: not a `lifecycle/` migration).** Per the standing owner
+  ruling this is an **idempotent backfill keyed on data inspection** — it runs only when
+  `notification_rules.json` is ABSENT and `inbox.json` still carries the legacy fields, and
+  writing the rules file is itself the marker that it has run. That last property is
+  load-bearing: without it, a user who deliberately CLEARED their keywords would have them
+  resurrected on the next read, silently undoing a deliberate choice. Verified live.
+  Projected onto **both** `inbox/alert` and `agent/message` — an alert was about the message
+  arriving, and narrowing to one kind would quietly reduce coverage.
+
+  **The clean break, in one change.** `alert_keywords`/`alert_on_name_mention` are gone from
+  `INBOX_DEFAULTS` (so a PUT naming them is now dropped rather than persisted into a store
+  nothing reads), `evaluate_alert()` lost its `settings` parameter entirely rather than
+  keeping it and ignoring it (a caller still passing retired fields would silently get no
+  alerts — exactly the failure a clean break should make impossible), and the now-dead
+  `load_inbox_settings()` read + `re` import in `inbox.py` were deleted. Frontend: the alert
+  controls were removed from **both** inbox settings panels and the settings bento widget
+  (which now surfaces retention, what the inbox still owns) and replaced with a pointer to
+  the rules matrix.
+
+  **DISCOVERY — a test that had become circular.** `test_conditions_match_agrees_with_inbox_
+  evaluate_alert` compared the engine to `evaluate_alert`, which now DELEGATES to it — so it
+  was asserting the engine agrees with itself. Rewritten to pin the semantics against a
+  **verbatim copy of the retired pre-S3 implementation** kept in the test as an oracle, with
+  11 cases. That is what actually protects a user whose keywords were backfilled.
+
+  **The primitive-adoption ratchet caught two raw `<button>`s and two raw inputs** in the new
+  matrix. Fixed by using `Button`/`Checkbox`/`TextInput` (which already supports `mono` for
+  the cron field) — **not** by raising the baseline, which was the tempting shortcut.
+
+  **Validated as a user** on an isolated dev home (port 10743, never :10000) seeded as a
+  **PRE-S3 install**: legacy `inbox.json` with two keywords + name-mention on, and no rules
+  file. On first read the backfill produced both rules with the migrated conditions; `GET
+  /api/inbox/settings` no longer surfaces the retired fields; a PUT naming them dropped them
+  while still applying `retention_days`; clearing the keywords through the API did **not**
+  resurrect them on re-read; and `evaluate_alert` fired for a keyword, for a name mention,
+  and stayed silent otherwise. In a real browser: the matrix rendered grouped by source with
+  `Notify` selected everywhere (the behavior-preserving default), the Inbox bento card showed
+  retention instead of alert keywords, and clicking **Badge** on Heartbeat persisted
+  `heartbeat/status: {mode: badge}` to disk while the migrated `inbox/alert` conditions
+  survived untouched. **0 gateway tracebacks.**
+
+  **Gates:** `make lint` clean (mypy 553 files) · `make test` **9327 passed, 0 failed** ·
+  web typecheck + **302** vitest + build + render smoke green.
+  Tests: +19 backfill/oracle cases in `test_notification_rules.py` (79 in file), +3 in
+  `test_entity_settings_routes.py` (40), `test_inbox.py` alert tests rewritten against the
+  rule, `test_inbox_service.py` helper now writes a real rule.

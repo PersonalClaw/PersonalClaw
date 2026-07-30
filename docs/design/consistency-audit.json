@@ -1,16 +1,16 @@
 {
-  "generatedAt": "2026-07-30T07:54:05.589Z",
+  "generatedAt": "2026-07-30T08:19:55.608Z",
   "totals": {
-    "driftHits": 6,
-    "filesScanned": 386,
-    "filesWithDrift": 5
+    "driftHits": 7,
+    "filesScanned": 387,
+    "filesWithDrift": 6
   },
   "byCategory": {
     "color": 1,
     "spacing": 1,
     "radius": 1,
     "shadow": 1,
-    "duration": 2
+    "duration": 3
   },
   "ranked": [
     {
@@ -215,8 +215,8 @@
     }
   ],
   "a11y": {
-    "outlineNoneCount": 137,
-    "outlineNoneFiles": 60,
+    "outlineNoneCount": 136,
+    "outlineNoneFiles": 59,
     "localFocusVisibleFiles": 13,
     "reducedMotionFiles": 8,
     "animatedFiles": 155,
@@ -240,6 +240,13 @@
     },
     "pages/settings/MemoryGraph.tsx": {
       "color": 1,
+      "spacing": 0,
+      "radius": 0,
+      "shadow": 0,
+      "duration": 1
+    },
+    "pages/settings/NotificationRulesMatrix.tsx": {
+      "color": 0,
       "spacing": 0,
       "radius": 0,
       "shadow": 0,
@@ -596,11 +603,6 @@
       "raw-input": 0,
       "raw-dialog": 0
     },
-    "pages/settings/InboxSettingsPanel.tsx": {
-      "raw-button": 1,
-      "raw-input": 1,
-      "raw-dialog": 0
-    },
     "pages/settings/MemoryPanel.tsx": {
       "raw-button": 7,
       "raw-input": 5,
@@ -791,6 +793,12 @@
       "line": 148,
       "category": "duration",
       "snippet": "<g transform={transform} style={{ transition: drag.current ? 'none' : 'transform 200ms ease-out' }}>"
+    },
+    {
+      "file": "pages/settings/NotificationRulesMatrix.tsx",
+      "line": 86,
+      "category": "duration",
+      "snippet": "<ChevronDown size={12} style={{ transform: isOpen ? 'rotate(180deg)' : undefined, transition: 'trans"
     },
     {
       "file": "ui/composer/liveMarkdown.ts",

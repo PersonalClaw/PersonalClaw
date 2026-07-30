@@ -197,14 +197,31 @@ def test_empty_text_never_matches():
     assert nr.Conditions(keywords=("x",), name_mention=True).matches("", "Jordan") == ""
 
 
-def test_conditions_match_agrees_with_inbox_evaluate_alert():
-    """The generalized engine must reproduce the surface it replaces.
+def test_conditions_reproduce_the_retired_inbox_alert_semantics():
+    """The generalized engine must behave exactly like the code it replaced.
 
-    Drives the REAL `inbox.evaluate_alert` and the new `Conditions.matches` over the same
-    inputs; a divergence means users' existing alert config changes meaning at S3's
-    backfill.
+    `evaluate_alert` now DELEGATES to `Conditions.matches`, so comparing the two would be
+    comparing the engine to itself. Instead this pins the semantics against a verbatim copy
+    of the retired implementation (the pre-S3 body of `inbox.evaluate_alert`, kept here as
+    the oracle) — so a user whose keywords were backfilled cannot silently start getting
+    different alerts.
     """
-    from personalclaw.inbox import InboxItem, evaluate_alert
+    import re
+
+    def legacy(text: str, keywords: list[str], name_mention: bool, user_name: str) -> str:
+        """The pre-S3 `inbox.evaluate_alert` body, verbatim."""
+        low = (text or "").lower()
+        if not low:
+            return ""
+        for kw in keywords or []:
+            k = str(kw).strip().lower()
+            if k and k in low:
+                return f"keyword: {kw}"
+        if name_mention and user_name.strip():
+            for part in user_name.strip().lower().split():
+                if len(part) >= 3 and re.search(rf"\b{re.escape(part)}\b", low):
+                    return "name mention"
+        return ""
 
     cases = [
         ("ship the deploy tonight", ["deploy"], False, "Jordan Marlow"),
@@ -214,24 +231,15 @@ def test_conditions_match_agrees_with_inbox_evaluate_alert():
         ("REDEPLOY now", ["deploy"], False, ""),
         ("", ["deploy"], True, "Jordan Marlow"),
         ("a de facto standard", [], True, "J de Vries"),
+        ("  ", ["x"], True, "Jordan"),
+        ("Deploy DEPLOY deploy", ["DePlOy"], False, ""),
+        ("hey marlow", [], True, "Jordan Marlow"),
+        ("nothing", [], False, "Jordan Marlow"),
     ]
     for text, keywords, name_mention, user in cases:
-        item = InboxItem(
-            id="c_1",
-            channel="c",
-            channel_name="c",
-            thread_ts=None,
-            message=text,
-            sender_id="s",
-            sender_name="s",
-        )
-        legacy = evaluate_alert(
-            item,
-            {"alert_keywords": keywords, "alert_on_name_mention": name_mention},
-            user_name=user,
-        )
-        new = nr.Conditions(keywords=tuple(keywords), name_mention=name_mention).matches(text, user)
-        assert bool(legacy) == bool(new), f"divergence on {text!r}: legacy={legacy!r} new={new!r}"
+        want = legacy(text, keywords, name_mention, user)
+        got = nr.Conditions(keywords=tuple(keywords), name_mention=name_mention).matches(text, user)
+        assert got == want, f"divergence on {text!r}: legacy={want!r} new={got!r}"
 
 
 # ── escalation ──────────────────────────────────────────────────────────
@@ -380,3 +388,136 @@ def test_queue_never_exceeds_twice_the_cap_on_disk(home):
 def test_queue_survives_non_ascii(home):
     nr.queue_for_digest({"title": "café — 日本語"})
     assert nr.drain_digest_queue()[0]["title"] == "café — 日本語"
+
+
+# ── T3.2: the inbox-alert backfill ──────────────────────────────────────
+#
+# This replaces what the plan wrote as a `lifecycle/migrations/m_*.py`. It is an idempotent
+# backfill keyed on DATA INSPECTION (rules file absent + legacy fields present), because
+# there is no schema version for entity settings and inventing one is the machinery the
+# doctrine rejects. The risk it guards: a user who configured "alert me when someone says
+# deploy" silently losing that on upgrade.
+
+
+@pytest.fixture()
+def legacy_home(tmp_path, monkeypatch):
+    """A home where BOTH the rules store and the legacy inbox settings are isolated."""
+    from personalclaw.providers import entity_routes as er
+
+    (tmp_path / "entity_settings").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(nr, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(er, "_entity_settings_path", lambda entity: tmp_path / f"{entity}.json")
+    return tmp_path
+
+
+def _write_legacy(home, payload):
+    (home / "inbox.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_backfill_projects_keywords_onto_the_alert_rule(legacy_home):
+    _write_legacy(legacy_home, {"alert_keywords": ["deploy", "prod"]})
+    rule = nr.resolve_rule("inbox", "alert")
+    assert rule.conditions.keywords == ("deploy", "prod")
+    assert rule.mode == "immediate"
+
+
+def test_backfill_projects_name_mention(legacy_home):
+    _write_legacy(legacy_home, {"alert_on_name_mention": True})
+    assert nr.resolve_rule("inbox", "alert").conditions.name_mention is True
+
+
+def test_backfill_covers_agent_messages_too(legacy_home):
+    """An alert was about the MESSAGE arriving; narrowing to one kind would lose coverage."""
+    _write_legacy(legacy_home, {"alert_keywords": ["deploy"]})
+    assert nr.resolve_rule("agent", "message").conditions.keywords == ("deploy",)
+
+
+def test_backfill_is_idempotent(legacy_home):
+    """Re-running must not duplicate or resurrect anything."""
+    _write_legacy(legacy_home, {"alert_keywords": ["deploy"]})
+    first = nr.load_rules()
+    second = nr.load_rules()
+    assert first == second
+
+
+def test_backfill_does_not_overwrite_an_existing_rules_file(legacy_home):
+    """The rules file's existence IS the marker that the backfill has run.
+
+    Without this, a user who deliberately CLEARED their keywords would get them
+    resurrected on the next read — the worst kind of migration bug, because it silently
+    undoes a deliberate choice.
+    """
+    nr.save_rules({"rules": {"inbox/alert": {"mode": "never", "conditions": {"keywords": []}}}})
+    _write_legacy(legacy_home, {"alert_keywords": ["deploy"]})
+    rule = nr.resolve_rule("inbox", "alert")
+    assert rule.mode == "never"
+    assert rule.conditions.keywords == ()
+
+
+def test_backfill_no_ops_when_there_is_nothing_to_migrate(legacy_home):
+    _write_legacy(legacy_home, {"auto_cleanup_enabled": True, "retention_days": 90})
+    nr.load_rules()
+    assert not (legacy_home / "entity_settings" / "notification_rules.json").exists()
+
+
+def test_backfill_no_ops_on_empty_alert_config(legacy_home):
+    """Empty keywords + name_mention off is not a configuration worth migrating."""
+    _write_legacy(legacy_home, {"alert_keywords": [], "alert_on_name_mention": False})
+    nr.load_rules()
+    assert not (legacy_home / "entity_settings" / "notification_rules.json").exists()
+
+
+def test_backfill_no_ops_when_the_legacy_file_is_absent(legacy_home):
+    nr.load_rules()
+    assert not (legacy_home / "entity_settings" / "notification_rules.json").exists()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"alert_keywords": "a-string-not-a-list"},
+        {"alert_keywords": [1, 2, 3]},
+        {"alert_keywords": None},
+        {"alert_keywords": ["", "  ", "ok"]},
+        {"alert_on_name_mention": "yes"},
+        {"alert_on_name_mention": None},
+        {"alert_keywords": ["dup", "dup"]},
+    ],
+)
+def test_backfill_survives_hostile_legacy_values(legacy_home, payload):
+    """A mistyped value predates the type guard, so it CAN be on disk.
+
+    The backfill must never raise (it runs on every read path) and must never produce
+    nonsense conditions — e.g. a string whose CHARACTERS become keywords.
+    """
+    _write_legacy(legacy_home, payload)
+    rule = nr.resolve_rule("inbox", "alert")  # must not raise
+    for kw in rule.conditions.keywords:
+        assert isinstance(kw, str) and kw.strip() == kw and kw
+
+
+def test_backfill_stringifies_and_drops_blanks(legacy_home):
+    _write_legacy(legacy_home, {"alert_keywords": ["ok", "", "  ", " spaced "]})
+    assert nr.resolve_rule("inbox", "alert").conditions.keywords == ("ok", "spaced")
+
+
+def test_backfill_survives_malformed_legacy_json(legacy_home):
+    (legacy_home / "inbox.json").write_text("{not json", encoding="utf-8")
+    assert nr.load_rules() == {}  # no crash, nothing migrated
+
+
+def test_backfilled_conditions_actually_escalate(legacy_home):
+    """End-to-end: the migrated config must CHANGE DELIVERY, not just persist."""
+    _write_legacy(legacy_home, {"alert_keywords": ["deploy"]})
+    rule = nr.resolve_rule("inbox", "alert")
+    assert rule.conditions.matches("please deploy now") == "keyword: deploy"
+    assert rule.conditions.matches("nothing relevant") == ""
+
+
+def test_backfill_result_is_a_real_rules_document(legacy_home):
+    """It must be loadable by the same reader, not a special shape."""
+    _write_legacy(legacy_home, {"alert_keywords": ["deploy"], "alert_on_name_mention": True})
+    nr.load_rules()
+    doc = json.loads((legacy_home / "entity_settings" / "notification_rules.json").read_text())
+    assert set(doc["rules"]) == {"inbox/alert", "agent/message"}
+    json.dumps(nr.rules_document())  # the effective doc still serializes

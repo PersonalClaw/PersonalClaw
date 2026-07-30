@@ -127,11 +127,8 @@ def post_to_inbox(
     try:
         from personalclaw.config.loader import AppConfig
         from personalclaw.inbox import evaluate_alert, notify_inbox_alert
-        from personalclaw.providers.entity_routes import load_inbox_settings
 
-        reason = evaluate_alert(
-            item, load_inbox_settings(), AppConfig.load().dashboard.user_name or ""
-        )
+        reason = evaluate_alert(item, AppConfig.load().dashboard.user_name or "")
         if reason:
             notify_inbox_alert(st, item, reason)
     except Exception:
