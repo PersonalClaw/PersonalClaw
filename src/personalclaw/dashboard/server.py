@@ -666,9 +666,12 @@ async def start_dashboard(
     # Bulk ops + the session lifecycle (archive/restore/auto-archive). Registered
     # BEFORE the `{session}` routes below so the literal `bulk`/`auto-archive` paths
     # aren't captured as a session name by the dynamic pattern.
-    from personalclaw.dashboard import session_bulk
+    from personalclaw.dashboard import session_bulk, session_starters
 
     session_bulk.register_routes(app)
+    # Session templates + transcript export (S3). The literal `templates` segment has
+    # the same capture hazard as `bulk` above, so it registers here too.
+    session_starters.register_routes(app)
     app.router.add_get("/api/chat/sessions/{session}", chat.api_chat_session_detail)
     app.router.add_get("/api/chat/sessions/{session}/tool-result/{rid}", chat.api_chat_tool_result)
     app.router.add_post("/api/chat/sessions/{session}/stop", chat.api_chat_session_stop)

@@ -1,9 +1,12 @@
 # Plan: Session Management — Organize, Find, and Curate Conversations at Scale
 
-**Status:** IN PROGRESS — Session 1 (FTS5 cross-session search + match snippets) shipped 2026-07-28;
-Session 2 T2.2/T2.3 (bulk ops + lifecycle + auto-archive) shipped 2026-07-29 — **T2.1 (suggested
-organization) is BLOCKED**, see the Execution log; Sessions 3-4 (templates, export) not started. T1.3's sidebar
-windowing was re-scoped — there is no chat sidebar; see the Execution log. Created 2026-07-18
+**Status:** DONE (except T2.1) — Session 1 (FTS5 cross-session search + match snippets) shipped
+2026-07-28; Session 2 T2.2/T2.3 (bulk ops + lifecycle + auto-archive) shipped 2026-07-29;
+Session 3 (retention surface, starters, redacted export) shipped 2026-07-30, which also fixed
+an S2 bug that made the auto-archive rule inert for non-resident sessions. **T2.1 (suggested
+organization) remains BLOCKED** on INBOX-NOTIFICATIONS-UNIFICATION owning the attention
+contract — see the Execution log. T1.3's sidebar windowing was re-scoped — there is no chat
+sidebar; see the Execution log. Created 2026-07-18
 (roadmap rev 10; owner ask: chat session management improvements)
 **Created:** 2026-07-18
 **Wave:** 2 (S1-2: search + organization) + 3 (S3: lifecycle + templates)
@@ -223,3 +226,95 @@ bulk/auto-archive, templates, export) — separate clean sub-scopes, not started
     regenerated (`python -m personalclaw.manifest_reference`) since three routes are new —
     its drift test caught that, as designed.
   - Pre-existing/unrelated: `test_cron.py`'s spring-forward test (core issue #85).
+
+### 2026-07-30 — Session 3 (T3.1, T3.2, T3.3 + V3): DONE. Plan COMPLETE.
+
+Retention surface, session starters, and redacted export — plus a **latent S2 bug this
+session's validation exposed** (below), which was the difference between a retention rule
+that works and one that only appeared to.
+
+**BUG FOUND IN S2's SHIPPED WORK — the auto-archive rule was inert for its main case.**
+`stale_session_keys` iterated `state._sessions` (resident sessions) only. But
+`dashboard.restore_sessions` defaults to **False** (`config/loader.py:739-745`), and
+`restore_recent_sessions` otherwise only loads sessions modified inside a 30-minute
+window (or pinned/foldered) — so **a chat idle for months is precisely the one that is
+NOT in memory**. The rule therefore skipped exactly the sessions it exists to archive,
+and reported `count: 0` while doing it. Measured on a real gateway with 3 sessions seeded
+90 days stale: preview said `0`; the same 3 after adding a `folder_id` (which forces a
+restore) said `1`. `stale_session_keys` now sweeps both halves and `run_auto_archive`
+archives a non-resident session by writing `lifecycle` into its transcript metadata line
+(`_archive_on_disk`) — **without loading it**, since restoring every stale chat just to
+archive it would undo the reason it wasn't resident. Live re-verify: `count: 0` → `count:
+4`, archived on disk, idempotent on a second run, gone from the active list, present in
+`?archived=1`, and **restorable** via both the single-session PATCH and bulk restore
+(reversibility is the entire safety argument for archiving on a timer). 14 new tests
+pin the disk half, including the same upgrade-safety rule (`last_activity_at`
+missing ⇒ NOT stale), channel-thread exemption, no-double-count when a session is both
+resident and on disk, and a broken-listing degrade-to-resident-only path.
+
+- **T3.1 — retention surface.** `session.auto_archive_days` shipped in S2 wired through
+  four of the config contract's five points; **the frontend control was never built**, so
+  a rule that archives chats after 30 days was running hourly with no way to see or change
+  it. Added to `ChatPanel`'s existing "Context & lifecycle" section (not a new panel), with
+  a **live preview** driven by the existing `dry_run` endpoint — so the number shown is the
+  number that would move, not an estimate. A retention rule the user can't inspect is
+  indistinguishable from data loss.
+  - **Purge deliberately NOT built.** §T3.1 mentions a purge surface; S2 deliberately
+    excluded bulk delete because irreversible actions must not sit beside reversible ones,
+    and the single-session DELETE already carries its own confirmation. Adding a bulk purge
+    here would undo that decision for no user demand. Recorded rather than silently skipped.
+- **T3.2 — starters.** New `dashboard/session_templates.py` (`entity_settings/
+  session_templates.json`, so it rides the durability inventory's existing
+  `entity_settings` item and needs no backup wiring) + routes. Captures **setup only** —
+  agent, model, reasoning effort, optional first prompt — never the transcript, and
+  deliberately not the workspace binding (a template dragging a workspace path along would
+  point a new chat at a directory the user wasn't thinking about). The field dict doubles
+  as the key **allowlist** and type schema, mirroring `INBOX_DEFAULTS`.
+  - **DEVIATION — no server-side `create_from_template()`.** §C3 sketched
+    `create_from_template(template_id) -> session_key`. The chat page mints a session
+    lazily on first send (`ChatPage.tsx::ensureSession`), so a second server-side creation
+    path would mean two ways a session comes into existence AND would leave an empty chat
+    behind whenever a user opened a starter and walked away. Picking a starter instead
+    **prefills** the composer selection + prompt and lets the one existing `ensureSession`
+    path run. Same user outcome, one creation path.
+- **T3.3 — export.** New `dashboard/session_export.py`: Markdown or JSON, via
+  `GET /api/chat/sessions/{session}/export?format=md|json`, following `portability.py`'s
+  established `Content-Disposition` download pattern.
+  - **PREMISE CORRECTED — export does NOT inherit "history.py's existing redaction."**
+    The plan's §S3/risks say export "reuses `history.py`'s existing redaction". The
+    dashboard write path redacts assistant/tool content but **deliberately SKIPS `user` and
+    `system` roles** (`chat_persistence.py:606-608`), and `ConversationLog.append` redacts
+    nothing at all — so a credential the user *typed* is stored raw. Export re-runs both
+    passes over **every** role: defense-in-depth for the already-redacted ones, and the
+    only redaction the user/system roles ever get before text leaves the machine. Verified
+    live end-to-end: a transcript containing `AKIAIOSFODNN7EXAMPLE` and a Slack bot token
+    in a **user** message exported with both replaced by `[REDACTED: credential]`. Titles
+    are redacted too (an auto-titled session can carry the secret in its title).
+  - Message content is emitted as a **blockquote** so a conversation about markdown can't
+    restructure the export around its own headings. The artifact declares `redacted: true`
+    so a consumer never mistakes it for a verbatim transcript.
+- **BUG IN OWN WORK, caught by a test written for it:** `export_filename` filtered on
+  `str.isalnum()`, which is **True for CJK and accented letters** — so a Japanese chat
+  title produced a non-ASCII filename, and the route emits the plain `filename="…"` form,
+  which cannot carry those bytes. Now filters on `isascii() and isalnum()` with a `chat`
+  fallback, so the download works regardless of the user's locale.
+- **Validated as a user** on an isolated dev home (never `~/.personalclaw`), driving the
+  real gateway + browser: template CRUD incl. the 400 on a blank name; the literal
+  `templates` path **not** captured by `/{session}` (the aiohttp ordering hazard `bulk`
+  already had); export md/json + 400 on a bad format + 404 on an unknown session + correct
+  `Content-Disposition`/`nosniff` headers; the config round-trip through the real PATCH
+  route (`45` persisted → rule reads it → `0` reports `enabled:false` → `99999` rejected);
+  the retention row rendering `30 days` with its live preview; the starter chip applying
+  agent+model+effort+prompt and enabling Send; starter delete from Settings. **0 console
+  errors, 0 gateway tracebacks from the new code** (the log's only tracebacks are
+  `no model provider resolves for use case 'background'` — expected with no model bound in
+  a throwaway home). SEL audit confirmed for `chat.session_export`,
+  `chat.template_create`, `chat.sessions_auto_archive`.
+- **Gates:** `make lint` clean (mypy 550 files) · backend **9034 passed** · web
+  **283 passed** (32 files) + typecheck + build. Offline agent reference regenerated
+  (5 new routes) — its drift test caught the staleness, as designed.
+- Tests: `tests/test_session_starters.py` (33) + 14 added to `tests/test_session_lifecycle.py`.
+
+**The plan is now COMPLETE except T2.1 (suggested organization)**, which stays BLOCKED on
+INBOX-NOTIFICATIONS-UNIFICATION owning the `emit_attention_item(kind="proposal")` contract
+— unchanged from S2's finding, and `chat_retag.py` already covers much of its user value.

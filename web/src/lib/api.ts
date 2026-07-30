@@ -759,6 +759,14 @@ export interface SelVerify { valid: boolean; count?: number; broken_at?: string;
 // An archived chat session file (read-only browse). `key`=session key, `stamp`=
 // archive timestamp slug, `mtime`=epoch seconds.
 export interface SessionArchive { name: string; key: string; stamp: string; size: number; mtime: number }
+
+/** A saved chat starter: the SETUP of a conversation, never its content
+ *  (SESSION-MANAGEMENT S3). Empty agent/model mean "use the default at start time". */
+export interface SessionTemplate {
+  id: string; name: string; agent: string; model: string
+  reasoning_effort: string; first_prompt: string; created_at: number
+}
+export type SessionTemplateInput = Omit<SessionTemplate, 'id' | 'created_at'>
 // Portability (import/export archive). Manifest is the zip's MANIFEST.json;
 // preview validates without applying, import returns what was merged/replaced.
 export interface PortabilityManifest {
@@ -1696,6 +1704,19 @@ export const api = {
     post<{ ok: boolean; op: string; changed: string[]; unchanged: string[]; missing: string[] }>('/api/chat/sessions/bulk', { op, keys, ...args }),
   autoArchiveSessions: (opts: { dry_run?: boolean; active_session?: string } = {}) =>
     post<{ ok: boolean; enabled: boolean; days: number; keys: string[]; count: number }>('/api/chat/sessions/auto-archive', opts),
+  // ── session templates + export (SESSION-MANAGEMENT S3) ──
+  sessionTemplates: () =>
+    get<{ templates: SessionTemplate[] }>('/api/chat/sessions/templates').then((d) => d.templates),
+  createSessionTemplate: (body: SessionTemplateInput) =>
+    post<{ ok: boolean; template: SessionTemplate }>('/api/chat/sessions/templates', body),
+  updateSessionTemplate: (id: string, body: SessionTemplateInput) =>
+    put<{ ok: boolean; template: SessionTemplate }>(`/api/chat/sessions/templates/${encodeURIComponent(id)}`, body),
+  deleteSessionTemplate: (id: string) =>
+    del(`/api/chat/sessions/templates/${encodeURIComponent(id)}`),
+  /** Export URL — a plain link, so the browser downloads via Content-Disposition
+   *  rather than this client buffering the transcript in memory. */
+  sessionExportUrl: (key: string, format: 'md' | 'json') =>
+    `/api/chat/sessions/${encodeURIComponent(key)}/export?format=${format}`,
   createChatSession: (opts: { name?: string; agent?: string; model?: string; memory_mode?: MemoryMode; mode?: string; project_id?: string } = {}) =>
     post<ChatSession>('/api/chat/sessions', opts),
   setSessionAgent: (session: string, agent: string) => post(`/api/chat/sessions/${session}/agent`, { agent }),

@@ -235,3 +235,143 @@ def test_now_defaults_to_wall_clock():
     """`now=None` must use the real clock, so the heartbeat needs no clock argument."""
     st = _State({"old": _Session(last=time.time() - 40 * DAY)})
     assert sl.run_auto_archive(st, days=30) == ["old"]
+
+
+# ── disk-only sessions (the half the rule originally missed) ──────────────────
+
+
+class _FakeLog:
+    """A conversation log stand-in over an in-memory metadata map.
+
+    Keys are the persisted form (``dashboard:<name>``), matching what
+    ``ConversationLog.list_sessions`` yields.
+    """
+
+    def __init__(self, meta: dict[str, dict]) -> None:
+        self._meta = dict(meta)
+        self.writes: list[tuple[str, dict]] = []
+
+    def list_sessions(self) -> list[dict]:
+        return [{"key": k} for k in self._meta]
+
+    def get_metadata(self, key: str) -> dict:
+        return dict(self._meta.get(key, {}))
+
+    def update_metadata(self, key: str, fields: dict) -> None:
+        self.writes.append((key, dict(fields)))
+        self._meta.setdefault(key, {}).update(fields)
+
+
+class _DiskState(_State):
+    def __init__(self, sessions: dict[str, _Session], log: _FakeLog) -> None:
+        super().__init__(sessions)
+        self.conversation_log = log
+
+
+def _disk_state(meta: dict[str, dict], sessions: dict[str, _Session] | None = None) -> _DiskState:
+    return _DiskState(sessions or {}, _FakeLog(meta))
+
+
+def test_a_stale_disk_only_session_is_archived():
+    """THE bug this covers: with `restore_sessions` off (the default) an idle chat is
+    never resident, so a memory-only sweep skipped exactly the sessions it exists to
+    catch — while reporting success."""
+    st = _disk_state({"dashboard:old": {"lifecycle": "active", "last_activity_at": NOW - 40 * DAY}})
+    assert sl.stale_session_keys(st, days=30, now=NOW) == ["old"]
+    assert sl.run_auto_archive(st, days=30, now=NOW) == ["old"]
+    assert st.conversation_log.writes == [("dashboard:old", {"lifecycle": "archived"})]
+
+
+def test_a_fresh_disk_only_session_is_left_alone():
+    st = _disk_state({"dashboard:new": {"lifecycle": "active", "last_activity_at": NOW - 2 * DAY}})
+    assert sl.stale_session_keys(st, days=30, now=NOW) == []
+    assert st.conversation_log.writes == []
+
+
+def test_a_disk_only_session_with_no_recorded_activity_is_not_stale():
+    """Same upgrade-safety rule as the resident half: unknown is never 'ancient'."""
+    st = _disk_state({"dashboard:legacy": {"lifecycle": "active"}})
+    assert sl.stale_session_keys(st, days=30, now=NOW) == []
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"lifecycle": "archived"},
+        {"never_archive": True},
+        {"app": "some-app"},
+        {"memory_mode": "incognito"},
+        {"memory_mode": "temporary"},
+    ],
+)
+def test_disk_only_exemptions_match_the_resident_ones(extra):
+    meta = {"lifecycle": "active", "last_activity_at": NOW - 40 * DAY, **extra}
+    st = _disk_state({"dashboard:x": meta})
+    assert sl.stale_session_keys(st, days=30, now=NOW) == []
+
+
+def test_a_channel_thread_on_disk_is_never_touched():
+    """A channel-provider thread's lifecycle belongs to the channel app, not this rule."""
+    st = _disk_state(
+        {"slack:C123.456": {"lifecycle": "active", "last_activity_at": NOW - 99 * DAY}}
+    )
+    assert sl.stale_session_keys(st, days=30, now=NOW) == []
+
+
+def test_the_active_session_is_exempt_on_disk_too():
+    st = _disk_state(
+        {"dashboard:here": {"lifecycle": "active", "last_activity_at": NOW - 40 * DAY}}
+    )
+    assert sl.stale_session_keys(st, days=30, now=NOW, active_session="here") == []
+
+
+def test_a_resident_session_is_not_double_counted():
+    """The same chat exists in memory AND on disk; it must appear once, and the live
+    object (not the transcript) must be what gets mutated."""
+    st = _disk_state(
+        {"dashboard:dup": {"lifecycle": "active", "last_activity_at": NOW - 40 * DAY}},
+        {"dup": _Session(last=NOW - 40 * DAY)},
+    )
+    assert sl.stale_session_keys(st, days=30, now=NOW) == ["dup"]
+    assert sl.run_auto_archive(st, days=30, now=NOW) == ["dup"]
+    assert st.conversation_log.writes == []  # live object handled it
+
+
+def test_dashboard_underscore_key_form_is_handled():
+    st = _disk_state(
+        {"dashboard_legacy": {"lifecycle": "active", "last_activity_at": NOW - 40 * DAY}}
+    )
+    assert sl.stale_session_keys(st, days=30, now=NOW) == ["legacy"]
+    assert sl.run_auto_archive(st, days=30, now=NOW) == ["legacy"]
+
+
+def test_both_halves_are_returned_oldest_first():
+    st = _disk_state(
+        {"dashboard:diskold": {"lifecycle": "active", "last_activity_at": NOW - 90 * DAY}},
+        {"memmid": _Session(last=NOW - 60 * DAY)},
+    )
+    assert sl.stale_session_keys(st, days=30, now=NOW) == ["diskold", "memmid"]
+
+
+def test_a_broken_listing_does_not_break_the_sweep():
+    """A disk read failure must degrade to 'resident only', never raise into the
+    heartbeat."""
+
+    class _Broken(_FakeLog):
+        def list_sessions(self):
+            raise OSError("disk gone")
+
+    st = _DiskState({"mem": _Session(last=NOW - 40 * DAY)}, _Broken({}))
+    assert sl.stale_session_keys(st, days=30, now=NOW) == ["mem"]
+
+
+def test_no_conversation_log_still_works():
+    """The rule must not require a log — a state without one sweeps memory only."""
+    st = _State({"old": _Session(last=NOW - 40 * DAY)})
+    assert sl.stale_session_keys(st, days=30, now=NOW) == ["old"]
+
+
+def test_disabled_rule_reads_no_disk_at_all():
+    st = _disk_state({"dashboard:old": {"lifecycle": "active", "last_activity_at": NOW - 40 * DAY}})
+    assert sl.stale_session_keys(st, days=0, now=NOW) == []
+    assert st.conversation_log.writes == []

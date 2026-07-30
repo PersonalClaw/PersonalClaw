@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react'
-import { api, type DashboardConfig } from '../../lib/api'
+import { api, type DashboardConfig, type SessionTemplate } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useAgentCatalog, ensureBindableAgentName } from '../../lib/agents'
-import { useCachedData } from '../../lib/useCachedData'
+import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Toggle, SegPills, SavedToast } from './settingsUI'
 import { Combobox } from '../../ui/Combobox'
 import { NumberField } from '../../ui/forms'
+import { IconButton } from '../../ui/IconButton'
+import { confirmDelete } from '../../ui/dialog'
+import { Trash2 } from 'lucide-react'
 import { FormSkeleton } from '../../ui/ListScaffold'
 
 const RESTORE_WINDOWS = [
@@ -58,7 +61,58 @@ export function ChatPanel() {
       <MidTurnSection resilience={resilience} setResilience={setResilience} />
       <RoutingSection routing={routing} setRouting={setRouting} />
       <LifecycleSection session={session} setSession={setSession} agentOptions={agentOptions} discovered={discovered} />
+      <StartersSection />
     </div>
+  )
+}
+
+/** Saved chat starters (SESSION-MANAGEMENT S3 T3.2) — the management surface.
+ *
+ *  Starters are CREATED from a chat's header ("Save as starter"), because that's where
+ *  the setup being saved actually exists. This section is where they're reviewed and
+ *  removed: without it a starter would be creatable and never deletable, which is how
+ *  a picker fills up with stale entries nobody can clear. */
+function StartersSection() {
+  const [items, setItems] = useState<SessionTemplate[] | null>(null)
+
+  useEffect(() => {
+    let live = true
+    api.sessionTemplates()
+      .then((t) => { if (live) setItems(t) })
+      .catch(() => { if (live) setItems([]) })
+    return () => { live = false }
+  }, [])
+
+  async function remove(t: SessionTemplate) {
+    if (!(await confirmDelete('starter', t.name))) return
+    try {
+      await api.deleteSessionTemplate(t.id)
+    } catch (e) {
+      notify(`Couldn't delete this starter: ${String((e as Error)?.message || e)}`, 'error')
+      return
+    }
+    setItems((prev) => (prev ?? []).filter((x) => x.id !== t.id))
+    // The chat page caches the starter list for instant paint; drop it so the picker
+    // doesn't keep offering something that no longer exists.
+    invalidateCache('chat:starters')
+  }
+
+  return (
+    <Section title="Chat starters" hint="Reusable setups — agent, model and reasoning effort. Save one from a chat's header; they appear on the new-chat screen.">
+      <div className="rounded-lg bg-surface-container px-4 py-1">
+        {items === null ? (
+          <p className="py-3 text-[0.8125rem] text-on-surface-low">Loading…</p>
+        ) : items.length === 0 ? (
+          <p className="py-3 text-[0.8125rem] text-on-surface-low">
+            No starters yet. Open a chat, set it up how you like, then use “Save as starter” in its header.
+          </p>
+        ) : items.map((t) => (
+          <Row key={t.id} label={t.name} hint={[t.agent, t.model, t.reasoning_effort].filter(Boolean).join(' · ') || 'Uses your defaults'}>
+            <IconButton icon={Trash2} label={`Delete ${t.name}`} iconSize={16} size={32} onClick={() => remove(t)} />
+          </Row>
+        ))}
+      </div>
+    </Section>
   )
 }
 
@@ -225,6 +279,7 @@ function LifecycleSection({ session, setSession, agentOptions, discovered }: {
       <div className="rounded-lg bg-surface-container px-4 py-1">
         <NumberRow label="Auto-compact threshold" hint="Context-usage % that triggers compaction. Lower = more frequent." value={Number(session.autocompact_pct ?? 90)} min={5} max={90} step={1} suffix="%" onCommit={(n) => patch('autocompact_pct', n)} saved={saved} />
         <NumberRow label="Idle timeout" hint="Auto-close an idle session after this long. 0 = never." value={Number(session.timeout_secs ?? 0)} min={0} max={86400} step={60} suffix="s" onCommit={(n) => patch('timeout_secs', n)} saved={saved} />
+        <AutoArchiveRow days={Number(session.auto_archive_days ?? 30)} onCommit={(n) => patch('auto_archive_days', n)} saved={saved} />
 
         <Row label="Warm pool size" hint="Pre-started sessions kept ready for an instant first turn. 0 = off.">
           <NumberField value={poolSize} min={0} max={10} step={1} onChange={(n) => patch('pool_size', n)} ariaLabel="Warm pool size" />
@@ -246,6 +301,52 @@ function LifecycleSection({ session, setSession, agentOptions, discovered }: {
         )}
       </div>
     </Section>
+  )
+}
+
+/** The auto-archive threshold, plus what it would actually do right now.
+ *
+ *  The rule has been running on the heartbeat since S2 with no way to see or change
+ *  it: chats silently left the list after 30 days and the only evidence was a shorter
+ *  list. A retention rule the user can't inspect is indistinguishable from data loss,
+ *  so the count is fetched from the existing dry-run preview — the same call the sweep
+ *  makes, so the number shown IS the number that would move, not an estimate. */
+function AutoArchiveRow({ days, onCommit, saved }: {
+  days: number; onCommit: (n: number) => void; saved: boolean
+}) {
+  const [pending, setPending] = useState<number | null>(null)
+  const [preview, setPreview] = useState<{ count: number; enabled: boolean } | null>(null)
+  const shown = pending ?? days
+
+  useEffect(() => {
+    // Only meaningful while the rule is on; 0 = off has nothing to preview.
+    if (shown <= 0) { setPreview(null); return }
+    let live = true
+    api.autoArchiveSessions({ dry_run: true })
+      .then((r) => { if (live) setPreview({ count: r.count, enabled: r.enabled }) })
+      .catch(() => { if (live) setPreview(null) })
+    return () => { live = false }
+  }, [shown])
+
+  return (
+    <Row
+      label="Auto-archive after"
+      hint="Archive chats with no activity for this long. Archived chats stay searchable and restore in one click — nothing is deleted. 0 = off."
+    >
+      <div className="flex items-center gap-2">
+        <SavedToast show={saved} />
+        {shown > 0 && preview?.enabled && (
+          <span className="text-xs text-on-surface-variant tabular-nums">
+            {preview.count === 0 ? 'none stale now' : `${preview.count} stale now`}
+          </span>
+        )}
+        <NumberField
+          value={shown} min={0} max={3650} step={1} ariaLabel="Auto-archive after (days)"
+          onChange={(n) => { setPending(n); onCommit(n) }}
+        />
+        <span className="text-xs text-on-surface-variant">{shown > 0 ? 'days' : 'off'}</span>
+      </div>
+    </Row>
   )
 }
 
