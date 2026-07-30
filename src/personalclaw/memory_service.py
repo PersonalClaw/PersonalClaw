@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Callable, cast
 
+from personalclaw.identity import current_username
 from personalclaw.memory_providers.base import MemoryProvider
 
 if TYPE_CHECKING:
@@ -1020,7 +1021,21 @@ class MemoryService:
             heat = rec.heat(now=now) if rec is not None else 0.0
             # multiplicative boost in [1.0, 1.5]: relevance dominates, heat nudges
             h["ranked_score"] = base * (1.0 + min(0.5, 0.33 * heat))
-        hits.sort(key=lambda x: x.get("ranked_score", 0.0), reverse=True)
+        # Owner preference (TEAM-SHARED-ENTITIES §2.3), applied in the SORT KEY rather
+        # than folded into ranked_score. Stage 1 already fixed the candidate set, so this
+        # cannot admit anything — but keeping it out of the stored score also means an
+        # inspector reading `ranked_score` sees relevance × heat, not relevance × heat ×
+        # whose-it-is. Locality decides ordering; it never decides what was retrieved.
+        from personalclaw.vector_memory import _owner_rank_bonus
+
+        owner = current_username()
+        hits.sort(
+            key=lambda x: (
+                float(x.get("ranked_score", 0.0) or 0.0)
+                + _owner_rank_bonus(x.get("contributor"), owner)
+            ),
+            reverse=True,
+        )
         return hits[:limit]
 
     # ── category-TTL expiry (M5b — O-A1) ──────────────────────────────────────
@@ -1197,6 +1212,10 @@ class MemoryService:
                     "session": h.get("conversation_id") or "",
                     "created_at": h.get("created_at") or "",
                     "score": round(float(h.get("ranked_score", h.get("score", 0.0)) or 0.0), 4),
+                    # Who contributed it (§2.3). Empty for the owner's own and for
+                    # unattributed records, so a consumer can render a label only when
+                    # there is actually another contributor to name.
+                    "contributor": str(h.get("contributor") or ""),
                 }
             )
         return out

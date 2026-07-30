@@ -1,7 +1,9 @@
 # Plan: Multi-Tenant Entity Readiness — The Harness as a Good Citizen of Shared Stores
 
 **Status:** IN PROGRESS — Session 1 (username identity + author attribution) shipped 2026-07-28;
-Sessions 2-3 (mine-vs-everyone filters, contributor provenance + weighted ranking) not started.
+Session 2 (mine-vs-everyone filters) shipped 2026-07-28; Session 3 (contributor provenance
++ owner-weighted ranking) shipped 2026-07-30 — §2.4 satisfied by inspection. Sessions 4-5
+remain gated on AUTOMATION-SUBSTRATE.
 Rescoped 2026-07-14 — harness-side scope
 **Created:** 2026-07-14
 **Wave:** 0+3 — Sessions 1-3 (owner identity + per-entity multi-user tolerance) have no dependencies and can start today; Sessions 4-5 (trigger-store provider seam + proof-of-concept trigger-provider app) gate on AUTOMATION-SUBSTRATE steps 1-3 (`triggers.json` + one `TriggerService` — build one seam, not four).
@@ -209,3 +211,107 @@ while `?everyone=1` returned all three. Full suite 8696 passed; lint clean; web
 typecheck + 268 vitest green. **Remaining: Session 3** (§2.3 memory contributor
 provenance + owner-weighted ranking, §2.4 knowledge label passthrough) and Sessions
 4-5 (the trigger-store provider seam, gated).
+
+### 2026-07-30 — Session 3 (§2.3 memory contributor provenance + owner-weighted ranking) — DONE
+
+Migration **v9** adds `contributor` to both record tables, stamped at the single INSERT of
+each; recall labels foreign records and fences the label as metadata; ranking prefers the
+owner's own memories in ORDER only. §2.4 is satisfied by inspection (below).
+
+**The deferred stamp had fallen through TWICE and this session owns it.** S1's log deferred
+the memory contributor stamp to MEMORY-GRAPH-AND-VAULT S1 ("one migration instead of two");
+that plan's S1 log then re-deferred it to its own §4.2 (Session 3, unbuilt) as "dead schema
+nothing reads". Both deferrals were individually reasonable and the net effect was a
+capability owned by nobody. Verified before starting: no `contributor` column existed on
+either table. It lands here, where there is finally a reader for it.
+
+**One stamp site, not nine.** `_write_semantic`'s upsert is the ONLY statement that creates
+a `semantic_memory` row, and `write_episodic`'s INSERT the only one for episodes — so both
+stamps cover every typed writer (`put`, `write_lesson`, facets, consolidation, promotion,
+migration, import) plus the HTTP endpoint, and no future writer can forget. Verified by
+driving `write_lesson` and the PUT endpoint, not by reading call sites.
+
+**A caller cannot spoof a contributor.** `PUT /api/memory/semantic` reads four named keys
+and silently drops the rest, so a `contributor` in the body never reaches the store; the
+server stamps `current_username()`. Confirmed live — posting `"contributor":"dana"` stored
+`keyur-golani`. The keyword-only override on `set_semantic` exists for internal callers
+(import) only.
+
+**`contributor` is NOT in the ON CONFLICT update.** Editing a shared record is not authoring
+it. Reassigning on every touch would make the column mean "last writer" while claiming to
+mean "contributor" — worse than no column. Test-locked: the owner edits Dana's record, the
+value changes, the attribution does not.
+
+**Ordering only, never admission — and where that boundary physically lives.** The owner
+bonus is applied in the SORT KEY, deliberately not added to `score`, because `score > 0` is
+the admission gate: a provenance bonus ahead of it could lift a zero-relevance record into
+the result set, letting locality decide what the model SEES. Three tests pin the boundary
+from both sides — owner wins a tie, a zero-relevance owner record is still excluded, and a
+stronger foreign match still beats a weaker owner one. `_OWNER_RANK_BONUS = 0.05` sits under
+one keyword-overlap step (0.1 after normalization), following the heat boost's
+bounded-nudge precedent rather than the graph arm's deliberately-admitting one.
+Also verified live that a *better-matching* foreign record correctly outranks the owner's.
+
+**A REAL BUG I INTRODUCED AND THE SUITE CAUGHT — restore from any older snapshot silently
+imported NOTHING.** `_MERGE_ALLOWED_TABLES` names columns explicitly; adding `contributor`
+unconditionally meant a pre-v9 snapshot raised `no such column`, the handler logged and
+SKIPPED the table, and the restore printed "Semantic Memory imported: 0" while looking like
+it succeeded. Losing all memory on restore is far worse than losing a provenance column, so
+the column is now opportunistic via `_both_have()` (checks BOTH databases). Verified both
+directions: v9→v9 imports 6 semantic + 1 episodic with contributors intact; pre-v9→v9
+imports cleanly with an empty contributor.
+
+**Two other explicit allowlists that would have silently dropped provenance:** the vault
+frontmatter emitter (`_FM_ORDER`) and the snapshot merge column lists. Both are now covered
+by tests that assert the allowlist itself, since a unit test on the column can't see them.
+
+**Three episodic READ paths omitted the column** (vector search, list, FTS search), so the
+stamp landed but never reached recall. Found by asserting on `recall_with_provenance`'s
+output rather than on the stored row — the stamp test passed while the feature didn't work.
+
+**Fence budget:** the "(from …) is metadata" clause is added ONLY when a label is actually
+present. The fence is paid on every injected turn, and `test_respects_cap` correctly caught
+the unconditional version inflating the header by 315 chars. Content capping was never
+wrong (476 ≤ 500) — the fence was.
+
+**§2.4 (knowledge label passthrough) — SATISFIED BY INSPECTION, no code.** The section reads
+"*Where* federated knowledge search hits already render a source label, a provider-supplied
+contributor rides that label unchanged — string passthrough, no new machinery. Nothing
+further." That condition is already met: `provider` is an opaque string set at ingest
+(`knowledge/store.py:239`), defaulted on read (`store.py:963`), carried verbatim onto search
+hits (`knowledge/retrieval.py:154`) and context cards (`handlers/knowledge.py:1186`), and
+rendered as a pill (`KnowledgeDetail.tsx:367`, `KnowledgeListPage.tsx:645`).
+`KnowledgeItem.metadata` is a second open carrier. A provider expressing a contributor works
+today. Making it a *separately rendered token* would be new machinery, which §2.4 explicitly
+forecloses — so nothing was built, deliberately.
+
+**Upgrade safety:** existing rows are NOT back-stamped (no backfill) — a pre-column record
+has genuinely unknown authorship, and inventing the current owner would falsify exactly what
+the column exists to preserve, the same rule `identity.py` states for renames. An
+unattributed record counts as the owner's for ranking, and with no username configured the
+bonus is uniform, so a single-user install orders exactly as it does today (test-locked).
+
+**Import preserves foreign provenance.** A record carrying a contributor keeps it; stamping
+the importer would relabel a colleague's memory as the importer's own. Verified live through
+`POST /api/memory/import`.
+
+**Product surface:** `GET /api/memory/semantic` gains `contributor` (automatic — it
+pass-throughs the row) plus a server-resolved `is_mine` flag, so the "is this mine?" rule
+lives in one place instead of being re-derived in the client; the Memory Studio inspector
+shows `Contributor: you | <handle>`.
+
+**Validated as a user** on an isolated dev home with a mixed store (owner + an imported
+"dana"): server stamping; spoof attempt stored the real owner; import preserved `dana`;
+recall labeled the foreign record and episode with the metadata-not-instructions fence;
+symmetric-key tie ordered the owner first while a better-matching foreign record correctly
+won; snapshot→restore(replace) preserved both contributors; the inspector rendered
+`Contributor: dana` and `Contributor: you`. **0 console errors, 0 gateway tracebacks.** (The
+owner's real gateway on :10000 was left untouched; the CLI's gateway-running guard is global,
+so the merge paths were exercised by calling `_merge_memory` directly.)
+
+**Gates:** `make lint` clean (mypy 551 files) · backend **9118 passed** · web **283 passed**
++ typecheck + build. Tests: `tests/test_memory_contributor.py`, 38 cases.
+
+**Remaining:** Sessions 4-5 (the trigger-store provider seam + a proof-of-concept trigger
+provider app), still gated on AUTOMATION-SUBSTRATE steps 1-3 — `triggers.json` and
+`TriggerService` do not exist yet.

@@ -473,6 +473,23 @@ _MERGE_ALLOWED_TABLES = frozenset(
 _SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
+def _both_have(conn: "sqlite3.Connection", table: str, column: str) -> bool:
+    """True when *column* exists on *table* in BOTH the destination and attached source.
+
+    A snapshot taken before a column was added genuinely does not have it, and a merge
+    that names a column either side lacks fails the whole table. Checked rather than
+    assumed so restoring an older snapshot keeps working.
+    """
+    for prefix in ("", "src."):
+        try:
+            cols = {r[1] for r in conn.execute(f"PRAGMA {prefix}table_info({table})").fetchall()}
+        except sqlite3.Error:
+            return False
+        if column not in cols:
+            return False
+    return True
+
+
 def _validate_identifier(name: str) -> str:
     """Validate a SQL identifier against allowlist pattern. Raises ValueError if invalid."""
     if not _SAFE_IDENTIFIER_RE.match(name):
@@ -498,15 +515,32 @@ def _merge_memory(src_db: Path, dst_db: Path) -> None:
     try:
         conn.execute("ATTACH DATABASE ? AS src", (str(src_db),))
         attached = True
+
+        # `contributor` (TEAM-SHARED-ENTITIES §2.3) is included only when BOTH databases
+        # carry it. Naming it unconditionally made every pre-v9 snapshot fail its whole
+        # memory merge — SQLite raises on the missing source column, the handler below
+        # logs and SKIPS the table, and the restore reported "imported: 0" while looking
+        # like it worked. A restore that silently drops all memory is far worse than one
+        # that drops a provenance column, so the column is opportunistic, not required.
+        def _with_contributor(base: str, table: str) -> str:
+            return f"{base}, contributor" if _both_have(conn, table, "contributor") else base
+
         for table, cols, where in [
             (
                 "semantic_memory",
-                "key, value_json, confidence, source, created_at, updated_at, embedding",
+                _with_contributor(
+                    "key, value_json, confidence, source, created_at, updated_at, embedding",
+                    "semantic_memory",
+                ),
                 "WHERE is_deleted=0",
             ),
             (
                 "episodic_memories",
-                "id, conversation_id, text, embedding, tags, importance, created_at, last_accessed_at",  # noqa: E501
+                _with_contributor(
+                    "id, conversation_id, text, embedding, tags, importance, created_at, "
+                    "last_accessed_at",
+                    "episodic_memories",
+                ),
                 "WHERE is_deleted=0",
             ),
             ("knowledge_facts", "subject, predicate, object, episode_id, created_at", ""),

@@ -92,6 +92,27 @@ def _reset_model_call_breakers():
 
 
 @pytest.fixture(autouse=True)
+def _reset_context_engine_breakers():
+    """Reset the context engine's process-global timeout counters around every test.
+
+    ``context_engine`` keeps two module-level consecutive-timeout counters — one for
+    active recall, one for the push reflex — that latch their feature OFF for the rest of
+    the process once they reach 3. That is correct for a gateway (a slow memory store
+    shouldn't be retried on every turn) and wrong for a test session: under xdist, three
+    timeouts anywhere in a worker would silently disable recall/push for every later test
+    in that worker, and the symptom would be an empty block rather than an error. Same
+    discipline as the model-call breakers above.
+    """
+    import personalclaw.context_engine as ce
+
+    ce._recall_consecutive_timeouts = 0
+    ce._push_consecutive_timeouts = 0
+    yield
+    ce._recall_consecutive_timeouts = 0
+    ce._push_consecutive_timeouts = 0
+
+
+@pytest.fixture(autouse=True)
 def _reset_sel_singleton():
     """Reset the process-global Security Event Log singleton around every test.
 
