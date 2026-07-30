@@ -420,6 +420,20 @@ def _migrate_v7(db: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_v8(db: sqlite3.Connection) -> None:
+    """Add the push reflex's volunteer log (MEMORY-GRAPH-AND-VAULT §3).
+
+    One table recording what the reflex volunteered and the record's recall count at
+    that moment, so volunteered-vs-used precision can be computed from data instead of
+    asserted. Stores no conversation text — see ``SCHEMA_V8``'s note.
+
+    Idempotent — every statement is IF NOT EXISTS.
+    """
+    from personalclaw.memory_graph import SCHEMA_V8
+
+    db.executescript(SCHEMA_V8)
+
+
 _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], None] | None"]] = [
     (1, _SCHEMA_V1, None),
     (2, "", _migrate_v2),
@@ -428,6 +442,7 @@ _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], None] | None"]
     (5, "", _migrate_v5),
     (6, "", _migrate_v6),
     (7, "", _migrate_v7),
+    (8, "", _migrate_v8),
 ]
 
 _MAX_BACKFILLS_PER_CALL = 5  # cap lazy embedding backfills to bound latency

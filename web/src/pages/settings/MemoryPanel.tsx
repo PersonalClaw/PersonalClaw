@@ -722,6 +722,8 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
 
       <EntityGraphSection onChanged={reload} />
 
+      <VolunteerPrecisionSection />
+
       {/* observability */}
       {obs && (
         <Section title="Observability" hint="What the memory system is doing under the hood.">
@@ -750,6 +752,82 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
         </Section>
       )}
     </div>
+  )
+}
+
+// ── Push reflex precision (MEMORY-GRAPH-AND-VAULT §3) ───────────────────────
+// The reflex volunteers memory the user didn't ask for, so it owes the user a
+// report card. "Used" = the record's recall count rose after being volunteered —
+// measured, not asserted. A low precision with a high count is the honest signal
+// that the confidence gate should go up.
+
+/** How many events before a precision ratio means anything. Below this the number
+ *  is noise, and showing "0% precision" off two events would be actively misleading
+ *  — the same min-N discipline the feedback surface applies to producer accuracy. */
+const VOLUNTEER_MIN_N = 10
+
+function VolunteerPrecisionSection() {
+  const { data } = useCachedData('settings:memory-volunteer', () => api.memoryVolunteerStats(), { persist: true })
+  if (!data) return null
+  // Nothing to report and the feature is off: stay silent rather than adding an
+  // empty panel about a feature the user hasn't enabled.
+  if (!data.enabled && data.overall.n === 0) return null
+
+  const arms = Object.entries(data.arms)
+  const pct = (v: number) => `${Math.round(v * 100)}%`
+  return (
+    <Section title="Volunteered memory" hint="How often memory the assistant offered on its own actually got used afterwards.">
+      {!data.enabled && (
+        <p className="mb-2 text-on-surface-low text-[0.8125rem]">
+          Volunteering is off. These are the numbers from when it was on.
+        </p>
+      )}
+      {data.overall.n === 0 ? (
+        <p className="text-on-surface-low text-[0.8125rem]">
+          Nothing volunteered yet. Mention a person, project or tool the entity graph knows and it'll start offering related memory.
+        </p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <div className="rounded-lg bg-surface-container px-3 py-2">
+              <div className="text-on-surface text-[1.0625rem] tabular-nums" style={fvs(600)}>{data.overall.n}</div>
+              <div className="text-on-surface-low text-[0.75rem]">volunteered</div>
+            </div>
+            <div className="rounded-lg bg-surface-container px-3 py-2">
+              <div className="text-on-surface text-[1.0625rem] tabular-nums" style={fvs(600)}>{data.overall.used}</div>
+              <div className="text-on-surface-low text-[0.75rem]">used after</div>
+            </div>
+            <div className="rounded-lg bg-surface-container px-3 py-2">
+              <div className="text-on-surface text-[1.0625rem] tabular-nums" style={fvs(600)}>
+                {data.overall.n >= VOLUNTEER_MIN_N ? pct(data.overall.precision) : '—'}
+              </div>
+              <div className="text-on-surface-low text-[0.75rem]">precision</div>
+            </div>
+          </div>
+          {data.overall.n < VOLUNTEER_MIN_N && (
+            <p className="mt-2 text-on-surface-low text-[0.75rem]">
+              Precision needs at least {VOLUNTEER_MIN_N} volunteers before it means anything — {data.overall.n} so far.
+            </p>
+          )}
+          {arms.length > 0 && (
+            <div className="mt-3">
+              <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">By match type</div>
+              <div className="flex flex-wrap gap-1.5">
+                {arms.map(([arm, stat]) => (
+                  <span key={arm} className="rounded-pill bg-surface-high px-2.5 py-1 text-[0.75rem] text-on-surface-var">
+                    {arm.replace(/_/g, ' ')}: <strong>{stat.used}/{stat.n}</strong>
+                    {stat.n >= VOLUNTEER_MIN_N && <> · {pct(stat.precision)}</>}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          <p className="mt-3 text-on-surface-low text-[0.75rem]">
+            Current confidence gate: <strong className="text-on-surface-var">{data.min_confidence.toFixed(2)}</strong>. Raise it in Settings if too much of what's offered goes unused.
+          </p>
+        </>
+      )}
+    </Section>
   )
 }
 
@@ -1011,6 +1089,14 @@ function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | un
         <Row label="Entity graph" hint="Link each memory to the people, projects and tools it names, so “what do I know about X?” can follow those links instead of relying on search alone. Costs no tokens — matching is exact-name. Off = recall behaves as it does today; existing links are kept.">
           <Toggle on={s.graph_enabled !== false} onChange={(v) => patch({ graph_enabled: v })} label="Entity graph" />
         </Row>
+        <Row label="Volunteer related memory" hint="When a message mentions someone or something the entity graph knows, offer up to 3 linked memories for that turn — including ones that share no words with what you typed. Needs the entity graph. Off by default: it puts context in front of the model you didn't ask for. The Health tab reports how often what it volunteered was actually used.">
+          <Toggle on={Boolean(s.push_context)} onChange={(v) => patch({ push_context: v })} label="Volunteer related memory" disabled={s.graph_enabled === false} />
+        </Row>
+        {s.push_context && s.graph_enabled !== false && (
+          <Row label="Volunteer confidence" hint="How sure the match must be before memory is volunteered. 0.9 = declared aliases only · 0.8 also admits exact names · 0.6 admits looser matches (more offered, more of it irrelevant).">
+            <NumInput value={Number(s.push_min_confidence ?? 0.7)} min={0} max={1} step={0.05} onChange={(v) => patch({ push_min_confidence: v })} />
+          </Row>
+        )}
         <div className="mt-2"><SavedToast show={saved} /></div>
       </Section>
 
@@ -1127,9 +1213,9 @@ function VaultSection({ settings, onToggle, saved }: {
   )
 }
 
-function NumInput({ value, onChange, step, min }: { value: number; onChange: (v: number) => void; step: number; min: number }) {
+function NumInput({ value, onChange, step, min, max }: { value: number; onChange: (v: number) => void; step: number; min: number; max?: number }) {
   return (
-    <input type="number" value={value} step={step} min={min} onChange={(e) => onChange(Number(e.target.value))}
+    <input type="number" value={value} step={step} min={min} max={max} onChange={(e) => onChange(Number(e.target.value))}
       className="h-9 w-28 rounded-md bg-surface-container px-2.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]" />
   )
 }

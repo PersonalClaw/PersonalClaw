@@ -783,7 +783,18 @@ export interface NotificationSettings {
   mute_all: boolean; quiet_hours_enabled: boolean; quiet_hours_start: string; quiet_hours_end: string
   min_severity: string
 }
-export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_enabled?: boolean; vault_path?: string; graph_enabled?: boolean }
+export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_enabled?: boolean; vault_path?: string; graph_enabled?: boolean; push_context?: boolean; push_min_confidence?: number }
+
+/** Per-arm volunteered-vs-used precision for the push reflex
+ *  (MEMORY-GRAPH-AND-VAULT §3). `used` = the record's recall count rose after it
+ *  was volunteered, so precision is measured rather than asserted. */
+export interface VolunteerArmStat { n: number; used: number; precision: number }
+export interface VolunteerStats {
+  arms: Record<string, VolunteerArmStat>
+  overall: VolunteerArmStat
+  enabled: boolean
+  min_confidence: number
+}
 export interface MemoryVaultStatus { enabled: boolean; path: string; files: number; exists: boolean }
 export interface MemoryVaultSyncResult { records: number; files: number; written: number; pruned: number; path: string }
 export interface DailyDigest { day: string; text: string; created_at: string }
@@ -2285,6 +2296,9 @@ export const api = {
   saveNotificationSettings: (s: Partial<NotificationSettings>) => put<{ settings: NotificationSettings }>('/api/notifications/settings', s),
   memorySettings: () => get<MemorySettings>('/api/memory/settings'),
   saveMemorySettings: (s: Partial<MemorySettings>) => put<MemorySettings>('/api/memory/settings', s),
+  /** The push reflex's report card (MEMORY-GRAPH-AND-VAULT §3). */
+  memoryVolunteerStats: (windowDays?: number) =>
+    get<VolunteerStats>(`/api/memory/volunteer-stats${windowDays ? `?window_days=${windowDays}` : ''}`),
   memoryStats: () => get<MemoryStats>('/api/memory/stats'),
   // memory vault (Obsidian markdown mirror) — status + on-demand sync.
   memoryVaultStatus: () => get<MemoryVaultStatus>('/api/memory/vault'),

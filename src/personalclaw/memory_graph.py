@@ -273,6 +273,35 @@ CREATE TABLE IF NOT EXISTS mem_entity_proposals (
 );
 """
 
+#: Migration v8 — the push reflex's volunteer log (§3).
+#:
+#: ``recall_at_volunteer`` is the load-bearing column: "used" is defined as the
+#: record's ``recall_count`` having risen SINCE it was volunteered, so the count at
+#: volunteer time must be captured at volunteer time. Comparing against a
+#: later-read absolute count would score every already-popular record as used and
+#: report a precision near 1.0 no matter how bad the volunteering was.
+#:
+#: No conversation text is stored — only the entity name, the arm, the confidence and
+#: the record ref. A volunteer log that quoted the conversation would be a second
+#: transcript in a store the user thinks holds facts.
+SCHEMA_V8 = """
+CREATE TABLE IF NOT EXISTS mem_volunteer_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id TEXT NOT NULL,
+    entity_name TEXT NOT NULL,
+    arm TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    from_kind TEXT NOT NULL,
+    record_ref TEXT NOT NULL,
+    recall_at_volunteer INTEGER NOT NULL DEFAULT 0,
+    session_key TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mem_volunteer_created ON mem_volunteer_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_mem_volunteer_ref ON mem_volunteer_events(record_ref);
+CREATE INDEX IF NOT EXISTS idx_mem_volunteer_arm ON mem_volunteer_events(arm);
+"""
+
 
 # ── The graph ──────────────────────────────────────────────────────────────────
 
@@ -706,6 +735,117 @@ class MemoryGraph:
             **self.orphan_counts(),
         }
 
+    # ── Volunteer log (§3) ────────────────────────────────────────────────────
+
+    def log_volunteer(
+        self,
+        *,
+        entity_id: str,
+        entity_name: str,
+        arm: str,
+        confidence: float,
+        from_kind: str,
+        record_ref: str,
+        recall_at_volunteer: int,
+        session_key: str = "",
+    ) -> int:
+        """Record one volunteer event. Returns its row id (0 on failure).
+
+        ``recall_at_volunteer`` must be the record's recall count as of NOW — the
+        "used" test is whether that number later RISES. Never raises: a failure to
+        log a statistic must not break the turn it was measuring.
+        """
+        try:
+            cur = self.db.execute(
+                "INSERT INTO mem_volunteer_events (entity_id, entity_name, arm, confidence, "
+                "from_kind, record_ref, recall_at_volunteer, session_key, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    entity_id,
+                    entity_name,
+                    arm,
+                    float(confidence),
+                    from_kind,
+                    record_ref,
+                    int(recall_at_volunteer),
+                    session_key,
+                    _now(),
+                ),
+            )
+            self.db.commit()
+            return int(cur.lastrowid or 0)
+        except sqlite3.Error:
+            logger.debug("volunteer event not logged", exc_info=True)
+            return 0
+
+    def volunteer_precision(self, *, window_days: int | None = None) -> dict:
+        """Per-arm volunteered-vs-used precision (§3).
+
+        "Used" = the record's CURRENT ``recall_count`` exceeds what it was when the
+        reflex volunteered it. That comparison is why ``recall_at_volunteer`` is stored:
+        against an absolute count, every already-popular record would score as used and
+        the number would flatter the reflex regardless of how it behaved.
+
+        Shape mirrors ``feedback.producer_stats``: ``{arm: {n, used, precision}}`` plus
+        an ``overall`` roll-up, so the UI can apply the same min-N discipline instead of
+        drawing conclusions from three events.
+        """
+        sql = (
+            "SELECT v.arm AS arm, COUNT(*) AS n, "
+            "SUM(CASE WHEN COALESCE(s.recall_count, 0) > v.recall_at_volunteer "
+            "         THEN 1 ELSE 0 END) AS used "
+            "FROM mem_volunteer_events v "
+            "LEFT JOIN semantic_memory s ON s.key = v.record_ref "
+            # Episodic rows have no recall counter incremented on read, so they can
+            # never register as used; counting them would drag every arm's precision
+            # toward zero for a reason that has nothing to do with volunteer quality.
+            "WHERE v.from_kind = 'semantic'"
+        )
+        params: tuple = ()
+        if window_days:
+            sql += " AND v.created_at >= ?"
+            params = (_iso_days_ago(int(window_days)),)
+        sql += " GROUP BY v.arm ORDER BY v.arm"
+        try:
+            rows = self.db.execute(sql, params).fetchall()
+        except sqlite3.Error:
+            logger.debug("volunteer precision unavailable", exc_info=True)
+            return {"arms": {}, "overall": {"n": 0, "used": 0, "precision": 0.0}}
+
+        arms: dict[str, dict] = {}
+        total = used_total = 0
+        for row in rows:
+            n = int(row["n"] or 0)
+            used = int(row["used"] or 0)
+            arms[str(row["arm"])] = {
+                "n": n,
+                "used": used,
+                "precision": (used / n) if n else 0.0,
+            }
+            total += n
+            used_total += used
+        return {
+            "arms": arms,
+            "overall": {
+                "n": total,
+                "used": used_total,
+                "precision": (used_total / total) if total else 0.0,
+            },
+        }
+
+    def prune_volunteer_events(self, *, keep_days: int = 90) -> int:
+        """Drop volunteer events older than *keep_days*. Returns rows removed."""
+        try:
+            cur = self.db.execute(
+                "DELETE FROM mem_volunteer_events WHERE created_at < ?",
+                (_iso_days_ago(keep_days),),
+            )
+            self.db.commit()
+            return int(cur.rowcount or 0)
+        except sqlite3.Error:
+            logger.debug("volunteer prune skipped", exc_info=True)
+            return 0
+
 
 def _merge_aliases(existing_json: str | None, incoming: "list[str]") -> list[str]:
     try:
@@ -714,6 +854,13 @@ def _merge_aliases(existing_json: str | None, incoming: "list[str]") -> list[str
         current = set()
     current.update(a for a in incoming if a and a.strip())
     return sorted(current)
+
+
+def _iso_days_ago(days: int) -> str:
+    """UTC ISO timestamp *days* in the past — the cutoff shape ``created_at`` sorts by."""
+    from datetime import datetime, timedelta, timezone
+
+    return (datetime.now(timezone.utc) - timedelta(days=max(0, days))).isoformat()
 
 
 def _now() -> str:

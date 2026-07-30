@@ -1537,6 +1537,10 @@ async def _run_chat(
                 compressed_history=compressed,
                 mode=session.mode,
                 blocks_reads=session.blocks_reads,
+                # The push reflex logs a volunteer event per offered record; incognito
+                # allows memory reads but suppresses writes, so the reflex still runs
+                # there and only its logging is silenced.
+                blocks_writes=session.is_restricted,
                 # Active recall is an interactive-chat affordance — headless
                 # worker apps (goal loops, etc.) opt out so they don't pay the
                 # recall budget on every autonomous cycle.

@@ -100,6 +100,10 @@ class DefaultContextEngine:
     ) -> AssembledContext:
         # `active_recall` is an engine-level concern, not a build_message param.
         active_recall = kwargs.pop("active_recall", True)
+        # Likewise `blocks_writes`: it gates the push reflex's volunteer LOG (incognito
+        # suppresses writes but allows reads), and `build_message` has an explicit
+        # signature that would reject an unknown kwarg.
+        blocks_writes = kwargs.pop("blocks_writes", False)
         full_message, hook_result = builder.build_message(text, is_new_session, **kwargs)
         injected = max(0, len(full_message) - len(text)) if is_new_session else 0
         # Active recall (the assemble hook): on an eligible interactive turn,
@@ -116,6 +120,31 @@ class DefaultContextEngine:
             if recall:
                 full_message = recall + full_message
                 injected += len(recall)
+        # The push reflex (MEMORY-GRAPH-AND-VAULT §3): EVERY turn, not just the first.
+        #
+        # Deliberately NOT folded into the branch above. `is_new_session` tracks the
+        # runtime CLIENT (recreated between turns, on idle eviction), not the
+        # conversation — see chat_runner's own comment at the get_or_create call. So a
+        # reflex sharing that guard would fire on turn 1 and then go quiet for the rest
+        # of the conversation, which is the opposite of an ambient per-turn reflex. The
+        # plan's §3 says the reflex "rides the proven context_engine seam"; the seam is
+        # `assemble`, which runs per turn — the *condition* is what had to change.
+        #
+        # Gated on `blocks_reads` (temporary sessions), same as active recall. Incognito
+        # is NOT blocked here: it suppresses memory WRITES, and §3 wants the reflex to
+        # run there with only its volunteer logging suppressed.
+        if not kwargs.get("blocks_reads") and active_recall:
+            pushed = push_context_block(
+                builder,
+                text,
+                cwd=kwargs.get("cwd"),
+                memory_store=kwargs.get("memory_store"),
+                session_key=str(kwargs.get("session_key") or ""),
+                log_events=not blocks_writes,
+            )
+            if pushed:
+                full_message = pushed + full_message
+                injected += len(pushed)
         return AssembledContext(
             message=full_message, hook_result=hook_result, injected_chars=injected
         )
@@ -196,6 +225,108 @@ def active_recall_block(
         + recalled
         + "\n[END ACTIVE RECALL]\n\n"
     )
+
+
+# ── The push reflex (§3 of MEMORY-GRAPH-AND-VAULT) ──
+# Runs EVERY turn, unlike active recall. Bounded by its own timeout + breaker: a
+# per-turn pass is on the critical path of every message, so it gets a tighter budget
+# than the once-per-session recall and trips off after repeated slowness.
+
+_push_consecutive_timeouts = 0
+_PUSH_BREAKER_TRIP = 3
+_PUSH_TIMEOUT_MS = 400
+
+
+def _push_settings() -> tuple[bool, float]:
+    """``(enabled, min_confidence)`` read LIVE from config.
+
+    Read per turn rather than captured at construction: S1's kill switch shipped
+    captured-at-construction and flipping the toggle updated config.json while the
+    running gateway kept going. Same mistake, same fix — read it when you need it.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        mem = AppConfig.load().memory
+        return bool(getattr(mem, "push_context", False)), float(
+            getattr(mem, "push_min_confidence", 0.7)
+        )
+    except Exception:  # noqa: BLE001
+        return False, 0.7
+
+
+def push_context_block(
+    builder: "ContextBuilder",
+    text: str,
+    *,
+    cwd: str | None,
+    memory_store: str | None,
+    session_key: str = "",
+    log_events: bool = True,
+) -> str:
+    """Memory the store volunteers for THIS turn, fenced as untrusted, or "".
+
+    Off by default (opt-in config). Any failure or timeout → "": a reflex that delays
+    a reply is worse than one that stays quiet, so it fails silent rather than loud.
+    """
+    global _push_consecutive_timeouts
+    enabled, min_confidence = _push_settings()
+    if not enabled or not text.strip():
+        return ""
+    if _push_consecutive_timeouts >= _PUSH_BREAKER_TRIP:
+        return ""  # breaker open
+
+    import concurrent.futures
+
+    def _push() -> str:
+        from personalclaw.memory_service import service_for
+
+        memory = builder.get_memory_for(cwd, memory_store)
+        turns = _recent_turns(builder, session_key)
+        turns.append(text)  # the current message is the newest turn
+        block, _ = service_for(memory).push_context(
+            turns,
+            session_key=session_key,
+            log_events=log_events,
+            min_confidence=min_confidence,
+        )
+        return block
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            block = ex.submit(_push).result(timeout=_PUSH_TIMEOUT_MS / 1000.0)
+        _push_consecutive_timeouts = 0
+    except concurrent.futures.TimeoutError:
+        _push_consecutive_timeouts += 1
+        logger.info(
+            "push reflex timed out (%dms); consecutive=%d",
+            _PUSH_TIMEOUT_MS,
+            _push_consecutive_timeouts,
+        )
+        return ""
+    except Exception:
+        logger.debug("push reflex failed", exc_info=True)
+        return ""
+    return block or ""
+
+
+def _recent_turns(builder: "ContextBuilder", session_key: str) -> list[str]:
+    """The last few user/assistant turns as text, oldest first ([] when unavailable).
+
+    The reflex needs a WINDOW, not just the latest message: "does Sparrow ship Fridays?"
+    followed by "what about the other one?" should still resolve, and the second message
+    names nothing on its own.
+    """
+    from personalclaw.memory_push import WINDOW_TURNS
+
+    log = getattr(builder, "conversation_log", None)
+    if log is None or not session_key:
+        return []
+    try:
+        msgs = log.recent(session_key, max_messages=WINDOW_TURNS, roles={"user", "assistant"})
+    except Exception:  # noqa: BLE001
+        return []
+    return [str(m.get("content") or "") for m in msgs if m.get("content")]
 
 
 _DEFAULT = DefaultContextEngine()

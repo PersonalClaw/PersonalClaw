@@ -492,6 +492,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # stops new links immediately (existing links are kept, so re-enabling doesn't
     # need a backfill).
     "memory.graph_enabled": {"type": "bool"},
+    # MEMORY-GRAPH-AND-VAULT §3 — the push reflex. Both runtime-editable: the reflex
+    # reads them per turn, so a change takes effect on the next message with no restart.
+    "memory.push_context": {"type": "bool"},
+    "memory.push_min_confidence": {"type": "float", "min": 0.0, "max": 1.0},
     "feedback.enabled": {"type": "bool"},
     "feedback.retire_threshold": {"type": "float", "min": 0.1, "max": 0.9},
     "feedback.min_n": {"type": "int", "min": 3, "max": 50},

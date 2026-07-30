@@ -329,6 +329,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/memory/stats` — memory system statistics.
 - `GET /api/memory/vault` — the markdown-vault mirror status (mem-fs-mirror).
 - `POST /api/memory/vault/sync` — reconcile the vault to the current records.
+- `GET /api/memory/volunteer-stats` — per-arm volunteered-vs-used precision (§3).
 - `GET /api/model-provider-types` — installable model-provider types.
 - `GET /api/model-providers` — list configured model-provider entries.
 - `POST /api/model-providers` — add a new model provider to config.

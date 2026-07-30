@@ -135,9 +135,22 @@ async def api_memory_settings(request: web.Request) -> web.Response:
                 "proactive_commitments",
                 "vault_enabled",
                 "graph_enabled",
+                "push_context",
             ):
                 if flag in body:
                     mem[flag] = bool(body[flag])
+            # The push reflex's confidence gate (§3). Clamped to [0,1] here as well as
+            # in load(): a value outside the range would either volunteer everything or
+            # nothing, and the caller should not be able to reach either by typing.
+            if "push_min_confidence" in body:
+                try:
+                    mem["push_min_confidence"] = max(
+                        0.0, min(1.0, float(body["push_min_confidence"]))
+                    )
+                except (ValueError, TypeError):
+                    return web.json_response(
+                        {"error": "push_min_confidence must be numeric"}, status=400
+                    )
             # Vault path (string): where the markdown mirror is written. Empty
             # falls back to the default; strip so a stray space can't misroute it.
             if "vault_path" in body:
@@ -161,6 +174,8 @@ async def api_memory_settings(request: web.Request) -> web.Response:
             "vault_enabled": cfg.memory.vault_enabled,
             "vault_path": cfg.memory.vault_path,
             "graph_enabled": cfg.memory.graph_enabled,
+            "push_context": cfg.memory.push_context,
+            "push_min_confidence": cfg.memory.push_min_confidence,
         }
     )
 
@@ -1291,3 +1306,33 @@ async def api_memory_graph_rebuild(request: web.Request) -> web.Response:
         session_key="dashboard", tool_name="memory_graph_rebuild", outcome="success"
     )
     return web.json_response({"ok": True, "seeded": seeded, **result})
+
+
+async def api_memory_volunteer_stats(request: web.Request) -> web.Response:
+    """GET /api/memory/volunteer-stats — per-arm volunteered-vs-used precision (§3).
+
+    The push reflex's own report card. "Used" means the record's recall count rose
+    after it was volunteered, so a high count with a low precision is the honest
+    signal that the reflex is offering noise — which is the point of measuring it
+    rather than asserting the feature helps.
+    """
+    svc = _get_service(request.app["state"])
+    window = request.query.get("window_days", "")
+    try:
+        window_days: int | None = int(window) if window else None
+    except (TypeError, ValueError):
+        window_days = None
+    from personalclaw.config.loader import AppConfig  # noqa: F811
+
+    loop = asyncio.get_event_loop()
+    stats = await loop.run_in_executor(
+        None, lambda: svc.volunteer_precision(window_days=window_days)
+    )
+    cfg = AppConfig.load().memory
+    return web.json_response(
+        {
+            **stats,
+            "enabled": bool(getattr(cfg, "push_context", False)) and svc.has_graph,
+            "min_confidence": float(getattr(cfg, "push_min_confidence", 0.7)),
+        }
+    )

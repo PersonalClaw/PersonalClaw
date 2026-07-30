@@ -1392,6 +1392,15 @@ class HistoryConsolidator:
                         logger.info("Built %d daily-digest node(s)", digested)
                 except Exception:
                     logger.debug("Daily-digest build failed for %s", key, exc_info=True)
+                # Push-reflex volunteer log (MEMORY-GRAPH-AND-VAULT §3): 90-day
+                # retention on the same cadence. The log exists to compute a precision
+                # ratio, not to be a permanent record of every turn's entity matches.
+                try:
+                    pruned_vol = self._svc.prune_volunteer_events(keep_days=90)
+                    if pruned_vol:
+                        logger.info("Pruned %d volunteer event(s)", pruned_vol)
+                except Exception:
+                    logger.debug("Volunteer-log prune failed for %s", key, exc_info=True)
 
         except Exception:
             logger.exception("Consolidation failed for %s", key)
