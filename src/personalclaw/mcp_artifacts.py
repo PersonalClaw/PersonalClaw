@@ -1042,11 +1042,14 @@ def _document_create(
     # Re-generating under an existing slug UPDATES in place and bumps a version rather
     # than minting a "-2" twin — the same dedup posture artifact_save takes.
     if slug and prov.get(slug) is not None:
+        # No `snapshot=` argument: update_binary ALWAYS bumps the version and writes a
+        # snapshot (there is no non-snapshotting binary update, because a binary body has
+        # no diffable draft state to hold back). Passing it raised TypeError, so every
+        # attempt to regenerate a document under an existing slug crashed.
         art = prov.update_binary(
-            slug=slug,
+            slug,
             data=data,
             mime=_DOC_MIME.get(fmt, "application/octet-stream"),
-            snapshot=True,
             event_type="iterated",
             actor="agent",
             session_id=sk,

@@ -552,3 +552,120 @@ def test_the_pptx_kind_is_registered_in_both_sets():
     from personalclaw.artifacts.models import ALLOWED_KINDS, BINARY_KINDS
 
     assert "pptx" in ALLOWED_KINDS and "pptx" in BINARY_KINDS
+
+
+# ── Regenerating under an existing slug (the tool path) ──────────────────────
+# This path had NO test, and shipped broken: `_document_create` passed
+# `snapshot=True` to `update_binary`, which accepts no such argument, so every
+# attempt to regenerate a document in place raised TypeError. The writers were
+# all covered; the tool that calls them was not.
+
+
+class TestDocumentRegenerate:
+    def _prov(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        from personalclaw.artifacts.native import NativeArtifactProvider
+
+        return NativeArtifactProvider(root=tmp_path / "artifacts")
+
+    def test_regenerating_under_an_existing_slug_bumps_a_version(self, tmp_path, monkeypatch):
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        audited: list = []
+
+        def _audit(outcome, slug="", error=""):
+            audited.append((outcome, slug, error))
+
+        first = _document_create(
+            prov, "document_create", {"name": "Report", "markdown": "# One"}, "s1", _audit
+        )
+        assert "Error" not in first, first
+        slug = [a.slug for a in prov.list()][0]
+        assert prov.get(slug).version == 1
+
+        # THE regression: same slug again must update in place, not raise.
+        second = _document_create(
+            prov,
+            "document_create",
+            {"name": "Report", "markdown": "# Two", "slug": slug},
+            "s1",
+            _audit,
+        )
+        assert "Error" not in second, second
+        art = prov.get(slug)
+        assert art.version == 2
+        assert len(prov.list_versions(slug)) == 2
+
+    def test_the_regenerated_bytes_are_the_new_content(self, tmp_path, monkeypatch):
+        """A version bump that kept the old bytes would be worse than a crash."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        _document_create(
+            prov,
+            "document_create",
+            {"name": "R", "markdown": "# Alpha"},
+            None,
+            lambda outcome, slug="", error="": None,
+        )
+        slug = [a.slug for a in prov.list()][0]
+        _document_create(
+            prov,
+            "document_create",
+            {"name": "R", "markdown": "# Bravo", "slug": slug},
+            None,
+            lambda outcome, slug="", error="": None,
+        )
+        data, _mime = prov.raw_bytes(slug)
+        import io
+
+        from docx import Document
+
+        text = "\n".join(p.text for p in Document(io.BytesIO(data)).paragraphs)
+        assert "Bravo" in text
+        assert "Alpha" not in text
+
+    def test_the_update_records_an_iterated_event(self, tmp_path, monkeypatch):
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        _document_create(
+            prov,
+            "document_create",
+            {"name": "R", "markdown": "# A"},
+            None,
+            lambda outcome, slug="", error="": None,
+        )
+        slug = [a.slug for a in prov.list()][0]
+        _document_create(
+            prov,
+            "document_create",
+            {"name": "R", "markdown": "# B", "slug": slug},
+            None,
+            lambda outcome, slug="", error="": None,
+        )
+        types = [e.type for e in prov.get(slug).events]
+        assert "iterated" in types
+
+
+class TestUpdateBinaryContract:
+    def test_update_binary_takes_no_snapshot_argument(self):
+        """Pinned so a caller can't reintroduce it: a binary update ALWAYS bumps and
+        snapshots, because binary bodies have no held-back draft state."""
+        import inspect
+
+        from personalclaw.artifacts.native import NativeArtifactProvider
+
+        params = inspect.signature(NativeArtifactProvider.update_binary).parameters
+        assert "snapshot" not in params
+
+    def test_no_caller_passes_snapshot_to_update_binary(self):
+        """A source sweep, because the TypeError only fires at runtime on a path that
+        had no test — exactly how this shipped."""
+        from pathlib import Path
+
+        src = Path("src/personalclaw/mcp_artifacts.py").read_text(encoding="utf-8")
+        for chunk in src.split("update_binary(")[1:]:
+            call = chunk.split(")", 1)[0]
+            assert "snapshot" not in call, f"update_binary call passes snapshot: {call!r}"
