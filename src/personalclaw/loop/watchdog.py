@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from personalclaw import shutdown_event
+from personalclaw import notification_kinds, shutdown_event
 from personalclaw.config.loader import AppConfig
 from personalclaw.loop import instrument, kinds, manager, store
 from personalclaw.loop.loop import LoopStatus
@@ -220,7 +220,7 @@ class LoopWatchdog:
         try:
             loop = store.get(loop_id)
             self._state.notify(
-                "info",
+                notification_kinds.INFO,
                 "Loop progress",
                 f"Cycle {count}{budget} complete — {self._loop_name(loop_id)}",
                 meta={"loop_id": loop_id, "cycle": count, "loop_kind": loop.kind if loop else ""},

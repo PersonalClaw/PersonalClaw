@@ -1109,12 +1109,21 @@ class DashboardState:
     def notify(self, kind: str, title: str, body: str, *, meta: dict | None = None) -> None:
         """Push a notification to ALL connected SSE clients and persist to disk.
 
-        Delivery honors the notification entity settings (Settings →
-        Notifications): mute-all, minimum severity, and quiet hours — the
-        single gate for every emitter (crons, loops, hooks, inbox alerts,
-        heartbeats, app actions). A suppressed notification is dropped
-        entirely (not logged unread) — mute means mute.
+        THE single delivery choke point for every emitter (crons, loops, hooks, inbox
+        alerts, heartbeats, app actions). Two layers of policy, in this order:
+
+        1. **The global gate** (`notification_allowed`) — mute-all, minimum severity,
+           quiet hours. Unchanged, and still outermost: mute means mute, whatever a rule
+           says. A suppressed notification is dropped entirely, not logged unread.
+        2. **The per-(source, kind) rule** (`notification_rules`) — never / badge /
+           immediate / digest, plus conditions that escalate a quieter mode when the text
+           matches a keyword or names the operator.
+
+        With no rules file, every registered kind resolves to ``immediate`` and this
+        behaves exactly as it did before rules existed — that equivalence is the safety
+        property of shipping without a gate, and `test_notification_rules.py` pins it.
         """
+        from personalclaw import notification_rules as rules
         from personalclaw.providers.entity_routes import notification_allowed
 
         try:
@@ -1123,6 +1132,7 @@ class DashboardState:
                 return
         except Exception:  # never let the prefs gate break delivery
             logger.debug("notification_allowed failed; delivering", exc_info=True)
+
         note: dict[str, Any] = {
             "kind": kind,
             "title": title,
@@ -1131,9 +1141,55 @@ class DashboardState:
         }
         if meta:
             note.update(meta)
+
+        # Resolve the rule. Every failure path here falls through to immediate delivery:
+        # a policy layer that can't read its own config must not be able to silence the
+        # system (the same reason the gate above fails open).
+        try:
+            rule = rules.resolve_rule_for_legacy(kind)
+            reason = rule.conditions.matches(f"{title}\n{body}", self._operator_name())
+            if reason:
+                rule = rule.escalated()
+                note["escalated_by"] = reason
+        except Exception:
+            logger.debug("notification rule resolution failed; delivering", exc_info=True)
+            rule = None
+
+        mode = rule.mode if rule is not None else "immediate"
+        note["mode"] = mode
+        if rule is not None:
+            note["targets"] = list(rule.targets)
+
+        if mode == "never":
+            logger.debug("Notification dropped by rule %s: %r", rule.key if rule else kind, title)
+            return
+        if mode == "digest":
+            rules.queue_for_digest(note)
+            return
+        if mode == "badge":
+            # Persist and count, but do not push a toast: the badge is the delivery.
+            note["badge_only"] = True
+            self._notification_log.append(note)
+            _persist_notification(note)
+            return
+
         self._notification_log.append(note)
         self._broadcast(note)
         _persist_notification(note)
+
+    def _operator_name(self) -> str:
+        """The operator's name for name-mention conditions, or "" when unknown.
+
+        Best-effort and never raises: a missing config must not turn a condition check
+        into a failed notification.
+        """
+        try:
+            from personalclaw.config.loader import AppConfig
+
+            return (AppConfig.load().agent.bot_name or "").strip()
+        except Exception:
+            logger.debug("operator name lookup failed", exc_info=True)
+            return ""
 
     def unread_count(self) -> int:
         """Number of notifications not yet acknowledged (derived, never cached)."""

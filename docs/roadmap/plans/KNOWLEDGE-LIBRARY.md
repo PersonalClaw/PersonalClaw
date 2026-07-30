@@ -60,7 +60,7 @@ def merge_items(keep_id, drop_id) -> None: ...    # redirects mentions + collect
 
 | ID | Task | Files | Done when |
 |---|---|---|---|
-| T1.1 | Schema + migration (collections, collection_items; the two item columns via the additive-column pattern at `store.py:276`); gate `knowledge_library` | `knowledge/store.py`, `lifecycle/migrations/m_*_knowledge_library.py`, gates | migration creates tables on a fixture home; existing items load unchanged; idempotent |
+| T1.1 | Schema (collections, collection_items; the two item columns via the additive-column pattern at `store.py:276`) — **store-native, no gate and no `lifecycle/` file** (the original wording asked for both; see the S1 execution-log DEVIATION) | `knowledge/store.py`, tests | opening the store on a pre-collections fixture home creates both tables + both columns; existing items load unchanged; idempotent on reopen |
 | T1.2 | Store API C2 collection methods + smart-collection resolution (via `retrieval.search`) | `knowledge/store.py`, tests | manual + smart collections resolve; item in N collections works |
 | T1.3 | HTTP routes C3 for collections; frontend collections rail on the Knowledge page (create/rename/reorder, per-collection view) | knowledge handlers, `web/src/pages/knowledge/` | create a collection, add items, view it; smart collection updates as items match |
 | V1 | Validation as a user: build a manual shelf + a smart collection ("all PDFs about X"); both behave; reduced-motion/theme/token-lint pass on new UI | — | holds |
@@ -288,6 +288,14 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
   user-authored tags by **list-equality on the JSON shape**. Recommend re-scoping to a
   derived tag registry (counts + hierarchy, JSON stays authoritative) — additive, no
   migration, and it satisfies the stated done-when. Owner ruling needed before starting.
+  - **⚠️ SUPERSEDED — this "NOT startable" verdict was wrong** (owner correction, kept here
+    because an execution log is a record, not a wiki). T2.2 **shipped** later the same day:
+    the owner ruled the table becomes authoritative, and the JSON→rows backfill was made
+    idempotent **by data inspection** rather than by a schema version — which is the house
+    pattern, so the "no schema version to gate on" objection dissolved. The general lesson,
+    now standing doctrine: a plan clause conflicting with the clean-break doctrine is a
+    **re-scope, never a blocker** — see [EXECUTION-PROTOCOL §2](EXECUTION-PROTOCOL.md) and
+    the workspace `AGENTS.md` section "You are working as the OWNER".
 - 2026-07-29 — **DONE (S2: T2.1 remainder).** S1 shipped the store API, routes and
   context-menu verbs for read state and favorites; **neither state rendered anywhere**,
   which made favoriting **write-only** — you could star an item and then had no way to

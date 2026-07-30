@@ -14,6 +14,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from personalclaw import notification_kinds
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import config_dir
 
@@ -299,7 +300,7 @@ def notify_inbox_alert(state: Any, item: InboxItem, reason: str) -> None:
     msg, _ = redact_exfiltration_urls(item.message)
     msg, _ = redact_credentials(msg)
     state.notify(
-        "inbox_alert",
+        notification_kinds.INBOX_ALERT,
         f"{item.sender_name} in {item.channel_name}",
         f"Alert ({reason}): {msg[:200]}",
         meta={"session": f"inbox:{item.id}"},

@@ -10,7 +10,11 @@ Every plan's task tables assume this protocol. A session that has not read this 
 
 1. Read, in order: the plan document (fully — especially its **soul guardrail** and **Context** sections), this protocol, and every architecture doc the plan cites (they live in `docs/architecture/`).
 2. Locate your session's **task table** in the plan. Tasks are executed **in listed order**. You own exactly one task at a time.
-3. Confirm the plan's **change class** (R / B / S — see `docs/architecture/change-lifecycle.md` once plan 31 lands; until then: does this change persisted state or a stable surface? If yes, it needs its gate/migration named in the plan). If the plan doesn't state the class and the change touches state, **stop — escalation trigger E3**.
+3. Confirm the plan's **change class** (R / B / S): does this change persisted state or a stable surface? If the plan doesn't state the class and the change touches state, **stop — escalation trigger E3**.
+   **A class-B/S change is not blocked by the absence of `lifecycle/`.** During 0.x the
+   maintainer's changes are clean breaks under the pre-1.0 banner — see §2's *gate and
+   migration tasks are methodology, not scope*. Knowing the class tells you what to write in
+   the CHANGELOG and what to advise (`personalclaw snapshot`), not whether you may proceed.
 4. Set up: dev gateway state must NEVER be your real home. Use `make serve` (isolated `./.dev-home`) or `PERSONALCLAW_HOME=<tmp>` + `--seed <fixture>`. Tests must monkeypatch `config_dir`/`tmp_path` (CONTRIBUTING rule — this has bitten before).
 
 ## 2. Ground rules (the anti-derail set)
@@ -20,7 +24,13 @@ Every plan's task tables assume this protocol. A session that has not read this 
 - **No new dependencies** unless the task line names the exact package. This includes "tiny" ones.
 - **No dead code, no TODO/FIXME comments, no commented-out blocks, no "phase 2" stubs.** The codebase has zero TODOs; keep it that way — unfinished work lives in the plan file, not in code comments.
 - **Vendor names never enter core.** Anything provider-specific goes in an app bundle; apps import core **only** via `personalclaw.sdk.*`. The deliberate exceptions are enumerated in `docs/architecture/provider-boundary.md` — you may not add to them.
-- **One path per concern.** Never leave two implementations of the same behavior without a registered lifecycle gate (plan 31). "Old path kept just in case" is a defect.
+- **One path per concern.** Never leave two implementations of the same behavior. "Old path kept just in case" is a defect. (Post-LIFECYCLE-DOCTRINE, a *registered gate* is the one sanctioned way to hold two paths temporarily; until it lands there is no such escape hatch, so replacement and deletion are the same change.)
+- **Gate and migration tasks are METHODOLOGY, not scope — never a blocker.** Many plans were written in the migration-backed form a contributor would use: a `lifecycle/gates.py` registration, a dual-path "gate OFF = byte-identical" task, an `m_*.py` migration file, a cleanup session that flips the gate and deletes the legacy branch. **`src/personalclaw/lifecycle/` does not exist**, and per the owner's standing ruling ([AGENTS.md](../../../AGENTS.md), [CONTRIBUTING.md](../../../CONTRIBUTING.md#breaking-changes)) the maintainer executes class-B/S work as a **clean break under the pre-1.0 banner**. So when you meet one of those tasks:
+  - **A gate task is dropped.** The new path *is* the path; delete the old one in the same change. No dual-path, no "gate OFF" equivalence task, no cleanup session. Where the gate task guarded a behavioral equivalence worth keeping, re-express it as a regression test on *default* behavior.
+  - **A migration task becomes an idempotent backfill keyed on data inspection** — "the table is empty but the items carry tags", "the rules file is absent but the old alert fields are set" — never a version gate. That is the house pattern (`_init_schema`'s `IF NOT EXISTS`, `vector_memory`'s own `_MIGRATIONS` ladder, `knowledge/store.py`'s `_NEW_ITEM_COLUMNS`). A store with its own migration ladder uses **that ladder**, not a new mechanism.
+  - **Never hand-roll gate/migration machinery** to satisfy the literal task — it would have to be deleted when the real thing lands.
+  - Record the re-scope as a DEVIATION (§5) citing this rule, then **keep building**.
+  This is a re-scope, not an escalation: it needs no owner input. Read `Depends on: LIFECYCLE-DOCTRINE` in a plan header the same way — a claim to check against code, not a fact. **A plan sentence that conflicts with doctrine is a wording problem; it never makes a feature unbuildable.** If the feature itself is genuinely blocked, that is E3 — but a missing gate never is.
 - **Config fields are contracts.** A new config field must be wired through all of: dataclass + `_meta`, `load()`, `to_dict()`, a write path, and (if user-facing) a frontend control — `tests/test_config_roundtrip.py` will catch most misses; don't fight it, complete the wiring.
 - **Entity/user state goes outside `config.json`** (`entity_settings/*.json`, dedicated stores) unless the plan says otherwise.
 - **Security surfaces are copy-sensitive.** Do not reword warnings, consent text, fencing preambles, or refusal messages except as the task specifies — their wording is part of the control.
@@ -68,7 +78,7 @@ This ledger is how a solo maintainer audits delegated work — keep entries hone
 
 - **E1 — premise mismatch:** the code doesn't match the task's citations.
 - **E2 — failing test you can't root-cause in ~30 minutes** (or any pre-existing red not annotated in code).
-- **E3 — lifecycle ambiguity:** the change turns out to touch persisted state / a Tier-S surface and the plan didn't declare it.
+- **E3 — lifecycle ambiguity:** the change turns out to touch persisted state / a Tier-S surface and the plan didn't declare it. **Not E3:** a plan asking for a gate, a dual path, or a `lifecycle/migrations/m_*.py` file. That is §2's methodology re-scope — drop the gate, make the migration an idempotent backfill, record a DEVIATION, and keep building.
 - **E4 — security-control ambiguity:** the task requires touching auth, fencing, scanner, egress, sandbox, or SEL beyond its literal wording.
 - **E5 — dependency pressure:** the implementation seems to need a package the task didn't name.
 - **E6 — scope pressure:** completing the task honestly seems to require work another task/plan owns.

@@ -2,8 +2,8 @@
 
 **Status:** DESIGNED — deepened 2026-07-18 with code recon (initial PROPOSED 2026-07-18 from the owner-commissioned boundary investigation)
 **Created:** 2026-07-18
-**Wave:** 1 (S1-3) + 2 (S4-5). **Change class B** (persisted-state changes; gate `inbox_unification`) — the designated **first full exercise of LIFECYCLE-DOCTRINE** (gate → dual-path → migrate → cleanup).
-**Depends on:** LIFECYCLE-DOCTRINE S1-2 (gates + migration runner). Coordinates with: LEARNING-FLYWHEEL §2.2 (its proposal queue lands AS inbox kind=proposal — one attention surface, not a fourth); PROACTIVE-ASSISTANT (the digest built here is its pulled-forward ambient slice); CHANNEL-EXPANSION (channel DM as a rules target; pairing prompts become `agent_request` items); MOBILE-COMPANION (the `push` target activates there).
+**Wave:** 1 (S1-3) + 2 (S4-5). **Change class B** (persisted-state changes) — executed as a **maintainer clean break under the pre-1.0 banner**, per the standing owner ruling (see *Change discipline* below). It was previously framed as the first full exercise of LIFECYCLE-DOCTRINE; that framing described a methodology this plan does not need.
+**Depends on:** nothing hard — **buildable today** against code that exists. Coordinates with: LEARNING-FLYWHEEL §2.2 (its proposal queue lands AS inbox kind=proposal — one attention surface, not a fourth); PROACTIVE-ASSISTANT (the digest built here is its pulled-forward ambient slice); CHANNEL-EXPANSION (channel DM as a rules target; pairing prompts become `agent_request` items); MOBILE-COMPANION (the `push` target activates there).
 **Scope:** end state per the owner's model — **Inbox is THE durable attention store; Notifications is an ephemeral, per-(source, kind)-configurable delivery layer over it.** **Soul guardrail:** `DashboardState.notify()` remains the single delivery choke point (one path per concern) — this plan re-homes *policy and persistence*, never adds a second delivery pipeline. Real-time tool approvals stay session-modal for latency, mirroring into the inbox only when they outlive the prompt. The fail-open philosophy of the existing gate ("a broken settings file must not silence the system") is preserved in the rules engine.
 
 ---
@@ -26,12 +26,39 @@
 - **Rules (`entity_settings/notification_rules.json`):** `{"<source>/<kind>": {mode: never|badge|immediate|digest, targets: [dashboard, channel_dm, push], conditions: {keywords: [], name_mention: bool}}}`; guarded PUTs beside the existing entity routes. Evaluation inside `notify()` **after** the global gate: `never` → drop (debug log); `badge` → persist log entry flagged `badge_only` (no toast broadcast); `immediate` → current behavior + per-target dispatch (`channel_dm` via `ChannelDelivery.deliver_notification`, `push` no-op until plan 44); `digest` → append to `~/.personalclaw/digest_queue.jsonl`. Conditions gate mode escalation (e.g., keyword hit upgrades a `badge` rule to `immediate`) — exactly today's inbox-alert semantics, generalized. Corrupt/missing rules file → registry defaults (fail-open).
 - **Digest:** a system cron (`notification_digest`, owner-configurable schedule, default 08:00 local) drains the queue → one `digest` inbox item (grouped by source/kind, counts + top lines) → delivered per the digest rule's targets. This is the **morning digest** (PROACTIVE-ASSISTANT's ambient slice).
 - **Fold-ins:** skills proposals surface as `proposal` items (created at `enqueue`, resolved by accept/reject actions); loop needs-input/autopause emit `needs_input` items + immediate rule; channel pairing requests (plan 40) emit `agent_request`. LEARNING-FLYWHEEL's queue registers as `proposal` from birth (coordination note in that plan's steps).
-- **Demotion (S5):** notification log becomes a delivery audit (acked/unread semantics removed); `unread_count()` re-derives from inbox; dashboard badge + notifications panel read the new truth; old alert fields in `inbox.json` removed after migration.
+- **Demotion (S5):** notification log becomes a delivery audit (acked/unread semantics removed); `unread_count()` re-derives from inbox; dashboard badge + notifications panel read the new truth; old alert fields in `inbox.json` are removed in the same change that stops reading them.
 
-### Lifecycle artifacts (per LIFECYCLE-DOCTRINE)
+### Change discipline (maintainer clean break — supersedes the earlier gate/migration framing)
 
-- Gate `inbox_unification` (class B, default OFF until S3 completes, ON for fresh installs at S4, removal one release after default-ON).
-- Migrations: `m_YYYYMMDD_inbox_alert_fields_to_rules` (inbox.json keywords/name-mention → conditions on the channel message/mention rules; removes old fields), `m_YYYYMMDD_pending_skill_proposals_to_inbox` (existing pending proposals get inbox items; idempotent by pid).
+This plan changes persisted state, so it was originally written in the migration-backed
+form a *contributor* would use: a `inbox_unification` gate, a dual-path `notify()`, and two
+`lifecycle/migrations/m_*.py` files. **That is not how the maintainer executes it, and the
+gate/dual-path half is not a prerequisite for the feature.** Per the standing owner ruling
+recorded in [AGENTS.md](../../../AGENTS.md) and
+[CONTRIBUTING.md](../../../CONTRIBUTING.md#breaking-changes), during 0.x the maintainer
+lands backward-incompatible clean breaks under the README's pre-1.0 banner. So:
+
+- **No gate.** The rules engine *is* the delivery path — there is no gate-OFF legacy branch
+  to keep byte-identical, and no cleanup session to remove one. Replacement and deletion
+  land in the same change.
+- **No `lifecycle/` machinery.** That package does not exist and must not be hand-rolled
+  (an explicit rejection in both contributor docs). The two migrations become **idempotent
+  backfills keyed on data inspection** — the same shape the tags-table change used, and the
+  same pattern `_init_schema`'s `IF NOT EXISTS` already establishes:
+  - inbox alert fields → rules conditions: if `notification_rules.json` is absent and
+    `inbox.json` still carries `alert_keywords`/`alert_on_name_mention`, project them into
+    the channel message/mention rules, then delete the old fields and their PUT guards.
+  - pending skill proposals → inbox items: for each pending proposal without an item
+    referencing its `pid`, create one. Idempotent by `pid`; re-running is a no-op.
+- **One accepted state break, named up front.** S5 makes inbox `PENDING` the single unread
+  truth and strips acked/unread semantics from the notification log, so an existing
+  install's **unread badge resets once** on upgrade. That is the banner's job to cover:
+  CHANGELOG entry + `personalclaw snapshot` in the release notes. It does not earn a
+  migration.
+
+A contributor picking this plan up instead should read the
+[breaking-changes section](../../../CONTRIBUTING.md#breaking-changes) and surface the state
+change rather than executing it.
 
 ## Contracts & Interfaces (this plan OWNS the attention-path contracts every consumer references — [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md) §1.3 landmine #1)
 
@@ -70,11 +97,14 @@ Every one of the ~10 `notify()` emitters passes a registered `(source, kind)`. T
 ```
 Corrupt/missing → registry defaults + warn (**fail-open**, §2.7). Guarded PUTs beside `providers/entity_routes.py` patterns.
 
-### C3 — Evaluation (inside `notify()`, BEHIND gate `inbox_unification`; gate OFF = byte-identical legacy path)
+### C3 — Evaluation (inside `notify()` — THE delivery path; no gate, per *Change discipline*)
+
+The equivalence the dropped gate would have proven is instead a **regression test on default
+behavior**: with no `notification_rules.json` present, every registered kind must deliver
+exactly as it does today.
 
 ```
 notify(kind_or_(source,kind), title, body, meta):
-  if not gate_enabled("inbox_unification"): <legacy path, unchanged>; return
   if not global_gate_allows(severity): drop(debug); return           # existing min_sev/quiet/mute
   rule = resolve_rule(source, kind)                                    # registry default if unset
   if conditions_match(rule, title, body): rule = escalate(rule)       # keyword/mention → immediate
@@ -108,40 +138,40 @@ def emit_attention_item(*, source: str, kind: str, title: str, body: str,
 
 ### Integration points
 - **Called by:** every `notify()` emitter (~10 sites, T1.2 migrates them to typed kinds); loop watchdog + gateway autopause → `emit_attention_item(kind="needs_input")`; skills `enqueue()` → `emit_attention_item(kind="proposal")` (T4.1); channel trust (plan 40) → `kind="agent_request"`; LEARNING-FLYWHEEL queue registers as `kind="proposal"`.
-- **Calls:** `DashboardState.notify` (unchanged choke point, §3.4), `gate_enabled`, `resolve_kind`, `ChannelDelivery.deliver_notification` (channel_dm target), `skills/proposals.accept/reject` (T4.1), plan-31 migration framework.
+- **Calls:** `DashboardState.notify` (unchanged choke point, §3.4), `resolve_kind`, `ChannelDelivery.deliver_notification` (channel_dm target), `skills/proposals.accept/reject` (T4.1). (No `gate_enabled`, no migration framework — see *Change discipline*.)
 - **Consumed by:** 44 (push target), 45 (native target), 46 (proposal/attribution), 21 (digest is its ambient slice), 40 (channel_dm + agent_request).
 - **Storage owned:** `notification_rules.json`, `digest_queue.jsonl`; **migrates** `inbox.json` alert fields (migration `m_*_inbox_alert_fields_to_rules`) and seeds proposal items (`m_*_pending_skill_proposals_to_inbox`).
 - **Gate:** `inbox_unification` (class B).
 
 ## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
 
-### Session 1 — Kind registry + rules engine (additive, gate OFF = zero behavior change)
+### Session 1 — Kind registry + rules engine (the rules path replaces the ad-hoc one)
 
 | ID | Task | Files | Done when |
 |---|---|---|---|
 | T1.1 | `notification_kinds.py`: registry dataclass + registrations covering every existing `notify()` call site's kind (enumerate by grep; record the inventory in the Execution log); constants exported | create `src/personalclaw/notification_kinds.py`, tests | every current emitter's kind string has a registration; duplicate registration raises |
 | T1.2 | Migrate the ~10 emitters to typed constants (mechanical; zero behavior change — same strings flow through) | the 10 listed modules | grep finds no bare-string kinds at call sites; suite green |
-| T1.3 | Rules store + evaluation: load/validate `notification_rules.json` (guarded PUT routes beside `entity_routes.py` patterns), `resolve_rule(source, kind) -> Rule` with registry defaults + corrupt-file fail-open; evaluation wired into `notify()` **behind the gate** (gate OFF → exact legacy path, byte-identical notes) | `src/personalclaw/notification_rules.py`, `providers/entity_routes.py`, `dashboard/state.py` | with gate OFF: existing notification tests green unchanged; with gate ON in tests: never/badge/immediate/digest each behave per Design |
-| T1.4 | Register gate `inbox_unification` (class B, this plan) + digest queue writer (append-only JSONL, trim at 2× cap) | `lifecycle/gates.py` site, `notification_rules.py` | gate listed; queue writes covered by test |
-| V1 | Validation: gate OFF — drive chat/cron/loop notifications as a user, confirm zero visible change; gate ON (dev home) — set a `never` rule and a `digest` rule, observe drop + queue append | — | both states verified; ledger written |
+| T1.3 | Rules store + evaluation: load/validate `notification_rules.json` (guarded PUT routes beside `entity_routes.py` patterns), `resolve_rule(source, kind) -> Rule` with registry defaults + corrupt-file fail-open; evaluation wired into `notify()` **as the delivery path** (no gate — the pre-rules branch is deleted in this change, per *Change discipline*) | `src/personalclaw/notification_rules.py`, `providers/entity_routes.py`, `dashboard/state.py` | never/badge/immediate/digest each behave per Design; **a default/absent rules file reproduces today's user-visible behavior** for every registered kind (that equivalence is the regression test, replacing the gate-OFF comparison); no second delivery branch remains in `notify()` |
+| T1.4 | Digest queue writer (append-only JSONL, trim at 2× cap) | `notification_rules.py` | queue writes covered by test; trim proven at the boundary |
+| V1 | Validation: with no rules file, drive chat/cron/loop notifications as a user and confirm they behave as before; then set a `never` rule and a `digest` rule and observe the drop + the queue append | — | both states verified; ledger written |
 
 ### Session 2 — Inbox as the attention store
 
 | ID | Task | Files | Done when |
 |---|---|---|---|
 | T2.1 | `InboxItem` extension: `item_kind` (default message), `refs`, `SEEN` status, id helper for non-channel kinds (`{kind}_{uuid8}_{ts}`); `from_dict` tolerance test for old items | `src/personalclaw/inbox.py`, tests | old fixture items load; new kinds round-trip; `ts` property holds for both id shapes |
-| T2.2 | Emit-side helpers: `emit_attention_item(kind, source, title, body, refs, notify_rule=...)` — creates the inbox item AND routes one notification through `notify()` (single choke point preserved); wired for `needs_input` (loop watchdog + gateway autopause sites) behind the gate | `inbox.py`, `loop/watchdog.py`, gateway autopause site | gate ON: a loop needs-input produces one PENDING `needs_input` item + one immediate notification; gate OFF: legacy behavior only |
+| T2.2 | Emit-side helpers: `emit_attention_item(kind, source, title, body, refs, notify_rule=...)` — creates the inbox item AND routes one notification through `notify()` (single choke point preserved); wired for `needs_input` (loop watchdog + gateway autopause sites) | `inbox.py`, `loop/watchdog.py`, gateway autopause site | a loop needs-input produces exactly one PENDING `needs_input` item + one immediate notification (not two of either); the previous notify-only path at those sites is gone |
 | T2.3 | Inbox service/API: list/filter by `item_kind`, mark-SEEN on view, handled/dismissed transitions for non-message kinds (no draft/reply machinery for them) | `inbox_service.py`, `dashboard/handlers/` inbox routes | API filter returns kinds; transitions persist; message-kind behavior untouched |
 | T2.4 | Frontend inbox: kind filter chips + kind-specific row rendering (needs_input rows deep-link their loop/session via `refs`) | `web/src/pages/inbox/` components | chips filter; deep links navigate (URL-state doctrine respected) |
 | V2 | Validation: run a loop to a checkpoint → needs_input appears in inbox, deep-links to the loop, resolves to HANDLED on answer; message items unaffected | — | holds |
 
-### Session 3 — Settings unification (frontend) + migration #1
+### Session 3 — Settings unification (frontend) + the alert-fields backfill
 
 | ID | Task | Files | Done when |
 |---|---|---|---|
 | T3.1 | Notifications settings page: global gate section (existing controls) + rules matrix (source×kind grid: mode selector, targets, conditions editor) + digest schedule field; served from the rules store | `web/src/pages/settings/` (new panel beside MemoryPanel pattern), rules PUT routes | matrix edits persist and take effect on next notify() (no restart) |
-| T3.2 | Migration `m_*_inbox_alert_fields_to_rules` per Design (+ removal of the old fields and their PUT guards after migration; inbox settings page loses the alert section, points at Notifications) | `lifecycle/migrations/m_*.py`, `providers/entity_routes.py`, inbox settings component | migration fixture: keywords/name-mention reappear as conditions; doctor shows applied; old fields gone post-migration |
-| T3.3 | Docs: `docs/architecture/inbox-channels.md` Notifications section rewritten to the rules model (mark legacy paragraphs removed); configuration reference updated | the two docs | docs match gate-ON behavior |
+| T3.2 | Idempotent backfill (**not** a `lifecycle/` migration — see *Change discipline*): if `notification_rules.json` is absent and `inbox.json` still carries `alert_keywords`/`alert_on_name_mention`, project them onto the channel message/mention rules; then delete those fields, their PUT guards, and the inbox settings page's alert section (which points at Notifications instead) | `notification_rules.py`, `providers/entity_routes.py`, inbox settings component | hostile fixture (keywords set / empty / missing file / malformed JSON) → conditions reappear or defaults apply, never a crash; **re-running is a no-op**; old fields and their guards are gone in the same change; a PUT to a removed field 400s |
+| T3.3 | Docs: `docs/architecture/inbox-channels.md` Notifications section rewritten to the rules model (legacy paragraphs deleted, not marked); configuration reference updated | the two docs | docs match shipped behavior; no paragraph describes the removed alert fields |
 | V3 | Validation: as a user — configure a keyword condition in the new UI, send a matching channel message (echo transport), observe the escalated immediate notification; non-matching stays badge | — | holds |
 
 ### Session 4 — Fold the proposal surfaces (Wave 2)
@@ -149,18 +179,18 @@ def emit_attention_item(*, source: str, kind: str, title: str, body: str,
 | ID | Task | Files | Done when |
 |---|---|---|---|
 | T4.1 | Skills proposals → inbox: `enqueue()` also emits a `proposal` item (refs.pid); accept/reject actions on the inbox row call `skills/proposals.accept/reject`; item resolves HANDLED/DISMISSED accordingly | `skills/proposals.py`, inbox handlers, inbox frontend row actions | proposing → item appears; approve from inbox installs the skill (existing accept path); reject dismisses |
-| T4.2 | Migration `m_*_pending_skill_proposals_to_inbox` (idempotent by pid) | `lifecycle/migrations/m_*.py` | fixture with 3 pending proposals gains exactly 3 items; re-run no-op |
+| T4.2 | Idempotent backfill (**not** a `lifecycle/` migration): every pending proposal without an inbox item referencing its `pid` gains one | `skills/proposals.py` or inbox service, tests | fixture with 3 pending proposals gains exactly 3 items; re-run no-op; a proposal already carrying an item is untouched |
 | T4.3 | Skills page's approval tab becomes a filtered-inbox embed (component reuse — one surface, no second approval UI to maintain) — or, if embed friction is high, links to the filtered inbox (record choice as DEVIATION/decision) | `web/src/pages/skills/` | one code path renders proposals everywhere |
 | T4.4 | Session-modal approvals: when a tool-approval prompt outlives its session view (unanswered > TTL or session backgrounded), mirror an `agent_request` item (refs.session, deep-link to the approval); answering either surface resolves both | approval prompt machinery (`chat_runner`/approval path — locate `resume`/`approve` route), inbox wiring | timed-out approval appears in inbox; answering from inbox unblocks the session |
 | V4 | Validation: full proposal round-trip from inbox; a backgrounded approval recovered via inbox on a phone-sized viewport | — | holds |
 
-### Session 5 — Digest + demotion + cleanup (Wave 2)
+### Session 5 — Digest + demotion (Wave 2)
 
 | ID | Task | Files | Done when |
 |---|---|---|---|
 | T5.1 | Digest cron: system cron registration (respects `--no-crons`), drain queue → grouped `digest` inbox item + delivery per rule targets (dashboard + channel_dm via existing `deliver_notification`/`deliver_cron_result` precedent — record which fits) | `notification_rules.py` digest builder, cron registration site (`schedule.py` patterns) | scheduled run produces one digest item with correct grouping; empty queue → no item |
 | T5.2 | Demotion: `unread_count()` derives from inbox PENDING; notification log loses acked/unread semantics (becomes delivery audit; panel renders read-only history); badge + panel wired to inbox truth | `dashboard/state.py`, notifications panel component | badge counts inbox PENDING only; audit panel shows deliveries; no unread semantics remain on the log |
-| T5.3 | Cleanup per doctrine: gate default-ON for fresh installs → flip note in CHANGELOG → legacy code paths (pre-rules notify branch, old unread derivation) deleted; gate registered for removal next release | `dashboard/state.py`, gates registry, `CHANGELOG.md` | grep finds no gate-OFF branches; gate marked for removal; suite green |
+| T5.3 | CHANGELOG entry naming the one accepted state break — the unread badge resets once because acked/unread semantics leave the notification log — with `personalclaw snapshot` advised in the release notes | `CHANGELOG.md` | entry present and specific about what a user observes; the old unread derivation is gone from `state.py` (deleted in T5.2, verified by grep) |
 | V5 | Validation: 24h dogfood on the owner's real instance (owner task 2) — digest arrives on schedule with the day's badge-mode items; unread badge tracks inbox exactly; SEL/audit review shows sane delivery history | — | owner-confirmed; ledger written |
 
 ## Owner tasks (real world)
@@ -245,3 +275,74 @@ Extends **Session 4** (which already owns the proposal fold-in): T4.1 becomes th
 | T7.1 | C6 Proposal dataclass + apply dispatcher (four apply cases through existing dispatchers; typed failure keeps item PENDING); T4.1's skill path re-expressed as `skill_promotion` | `inbox.py` or new `proposals_contract.py`, inbox handlers, tests | each apply case round-trips on fixtures; a failing apply surfaces the error on the item; skills accept path behavior unchanged |
 | T7.2 | App emission: `permissions.proposals` manifest field + kind registration at enable-time + `POST /api/inbox/proposals` (scoped-token identity, 403 on undeclared kind/foreign callback) | `apps/manifest.py`, `apps/permissions.py`, inbox handlers | fixture app posts a proposal that renders + applies via its callback; undeclared kind rejected; SEL entry per app emission |
 | T7.3 | Proposals lens + same-(provenance,kind) batch-approve with per-item outcomes; edit-then-approve for `editable` payloads | `web/src/pages/inbox/` | batch across mixed kinds impossible in the UI; edited payload is what apply receives; per-item results visible |
+
+---
+
+## Execution log
+
+- 2026-07-30 — **DONE (Session 1: T1.1–T1.4).** Typed kind registry
+  (`notification_kinds.py`, 20 pairs), all 26 emitters migrated to named constants, rules
+  store + evaluation (`notification_rules.py`) wired into `notify()` as THE delivery path,
+  guarded `GET/PUT /api/notifications/rules`, and the digest queue writer.
+
+  **DEVIATION (methodology re-scope, not premise mismatch).** The session's tasks were
+  written in contributor form: T1.3 asked for evaluation "behind the gate (gate OFF → exact
+  legacy path, byte-identical notes)", T1.4 for a `lifecycle/gates.py` registration, and S5's
+  T5.3 for a gate flip + legacy-branch deletion. `src/personalclaw/lifecycle/` does not
+  exist, and per the owner's standing ruling (workspace `AGENTS.md` "You are working as the
+  OWNER", `CONTRIBUTING.md#breaking-changes`) maintainer class-B work is a clean break under
+  the pre-1.0 banner. So: **no gate, no dual path, no cleanup session** — the rules engine
+  replaced the ad-hoc branch in one change. The equivalence the gate-OFF task would have
+  proven is now a regression test on DEFAULT behavior
+  (`test_no_rules_file_delivers_exactly_like_before`). The plan header, the
+  Lifecycle-artifacts section (now *Change discipline*), C3, and five task rows were
+  rewritten to match; the correction was also traced to its source in LIFECYCLE-DOCTRINE and
+  fixed across ROADMAP/CLAUDE/INTEGRATION-ARCHITECTURE/EXECUTION-PROTOCOL.
+
+  **T1.1 inventory (26 call sites, 11 flat kinds).** Built by AST walk, not grep — **two
+  sites pass a DYNAMIC kind** a grep inventory misses (`loop/watchdog.py:159` via
+  `_NOTIFY_EVENTS`, `action_providers/notify_provider.py:59` via config) and a **third**
+  (`watchdog.py:222`) passes a literal `"info"` that my first pass mis-bucketed as dynamic —
+  found by the T1.2 drift test. Sites: gateway ×15 (cron ×5, heartbeat ×5, subagent ×4,
+  warning), watchdog ×2, feedback, inbox, denylist, hooks, messaging, app_routes,
+  send_message, notify_provider.
+
+  **Three behavior changes caught by the new tests before they shipped** — all the same
+  class, *a refactor silently changing what reaches the user with no setting they touched*:
+  (1) `badge` defaults on heartbeat / loop-progress / signal-retirement would have STOPPED
+  delivering three kinds (read as "notifications broke"); (2) ranking cron **failures** as
+  warning would have STARTED delivering them to anyone with `min_severity: warning`, since
+  the old gate ranked that flat string info; (3) same for `app.route.drift`. Every
+  `default_mode` is now `immediate` and every reachable pair keeps its historical severity,
+  both pinned by tests (`test_every_default_mode_is_immediate`,
+  `test_reachable_pairs_preserve_their_old_severity_exactly`). `badge` is opt-in per row.
+
+  **Conditions preserve the surface they generalize.** Keyword/name-mention semantics are
+  lifted verbatim from `inbox.evaluate_alert` (case-insensitive substring; whole-word name
+  parts ≥3 chars), and `test_conditions_match_agrees_with_inbox_evaluate_alert` drives the
+  REAL `evaluate_alert` and the new `Conditions.matches` over the same inputs so S3's
+  backfill cannot change the meaning of alert config users already have. Escalation is
+  capped at `immediate` and deliberately does NOT add targets — a keyword hit means "show me
+  now", not "also DM me off this machine".
+
+  **DISCOVERY (pre-existing, not fixed here):** the SPA's display map
+  (`web/src/pages/notifications/notificationMeta.ts`) has rows for `schedule` and `loop`
+  that **no backend emitter passes**. Mapped to their nearest real registration so
+  notifications persisted by an older build still resolve, and pinned by
+  `test_frontend_display_map_kinds_all_resolve`.
+
+  **Validated as a user** on an isolated dev home (port 10741, never the owner's :10000):
+  `GET /api/notifications/rules` returned a row for all 20 registered kinds with defaults;
+  PUT persisted `never` to disk and the read path honored it; unknown kind / bad mode /
+  unknown target / malformed conditions / bad cron all 400'd; a valid digest schedule
+  round-tripped. Then drove `notify()` against the real store: **never** dropped (0 logged,
+  0 broadcast), **immediate** delivered (1/1), **badge** logged without a toast (1/0,
+  `badge_only: true`), **digest** queued instead of logging (0/0, entry in the queue), and a
+  keyword hit escalated badge→immediate (`escalated_by: "keyword: urgent"`). Confirmed the
+  global gate still wins: `mute_all` beat both an `immediate` and a `digest` rule (nothing
+  delivered, nothing queued), and a corrupt rules file failed **open** (delivered). **0
+  gateway tracebacks.**
+
+  **Gates:** `make lint` clean (mypy 553 files) · `make test` **9249 passed, 0 failed**.
+  Tests: `test_notification_kinds.py` (45), `test_notification_rules.py` (60), +14 route
+  cases in `test_entity_settings_routes.py` (37 in file).

@@ -258,3 +258,134 @@ async def test_state_notify_respects_gate(monkeypatch, tmp_path):
     er._save_entity_settings("notifications", {"mute_all": False})
     ds.notify("info", "Live", "delivers")
     assert len(ds._notification_log) == 1 and len(broadcasts) == 1 and len(persisted) == 1
+
+
+# ── Notification rules matrix (INBOX-NOTIFICATIONS-UNIFICATION T1.3) ──
+#
+# The guards here exist because a rules file that fails to parse degrades to
+# registry defaults — which means a REJECTED-at-write value that got persisted
+# anyway becomes silent policy failure: the user sets `never` on a noisy kind,
+# sees it accepted, and keeps getting notified. So the PUT must 400 rather than
+# store anything the read path would later ignore.
+
+
+@pytest.fixture()
+def _isolate_rules(monkeypatch, tmp_path):
+    from personalclaw import notification_rules as nr
+
+    (tmp_path / "entity_settings").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(nr, "config_dir", lambda: tmp_path)
+    return tmp_path
+
+
+@pytest.mark.asyncio
+async def test_rules_get_returns_a_row_per_registered_kind(_isolate_rules):
+    from personalclaw import notification_kinds as nk
+
+    resp = await er.handle_notification_rules_get(MagicMock())
+    data = await _json(resp)
+    assert {r["key"] for r in data["rules"]} == {k.key for k in nk.all_kinds()}
+    assert data["digest"]["schedule"]
+
+
+@pytest.mark.asyncio
+async def test_rules_put_persists_and_takes_effect(_isolate_rules):
+    from personalclaw import notification_rules as nr
+
+    resp = await er.handle_notification_rules_put(
+        _req({"rules": {"heartbeat/status": {"mode": "badge"}}})
+    )
+    data = await _json(resp)
+    assert data["ok"] is True
+    # The effective read path — not just the response echo — must reflect it.
+    assert nr.resolve_rule("heartbeat", "status").mode == "badge"
+
+
+@pytest.mark.asyncio
+async def test_rules_put_merges_rather_than_replacing(_isolate_rules):
+    from personalclaw import notification_rules as nr
+
+    await er.handle_notification_rules_put(_req({"rules": {"heartbeat/status": {"mode": "badge"}}}))
+    await er.handle_notification_rules_put(_req({"rules": {"hook/fired": {"mode": "never"}}}))
+    assert nr.resolve_rule("heartbeat", "status").mode == "badge", "second PUT dropped the first"
+    assert nr.resolve_rule("hook", "fired").mode == "never"
+
+
+@pytest.mark.asyncio
+async def test_rules_put_rejects_unknown_kind(_isolate_rules):
+    resp = await er.handle_notification_rules_put(_req({"rules": {"nope/nada": {"mode": "never"}}}))
+    assert resp.status == 400
+    assert "unknown notification kind" in (await _json(resp))["error"]
+
+
+@pytest.mark.asyncio
+async def test_rules_put_rejects_unknown_mode(_isolate_rules):
+    """A typo'd mode would read back as the default — accept it and policy lies."""
+    resp = await er.handle_notification_rules_put(_req({"rules": {"hook/fired": {"mode": "nevr"}}}))
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_rules_put_rejects_unknown_target(_isolate_rules):
+    resp = await er.handle_notification_rules_put(
+        _req({"rules": {"hook/fired": {"targets": ["hologram"]}}})
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"rules": ["hook/fired"]},
+        {"rules": {"hook/fired": "never"}},
+        {"rules": {"hook/fired": {"targets": "dashboard"}}},
+        {"rules": {"hook/fired": {"conditions": []}}},
+        {"rules": {"hook/fired": {"conditions": {"keywords": "deploy"}}}},
+        {"rules": {"hook/fired": {"conditions": {"keywords": [1, 2]}}}},
+        {"rules": {"hook/fired": {"conditions": {"name_mention": "yes"}}}},
+        {"digest": []},
+        {"digest": {"schedule": "not a cron"}},
+        {"digest": {"schedule": 8}},
+    ],
+)
+async def test_rules_put_rejects_malformed_shapes(_isolate_rules, bad):
+    resp = await er.handle_notification_rules_put(_req(bad))
+    assert resp.status == 400, f"should have rejected {bad!r}"
+
+
+@pytest.mark.asyncio
+async def test_rules_put_rejects_non_object_body(_isolate_rules):
+    resp = await er.handle_notification_rules_put(_req(["not", "an", "object"]))
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_rules_put_persists_a_valid_digest_schedule(_isolate_rules):
+    from personalclaw import notification_rules as nr
+
+    resp = await er.handle_notification_rules_put(_req({"digest": {"schedule": "0 7 * * 1-5"}}))
+    assert resp.status == 200
+    assert nr.digest_settings()["schedule"] == "0 7 * * 1-5"
+
+
+@pytest.mark.asyncio
+async def test_rules_put_stores_conditions_that_escalate(_isolate_rules):
+    from personalclaw import notification_rules as nr
+
+    await er.handle_notification_rules_put(
+        _req(
+            {
+                "rules": {
+                    "hook/fired": {
+                        "mode": "badge",
+                        "conditions": {"keywords": ["deploy"], "name_mention": True},
+                    }
+                }
+            }
+        )
+    )
+    rule = nr.resolve_rule("hook", "fired")
+    assert rule.mode == "badge"
+    assert rule.conditions.matches("please deploy now") == "keyword: deploy"
+    assert rule.escalated().mode == "immediate"

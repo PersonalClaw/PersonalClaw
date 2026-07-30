@@ -21,6 +21,8 @@ import os
 import re
 from dataclasses import dataclass
 
+from personalclaw import notification_kinds
+
 logger = logging.getLogger(__name__)
 
 
@@ -210,7 +212,7 @@ def enforce_action(provider_name: str, action_config: dict, ctx: object = None) 
             services = get_action_services()
             if services is not None and getattr(services, "state", None) is not None:
                 services.state.notify(
-                    "warning",
+                    notification_kinds.WARNING,
                     "Action needs your approval",
                     f"An automated action via {provider_name!r} was held: {decision.reason}. "
                     f"Review it in Settings → Guardrails.",
