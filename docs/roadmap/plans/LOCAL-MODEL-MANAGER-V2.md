@@ -296,3 +296,58 @@ Where each piece plugs into the pluggable-provider architecture (recon: provider
 8. The loaded-models widget lists every resident occupant with attribution; Unload actually frees RSS (verified by the pressure snapshot); a model resident after a binding switch shows `is_active: false`.
 9. `refresh_providers()` after a config change leaves every bundled/sidecar provider registered (the two-population regression stays closed, now under test).
 10. The full test suite runs with a fixture guaranteeing no fs-touching test can reach a real model dir — the bound-model-deletion incident is unreproducible by construction.
+
+## Execution log
+
+- 2026-07-30 — **PARTIAL (§4.4 the shared layout probe + §4.2 cleanup candidates).
+  DEVIATION: scoped to one slice of a large plan.**
+
+  **DEVIATION — why §4.4 and not the plan's front half.** This plan is ~12 sections spanning a
+  capability matrix, sidecar venv isolation, resumable install jobs, a download manager rewrite,
+  an HF token cascade, selftests and a memory widget. §4.4 was taken because it is (a) the one
+  slice with a **consumer already waiting** — `resilience/doctor.py:418` carries a scope note
+  reading *"the on-disk HF `models--` layout probe belongs to LOCAL-MODEL-MANAGER-V2
+  (`local_models/layouts.py`, unbuilt)"* — and (b) a **bug-class fix rather than a feature**, so
+  it is complete in itself and cannot be half-done. Sidecar isolation and the token cascade
+  remain unstarted. Recorded per the sprint's decide-and-continue rule.
+
+  **The bug class.** A downloaded model lands on disk in several shapes and every consumer was
+  guessing at one: the HF hub snapshot (`models--{org}--{name}/snapshots/{rev}/`, where the model
+  id **never appears literally**), a provider-native directory from its own `save()`, or a direct
+  file with any of several extensions. Guessing wrong gives either a `downloaded` flag reading
+  **False for a model sitting right there** — the user re-downloads gigabytes — or a `delete` that
+  reports success while leaving weights behind, so **the disk never frees**. Both were observed;
+  hence one shared probe over EVERY layout.
+
+  **Three judgment calls worth naming.**
+  1. **A partial is NOT downloaded.** `blobs/*.incomplete` or a bare `.part` means an interrupted
+     fetch, and reporting it as present yields a model that fails at load with no explanation —
+     worse than reporting nothing. A zero-byte file is likewise a placeholder, not a model.
+  2. **Deleting is greedy.** `delete_all_layouts` removes every layout it finds (and the partials)
+     rather than stopping at the first hit: a model fetched twice by different paths leaves two
+     copies, and freeing one is the disk-never-frees bug in a different costume. Verified live —
+     two copies, both deleted.
+  3. **The runner's second opinion is ASYMMETRIC.** The provider's `downloaded` flag is
+     authoritative when it says **yes** (only it knows backend-specific layouts); the probe is
+     consulted only when it says **no**. A false NO costs the user gigabytes and is the common
+     failure; a false YES would be worse, so the probe only ever ADDS a yes, and only on
+     finished non-empty bytes.
+
+  **Two self-inflicted test bugs, both instructive.** My first `.part` test failed for a real
+  reason: partial suffixes were absent from `candidate_paths`, so `delete_all_layouts` could not
+  sweep a cancelled download's leftovers — the invisible-leftover half of the same bug. Fixed in
+  the code. Then the destructive-test guard the plan asks for **matched its own source twice** (a
+  literal scan tripping over the very path names it warns about, then over the fs verbs it scans
+  for). Replaced with a structural check — every fs-touching test in the module must take
+  `tmp_path` — which is the property that actually protects the developer, since a test hard-coding
+  a path would not have the fixture.
+
+  **Validated as a user** against a REAL hf-hub cache shape (isolated tmp dir, never the models
+  root): a symlinked `snapshots/{rev}/model.safetensors → blobs/{sha}` was detected as downloaded;
+  an `.incomplete` blob beside it was surfaced as a cleanup candidate with its size (the "Reclaim
+  N GB" input) and did **not** count as downloaded; a second provider-native copy made
+  `downloaded_layouts` report **2**; and `delete_all_layouts` removed both, after which
+  `is_downloaded` was False.
+
+  **Gates:** `make lint` clean (mypy 557 files) · `make test` **9541 passed, 0 failed**.
+  Tests: `tests/test_local_model_layouts.py`, 47 cases.
