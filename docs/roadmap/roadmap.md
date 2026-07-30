@@ -178,7 +178,7 @@ The product getting richer and more polished: platform/app evolution, knowledge-
 - WORKFLOWS-V2 Slices 0-5 (data model + frontier scheduler, engine-owned completion, effect ledger, mutations + checkpoints/fork, chat tools + HTTP/FE + live widget; Self-Verification replay gates the journal format)
 - Channel Expansion (Sessions 1-3: sender-trust core seam, then Telegram)
 - **Remote User Authentication (plan 53: durable session foundation → owner credential + CLI/deploy bootstrap → login front door → public-exposure hardening — the prerequisite for remote companion clients)**
-- Inbox/Notifications Unification (Sessions 1-3: kind registry + rules engine, inbox as the attention store, settings unification) — first full LIFECYCLE-DOCTRINE exercise
+- Inbox/Notifications Unification (Sessions 1-3: kind registry + rules engine, inbox as the attention store, settings unification) — executed as a maintainer clean break under the pre-1.0 banner (the earlier "first full LIFECYCLE-DOCTRINE exercise" framing described a methodology, not a dependency; corrected 2026-07-30)
 - Learning Visibility (Sessions 1-2: end-to-end visible slice, "What I learned" surfaces)
 - Onboarding UX (Sessions 1-2: guided first run, progressive disclosure)
 - Platform Reach Track A (ARM: arm64 CI + SQLite-fallback verification, multi-arch release-blocking)

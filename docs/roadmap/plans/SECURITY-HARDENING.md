@@ -55,6 +55,15 @@ def credential_backend() -> CredentialBackend: ...   # keychain if available+ena
 |---|---|---|---|
 | T1.1 | Keyring backend behind the credential API: `save_credential`/read gain a backend selector (`keychain` | `dotenv`), `keyring` as an optional extra; **absent secret service → fall back to `.env` 0600 with a doctor warning (never plaintext-elsewhere)** | `src/personalclaw/config/loader.py`, `pyproject.toml` extra, `cli_doctor.py` | reads are backend-transparent; headless fixture (no keyring) uses `.env`; backend reported by doctor; unit tests both backends |
 | T1.2 | Register gate `credential_keychain` (class B) + migration `m_*_credentials_to_keychain` (moves `.env` secrets → keychain, removes the keys from `.env`; idempotent; snapshot-backed; rollback restores `.env`) | `lifecycle/gates.py`, `lifecycle/migrations/m_*.py` | migration fixture (with a fake keyring) moves + verifies; rollback restores; `portability` export still excludes secrets |
+
+> **These `lifecycle/` references are deliberate, not stale.** This plan is ordered
+> **after** LIFECYCLE-DOCTRINE by owner decision (workspace `CLAUDE.md` §7 capstones: "its
+> keychain slice is class-B and lands post-Lifecycle-Doctrine, as ordered"), so the gate and
+> migration runner will exist when T1.2 executes. Unlike the plans re-scoped on 2026-07-30,
+> do **not** rewrite this row into a clean break: **silently losing a user's stored
+> credentials is not an acceptable clean break**, and the rollback path is the point of the
+> task. If this slice is ever pulled forward ahead of LIFECYCLE-DOCTRINE, that is a genuine
+> escalation, not a re-scope.
 | T1.3 | Settings → Security note: which backend is active + a "move to keychain" action (triggers the migration with the snapshot confirm) | security settings component | action runs the migration with a visible snapshot step; state reflects post-migration |
 | V1 | Validation: on macOS — migrate a test credential into Keychain, confirm chat still authenticates, rollback restores `.env`; on a headless fixture — confirm `.env` fallback + warning | — | both paths recorded |
 

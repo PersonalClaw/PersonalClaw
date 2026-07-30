@@ -14,7 +14,8 @@
 
 ```
 31 LIFECYCLE-DOCTRINE ──────────────┬────────────────────────────────────────────┐
-  (gates + migrations + tiers)      │ (every class-B/S change needs these)        │
+  (gates + migrations + tiers)      │ (CONTRIBUTOR methodology — NOT a maintainer  │
+  ⚠ deferred; blocks NOTHING        │  build dependency; see the note below)       │
                                     ▼                                             │
 33 CI-RELEASE ──► 34 DISTRIBUTION   42 INBOX-NOTIF-UNIFICATION ◄── 40 CHANNEL (S1 trust)
   │  (pipeline)     │ (artifacts)     │ (kind registry, rules, inbox kinds)        │
@@ -30,6 +31,16 @@
 37 OSS-OPERATIONS (model+hygiene) ──► 38 ECOSYSTEM (front door)
 39 PLATFORM-REACH (arm/windows) ──► 45 DESKTOP (non-mac targets)   43 ONBOARDING (independent)
 ```
+
+> **The 31 → everything edge is NOT a build dependency (corrected 2026-07-30).** Plan 31
+> defines the *contribution methodology* for breaking changes; during 0.x the maintainer is
+> exempt and lands clean breaks under the pre-1.0 banner, so plans downstream of 31 —
+> notably **42 INBOX-NOTIF-UNIFICATION** — are **buildable now**, and are cheaper without
+> the gate/dual-path half. Read that edge as "these plans' *published contributor* story
+> needs 31," never as "these plans must wait." The genuine exception is **47
+> SECURITY-HARDENING**'s keychain slice, deliberately ordered after 31 because losing stored
+> credentials is not an acceptable clean break. Rows in §1.2 marked "plan 31" as producer
+> follow the same reading.
 
 ### 1.2 The shared seams and who touches them
 
@@ -125,6 +136,14 @@ Apps import core ONLY via `personalclaw.sdk.*` (enforced by `tests/test_apps_imp
 ---
 
 ## 4. The three foundational contracts (owned by plan 31 — reproduced here as the index; plan 31 is authority)
+
+> **§4.1–4.2 describe machinery that DOES NOT EXIST YET.** `src/personalclaw/lifecycle/` is
+> unbuilt (LIFECYCLE-DOCTRINE is deliberately ordered late). These are the contracts that
+> plan will implement — the specification a *future* consumer codes against, not an API
+> available today. A plan task naming `lifecycle/gates.py` or `lifecycle/migrations/m_*.py`
+> **re-scopes to clean-break form** rather than blocking or hand-rolling the mechanism (see
+> [EXECUTION-PROTOCOL §2](EXECUTION-PROTOCOL.md)). The one exception is a plan explicitly
+> ordered *after* LIFECYCLE-DOCTRINE, such as SECURITY-HARDENING's keychain slice.
 
 ### 4.1 Gate registry
 `Gate(id: str, owner_plan: str, created: str, change_class: Literal["R","B","S"], summary: str, removal_condition: str, target_removal: str, default: bool)`; `register(gate) -> None`; `all_gates() -> list[Gate]`; `gate_enabled(id: str) -> bool` (missing state→default; unregistered id→`KeyError`). State: `~/.personalclaw/gates.json` `{id: {enabled: bool, flipped_at: str}}`. CLI: `personalclaw gates list|set <id> on|off`. **Consumers call `gate_enabled("<id>")` at the call site, never cache it.**
