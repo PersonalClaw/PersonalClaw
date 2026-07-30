@@ -462,3 +462,60 @@ Extends **Session 4** (which already owns the proposal fold-in): T4.1 becomes th
   **Gates:** `make lint` clean (mypy 553 files) · `make test` **9359 passed, 0 failed** ·
   web typecheck + 302 vitest + build + render smoke green.
   Tests: `tests/test_inbox_proposals.py`, 32 cases.
+
+- 2026-07-30 — **DONE (Session 5: T5.1–T5.3). The plan is COMPLETE (S1–S5).**
+
+  **T5.1 — the digest.** `build_digest_body` groups by kind (the point of a digest is that "9
+  heartbeats" is ONE fact, not nine), newest-first within a group, capped at
+  `DIGEST_LINES_PER_GROUP` with a remainder count so a busy day can't produce an unbounded
+  summary. `run_digest` drains **before** writing: a write failure loses one digest body
+  rather than leaving entries that get re-digested tomorrow *and* re-notified. An empty queue
+  produces **nothing** — a daily "you have no notifications" item would be a reminder that
+  nothing happened. Shipped as a deterministic action provider (`notification-digest`), not an
+  agent turn: a digest is a grouping of things that already happened, so a model would add
+  latency, cost, and a chance of inventing detail for a summary whose whole value is accuracy.
+  Registered as a `silent` system cron — the digest's OUTPUT is an inbox item, so a cron-result
+  toast would be a notification about your notifications.
+
+  **T5.2 — the demotion.** `unread_count()` now counts inbox items in PENDING. The two stores
+  had become two answers to one question: the log tracked "was a toast acknowledged", the inbox
+  tracks "is this dealt with" — so handling a request in the inbox still left a badge lit, and
+  dismissing a toast cleared the badge for work that was still outstanding. Counts PENDING
+  only, not SEEN: the badge means "new since you last looked". Fails to 0 rather than raising —
+  a badge is chrome and must not take down the sessions payload.
+
+  **T5.3 — the accepted state break, in the CHANGELOG.** The badge resets once on upgrade.
+  Written for a user, not a developer: what changes, that nothing is lost, why it's more honest
+  afterwards, and `personalclaw snapshot` per the banner.
+
+  **THREE integration gaps the full suite caught that unit tests could not:**
+  1. `notification-digest` was registered as an action provider but absent from
+     `ALLOWED_HOOK_PROVIDERS`, so **trigger validation would have refused to dispatch it** —
+     the cron would look healthy and produce no digest. (`test_native_hook_providers` exists
+     precisely to catch a registered-but-unroutable provider.)
+  2. Two harness tests cascaded from the same gap.
+  3. **A bug my own fakes hid.** `reconcile_digest_cron` read `getattr(job, "cron_expr")`, but
+     the real `ScheduleJob` stores it at `job.schedule.cron_expr` (a nested
+     `ScheduleDefinition`) — a flat read always yields None, so the reconcile would have
+     "converged" the schedule on **every startup**, churning the job file forever. My
+     `_FakeJob` had invented the flat attribute, so the fake agreed with the bug. Fixed the
+     code, rebuilt the fake on the real dataclass, and added
+     `test_fake_job_matches_the_real_schedule_shape` so a future shape change fails loudly
+     instead of silently re-hiding this.
+
+  **Validated as a user** on an isolated dev home (port 10745, never :10000). Set `digest` mode
+  on two kinds and fired notifications through the **real** `notify()`: 7 queued, 1 badge-only
+  persisted, 0 toasts broadcast. `run_digest` produced one item titled "Digest — 7
+  notifications" with the grouped body (`**Scheduled job result** — 2` / `**Heartbeat** — 5` +
+  "…and 2 more"), drained the queue, and a second run returned "" with nothing created.
+  Against the **real** `ScheduleService`: the cron registered as `kind=cron cron=0 8 * * *
+  silent=True provider=notification-digest`, three reconciles with an unchanged schedule were a
+  no-op, and editing the schedule in the rules store converged the job to `30 6 * * 1-5`. The
+  badge: 1 PENDING item → `unread_count() == 1`; **20 delivered toasts left it at 1**; handling
+  the item took it to 0. **0 gateway tracebacks.**
+
+  **Gates:** `make lint` clean (mypy 554 files) · `make test` **9387 passed, 0 failed**.
+  Tests: +25 digest/cron cases in `test_notification_rules.py` (102 in file), `TestUnreadDerived`
+  rewritten to the inbox contract (`test_dashboard.py`, 27 in file — its old isolation patched
+  only `state.config_dir`, so my inbox read hit the DEVELOPER'S real inbox and returned 39;
+  both `config_dir` seams are now patched).

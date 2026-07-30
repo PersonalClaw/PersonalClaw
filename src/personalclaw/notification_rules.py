@@ -390,3 +390,74 @@ def drain_digest_queue() -> list[dict[str, Any]]:
     except OSError:
         logger.warning("digest queue truncate failed", exc_info=True)
     return out
+
+
+# ── The digest (T5.1) ───────────────────────────────────────────────────
+
+
+#: Per-group lines in the digest body. A digest that reproduces every notification is just
+#: the notification list with extra steps; the count carries the volume, a few examples
+#: carry the substance.
+DIGEST_LINES_PER_GROUP = 3
+
+
+def build_digest_body(entries: list[dict[str, Any]]) -> str:
+    """One grouped summary of *entries*, or "" when there is nothing to say.
+
+    Grouped by the notification's wire kind rather than listed flat: the point of a digest is
+    that "9 heartbeats" is one fact, not nine. Within a group the newest lines come first,
+    capped, with a remainder count so the summary never grows unbounded on a busy day.
+    """
+    if not entries:
+        return ""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for e in entries:
+        groups.setdefault(str(e.get("kind") or nk.GENERIC_KIND), []).append(e)
+
+    lines: list[str] = []
+    for kind in sorted(groups):
+        items = groups[kind]
+        registered = nk.kind_for_legacy(kind)
+        label = registered.label or kind
+        lines.append(f"**{label}** — {len(items)}")
+        # Newest first: on a long list the recent ones are the ones still worth reading.
+        for e in list(reversed(items))[:DIGEST_LINES_PER_GROUP]:
+            title = " ".join(str(e.get("title") or "").split())
+            lines.append(f"- {title}" if title else "- (no title)")
+        remainder = len(items) - DIGEST_LINES_PER_GROUP
+        if remainder > 0:
+            lines.append(f"- …and {remainder} more")
+    return "\n".join(lines)
+
+
+def run_digest(state: Any = None) -> str:
+    """Drain the digest queue into ONE inbox item. Returns its id, or "" when empty.
+
+    An empty queue produces **nothing** — not an empty "you have no notifications" item,
+    which would be a daily reminder that nothing happened.
+
+    The queue is drained BEFORE the item is written, so a failure to write cannot leave
+    entries that get re-digested tomorrow *and* re-notified. Losing one digest body is a
+    smaller harm than a queue that never clears.
+    """
+    entries = drain_digest_queue()
+    if not entries:
+        logger.debug("digest: queue empty, nothing to summarize")
+        return ""
+    body = build_digest_body(entries)
+    if not body:
+        return ""
+    try:
+        from personalclaw.inbox import ItemKind, emit_attention_item
+
+        return emit_attention_item(
+            state,
+            source="system",
+            kind="digest",
+            item_kind=ItemKind.DIGEST.value,
+            title=f"Digest — {len(entries)} notification{'s' if len(entries) != 1 else ''}",
+            body=body,
+        )
+    except Exception:
+        logger.warning("digest: could not create the inbox item", exc_info=True)
+        return ""
