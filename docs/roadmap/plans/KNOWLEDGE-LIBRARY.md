@@ -1,6 +1,6 @@
 # Plan: Knowledge Library — Collections, Curation, and Reading
 
-**Status:** IN PROGRESS — Session 1 (collections + item curation) shipped 2026-07-29; S2 T2.1 + T2.3 shipped 2026-07-29 (curation display/filters + bulk ops); T2.2 (tags taxonomy) needs an owner re-scope — see the S2 log. Created as DESIGNED — created 2026-07-18 (roadmap rev 10; owner ask: more library-management capabilities for knowledge articles)
+**Status:** IN PROGRESS — Session 1 (collections + item curation) shipped 2026-07-29; **Session 2 COMPLETE** — T2.1 curation display/filters, T2.2 tags taxonomy (authoritative tag rows + hierarchy), T2.3 bulk ops, all shipped 2026-07-29. Session 3 (reading view, dedup, library home) not started. Created as DESIGNED — created 2026-07-18 (roadmap rev 10; owner ask: more library-management capabilities for knowledge articles)
 **Created:** 2026-07-18
 **Wave:** 2 (S1-2: collections + curation) + 3 (S3: reading experience + saved views)
 **Depends on:** nothing hard (builds on the shipped knowledge store). Coordinates with KNOWLEDGE-SYNTHESIS (5 — synthesis nodes produce library items), WATCHED-SOURCES (15 — watched sources land in collections), DESIGN-SYSTEM-CONSISTENCY (51 — the library UI is a flagship consistency surface), MEMORY-GRAPH-AND-VAULT (14 — knowledge-side graph is distinct: knowledge.db = the user's items).
@@ -334,3 +334,106 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
 
   **T2.1 is now complete.** Remaining in S2: **T2.2 (tags taxonomy)**, which still needs
   the owner re-scope ruling recorded in the T2.3 log above.
+- 2026-07-29 — **DONE (S2: T2.2 tags taxonomy).** Tags moved from a JSON column on
+  `items` into an AUTHORITATIVE `tags` + `item_tags` pair; the column is DROPPED. Owner
+  ruling (option B) over my recommendation of a derived registry.
+
+  **The clean-break shape.** The plan's done-when asked for "old JSON still readable
+  during dual-path", which pre-Lifecycle-Doctrine doctrine forbids — but that was ONE
+  CLAUSE, not a blocker, and treating it as one was my error (the owner corrected it).
+  Executed as a single-pass migration with no dual path.
+
+  **Schema decisions that differ from the plan's §32 sketch, deliberately:**
+  - **Surrogate `id INTEGER PRIMARY KEY` with `name` merely UNIQUE**, not `name` as the
+    PK. A rename is then one row instead of a cascade across every membership row and
+    every child's parent pointer. (`mem_entities` is the in-repo precedent.)
+  - **`parent_id` is NULL for a root**, not `''` — it is what a self-FK can express, and
+    it keeps "no parent" out of the name space. `ON DELETE SET NULL` re-parents children
+    rather than cascading, so deleting a parent never destroys the branch beneath it.
+  - **Usage counts are COMPUTED from the join, never stored.** A denormalized
+    `usage_count` cannot express the active-plus-non-archived scope that `all_tags` and
+    `corpus_overview` both use (archiving an item would have to decrement every one of
+    its tags), and two shipped tests pin that scoping.
+  - **`item_tags.source` records PROVENANCE** ('user' | 'ai') — see the runner rewrite.
+
+  **The FTS table now sources from a VIEW (`items_fts_src`), not `items`.** This is a
+  correctness requirement, not tidiness: an external-content FTS5 table's column list is
+  fixed at creation and its `content=` target must be able to produce every column.
+  Pointing it at `items` after the `tags` column is gone makes
+  `INSERT INTO items_fts(items_fts) VALUES('rebuild')` **WIPE THE INDEX AND REPORT
+  SUCCESS** — measured, with `integrity-check` still reporting ok afterwards. No
+  `rebuild` call exists in the repo today, so this was a latent trap for whoever added
+  one. A test now asserts a rebuild preserves recall.
+
+  **The migration is the unrecoverable step, so three guards:** (1) a per-row PYTHON
+  parse rather than SQL `json_each` — `json_each` RAISES on malformed values, and those
+  genuinely exist because `_serialize_item` has always swallowed `JSONDecodeError`, so
+  SQL would abort the migration or (wrapped in a bare except) drop that item's tags;
+  (2) COUNT RECONCILIATION before `DROP COLUMN`, rolling back on mismatch; (3) the FTS
+  table dropped and recreated, never rebuilt. Guarded on `"tags" in cols`, which is the
+  whole idempotence mechanism — knowledge.db has no schema version, matching how
+  `_init_schema` relies on `IF NOT EXISTS`.
+
+  **PROVENANCE REPLACES INFERENCE in `pipeline/runner.py`.** The old code decided whether
+  the AI could refresh an item's tags by comparing them against the previous run's
+  `insights.topics` as ORDERED LISTS. Rows come back name-ordered, so that comparison
+  would have broken silently: an AI-seeded item whose topics were emitted in a different
+  order would compare unequal, the refresh branch would stop firing, and a content-edited
+  item would keep stale tags forever. Now `store.tags_are_all_ai_authored(item_id)` asks
+  who wrote each tag. **A canary test was verified to FAIL against the old mechanism**
+  with the exact message it was written for — the two pre-existing "preserve user tags"
+  tests stay green even in the degraded case, so they could not have caught it.
+
+  **BUG IN MY OWN FIRST IMPLEMENTATION, found by running it.** `_resync_fts_for_items`
+  used `DELETE FROM items_fts WHERE rowid = ?`, which is a **SILENT NO-OP on an
+  external-content FTS5 table** — proven in isolation. A renamed tag stayed findable
+  under BOTH names. The correct form is FTS5's `'delete'` command with the EXACT prior
+  column values, which means snapshotting them BEFORE the tag rows change (the index
+  cannot be asked what it stored). Now `_fts_snapshot` + `_resync_fts`, with three tests
+  covering rename, merge and delete. This is the fifth FTS write path and it did not
+  exist before tags were rows — missing it is how tag search rots while writes succeed.
+
+  **A pre-existing bug fixed as a side effect:** `json.dumps` defaults to
+  `ensure_ascii=True`, so a tag like `日本語` was stored — and therefore indexed — as
+  `日本語`, making it **unsearchable**. Measured 0 matches before, 1 after.
+
+  **The external contract is UNCHANGED.** `_serialize_item` still emits `list[str]`, so
+  the 2 agent tool schemas, `reference/tools.md`, the HTTP layer and the whole frontend
+  needed no contract change — verified by `git diff` on `reference/` and
+  `builtin_tools.py` coming back empty. (The plan says 3 schemas; the third,
+  `task_search`, belongs to the tasks store and is out of scope.) List paths batch the
+  tag lookup via `_serialize_items` so normalization is not an N+1 on the busiest read.
+
+  **Surfaces.** `GET /api/knowledge/tag-tree` (ids + parents + live counts) alongside the
+  untouched flat `GET /api/knowledge/tags` autocomplete contract; PATCH (rename and/or
+  re-parent), POST `/merge`, DELETE. A new **Tags** view on the Knowledge page renders the
+  taxonomy as an indented list with counts and a right-click menu for
+  rename/nest/merge/delete. Flat-with-indentation rather than collapsible: the hierarchy
+  is one level deep in practice and the point of the screen is to SEE the shape. Every
+  mutation re-seeds from the server's returned tree rather than patching local state,
+  because a rename can move a child and a delete re-parents to root.
+
+  **Cycle guard added that the mirrored precedent lacks:** `dashboard/chat_folders.py` has
+  parent/child with NO cycle detection, so A→B→A is constructible there. Here a cycle
+  walk rejects self-parenting and multi-hop loops (with a visited set, so a pre-existing
+  cycle can't hang the check).
+
+  **Frontend fix required by the change:** `KnowledgeDetail`'s dirty check compared tags
+  as ORDERED lists (`JSON.stringify`). Name-ordered rows would have made every save look
+  dirty and fire a pointless PATCH — which re-syncs the search index, so not free. Now a
+  set comparison.
+
+  Validated as a user on an isolated dev home (port 10736): seeded four tagged items,
+  confirmed the Tags view renders with correct live counts, nested `async` under `rust`
+  from the context menu and saw it indent + persist, then over HTTP confirmed the cycle
+  guard returns a typed `tag_cycle` 400, a merge reports `moved`/`already` correctly, and
+  a rename collision returns `tag_name_taken`. Zero console errors.
+
+  Tests: 24 new store/taxonomy cases in `test_knowledge_collections.py` (61 in file) +
+  11 route cases in `test_knowledge_bulk_api.py` (21 in file), including the hostile
+  migration fixture (duplicates, blanks, non-ASCII, malformed JSON, NULL, AI-authored)
+  and an idempotent-reopen test. Gate: `make lint` green · `make test` **8942 passed** ·
+  web typecheck + 283 vitest + build green.
+
+  **S2 is now COMPLETE** (T2.1 + T2.2 + T2.3). Remaining in the plan: Session 3
+  (reading view, dedup/merge, library home).

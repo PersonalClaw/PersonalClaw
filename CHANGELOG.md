@@ -16,6 +16,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 > **Note (0.x clean break):** true rewind adds a `rewound` field to persisted chat
 > messages (the retained discarded tail). Old sessions read cleanly (missing field =
 > today's behavior — no migration); consider `personalclaw snapshot` before upgrading.
+>
+> **Note (0.x clean break):** knowledge-item tags move from a JSON column into their own
+> tables, and the old column is dropped. Opening your library migrates it in place — the
+> upgrade is verified against duplicates, blanks, non-ASCII and malformed values, and
+> refuses to drop the column if any tag would be lost. Consider `personalclaw snapshot`
+> before upgrading, per the pre-1.0 banner.
 
 ### Added
 
@@ -67,6 +73,25 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   tasks**. Someone else's task can never quietly become something your assistant picks
   up. Dependencies are still honored across everyone, so a task of yours blocked by a
   colleague's unfinished work is correctly *not* ready rather than falsely startable.
+- **Tags are a real taxonomy now — nest them, rename them, merge them.** Tags were a
+  flat list of strings stapled to each item, so a typo meant editing every item that
+  carried it and there was no way to express that "tokio" is a kind of "rust". The new
+  **Tags** view on the Knowledge page shows every tag with how many items actually use
+  it, and lets you rename, nest one under another, merge two together, or delete one —
+  from a right-click.
+
+  Renaming is instant and applies everywhere at once. Merging moves every item onto the
+  surviving tag and takes nested tags with it rather than orphaning them. Deleting a tag
+  removes it from your items but never deletes the items, and its nested tags become
+  top-level rather than disappearing with it. Unused tags are kept on purpose: a tag you
+  built is part of your taxonomy even when nothing carries it this week.
+
+  Two things this quietly fixed. **Tags with non-Latin characters were unsearchable** —
+  a tag like 日本語 was stored in an escaped form the search index couldn't match, so it
+  simply never came up; it does now. And the tags you write by hand are now marked as
+  yours, so automatic enrichment can refresh the tags it generated without ever
+  overwriting one you chose.
+
 - **Your reading state and favorites are now visible, and filterable.** Marking a saved
   item as reading, read, or a favorite already worked — but nothing showed it anywhere,
   so favoriting was effectively write-only: you could star something and then had no way

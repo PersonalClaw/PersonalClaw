@@ -46,6 +46,40 @@ _TRACKING_PARAMS = frozenset(
 )
 
 
+def _clean_tag_names(tags) -> list[str]:
+    """Caller-supplied tags → the names to store: strings only, stripped, blanks and
+    duplicates dropped, first-seen order kept.
+
+    One funnel for every write path (create, update, the agent tools, the HTTP handlers)
+    so no surface can put a blank or a duplicate into the tag tables. Blanks were already
+    invisible before this change — ``all_tags`` has always filtered falsy names out of
+    its results — so dropping them at the boundary matches observed behavior.
+    """
+    out: list[str] = []
+    for entry in tags or []:
+        if not isinstance(entry, str):
+            continue
+        name = entry.strip()
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def _fts_tags(names: list[str]) -> str:
+    """The value indexed in the FTS `tags` column: names joined by spaces.
+
+    Recall is unaffected by the switch from the old JSON string. FTS5's default
+    unicode61 tokenizer treats ``[``, ``]``, ``"`` and ``,`` as separators, so
+    ``'["python", "cli"]'`` and ``'python cli'`` produce identical terms at identical
+    offsets (measured, including phrase and NEAR queries).
+
+    It does FIX one thing: ``json.dumps`` defaults to ``ensure_ascii=True``, so a tag
+    like ``日本語`` was stored — and therefore indexed — as ``\\u65e5\\u672c\\u8a9e``,
+    making it unsearchable. Joined names index the real characters.
+    """
+    return " ".join(names)
+
+
 def normalize_url(url: str) -> str:
     """Canonicalize a URL for dedup: lowercase scheme+host, drop a default port and a
     bare trailing slash, sort query params and strip marketing/tracking ones, drop the
@@ -191,7 +225,6 @@ class KnowledgeStore:
                 content TEXT NOT NULL,
                 item_type TEXT NOT NULL,
                 summary TEXT,
-                tags TEXT DEFAULT '[]',
                 embedding BLOB,
                 status TEXT DEFAULT 'active',
                 -- first-class typed-item fields (P6b)
@@ -242,8 +275,61 @@ class KnowledgeStore:
             CREATE INDEX IF NOT EXISTS idx_collection_items_item ON collection_items(item_id);
             CREATE INDEX IF NOT EXISTS idx_collections_position ON collections(position);
 
+            -- Tags (KNOWLEDGE-LIBRARY S2, T2.2). AUTHORITATIVE: tags live here, not in a
+            -- JSON column on `items` (that column is dropped by _migrate). A surrogate
+            -- integer id with `name` merely UNIQUE — rather than `name` as the PK — is
+            -- what makes RENAME a single-row update instead of a cascade across every
+            -- membership row and every child's parent pointer.
+            CREATE TABLE IF NOT EXISTS tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                -- Adjacency-list hierarchy. NULL (not '') = a root tag: NULL is what the
+                -- self-FK can express, and it keeps "no parent" out of the name space.
+                -- ON DELETE SET NULL re-parents children to root rather than cascading,
+                -- so deleting a parent never silently deletes the tags underneath it
+                -- (the chat-folders precedent, plus the cycle guard that one lacks).
+                parent_id INTEGER REFERENCES tags(id) ON DELETE SET NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_tags_parent ON tags(parent_id);
+
+            -- Membership. Composite PK makes tagging twice a no-op. `source` records
+            -- PROVENANCE explicitly ('user' | 'ai') so the enrichment pipeline no longer
+            -- has to INFER whether it may overwrite a tag by comparing the item's
+            -- current tags against the previous run's topics — an ordered-list equality
+            -- that rows would have broken (see pipeline/runner.py).
+            CREATE TABLE IF NOT EXISTS item_tags (
+                item_id TEXT NOT NULL,
+                tag_id INTEGER NOT NULL,
+                source TEXT NOT NULL DEFAULT 'user',
+                added_at TEXT NOT NULL,
+                PRIMARY KEY (item_id, tag_id),
+                FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+                FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_item_tags_tag ON item_tags(tag_id);
+
+            -- The FTS source is a VIEW that flattens each item's tags back into one
+            -- searchable string. This is what keeps `tags` a searchable column after the
+            -- JSON column is gone: an external-content FTS table's column list is fixed
+            -- at creation and its `content=` target must be able to produce every column.
+            -- Pointing it at `items` with a `tags` column that no longer exists makes
+            -- 'rebuild' WIPE THE INDEX AND REPORT SUCCESS (measured; integrity-check
+            -- afterwards still says ok), so the view is a correctness requirement, not
+            -- tidiness. Ordering by name gives the flattened string a deterministic
+            -- shape, which keeps the manual sync sites' delete-then-insert honest.
+            CREATE VIEW IF NOT EXISTS items_fts_src AS
+                SELECT i.rowid AS rowid, i.title AS title, i.content AS content,
+                       (SELECT COALESCE(group_concat(t.name, ' '), '')
+                          FROM item_tags it JOIN tags t ON t.id = it.tag_id
+                         WHERE it.item_id = i.id
+                         ORDER BY t.name) AS tags
+                  FROM items i;
+
             CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
-                title, content, tags, content=items, content_rowid=rowid
+                title, content, tags, content=items_fts_src, content_rowid=rowid
             );
 
             CREATE TABLE IF NOT EXISTS entities (
@@ -400,6 +486,8 @@ class KnowledgeStore:
                 raise
             finally:
                 self.db.execute("PRAGMA foreign_keys=ON")
+        if "tags" in cols:
+            self._migrate_tags_to_rows()
         # Prune orphan entities (no mentions/relations) + stale relations.
         self.db.execute("BEGIN")
         try:
@@ -415,6 +503,153 @@ class KnowledgeStore:
         except Exception:
             self.db.execute("ROLLBACK")
             raise
+
+    def _migrate_tags_to_rows(self):
+        """Move tags from the legacy `items.tags` JSON column into `tags`/`item_tags`,
+        then DROP the column. Clean break: one pass, no dual-path.
+
+        Guarded by the caller on ``"tags" in cols``, which is the whole idempotence
+        mechanism — knowledge.db has no schema version to gate on, matching how
+        ``_init_schema`` relies on ``IF NOT EXISTS``.
+
+        Three deliberate choices, each guarding a way this could silently lose data:
+
+        1. **A per-row Python parse, not SQL ``json_each``.** ``json_each`` RAISES on a
+           malformed value, and malformed values genuinely exist: ``_serialize_item`` has
+           always swallowed ``JSONDecodeError``, so the store has tolerated them for the
+           column's whole life. SQL would abort the migration (or, wrapped in a bare
+           except, drop that item's tags). Parsing here means one bad row costs one
+           warning, not everyone's tags.
+        2. **Count reconciliation before COMMIT.** Every distinct tag name found must
+           exist as a row afterwards; a mismatch rolls back. Once the column is dropped
+           the source data is GONE — there is no second attempt, and the pre-1.0 banner
+           means no migration safety net either.
+        3. **The FTS table is dropped and recreated, never rebuilt.** Its column list is
+           fixed at creation and its ``content=`` target changes here (``items`` → the
+           ``items_fts_src`` view). Calling ``'rebuild'`` while it still points at the
+           dropped column WIPES THE INDEX AND REPORTS SUCCESS — measured, with
+           ``integrity-check`` still reporting ok afterwards.
+        """
+        rows = self.db.execute("SELECT id, tags FROM items").fetchall()
+        # item id -> ordered, de-duplicated tag names. Insertion order is preserved
+        # because the AI-vs-user provenance backfill below reads it, and because
+        # `_serialize_item` used to return tags in exactly this order.
+        per_item: dict[str, list[str]] = {}
+        found: set[str] = set()
+        salvaged = 0
+        for row in rows:
+            raw = row["tags"]
+            if not raw:
+                continue
+            try:
+                parsed = json.loads(raw)
+            except (TypeError, ValueError):
+                # Not valid JSON. The column has held such values for as long as it has
+                # existed (the reader swallowed the error), so salvage rather than lose:
+                # treat a bare/comma-separated string as tag names.
+                parsed = [p for p in str(raw).strip("[]").replace('"', "").split(",")]
+                salvaged += 1
+            if not isinstance(parsed, list):
+                parsed = [parsed]
+            names: list[str] = []
+            for entry in parsed:
+                if not isinstance(entry, str):
+                    continue
+                name = entry.strip()
+                # Empty strings are dropped, matching `all_tags`, which has always
+                # filtered falsy names out of its results.
+                if name and name not in names:
+                    names.append(name)
+            if names:
+                per_item[row["id"]] = names
+                found.update(names)
+
+        now = datetime.now().isoformat()
+        self.db.execute("PRAGMA foreign_keys=OFF")
+        self.db.execute("BEGIN")
+        try:
+            for name in sorted(found):
+                self.db.execute(
+                    "INSERT OR IGNORE INTO tags (name, created_at) VALUES (?, ?)",
+                    (name, now),
+                )
+            ids = {
+                r["name"]: r["id"] for r in self.db.execute("SELECT id, name FROM tags").fetchall()
+            }
+            for item_id, names in per_item.items():
+                for name in names:
+                    self.db.execute(
+                        "INSERT OR IGNORE INTO item_tags (item_id, tag_id, source, added_at) "
+                        "VALUES (?, ?, ?, ?)",
+                        (item_id, ids[name], self._migrated_tag_source(item_id, names), now),
+                    )
+
+            # Reconcile BEFORE the irreversible step.
+            landed = {
+                r["name"]
+                for r in self.db.execute(
+                    "SELECT DISTINCT t.name FROM tags t JOIN item_tags it ON it.tag_id = t.id"
+                ).fetchall()
+            }
+            if landed != found:
+                missing = sorted(found - landed)
+                raise RuntimeError(
+                    f"tag migration would lose {len(missing)} tag(s): {missing[:10]} — "
+                    "rolling back, the JSON column is untouched"
+                )
+
+            self.db.execute("ALTER TABLE items DROP COLUMN tags")
+            # Recreate the FTS table against the new view (see the docstring — never
+            # 'rebuild' here), then repopulate from the view itself.
+            self.db.execute("DROP TABLE IF EXISTS items_fts")
+            self.db.execute(
+                "CREATE VIRTUAL TABLE items_fts USING fts5("
+                "title, content, tags, content=items_fts_src, content_rowid=rowid)"
+            )
+            self.db.execute(
+                "INSERT INTO items_fts (rowid, title, content, tags) "
+                "SELECT rowid, title, content, tags FROM items_fts_src"
+            )
+            self.db.execute("COMMIT")
+        except Exception:
+            self.db.execute("ROLLBACK")
+            raise
+        finally:
+            self.db.execute("PRAGMA foreign_keys=ON")
+
+        if salvaged:
+            logger.warning(
+                "tag migration: salvaged tags from %d item(s) whose tags column held "
+                "invalid JSON",
+                salvaged,
+            )
+        logger.info(
+            "tag migration: %d distinct tag(s) across %d item(s) moved to rows",
+            len(found),
+            len(per_item),
+        )
+
+    def _migrated_tag_source(self, item_id: str, names: list[str]) -> str:
+        """Provenance for a tag being backfilled: 'ai' only when the item's stored
+        insights say the AI produced exactly this tag set.
+
+        Getting this right at migration time is what lets the enrichment pipeline stop
+        INFERRING provenance. Ties break toward ``'user'``: mislabelling a user's tag as
+        AI-authored makes it eligible to be overwritten on the next enrichment, which is
+        silent data loss, while mislabelling an AI tag as the user's merely means it
+        stops being auto-refreshed.
+        """
+        row = self.db.execute("SELECT insights FROM items WHERE id = ?", (item_id,)).fetchone()
+        if not row or not row["insights"]:
+            return "user"
+        try:
+            topics = json.loads(row["insights"]).get("topics") or []
+        except (TypeError, ValueError):
+            return "user"
+        topics = [t.strip() for t in topics if isinstance(t, str) and t.strip()]
+        # The same comparison the pipeline used to make, applied once here instead of on
+        # every enrichment — order-insensitive, because row order is not JSON order.
+        return "ai" if topics and sorted(set(topics)) == sorted(set(names)) else "user"
 
     def _load_graph(self):
         self.graph.clear()
@@ -451,7 +686,9 @@ class KnowledgeStore:
         (mime_type, file_path, …)."""
         item_id = str(uuid4())
         now = datetime.now().isoformat()
-        tags_json = json.dumps(tags or [])
+        # Tags are rows now. Normalized here so the caller's shape (list[str], possibly
+        # with blanks/dupes) can't reach storage — the public contract is unchanged.
+        tag_names = _clean_tag_names(tags)
         word_count = len((content or "").split())
         extra = extra or {}
         # Canonicalize a bookmark's URL at the storage boundary so dedup is consistent
@@ -463,15 +700,14 @@ class KnowledgeStore:
         try:
             self.db.execute(
                 "INSERT INTO items (id, title, content, item_type, "
-                "summary, tags, status, url, word_count, provider, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)",
+                "summary, status, url, word_count, provider, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)",
                 (
                     item_id,
                     title,
                     content,
                     item_type,
                     summary,
-                    tags_json,
                     url,
                     word_count,
                     provider,
@@ -479,12 +715,13 @@ class KnowledgeStore:
                     now,
                 ),
             )
+            self._write_item_tags(item_id, tag_names, source="user", now=now)
             rowid = self.db.execute("SELECT rowid FROM items WHERE id = ?", (item_id,)).fetchone()[
                 0
             ]
             self.db.execute(
                 "INSERT INTO items_fts (rowid, title, content, tags) VALUES (?, ?, ?, ?)",
-                (rowid, title, content, tags_json),
+                (rowid, title, content, _fts_tags(tag_names)),
             )
             self.db.execute("COMMIT")
         except Exception:
@@ -689,8 +926,15 @@ class KnowledgeStore:
         self.db.commit()
         return cur.rowcount
 
-    @staticmethod
-    def _serialize_item(row) -> dict:
+    def _serialize_item(self, row, *, tags: list[str] | None = None) -> dict:
+        """Storage row → the typed-item API shape.
+
+        Tags come from `item_tags` now, so this is an instance method rather than a
+        staticmethod. Pass ``tags`` when the caller already batched them (list paths do,
+        via :meth:`_tags_for_items`) — otherwise it issues one lookup for this item.
+        Either way the emitted shape is unchanged: a plain ``list[str]``, which is what
+        every consumer, every tool schema and the whole frontend already expect.
+        """
         d = dict(row)
         raw = d.pop("embedding", None)
         # The raw 384-float vector is an embedding-pipeline detail no API consumer
@@ -698,17 +942,19 @@ class KnowledgeStore:
         # Responses carry only a `has_embedding` flag; the vector never leaves the DB.
         d["has_embedding"] = bool(raw)
         # Typed-item API shape: expose `type` (alias of the item_type storage
-        # column), tags/file_metadata/insights as parsed JSON, booleans as bool.
+        # column), file_metadata/insights as parsed JSON, booleans as bool.
         d["type"] = d.get("item_type", "")
-        for key in ("tags", "file_metadata", "insights"):
+        for key in ("file_metadata", "insights"):
             val = d.get(key)
             if isinstance(val, str):
                 try:
-                    d[key] = json.loads(val) if val else ([] if key == "tags" else {})
+                    d[key] = json.loads(val) if val else {}
                 except (json.JSONDecodeError, ValueError):
-                    d[key] = [] if key == "tags" else {}
+                    d[key] = {}
             elif val is None:
-                d[key] = [] if key == "tags" else {}
+                d[key] = {}
+        item_id = d.get("id") or ""
+        d["tags"] = tags if tags is not None else self._tags_for_item(item_id)
         for key in ("is_pinned", "is_archived", "favorited"):
             d[key] = bool(d.get(key))
         # An item written before the curation columns landed reads NULL; the API
@@ -717,12 +963,89 @@ class KnowledgeStore:
         d.setdefault("provider", "native")
         return d
 
+    def _serialize_items(self, rows) -> list[dict]:
+        """Serialize many rows with ONE tag query instead of one per row.
+
+        The list surfaces render dozens of items at a time; a per-row lookup would make
+        tag normalization an N+1 regression on the busiest read path in the library.
+        """
+        rows = list(rows)
+        by_item = self._tags_for_items([r["id"] for r in rows if "id" in r.keys()])
+        return [self._serialize_item(r, tags=by_item.get(r["id"], [])) for r in rows]
+
+    def tags_are_all_ai_authored(self, item_id: str) -> bool:
+        """True when the item has no tags, or every tag it has was written by a previous
+        enrichment — i.e. when the AI may safely refresh them.
+
+        This replaces the old inference in `pipeline/runner.py` (an ordered-list equality
+        against the previous run's `insights.topics`). Recorded provenance is both
+        order-independent and honest: a single user-added tag makes the whole set
+        off-limits, which is the conservative direction — failing to refresh costs a
+        stale tag, whereas overwriting costs the user's own work.
+        """
+        rows = self.db.execute(
+            "SELECT source FROM item_tags WHERE item_id = ?", (item_id,)
+        ).fetchall()
+        return all((r["source"] or "user") == "ai" for r in rows)
+
+    def _tags_for_item(self, item_id: str) -> list[str]:
+        if not item_id:
+            return []
+        return [
+            r["name"]
+            for r in self.db.execute(
+                "SELECT t.name FROM item_tags it JOIN tags t ON t.id = it.tag_id "
+                "WHERE it.item_id = ? ORDER BY t.name",
+                (item_id,),
+            ).fetchall()
+        ]
+
+    def _tags_for_items(self, item_ids: list[str]) -> dict[str, list[str]]:
+        """``{item_id: [tag names]}`` for many items in one query."""
+        if not item_ids:
+            return {}
+        out: dict[str, list[str]] = {}
+        # Chunked to stay under SQLite's variable limit (999 by default) on a big list.
+        for start in range(0, len(item_ids), 500):
+            chunk = item_ids[start : start + 500]
+            placeholders = ",".join("?" * len(chunk))
+            for row in self.db.execute(
+                f"SELECT it.item_id, t.name FROM item_tags it "  # noqa: S608
+                f"JOIN tags t ON t.id = it.tag_id "
+                f"WHERE it.item_id IN ({placeholders}) ORDER BY t.name",
+                chunk,
+            ).fetchall():
+                out.setdefault(row["item_id"], []).append(row["name"])
+        return out
+
+    def _write_item_tags(
+        self, item_id: str, names: list[str], *, source: str = "user", now: str = ""
+    ) -> None:
+        """REPLACE an item's tags with *names*. Caller owns the transaction.
+
+        Replace, not merge — `update_item(tags=[...])` has always been a replace, and a
+        test pins it. Tag rows themselves are never deleted here: a tag surviving with no
+        members is what makes the hierarchy stable (deleting the last tagged item would
+        otherwise silently destroy a branch of the user's taxonomy).
+        """
+        now = now or datetime.now().isoformat()
+        self.db.execute("DELETE FROM item_tags WHERE item_id = ?", (item_id,))
+        for name in names:
+            self.db.execute(
+                "INSERT OR IGNORE INTO tags (name, created_at) VALUES (?, ?)", (name, now)
+            )
+            row = self.db.execute("SELECT id FROM tags WHERE name = ?", (name,)).fetchone()
+            self.db.execute(
+                "INSERT OR IGNORE INTO item_tags (item_id, tag_id, source, added_at) "
+                "VALUES (?, ?, ?, ?)",
+                (item_id, row["id"], source, now),
+            )
+
     _ITEM_COLUMNS = {
         "title",
         "content",
         "item_type",
         "summary",
-        "tags",
         "embedding",
         "status",
         "updated_at",
@@ -764,33 +1087,56 @@ class KnowledgeStore:
         # it explicitly.
         if "content" in fields and "word_count" not in fields:
             fields["word_count"] = len((fields.get("content") or "").split())
+        # `tags` is no longer an items column — pull it out and write rows instead. The
+        # public signature is unchanged: callers still pass `tags=[...]`.
+        tags_update = _clean_tag_names(fields["tags"]) if "tags" in fields else None
+        tag_source = str(fields.pop("tag_source", "") or "user")
         safe = {k: v for k, v in fields.items() if k in self._ITEM_COLUMNS}
-        if not safe:
+        if not safe and tags_update is None:
             return
-        # Read old FTS values BEFORE the update
-        fts_fields = {"title", "content", "tags"} & set(fields)
+        # Read old FTS values BEFORE the update. `tags` counts as an FTS field even
+        # though it isn't a column, because the indexed value derives from the tag rows.
+        fts_fields = {"title", "content"} & set(fields)
+        if tags_update is not None:
+            fts_fields.add("tags")
         old_row = None
+        old_fts_tags = ""
         if fts_fields:
             old_row = self.db.execute(
-                "SELECT rowid, title, content, tags FROM items WHERE id = ?", (item_id,)
+                "SELECT rowid, title, content FROM items WHERE id = ?", (item_id,)
             ).fetchone()
+            # The delete-side value MUST be exactly what was indexed, or FTS desyncs
+            # silently: a mismatched 'delete' corrupts the posting list without raising,
+            # and integrity-check does not detect it afterwards.
+            old_fts_tags = _fts_tags(self._tags_for_item(item_id))
         cols = ", ".join(f"{k} = ?" for k in safe)
         vals = [json.dumps(v) if isinstance(v, (list, dict)) else v for v in safe.values()]
         self.db.execute("BEGIN")
         try:
-            self.db.execute(f"UPDATE items SET {cols} WHERE id = ?", (*vals, item_id))  # noqa: S608
+            if safe:
+                self.db.execute(
+                    f"UPDATE items SET {cols} WHERE id = ?",  # noqa: S608
+                    (*vals, item_id),
+                )
+            if tags_update is not None:
+                self._write_item_tags(item_id, tags_update, source=tag_source)
             # Sync FTS: delete with OLD values, insert with NEW values
             if old_row:
                 self.db.execute(
                     "INSERT INTO items_fts (items_fts, rowid, title, content, tags) VALUES ('delete', ?, ?, ?, ?)",  # noqa: E501
-                    (old_row["rowid"], old_row["title"], old_row["content"], old_row["tags"]),
+                    (old_row["rowid"], old_row["title"], old_row["content"], old_fts_tags),
                 )
                 new_row = self.db.execute(
-                    "SELECT title, content, tags FROM items WHERE id = ?", (item_id,)
+                    "SELECT title, content FROM items WHERE id = ?", (item_id,)
                 ).fetchone()
                 self.db.execute(
                     "INSERT INTO items_fts (rowid, title, content, tags) VALUES (?, ?, ?, ?)",
-                    (old_row["rowid"], new_row["title"], new_row["content"], new_row["tags"]),
+                    (
+                        old_row["rowid"],
+                        new_row["title"],
+                        new_row["content"],
+                        _fts_tags(self._tags_for_item(item_id)),
+                    ),
                 )
             self.db.execute("COMMIT")
         except Exception:
@@ -800,13 +1146,21 @@ class KnowledgeStore:
     def _delete_item_cascade(self, item_id):
         """Delete item and its dependents without commit/graph reload (for batch use)."""
         row = self.db.execute(
-            "SELECT rowid, title, content, tags FROM items WHERE id = ?", (item_id,)
+            "SELECT rowid, title, content FROM items WHERE id = ?", (item_id,)
         ).fetchone()
         if row:
+            # Same rule as the update path: the 'delete' side must carry exactly the
+            # indexed value, read BEFORE item_tags rows go away.
             self.db.execute(
                 "INSERT INTO items_fts (items_fts, rowid, title, content, tags) VALUES ('delete', ?, ?, ?, ?)",  # noqa: E501
-                (row["rowid"], row["title"], row["content"], row["tags"]),
+                (
+                    row["rowid"],
+                    row["title"],
+                    row["content"],
+                    _fts_tags(self._tags_for_item(item_id)),
+                ),
             )
+        self.db.execute("DELETE FROM item_tags WHERE item_id = ?", (item_id,))
         self.db.execute("DELETE FROM mentions WHERE item_id = ?", (item_id,))
         self.db.execute("DELETE FROM entity_relations WHERE source_item_id = ?", (item_id,))
         self.db.execute("DELETE FROM extracted_contents WHERE item_id = ?", (item_id,))
@@ -940,7 +1294,7 @@ class KnowledgeStore:
             ).fetchall()
         except sqlite3.OperationalError:
             return []
-        return [self._serialize_item(r) for r in rows]
+        return self._serialize_items(rows)
 
     def search_items_fts_count(self, query) -> int:
         safe = self._sanitize_fts5(query)
@@ -1143,10 +1497,15 @@ class KnowledgeStore:
                 "GROUP BY item_type ORDER BY c DESC",
             )
         }
+        # Counted from the join, not a denormalized tags.usage_count: the count must
+        # respect the SAME active + non-archived scope as everything else here, and a
+        # stored counter cannot express that (archiving an item would have to decrement
+        # every one of its tags). Tests pin the archived-exclusion behavior.
         tag_rows = self.db.execute(
-            "SELECT je.value AS tag, COUNT(*) c FROM items, json_each(items.tags) je "
-            f"WHERE items.{active} "  # noqa: S608
-            "GROUP BY je.value ORDER BY c DESC, tag LIMIT ?",
+            "SELECT t.name AS tag, COUNT(*) c FROM item_tags it "
+            "JOIN tags t ON t.id = it.tag_id JOIN items i ON i.id = it.item_id "
+            f"WHERE i.{active} "  # noqa: S608
+            "GROUP BY t.name ORDER BY c DESC, tag LIMIT ?",
             (top_tags,),
         ).fetchall()
         return {
@@ -1160,11 +1519,226 @@ class KnowledgeStore:
         """Distinct tags across non-archived items, ordered by frequency then name.
         Powers tag autocomplete in the create/edit forms (consistent tag reuse)."""
         rows = self.db.execute(
-            "SELECT je.value AS tag FROM items, json_each(items.tags) je "
-            "WHERE COALESCE(items.is_archived,0)=0 AND items.status='active' "
-            "GROUP BY je.value ORDER BY COUNT(*) DESC, je.value"
+            "SELECT t.name AS tag FROM item_tags it "
+            "JOIN tags t ON t.id = it.tag_id JOIN items i ON i.id = it.item_id "
+            "WHERE COALESCE(i.is_archived,0)=0 AND i.status='active' "
+            "GROUP BY t.name ORDER BY COUNT(*) DESC, t.name"
         ).fetchall()
         return [r["tag"] for r in rows if r["tag"]]
+
+    # ── Tag taxonomy (KNOWLEDGE-LIBRARY S2, T2.2) ────────────────────────────
+
+    def list_tags(self) -> list[dict]:
+        """Every tag with its parent and live usage count, name-ordered.
+
+        The count is computed from the join and scoped to the live library (active,
+        non-archived) so it agrees with `all_tags` and `corpus_overview`. A tag with zero
+        members is still listed: an empty tag is a real part of the taxonomy the user
+        built, and hiding it would make a parent vanish the moment its last item was
+        archived.
+        """
+        rows = self.db.execute(
+            "SELECT t.id, t.name, t.parent_id, p.name AS parent_name, "
+            "  (SELECT COUNT(*) FROM item_tags it JOIN items i ON i.id = it.item_id "
+            "     WHERE it.tag_id = t.id AND i.status = 'active' "
+            "       AND COALESCE(i.is_archived, 0) = 0) AS usage_count "
+            "FROM tags t LEFT JOIN tags p ON p.id = t.parent_id "
+            "ORDER BY t.name"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def rename_tag(self, tag_id: int, name: str) -> bool:
+        """Rename a tag in place. One row — which is exactly why `tags` has a surrogate
+        id rather than using `name` as the primary key.
+
+        Refuses a collision instead of silently merging: two tags becoming one is a
+        distinct, lossier operation with its own method (:meth:`merge_tags`), and a
+        rename that quietly merged would be impossible to undo.
+        """
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("tag name is required")
+        row = self.db.execute("SELECT id FROM tags WHERE id = ?", (tag_id,)).fetchone()
+        if not row:
+            return False
+        clash = self.db.execute(
+            "SELECT id FROM tags WHERE name = ? AND id <> ?", (name, tag_id)
+        ).fetchone()
+        if clash:
+            raise ValueError(f"tag_name_taken:{name}")
+        # Snapshot the indexed values BEFORE the rename — afterwards the old tag string
+        # is unrecoverable, and FTS5 needs it verbatim to remove the stale terms.
+        snapshot = self._fts_snapshot(self._items_with_tag(tag_id))
+        self.db.execute("UPDATE tags SET name = ? WHERE id = ?", (name, tag_id))
+        self.db.commit()
+        self._resync_fts(snapshot)
+        return True
+
+    def set_tag_parent(self, tag_id: int, parent_id: int | None) -> bool:
+        """Re-parent a tag. ``None`` makes it a root.
+
+        Rejects cycles — including a tag becoming its own parent. The chat-folders
+        hierarchy this mirrors has no such guard, so A→B→A is constructible there; a
+        cycle here would make any recursive walk of the taxonomy hang.
+        """
+        if not self.db.execute("SELECT id FROM tags WHERE id = ?", (tag_id,)).fetchone():
+            return False
+        if parent_id is not None:
+            if parent_id == tag_id:
+                raise ValueError("tag_cycle")
+            if not self.db.execute("SELECT id FROM tags WHERE id = ?", (parent_id,)).fetchone():
+                raise ValueError(f"no such parent tag: {parent_id}")
+            # Walk up from the proposed parent: if we reach tag_id, this edge closes a
+            # loop. The visited set also stops a pre-existing cycle from hanging us.
+            seen: set[int] = set()
+            cursor: int | None = parent_id
+            while cursor is not None and cursor not in seen:
+                if cursor == tag_id:
+                    raise ValueError("tag_cycle")
+                seen.add(cursor)
+                row = self.db.execute(
+                    "SELECT parent_id FROM tags WHERE id = ?", (cursor,)
+                ).fetchone()
+                cursor = row["parent_id"] if row else None
+        self.db.execute("UPDATE tags SET parent_id = ? WHERE id = ?", (parent_id, tag_id))
+        self.db.commit()
+        return True
+
+    def merge_tags(self, source_id: int, target_id: int) -> dict:
+        """Fold ``source_id`` into ``target_id``: every item tagged source becomes tagged
+        target, then the source tag is deleted.
+
+        Returns ``{"moved": n, "already": n}`` — items that gained the target tag versus
+        items that already carried it. Provenance follows the more human of the two: if
+        either membership was user-authored the merged one is, so a merge can never
+        downgrade a user's tag into something enrichment may overwrite.
+        """
+        if source_id == target_id:
+            raise ValueError("cannot merge a tag into itself")
+        src = self.db.execute("SELECT id FROM tags WHERE id = ?", (source_id,)).fetchone()
+        tgt = self.db.execute("SELECT id FROM tags WHERE id = ?", (target_id,)).fetchone()
+        if not src or not tgt:
+            return {"moved": 0, "already": 0}
+        rows = self.db.execute(
+            "SELECT item_id, source FROM item_tags WHERE tag_id = ?", (source_id,)
+        ).fetchall()
+        # Before anything moves: both sides' items change indexed tag text.
+        snapshot = self._fts_snapshot(
+            [r["item_id"] for r in rows] + self._items_with_tag(target_id)
+        )
+        moved = already = 0
+        now = datetime.now().isoformat()
+        self.db.execute("BEGIN")
+        try:
+            for row in rows:
+                existing = self.db.execute(
+                    "SELECT source FROM item_tags WHERE item_id = ? AND tag_id = ?",
+                    (row["item_id"], target_id),
+                ).fetchone()
+                if existing:
+                    already += 1
+                    if "user" in (existing["source"], row["source"]):
+                        self.db.execute(
+                            "UPDATE item_tags SET source = 'user' "
+                            "WHERE item_id = ? AND tag_id = ?",
+                            (row["item_id"], target_id),
+                        )
+                else:
+                    self.db.execute(
+                        "INSERT INTO item_tags (item_id, tag_id, source, added_at) "
+                        "VALUES (?, ?, ?, ?)",
+                        (row["item_id"], target_id, row["source"] or "user", now),
+                    )
+                    moved += 1
+            # Children of the source follow it to the target rather than being orphaned.
+            self.db.execute(
+                "UPDATE tags SET parent_id = ? WHERE parent_id = ?", (target_id, source_id)
+            )
+            self.db.execute("DELETE FROM item_tags WHERE tag_id = ?", (source_id,))
+            self.db.execute("DELETE FROM tags WHERE id = ?", (source_id,))
+            self.db.execute("COMMIT")
+        except Exception:
+            self.db.execute("ROLLBACK")
+            raise
+        self._resync_fts(snapshot)
+        return {"moved": moved, "already": already}
+
+    def delete_tag(self, tag_id: int) -> bool:
+        """Remove a tag from the taxonomy and from every item carrying it.
+
+        Children are re-parented to root rather than deleted (the ``ON DELETE SET NULL``
+        on the self-FK). Deleting a parent should not silently destroy the branch beneath
+        it — that is the one behavior of the chat-folders precedent worth keeping.
+        """
+        if not self.db.execute("SELECT id FROM tags WHERE id = ?", (tag_id,)).fetchone():
+            return False
+        snapshot = self._fts_snapshot(self._items_with_tag(tag_id))
+        self.db.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
+        self.db.commit()
+        self._resync_fts(snapshot)
+        return True
+
+    def _items_with_tag(self, tag_id: int) -> list[str]:
+        """Item ids currently carrying *tag_id*."""
+        return [
+            r["item_id"]
+            for r in self.db.execute(
+                "SELECT item_id FROM item_tags WHERE tag_id = ?", (tag_id,)
+            ).fetchall()
+        ]
+
+    def _fts_snapshot(self, item_ids: list[str]) -> list[tuple]:
+        """Capture ``(rowid, title, content, tags)`` as currently INDEXED, for later
+        removal from the FTS index.
+
+        Must be called BEFORE the tag rows change. An external-content FTS5 index cannot
+        be asked "what did you store for this row?" — the ``'delete'`` command requires
+        the caller to hand back the exact column values that were inserted, so a
+        rename/merge/delete has to snapshot them first or it can never remove them.
+        """
+        out: list[tuple] = []
+        for item_id in dict.fromkeys(item_ids):
+            row = self.db.execute(
+                "SELECT i.rowid AS rowid, s.title AS title, s.content AS content, "
+                "       s.tags AS tags "
+                "FROM items i JOIN items_fts_src s ON s.rowid = i.rowid WHERE i.id = ?",
+                (item_id,),
+            ).fetchone()
+            if row is not None:
+                out.append((row["rowid"], row["title"], row["content"], row["tags"]))
+        return out
+
+    def _resync_fts(self, snapshot: list[tuple]) -> None:
+        """Re-index the snapshotted rows so the indexed tag text matches the tag rows.
+
+        This is the FIFTH FTS write path, and it did not exist before tags became rows: a
+        rename/merge/delete changes an item's searchable tag text without touching the
+        item itself. Miss it and tag search rots silently as the taxonomy is curated —
+        writes keep succeeding while results drift.
+
+        The removal MUST use FTS5's ``'delete'`` command with the pre-change values from
+        :meth:`_fts_snapshot`. A plain ``DELETE FROM items_fts WHERE rowid = ?`` is a
+        SILENT NO-OP on an external-content table (measured: the old term keeps matching
+        after the delete+insert, so a renamed tag stays findable under BOTH names) — and
+        passing the wrong values to ``'delete'`` corrupts the posting list without
+        raising, which ``integrity-check`` does not detect.
+        """
+        for rowid, title, content, tags in snapshot:
+            self.db.execute(
+                "INSERT INTO items_fts (items_fts, rowid, title, content, tags) "
+                "VALUES ('delete', ?, ?, ?, ?)",
+                (rowid, title, content, tags),
+            )
+            fresh = self.db.execute(
+                "SELECT title, content, tags FROM items_fts_src WHERE rowid = ?", (rowid,)
+            ).fetchone()
+            if fresh is None:
+                continue  # the item itself is gone; the removal above is the whole job
+            self.db.execute(
+                "INSERT INTO items_fts (rowid, title, content, tags) VALUES (?, ?, ?, ?)",
+                (rowid, fresh["title"], fresh["content"], fresh["tags"]),
+            )
+        self.db.commit()
 
     # ── Collections (KNOWLEDGE-LIBRARY S1, contract C2) ──────────────────────
 
@@ -1332,7 +1906,7 @@ class KnowledgeStore:
             "ORDER BY ci.added_at DESC LIMIT ?",
             (collection_id, limit),
         ).fetchall()
-        return [self._serialize_item(r) for r in rows]
+        return self._serialize_items(rows)
 
     # ── Item curation ────────────────────────────────────────────────────────
 
