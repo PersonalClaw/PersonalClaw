@@ -1,7 +1,8 @@
 # Plan: Memory Graph & Readable Vault — Typed Entity Linking, Push-Context, Slots
 
 **Status:** IN PROGRESS — Session 1 (graph data model + write-time linker) shipped 2026-07-28;
-Sessions 2-5 (recall arm + push reflex, formation, two-way vault, slots + FE) not started.
+Session 2 COMPLETE (recall arm 2026-07-28 + push reflex 2026-07-30); Sessions 3-5 (formation,
+two-way vault, slots + FE) not started. The §1.3 knowledge-side alias pre-pass remains open.
 rev 2 — research-integrated 2026-07-12  
 **Created:** 2026-07-12  
 **Depends on:** nothing hard. Pairs with WORKFLOWS-V2-LEARNING-FLYWHEEL (which owns lesson/skill lifecycle — this plan owns the *store structure* under it) and with the git-snapshot work (NEW-4) for vault versioning  
@@ -507,3 +508,94 @@ Tests: 26 new cases in `tests/test_memory_entity_graph.py` (113 total). Validate
 user on an isolated gateway: `/api/memory/recall?q=what+is+Sparrow+working+on` returns
 the linked record FIRST via a nickname sharing no characters with the stored text,
 while `q=coffee+machine+floor` still ranks by words. Full suite 8712 passed; lint clean.
+
+### 2026-07-30 — Session 2 (remainder): the push-context reflex (§3) — DONE
+
+The reflex volunteers memory the conversation is implicitly *about*. Migration **v8** adds
+`mem_volunteer_events`; `memory_push.py` owns the per-arm resolver; `MemoryService.push_context`
+picks records and logs events; the injection rides `context_engine.assemble` on **every** turn.
+
+**E1 — PREMISE CORRECTION (the reflex would have gone silent after turn 1).** §3 says the
+reflex "rides the proven context_engine seam" — the seam at `context_engine.py:109`, which
+calls `active_recall_block`. That call is gated on `is_new_session`, and `is_new_session`
+tracks the **runtime client** (recreated between turns, on idle eviction), NOT the
+conversation — `chat_runner.py:1416` says so in its own comment. A reflex sharing that guard
+fires once per client and then goes quiet, which is the opposite of "ambient, per-turn". The
+seam was right; the *condition* was wrong. The push block is therefore a sibling branch with
+no `is_new_session` term. Verified by calling `assemble_context` with `is_new_session=False`
+against a real store: the reflex injects. Under the plan's literal reading it would not have.
+
+**E1 — PREMISE CORRECTION (the cited restriction check was wrong twice).** §3: "the reflex
+checks `session_restrictions.is_restricted` exactly as the recall endpoint does." Neither half
+holds. The recall endpoint gates reads on `_blocks_reads_session`/`is_temporary`
+(`handlers/memory.py:687`), and `is_restricted` is the **write** gate — true for incognito too
+(`session_restrictions.py:5-9`, `state.py:563-571`). Using it for reads would have silently
+killed the reflex in incognito, contradicting §3's own next sentence. Corrected: reads gate on
+`blocks_reads`, the volunteer **log** gates on `is_restricted` (threaded as a new
+`blocks_writes` kwarg, popped in `assemble` because `build_message` has an explicit signature).
+Verified live — temporary: no injection; incognito: injection with **0 events logged**.
+
+**A REAL BUG the plan's headline example would have hit, found by testing against the real
+tokenizer.** §3 names `@handle` as the strongest arm. But `_tokenize` strips `@`, so a mention
+of `@sparrow` returns `matched="sparrow"` — byte-identical to the entity's own NAME for the
+common `@sparrow`/`Sparrow` pair. Classifying on `matched` alone made **every `@handle` hit
+report as `exact_name`, so the alias arm could never fire at all** — the per-arm stat §3 exists
+to produce would have had a permanently empty column. Fixed by recovering the sigil from the
+source text at the mention's span (`_sigil_before`); only the abutting character counts, so
+"email @ Sparrow" is still `exact_name`. Both directions test-locked. This was invisible to a
+stand-in matcher, which is what hid it initially — the test that catches it drives the real
+`AliasIndex`.
+
+**`recall_at_volunteer` is the load-bearing column.** "Used" = the record's `recall_count`
+having risen SINCE it was volunteered, so the count at volunteer time must be captured then.
+Against an absolute count, every already-popular record would score as used and precision would
+flatter the reflex no matter how it behaved. Test-locked with a record recalled *before* the
+reflex ever offered it (n=1, used=0 → then used=1 after a real later recall).
+
+**Episodic records are never volunteered.** An episodic row is a conversation fragment;
+volunteering one pastes old dialogue into a new turn as if it were a fact. Also: the precision
+query counts only `from_kind='semantic'`, because `record_recall` bumps `recall_count` on
+`semantic_memory` only — including episodic rows would drag every arm's ratio toward zero for a
+reason unrelated to volunteer quality.
+
+**Design decisions worth recording:**
+- **Own timeout + breaker (400ms, 3 strikes)**, tighter than active recall's 1500ms: this runs
+  on the critical path of *every* message, not once per session.
+- **Config read LIVE per turn** (`_push_settings`), because S1 shipped a captured-at-construction
+  kill switch and flipping it did nothing until restart. Same mistake avoided deliberately.
+- **`push_context` defaults FALSE and parses as a plain bool, not `_guard_flag`** — that helper
+  fails ON, which would have enabled volunteering for every existing user on upgrade. Same
+  shape as `vault_enabled`.
+- **`HARD_CAP_RECORDS = 5` enforced in the service**, so a config value cannot raise the ceiling.
+- **The UI refuses to report a precision below 10 events** (`VOLUNTEER_MIN_N`), mirroring
+  `feedback.producer_stats`' min-N discipline: "0% precision" off two events is misleading.
+- **The volunteer log stores no conversation text** — entity, arm, confidence, ref only
+  (test-asserted, including that no column named text/content exists).
+
+**Config:** `memory.push_context` + `memory.push_min_confidence` wired through the dataclass +
+`_meta`, `load()`, `to_dict()`, `_EDITABLE_CONFIG`, **and** the separate `/api/memory/settings`
+PUT allowlist + its GET mirror (three places in that handler), plus Settings → Memory controls.
+`test_config_roundtrip` caught the clamped-probability case and took a `_SPECIAL` entry, the
+same treatment `agent.soft_stop_budget_secs` already has.
+
+**Product surface:** `GET /api/memory/volunteer-stats` + a "Volunteered memory" section in the
+Memory panel's Health tab (volunteered / used-after / precision, per-arm breakdown, the current
+gate) + the two Settings toggles, with the volunteer switch **disabled when the entity graph is
+off** (it depends on it).
+
+**Validated as a user** on an isolated dev home: entity created and linked through the real API;
+the reflex injected the fenced block against the real store; `is_new_session` False still fired;
+temporary blocked, incognito injected-without-logging; precision moved **0.0 → 1.0** through the
+real `/api/memory/recall` endpoint bumping `recall_count`; both config write paths round-tripped
+with out-of-range and bad-type both rejected (400); graph-off degraded to `enabled:false` + empty
+block with no restart; Health tab and Settings rendered and the dependency-disable worked in the
+browser. **0 console errors; 0 gateway tracebacks from the new code** (the log's only two are
+`no model provider resolves` — expected with no model bound).
+
+**Gates:** `make lint` clean (mypy 551 files) · backend **9080 passed** · web **283 passed** +
+typecheck + build. Offline agent reference regenerated for the new route.
+Tests: `tests/test_memory_push_reflex.py`, 46 cases.
+
+**Still NOT in this session** (the rest of §1.3 / later sessions): the knowledge-pipeline alias
+pre-pass, and Sessions 3-5 (formation, two-way vault, slots + FE). The knowledge-side pre-pass is
+a knowledge-repo-adjacent change with its own ingestion seam and is cleanly separable.

@@ -235,6 +235,7 @@ from personalclaw.dashboard.handlers.memory import (  # noqa: E402, F401
     api_memory_stats,
     api_memory_vault_status,
     api_memory_vault_sync,
+    api_memory_volunteer_stats,
 )
 
 # ── Messaging (handlers/messaging.py) ──

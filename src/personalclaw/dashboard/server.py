@@ -574,6 +574,7 @@ async def start_dashboard(
         "/api/memory/entities/{entity_id}/backlinks", handlers.api_memory_entity_backlinks
     )
     app.router.add_post("/api/memory/graph/rebuild", handlers.api_memory_graph_rebuild)
+    app.router.add_get("/api/memory/volunteer-stats", handlers.api_memory_volunteer_stats)
 
     # Crons, lessons, spawn, send-message, notifications
     # are registered via _register_mcp_routes() above.

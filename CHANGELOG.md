@@ -25,6 +25,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Memory can now offer itself, not just answer when asked.** Mention a person, project or
+  tool the entity graph knows and PersonalClaw can volunteer up to three linked memories for
+  that turn — including ones that share no words with what you typed, which ordinary search
+  structurally cannot find ("ships Fridays" doesn't match "when does Sparrow release?"). It
+  costs no tokens or model calls, and it's **off by default**, because putting context in
+  front of the model that you didn't ask for should be your choice. Turn it on under
+  **Settings → Memory**, along with how confident a match has to be. The Health tab shows how
+  often what it volunteered actually got used afterwards, so you can tighten the setting from
+  evidence instead of guesswork. Temporary chats get nothing; incognito chats get the benefit
+  without anything being recorded.
+
 - **Take a conversation with you, and stop rebuilding the same chat setup.** Any chat can
   now be exported as **Markdown or JSON** from its context menu in the chat history —
   readable, pasteable, and **credential-redacted**, including the messages you typed

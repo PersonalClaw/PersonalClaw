@@ -31,6 +31,37 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Ceiling on records the push reflex may volunteer per turn (§3's hard 5). A config
+# value cannot exceed it: an unbounded "possibly relevant" block is precisely the
+# context bloat the plan's soul guardrail forbids, and a cap enforced here can't be
+# raised by editing config.json.
+HARD_CAP_RECORDS = 5
+
+
+def _push_text(row: dict) -> str:
+    """The readable claim inside a semantic row, for the volunteered block.
+
+    Mirrors ``vector_memory._linkable_text``'s reasoning: semantic values are either a
+    plain string or a payload dict whose readable text lives under a known field. Dumping
+    the JSON would inject key names and structural noise into the prompt.
+    """
+    import json as _json
+
+    raw = row.get("value_json")
+    try:
+        value = _json.loads(raw) if isinstance(raw, str) else raw
+    except (ValueError, TypeError):
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        for field_name in ("text", "rule", "value", "description"):
+            candidate = value.get(field_name)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+    return ""
+
+
 # Category → time-to-live in days (memory-architecture.md §3.6, O-A1). Memories
 # age at different rates by what kind of thing they are. A category absent here
 # never expires (facts/prefs are durable). Only records that carry a category are
@@ -395,6 +426,125 @@ class MemoryService:
             return vs.graph.recall_evidence(query_text, index=vs.alias_index)
         except Exception:  # noqa: BLE001
             return {}
+
+    def push_context(
+        self,
+        turns: "list[str]",
+        *,
+        session_key: str = "",
+        log_events: bool = True,
+        max_records: int | None = None,
+        min_confidence: float | None = None,
+    ) -> "tuple[str, list[dict]]":
+        """The push reflex (§3): volunteer records this conversation is *about*.
+
+        Returns ``(injected_block, volunteered)`` — the block is "" when nothing clears
+        the confidence gate, which is the common and correct case on an entity-free turn.
+        ``volunteered`` describes what was offered, for the debug surface.
+
+        ``log_events=False`` suppresses the volunteer-event WRITE while still returning
+        the block: that is the incognito posture (reads allowed, writes suppressed), and
+        it is why logging is a parameter rather than an internal decision.
+
+        Never raises. A reflex is an enhancement; if it fails, the turn proceeds with
+        exactly today's context.
+        """
+        from personalclaw import memory_push as push
+
+        vs = self._graph_store()
+        if vs is None or not turns:
+            return "", []
+        cap = min(HARD_CAP_RECORDS if max_records is None else max_records, HARD_CAP_RECORDS)
+        gate = push.DEFAULT_MIN_CONFIDENCE if min_confidence is None else float(min_confidence)
+        try:
+            entities = vs.graph.entities()
+            if not entities:
+                return "", []
+            candidates = push.resolve_candidates(
+                turns, entities, vs.alias_index, min_confidence=gate
+            )
+            if not candidates:
+                return "", []
+            return self._volunteer_for(
+                vs, candidates, cap=cap, session_key=session_key, log_events=log_events
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("push reflex skipped", exc_info=True)
+            return "", []
+
+    def _volunteer_for(
+        self, vs, candidates: "list", *, cap: int, session_key: str, log_events: bool
+    ) -> "tuple[str, list[dict]]":
+        """Pick records for the resolved entities, render the block, log the events."""
+        from personalclaw import memory_push as push
+
+        rendered: list[tuple[str, str]] = []
+        volunteered: list[dict] = []
+        seen_refs: set[str] = set()
+        for cand in candidates:
+            if len(rendered) >= cap:
+                break
+            for link in vs.graph.backlinks(cand.entity_id, limit=cap * 4):
+                if len(rendered) >= cap:
+                    break
+                ref = str(link.get("from_ref") or "")
+                kind = str(link.get("from_kind") or "")
+                # A record already volunteered this turn (via another entity) must not
+                # be offered twice — duplicated context reads as a bug, not as emphasis.
+                if not ref or ref in seen_refs:
+                    continue
+                # Only semantic records inject. An episodic row is a conversation
+                # fragment; volunteering one would paste old dialogue into a new turn.
+                if kind != "semantic":
+                    continue
+                row = vs.get_semantic(ref)
+                if not row:
+                    continue
+                text = _push_text(row)
+                if not text:
+                    continue
+                seen_refs.add(ref)
+                rendered.append((cand.name, text))
+                volunteered.append(
+                    {
+                        "entity": cand.name,
+                        "arm": cand.arm,
+                        "confidence": cand.confidence,
+                        "record_ref": ref,
+                    }
+                )
+                if log_events:
+                    vs.graph.log_volunteer(
+                        entity_id=cand.entity_id,
+                        entity_name=cand.name,
+                        arm=cand.arm,
+                        confidence=cand.confidence,
+                        from_kind=kind,
+                        record_ref=ref,
+                        recall_at_volunteer=int(row.get("recall_count", 0) or 0),
+                        session_key=session_key,
+                    )
+        return push.render_block(rendered), volunteered
+
+    def volunteer_precision(self, *, window_days: int | None = None) -> dict:
+        """Per-arm volunteered-vs-used precision for the health tab (§3)."""
+        vs = self._graph_store()
+        if vs is None:
+            return {"arms": {}, "overall": {"n": 0, "used": 0, "precision": 0.0}}
+        try:
+            return vs.graph.volunteer_precision(window_days=window_days)
+        except Exception:  # noqa: BLE001
+            return {"arms": {}, "overall": {"n": 0, "used": 0, "precision": 0.0}}
+
+    def prune_volunteer_events(self, *, keep_days: int = 90) -> int:
+        """Maintenance-cadence prune of the volunteer log (§3's 90d retention)."""
+        vs = self._graph_store()
+        if vs is None:
+            return 0
+        try:
+            return vs.graph.prune_volunteer_events(keep_days=keep_days)
+        except Exception:  # noqa: BLE001
+            return 0
 
     def graph_seed(self) -> dict:
         """Seed entities from facts + knowledge, then link the whole store."""

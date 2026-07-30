@@ -104,6 +104,9 @@ _SPECIAL = {
     ("dashboard", "terminal"): {"enabled": False, "persist": True},
     ("dashboard", "dashboard_layout"): {"widgets": [], "v": 1},
     ("inbox", "poll_interval_seconds"): 90,
+    # memory.push_min_confidence is a probability clamped to [0,1] by load() — the
+    # generic rule's out-of-range value would (correctly) come back clamped.
+    ("memory", "push_min_confidence"): 0.55,
     ("skills", "auto_similarity_threshold"): 0.5,
     ("workflows", "match_threshold"): 0.5,
     ("tools", "projection_rules"): [

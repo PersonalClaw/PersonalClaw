@@ -725,6 +725,27 @@ class MemoryConfig:
             "to today's search behavior.",
         ),
     )
+    push_context: bool = field(
+        default=False,
+        metadata=_meta(
+            "Volunteer Related Memory",
+            "When a message mentions someone or something the entity graph knows, "
+            "offer up to 3 linked memories for that turn — even when they share no "
+            "words with what you typed. Costs no tokens or LLM calls beyond the small "
+            "block it adds. Off by default because it puts context in front of the "
+            "model you didn't ask for; the Health tab reports how often what it "
+            "volunteered actually got used.",
+        ),
+    )
+    push_min_confidence: float = field(
+        default=0.7,
+        metadata=_meta(
+            "Volunteer Confidence",
+            "How sure the match must be before memory is volunteered. Higher = only "
+            "explicit aliases and exact names; lower also admits looser matches "
+            "(more offered, more of it irrelevant).",
+        ),
+    )
 
 
 @dataclass
@@ -2379,6 +2400,14 @@ class AppConfig:
                 vault_enabled=memory_data.get("vault_enabled", False),
                 vault_path=memory_data.get("vault_path", "memory-vault"),
                 graph_enabled=_guard_flag(memory_data.get("graph_enabled")),
+                # Opt-in, so a plain read defaulting False — NOT `_guard_flag`, which
+                # fails ON and would silently enable volunteering for every existing
+                # user on upgrade. Same shape as `vault_enabled` above. `_expose_flag`
+                # is reserved for flags that open a network surface; this one doesn't.
+                push_context=bool(memory_data.get("push_context", False)),
+                push_min_confidence=max(
+                    0.0, min(1.0, float(memory_data.get("push_min_confidence", 0.7) or 0.7))
+                ),
             ),
             dashboard=DashboardConfig(
                 url=dashboard_data.get("url", ""),
