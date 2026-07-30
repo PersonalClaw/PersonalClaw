@@ -6,7 +6,7 @@ import { FeedbackThumbs } from '../../ui/FeedbackThumbs'
 import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { TextArea, Segmented } from '../../ui/forms'
-import { api, type InboxItem, type InboxClassification } from '../../lib/api'
+import { api, type InboxItem, type InboxClassification, type SkillProposalDetail } from '../../lib/api'
 import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, CLASSIFICATIONS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
 
 /** Inbox item triage panel: the full message + thread context, the triage
@@ -115,9 +115,17 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
         </Section>
       )}
 
+      {/* A proposal is ANSWERABLE here — that's the point of folding it in. Approving from
+          the inbox runs the same accept path the skills page uses, so there is one
+          installation code path, not a second one that could drift. */}
+      {item.item_kind === 'proposal' && item.refs?.skill_proposal && (
+        <ProposalActions pid={item.refs.skill_proposal} onChanged={onChanged} navigate={navigate} />
+      )}
+
       {/* Deep link — for a non-channel item this REPLACES the reply machinery as the
-          primary action: the answer to "a loop needs your input" is to go to the loop. */}
-      {!channelBacked && target && (
+          primary action: the answer to "a loop needs your input" is to go to the loop.
+          Skipped for proposals, which have their own actions above. */}
+      {!channelBacked && target && item.item_kind !== 'proposal' && (
         <Section label="Source">
           <Button size="sm" variant="secondary" onClick={() => navigate(target)}>
             <ExternalLink size={14} /> {refLabel(item)}
@@ -187,5 +195,90 @@ function Section({ label, right, children }: { label: string; right?: React.Reac
       </div>
       {children}
     </div>
+  )
+}
+
+/** Accept / reject a skill proposal from its inbox row.
+ *
+ *  Loads the FULL proposal (the list summary truncates the procedure at 280 chars) because
+ *  approving something whose body you can't read is not a review. Runs the same
+ *  accept/reject endpoints the skills page uses — one installation path, not a second one
+ *  that could drift from it. */
+function ProposalActions({ pid, onChanged, navigate }: { pid: string; onChanged: () => void; navigate: (path: string) => void }) {
+  const [detail, setDetail] = useState<SkillProposalDetail | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [err, setErr] = useState('')
+  const [gone, setGone] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    setErr(''); setGone(false); setDetail(null)
+    api.skillProposalDetail(pid)
+      .then((d) => { if (alive) setDetail(d) })
+      // A 404 means it was already answered elsewhere (the skills page, or another tab).
+      // That is not an error to shout about — it's a stale row, so say so plainly.
+      .catch(() => { if (alive) setGone(true) })
+    return () => { alive = false }
+  }, [pid])
+
+  async function act(kind: 'accept' | 'reject') {
+    setBusy(kind); setErr('')
+    try {
+      if (kind === 'accept') await api.acceptSkillProposal(pid)
+      else await api.rejectSkillProposal(pid)
+      onChanged()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : `${kind} failed`)
+    } finally { setBusy(null) }
+  }
+
+  if (gone) {
+    return (
+      <Section label="Proposal">
+        <p className="text-on-surface-low text-[0.8125rem]">
+          This proposal was already answered. <button type="button" onClick={() => navigate('skills')} className="text-primary hover:underline">Open Skills</button>
+        </p>
+      </Section>
+    )
+  }
+  return (
+    <Section label={detail?.kind === 'refine' ? 'Refine a skill' : 'New skill'}>
+      {detail === null ? (
+        <p className="text-on-surface-low text-[0.8125rem]">Loading the proposal…</p>
+      ) : (
+        <div className="flex flex-col gap-m">
+          <div className="flex flex-wrap items-center gap-x-m gap-y-1 text-[0.8125rem]">
+            <span className="text-on-surface" style={fvs(600)}>{detail.slug}</span>
+            {detail.refine_target && <span className="text-on-surface-low">refines {detail.refine_target}</span>}
+            {detail.triggers && <span className="text-on-surface-low">triggers: {detail.triggers}</span>}
+          </div>
+          {/* The full procedure — the thing actually being approved. */}
+          <div className="max-h-64 overflow-auto rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem]">
+            <Markdown>{detail.procedure_md}</Markdown>
+          </div>
+          {/* Provenance is a FENCED excerpt of the driving trace: untrusted text rendered
+              for review only, so it stays visually distinct from the procedure above. */}
+          {detail.source_excerpt && (
+            <details>
+              <summary className="cursor-pointer text-on-surface-low text-[0.75rem]">Why this was proposed</summary>
+              <pre className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-surface-container/60 px-m py-2 text-on-surface-low text-[0.75rem]">{detail.source_excerpt}</pre>
+            </details>
+          )}
+          <div className="flex flex-wrap items-center gap-s">
+            <Button size="sm" onClick={() => act('accept')} disabled={!!busy}>
+              {busy === 'accept' ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Install skill
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => act('reject')} disabled={!!busy}>
+              <XCircle size={14} /> Reject
+            </Button>
+            {/* Editing before approving lives on the skills page, which has the editor. */}
+            <Button size="sm" variant="ghost" onClick={() => navigate('skills')} disabled={!!busy}>
+              <ExternalLink size={14} /> Edit first
+            </Button>
+          </div>
+          {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+        </div>
+      )}
+    </Section>
   )
 }

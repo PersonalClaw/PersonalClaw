@@ -359,6 +359,60 @@ _WRITE_FILE_TOOLS = {"write_file", "edit_file"}
 # would bloat persisted meta; truncate with a marker.
 _MAX_FILE_SNAPSHOT = 200_000
 
+# How long an approval prompt may go unanswered before it is ALSO mirrored into the inbox
+# as a standing request (plan 42 T4.4). Short enough that a user who stepped away finds it
+# waiting, long enough that answering promptly never creates an inbox row to clean up —
+# the common case (approve within seconds) must not leave litter.
+_APPROVAL_MIRROR_GRACE_SECS = 90.0
+
+
+def _mirror_approval_to_inbox(state: object, session_key: str, event: object, risk: str) -> str:
+    """Raise an ``agent_request`` item for an approval that outlived its prompt.
+
+    Returns the inbox item id, or "" when nothing was written. Deduped per
+    (session, request) so a re-entered prompt can't stack rows. Best-effort: a failure here
+    must never break the approval flow the user is actually waiting on.
+    """
+    try:
+        from personalclaw.inbox import ItemKind, emit_attention_item
+
+        tool = getattr(event, "title", "") or "a tool"
+        return emit_attention_item(
+            state,
+            source="system",
+            kind="agent_request",
+            item_kind=ItemKind.AGENT_REQUEST.value,
+            title=f"Approval needed: {tool}",
+            body=f"A chat is waiting for your decision before running {tool} (risk: {risk}).",
+            refs={"session": session_key, "approval": str(getattr(event, "request_id", ""))},
+            dedup_key=f"approval:{session_key}:{getattr(event, 'request_id', '')}",
+        )
+    except Exception:
+        logger.debug("approval inbox mirror failed", exc_info=True)
+        return ""
+
+
+def _resolve_mirrored_approval(item_id: str, outcome: str) -> None:
+    """Close the mirrored item once the approval is answered anywhere.
+
+    Approved → HANDLED, anything else (rejected, timed out) → DISMISSED, so the item records
+    which answer was given rather than merely that the question closed.
+    """
+    if not item_id:
+        return
+    try:
+        from personalclaw.inbox import InboxStore
+
+        store = InboxStore()
+        store.load()
+        item = store.items.get(item_id)
+        if item is None or item.status in ("handled", "dismissed"):
+            return
+        item.status = "handled" if outcome.startswith("approved") else "dismissed"
+        store.save()
+    except Exception:
+        logger.debug("approval inbox mirror resolve failed", exc_info=True)
+
 
 def _file_change_base(session: _ChatSession) -> Path:
     """The workspace base a write tool resolves paths against — mirror
@@ -2368,12 +2422,32 @@ async def _run_chat(
                 # session dict reflects pending_approval=true and Board cards
                 # move into the Blocked lane without a browser refresh.
                 state.push_sessions_update()
+                mirrored_item = ""
                 try:
-                    outcome = await asyncio.wait_for(fut, timeout=7200.0)
+                    # An approval prompt is session-MODAL for latency: if the user is
+                    # looking at the chat, the card is the right surface and the inbox
+                    # would be noise. But this waits up to two hours, and a prompt the
+                    # user walked away from is a standing request they cannot see —
+                    # the session might be backgrounded, or the tab closed. So: wait a
+                    # short grace period first, and only mirror into the inbox if the
+                    # prompt is still unanswered after it (plan 42 T4.4).
+                    try:
+                        outcome = await asyncio.wait_for(
+                            asyncio.shield(fut), timeout=_APPROVAL_MIRROR_GRACE_SECS
+                        )
+                    except asyncio.TimeoutError:
+                        mirrored_item = _mirror_approval_to_inbox(
+                            state, session.key, event, effective_risk
+                        )
+                        outcome = await asyncio.wait_for(fut, timeout=7200.0)
                 except asyncio.TimeoutError:
                     outcome = "rejected"
                 finally:
                     session._approval_futures.pop(str(event.request_id), None)
+                    # Answering in the session must resolve the mirror too, or the inbox
+                    # keeps asking for a decision the user already made.
+                    if mirrored_item:
+                        _resolve_mirrored_approval(mirrored_item, outcome)
                 if outcome == "approved_trust_reads":
                     session._trust_reads = True
                     outcome = "approved"

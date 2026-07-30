@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-30T08:19:55.608Z",
+  "generatedAt": "2026-07-30T08:34:55.948Z",
   "totals": {
     "driftHits": 7,
     "filesScanned": 387,
@@ -446,6 +446,11 @@
     "pages/files/comments/CommentLayer.tsx": {
       "raw-button": 1,
       "raw-input": 2,
+      "raw-dialog": 0
+    },
+    "pages/inbox/InboxDetail.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
       "raw-dialog": 0
     },
     "pages/inbox/InboxPage.tsx": {

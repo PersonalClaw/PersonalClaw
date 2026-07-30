@@ -131,7 +131,76 @@ def enqueue(
         logger.debug("skill proposal write failed", exc_info=True)
         return None
     logger.info("Queued skill proposal %s (session %s)", pid, session_key)
+    _surface_in_inbox(prop)
     return prop
+
+
+def _surface_in_inbox(prop: SkillProposal) -> None:
+    """Raise the proposal as a durable inbox item (plan 42 S4).
+
+    A proposal is a standing request: it waits until the user decides. Before this it lived
+    only in the skills page's approval tab, so a proposal synthesized while the user was
+    away was invisible unless they went looking. Deduped by proposal id so a re-enqueue of
+    the same synthesis can't stack rows.
+
+    Best-effort: if the inbox is unreachable the proposal still exists in its own store and
+    the skills page still shows it — surfacing must never be able to fail the enqueue.
+    """
+    try:
+        from personalclaw.inbox import ItemKind, emit_attention_item
+
+        state = None
+        try:
+            # The same process-wide accessor the inbox service uses; None when headless.
+            from personalclaw.inbox_providers.native_source import get_dashboard_state
+
+            state = get_dashboard_state()
+        except Exception:
+            logger.debug("proposal inbox surface: no dashboard state", exc_info=True)
+
+        label = "Refine a skill" if prop.kind == "refine" else "New skill proposed"
+        emit_attention_item(
+            state,
+            source="skills",
+            kind="proposal",
+            item_kind=ItemKind.PROPOSAL.value,
+            title=label,
+            body=f"{prop.slug} — {prop.description}",
+            refs={"skill_proposal": prop.id, "session": prop.session_key},
+            dedup_key=f"skill_proposal:{prop.id}",
+        )
+    except Exception:
+        logger.debug("proposal inbox surface failed", exc_info=True)
+
+
+def _resolve_inbox_item(pid: str, status: str) -> None:
+    """Move the inbox item for *pid* to a terminal status once the user decides.
+
+    Without this the row would sit unresolved forever after the user accepted or rejected
+    the proposal on either surface — the inbox would keep claiming attention for work
+    already done, which is precisely the "second attention store" problem this plan exists
+    to end.
+
+    Accepts a transition FROM a terminal status, because ``accept()`` runs after
+    ``reject()`` has already marked the item dismissed and needs to correct it to handled.
+    Never moves an item backwards into an open state, which would resurrect it.
+    """
+    open_or_resolved = ("pending", "seen", "dismissed", "handled")
+    try:
+        from personalclaw.inbox import InboxStore
+
+        store = InboxStore()
+        store.load()
+        changed = False
+        for item in store.items.values():
+            if item.refs.get("skill_proposal") == pid and item.status in open_or_resolved:
+                if item.status != status:
+                    item.status = status
+                    changed = True
+        if changed:
+            store.save()
+    except Exception:
+        logger.debug("proposal inbox resolve failed", exc_info=True)
 
 
 def _load(pid: str) -> SkillProposal | None:
@@ -156,7 +225,66 @@ def list_pending() -> list[SkillProposal]:
         except (OSError, ValueError, TypeError):
             continue
     out.sort(key=lambda r: r.created_at, reverse=True)
+    backfill_inbox_items(out)
     return out
+
+
+def backfill_inbox_items(pending: "list[SkillProposal] | None" = None) -> int:
+    """Give every pending proposal an inbox item if it doesn't have one. Returns how many.
+
+    T4.2, as an **idempotent backfill keyed on data inspection** rather than a
+    `lifecycle/migrations/m_*.py` file (see the plan's *Change discipline*). Proposals
+    enqueued before S4 have no item; without this they'd stay invisible in the inbox forever
+    while `enqueue` only covers new ones.
+
+    Idempotent **by pid**: `emit_attention_item`'s dedup key is the proposal id, so an
+    existing OPEN item is reused and no second notification fires. A proposal the user
+    already resolved is deliberately skipped — re-creating an item for it would resurrect a
+    decision they'd made.
+
+    Runs from `list_pending()` (the read path both the skills page and the API use), so the
+    first look at either surface after an upgrade is already correct.
+    """
+    props = pending if pending is not None else []
+    if pending is None:
+        d = _proposals_dir()
+        if not d.is_dir():
+            return 0
+        for p in d.glob("*.json"):
+            try:
+                rec = SkillProposal(**json.loads(p.read_text(encoding="utf-8")))
+                if rec.status == "pending":
+                    props.append(rec)
+            except (OSError, ValueError, TypeError):
+                continue
+    if not props:
+        return 0
+
+    try:
+        from personalclaw.inbox import InboxStore
+
+        store = InboxStore()
+        store.load()
+        # Any item referencing the pid counts as "has one", INCLUDING a resolved one —
+        # otherwise every read would re-raise items for proposals the user has answered.
+        seen = {
+            i.refs.get("skill_proposal")
+            for i in store.items.values()
+            if i.refs.get("skill_proposal")
+        }
+    except Exception:
+        logger.debug("proposal backfill: inbox read failed", exc_info=True)
+        return 0
+
+    made = 0
+    for prop in props:
+        if prop.id in seen:
+            continue
+        _surface_in_inbox(prop)
+        made += 1
+    if made:
+        logger.info("surfaced %d pre-existing skill proposal(s) in the inbox", made)
+    return made
 
 
 def get(pid: str) -> SkillProposal | None:
@@ -164,10 +292,17 @@ def get(pid: str) -> SkillProposal | None:
 
 
 def reject(pid: str) -> bool:
-    """Drop a proposal (never installed). Returns True if it existed."""
+    """Drop a proposal (never installed). Returns True if it existed.
+
+    ``accept()`` also calls this to clear the queue entry, so the inbox resolution here is
+    deliberately DISMISSED and `accept()` overwrites it with HANDLED afterwards — the
+    distinction matters because "I said no" and "I installed it" are different answers, and
+    the item's terminal status is the only record of which one the user gave.
+    """
     try:
         (_proposals_dir() / f"{pid}.json").unlink()
         logger.info("Rejected skill proposal %s", pid)
+        _resolve_inbox_item(pid, "dismissed")
         return True
     except OSError:
         return False
@@ -198,5 +333,8 @@ def accept(pid: str, *, description: str | None = None, procedure_md: str | None
     if not name:
         raise AcceptError(f"could not write skill {prop.slug!r} (invalid, oversized, or exists)")
     reject(pid)  # clear the now-accepted proposal
+    # reject() marked the item DISMISSED; correct it to HANDLED. Order matters: doing this
+    # before reject() would let reject() overwrite it back to dismissed.
+    _resolve_inbox_item(pid, "handled")
     logger.info("Accepted skill proposal %s → %s", pid, name)
     return name
