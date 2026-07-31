@@ -1423,7 +1423,10 @@ export interface GitStatusResp { repoRoot: string; branch: string; statuses: Rec
 export interface ContentMatch { file: string; line: number; col: number; preview: string }
 export interface ContentSearchResp { results: ContentMatch[]; engine: 'rg' | 'python'; truncated: boolean }
 
-export type ArtifactKind = 'widget' | 'html' | 'react' | 'markdown' | 'svg' | 'json' | 'text' | 'infographic' | 'document' | 'image'
+// Mirrors the backend's ALLOWED_KINDS (artifacts/models.py). The office/PDF kinds and
+// `video` were missing here, so `artifactKindMeta` fell through to its first entry and
+// every generated .docx/.xlsx/.pptx/.pdf/.csv/video displayed as a "Widget".
+export type ArtifactKind = 'widget' | 'html' | 'react' | 'markdown' | 'svg' | 'json' | 'text' | 'infographic' | 'document' | 'image' | 'csv' | 'docx' | 'xlsx' | 'pptx' | 'pdf' | 'video'
 export type ArtifactSource = 'chat' | 'cron' | 'subagent' | 'manual' | 'import'
 export type ArtifactEventType = 'created' | 'edited' | 'iterated' | 'referenced' | 'reverted'
 export interface ArtifactEvent {
