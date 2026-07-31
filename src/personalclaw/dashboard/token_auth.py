@@ -243,6 +243,13 @@ _state: TokenStateManager = TokenStateManager(max_concurrent_nonces=MAX_CONCURRE
 
 _BYPASS_PREFIXES = ("/assets/", "/fonts/", "/sprites/", "/vendor/")
 _BYPASS_EXACT = {"/claw.svg", "/api/token/local", "/api/healthz"}
+# `/api/logout` authenticates ITSELF exactly like `/api/token/local` above: loopback rail plus a
+# constant-time `X-Local-Secret` check inside `api_logout`. It was missing here, so the dashboard
+# middleware demanded a session token first and `personalclaw logout` / `auth revoke --all`
+# always got 403 — a revoke-everything command that could never revoke anything, while the CLI's
+# own fallback reported success. Found in live validation: the "revoked" session kept working.
+# Exempting it opens nothing; it lets the request reach the check that actually guards it.
+_BYPASS_EXACT.add("/api/logout")
 # The inbound MCP surface authenticates ITSELF (MCP-READONLY-INBOUND §T1.1): it
 # carries a dedicated bearer token plus its own loopback rail, so it must bypass
 # the DASHBOARD's cookie auth rather than be reachable with a dashboard session.
@@ -263,6 +270,10 @@ _BYPASS_EXACT.add("/mcp")
 # NOTHING else auth-related is exempt: logout, the session view, and setting a password all
 # stay behind the normal middleware.
 _BYPASS_EXACT.update({"/login", "/api/auth/login", "/api/auth/status"})
+# Device enrollment COMPLETION is exempt for the same reason login is: the device redeeming a
+# code has no session yet — that is the point. `enroll/start` is NOT exempt (you must already be
+# authenticated to mint a code), and completion is origin-checked and rate-limited like login.
+_BYPASS_EXACT.add("/api/auth/enroll/complete")
 
 # Link click window — URL must be opened within this time.
 # 24 hours for local installs; the URL only works on loopback anyway.
@@ -553,6 +564,25 @@ def revoke_all_sessions() -> None:
         logger.warning("could not clear the durable session store during revoke", exc_info=True)
 
 
+def secure_cookies() -> bool:
+    """Whether session cookies should carry ``Secure`` (REMOTE-USER-AUTH T4.1).
+
+    True only when the operator has declared an **https** public URL. Deliberately NOT the
+    default: `Secure` makes a cookie undeliverable over plain http, which is how essentially
+    every local install runs, so switching it on unconditionally would silently break login
+    and page auth for everyone with nothing pointing at the cause.
+
+    Any failure resolving this returns False — the value that keeps the box usable.
+    """
+    try:
+        from personalclaw.dashboard.exposure import is_https
+
+        return bool(is_https())
+    except Exception:  # noqa: BLE001
+        logger.debug("could not determine whether to set Secure on cookies", exc_info=True)
+        return False
+
+
 def revoke_token(token: str) -> bool:
     """Revoke the ONE session *token* belongs to (logout). Returns whether it was live.
 
@@ -662,19 +692,44 @@ def token_auth_middleware(
     """
 
     def _resolved_client_ip(request: web.Request) -> str:
-        """Return the browser's IP, preferring trusted X-Real-IP over remote.
+        """Return the browser's IP, preferring a forwarded header from a TRUSTED peer.
 
-        nginx (or any reverse proxy in the same compose network) sees the
-        gateway's container IP as the TCP remote, not the actual client.
-        When the TCP remote is itself on a loopback or private subnet
-        (i.e. came from a trusted internal proxy) we trust X-Real-IP.
+        nginx (or any reverse proxy in the same compose network) sees the gateway's container
+        IP as the TCP remote, not the actual client, so a forwarded header is the only way to
+        recover the real one — and the real one is what IP binding binds to.
+
+        **REMOTE-USER-AUTH T4.1 tightens who may set it.** Once the operator declares this
+        instance internet-exposed (`dashboard.public_url`), only a peer listed in
+        `dashboard.trusted_proxies` is believed. Before that change the rule was the shape of
+        the TCP remote — "starts with 10./172.1x/192.168." — which is the classic mistake: on
+        an exposed box every container neighbour, LAN device and SSRF-able local service sits
+        on a private address, so any of them could set `X-Real-IP` and move a bound session to
+        an address of their choosing.
+
+        **Not exposed ⇒ behavior is unchanged**, deliberately. Home/compose installs depend on
+        the private-subnet heuristic today, and silently breaking their nginx would be a
+        regression paid by everyone to harden the few. Exposure is the operator's own
+        statement, and it is what switches the strict rule on.
         """
         raw = request.remote or "unknown"
         forwarded = request.headers.get("X-Real-IP", "").strip()
+        if not forwarded:
+            return raw
+        try:
+            from personalclaw.dashboard.exposure import is_exposed, is_trusted_proxy
+
+            if is_exposed():
+                # Strict: an explicitly trusted peer, or the header is ignored entirely.
+                if is_trusted_proxy(raw):
+                    return forwarded
+                logger.debug("ignoring X-Real-IP from untrusted peer on an exposed instance")
+                return raw
+        except Exception:  # noqa: BLE001 — never let this decision break a request
+            logger.debug("exposure check failed; using the legacy proxy heuristic", exc_info=True)
         is_proxy = raw.startswith(
             ("127.", "10.", "172.1", "172.2", "172.3", "192.168.", "::1", "fc", "fd")
         )
-        return forwarded if (forwarded and is_proxy) else raw
+        return forwarded if is_proxy else raw
 
     def _extract_and_validate_token(request: web.Request, _port: int) -> tuple[bool, str, str]:
         """Extract token from query param or cookie and validate it.
@@ -954,6 +1009,7 @@ def token_auth_middleware(
                 samesite="Lax",
                 path="/",
                 max_age=cookie_max_age,
+                secure=secure_cookies(),
             )
             # Clear the non-port-specific cookie so only pc_token_{port} is used.
             resp.set_cookie("pc_token", "", max_age=0, path="/")

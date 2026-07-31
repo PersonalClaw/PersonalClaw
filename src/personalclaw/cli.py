@@ -479,6 +479,16 @@ Examples:
     auth_sub.add_parser("status", help="Show whether login and 2FA are configured")
     auth_totp = auth_sub.add_parser("totp", help="Enroll or disable a 2FA code")
     auth_totp.add_argument("totp_action", choices=("setup", "disable"), nargs="?", default="setup")
+    auth_enroll = auth_sub.add_parser("enroll", help="Print a single-use code to pair a device")
+    auth_enroll.add_argument("--label", default="", help="A note for your own reference")
+    auth_enroll.add_argument(
+        "--clear", action="store_true", help="Invalidate every outstanding code"
+    )
+    auth_revoke = auth_sub.add_parser("revoke", help="End dashboard sessions")
+    auth_revoke.add_argument("--all", action="store_true", help="Revoke every session")
+    auth_revoke.add_argument(
+        "--port", type=int, default=0, help="Gateway port (defaults to the configured one)"
+    )
 
     # backup — deterministic shard export + verification (DURABILITY §2)
     backup_parser = sub.add_parser(

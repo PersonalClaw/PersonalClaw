@@ -241,6 +241,27 @@ def _apply_startup_yolo(state: DashboardState, cfg: Any) -> None:
     logger.info("YOLO mode enabled at startup (agent.yolo=true)")
 
 
+def _ws_csp_sources() -> str:
+    """Extra `connect-src` entries for an internet-exposed instance (T4.1).
+
+    Returns "" unless `dashboard.public_url` is set, so a normal local install keeps a
+    byte-identical CSP. When set, both `wss://host` and `https://host` are added: the page is
+    served over TLS through the tunnel, so the browser opens the WebSocket against the public
+    origin rather than localhost, and a policy that omits it produces a dashboard that renders
+    but never receives an event.
+    """
+    try:
+        from personalclaw.dashboard.exposure import public_host
+
+        host = public_host()
+        if not host:
+            return ""
+        return f" wss://{host} https://{host}"
+    except Exception:  # noqa: BLE001
+        logger.debug("could not resolve the public host for the CSP", exc_info=True)
+        return ""
+
+
 async def start_dashboard(
     sessions: "SessionManager",
     crons: "ScheduleService",
@@ -375,6 +396,8 @@ async def start_dashboard(
     app.router.add_post("/api/auth/logout", _auth_h.api_auth_logout)
     app.router.add_get("/api/auth/session", _auth_h.api_auth_session)
     app.router.add_post("/api/auth/password", _auth_h.api_auth_set_password)
+    app.router.add_post("/api/auth/enroll/start", _auth_h.api_auth_enroll_start)
+    app.router.add_post("/api/auth/enroll/complete", _auth_h.api_auth_enroll_complete)
 
     # WebSocket (multiplexed real-time events)
     app.router.add_get("/api/ws", ws.api_ws)
@@ -1360,7 +1383,13 @@ async def start_dashboard(
                 # Monaco (locally bundled) inlines its codicon icon font as a data: URI;
                 # without font-src the default-src 'self' fallback blocks it.
                 "font-src 'self' data:; "
-                "connect-src 'self' ws://localhost:* ws://127.0.0.1:*; "
+                # REMOTE-USER-AUTH T4.1: behind a TLS-terminating tunnel the page is https,
+                # so the browser upgrades the WS to wss:// against the PUBLIC host — which
+                # this policy must name, or the dashboard loads and then silently has no
+                # live connection (the worst failure shape: it looks fine and does nothing).
+                # `_ws_csp_sources()` returns "" for a normal local install, leaving the
+                # policy byte-identical to before.
+                f"connect-src 'self' ws://localhost:* ws://127.0.0.1:*{_ws_csp_sources()}; "
                 "frame-src 'self' blob:; "
                 "worker-src 'self' blob:; "
                 "object-src 'none'; base-uri 'self'",

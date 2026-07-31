@@ -33,6 +33,33 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Sign in from outside your home network.** Reaching your own dashboard while away used to
+  mean being at the machine — the only way in was a token link you had to mint locally. You can
+  now set a password (`personalclaw auth set-password`) and turn on a sign-in page, so a browser
+  anywhere can log in for a session. **It is off by default and it is additive:** the token link
+  and the loopback paths keep working exactly as before, and they stay the way back in if you
+  ever forget the password — a login you misconfigure cannot lock you out of your own box.
+  Optional 2FA (`personalclaw auth totp setup`) adds a time-based code. Failed attempts are rate
+  limited with a lockout, and every attempt is recorded in the audit log.
+- **Pair a phone without typing your password into it.** `personalclaw auth enroll` prints a
+  short code you enter once on the other device. It works exactly once, expires in five minutes,
+  and is stored only as a hash — so the worst case for a code you lose on a screen is that you
+  run the command again.
+- **Sessions survive a restart.** Previously every gateway restart invalidated every token: on a
+  local box you re-ran `personalclaw token`, and away from home you were simply locked out,
+  because minting a URL required being at the machine. The signing key and the session records
+  are now persisted (both `0600`). `personalclaw auth revoke --all` ends every session, and that
+  survives a restart too.
+- **Hardening for an internet-exposed instance.** Set `dashboard.public_url` when you reach the
+  dashboard through a TLS-terminating tunnel and the session cookie gains `Secure`, the
+  WebSocket policy allows `wss://` to that host, and proxy headers (`X-Forwarded-For` /
+  `X-Real-IP`) are honored **only** from an address you list in `dashboard.trusted_proxies`.
+  That last one closes a real hole: those headers used to be trusted based on the *shape* of the
+  peer address, and on an exposed box any container neighbour sits on a private address and
+  could have moved a session's bound address. A local install is unaffected — nothing changes
+  until you declare a public URL. The new [remote-access guide](docs/guides/remote-access.md)
+  walks the whole setup and is explicit about what it does *not* protect you from.
+
 - **One place for everything waiting on you.** The inbox is no longer just messages: a goal
   loop that needs a decision, a proposed skill, and a tool approval you walked away from all
   land there as items you can answer in place — instead of a toast that scrolls past while the
@@ -514,6 +541,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   representation that leaves your machine.
 
 ### Fixed
+
+- **`personalclaw logout` never actually revoked anything.** It printed
+  "All dashboard sessions revoked" and returned success while the gateway refused the request
+  (403) and every session kept working — the endpoint was gated behind the very dashboard
+  session it was meant to end. Found by running the command against a real gateway rather than
+  reading the code.
 
 - **Auto-archive skipped the very chats it existed to tidy — and you couldn't see or
   change the rule.** Chats are archived after a period of inactivity (30 days by default),

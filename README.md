@@ -202,6 +202,7 @@ run on every push to `main`.
 ## Documentation
 
 - [Getting started](docs/guides/getting-started.md) — install → first chat.
+- [Remote access](docs/guides/remote-access.md) — reaching your dashboard from outside your home network (tunnel + password + 2FA), and what it does *not* protect you from.
 - [Architecture overview](docs/architecture/overview.md) — the system map (with diagrams).
 - [Configuration reference](docs/reference/configuration.md) · [CLI](docs/reference/cli.md) · [API](docs/reference/api-overview.md)
 - [Roadmap](docs/roadmap/roadmap.md) — 52 plans across 6 pillars, with a shared execution protocol.
