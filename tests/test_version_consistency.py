@@ -109,3 +109,43 @@ def test_client_version_locksteps_core() -> None:
         f"version={_pyproject_version()!r} — bump packages/personalclaw-client-py/"
         "pyproject.toml in the same release-prep commit (lockstep policy)"
     )
+
+
+def _acp_client_version() -> str:
+    text = (_REPO_ROOT / "src" / "personalclaw" / "acp" / "client.py").read_text(encoding="utf-8")
+    m = re.search(r'^CLIENT_VERSION\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    assert m, "CLIENT_VERSION literal not found in acp/client.py"
+    return m.group(1)
+
+
+def test_acp_client_version_tracks_core() -> None:
+    """The version PersonalClaw announces to an ACP agent must be its real one.
+
+    This was found hardcoded at ``0.1.2`` during the 0.1.3 release — the handshake
+    told every ACP CLI the wrong version, which is the kind of thing that surfaces
+    as an unreproducible compatibility report months later.
+    """
+    assert _acp_client_version() == _pyproject_version(), (
+        f"acp/client.py CLIENT_VERSION={_acp_client_version()!r} disagrees with core "
+        f"version={_pyproject_version()!r} — it is sent in the ACP initialize handshake"
+    )
+
+
+def _readme_declared_version() -> str:
+    text = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    m = re.search(r"PersonalClaw is at \*\*v(\d+\.\d+\.\d+)\*\*", text)
+    assert m, "the pre-1.0 banner's 'PersonalClaw is at **vX.Y.Z**' sentence is missing"
+    return m.group(1)
+
+
+def test_readme_banner_version_tracks_core() -> None:
+    """The README's pre-1.0 banner states a version; it must be the current one.
+
+    Unenforced, it drifted three releases (it still said v0.1.0 at v0.1.3) — and it
+    sits in the one paragraph warning users their data may break, where being wrong
+    about which release they are reading about is worst.
+    """
+    assert _readme_declared_version() == _pyproject_version(), (
+        f"README pre-1.0 banner says v{_readme_declared_version()} but core is "
+        f"v{_pyproject_version()} — update the banner in the release-prep commit"
+    )

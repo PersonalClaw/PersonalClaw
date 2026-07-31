@@ -77,10 +77,10 @@ Plans with **no material rev-9 change and no real-world owner action** are marke
 
 | Category | Plans | What you do |
 |---|---|---|
-| **Accounts/registration** | 33, 36, 37 | PyPI + TestPyPI (trusted publishing), GitHub org + repo transfer, personalclaw.dev registration + DNS, GitHub Sponsors, Discord server |
+| **Accounts/registration** | 33, 36, 37 | PyPI + TestPyPI (trusted publishing), GitHub org + repo transfer, personalclaw.dev registration + DNS, GitHub Sponsors |
 | **Money decisions** | 44, 45, 47, 9 | Apple Developer ($99/yr), Play Console ($25), external security audit budget, your LLM spend budgets |
 | **Credentials/secrets** | 15, 18, 40, 45, 47 | Google OAuth (Drive/Photos), HuggingFace tokens (gated models), bot tokens (BotFather/Discord/email app-passwords), Apple signing certs, minisign signing key |
 | **Hardware/hosting** | 18, 13, 26, 39, 44 | Local inference machine, BYO runner hosts, backup destinations, ARM + Windows test machines, Tailscale |
 | **Validation you must drive** | 34, 39, 40, 42, 43, 44, 45, 46 | Clean-machine installs, ARM/Windows checklists, phone-channel walkthroughs, 24h dogfood, 3 usability strangers, mobile field week, benchmark task curation |
-| **Policy/copy sign-off** | 9, 35, 37, 43, 46, 47 | Spend/incident posture, security limitations wording, CoC contact + continuity, onboarding + approval copy, benchmark publish decision, scanner-corpus publish decision |
+| **Policy/copy sign-off** | 9, 35, 37, 43, 46, 47 | Spend/incident posture, security limitations wording, CoC contact, onboarding + approval copy, benchmark publish decision, scanner-corpus publish decision |
 | **Name/brand (done)** | 36 | PersonalClaw + personalclaw.dev decided 2026-07-18; still-open: pursue .com/.ai or drop; optional USPTO screen |
