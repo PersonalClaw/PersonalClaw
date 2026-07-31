@@ -8,7 +8,8 @@ the box itself has none of that exhaust.
 
 Nothing here reveals a stored secret. `auth status` reports whether a credential exists,
 never the hash; `auth totp setup` prints the new secret exactly once because the user has
-to type it into an authenticator app, and says so.
+to type it into an authenticator app, and says so. `auth enroll` prints a short single-use
+code for pairing another device — the store keeps only its hash, so it cannot be read back.
 """
 
 from __future__ import annotations
@@ -141,8 +142,103 @@ def auth_cmd(args) -> int:
     if action == "totp":
         return _totp_cmd(args)
 
-    print("Usage: personalclaw auth set-password|enable|disable|status|totp")
+    if action == "enroll":
+        return _enroll_cmd(args)
+
+    if action == "revoke":
+        return _revoke_cmd(args)
+
+    print("Usage: personalclaw auth set-password|enable|disable|status|totp|enroll|revoke")
     return 2
+
+
+def _enroll_cmd(args) -> int:
+    """``personalclaw auth enroll [--label NAME] [--clear]`` — a single-use device code."""
+    from personalclaw.auth import enrollment
+
+    if bool(getattr(args, "clear", False)):
+        enrollment.clear_codes()
+        print("✅ Cleared every outstanding enrollment code.")
+        return 0
+
+    code, _expires_at = enrollment.issue_code(label=str(getattr(args, "label", "") or ""))
+    mins = enrollment.CODE_TTL_SECS // 60
+    print("✅ Enrollment code (single use, valid for %d minutes):" % mins)
+    print()
+    print(f"    {enrollment.format_code(code)}")
+    print()
+    print("Open the dashboard on the other device and enter this code. It is shown once,")
+    print("works exactly once, and expires on its own — losing it costs nothing, just")
+    print("run this again.")
+    return 0
+
+
+def _revoke_cmd(args) -> int:
+    """``personalclaw auth revoke --all`` — end every session.
+
+    **Routed through the RUNNING gateway**, not by editing the session file. Clearing the file
+    from a separate process leaves the live gateway's in-memory nonce set untouched, so it keeps
+    honoring exactly the sessions you just tried to kill — the command prints success and the
+    stolen cookie still works. Found in live validation, which is the only place a
+    two-process-state bug like this shows up.
+
+    Falls back to a direct store clear only when no gateway is running (nothing is holding
+    contradictory state then, and refusing would leave no way to revoke offline).
+
+    Only `--all` is offered. A per-nonce revoke would mean printing live nonces to choose one,
+    and a nonce in a terminal or shell history is a credential.
+    """
+    if not bool(getattr(args, "all", False)):
+        print("Usage: personalclaw auth revoke --all")
+        print("  Ends every dashboard session. You will need to log in (or use a token) again.")
+        return 2
+
+    from personalclaw.config.loader import _DEFAULT_PORT
+
+    port = int(getattr(args, "port", 0) or _DEFAULT_PORT)
+    if _revoke_via_gateway(port):
+        print("✅ Revoked every dashboard session (live gateway + on disk).")
+        print("   Your password and 2FA enrollment are untouched.")
+        return 0
+
+    from personalclaw.dashboard.token_auth import revoke_all_sessions
+
+    revoke_all_sessions()
+    print("✅ Revoked every stored session (no gateway was running).")
+    print("   Your password and 2FA enrollment are untouched.")
+    return 0
+
+
+def _revoke_via_gateway(port: int) -> bool:
+    """Ask a running gateway to revoke everything. False when none is reachable.
+
+    Reuses the existing loopback + `.local_secret` rail that `personalclaw logout` uses, so this
+    adds no new authenticated surface — it is the same internal endpoint.
+    """
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    from personalclaw.config.loader import config_dir
+
+    try:
+        secret = (config_dir() / ".local_secret").read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+    if not secret:
+        return False
+
+    req = urllib.request.Request(
+        f"http://localhost:{port}/api/logout",
+        method="POST",
+        headers={"X-Local-Secret": secret, "Content-Type": "application/json"},
+        data=b"{}",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:  # nosec B310 - fixed loopback URL
+            return bool(_json.loads(resp.read()).get("ok"))
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
+        return False
 
 
 def _totp_cmd(args) -> int:

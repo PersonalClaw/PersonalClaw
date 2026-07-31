@@ -35,6 +35,7 @@ from personalclaw.dashboard.token_auth import (
     DEFAULT_BROWSER_SESSION_TTL_SECS,
     generate_token,
     parse_config_duration,
+    secure_cookies,
     validate_token,
 )
 
@@ -230,10 +231,10 @@ async def api_auth_login(request: web.Request) -> web.Response:
 def _set_session_cookie(request: web.Request, resp: web.Response, token: str, ttl: int) -> None:
     """Set the session cookie the middleware already reads.
 
-    Same name, same flags as the middleware's own mint, so the two are indistinguishable.
-    `Secure` is NOT set here — S4 (T4.1) adds it off `dashboard.public_url`, because setting
-    it unconditionally would break every plain-http local install, which is the default way
-    this software runs.
+    Same name, same flags as the middleware's own mint, so the two are indistinguishable —
+    including `Secure`, which comes from the SAME `secure_cookies()` the middleware uses
+    (T4.1). Sharing that one resolver is the point: a login cookie that was `Secure` while a
+    link cookie was not would be two different security postures for one session model.
     """
     port = _cookie_port(request)
     resp.set_cookie(
@@ -243,6 +244,7 @@ def _set_session_cookie(request: web.Request, resp: web.Response, token: str, tt
         samesite="Lax",
         path="/",
         max_age=ttl,
+        secure=secure_cookies(),
     )
     # Clear the legacy non-port-specific cookie, mirroring the middleware.
     resp.set_cookie("pc_token", "", max_age=0, path="/")
@@ -374,6 +376,84 @@ async def api_auth_set_password(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "username": username})
 
 
+ERR_ENROLL_INVALID = "auth_enroll_code_invalid"
+
+
+async def api_auth_enroll_start(request: web.Request) -> web.Response:
+    """POST /api/auth/enroll/start — mint a single-use device enrollment code.
+
+    Behind the normal middleware (a live session), so this is the "I am already in, on my
+    laptop, and want my phone in too" path. The code is returned ONCE; nothing can read it
+    back, because the store holds only its hash.
+    """
+    if not check_origin(request):
+        return _err(ERR_INVALID, 403)
+
+    from personalclaw.auth import enrollment
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    label = str((body or {}).get("label") or "") if isinstance(body, dict) else ""
+
+    code, expires_at = enrollment.issue_code(label=label)
+    return web.json_response(
+        {
+            "code": enrollment.format_code(code),
+            "expires_at": expires_at,
+            "expires_in": enrollment.CODE_TTL_SECS,
+        }
+    )
+
+
+async def api_auth_enroll_complete(request: web.Request) -> web.Response:
+    """POST /api/auth/enroll/complete — redeem a code for a device session.
+
+    Exempt from token auth (the whole point is that the device has no session yet), so it
+    carries the same guards as login: origin check and the per-IP lockout, because a code is a
+    short credential and an unrated endpoint would let someone grind the 8-character space.
+    """
+    ip = _client_ip(request)
+    cfg = _auth_cfg()
+    if not check_origin(request):
+        return _err(ERR_ENROLL_INVALID, 403)
+
+    remaining = _lockout_remaining(ip, cfg)
+    if remaining:
+        _sel().log_api_access(
+            caller=ip,
+            operation="login_locked_out",
+            outcome="denied",
+            source="auth",
+            error=f"enroll retry_after={remaining}s",
+        )
+        return _err(ERR_LOCKED_OUT, 429, headers={"Retry-After": str(remaining)})
+
+    from personalclaw.auth import enrollment
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    code = str((body or {}).get("code") or "") if isinstance(body, dict) else ""
+
+    if not enrollment.redeem_code(code):
+        _record_failure(ip)
+        return _err(ERR_ENROLL_INVALID, 401)
+
+    # A device session, deliberately at the same TTL as a browser login rather than the
+    # 1-year cap: a phone in a drawer should not hold a live session for a year.
+    ttl = parse_config_duration(cfg.session_ttl, default_secs=DEFAULT_BROWSER_SESSION_TTL_SECS)
+    token = generate_token("enrolled-device", ttl_seconds=ttl)
+    _clear_failures(ip)
+    _sel().log_api_access(caller=ip, operation="enroll_completed", outcome="granted", source="auth")
+
+    resp = web.json_response({"ok": True, "expires_in": ttl})
+    _set_session_cookie(request, resp, token, ttl)
+    return resp
+
+
 async def login_page(request: web.Request) -> web.Response:
     """GET /login — the login form.
 
@@ -445,6 +525,8 @@ button:active{transform:scale(0.985)}
 button[disabled]{opacity:.6;cursor:default}
 .err{color:var(--danger);font-size:13px;margin-top:14px;min-height:18px}
 .hint{margin-top:18px;font-size:12px;color:var(--ink-low)}
+.hint a{color:var(--primary-emphasis);text-decoration:none}
+.hint a:hover{text-decoration:underline}
 @media(prefers-color-scheme:light){:root{--canvas:#f0f4f8;--surface:#ffffff;
 --surface-high:#e6eaef;--ink:#1f1f1f;--ink-low:#5f6368;--outline:#e1e3e1;
 --primary:#6a4fd0;--on-primary:#ffffff;--primary-emphasis:#563bbf}
@@ -472,8 +554,15 @@ autocomplete='one-time-code' style='display:none'>
 <button id='b' type='submit'>Sign in</button>
 </form>
 <div class='err' id='e' role='alert' aria-live='polite'></div>
-<div class='hint'>On your home network you can still use
-<code>personalclaw token</code>.</div>
+<div class='hint'>
+<a href='#' id='toggle'>Use a device code instead</a> &middot;
+on your home network you can still use <code>personalclaw token</code>.
+</div>
+<form id='cf' style='display:none;margin-top:18px'>
+<input id='c' name='code' type='text' placeholder='XXXX-XXXX' autocomplete='off'
+autocapitalize='characters' spellcheck='false'>
+<button id='cb' type='submit'>Pair this device</button>
+</form>
 </div><script>
 var NEEDS_TOTP = __TOTP__;
 var MESSAGES = {
@@ -483,6 +572,40 @@ var MESSAGES = {
   auth_not_enabled: 'Password sign-in is not enabled on this instance.'
 };
 if (NEEDS_TOTP) { document.getElementById('t').style.display = 'block'; }
+MESSAGES.auth_enroll_code_invalid = 'That code is not valid, or has already been used.';
+document.getElementById('toggle').addEventListener('click', function (ev) {
+  ev.preventDefault();
+  var pw = document.getElementById('f'), cf = document.getElementById('cf');
+  var showingCode = cf.style.display === 'none';
+  cf.style.display = showingCode ? 'block' : 'none';
+  pw.style.display = showingCode ? 'none' : 'block';
+  ev.target.textContent = showingCode ? 'Use a password instead' : 'Use a device code instead';
+  document.getElementById('e').textContent = '';
+  if (showingCode) { document.getElementById('c').focus(); }
+});
+document.getElementById('cf').addEventListener('submit', function (ev) {
+  ev.preventDefault();
+  var btn = document.getElementById('cb'), err = document.getElementById('e');
+  btn.disabled = true; err.textContent = '';
+  fetch('/api/auth/enroll/complete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ code: document.getElementById('c').value })
+  }).then(function (r) {
+    return r.json().catch(function () { return {}; }).then(function (d) {
+      return { ok: r.ok, data: d };
+    });
+  }).then(function (res) {
+    if (res.ok) { window.location.href = '/'; return; }
+    var code = (res.data && res.data.error) || 'auth_enroll_code_invalid';
+    err.textContent = MESSAGES[code] || 'Pairing failed.';
+    btn.disabled = false;
+  }).catch(function () {
+    err.textContent = 'Could not reach the gateway.';
+    btn.disabled = false;
+  });
+});
 document.getElementById('f').addEventListener('submit', function (ev) {
   ev.preventDefault();
   var btn = document.getElementById('b'), err = document.getElementById('e');

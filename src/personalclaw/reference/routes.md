@@ -59,6 +59,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/apps/{name}/update` — atomic update from ``{source, confirm?}``.
 - `GET /api/attachment-extract` — the extracted text content for an
 - `GET /api/auth-status` — Auth configuration status — mode, bind_host, and session validity.
+- `POST /api/auth/enroll/complete` — redeem a code for a device session.
+- `POST /api/auth/enroll/start` — mint a single-use device enrollment code.
 - `POST /api/auth/login` — verify the owner credential and mint a session cookie.
 - `POST /api/auth/logout` — clear the cookie AND revoke the session behind it.
 - `POST /api/auth/password` — set the owner password from an AUTHENTICATED session.

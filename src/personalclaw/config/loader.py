@@ -757,6 +757,26 @@ class DashboardConfig:
             "Public URL for the dashboard (used in links delivered to external channels).",
         ),
     )
+    public_url: str = field(
+        default="",
+        metadata=_meta(
+            "Public URL",
+            "Set this ONLY if you reach this dashboard from the internet through a "
+            "TLS-terminating tunnel or reverse proxy (e.g. https://pc.example.com). It "
+            "hardens the session cookie (Secure), allows wss:// to that host, and is a "
+            "precondition for trusting proxy headers. Distinct from Dashboard URL, which "
+            "is only used for links.",
+        ),
+    )
+    trusted_proxies: list[str] = field(
+        default_factory=list,
+        metadata=_meta(
+            "Trusted Proxies",
+            "Addresses or CIDR blocks of the proxy/tunnel in front of this gateway. "
+            "X-Forwarded-Proto / X-Forwarded-For are honored ONLY from these peers — "
+            "anyone else can forge them. Empty (the default) trusts none.",
+        ),
+    )
     restore_sessions: bool = field(
         default=False,
         metadata=_meta(
@@ -2476,6 +2496,12 @@ class AppConfig:
             ),
             dashboard=DashboardConfig(
                 url=dashboard_data.get("url", ""),
+                public_url=str(dashboard_data.get("public_url", "") or ""),
+                trusted_proxies=[
+                    str(p)
+                    for p in (dashboard_data.get("trusted_proxies", []) or [])
+                    if isinstance(p, str) and str(p).strip()
+                ],
                 restore_sessions=dashboard_data.get("restore_sessions", False),
                 restore_window_minutes=dashboard_data.get("restore_window_minutes", 30),
                 user_name=dashboard_data.get("user_name", ""),

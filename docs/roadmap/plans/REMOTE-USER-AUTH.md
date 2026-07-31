@@ -482,3 +482,94 @@ Under the pre-1.0 banner this executes as a clean break (no lifecycle gate/migra
   **NOT in this session** (S4): `Secure` cookie + `wss` CSP + trusted-proxy forwarded headers off
   `dashboard.public_url`, the TOTP QR in Settings, remote enrollment codes
   (`/api/auth/enroll/start|complete`), and `docs/guides/remote-access.md`.
+
+- 2026-07-30 — **DONE (S4: exposure hardening + TOTP at login + device enrollment + the guide).**
+
+  **DEVIATION — `dashboard.public_url` did not exist; the plan named a field that was never built.**
+  Only `inbound.public_url` (MCP-READONLY-INBOUND) existed. Added `dashboard.public_url` +
+  `dashboard.trusted_proxies`, and put the resolution in ONE place (`dashboard/exposure.py`) that
+  prefers the dashboard field and falls back to the inbound one — because the plan's own
+  coordination note says there is one "this instance is exposed" signal serving two surfaces. An
+  operator who already declared exposure for the inbound surface should not have to say it twice
+  and silently keep an unhardened dashboard.
+
+  **`dashboard.url` is deliberately NOT the signal**, though it already exists and looks apt. It
+  means "a URL to put in links", and people legitimately set it to a LAN/`http://` address.
+  Deriving `Secure` from it would set a flag that makes the cookie undeliverable over plain http —
+  the user would be silently unable to log in with nothing pointing at the cause. Pinned by a test.
+
+  **The forwarded-header rule was the real vulnerability.** `_resolved_client_ip` trusted
+  `X-Real-IP` based on the SHAPE of the peer address (`10.`/`172.1x`/`192.168.`). On an exposed
+  box every container neighbour, LAN device and SSRF-able local service sits on a private address,
+  so any of them could set that header and move a session's IP binding. Now: exposed ⇒ only a peer
+  in `trusted_proxies` is believed (empty = trust nothing); NOT exposed ⇒ **behavior unchanged**,
+  because breaking every compose/nginx user to harden the few would be a regression paid by
+  everyone. **Mutation-verified**: reverting the hardening makes
+  `test_forwarded_header_ignored_from_an_untrusted_peer_when_exposed` fail (403 vs 200), so the
+  test detects the actual vulnerability rather than merely covering the line.
+
+  **`Secure` is shared, not duplicated.** Both mint paths (middleware + login handler) call one
+  `secure_cookies()`, so a login cookie cannot end up with a different posture than a link cookie.
+  An `http://` public URL deliberately does NOT get `Secure` — insecure by nature, but not broken;
+  the guide says plainly that TLS termination is the precondition.
+
+  **Enrollment codes bound the blast radius of an 8-character string:** single-use (consumed and
+  persisted BEFORE the session is minted, so a race cannot redeem twice), 300s TTL, at most 5
+  outstanding (an attacker cannot widen the guess space by asking for thousands), SHA-256 at rest
+  in a 0600 file (reading it yields nothing redeemable), constant-time compared, fail-closed on an
+  unreadable store, and wrong codes count toward the same lockout as passwords. Alphabet excludes
+  I/O/0/1 because the code is read off one screen and typed into another.
+
+  **A REAL BUG found only by live validation, and it was pre-existing on `main`.**
+  `personalclaw auth revoke --all` printed success while the revoked session **kept working**.
+  Two faults: (1) my CLI cleared the on-disk store while the running gateway held the nonces in
+  memory — a two-process state bug no in-process test can see; (2) the root cause — **`/api/logout`
+  was missing from `_BYPASS_EXACT`**, so the dashboard middleware demanded a session token before
+  `api_logout`'s own loopback + `X-Local-Secret` check could run. Every `personalclaw logout` has
+  been returning 403 while the CLI reported "✅ All dashboard sessions revoked." A
+  revoke-everything command that could never revoke anything.
+
+  Fixed by routing the CLI through the running gateway (reusing the existing rail, no new
+  authenticated surface) and adding `/api/logout` beside `/api/token/local` — the precedent for a
+  route that authenticates ITSELF. Exempting it opens nothing; it lets the request reach the check
+  that guards it, asserted by a test that drives the middleware and then the handler. Both
+  regression tests are **mutation-verified**. I first tried `internal_paths`, which was the wrong
+  lever (that branch wants `X-Internal-Secret`) and reverted it.
+
+  **DEVIATION — `auth revoke <nonce>` is not built; only `--all`.** A per-nonce revoke means
+  printing live nonces so the user can choose one, and a nonce in a terminal or shell history is a
+  credential. Re-authenticating is cheap; leaking a session identifier to save a step is not.
+
+  **T4.4 guide** (`docs/guides/remote-access.md`, linked from the README) walks a reader from
+  tunnel → password → `public_url` → 2FA → phone pairing, and has an explicit **"what this does not
+  protect you from"** section (weak passwords, compromised devices, the tunnel provider, the
+  agent's own reach, plain-http exposure). Also fixed `containers.md`, which recommended
+  `PERSONALCLAW_AUTH_MODE=api_key` — a mode `AuthConfig.from_env` does not honor, so readers
+  believed they had configured auth they did not have.
+
+  **ARCC was NOT queried — the MCP server is unavailable in this session.** Standard practice
+  applied: default-deny trusted proxies, no shape-based trust of attacker-controlled headers,
+  `Secure`+`HttpOnly`+`SameSite=Lax` cookies on an exposed instance, single-use hashed short-lived
+  codes, rate limiting on the pre-auth redemption endpoint, 0600 on every new file, fail-closed
+  reads throughout, and no secret in any log, status payload or response.
+
+  **Validated as a user** across **four gateway boots** on an isolated dev home (port 10861, never
+  :10000), configured as exposed: the session cookie carried **`Secure; HttpOnly; SameSite=Lax`**;
+  the CSP contained **`wss://pc.example.com https://pc.example.com`**; a CLI-minted code
+  (`FYHW-PB9C`) paired a device (200) and was then **refused on reuse**; the code store held **no
+  plaintext** at 0600; `require_totp` refused a password-only login with `auth_totp_required` and
+  accepted it with a live code; and after the fix `auth revoke --all` **killed the live session**
+  (302) with `personalclaw logout` working again. **0 tracebacks.**
+
+  **Gates:** `make lint` clean (mypy 563 files) · `make test` **9752 passed, 0 failed** · web
+  typecheck + **302 vitest** green. Tests: `tests/test_auth_exposure.py`, 51 cases.
+
+  **Storage decision (plan's request to record):** `auth/credentials.json` joins the
+  snapshot/export set; `auth/signing_key`, `auth/sessions.json` and `auth/enroll_codes.json` are
+  **excluded** — a signing key or live nonce in a portable archive is a credential in a backup,
+  and enrollment codes are 5-minute artifacts that would be expired garbage on restore.
+
+  **Remaining in this plan:** the TOTP **QR image** in Settings (the secret + `otpauth://` URI are
+  both surfaced, so enrollment works today by paste; a rendered QR needs a frontend qr dependency
+  — deferred as a taste/dependency call, not a blocker), and passkey/WebAuthn, which the plan
+  already lists as a future extension rather than v1 scope.
