@@ -59,6 +59,11 @@ MANIFEST_EXCLUDE: dict[str, str] = {
         "per-app backend reverse-proxy — reached via the app-route tools (§4), "
         "not called directly by agents"
     ),
+    "/login": (
+        "the owner sign-in page (REMOTE-USER-AUTH C3) — a rendered HTML form for a "
+        "HUMAN browser, UI transport. The agent-callable surface is POST "
+        "/api/auth/login, which IS in the manifest"
+    ),
 }
 
 

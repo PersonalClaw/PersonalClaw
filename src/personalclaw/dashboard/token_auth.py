@@ -214,6 +214,19 @@ class TokenStateManager:
             for n in expired_nonces:
                 self._nonces.pop(n, None)
 
+    def revoke_nonce(self, nonce: str, token: str = "") -> bool:
+        """Drop ONE nonce (single-session logout). Returns whether it was present.
+
+        Also drops the token's IP binding and consumed marker so nothing about the dead
+        session lingers to be matched against a future token.
+        """
+        with self._lock:
+            existed = self._nonces.pop(nonce, None) is not None
+            if token:
+                self._ip_bindings.pop(token, None)
+                self._consumed.pop(token, None)
+            return existed
+
     def clear_all(self) -> None:
         """Clear all token state (nonces, IP bindings, consumed tokens)."""
         with self._lock:
@@ -237,6 +250,19 @@ _BYPASS_EXACT = {"/claw.svg", "/api/token/local", "/api/healthz"}
 # request that fails enablement, peer, or token checks, and only mounts the route
 # at all when a valid dedicated token exists.
 _BYPASS_EXACT.add("/mcp")
+
+# The login front door (REMOTE-USER-AUTH C3). These three MUST be reachable without a
+# session, because they are how a remote browser gets one — gating them behind the session
+# they exist to mint would be circular. Exempting them does not make them open:
+#   * `/login` renders a form and redirects to `/` when login is disabled;
+#   * `/api/auth/login` verifies argon2 fail-closed, refuses unless `login_enabled`, checks
+#     the CSRF origin, and rate-limits per IP with lockout;
+#   * `/api/auth/status` returns two booleans an unauthenticated caller may already infer
+#     from being served a login page at all — never the username or whether a credential
+#     exists.
+# NOTHING else auth-related is exempt: logout, the session view, and setting a password all
+# stay behind the normal middleware.
+_BYPASS_EXACT.update({"/login", "/api/auth/login", "/api/auth/status"})
 
 # Link click window — URL must be opened within this time.
 # 24 hours for local installs; the URL only works on loopback anyway.
@@ -525,6 +551,48 @@ def revoke_all_sessions() -> None:
         clear_sessions()
     except Exception:  # noqa: BLE001
         logger.warning("could not clear the durable session store during revoke", exc_info=True)
+
+
+def revoke_token(token: str) -> bool:
+    """Revoke the ONE session *token* belongs to (logout). Returns whether it was live.
+
+    Clears the nonce from memory **and** from the durable store. The second half is the
+    security-relevant one: with only the in-memory drop, a logged-out session would be
+    refused until the next restart and then accepted again, because `is_nonce_valid` would
+    still find its nonce on disk — the same class of bug S1's `revoke_all_sessions` fixed.
+
+    Note this revokes the SESSION, not just the presented string: any other copy of the same
+    token dies with it, which is what a user pressing "log out" means.
+    """
+    nonce = ""
+    try:
+        payload_b64 = token.split(".")[0]
+        nonce = str(json.loads(_b64url_decode(payload_b64)).get("nonce") or "")
+    except Exception:  # noqa: BLE001 — a malformed token has no session to revoke
+        logger.debug("could not extract a nonce from the token being revoked", exc_info=True)
+        return False
+    if not nonce:
+        return False
+
+    existed = _state.revoke_nonce(nonce, token)
+    try:
+        from personalclaw.dashboard.session_store import forget_session, load_sessions
+
+        stored = load_sessions()
+        if nonce in stored:
+            existed = True
+        forget_session(nonce)
+    except Exception:  # noqa: BLE001
+        logger.warning("could not remove the session from the durable store", exc_info=True)
+
+    _sel_fn().log_api_access(
+        caller="system",
+        operation="session_revoked",
+        outcome="ok",
+        source="token_auth",
+        resources=f"nonce={nonce[:8]}…",
+    )
+    return existed
 
 
 def parse_duration(s: str) -> int | None:
@@ -1031,10 +1099,44 @@ def _deny_401(request: web.Request, reason: str) -> web.Response:
     return web.json_response({"error": reason}, status=401)
 
 
+def _login_offered() -> bool:
+    """Whether a password login page should be offered instead of the paste-token gate.
+
+    Requires BOTH `auth.login_enabled` and an actually-configured credential. The second
+    condition is what keeps a misconfiguration from becoming a lockout: enabling login and
+    then losing the credential file would otherwise redirect every page to a form nobody can
+    pass, with the paste-token gate — the escape hatch — no longer reachable. Any error here
+    falls back to the existing gate, because that is the behavior that always works.
+    """
+    try:
+        from personalclaw.auth.credentials import has_credentials
+        from personalclaw.config.loader import AppConfig
+
+        if not bool(AppConfig.load().auth.login_enabled):
+            return False
+        return bool(has_credentials())
+    except Exception:  # noqa: BLE001
+        logger.debug("could not determine whether login is offered", exc_info=True)
+        return False
+
+
 def _deny(request: web.Request, reason: str) -> web.Response:
     headers = {"X-Auth-Required": "true"}
     if request.path.startswith("/api/"):
         return web.json_response({"error": reason}, status=403, headers=headers)
+    # REMOTE-USER-AUTH T3.3 — when a password login is on offer, an expired or absent session
+    # on a PAGE request lands on /login instead of the paste-token gate. Telling a remote user
+    # to "run personalclaw token in your terminal" is useless advice when the whole reason
+    # they are here is that they are not at the terminal.
+    #
+    # Deliberately narrow: only non-API GETs, and never /login itself (that would loop). The
+    # `?token=` path never reaches here at all — a valid token is authorized upstream — so the
+    # local flow is untouched, and the gate remains the fallback whenever login is not offered.
+    if request.method == "GET" and request.path != "/login" and _login_offered():
+        return web.Response(
+            status=302,
+            headers={**headers, "Location": "/login", "Cache-Control": "no-store"},
+        )
     return web.Response(
         text=_403_HTML.format(reason=reason),
         status=403,

@@ -4,7 +4,7 @@ import { useIdentity } from '../../app/identity'
 import { confirm } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
 import { api } from '../../lib/api'
-import { PanelHeader, Section, Field, Row } from './settingsUI'
+import { PanelHeader, Section, Field, Row, Toggle } from './settingsUI'
 import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 
@@ -83,7 +83,7 @@ export function AccountPanel() {
 
   return (
     <div>
-      <PanelHeader title="Account" hint="PersonalClaw is self-hosted and single-user — there's no sign-in or profile, just how the system addresses you." />
+      <PanelHeader title="Account" hint="PersonalClaw is self-hosted and single-user. Below: how the system addresses you, and — if you reach this box from outside your home network — an optional password sign-in." />
 
       <Section title="Identity">
         <Field label="Your name" hint="Used in greetings and where the system refers to you. Saved on the server, so it follows you across browsers and machines.">
@@ -127,6 +127,130 @@ export function AccountPanel() {
           </button>
         </Row>
       </Section>
+
+      <LoginSection />
     </div>
+  )
+}
+
+/** Owner login (REMOTE-USER-AUTH T3.4).
+ *
+ *  Deliberately guarded copy, in the security voice: the toggle can only be turned on once a
+ *  password exists (the server refuses otherwise, and offering a form nobody can pass is worse
+ *  than no form), and the panel says plainly that the local token link keeps working — that is
+ *  the escape hatch, and a user who doesn't know it exists will be afraid to enable this. */
+function LoginSection() {
+  const [state, setState] = useState<{
+    login_enabled: boolean
+    credential_configured: boolean
+    username: string
+    totp_enabled: boolean
+    totp_required: boolean
+    lockout_threshold: number
+    lockout_window: string
+  } | null>(null)
+  const [userDraft, setUserDraft] = useState('')
+  const [pwDraft, setPwDraft] = useState('')
+  const [pwConfirm, setPwConfirm] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [pwSaved, setPwSaved] = useState(false)
+
+  const load = () => {
+    api.authSession().then((s) => {
+      setState(s)
+      setUserDraft(s.username || '')
+    }).catch(() => {})
+  }
+  useEffect(load, [])
+
+  if (!state) return null
+
+  const pwLongEnough = pwDraft.length >= 12
+  const pwMatches = pwDraft.length > 0 && pwDraft === pwConfirm
+  const canSavePw = pwLongEnough && pwMatches && !busy
+
+  const savePassword = () => {
+    setBusy(true)
+    api.setLoginPassword(userDraft.trim(), pwDraft)
+      .then(() => {
+        setPwDraft(''); setPwConfirm('')
+        setPwSaved(true); setTimeout(() => setPwSaved(false), 2400)
+        load()
+      })
+      .catch((e) => notify(`Couldn't set the password: ${String((e as Error)?.message || e)}`, 'error'))
+      .finally(() => setBusy(false))
+  }
+
+  const toggleLogin = (next: boolean) => {
+    api.patchConfig('auth.login_enabled', next)
+      .then(() => load())
+      .catch((e) => notify(`Couldn't change sign-in: ${String((e as Error)?.message || e)}`, 'error'))
+  }
+
+  const toggleTotp = (next: boolean) => {
+    api.patchConfig('auth.require_totp', next)
+      .then(() => load())
+      .catch((e) => notify(`Couldn't change the 2FA requirement: ${String((e as Error)?.message || e)}`, 'error'))
+  }
+
+  return (
+    <Section title="Sign in from outside your network"
+      hint="Off by default. Turn this on only if you reach this dashboard over a tunnel or from the internet — on your home network the token link is simpler and safer.">
+
+      <Field label="Sign-in username"
+        hint="The name you'll type at the sign-in form. There is still exactly one account — this is a subject for the login, not a user list.">
+        <div className="flex items-center gap-s">
+          <div className="flex-1" style={{ maxWidth: 280 }}>
+            <TextInput value={userDraft} onChange={setUserDraft} placeholder="you" />
+          </div>
+        </div>
+      </Field>
+
+      <Field label={state.credential_configured ? 'Change password' : 'Set a password'}
+        hint="At least 12 characters — length matters more than symbols. Stored as an argon2id hash; it is never shown again, and never leaves this box.">
+        <div className="flex flex-col gap-s" style={{ maxWidth: 280 }}>
+          <TextInput type="password" value={pwDraft} onChange={setPwDraft} placeholder="New password" />
+          <TextInput type="password" value={pwConfirm} onChange={setPwConfirm} placeholder="Confirm password" />
+          <div className="flex items-center gap-s">
+            <Button size="sm" variant={canSavePw ? 'primary' : 'secondary'} disabled={!canSavePw} onClick={savePassword}>
+              {pwSaved ? <Check size={14} /> : null} {pwSaved ? 'Saved' : 'Save password'}
+            </Button>
+            {pwDraft.length > 0 && !pwLongEnough ? (
+              <span className="text-[0.75rem]" style={{ color: 'var(--color-on-surface-low)' }}>
+                {12 - pwDraft.length} more characters
+              </span>
+            ) : null}
+            {pwDraft.length > 0 && pwLongEnough && !pwMatches ? (
+              <span className="text-[0.75rem]" style={{ color: 'var(--color-on-surface-low)' }}>
+                Passwords don't match
+              </span>
+            ) : null}
+          </div>
+        </div>
+      </Field>
+
+      <Row label="Offer password sign-in"
+        hint={state.credential_configured
+          ? 'Adds a sign-in page as another way in. Your token link keeps working — it stays the way back in if you ever forget the password.'
+          : 'Set a password first. Turning this on without one would show a form nobody can pass.'}>
+        <Toggle on={state.login_enabled} onChange={toggleLogin} disabled={!state.credential_configured}
+          label="Offer password sign-in" />
+      </Row>
+
+      <Row label="Require a 2FA code"
+        hint={state.totp_enabled
+          ? 'Also ask for a time-based code at sign-in.'
+          : 'Enroll an authenticator first with `personalclaw auth totp setup`, then turn this on — verify a code works before requiring it.'}>
+        <Toggle on={state.totp_required} onChange={toggleTotp} disabled={!state.totp_enabled}
+          label="Require a 2FA code" />
+      </Row>
+
+      {state.login_enabled ? (
+        <p className="text-[0.75rem] leading-relaxed" style={{ color: 'var(--color-on-surface-low)' }}>
+          After {state.lockout_threshold} failed attempts, sign-in is refused for {state.lockout_window}.
+          Every attempt is recorded in the audit log.
+        </p>
+      ) : null}
+    </Section>
   )
 }
