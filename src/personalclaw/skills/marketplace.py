@@ -498,34 +498,20 @@ def list_local_skills(extra_paths: list[Path] | None = None) -> list[dict[str, s
 
 
 def _parse_description(skill_md: Path) -> str:
-    """Extract the description field from SKILL.md YAML frontmatter."""
+    """Extract the description field from SKILL.md YAML frontmatter.
+
+    Delegated to the one parser. This copy's block-scalar folding was the ONLY
+    capability any duplicate had over the loader, so it was promoted into
+    `_parse_frontmatter_text` rather than dropped — the behavior is preserved,
+    the duplication is not.
+    """
+    from personalclaw.skills.loader import SkillsLoader
+
     try:
-        text = skill_md.read_text(encoding="utf-8", errors="replace")
+        text = skill_md.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return ""
-    if not text.startswith("---"):
-        return ""
-    end = text.find("\n---", 3)
-    if end == -1:
-        return ""
-    frontmatter = text[3:end]
-    lines = frontmatter.splitlines()
-    for i, line in enumerate(lines):
-        m = re.match(r"^description:\s*(.*)$", line)
-        if not m:
-            continue
-        value = m.group(1).strip().strip("\"'")
-        if value in ("|", ">", "|+", "|-", ">+", ">-"):
-            # YAML block scalar — collect indented continuation lines
-            parts: list[str] = []
-            for cont in lines[i + 1 :]:
-                if cont and cont[0] in (" ", "\t"):
-                    parts.append(cont.strip())
-                else:
-                    break
-            return " ".join(parts)
-        return value
-    return ""
+    return SkillsLoader._parse_frontmatter_text(text).get("description", "")
 
 
 def _validate_skill_md(contents: str) -> list[str]:

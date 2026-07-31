@@ -45,7 +45,7 @@ def credential_backend() -> CredentialBackend: ...   # keychain if available+ena
 ### Integration points
 - **Calls:** `save_credential`/credential store (§2.5), `SkillScanner`/`install_guarded`, `sel().verify_integrity`, plan-31 gate+migration, `redact` (§3.7).
 - **Consumed by:** plan 38 (registry signer records), plan 13 (shared credential backend).
-- **Owner-critical:** the signing private key (owner task 2) — referenced in the continuity doc (plan 37).
+- **Owner-critical:** the signing private key (owner task 2). Its recovery note lives with this plan's owner task 2 — plan 37's continuity doc was descoped 2026-07-31, so this plan owns the safeguarding record.
 
 ## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
 
@@ -97,14 +97,14 @@ def credential_backend() -> CredentialBackend: ...   # keychain if available+ena
 ## Owner tasks (real world)
 
 1. **macOS Keychain validation** (V1) — 15 min on your Mac.
-2. **Generate + safeguard the signing key** (S2): create the minisign (or Sigstore identity) keypair; the private key is a release-critical secret — store it in your password manager + the CI `release` environment; the continuity doc (plan 37) must reference its recovery. This is a keep-it-safe-forever artifact.
+2. **Generate + safeguard the signing key** (S2): create the minisign (or Sigstore identity) keypair; the private key is a release-critical secret — store it in your password manager + the CI `release` environment, and record its recovery in this plan (plan 37's continuity doc was descoped 2026-07-31). This is a keep-it-safe-forever artifact.
 3. **Decide external review** (S4): budget for a professional audit of the five paths (a scoped agent-security review is a real line item) vs. a published structured self-audit. Either is credible; the choice is yours to fund.
 4. **Approve publishing the scanner corpus** (S3) — it advertises exactly how your gate is tested (a strength, but your call to make it public).
 
 ## Risks & open questions
 
 - **`keyring` dependency reliability** across Linux desktops varies (Secret Service presence) — the fail-closed-to-`.env` default contains it; keychain is an upgrade, never a requirement.
-- **Signing key loss** would break the update/trust chain — owner task 2's safeguarding + the continuity doc are the mitigation; minisign's simplicity (single keypair, no CA) is deliberately chosen to make recovery tractable.
+- **Signing key loss** would break the update/trust chain — owner task 2's safeguarding + its recovery note (kept in this plan; plan 37's continuity doc was descoped 2026-07-31) are the mitigation; minisign's simplicity (single keypair, no CA) is deliberately chosen to make recovery tractable.
 - **Open:** whether to pursue a CVE-numbering-authority relationship or just GitHub advisories — GitHub advisories suffice at this scale; revisit if adoption warrants (ratchet).
 
 ## Amendment (2026-07-26 — sibling-platform gap analysis, owner greenlight)

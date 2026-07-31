@@ -158,7 +158,7 @@ The product getting richer and more polished: platform/app evolution, knowledge-
 - **Distribution (plan 34: wheels with prebuilt web assets, PyPI/uvx, images, bootstrap, self-update generalization)**
 - **Security Legibility (plan 35: SECURITY.md, public threat model, honest-limitations)**
 - **Discoverability & Launch (plan 36 S1-3: claim org/domain, website + docs site + llms.txt, launch assets)**
-- **OSS Operations (plan 37: stated model, hygiene set, DCO, AGENTS.md, community surface, continuity)**
+- **OSS Operations (plan 37: stated model, hygiene set, DCO, AGENTS.md, GitHub Discussions; the chat server + continuity floor were owner-descoped 2026-07-31 — handled separately)**
 - **Provider-Boundary Completion (plan 32: slack-sdk dep out, doctor/setup extraction, logger-root seam)**
 - **MCP Read-Only Inbound (plan 41 S1: substrate + mount; S2 lands Wave 0/1)**
 - Autonomy Guardrails (full)

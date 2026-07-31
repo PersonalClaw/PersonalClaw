@@ -783,23 +783,97 @@ class SkillsLoader:
 
     @staticmethod
     def _parse_frontmatter(path: Path) -> dict[str, str]:
-        """Parse YAML frontmatter from a markdown file (simple key: value)."""
-        content = path.read_text(encoding="utf-8")
+        """Parse YAML frontmatter from a markdown file (simple ``key: value``).
+
+        Deliberately a line parser, not a YAML parser — see
+        ``docs/reference/skill-format.md`` for the documented contract and its
+        limits. What matters here is that an *unparseable* file must not look
+        like a file with no metadata: returning ``{}`` for a skill that plainly
+        has a name is the silent-failure mode this function is careful to avoid,
+        because such a skill loads fine and then never matches anything.
+        """
+        # `utf-8-sig` transparently drops a BOM. Windows editors add one, and with
+        # plain `utf-8` the BOM sat before `---` so the startswith() guard below
+        # rejected the whole file: every field silently lost.
+        content = path.read_text(encoding="utf-8-sig")
+        return SkillsLoader._parse_frontmatter_text(content)
+
+    @staticmethod
+    def _parse_frontmatter_text(content: str) -> dict[str, str]:
+        """Frontmatter parse over already-read text (see `_parse_frontmatter`)."""
+        # Leading blank lines/whitespace are invisible in an editor but used to
+        # defeat the delimiter check the same way a BOM did.
+        content = content.lstrip().replace("\r\n", "\n")
         if not content.startswith("---"):
             return {}
         match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
         if not match:
             return {}
         meta: dict[str, str] = {}
-        for line in match.group(1).split("\n"):
-            if ":" in line:
-                key, value = line.split(":", 1)
-                meta[key.strip()] = value.strip().strip("\"'")
+        # The key whose continuation lines we are collecting, and how to join them:
+        # block-list items join with ", ", block-scalar lines with " ".
+        pending_key = ""
+        pending_sep = ""
+        collected: list[str] = []
+
+        # YAML block-scalar indicators. A value of exactly one of these means the
+        # real value is the indented block beneath it.
+        block_scalars = ("|", ">", "|+", "|-", ">+", ">-")
+
+        def _flush() -> None:
+            if pending_key and collected:
+                meta[pending_key] = pending_sep.join(collected)
+
+        for raw in match.group(1).split("\n"):
+            item = raw.strip()
+            indented = bool(raw[:1].isspace())
+            # A continuation line under the previous key.
+            if pending_key and indented and item:
+                if pending_sep == ", ":
+                    if item.startswith("- "):
+                        collected.append(item[2:].strip().strip("\"'"))
+                        continue
+                else:
+                    collected.append(item)
+                    continue
+            # A non-indented block-list item still belongs to the pending key
+            # (`triggers:` followed by `- pdf` at column 0 is legal YAML).
+            if pending_key and pending_sep == ", " and item.startswith("- "):
+                collected.append(item[2:].strip().strip("\"'"))
+                continue
+            if ":" in raw:
+                _flush()
+                pending_key, pending_sep, collected = "", "", []
+                # An indented key belongs to a nested mapping this parser cannot
+                # represent. Skip it rather than hoisting it to the top level,
+                # where `sub: v` would masquerade as a real field.
+                if indented:
+                    continue
+                key, value = raw.split(":", 1)
+                key, value = key.strip(), value.strip().strip("\"'")
+                if value in block_scalars:
+                    # Fold the indented block into one line — these fields are
+                    # single-line by contract (`description`, `triggers`).
+                    pending_key, pending_sep = key, " "
+                    meta[key] = ""
+                    continue
+                meta[key] = value
+                if not value:
+                    # May head a block list; remember the key so `- item` lines fold in.
+                    pending_key, pending_sep = key, ", "
+        _flush()
         return meta
 
     @staticmethod
     def strip_frontmatter(content: str) -> str:
-        """Remove YAML frontmatter from markdown."""
+        """Remove YAML frontmatter from markdown.
+
+        Tolerates the same BOM/leading-blank/CRLF variants as
+        `_parse_frontmatter`. It must: this function's output goes into the model
+        prompt, so failing to recognise a delimiter leaks the whole raw YAML
+        block into context instead of dropping it.
+        """
+        content = content.lstrip("﻿").lstrip().replace("\r\n", "\n")
         if content.startswith("---"):
             match = re.match(r"^---\n.*?\n---\n", content, re.DOTALL)
             if match:

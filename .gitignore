@@ -88,3 +88,7 @@ playwright-responses/
 # It holds a real signing key, live session records and credential material, so it must
 # never be committable — the same reason .dev-home is ignored.
 /.screenshot-home/
+
+# Owner-provided local secrets — never committed. The real file lives at the
+# workspace root (outside every repo); this rule is belt-and-braces.
+.secrets.env
