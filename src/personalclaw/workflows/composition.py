@@ -209,24 +209,8 @@ def build_graph(workflow_id: str, all_workflows: list[Workflow]) -> dict:
 
 
 # ── agent identity resolution (agent-scope eligibility) ──
-
-
-def resolve_agent_id(
-    agent: str | None, provider_kind: str | None, provider_agent: str | None
-) -> str:
-    """Normalize the turn's agent identity to the binding-id form the workflow
-    ``scope_ref`` uses (matching the FE agent catalog values):
-
-    - native turn → the bare profile name (e.g. ``default``, ``personalclaw-loop``)
-    - ACP turn   → ``acp:<cli>/<modeId>`` (e.g. ``acp:claude-code/<agent>``)
-
-    ``provider_kind`` is the resolved provider (``native`` or ``acp:<cli>``);
-    ``provider_agent`` is the ACP-internal modeId/agent. Falls back to ``agent``.
-    """
-    kind = (provider_kind or "").strip()
-    if kind.startswith("acp:"):
-        cli = kind.split(":", 1)[1]
-        mode = (provider_agent or "").strip()
-        return f"acp:{cli}/{mode}" if mode else f"acp:{cli}"
-    # native (or unknown) → bare profile name
-    return (agent or provider_agent or "").strip()
+#
+# `resolve_agent_id` now lives in `agents/identity.py` — it is not workflow-specific
+# and `chat_runner` was importing it across this boundary. Re-exported here so this
+# module's own callers keep working; the new home is the one to import from.
+from personalclaw.agents.identity import resolve_agent_id  # noqa: E402,F401

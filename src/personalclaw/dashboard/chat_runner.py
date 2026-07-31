@@ -272,8 +272,8 @@ def _agent_label(session: object) -> str:
 
 
 def _resolve_agent_id(agent: str | None, provider_kind: str, provider_agent: str | None) -> str:
-    """Normalize the turn's agent to the workflow scope_ref binding-id form."""
-    from personalclaw.workflows.composition import resolve_agent_id
+    """Normalize the turn's agent to its binding-id form (`agents.identity`)."""
+    from personalclaw.agents.identity import resolve_agent_id
 
     return resolve_agent_id(agent, provider_kind, provider_agent)
 
