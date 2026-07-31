@@ -280,6 +280,7 @@ class AcpConnectionPool:
     ):
         """Get-or-spawn the per-runtime shared AcpConnection (guarded by the slot lock so
         two racing sessions don't spawn two processes). Spawns + ``initialize`` once."""
+        from personalclaw.acp.client import CLIENT_NAME, CLIENT_VERSION
         from personalclaw.acp.dialect import get_dialect
         from personalclaw.acp.session import AcpConnection
 
@@ -301,8 +302,12 @@ class AcpConnectionPool:
                 await conn.initialize(
                     {
                         "protocolVersion": get_dialect(dialect).protocol_version(),
+                        # Read the shared constant rather than repeating the literal: this
+                        # copy was left at 0.1.2 through the 0.1.3 bump, so a pooled ACP
+                        # connection would have announced a version the release did not
+                        # have. One source, one place to bump.
                         "clientInfo": get_dialect(dialect).client_info(
-                            client_name="personalclaw", client_version="0.1.2"
+                            client_name=CLIENT_NAME, client_version=CLIENT_VERSION
                         ),
                     }
                 )

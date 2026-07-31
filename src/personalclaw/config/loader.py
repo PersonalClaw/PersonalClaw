@@ -757,6 +757,26 @@ class DashboardConfig:
             "Public URL for the dashboard (used in links delivered to external channels).",
         ),
     )
+    public_url: str = field(
+        default="",
+        metadata=_meta(
+            "Public URL",
+            "Set this ONLY if you reach this dashboard from the internet through a "
+            "TLS-terminating tunnel or reverse proxy (e.g. https://pc.example.com). It "
+            "hardens the session cookie (Secure), allows wss:// to that host, and is a "
+            "precondition for trusting proxy headers. Distinct from Dashboard URL, which "
+            "is only used for links.",
+        ),
+    )
+    trusted_proxies: list[str] = field(
+        default_factory=list,
+        metadata=_meta(
+            "Trusted Proxies",
+            "Addresses or CIDR blocks of the proxy/tunnel in front of this gateway. "
+            "X-Forwarded-Proto / X-Forwarded-For are honored ONLY from these peers — "
+            "anyone else can forge them. Empty (the default) trusts none.",
+        ),
+    )
     restore_sessions: bool = field(
         default=False,
         metadata=_meta(
@@ -1415,6 +1435,61 @@ class ResilienceConfig:
     remediation: RemediationConfig = field(
         default_factory=RemediationConfig,
         metadata=_meta("Remediation Engine", "Health-scored maintenance engine tuning."),
+    )
+
+
+@dataclass
+class AuthConfigSection:
+    """Owner-login settings (REMOTE-USER-AUTH C4).
+
+    Login is **opt-in and off by default**. That default is load-bearing: a local install
+    should keep working exactly as it does today — the `?token=` link, `personalclaw token`,
+    the loopback paths — without anyone opting into a password. Turning this on ADDS a second
+    issuer of the same session token; it never replaces the existing ones.
+
+    The credential itself is NOT here. The username/hash live in `auth/credentials.json` and
+    the TOTP secret in the credential store, because `config.json` is a settings file people
+    read, diff and paste into issues.
+    """
+
+    login_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Enable Login",
+            "Offer a username/password login page as an additional way in. Off by default; "
+            "the local token link keeps working either way, and remains the escape hatch if "
+            "login is ever misconfigured.",
+        ),
+    )
+    session_ttl: str = field(
+        default="30d",
+        metadata=_meta(
+            "Session Lifetime",
+            "How long a browser session lasts before you log in again (e.g. 30d, 12h). "
+            "Explicitly-minted CLI tokens are unaffected.",
+        ),
+    )
+    require_totp: bool = field(
+        default=False,
+        metadata=_meta(
+            "Require 2FA Code",
+            "Also require a time-based code at login. Set the secret up first with "
+            "`personalclaw auth totp setup`, or login will be impossible.",
+        ),
+    )
+    lockout_threshold: int = field(
+        default=5,
+        metadata=_meta(
+            "Lockout After",
+            "Failed login attempts before logins are temporarily refused.",
+        ),
+    )
+    lockout_window: str = field(
+        default="15m",
+        metadata=_meta(
+            "Lockout Window",
+            "How long the lockout lasts, and the window failures are counted over.",
+        ),
     )
 
 
@@ -2095,6 +2170,10 @@ class AppConfig:
         default_factory=SecurityConfig,
         metadata=_meta("Security", "Shell-command security controls."),
     )
+    auth: AuthConfigSection = field(
+        default_factory=AuthConfigSection,
+        metadata=_meta("Login", "Owner login — an additional front door, off by default."),
+    )
     guardrails: GuardrailsConfig = field(
         default_factory=GuardrailsConfig,
         metadata=_meta("Guardrails", "Autonomy safety floor — budgets, breaker, scan."),
@@ -2259,6 +2338,10 @@ class AppConfig:
         if not isinstance(security_data, dict):
             security_data = {}
 
+        auth_data = data.get("auth", {})
+        if not isinstance(auth_data, dict):
+            auth_data = {}
+
         guardrails_data = data.get("guardrails", {})
         if not isinstance(guardrails_data, dict):
             guardrails_data = {}
@@ -2413,6 +2496,12 @@ class AppConfig:
             ),
             dashboard=DashboardConfig(
                 url=dashboard_data.get("url", ""),
+                public_url=str(dashboard_data.get("public_url", "") or ""),
+                trusted_proxies=[
+                    str(p)
+                    for p in (dashboard_data.get("trusted_proxies", []) or [])
+                    if isinstance(p, str) and str(p).strip()
+                ],
                 restore_sessions=dashboard_data.get("restore_sessions", False),
                 restore_window_minutes=dashboard_data.get("restore_window_minutes", 30),
                 user_name=dashboard_data.get("user_name", ""),
@@ -2564,6 +2653,17 @@ class AppConfig:
                     for d in (security_data.get("autonomy_denylist", []) or [])
                     if isinstance(d, dict)
                 ],
+            ),
+            auth=AuthConfigSection(
+                login_enabled=bool(auth_data.get("login_enabled", False)),
+                session_ttl=str(auth_data.get("session_ttl", "30d") or "30d"),
+                require_totp=bool(auth_data.get("require_totp", False)),
+                # Clamped, not rejected: a hand-edited 0 would mean "lock out on the zeroth
+                # failure", i.e. nobody can ever log in. Floor at 1, and `_safe_int` so a
+                # non-numeric typo falls back to the default instead of raising out of
+                # load() — a config file that cannot be parsed is a bricked gateway.
+                lockout_threshold=max(1, _safe_int(auth_data.get("lockout_threshold", 5), 5)),
+                lockout_window=str(auth_data.get("lockout_window", "15m") or "15m"),
             ),
             guardrails=GuardrailsConfig(
                 budgets=BudgetConfig(
@@ -2761,6 +2861,7 @@ class AppConfig:
             "workflows": asdict(self.workflows),
             "learning": asdict(self.learning),
             "security": asdict(self.security),
+            "auth": asdict(self.auth),
             "guardrails": asdict(self.guardrails),
             "resilience": asdict(self.resilience),
             "timezone": self.timezone,

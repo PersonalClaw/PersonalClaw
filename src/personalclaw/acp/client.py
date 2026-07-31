@@ -68,7 +68,7 @@ def _acp_trace(direction: str, text: str) -> None:
 
 
 CLIENT_NAME = "personalclaw"
-CLIENT_VERSION = "0.1.2"
+CLIENT_VERSION = "0.1.3"
 PROTOCOL_VERSION = "2025-08-22"
 DEFAULT_MODEL = "auto"
 

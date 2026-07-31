@@ -214,6 +214,19 @@ class TokenStateManager:
             for n in expired_nonces:
                 self._nonces.pop(n, None)
 
+    def revoke_nonce(self, nonce: str, token: str = "") -> bool:
+        """Drop ONE nonce (single-session logout). Returns whether it was present.
+
+        Also drops the token's IP binding and consumed marker so nothing about the dead
+        session lingers to be matched against a future token.
+        """
+        with self._lock:
+            existed = self._nonces.pop(nonce, None) is not None
+            if token:
+                self._ip_bindings.pop(token, None)
+                self._consumed.pop(token, None)
+            return existed
+
     def clear_all(self) -> None:
         """Clear all token state (nonces, IP bindings, consumed tokens)."""
         with self._lock:
@@ -230,6 +243,13 @@ _state: TokenStateManager = TokenStateManager(max_concurrent_nonces=MAX_CONCURRE
 
 _BYPASS_PREFIXES = ("/assets/", "/fonts/", "/sprites/", "/vendor/")
 _BYPASS_EXACT = {"/claw.svg", "/api/token/local", "/api/healthz"}
+# `/api/logout` authenticates ITSELF exactly like `/api/token/local` above: loopback rail plus a
+# constant-time `X-Local-Secret` check inside `api_logout`. It was missing here, so the dashboard
+# middleware demanded a session token first and `personalclaw logout` / `auth revoke --all`
+# always got 403 — a revoke-everything command that could never revoke anything, while the CLI's
+# own fallback reported success. Found in live validation: the "revoked" session kept working.
+# Exempting it opens nothing; it lets the request reach the check that actually guards it.
+_BYPASS_EXACT.add("/api/logout")
 # The inbound MCP surface authenticates ITSELF: it
 # carries a dedicated bearer token plus its own loopback rail, so it must bypass
 # the DASHBOARD's cookie auth rather than be reachable with a dashboard session.
@@ -237,6 +257,23 @@ _BYPASS_EXACT = {"/claw.svg", "/api/token/local", "/api/healthz"}
 # request that fails enablement, peer, or token checks, and only mounts the route
 # at all when a valid dedicated token exists.
 _BYPASS_EXACT.add("/mcp")
+
+# The login front door. These three MUST be reachable without a
+# session, because they are how a remote browser gets one — gating them behind the session
+# they exist to mint would be circular. Exempting them does not make them open:
+#   * `/login` renders a form and redirects to `/` when login is disabled;
+#   * `/api/auth/login` verifies argon2 fail-closed, refuses unless `login_enabled`, checks
+#     the CSRF origin, and rate-limits per IP with lockout;
+#   * `/api/auth/status` returns two booleans an unauthenticated caller may already infer
+#     from being served a login page at all — never the username or whether a credential
+#     exists.
+# NOTHING else auth-related is exempt: logout, the session view, and setting a password all
+# stay behind the normal middleware.
+_BYPASS_EXACT.update({"/login", "/api/auth/login", "/api/auth/status"})
+# Device enrollment COMPLETION is exempt for the same reason login is: the device redeeming a
+# code has no session yet — that is the point. `enroll/start` is NOT exempt (you must already be
+# authenticated to mint a code), and completion is origin-checked and rate-limited like login.
+_BYPASS_EXACT.add("/api/auth/enroll/complete")
 
 # Link click window — URL must be opened within this time.
 # 24 hours for local installs; the URL only works on loopback anyway.
@@ -527,6 +564,67 @@ def revoke_all_sessions() -> None:
         logger.warning("could not clear the durable session store during revoke", exc_info=True)
 
 
+def secure_cookies() -> bool:
+    """Whether session cookies should carry ``Secure`` (REMOTE-USER-AUTH T4.1).
+
+    True only when the operator has declared an **https** public URL. Deliberately NOT the
+    default: `Secure` makes a cookie undeliverable over plain http, which is how essentially
+    every local install runs, so switching it on unconditionally would silently break login
+    and page auth for everyone with nothing pointing at the cause.
+
+    Any failure resolving this returns False — the value that keeps the box usable.
+    """
+    try:
+        from personalclaw.dashboard.exposure import is_https
+
+        return bool(is_https())
+    except Exception:  # noqa: BLE001
+        logger.debug("could not determine whether to set Secure on cookies", exc_info=True)
+        return False
+
+
+def revoke_token(token: str) -> bool:
+    """Revoke the ONE session *token* belongs to (logout). Returns whether it was live.
+
+    Clears the nonce from memory **and** from the durable store. The second half is the
+    security-relevant one: with only the in-memory drop, a logged-out session would be
+    refused until the next restart and then accepted again, because `is_nonce_valid` would
+    still find its nonce on disk — the same class of bug S1's `revoke_all_sessions` fixed.
+
+    Note this revokes the SESSION, not just the presented string: any other copy of the same
+    token dies with it, which is what a user pressing "log out" means.
+    """
+    nonce = ""
+    try:
+        payload_b64 = token.split(".")[0]
+        nonce = str(json.loads(_b64url_decode(payload_b64)).get("nonce") or "")
+    except Exception:  # noqa: BLE001 — a malformed token has no session to revoke
+        logger.debug("could not extract a nonce from the token being revoked", exc_info=True)
+        return False
+    if not nonce:
+        return False
+
+    existed = _state.revoke_nonce(nonce, token)
+    try:
+        from personalclaw.dashboard.session_store import forget_session, load_sessions
+
+        stored = load_sessions()
+        if nonce in stored:
+            existed = True
+        forget_session(nonce)
+    except Exception:  # noqa: BLE001
+        logger.warning("could not remove the session from the durable store", exc_info=True)
+
+    _sel_fn().log_api_access(
+        caller="system",
+        operation="session_revoked",
+        outcome="ok",
+        source="token_auth",
+        resources=f"nonce={nonce[:8]}…",
+    )
+    return existed
+
+
 def parse_duration(s: str) -> int | None:
     """Parse ``'<int>h'`` or ``'<int>m'`` into seconds, or *None*.
 
@@ -537,6 +635,31 @@ def parse_duration(s: str) -> int | None:
         return None
     value, unit = int(m.group(1)), m.group(2)
     secs = value * 3600 if unit == "h" else value * 60
+    return min(secs, MAX_SESSION_TTL_SECS)
+
+
+#: Seconds per unit for `parse_config_duration`.
+_DURATION_UNITS = {"m": 60, "h": 3600, "d": 86400}
+
+
+def parse_config_duration(s: str, *, default_secs: int) -> int:
+    """Parse ``'<int>[mhd]'`` from CONFIG into seconds, falling back to *default_secs*.
+
+    Deliberately a second function rather than a widened `parse_duration`. That one serves
+    `personalclaw token --ttl` and the token endpoint, where an unrecognised unit must be a
+    hard error the user sees immediately — silently reading ``30d`` as something else would
+    mint a token with the wrong lifetime. Here the input is a config file that may have been
+    hand-edited, so the posture is the opposite: never let a typo brick the box; take the
+    documented default and carry on. ``d`` is accepted because a browser session lifetime is
+    naturally expressed in days (the plan's ``30d``), where a token's is in hours.
+    """
+    m = re.fullmatch(r"(\d+)([mhd])", (s or "").strip())
+    if not m:
+        logger.warning("unparseable duration %r in config — using the default", s)
+        return default_secs
+    secs = int(m.group(1)) * _DURATION_UNITS[m.group(2)]
+    if secs <= 0:
+        return default_secs
     return min(secs, MAX_SESSION_TTL_SECS)
 
 
@@ -569,19 +692,44 @@ def token_auth_middleware(
     """
 
     def _resolved_client_ip(request: web.Request) -> str:
-        """Return the browser's IP, preferring trusted X-Real-IP over remote.
+        """Return the browser's IP, preferring a forwarded header from a TRUSTED peer.
 
-        nginx (or any reverse proxy in the same compose network) sees the
-        gateway's container IP as the TCP remote, not the actual client.
-        When the TCP remote is itself on a loopback or private subnet
-        (i.e. came from a trusted internal proxy) we trust X-Real-IP.
+        nginx (or any reverse proxy in the same compose network) sees the gateway's container
+        IP as the TCP remote, not the actual client, so a forwarded header is the only way to
+        recover the real one — and the real one is what IP binding binds to.
+
+        **REMOTE-USER-AUTH T4.1 tightens who may set it.** Once the operator declares this
+        instance internet-exposed (`dashboard.public_url`), only a peer listed in
+        `dashboard.trusted_proxies` is believed. Before that change the rule was the shape of
+        the TCP remote — "starts with 10./172.1x/192.168." — which is the classic mistake: on
+        an exposed box every container neighbour, LAN device and SSRF-able local service sits
+        on a private address, so any of them could set `X-Real-IP` and move a bound session to
+        an address of their choosing.
+
+        **Not exposed ⇒ behavior is unchanged**, deliberately. Home/compose installs depend on
+        the private-subnet heuristic today, and silently breaking their nginx would be a
+        regression paid by everyone to harden the few. Exposure is the operator's own
+        statement, and it is what switches the strict rule on.
         """
         raw = request.remote or "unknown"
         forwarded = request.headers.get("X-Real-IP", "").strip()
+        if not forwarded:
+            return raw
+        try:
+            from personalclaw.dashboard.exposure import is_exposed, is_trusted_proxy
+
+            if is_exposed():
+                # Strict: an explicitly trusted peer, or the header is ignored entirely.
+                if is_trusted_proxy(raw):
+                    return forwarded
+                logger.debug("ignoring X-Real-IP from untrusted peer on an exposed instance")
+                return raw
+        except Exception:  # noqa: BLE001 — never let this decision break a request
+            logger.debug("exposure check failed; using the legacy proxy heuristic", exc_info=True)
         is_proxy = raw.startswith(
             ("127.", "10.", "172.1", "172.2", "172.3", "192.168.", "::1", "fc", "fd")
         )
-        return forwarded if (forwarded and is_proxy) else raw
+        return forwarded if is_proxy else raw
 
     def _extract_and_validate_token(request: web.Request, _port: int) -> tuple[bool, str, str]:
         """Extract token from query param or cookie and validate it.
@@ -861,6 +1009,7 @@ def token_auth_middleware(
                 samesite="Lax",
                 path="/",
                 max_age=cookie_max_age,
+                secure=secure_cookies(),
             )
             # Clear the non-port-specific cookie so only pc_token_{port} is used.
             resp.set_cookie("pc_token", "", max_age=0, path="/")
@@ -1006,10 +1155,44 @@ def _deny_401(request: web.Request, reason: str) -> web.Response:
     return web.json_response({"error": reason}, status=401)
 
 
+def _login_offered() -> bool:
+    """Whether a password login page should be offered instead of the paste-token gate.
+
+    Requires BOTH `auth.login_enabled` and an actually-configured credential. The second
+    condition is what keeps a misconfiguration from becoming a lockout: enabling login and
+    then losing the credential file would otherwise redirect every page to a form nobody can
+    pass, with the paste-token gate — the escape hatch — no longer reachable. Any error here
+    falls back to the existing gate, because that is the behavior that always works.
+    """
+    try:
+        from personalclaw.auth.credentials import has_credentials
+        from personalclaw.config.loader import AppConfig
+
+        if not bool(AppConfig.load().auth.login_enabled):
+            return False
+        return bool(has_credentials())
+    except Exception:  # noqa: BLE001
+        logger.debug("could not determine whether login is offered", exc_info=True)
+        return False
+
+
 def _deny(request: web.Request, reason: str) -> web.Response:
     headers = {"X-Auth-Required": "true"}
     if request.path.startswith("/api/"):
         return web.json_response({"error": reason}, status=403, headers=headers)
+    # When a password login is on offer, an expired or absent session
+    # on a PAGE request lands on /login instead of the paste-token gate. Telling a remote user
+    # to "run personalclaw token in your terminal" is useless advice when the whole reason
+    # they are here is that they are not at the terminal.
+    #
+    # Deliberately narrow: only non-API GETs, and never /login itself (that would loop). The
+    # `?token=` path never reaches here at all — a valid token is authorized upstream — so the
+    # local flow is untouched, and the gate remains the fallback whenever login is not offered.
+    if request.method == "GET" and request.path != "/login" and _login_offered():
+        return web.Response(
+            status=302,
+            headers={**headers, "Location": "/login", "Cache-Control": "no-store"},
+        )
     return web.Response(
         text=_403_HTML.format(reason=reason),
         status=403,
