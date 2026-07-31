@@ -330,3 +330,77 @@ Under the pre-1.0 banner this executes as a clean break (no lifecycle gate/migra
   login front door that mints the session into a cookie, and the public-exposure hardening
   (Secure cookie / `wss` / trusted-proxy / TOTP). S1 stands alone and is strictly better without
   them: restart no longer logs you out.
+
+- 2026-07-30 — **DONE (S2: the owner credential, its config section, the CLI, the deploy seed).**
+
+  **`argon2-cffi` is a CORE dependency, not an extra.** A password verifier that only exists on
+  some installs makes `auth.login_enabled` a setting that silently cannot work — and the failure
+  would land on an internet-exposed box, which is the worst place to discover a missing wheel.
+  It clears the same bar `reportlab`/`tree-sitter` already did: prebuilt wheels, no compiler, no
+  torch weight. `uv.lock` re-locked in the same commit (CI runs `uv sync --locked`).
+
+  **Timing equalization, because "no such user" must not be faster than "wrong password".**
+  `verify_password` runs the argon2 verify even when there is no stored credential or the
+  username does not match, against a module-level dummy hash of a random value. Measured live:
+  wrong-password 28ms vs unknown-user 24ms (1.17×), where an early return would have been ~0ms
+  against ~25ms — i.e. a trivially observable username oracle. Pinned by two tests that observe
+  the verify actually running (a call record, not a wall-clock threshold, which would flake on a
+  loaded CI box) and assert WHICH hash it ran against.
+
+  **Fail-closed reads.** An unreadable, non-dict, or hash-less `credentials.json` means "no
+  credential configured", never "allow" — five tests cover the mangled-file shapes, including a
+  hand-edited record with the hash removed, which must not become a passwordless login.
+
+  **The rotation-safety property in the deploy seed (T2.4).** `bootstrap_from_env()` is a no-op
+  when a credential already exists, so a unit file or `.env` that keeps `PERSONALCLAW_LOGIN_*`
+  set cannot silently reset the password to the deploy-time one on every restart — which would
+  quietly undo a rotation and is the kind of bug nobody notices until they are locked out. It is
+  also non-fatal (a too-short password logs and continues; a gateway that will not boot is worse
+  than one you must set a password on) and it does NOT enable login — enrolling a credential and
+  opening a front door stay separate decisions.
+
+  **DEVIATION — TOTP primitives landed early.** T4.2 is an S4 row, but T2.3's `auth totp setup`
+  had to either work or not exist. `auth/totp.py` is stdlib-only (`hmac`/`base64`), pinned to all
+  six **RFC 6238 Appendix B** SHA-1 vectors. Not hand-rolled crypto in the forbidden sense: it
+  calls `hmac.new()` exactly as the RFC specifies, and a dependency on the credential path buys
+  nothing here. Password hashing is the opposite case and gets `argon2-cffi`. S4 wires it into
+  the login flow; the enrollment/verify/skew behavior is already tested (35 cases).
+
+  **DEVIATION — `parse_config_duration` is a second function, not a widened `parse_duration`.**
+  The existing one serves `personalclaw token --ttl`, where an unrecognised unit must be a hard
+  error the user sees immediately; reading `30d` as something else there would mint a token with
+  the wrong lifetime. Config is the opposite posture: a hand-edited typo takes the documented
+  default rather than bricking the box. Widening the original would have forced editing its
+  existing "`30d` is invalid" assertion — an E4 stop — so it is left byte-identical and pinned by
+  a test that says so.
+
+  **Found and fixed a live doc bug in T2.4's path.** `docs/guides/containers.md` told headless
+  users to set `PERSONALCLAW_AUTH_MODE=api_key` with `PERSONALCLAW_API_KEY`. `AuthConfig.from_env`
+  honors only `none` — that setting does *nothing*, so anyone following the guide believed they
+  had configured auth they did not have. Replaced with the owner-login flow and an explicit note
+  that `api_key` is not wired.
+
+  **The credential is not reachable through the config surface.** `login_enabled`/`require_totp`/
+  the lockout knobs are PATCH-editable (turning login off, or loosening a lockout you tripped,
+  should not need a restart); the password never is, and a test asserts no key matching
+  password/credential/hash/secret can enter `_EDITABLE_CONFIG` — plus one that fails when a NEW
+  `auth` field is added without deciding either way. Setting a password is CLI-only, prompted via
+  `getpass`, and refused on a non-TTY so a piped secret from a shell history or CI log cannot
+  become the login.
+
+  **ARCC was NOT queried — the MCP server is unavailable in this session.** Standard practice
+  applied: argon2id at the RFC 9106-informed profile, per-credential salt, 0600 on the credential
+  file, fail-closed reads, no plaintext or encoded hash in any log/status/argv path (asserted),
+  timing-equalized verification, TOTP secret held in the credential store rather than beside the
+  hash, and a 12-character floor.
+
+  **Gates:** `make lint` clean (mypy 560 files) · 115 new tests green
+  (`test_auth_credentials.py` 35, `test_auth_totp.py` 35, `test_auth_config_and_cli.py` 45) ·
+  `test_config_roundtrip` + the 201-test auth/CLI/loader contract set green with **zero edits to
+  existing assertions**.
+
+  **NOT in this session** (S3-S4): the `/login` page and `POST /api/auth/login` that mint the
+  session into a cookie, rate-limit + lockout enforcement, Settings → Account, and the
+  public-exposure hardening (Secure cookie / `wss` CSP / trusted-proxy headers / enrollment
+  codes). S2 stands alone: a credential exists, is reachable from the CLI, and no surface offers
+  it yet — `login_enabled` defaults off, so behavior is unchanged for every existing install.

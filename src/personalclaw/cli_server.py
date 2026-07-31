@@ -554,6 +554,20 @@ async def _gateway(
         print(f"Created default config: {config_path()}")
 
     cfg = AppConfig.load()
+
+    # Unattended login enrollment (REMOTE-USER-AUTH T2.4). A no-op unless
+    # PERSONALCLAW_LOGIN_USER/PASSWORD are set AND no credential exists yet, so a container
+    # that keeps them in its environment cannot reset a rotated password on every restart.
+    # Never fatal: it logs and continues, because the local token path is still the way in.
+    try:
+        from personalclaw.auth.credentials import bootstrap_from_env
+
+        bootstrap_from_env()
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "login credential bootstrap failed — continuing without it", exc_info=True
+        )
+
     await run_gateway(
         cfg,
         no_dashboard=no_dashboard,

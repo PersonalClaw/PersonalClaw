@@ -1419,6 +1419,61 @@ class ResilienceConfig:
 
 
 @dataclass
+class AuthConfigSection:
+    """Owner-login settings (REMOTE-USER-AUTH C4).
+
+    Login is **opt-in and off by default**. That default is load-bearing: a local install
+    should keep working exactly as it does today — the `?token=` link, `personalclaw token`,
+    the loopback paths — without anyone opting into a password. Turning this on ADDS a second
+    issuer of the same session token; it never replaces the existing ones.
+
+    The credential itself is NOT here. The username/hash live in `auth/credentials.json` and
+    the TOTP secret in the credential store, because `config.json` is a settings file people
+    read, diff and paste into issues.
+    """
+
+    login_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Enable Login",
+            "Offer a username/password login page as an additional way in. Off by default; "
+            "the local token link keeps working either way, and remains the escape hatch if "
+            "login is ever misconfigured.",
+        ),
+    )
+    session_ttl: str = field(
+        default="30d",
+        metadata=_meta(
+            "Session Lifetime",
+            "How long a browser session lasts before you log in again (e.g. 30d, 12h). "
+            "Explicitly-minted CLI tokens are unaffected.",
+        ),
+    )
+    require_totp: bool = field(
+        default=False,
+        metadata=_meta(
+            "Require 2FA Code",
+            "Also require a time-based code at login. Set the secret up first with "
+            "`personalclaw auth totp setup`, or login will be impossible.",
+        ),
+    )
+    lockout_threshold: int = field(
+        default=5,
+        metadata=_meta(
+            "Lockout After",
+            "Failed login attempts before logins are temporarily refused.",
+        ),
+    )
+    lockout_window: str = field(
+        default="15m",
+        metadata=_meta(
+            "Lockout Window",
+            "How long the lockout lasts, and the window failures are counted over.",
+        ),
+    )
+
+
+@dataclass
 class SecurityConfig:
     """Security controls for the agent's shell access.
 
@@ -2095,6 +2150,10 @@ class AppConfig:
         default_factory=SecurityConfig,
         metadata=_meta("Security", "Shell-command security controls."),
     )
+    auth: AuthConfigSection = field(
+        default_factory=AuthConfigSection,
+        metadata=_meta("Login", "Owner login — an additional front door, off by default."),
+    )
     guardrails: GuardrailsConfig = field(
         default_factory=GuardrailsConfig,
         metadata=_meta("Guardrails", "Autonomy safety floor — budgets, breaker, scan."),
@@ -2258,6 +2317,10 @@ class AppConfig:
         security_data = data.get("security", {})
         if not isinstance(security_data, dict):
             security_data = {}
+
+        auth_data = data.get("auth", {})
+        if not isinstance(auth_data, dict):
+            auth_data = {}
 
         guardrails_data = data.get("guardrails", {})
         if not isinstance(guardrails_data, dict):
@@ -2565,6 +2628,17 @@ class AppConfig:
                     if isinstance(d, dict)
                 ],
             ),
+            auth=AuthConfigSection(
+                login_enabled=bool(auth_data.get("login_enabled", False)),
+                session_ttl=str(auth_data.get("session_ttl", "30d") or "30d"),
+                require_totp=bool(auth_data.get("require_totp", False)),
+                # Clamped, not rejected: a hand-edited 0 would mean "lock out on the zeroth
+                # failure", i.e. nobody can ever log in. Floor at 1, and `_safe_int` so a
+                # non-numeric typo falls back to the default instead of raising out of
+                # load() — a config file that cannot be parsed is a bricked gateway.
+                lockout_threshold=max(1, _safe_int(auth_data.get("lockout_threshold", 5), 5)),
+                lockout_window=str(auth_data.get("lockout_window", "15m") or "15m"),
+            ),
             guardrails=GuardrailsConfig(
                 budgets=BudgetConfig(
                     max_tokens_per_run=max(0, int(budgets_data.get("max_tokens_per_run", 0))),
@@ -2761,6 +2835,7 @@ class AppConfig:
             "workflows": asdict(self.workflows),
             "learning": asdict(self.learning),
             "security": asdict(self.security),
+            "auth": asdict(self.auth),
             "guardrails": asdict(self.guardrails),
             "resilience": asdict(self.resilience),
             "timezone": self.timezone,
