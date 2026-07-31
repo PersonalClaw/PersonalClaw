@@ -83,6 +83,15 @@ dependencies = [
     # cli.py loads .env (CWD + PERSONALCLAW_HOME) so credentials resolve via
     # os.environ without hand-copying .env — an unconditional import at startup.
     "python-dotenv>=1.0",
+    # Owner-login password hashing (auth/credentials.py, REMOTE-USER-AUTH T2.1).
+    # CORE rather than an extra, deliberately: a password verifier that only exists on
+    # some installs means `auth.login_enabled` would be a setting that silently cannot
+    # work — and the failure would land on an internet-exposed box, which is the worst
+    # place to discover a missing dependency. argon2id is the current password-hashing
+    # recommendation (memory-hard, tunable); rolling our own PBKDF2 over hashlib to dodge
+    # one small wheel would be the wrong trade on a credential path. Prebuilt wheels, no
+    # compiler, no torch weight — the same bar reportlab/tree-sitter already cleared.
+    "argon2-cffi>=23,<26",
 ]
 
 # Project URLs — surfaced by `pip show personalclaw` and the PyPI project page.

@@ -468,6 +468,18 @@ Examples:
         help="Replace an existing token (the old one stops working)",
     )
 
+    # auth — the owner login (REMOTE-USER-AUTH C5). Setting a password is CLI-only on
+    # purpose: a plaintext credential should never ride in an HTTP body.
+    auth_parser = sub.add_parser("auth", help="Manage the owner login (password, 2FA)")
+    auth_sub = auth_parser.add_subparsers(dest="auth_command")
+    auth_setpw = auth_sub.add_parser("set-password", help="Set the owner login password")
+    auth_setpw.add_argument("--user", default="", help="Login username (defaults to $USER)")
+    auth_sub.add_parser("enable", help="Offer the login form (needs a password first)")
+    auth_sub.add_parser("disable", help="Stop offering the login form")
+    auth_sub.add_parser("status", help="Show whether login and 2FA are configured")
+    auth_totp = auth_sub.add_parser("totp", help="Enroll or disable a 2FA code")
+    auth_totp.add_argument("totp_action", choices=("setup", "disable"), nargs="?", default="setup")
+
     # backup — deterministic shard export + verification (DURABILITY §2)
     backup_parser = sub.add_parser(
         "backup", help="Export state as deterministic shards, and verify an export"
@@ -909,6 +921,10 @@ Examples:
         rc = _inbound_cmd(args)
         if rc:
             raise SystemExit(rc)
+    elif args.command == "auth":
+        rc = _auth_cmd(args)
+        if rc:
+            raise SystemExit(rc)
     elif args.command == "backup":
         rc = _backup_cmd(args)
         if rc:
@@ -925,6 +941,7 @@ Examples:
 # ── Config ──
 
 
+from personalclaw.auth.cli import auth_cmd as _auth_cmd  # noqa: E402
 from personalclaw.cli_chat import _chat  # noqa: E402
 from personalclaw.cli_commands import (  # noqa: E402
     _cron,

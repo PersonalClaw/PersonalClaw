@@ -540,6 +540,31 @@ def parse_duration(s: str) -> int | None:
     return min(secs, MAX_SESSION_TTL_SECS)
 
 
+#: Seconds per unit for `parse_config_duration`.
+_DURATION_UNITS = {"m": 60, "h": 3600, "d": 86400}
+
+
+def parse_config_duration(s: str, *, default_secs: int) -> int:
+    """Parse ``'<int>[mhd]'`` from CONFIG into seconds, falling back to *default_secs*.
+
+    Deliberately a second function rather than a widened `parse_duration`. That one serves
+    `personalclaw token --ttl` and the token endpoint, where an unrecognised unit must be a
+    hard error the user sees immediately — silently reading ``30d`` as something else would
+    mint a token with the wrong lifetime. Here the input is a config file that may have been
+    hand-edited, so the posture is the opposite: never let a typo brick the box; take the
+    documented default and carry on. ``d`` is accepted because a browser session lifetime is
+    naturally expressed in days (the plan's ``30d``), where a token's is in hours.
+    """
+    m = re.fullmatch(r"(\d+)([mhd])", (s or "").strip())
+    if not m:
+        logger.warning("unparseable duration %r in config — using the default", s)
+        return default_secs
+    secs = int(m.group(1)) * _DURATION_UNITS[m.group(2)]
+    if secs <= 0:
+        return default_secs
+    return min(secs, MAX_SESSION_TTL_SECS)
+
+
 def token_auth_middleware(
     *,
     internal_paths: frozenset[str] = frozenset(),

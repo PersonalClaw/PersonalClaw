@@ -530,6 +530,17 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # Gates the poll-based message sources (filesystem/channel apps). The UI
     # toggle calls /api/inbox/restart after flipping so the service re-attaches.
     "inbox.enabled": {"type": "bool"},
+    # REMOTE-USER-AUTH C4 — the owner-login knobs. Runtime-editable so turning login on
+    # or off, or loosening a lockout you tripped, takes effect on the next request without
+    # a restart. The PASSWORD is deliberately NOT here and never will be: a credential is
+    # not a setting, it goes through `personalclaw auth set-password` / the enroll flow so
+    # the plaintext never rides in a PATCH body that lands in a request log. `public_url`
+    # is likewise excluded — widening a network surface should be a deliberate file edit.
+    "auth.login_enabled": {"type": "bool"},
+    "auth.require_totp": {"type": "bool"},
+    "auth.session_ttl": {"type": "duration"},
+    "auth.lockout_threshold": {"type": "int", "min": 1, "max": 100},
+    "auth.lockout_window": {"type": "duration"},
     # Platform-legibility toggles (§6 Discover tips, §7 context adapters).
     # discover_tips gates the propose-don't-write Discover section + hub;
     # context_adapters gates writing adapter files into opted-in project workspaces.
@@ -605,6 +616,21 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         lo, hi = spec.get("min", 0.0), spec.get("max", 999999.0)
         if value < lo or value > hi:
             return _deny(f"must be between {lo} and {hi}", f"{path_key}={value}")
+    elif spec["type"] == "duration":
+        # A duration string like "30d" / "12h" / "15m". Validated with the SAME regex the
+        # loader reads it back with, so a value accepted here can never be one the loader
+        # then quietly replaces with a default — a PATCH that "succeeded" while changing
+        # nothing is the worst outcome for a session-lifetime field.
+        if not isinstance(value, str):
+            return _deny("must be a duration string like 30d, 12h or 15m", f"{path_key}={value}")
+        if not re.fullmatch(r"\d+[mhd]", value.strip()):
+            return _deny(
+                "must be a duration like 30d, 12h or 15m (integer + m/h/d)",
+                f"{path_key}={value}",
+            )
+        value = value.strip()
+        if int(value[:-1]) <= 0:
+            return _deny("must be greater than zero", f"{path_key}={value}")
     elif spec["type"] == "str_list":
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
             return _deny("must be a list of strings", f"{path_key}={value}")
