@@ -8,6 +8,30 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.1.3] — 2026-07-30
+
+The **attention-and-access** release. Two themes:
+
+**One place for everything waiting on you.** The inbox stops being a message list and becomes
+the single attention surface — a goal loop that needs a decision, a proposed skill, and a tool
+approval you walked away from all land there as items you can answer in place, instead of a
+toast that scrolls past while the work stays stalled. Delivery becomes a choice per kind of
+notification (notify / badge / digest / never) rather than one global severity floor, with a
+daily digest for the noisy kinds.
+
+**Reach your own assistant from anywhere.** Sessions now survive a restart (they didn't — every
+restart logged you out, and away from home that meant locked out), and an optional password
+sign-in with 2FA and device pairing lets a browser anywhere get in. It is off by default and
+purely additive: the local token link keeps working and remains the way back in, so a login you
+misconfigure cannot lock you out of your own box.
+
+Plus: artifacts get a real library, knowledge gets shelves and a proper tag taxonomy, the agent
+navigates code by symbol instead of grepping blind, backups run and verify themselves, and
+👍/👎 on AI judgments starts actually teaching.
+
+
 > **Note (0.x clean break):** model bindings in `active_models.json` now carry
 > ordered fallback-chain semantics. Old stores read cleanly (a single binding is a
 > one-entry chain); consider `personalclaw snapshot` before upgrading, per the
