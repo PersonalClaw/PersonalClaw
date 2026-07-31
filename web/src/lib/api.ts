@@ -1461,6 +1461,26 @@ export const api = {
   personalclawConfig: () => get<Record<string, any>>('/api/config/personalclaw'),
   patchConfig: (path: string, value: unknown) => patch<Record<string, any>>('/api/config/personalclaw', { path, value }),
 
+  // ── Owner login (REMOTE-USER-AUTH C3/C5) ──
+  // The credential itself is never READ back — `authSession` reports only whether one is
+  // configured, for whom, and whether 2FA is on. Setting a password goes through its own
+  // POST rather than patchConfig, because a password is not a config field: the PATCH
+  // allowlist deliberately refuses anything password-shaped.
+  authSession: () => get<{
+    login_enabled: boolean
+    credential_configured: boolean
+    username: string
+    totp_enabled: boolean
+    totp_required: boolean
+    session_ttl: string
+    lockout_threshold: number
+    lockout_window: string
+    user: string
+  }>('/api/auth/session'),
+  setLoginPassword: (username: string, password: string) =>
+    post<{ ok: boolean; username: string }>('/api/auth/password', { username, password }),
+  authLogout: () => post<{ ok: boolean; revoked: boolean }>('/api/auth/logout'),
+
   // ── Guardrails: incident kill switch + derived provider health (§1.3, §2.5) ──
   incident: () => get<{ active: boolean; reason: string; started_at: string }>('/api/incident'),
   incidentOn: (reason: string) =>

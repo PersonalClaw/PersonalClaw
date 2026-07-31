@@ -362,6 +362,20 @@ async def start_dashboard(
     app.router.add_get("/", handlers.index)
     app.router.add_get("/claw.svg", handlers.favicon)
 
+    # Owner login (REMOTE-USER-AUTH C3). `/login`, `/api/auth/login` and
+    # `/api/auth/status` are token-auth EXEMPT — they are how a remote browser obtains a
+    # session in the first place, so requiring one would be circular. They carry their own
+    # guards instead (origin check, per-IP lockout, fail-closed verify). Everything else here
+    # sits behind the normal middleware: logout/session/password all require a live session.
+    from personalclaw.dashboard.handlers import auth as _auth_h
+
+    app.router.add_get("/login", _auth_h.login_page)
+    app.router.add_post("/api/auth/login", _auth_h.api_auth_login)
+    app.router.add_get("/api/auth/status", _auth_h.api_login_status)
+    app.router.add_post("/api/auth/logout", _auth_h.api_auth_logout)
+    app.router.add_get("/api/auth/session", _auth_h.api_auth_session)
+    app.router.add_post("/api/auth/password", _auth_h.api_auth_set_password)
+
     # WebSocket (multiplexed real-time events)
     app.router.add_get("/api/ws", ws.api_ws)
 
