@@ -296,18 +296,20 @@ async def start_dashboard(
         except Exception:
             logger.debug("Could not create consolidator", exc_info=True)
 
-    # Extract skills from a session one last time when it idles out, then sweep
-    # its ephemeral session-scoped workflows (EVOLVE-WORKFLOWS #28), then evict its
+    # Extract skills from a session one last time when it idles out, then evict its
     # per-session MCP connections (rel-mcp-server-pooling #46). Composed so each
     # step runs alongside the others, none replacing consolidation.
+    #
+    # The session-scoped workflow sweep that sat between them died with the old
+    # feature (WORKFLOWS-V2 Phase 1): ephemeral session-scoped SOPs were a property
+    # of embedding-surfaced definitions. v2 runs are durable and engine-owned, so a
+    # session expiring must NOT delete them — if a v2 cleanup hook is ever needed it
+    # belongs on run retention, not session expiry.
     if sessions is not None:
         from personalclaw.mcp_client import with_mcp_session_eviction
-        from personalclaw.workflows.lifecycle import with_session_workflow_cleanup
 
         prior = consolidator.consolidate_session if consolidator is not None else None
-        sessions.set_session_expire_callback(
-            with_mcp_session_eviction(with_session_workflow_cleanup(prior))
-        )
+        sessions.set_session_expire_callback(with_mcp_session_eviction(prior))
 
     state = DashboardState(
         sessions=sessions,
@@ -969,10 +971,8 @@ async def start_dashboard(
 
     register_task_routes(app)
 
-    # Workflows — stateless scoped SOP definitions
-    from personalclaw.workflows.handlers import register_workflow_routes
-
-    register_workflow_routes(app)
+    # Workflows — no routes until WORKFLOWS-V2 Slice 7 mounts the v2 run/def API.
+    # The old /api/workflows family (SOP CRUD) is gone with the feature.
 
     # The unified Loop engine — ONE /api/loops route family for every kind
     # (general/goal/code/design). Replaces the legacy /api/loops + /api/code routes

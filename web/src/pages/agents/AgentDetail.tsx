@@ -27,10 +27,10 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
   const [draft, setDraft] = useState<AgentDraft>(() => toDraft(agent))
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
-  // The agent-scoped SOPs offered to this agent — workflows whose scope_ref
-  // matches the agent binding id, resolved via the reverse-index endpoint
-  // (used-by/{agent}). Computed server-side from the scope_ref model.
-  const { data: workflowNames } = useCachedData<string[]>(`agent:workflows-usedby:${agent.name}`, () => api.workflowsUsedBy(agent.name).then((ws) => ws.map((w) => w.name)).catch(() => []), { persist: true })
+  // The agent-scoped-SOP list was here (workflows whose scope_ref matched this
+  // agent's binding id, via the used-by reverse index). Both the endpoint and the
+  // scope_ref model are gone with the old feature (WORKFLOWS-V2 Phase 1); v2
+  // definitions are not agent-scoped, so there is nothing equivalent to show.
 
   useEffect(() => { setDraft(toDraft(agent)) }, [agent.name])
 
@@ -94,9 +94,6 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
       <Caps label="Skills" items={agent.skills} />
       <Caps label="Tools" items={agent.tools} />
       <Caps label="Triggers" items={agent.triggers} />
-      {workflowNames === undefined
-        ? <Section label="Workflows"><Skeleton className="h-6 w-32 rounded-pill" /></Section>
-        : <Caps label="Workflows" items={workflowNames} />}
 
       {!reserved && <AgentAdvanced agentName={agent.name} />}
     </div>

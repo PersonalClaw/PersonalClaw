@@ -1,11 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Check, Eye, Loader2, Sparkle, Workflow } from 'lucide-react'
+import { Check, Eye, Loader2, Sparkle } from 'lucide-react'
 import { fvs } from '../design/fontWeight'
 import { Modal } from './Modal'
 import { Markdown } from './Markdown'
-import { api, type SkillItem, type WorkflowItem } from '../lib/api'
+import { api, type SkillItem } from '../lib/api'
 
-/** A selectable capability row (skill or workflow) with a checkbox + suggested chip.
+/** A selectable capability row (a skill today) with a checkbox + suggested chip.
  *  The single picker row shared by the goal-loop and code-loop plan reviews — the
  *  full-width row body toggles selection; an optional peek button (Eye) opens the
  *  {@link CapabilityPeekModal} to study the capability before committing it. */
@@ -31,7 +31,7 @@ export function CapRow({ id, name, description, checked, suggested, onToggle, on
         </span>
       </button>
       {onPeek && (
-        <button type="button" onClick={(e) => { e.stopPropagation(); onPeek() }} title="Preview — read the full skill/workflow"
+        <button type="button" onClick={(e) => { e.stopPropagation(); onPeek() }} title="Preview — read the full skill"
           aria-label={`Preview ${name}`}
           className="shrink-0 mt-0.5 rounded-md p-1 text-on-surface-low opacity-0 transition-opacity hover:bg-surface-highest hover:text-on-surface group-hover:opacity-100 focus:opacity-100">
           <Eye size={14} />
@@ -41,12 +41,15 @@ export function CapRow({ id, name, description, checked, suggested, onToggle, on
   )
 }
 
-/** Preview the full content of a suggested skill or workflow, so the user can
- *  study it before committing it to the loop. Skills fetch their SKILL.md body;
- *  workflows render their steps from the in-hand item. Paired with {@link CapRow}'s
- *  `onPeek`. */
+/** Preview the full content of a suggested skill, so the user can study it before
+ *  committing it to the loop. Paired with {@link CapRow}'s `onPeek`.
+ *
+ *  The `kind` discriminant is kept even though 'skill' is its only member today: the
+ *  workflow branch was removed with the old feature (WORKFLOWS-V2 Phase 1) and
+ *  Slice 7 brings back a v2 def preview. Collapsing the union now would mean
+ *  re-threading `kind` through both plan reviews to reintroduce it.  */
 export function CapabilityPeekModal({ peek, onClose }: {
-  peek: { kind: 'skill' | 'workflow'; skill?: SkillItem; workflow?: WorkflowItem }
+  peek: { kind: 'skill'; skill?: SkillItem }
   onClose: () => void
 }) {
   const [content, setContent] = useState<string | null>(null)
@@ -62,8 +65,8 @@ export function CapabilityPeekModal({ peek, onClose }: {
     return () => { alive = false }
   }, [peek])
 
-  const title = peek.kind === 'skill' ? peek.skill?.name : peek.workflow?.name
-  const icon = peek.kind === 'skill' ? <Sparkle size={18} className="text-primary" /> : <Workflow size={18} className="text-primary" />
+  const title = peek.skill?.name
+  const icon = <Sparkle size={18} className="text-primary" />
   return (
     <Modal title={title || 'Preview'} icon={icon} onClose={onClose}>
       <div className="max-h-[60vh] overflow-y-auto">
@@ -75,26 +78,6 @@ export function CapabilityPeekModal({ peek, onClose }: {
           ) : (
             <p className="text-on-surface-low text-[0.8125rem]">{peek.skill?.description || 'No content available.'}</p>
           )
-        ) : peek.workflow ? (
-          <div className="flex flex-col gap-3">
-            {peek.workflow.description && <p className="text-on-surface-var text-[0.8125rem]">{peek.workflow.description}</p>}
-            <div className="flex flex-wrap gap-1.5 text-[0.75rem]">
-              {peek.workflow.scope && <span className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-low">scope: {peek.workflow.scope}</span>}
-              {(peek.workflow.tags ?? []).map((t) => <span key={t} className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-low">{t}</span>)}
-            </div>
-            <div className="flex flex-col gap-2">
-              <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{peek.workflow.steps.length} step{peek.workflow.steps.length === 1 ? '' : 's'}</span>
-              {peek.workflow.steps.map((st, i) => (
-                <div key={st.id || i} className="rounded-lg bg-surface-container px-m py-2.5">
-                  <div className="flex items-center gap-2">
-                    <span className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill bg-surface-high text-on-surface-low text-[0.75rem] tabular-nums">{i + 1}</span>
-                    <span className="text-on-surface text-[0.8125rem]" style={fvs(550)}>{st.title}</span>
-                  </div>
-                  {st.instruction && <p className="mt-1 pl-7 text-on-surface-var text-[0.8125rem] whitespace-pre-wrap">{st.instruction}</p>}
-                </div>
-              ))}
-            </div>
-          </div>
         ) : null}
       </div>
     </Modal>

@@ -221,12 +221,16 @@ class WorkflowTypeHandler(_TypeHandler):
         return factory(config)
 
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
-        from personalclaw.workflows.registry import register_provider
+        # Repointed from the deleted `workflows.registry` to the v2 def-provider
+        # registry (WORKFLOWS-V2 Phase 1). This handler must stay live: `PROVIDER_TYPES`
+        # and the runtime handler set have to be equal, or installing/reinstalling any
+        # app declaring a workflow provider is refused (#47's bug class).
+        from personalclaw.workflows.defs import register_provider
 
         register_provider(instance)
 
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
-        from personalclaw.workflows.registry import unregister_provider
+        from personalclaw.workflows.defs import unregister_provider
 
         unregister_provider(instance.name)
 

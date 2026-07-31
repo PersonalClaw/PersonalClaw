@@ -1,6 +1,7 @@
 import {
   FileText, FileCode, Image, FileJson, Table, Globe, File as FileIcon,
-  Folder, Box, Code2, Hash, Braces, BarChart3, ScrollText, ImagePlus, type LucideIcon,
+  Folder, Box, Code2, Hash, Braces, BarChart3, ScrollText, ImagePlus,
+  Presentation, Film, type LucideIcon,
 } from 'lucide-react'
 import type { ArtifactKind } from '../../lib/api'
 
@@ -172,6 +173,14 @@ export const ARTIFACT_KINDS: { key: ArtifactKind; label: string; icon: LucideIco
   { key: 'image', label: 'Image', icon: ImagePlus, tone: '#3fb950' },
   { key: 'json', label: 'JSON', icon: Braces, tone: '#d4a017' },
   { key: 'text', label: 'Text', icon: Code2, tone: 'var(--color-on-surface-low)' },
+  // Generated office/PDF documents + video. Absent from this table until now, so
+  // artifactKindMeta's fallback labelled every one of them "Widget".
+  { key: 'csv', label: 'CSV', icon: Table, tone: '#3fb950' },
+  { key: 'docx', label: 'Word', icon: FileText, tone: '#4f9be0' },
+  { key: 'xlsx', label: 'Spreadsheet', icon: Table, tone: '#3fb950' },
+  { key: 'pptx', label: 'Slides', icon: Presentation, tone: '#e06c4f' },
+  { key: 'pdf', label: 'PDF', icon: FileText, tone: '#e05c5c' },
+  { key: 'video', label: 'Video', icon: Film, tone: '#9d86f5' },
 ]
 
 export function artifactKindMeta(kind: string) {

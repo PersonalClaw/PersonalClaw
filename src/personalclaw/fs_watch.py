@@ -126,8 +126,13 @@ class ConfigFsWatcher:
 
 
 def default_config_roots():
-    """The editable config trees: config.json + agents/ + skills/ + workflows/."""
+    """The editable config trees: config.json + agents/ + skills/.
+
+    The old `workflows/` tree (one WORKFLOW.md per SOP dir) is gone with the feature
+    (WORKFLOWS-V2 Phase 1). Slice 0 re-adds the v2 `workflows/defs/` layout — watching
+    the bare `workflows/` dir meanwhile would fire on the archived _legacy_sops/ move.
+    """
     from personalclaw.config.loader import config_dir
 
     base = config_dir()
-    return [base / "config.json", base / "agents", base / "skills", base / "workflows"]
+    return [base / "config.json", base / "agents", base / "skills"]

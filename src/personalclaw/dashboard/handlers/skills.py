@@ -110,23 +110,20 @@ def _loaded_by_agents(skill_keys: list[str]) -> dict[str, list[str]]:
 
 
 def _parse_always(skill_md: Path) -> bool:
-    """Extract the 'always' field from SKILL.md frontmatter."""
+    """Extract the 'always' field from SKILL.md frontmatter.
+
+    Delegates to the one parser rather than re-deriving it: this copy lacked the
+    loader's BOM/leading-blank tolerance, so a BOM'd skill reported
+    ``always: false`` regardless of what it actually declared.
+    """
+    from personalclaw.skills.loader import SkillsLoader
+
     try:
-        text = skill_md.read_text(encoding="utf-8", errors="replace")
+        text = skill_md.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return False
-    if not text.startswith("---"):
-        return False
-    end = text.find("\n---", 3)
-    if end == -1:
-        return False
-    import re
-
-    for line in text[3:end].splitlines():
-        m = re.match(r"^always:\s*(.+)$", line)
-        if m:
-            return m.group(1).strip().lower() in ("true", "yes", "1")
-    return False
+    value = SkillsLoader._parse_frontmatter_text(text).get("always", "")
+    return value.strip().lower() in ("true", "yes", "1")
 
 
 async def api_skills_list(request: web.Request) -> web.Response:
@@ -336,21 +333,13 @@ async def api_skills_marketplace_detail(request: web.Request) -> web.Response:
 
     skill_md = detail.skill_md() or ""
     # Parse the SKILL.md frontmatter so the dashboard can render structured fields
-    # (name, description, triggers, tags, version, author, license).
-    frontmatter: dict[str, Any] = {}
-    body = skill_md
-    if skill_md.startswith("---"):
-        end = skill_md.find("\n---", 3)
-        if end != -1:
-            fm_text = skill_md[3:end].strip()
-            body = skill_md[end + 4 :].lstrip("\n")
-            for line in fm_text.split("\n"):
-                if ":" in line:
-                    key, _, value = line.partition(":")
-                    key = key.strip()
-                    value = value.strip().strip('"').strip("'")
-                    if key:
-                        frontmatter[key] = value
+    # (name, description, triggers, tags, version, author, license). Both halves
+    # delegate to the one parser — a marketplace preview must show the same
+    # metadata the loader will read once installed, or the consent surface lies.
+    from personalclaw.skills.loader import SkillsLoader
+
+    frontmatter: dict[str, Any] = dict(SkillsLoader._parse_frontmatter_text(skill_md))
+    body = SkillsLoader.strip_frontmatter(skill_md) if frontmatter else skill_md
 
     # JSON-safe file view: paths + a binary marker only. Raw ``data`` bytes from a binary
     # entry aren't JSON-serializable, and the preview UI only needs the tree — file

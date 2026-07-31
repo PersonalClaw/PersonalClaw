@@ -36,7 +36,7 @@ dashboard you own. Local-first, provider-agnostic, zero telemetry, MIT.
 
 ## <a name="-pre-10-heads-up"></a>⚠️ Pre-1.0 — breaking changes expected
 
-PersonalClaw is at **v0.1.0** and moving fast toward a deeper architecture (see the
+PersonalClaw is at **v0.1.3** and moving fast toward a deeper architecture (see the
 [roadmap](docs/roadmap/roadmap.md)). It follows a **clean-break** engineering doctrine:
 when a design is replaced, the old path is removed in the same change rather than carried
 along behind compatibility shims. The upshot for you as an early user:
@@ -213,6 +213,21 @@ run on every push to `main`.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the engineering doctrine (clean-break-within-class,
 provider-agnostic core, validate-as-a-user) and dev setup. First-party apps live in the
 [PersonalClawApps](https://github.com/PersonalClaw/PersonalClawApps) repo — the community front door.
+
+Looking for somewhere to start? The
+[good-first-issue](https://github.com/PersonalClaw/PersonalClaw/issues?q=is%3Aopen+label%3Agood-first-issue)
+label marks well-scoped work that needs little context.
+
+**Questions, ideas, showing off what you built:**
+[Discussions](https://github.com/PersonalClaw/PersonalClaw/discussions) — Q&A for help,
+Show and tell for what you've made, Ideas for feature thinking. Bugs go to
+[Issues](https://github.com/PersonalClaw/PersonalClaw/issues) instead, so they can be tracked
+and closed.
+
+The roadmap is maintainer-owned, but not opaque: propose changes in
+[Discussions → Ideas](https://github.com/PersonalClaw/PersonalClaw/discussions/categories/ideas)
+rather than by PR'ing `docs/roadmap/`. See
+[the intake path](docs/roadmap/roadmap.md#proposing-roadmap-changes).
 
 ## License
 

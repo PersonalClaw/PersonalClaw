@@ -1534,33 +1534,76 @@ class SecurityConfig:
 
 @dataclass
 class WorkflowsConfig:
-    """Surfacing config for workflow SOPs. The matcher embeds the user
-    intent, gates by scope, and injects the best-matching SOP above threshold."""
+    """Workflow engine config (WORKFLOWS-V2).
+
+    The old shape held surfacing knobs (`match_threshold` for the embedding matcher);
+    that feature is deleted, and the namespace is reused rather than renamed — the
+    plan's clean-break/namespace-reuse call. `enabled` keeps its meaning as the
+    feature kill-switch; the engine's own keys (max_active_runs, per-lane
+    max_concurrent_nodes, model_tiers, retention.*) arrive with Slice 0, each wired
+    through all four config points."""
 
     enabled: bool = field(
         default=True,
         metadata=_meta(
             "Enabled",
-            "When true, a scoped workflow SOP semantically matching the turn is "
-            "auto-injected as guidance. Acts as an instant kill-switch.",
+            "Master switch for the workflow engine. Turning it off stops new runs "
+            "from starting without touching stored definitions.",
         ),
     )
-    match_threshold: float = field(
-        default=0.62,
+    max_active_runs: int = field(
+        default=10,
         metadata=_meta(
-            "Match Threshold",
-            "Cosine-similarity threshold for surfacing a workflow (0.0-1.0). "
-            "Higher = stricter. The keyword fallback uses a fixed 0.7 word-overlap.",
+            "Max Active Runs",
+            "How many workflow runs may execute at once. A trigger firing faster than "
+            "its runs finish would otherwise stack them without bound.",
+        ),
+    )
+    max_concurrent_nodes: int = field(
+        default=6,
+        metadata=_meta(
+            "Max Concurrent Nodes",
+            "Total node slots per run, partitioned across typed lanes (llm/io/compute) "
+            "so a long local-model action cannot block the run's model calls.",
+        ),
+    )
+    default_node_timeout_total_secs: int = field(
+        default=900,
+        metadata=_meta(
+            "Node Timeout — Total",
+            "Wall-clock cap for one node, in seconds. 0 disables it.",
+        ),
+    )
+    default_node_timeout_stall_secs: int = field(
+        default=300,
+        metadata=_meta(
+            "Node Timeout — Stall",
+            "Kill a node after this many seconds with NO progress, even when it is "
+            "under the total cap. Progress events reset the clock, so a slow-but-"
+            "working node survives while a wedged one does not.",
+        ),
+    )
+    retention_per_def: int = field(
+        default=100,
+        metadata=_meta(
+            "Runs Kept Per Workflow",
+            "Oldest runs beyond this are pruned. Matches the per-job cap schedules use.",
         ),
     )
 
     def __post_init__(self) -> None:
-        if not 0.0 <= self.match_threshold <= 1.0:
-            logger.warning(
-                "workflows.match_threshold %.2f out of range [0.0, 1.0], using 0.62",
-                self.match_threshold,
-            )
-            object.__setattr__(self, "match_threshold", 0.62)
+        # Clamp rather than reject: a nonsensical value from a hand-edited config must
+        # not stop the gateway booting, and 0 concurrency would deadlock every run.
+        if self.max_active_runs < 1:
+            object.__setattr__(self, "max_active_runs", 1)
+        if self.max_concurrent_nodes < 1:
+            object.__setattr__(self, "max_concurrent_nodes", 1)
+        if self.default_node_timeout_total_secs < 0:
+            object.__setattr__(self, "default_node_timeout_total_secs", 0)
+        if self.default_node_timeout_stall_secs < 0:
+            object.__setattr__(self, "default_node_timeout_stall_secs", 0)
+        if self.retention_per_def < 1:
+            object.__setattr__(self, "retention_per_def", 1)
 
 
 # ---------------------------------------------------------------------------
@@ -2620,7 +2663,15 @@ class AppConfig:
             ),
             workflows=WorkflowsConfig(
                 enabled=bool(workflows_data.get("enabled", True)),
-                match_threshold=float(workflows_data.get("match_threshold", 0.62)),
+                max_active_runs=_safe_int(workflows_data.get("max_active_runs", 10), 10),
+                max_concurrent_nodes=_safe_int(workflows_data.get("max_concurrent_nodes", 6), 6),
+                default_node_timeout_total_secs=_safe_int(
+                    workflows_data.get("default_node_timeout_total_secs", 900), 900
+                ),
+                default_node_timeout_stall_secs=_safe_int(
+                    workflows_data.get("default_node_timeout_stall_secs", 300), 300
+                ),
+                retention_per_def=_safe_int(workflows_data.get("retention_per_def", 100), 100),
             ),
             learning=LearningConfig(
                 enabled=bool(learning_data.get("enabled", True)),

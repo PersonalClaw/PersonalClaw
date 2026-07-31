@@ -205,15 +205,13 @@ def is_archived(meta: dict) -> bool:
 
 
 def _frontmatter(content: str) -> dict[str, str]:
-    """Parse simple ``key: value`` YAML frontmatter (mirrors loader._parse_frontmatter)."""
-    if not content.startswith("---"):
-        return {}
-    m = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
-    if not m:
-        return {}
-    out: dict[str, str] = {}
-    for line in m.group(1).split("\n"):
-        if ":" in line:
-            k, v = line.split(":", 1)
-            out[k.strip()] = v.strip().strip("\"'")
-    return out
+    """Parse `key: value` frontmatter — delegated to the ONE parser.
+
+    This used to be a copy that claimed to mirror `loader._parse_frontmatter`
+    and had silently stopped doing so: the loader gained BOM/leading-blank
+    tolerance and YAML-list folding, this copy did not. A skill could therefore
+    be archived-aware in one code path and not another.
+    """
+    from personalclaw.skills.loader import SkillsLoader
+
+    return SkillsLoader._parse_frontmatter_text(content)

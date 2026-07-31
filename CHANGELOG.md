@@ -8,7 +8,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+
+- **Changing your embedding model silently stopped the assistant remembering anything.**
 
 ## [0.1.3] — 2026-07-30
 
