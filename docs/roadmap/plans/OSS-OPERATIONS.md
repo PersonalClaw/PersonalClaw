@@ -157,3 +157,77 @@ second org owner, apps-repo co-maintainer path).
   **Validated as a user** on :10761 across two gateway boots with a genuinely foreign skill (BOM +
   YAML-list triggers + no PersonalClaw fields): description empty → correct, `always` under a BOM
   false → true, YAML-list triggers matched live, **0 tracebacks**.
+- **[2026-07-31][T2.2] DONE — 9 good-first-issues live (bar was ≥8), and two of the plan's seeds were
+  RETIRED as already-fixed rather than filed.**
+
+  **`scripts/setup_labels.sh` had never been run** (V1's log flagged the GitHub-side step as deferred
+  to post-merge and it was never picked up) — so the repo carried only GitHub's 13 defaults and none of
+  the `area:*`/`wave:*`/`good-first-issue` taxonomy the script defines. Run now on **both** repos, 16
+  labels each.
+
+  **Verified every seed still reproduces before filing — two did not, and were CLOSED with evidence
+  instead:** #85 (croniter DST test) was fixed by PR #98's invariant rewrite (`-k spring_forward` → 2
+  passed), and #94 (video stored as `kind=image`) is fixed — `video` is now in `ALLOWED_KINDS`,
+  `BINARY_KINDS` and `_MIME_TO_EXT`, and #127 closed the frontend half with a test that reads
+  `ALLOWED_KINDS` out of the Python source so the two cannot drift again. Filing either as a
+  good-first-issue would have sent a newcomer to fix nothing.
+
+  **Two more plan seeds were stale and are not actionable:** the "one issue per `xfail`-annotated test"
+  list is already covered by open issues #6/#7 (the xfail reasons cite them inline), and
+  `--slack-only` no longer exists in code (Provider-Boundary retired it).
+
+  **Labeled 6 verified-real existing issues** (#6, #7, #8, #9, #10, #95 — each re-checked: #6 still
+  xfails, #95's `SafetyProfile` is exported but has zero consulting call sites, `WidgetFrame.tsx`
+  exists) and **filed 4 new ones from real findings**: #129 (a Skills authoring guide — `docs/guides/`
+  genuinely has no `skills.md`, found while writing T2.1), #130 (`audit_home()` has zero runtime
+  callers — wire into doctor or delete, with the honest "run it first, the answer decides" framing),
+  #131 (`make serve-web` documented on :3000, actually :3100 per `vite.config.ts:56` — a newcomer's
+  first frontend command lands on a dead port), and apps#13 (README badges — the apps README has none).
+- **[2026-07-31][T3.1] DONE — `docs/maintainers/release-runbook.md`, written from `release.yml` and
+  WALKED against the shipped v0.1.3.**
+
+  Documents all seven jobs, both protected environments (`release`, `release-client` — verified to
+  exist via the API), the six version surfaces, tagging, the in-flight approvals, and outside-in
+  post-release verification. Validated live: PyPI carries core **and** client at 0.1.3 (lockstep
+  holds), the GitHub Release has 48k of real CHANGELOG-derived notes, `static/dist` is the symlink the
+  wheel check inspects, and **`git rev-parse v0.1.3` (`f4c6b28`) genuinely differs from
+  `v0.1.3^{commit}` (`bc185c0`)** — the annotated-tag dereference trap the page warns about is real,
+  not theoretical.
+
+  **One claim corrected mid-write:** the CHANGELOG heading must be exactly `## [X.Y.Z]`, because the
+  `notes` job matches `^## \[<ver>\]…`; a heading without brackets silently yields the bare fallback
+  `Release X.Y.Z.` — a published release with no notes, unfixable after the tag. **One step left
+  explicitly unverified** rather than implied: the GHCR pull needs `docker login` or a `read:packages`
+  token, neither available here — marked as the one item to confirm by hand.
+- **[2026-07-31][T2.3 + T3.3] DONE (code/docs side); one OWNER action remains, and it is a real API
+  limit, not a deferral.**
+
+  **Discussions is ENABLED on both repos** (owner-approved; `has_discussions: true` verified). README
+  gains a community block routing by category (Q&A / Show and tell / Ideas, bugs → Issues) plus the
+  good-first-issue front door. `roadmap.md` gains **"Proposing roadmap changes"** (T3.3) stating
+  maintainer-ownership as *process, not opacity* — with the reason (plans encode cross-plan contracts;
+  one holder keeps the dependency graph coherent), the propose-don't-PR path into Ideas, and what IS
+  directly contributable (implement a plan task under EXECUTION-PROTOCOL, take a good-first-issue, or
+  report a plan whose premise no longer matches code — an E1 escalation, which has genuinely re-scoped
+  plans before).
+
+  **OWNER ACTION: discussion CATEGORIES cannot be created via the API.** Verified against the GraphQL
+  schema — the `Mutation` type exposes `createDiscussion`/`updateDiscussion`/`closeDiscussion` but
+  **no `createDiscussionCategory`**; category management is web-UI-only. Enabling Discussions created
+  six defaults (Announcements, General, Ideas, Polls, Q&A, Show and tell), which already cover the
+  plan's list except **App Dev**. Links currently point roadmap input at **Ideas**, which works — a
+  dedicated "Roadmap Input" category is optional. Both steps + the welcome post are laid out in
+  `docs/maintainers/discussions-welcome-draft.md` (drafted in owner voice, deliberately NOT posted;
+  all four doc paths it cites verified to resolve).
+- **[2026-07-31][README version] DONE — and the drift is now MECHANICALLY PREVENTED, not just fixed.**
+
+  The README's pre-1.0 banner said **v0.1.0 at v0.1.3** — three releases stale, in the exact paragraph
+  warning users their data may break without migration. Root cause: it was unenforced. Rather than fix
+  the symptom, `tests/test_version_consistency.py` grew two guards (4 → 6 surfaces): the README banner
+  version, and **`acp/client.py`'s `CLIENT_VERSION`** — which was itself found hardcoded at `0.1.2`
+  during the 0.1.3 release, meaning every ACP agent was told the wrong version in the initialize
+  handshake. Both guards mutation-verified: reverting either value fails its own test with a message
+  naming the file to fix. The runbook's bump table now lists all six.
+
+  Left alone deliberately: the v0.1.0 mentions in `AGENTS.md` and `CONTRIBUTING.md` are **historical**
+  ("this shipped as the v0.1.0 blank dashboard") and correct as written.
