@@ -1976,8 +1976,16 @@ class VectorMemoryStore(MemoryProvider):
                 normed = [x / norm_f for x in embedding] if norm_f > 0 else embedding
                 embedding_blob = struct.pack(f"{len(normed)}f", *normed)
 
-            # Dedup via FAISS
-            if self._faiss_index is not None and self._faiss_index.ntotal > 0:  # type: ignore[attr-defined]  # noqa: E501
+            # Dedup via FAISS. Width-gated for the same reason as the add below: `search`
+            # asserts its query width just as `add` does, so a query from a changed
+            # embedding model would raise here and take the write with it. Skipping dedup
+            # is the right degradation — a possible duplicate memory is a far smaller
+            # problem than a write that throws.
+            if (
+                self._faiss_index is not None
+                and self._faiss_index.ntotal > 0  # type: ignore[attr-defined]
+                and vec.shape[0] == self._embedding_dim
+            ):
                 distances, indices = self._faiss_index.search(vec.reshape(1, -1), 5)  # type: ignore[attr-defined]  # noqa: E501
                 for dist, idx in zip(distances[0], indices[0]):
                     if idx == -1:
@@ -2032,14 +2040,34 @@ class VectorMemoryStore(MemoryProvider):
         )
         self.db.commit()
 
-        # Add to FAISS
+        # Add to FAISS. The dimension is checked HERE, not left to faiss: `IndexFlat.add`
+        # enforces its width with a bare `assert d == self.d`, which surfaces as an
+        # `AssertionError` with no dimensions in the message, raised from inside a library
+        # frame — and it takes the whole write down with it. That is exactly what happened on
+        # an index built at 384 while the bound provider (qwen3-embedding:0.6b) emits 1024:
+        # every episodic write raised, so the agent silently stopped remembering anything.
+        #
+        # `rebuild_faiss_index` already skips-and-warns on this same mismatch. The write path
+        # not doing so is the inconsistency; matching it keeps the text (already committed
+        # above) and the SQLite embedding, so a later `reembed`/rebuild recovers the vector.
         if embedding_blob is not None and self._faiss_index is not None:
             vec = np.frombuffer(embedding_blob, dtype=np.float32).reshape(1, -1)
-            self._faiss_index.add(vec)  # type: ignore[attr-defined]
-            self._faiss_id_map.append(mem_id)
-            self._faiss_writes_since_save += 1
-            if self._faiss_writes_since_save >= _FAISS_SAVE_INTERVAL:
-                self.save_faiss_index()
+            if vec.shape[1] != self._embedding_dim:
+                logger.warning(
+                    "Skipping FAISS add for episodic %s: embedding is %d-dim but the index is "
+                    "%d-dim. The memory itself is saved; run a re-embed to restore semantic "
+                    "recall for it. This usually means the embedding model changed without "
+                    "clearing the index.",
+                    mem_id,
+                    vec.shape[1],
+                    self._embedding_dim,
+                )
+            else:
+                self._faiss_index.add(vec)  # type: ignore[attr-defined]
+                self._faiss_id_map.append(mem_id)
+                self._faiss_writes_since_save += 1
+                if self._faiss_writes_since_save >= _FAISS_SAVE_INTERVAL:
+                    self.save_faiss_index()
 
         self._log_event("create", "episodic", mem_id, None, text[:200], source)
         # Write-time entity linking (MEMORY-GRAPH-AND-VAULT §1.1). The
@@ -2095,6 +2123,18 @@ class VectorMemoryStore(MemoryProvider):
             norm = np.linalg.norm(vec)
             if norm > 0:
                 vec = vec / norm
+            if vec.shape[0] != self._embedding_dim:
+                # A query embedded by a different model than the index was built with. The
+                # numbers are not comparable, and `search` would assert. Fall through to the
+                # keyword path rather than raising into the caller's turn.
+                logger.warning(
+                    "Semantic recall skipped: query is %d-dim but the index is %d-dim "
+                    "(embedding model changed). Falling back to keyword search; run a "
+                    "re-embed to restore semantic recall.",
+                    vec.shape[0],
+                    self._embedding_dim,
+                )
+                return []
             k = min(limit * 2, self._faiss_index.ntotal)  # type: ignore[attr-defined]
             distances, indices = self._faiss_index.search(vec.reshape(1, -1), k)  # type: ignore[attr-defined]  # noqa: E501
 
@@ -2842,9 +2882,30 @@ class VectorMemoryStore(MemoryProvider):
             "ORDER BY importance DESC, created_at DESC LIMIT 500"
         ).fetchall()
 
-        # Cluster similar episodic memories
+        # Cluster similar episodic memories.
+        #
+        # Rows are filtered to the CURRENT index width first. A store that has seen an
+        # embedding-model change holds vectors of two widths, and `np.dot` on mismatched
+        # shapes raises ValueError — which would abort the whole consolidation pass, so a
+        # single stale row could stop the agent from ever promoting a pattern again.
+        # Comparing across models would be meaningless anyway: the two vector spaces are
+        # unrelated, so a similarity between them is a number without a meaning.
+        usable, stale = [], 0
+        for row in rows:
+            if len(np.frombuffer(row["embedding"], dtype=np.float32)) == self._embedding_dim:
+                usable.append(row)
+            else:
+                stale += 1
+        if stale:
+            logger.warning(
+                "Consolidation skipped %d episodic memories embedded at a different "
+                "dimension than the current model (%d). Re-embed to include them.",
+                stale,
+                self._embedding_dim,
+            )
+
         clusters: dict[int, list[dict]] = {}
-        for i, row in enumerate(rows):
+        for i, row in enumerate(usable):
             vec_i = np.frombuffer(row["embedding"], dtype=np.float32)
             found_cluster = False
             for cluster_id, members in clusters.items():

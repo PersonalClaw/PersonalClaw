@@ -480,6 +480,96 @@ class TestSemanticContext:
         assert len(ctx) < 700  # cap + delimiters
 
 
+class TestEmbeddingDimensionChange:
+    """A store whose embedding model changed must degrade, never raise.
+
+    Found in live use: an index built at 384 dims with `qwen3-embedding:0.6b` (1024 dims)
+    bound meant EVERY episodic write raised `AssertionError` from inside
+    `faiss.IndexFlat.add`'s bare `assert d == self.d` — so the agent silently stopped
+    remembering, with a library-frame traceback and no dimensions in the message.
+    `rebuild_faiss_index` already skipped-and-warned on the same mismatch; the write and
+    consolidation paths did not.
+    """
+
+    def test_write_survives_a_wider_embedding(self, tmp_path: Path) -> None:
+        store = VectorMemoryStore(db_path=tmp_path / "mem.db", embedding_dim=384)
+        store.init()
+        # What a switch to a 1024-dim model produces.
+        wide = [0.01] * 1024
+        assert store.write_episodic(
+            "User decided the collector stays on SQLite with WAL", embedding=wide
+        )
+        # The memory itself is kept — the text is the durable part, and a later re-embed
+        # restores semantic recall. Losing it would be the worse failure.
+        entries = store.get_episodic_list()
+        assert len(entries) == 1
+        assert "SQLite" in entries[0]["text"]
+
+    def test_write_still_indexes_a_matching_embedding(self, tmp_path: Path) -> None:
+        store = VectorMemoryStore(db_path=tmp_path / "mem.db", embedding_dim=8)
+        store.init()
+        assert store.write_episodic("A memory with a correctly sized vector", embedding=[0.1] * 8)
+        assert store.get_episodic_list()
+
+    def test_a_narrower_embedding_is_also_skipped(self, tmp_path: Path) -> None:
+        store = VectorMemoryStore(db_path=tmp_path / "mem.db", embedding_dim=384)
+        store.init()
+        assert store.write_episodic("A memory embedded by a smaller model", embedding=[0.5] * 128)
+        assert len(store.get_episodic_list()) == 1
+
+    def test_the_skip_is_logged_with_both_dimensions(self, tmp_path: Path, caplog) -> None:
+        """A silent skip would be its own bug — the operator needs to know to re-embed."""
+        import logging
+
+        store = VectorMemoryStore(db_path=tmp_path / "mem.db", embedding_dim=384)
+        store.init()
+        with caplog.at_level(logging.WARNING):
+            store.write_episodic(
+                "Something worth remembering about the release", embedding=[0.0] * 1024
+            )
+        text = "\n".join(r.getMessage() for r in caplog.records)
+        assert "1024" in text and "384" in text
+        assert "re-embed" in text.lower()
+
+    def test_recall_falls_back_instead_of_raising(self, tmp_path: Path) -> None:
+        """`faiss.search` asserts its query width too — a third unguarded site.
+
+        My first fix covered only `add`; this test is what found the search paths (dedup on
+        write, and semantic recall). Recall must return nothing and let the caller fall back
+        to keyword search, never raise into the user's turn.
+        """
+        store = VectorMemoryStore(db_path=tmp_path / "mem.db", embedding_dim=8)
+        store.init()
+        store.write_episodic("A memory indexed at the current width", embedding=[0.3] * 8)
+        # A query embedded by a DIFFERENT model than the index was built with.
+        got = store.search_episodic(query_embedding=[0.3] * 1024, query_text="anything at all")
+        assert got == []
+
+    def test_dedup_on_write_survives_a_width_change(self, tmp_path: Path) -> None:
+        """The dedup search runs on the write path, so it must not raise either."""
+        store = VectorMemoryStore(db_path=tmp_path / "mem.db", embedding_dim=8)
+        store.init()
+        assert store.write_episodic("First memory at the indexed width", embedding=[0.3] * 8)
+        # Now the model changes: this write must still succeed (dedup simply skipped).
+        assert store.write_episodic("Second memory from the new model", embedding=[0.3] * 1024)
+        assert len(store.get_episodic_list()) == 2
+
+    def test_consolidation_tolerates_a_mixed_width_store(self, tmp_path: Path) -> None:
+        """`np.dot` on mismatched shapes raises ValueError, which aborted the whole pass."""
+        store = VectorMemoryStore(db_path=tmp_path / "mem.db", embedding_dim=8)
+        store.init()
+        for i in range(3):
+            store.write_episodic(
+                f"A consistent memory number {i} about the ingest work", embedding=[0.4] * 8
+            )
+        # A row left behind by the previous model.
+        store.write_episodic(
+            "A memory from the older embedding model entirely", embedding=[0.4] * 1024
+        )
+        # Must complete rather than raising; the stale row is simply not clustered.
+        store.promote_episodic_patterns()
+
+
 class TestEpisodicCRUD:
     def test_write_and_list(self, tmp_path: Path) -> None:
         store = VectorMemoryStore(db_path=tmp_path / "mem.db")
