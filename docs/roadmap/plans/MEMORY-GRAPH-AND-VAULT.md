@@ -653,3 +653,43 @@ a knowledge-repo-adjacent change with its own ingestion seam and is cleanly sepa
 
   **Gates:** `make lint` clean (mypy 556 files) · `make test` **9465 passed, 0 failed**.
   Tests: `tests/test_knowledge_alias_prepass.py`, 26 cases.
+
+- 2026-07-31 — **DISCOVERY + FIX (an embedding-model change silently stopped all memory).**
+
+  Not a planned task — found while seeding a marketing instance for the 0.1.3 release. Every
+  episodic write was raising `AssertionError` from **inside** `faiss.IndexFlat.add`, whose width
+  check is a bare `assert d == self.d`: no dimensions in the message, raised from a library
+  frame, and it took the whole write with it. The agent had simply stopped remembering, and
+  nothing said so.
+
+  **Root cause was TWO things, and separating them mattered.** The instance's on-disk index was
+  384-dim while every stored vector — and the bound `qwen3-embedding:0.6b` — is 1024, so the
+  index predated a model change and had never been rebuilt. That is a *data* fault, repaired by
+  rebuilding at the real width (the same store then read 72 semantic / 13 episodic / 161 events).
+  The *code* fault is that this was allowed to be silent, and that is what got fixed.
+
+  **`rebuild_faiss_index` already skipped-and-warned on exactly this mismatch.** The
+  inconsistency was that no other path did. Three were unguarded, and the tests found the two the
+  first pass missed:
+
+  1. `write_episodic`'s `index.add` — the reported crash.
+  2. **Both `search` calls** — dedup-on-write and semantic recall. `faiss.search` asserts its
+     QUERY width the same way `add` asserts the added vector's, so a query from the new model
+     raised too. Recall now returns empty and lets the caller fall back to keyword search.
+  3. `promote_episodic_patterns`, which `np.dot`s stored vectors against each other: mixed widths
+     raise `ValueError`, so ONE stale row would abort the whole consolidation pass. Rows are now
+     filtered to the current width first — a similarity between two different models' spaces is a
+     number without a meaning anyway.
+
+  Every case keeps the memory text and its stored embedding, so a later re-embed restores
+  semantic recall; the warning names BOTH dimensions and says to re-embed, because a silent skip
+  would be its own version of this bug. **Mutation-verified:** neutralising the guards fails 5 of
+  the 7 new tests.
+
+  *Lesson worth recording:* the crash was in `add`, so `add` looked like the fix. It took writing
+  the tests to discover that `search` and the consolidation pass fail the same way for the same
+  reason — a fix aimed only at the reported traceback would have left two of the three paths
+  broken and looked complete.
+
+  **Gates:** `make lint` clean (mypy 563 files) · `make test` **9759 passed, 0 failed**.
+  Tests: `tests/test_vector_memory.py::TestEmbeddingDimensionChange`, 7 cases.

@@ -8,7 +8,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+
+- **Changing your embedding model silently stopped the assistant remembering anything.** If the
+  embedding model changed after the memory index was built, every attempt to save a new memory
+  failed — and nothing said so. Recall and the nightly consolidation pass broke the same way for
+  the same reason. Memories are now kept whenever this happens, with a warning naming both sizes
+  and telling you to re-embed, so the worst case is that older memories are temporarily missing
+  from semantic search instead of new ones being lost entirely. If you have hit this, your
+  memories are still there: re-embed to bring them back into search.
 
 ## [0.1.3] — 2026-07-30
 
