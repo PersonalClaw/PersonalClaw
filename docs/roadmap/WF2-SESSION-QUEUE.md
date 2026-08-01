@@ -55,7 +55,7 @@ mandatory.
 | 3 | **Slice 2c** — deterministic circuit breaker in frontier; escalation artifact; budgets (node soft caps, extend gates, baseline_check, topology estimate); two-knob timeout warm-up split; foreach `on_item_error` + per-item checkpointing | G1 | ✅ DONE |
 | 4 | **Slice 3a** — effect ledger: idempotency keys, effect_status, redo_effects gate, caller idempotency dedupe, BYOI teardown | G2 | ✅ DONE (#139) |
 | 5 | **Slice 3b** — v2 `run-workflow` action provider + `ALLOWED_HOOK_PROVIDERS`; write-scope enforcement (pre/post fs diff, scope_violation); termination (sticky cancel, protocol-violation, `workflow_audit`); secrets (`{{secret:KEY}}`, `_has*` stripping, RedactingSink) | G2 | ✅ DONE (#140) |
-| 6 | **Slice 4a** — `mutations.py`: op types incl. `run_from`, batch validator, spec-history writer, epoch/inputs-hash logic | G3 | TODO |
+| 6 | **Slice 4a** — `mutations.py`: op types incl. `run_from`, batch validator, spec-history writer, epoch/inputs-hash logic | G3 | ✅ DONE (#141) |
 | 7 | **Slice 4b** — binding-dependency cascade closure, engine-computed preview, `inputs_stale`, rollback-vs-revert, TOCTOU re-verify; mutation queue in the controller; grammar hardening a-f | G3 | TODO |
 | 8 | **Slice 4c** — rewind (archive outputs + journal region, epoch bump, memoized replay); checkpoints + `fork`; property tests (rewind idempotence, cascade = binding closure, fork isolation) | G3 | TODO |
 | 9 | **Slice 5a** — typed ask payload, mode-dependent gate timeouts, `timed_out_unattended`; continuation records + durable resume tokens + expiry | G4 | TODO |
@@ -225,3 +225,15 @@ mandatory.
   than `allowed_write_paths` — snapshotting only allowed paths makes a violation
   undetectable by construction; it reaches one level above the workspace, not `$HOME`, and
   the limitation is stated in the module rather than papered over.
+- 2026-08-01 — session 6 (Slice 4a, `mutations.py`) DONE → **PR #141** (stacked on #140,
+  which was still open — normal stacking, no rebase needed). Typed op vocabulary, the
+  binding-dependency cascade, transactional batch (parse → validate → apply-to-copy →
+  re-validate), grammar hardening a-d, spec-history writer, force-only epoch bump.
+  10199 tests (+51). Validated live on a real completed 4-node run: **tree subtree of
+  `gather` = ['gather'] vs BINDING closure = ['analyze','gather','report']** — a tree reset
+  would have missed both consumers (the WF2-R2 stale-input bug, demonstrated rather than
+  asserted); editing a done node rejected `WF_MUT_FROZEN_NODE`; a spec-breaking delete
+  wrote nothing.
+  NOTES: `rewind`/`run_from`/`fork` are spec-level no-ops here by design — they change
+  INSTANCE STATE and run identity, which Slice 4c owns; `inline_subworkflow` is a typed
+  refusal until Slice 10. Both are explicit, not silent.

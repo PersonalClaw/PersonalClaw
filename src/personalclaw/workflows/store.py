@@ -391,6 +391,30 @@ def write_output(run_id: str, node_path: str, output: Any) -> str:
     return rel
 
 
+def archive_output(run_id: str, node_path: str, version: int) -> str:
+    """Move a node's output into `outputs/attic/v<NNN>/` before a rewind overwrites it.
+
+    ARCHIVED, not deleted (WF2-R2 #5). A rewind that discarded the prior answer would make
+    the edit irreversible and leave a reader unable to see what the run used to say. Named
+    by the spec version that superseded it, so the attic reads as a history rather than a
+    pile of orphans.
+
+    Returns the archive path, or "" when there was nothing to move.
+    """
+    src = run_dir(run_id) / "outputs" / _output_filename(node_path)
+    if not src.is_file():
+        return ""
+    rel = f"outputs/attic/v{version:03d}/{_output_filename(node_path)}"
+    dest = run_dir(run_id) / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        src.replace(dest)
+    except OSError:
+        logger.warning("run %s: could not archive output for %s", run_id, node_path)
+        return ""
+    return rel
+
+
 def read_output(run_id: str, node_path: str) -> Any:
     path = run_dir(run_id) / "outputs" / _output_filename(node_path)
     if not path.is_file():
