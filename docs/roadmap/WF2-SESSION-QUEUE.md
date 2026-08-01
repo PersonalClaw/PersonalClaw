@@ -72,7 +72,7 @@ mandatory.
 | 20 | **Slice 9b** — conventions pack (triage-first, Finding record, baseline capture, `bundled/shared/`, template-lint, steering_examples); `artifact_update` provider; bundled-sync; FE template picker | G8 | ✅ DONE (#157) |
 | 21 | **Slice 10a** — `foreach pipeline=true` streaming handoff; `loop until_dry`; `subworkflow` nesting (depth ≤3, namespaced, `child_run_attach`) | G9 | ✅ DONE (#158) |
 | 22 | **Slice 10b** — context lifecycle: `session: fresh` resets + journaled handoffs, typed carryover buckets, decision records, output offloading, two-layer compaction; run-level budget end-to-end; FE collapsible containers | G9 | ✅ DONE (#159) |
-| 23 | **Slice 11a** — end-to-end lifecycle test (create→run→edit→rewind→run_from→fork→complete); adversarial property tests (concurrent mutations, crash-during-execution, deep nesting, double-resume) | G10 | TODO |
+| 23 | **Slice 11a** — end-to-end lifecycle test (create→run→edit→rewind→run_from→fork→complete); adversarial property tests (concurrent mutations, crash-during-execution, deep nesting, double-resume) | G10 | ✅ DONE (#160) |
 | 24 | **Slice 11b** — timeout-fires pair; active-edge pair; journal-replay harness CI-gated vs baseline; performance (50+ nodes <100ms, 1000-entry replay, coalesced widget); security (binding sandbox, RedactingSink coverage, write-scope escapes); architecture doc + template guide | G10 | TODO |
 
 ## B. Learning Flywheel steps 1-4 (`-LEARNING-FLYWHEEL.md`) — engine-independent, may front-run
@@ -633,3 +633,34 @@ mandatory.
   a stub with an `output_ref`, Slice 8b), but the `{{nodes.x.artifact}}` binding form and the
   `artifact_inspect` action are not built; the compaction ladder needs a summarizer seam that does
   not exist yet. Deferred to a follow-up rather than stubbed.
+- 2026-08-01 — session 23 (Slice 11a) DONE → **PR #160** (stack #152→…→#159→#160). New
+  `test_workflows_lifecycle_e2e.py`: 22 tests driving the whole engine through the REAL supervisor —
+  lifecycle composition, crash recovery, double-resume, deep nesting, fork isolation, performance
+  budgets, security boundaries. 10952 py.
+  DEVIATIONS/DISCOVERIES — this session was mostly about learning the engine's REAL contracts, and
+  every one of these was a wrong assumption in my tests, not a bug in the engine:
+  (a) **`edit_run`/`rewind_run`/`run_from` all require a LIVE controller** (`WF_RUN_NOT_LIVE`). A
+  mutation is only safe at the controller's drain point, so the suite launches through a real
+  `WorkflowWatchdog` rather than a hand-rolled registry — which would have drifted from the contract
+  exactly where the suite should be checking it.
+  (b) **Mutations are QUEUED, not applied.** `edit_run` returns `queued: True`; the tick applies it.
+  A test that does not drive the loop observes nothing and (worse) sees a stale version pass a
+  `expect_version` check that should have failed.
+  (c) **The spec version lives on `run.spec_version`, not in the spec file** — `read_spec()` has no
+  `version` key at all, so `spec.get("version", 1)` was silently always 1.
+  (d) **The frozen-region invariant refuses editing a COMPLETED node.** The user's order is REWIND
+  then edit; my first lifecycle test had it backwards and got `WF_MUT_FROZEN_NODE`, which is the
+  engine being right.
+  (e) **A rewind whose cascade would re-run completed work reports `needs_confirmation` and applies
+  nothing** until `force=True`. That gate is the point of the preview.
+  (f) **A rewind produces NO `step_cached` event** — it bumps the node's epoch, and the epoch is part
+  of the cache key, so the rewound region correctly MISSES the cache. The cache serves a RESUME;
+  invalidation is what serves a rewind. Measured by execution count per node instead.
+  (g) The real mutation op grammar is `{"op": "update_node", "node_id": …, "fields": {…}}` — not the
+  `target`/`value` shape I assumed.
+  (h) Three of my cases duplicated existing coverage (47 mutation tests + 35 fork tests already
+  assert version-mismatch, frozen-node, cascade and isolation directly). Dropped rather than kept as
+  a second, weaker copy; what remains is what only an e2e layer reaches — the seam between "the
+  service accepted it" and "the controller applied it", which every unit test stubs.
+  (i) The security assertion for `compile(` needed a word-boundary regex: `re.compile` is ubiquitous
+  and legitimate, and a test that cried wolf there would be turned off.
