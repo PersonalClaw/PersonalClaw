@@ -71,7 +71,7 @@ mandatory.
 | 19 | **Slice 9a** — author 6 bundled templates incl. `produce-and-audit`; macros (`judge_panel`, `verify_panel`, `route`, `research_sweep`) | G8 | ✅ DONE (#156) |
 | 20 | **Slice 9b** — conventions pack (triage-first, Finding record, baseline capture, `bundled/shared/`, template-lint, steering_examples); `artifact_update` provider; bundled-sync; FE template picker | G8 | ✅ DONE (#157) |
 | 21 | **Slice 10a** — `foreach pipeline=true` streaming handoff; `loop until_dry`; `subworkflow` nesting (depth ≤3, namespaced, `child_run_attach`) | G9 | ✅ DONE (#158) |
-| 22 | **Slice 10b** — context lifecycle: `session: fresh` resets + journaled handoffs, typed carryover buckets, decision records, output offloading, two-layer compaction; run-level budget end-to-end; FE collapsible containers | G9 | TODO |
+| 22 | **Slice 10b** — context lifecycle: `session: fresh` resets + journaled handoffs, typed carryover buckets, decision records, output offloading, two-layer compaction; run-level budget end-to-end; FE collapsible containers | G9 | ✅ DONE (#159) |
 | 23 | **Slice 11a** — end-to-end lifecycle test (create→run→edit→rewind→run_from→fork→complete); adversarial property tests (concurrent mutations, crash-during-execution, deep nesting, double-resume) | G10 | TODO |
 | 24 | **Slice 11b** — timeout-fires pair; active-edge pair; journal-replay harness CI-gated vs baseline; performance (50+ nodes <100ms, 1000-entry replay, coalesced widget); security (binding sandbox, RedactingSink coverage, write-scope escapes); architecture doc + template guide | G10 | TODO |
 
@@ -602,3 +602,34 @@ mandatory.
   (i) NOT DONE, deliberately: the run-view node row has no link to a spawned child run, because
   `child_run_id` is not on the node PROJECTION (only in the node's output). That is Slice-8-family
   widget work, not 10a engine scope. Recorded rather than half-built.
+- 2026-08-01 — session 22 (Slice 10b) DONE → **PR #159** (stack #152→…→#158→#159). New
+  `context.py` (Handoff / Carryover / Decision, all bounded + deduped) + three journal record kinds
+  in `LEDGER_KINDS`; `session: fresh|continuous` honoured; the carried context PREPENDED to a fresh
+  iteration's prompt; rehydration from the ledger on start/resume. New FE `nodeTree.ts` +
+  collapsible containers in the run view. 10930 py · 427 web (+21).
+  Validated live: a 13-node run with an untaken branch rendered as **3 rows** (`gather` showing
+  "9 skipped · 1 done"), the running node stayed visible, and expanding restored the hidden rows.
+  DEVIATIONS/DISCOVERIES:
+  (a) **The run BUDGET was already enforced end-to-end** — `_budget_exceeded()` pauses the run at
+  the cap and `_check_budget_warning()` emits the 80% notice once. Measured: a 1500-token cap paused
+  a run at 4/8 nodes. My first read of `_check_budget_warning` alone suggested warn-only; the stop
+  lives in the tick loop. No work needed.
+  (b) Handoff/carryover/decision are read from the node's OWN OUTPUT, not inferred from prose. A
+  node that says nothing hands over nothing — a FABRICATED handoff is worse than none, because the
+  next iteration would trust it.
+  (c) The journaled carryover is the MERGED state at each write, so a resume takes the last record
+  and is complete rather than replaying and re-merging every one.
+  (d) `session: continuous` deliberately injects NOTHING: a continuous session already holds the
+  previous iteration in its transcript, and prepending a handoff would say everything twice.
+  (e) Collapse seeding is ONE-SHOT per run id (a `seeded` ref), not derived on every poll — re-
+  deriving would slam a subtree shut the moment it finished, exactly as the user was reading it.
+  (f) A subtree collapses only when every member is TERMINAL and none FAILED. An unfinished subtree
+  holds the live work; a failed one holds the thing the user must read, and hiding a failure behind a
+  disclosure control is how a run "silently" fails from the user's point of view. `degraded` DOES
+  collapse — it is a success with a reason.
+  (g) NOT DONE, and recorded rather than half-built: **output offloading to artifacts +
+  `artifact_inspect`** and the **two-layer compaction ladder**. Both are real scope from the plan's
+  §2. Offloading already exists in a partial form (`journal.store_output` spills oversize/binary to
+  a stub with an `output_ref`, Slice 8b), but the `{{nodes.x.artifact}}` binding form and the
+  `artifact_inspect` action are not built; the compaction ladder needs a summarizer seam that does
+  not exist yet. Deferred to a follow-up rather than stubbed.

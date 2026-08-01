@@ -39,7 +39,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from personalclaw.workflows import attention, gate_policy
+from personalclaw.workflows import attention
+from personalclaw.workflows import context as context_mod
+from personalclaw.workflows import gate_policy
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import mutations, store
 from personalclaw.workflows.bindings import BindingContext, node_deps
@@ -190,6 +192,12 @@ class RunController:
         self._declined_edges: set[str] = self._collect_declined_edges()
         self._iterations: dict[str, int] = {}
         self._dry_streaks: dict[str, int] = {}
+        #: Context lifecycle (WF2-R6), keyed by the iterated container's path. Held in memory for
+        #: the CURRENT run and journaled on every write, so a resumed or rewound run rebuilds them
+        #: from the ledger rather than losing them — see `_rehydrate_context`.
+        self._handoffs: dict[str, context_mod.Handoff] = {}
+        self._carryover: dict[str, context_mod.Carryover] = {}
+        self._decisions: dict[str, list[context_mod.Decision]] = {}
         #: path -> the attempts already made. Feeds the correction hint on the next try,
         #: and the escalation artifact when retries run out.
         self._attempts: dict[str, list[Attempt]] = {}
@@ -380,6 +388,11 @@ class RunController:
         # Budget pre-charge (WF2-R4 #1): a resumed run inherits its own spend. Without
         # this a crash loop mints a fresh budget each time and spends without bound.
         self.run.total_tokens = max(self.run.total_tokens, int(totals.get("tokens", 0)))
+        # Context lifecycle (WF2-R6): rebuild handoffs/carryover/decisions from the ledger. This is
+        # the whole reason they are journaled — a resumed run that lost them would restart its next
+        # iteration blind, re-deriving what a previous one already verified, which is the exact
+        # failure the mechanism exists to prevent.
+        self._rehydrate_context()
         async with self._lock:
             if not self.run.started_at:
                 self.run.started_at = _now()
@@ -1209,6 +1222,32 @@ class RunController:
         node.config["prompt"] = retry_prompt(prompt, attempts)
         return node
 
+    def _with_carried_context(self, node: Node, item: ReadyNode) -> Node:
+        """Prepend the previous iteration's handoff/carryover/decisions to a fresh session's prompt.
+
+        This is what makes `session: fresh` mean something. Without it the policy is a label: the
+        iteration starts clean and also starts BLIND, re-deriving what the previous one verified —
+        which is worse than the continuous session it replaced.
+
+        Prepended, not appended: it is context the reader needs BEFORE the instruction, and a model
+        that reads the task first has already begun planning without the constraints.
+
+        A copy, never a mutation — the spec node is shared across every instance of an iterated
+        body, and editing it in place would leak iteration 3's context into iteration 1's prompt on
+        a rewind. Same reasoning as `_with_retry_hint`.
+        """
+        prompt = (node.config or {}).get("prompt")
+        if not isinstance(prompt, str) or not prompt:
+            return node
+        carried = self._carried_context(item)
+        if not carried:
+            return node
+        import copy
+
+        out = copy.deepcopy(node)
+        out.config["prompt"] = f"{carried}\n\n---\n\n{prompt}"
+        return out
+
     async def _execute(self, item: ReadyNode, ctx: BindingContext) -> NodeResult:
         """Run a dispatcher under the total-timeout knob.
 
@@ -1218,6 +1257,10 @@ class RunController:
         """
         total = self.services.node_timeout_total
         node = self._with_retry_hint(item)
+        # The carried context goes on AFTER the retry hint, so a retried fresh iteration gets both
+        # the correction and the handoff. Order between them does not matter — they are appended to
+        # different ends — but dropping either on a retry would be a real loss.
+        node = self._with_carried_context(node, item)
         # Write-scope snapshot BEFORE the node runs (WF2-R19). Only for nodes that opted
         # in: the walk is real work, and a fan-out of fast transforms must not each pay
         # for a tree scan.
@@ -1761,12 +1804,144 @@ class RunController:
             error_signature="",
             tokens=0,
         )
+        # Capture what this iteration hands to the next, BEFORE the counter advances (WF2-R6).
+        # Journaled rather than held in memory so a rewind to this iteration replays the handoff
+        # it actually had, instead of reconstructing one from a transcript that no longer exists —
+        # which is the summarization failure handoffs exist to replace.
+        self._capture_iteration_context(parent_path, node, iteration, output)
         if keep_going:
             self._iterations[parent_path] = iteration + 1
         else:
             loop_inst = self._instance(parent_path)
             loop_inst.state = InstanceState.DONE
             loop_inst.completed_at = _now()
+
+    # ── context lifecycle (WF2-R6) ──
+
+    def _capture_iteration_context(
+        self, parent_path: str, node: Node, iteration: int, output: Any
+    ) -> None:
+        """Journal the handoff, carryover and decision an iteration produced.
+
+        Read from the iteration's OWN OUTPUT rather than inferred: a node that wants to hand
+        something to the next iteration says so in a `handoff` / `carryover` / `decision` key, and
+        inferring one from prose would produce exactly the lossy summary the mechanism replaces.
+        A node that says nothing hands over nothing, which is correct — a fabricated handoff is
+        worse than none, because the next iteration would trust it.
+
+        Never raises: a run must not die because a bookkeeping write failed.
+        """
+        if not isinstance(output, dict):
+            return
+        inst = self._instance(parent_path)
+        try:
+            handoff = context_mod.Handoff.from_dict(output.get("handoff"))
+            if not handoff.empty:
+                self._handoffs[parent_path] = handoff
+                self.journal.handoff(
+                    parent_path,
+                    node.id,
+                    epoch=inst.epoch,
+                    iteration=iteration,
+                    handoff=handoff.to_dict(),
+                )
+
+            fresh = context_mod.Carryover.from_dict(output.get("carryover"))
+            if not fresh.empty:
+                # MERGED into what the loop already carried, not replaced: the buckets accumulate
+                # across iterations, and an iteration that only touched one file must not erase the
+                # nine the previous ones verified.
+                merged = self._carryover.get(parent_path, context_mod.Carryover()).merge(fresh)
+                self._carryover[parent_path] = merged
+                self.journal.carryover(
+                    parent_path,
+                    node.id,
+                    epoch=inst.epoch,
+                    iteration=iteration,
+                    buckets=merged.to_dict(),
+                )
+
+            raw_decisions = output.get("decisions")
+            if isinstance(output.get("decision"), dict):
+                raw_decisions = [output["decision"]]
+            for raw in raw_decisions if isinstance(raw_decisions, list) else []:
+                decision = context_mod.Decision.from_dict(raw if isinstance(raw, dict) else None)
+                if decision.empty:
+                    continue
+                self._decisions.setdefault(parent_path, []).append(decision)
+                self.journal.decision(
+                    parent_path, node.id, epoch=inst.epoch, decision=decision.to_dict()
+                )
+        except Exception:
+            logger.debug(
+                "run %s: could not capture iteration context at %s",
+                self.run.id,
+                parent_path,
+                exc_info=True,
+            )
+
+    def _rehydrate_context(self) -> None:
+        """Rebuild the context lifecycle from the ledger on start/resume (WF2-R6).
+
+        Replays in ledger ORDER, so the last handoff per container wins and the carryover arrives
+        already merged (each write journaled the merged state, so the final one is complete). A
+        rewind's records are naturally excluded because a rewind archives the region's journal
+        entries — the replay sees only what is still live.
+
+        Never raises: a resumed run must start even if its ledger is partly unreadable. It would
+        start context-blind, which is worse than nothing but far better than not starting.
+        """
+        try:
+            records = journal_mod.ledger(
+                self.run.id,
+                kinds={journal_mod.HANDOFF, journal_mod.CARRYOVER, journal_mod.DECISION},
+            )
+        except Exception:
+            logger.debug("run %s: could not read the context ledger", self.run.id, exc_info=True)
+            return
+        for rec in records:
+            path = str(rec.get("instance_path", "") or "")
+            if not path:
+                continue
+            kind = rec.get("kind")
+            try:
+                if kind == journal_mod.HANDOFF:
+                    self._handoffs[path] = context_mod.Handoff.from_dict(rec)
+                elif kind == journal_mod.CARRYOVER:
+                    # Each journaled bucket set is already the MERGED state at that point, so the
+                    # later record replaces rather than re-merges — re-merging would be harmless but
+                    # would quietly double the dedup work on every resume.
+                    self._carryover[path] = context_mod.Carryover.from_dict(rec)
+                elif kind == journal_mod.DECISION:
+                    decision = context_mod.Decision.from_dict(rec)
+                    if not decision.empty:
+                        self._decisions.setdefault(path, []).append(decision)
+            except Exception:
+                logger.debug("run %s: skipping unreadable context record", self.run.id)
+
+    def _carried_context(self, item: ReadyNode) -> str:
+        """The context block a `session: fresh` iteration starts from, or "".
+
+        Only for a node INSIDE an iterated container: a top-level node has no previous iteration to
+        inherit from, and injecting an empty block would teach a model the section is noise.
+
+        `session: continuous` returns "" deliberately — a continuous session already HAS the
+        previous iteration's context in its transcript, and prepending a handoff to it would say
+        everything twice.
+        """
+        parent_path, _iteration = _loop_parent(item.path)
+        if parent_path is None:
+            return ""
+        node = dict(_walk(self.root)).get(parent_path)
+        if node is None:
+            return ""
+        if context_mod.session_policy(node.config) != context_mod.SESSION_FRESH:
+            return ""
+        return context_mod.render_context(
+            handoff=self._handoffs.get(parent_path),
+            carryover=self._carryover.get(parent_path),
+            decisions=self._decisions.get(parent_path),
+        )
 
     # ── binding context ──
 
