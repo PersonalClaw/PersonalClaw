@@ -39,6 +39,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw.workflows import gate_policy
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import mutations, store
 from personalclaw.workflows.bindings import BindingContext, node_deps
@@ -195,6 +196,12 @@ class RunController:
         #: direct application: a handler applying a mutation mid-launch would make two
         #: writers of run state (WF2-R10).
         self._pending_mutations: list[tuple[mutations.BatchResult, str]] = []
+        #: Run-scoped "always allow" decisions (WF2-R7). Cleared on rewind: remembering
+        #: across one would auto-approve the very step the user rewound to reconsider.
+        self._allow_memory = gate_policy.AllowMemory()
+        #: event-gate path -> re-hold accounting. Bounded, because an unbounded hold is a
+        #: wedge that looks like patience.
+        self._event_holds: dict[str, gate_policy.HoldState] = {}
         self._outputs: dict[str, Any] = {}
         self._terminal = asyncio.Event()
         self._load_outputs()
@@ -462,13 +469,25 @@ class RunController:
         deps = node_deps(node.config or {})
         return {dep: self._outputs.get(dep) for dep in sorted(deps)}
 
-    def resume(self, token: str, answer: Any) -> dict[str, Any]:
+    def resume(
+        self,
+        token: str,
+        answer: Any,
+        *,
+        responder: str = "",
+        channel: str = "",
+        always_allow: bool = False,
+    ) -> dict[str, Any]:
         """Answer a waiting gate. The out-of-band entry point (widget, inbox, HTTP, chat).
 
         The answer is VALIDATED before the token is consumed: rejecting afterwards would
         have already destroyed the token, leaving a dead link and an unanswered gate. Then
         the token is consumed ATOMICALLY, so a double-click or a retried POST cannot replay
         one approval into two actions.
+
+        `channel` marks a REMOTE reply. A remote answer must come from the run's owner —
+        without that binding, a shared channel is a privilege-escalation path where anyone
+        who can type can approve someone else's deployment (WF2-R7).
         """
         from personalclaw.workflows.human_input import (
             Ask,
@@ -476,6 +495,13 @@ class RunController:
             expired_item,
             load_continuation,
         )
+
+        allowed, why = gate_policy.may_answer(self.run, responder=responder, channel=channel)
+        if not allowed:
+            # Checked BEFORE the token is touched, and deliberately terse: replying with
+            # the gate's content to a shared channel would leak it to everyone in it.
+            logger.info("workflow %s: refusing remote gate answer — %s", self.run.id, why)
+            return {"ok": False, "code": "WF_RESUME_NOT_OWNER", "message": why}
 
         cont = load_continuation(self.run.id, token)
         if cont is None:
@@ -505,6 +531,11 @@ class RunController:
 
         filled = ask.apply_defaults(answer)
         approved = _is_approved(ask, filled)
+        if approved and always_allow:
+            # Run-scoped, keyed by (operation, target) — and cleared on rewind, so it can
+            # never auto-approve a step the user rewound to reconsider.
+            node = dict(_walk(self.root)).get(_base_path(cont.instance_path))
+            self._allow_memory.remember(node.config if node else {}, cont.node_id)
         inst.wake_at = 0.0
         if approved:
             inst.state = InstanceState.DONE
@@ -693,6 +724,9 @@ class RunController:
         if op.kind == mutations.OpKind.RUN_FROM:
             targets.discard(op.node_id)
         paths = [path for path, node in _walk(self.root) if node.id in targets for _ in (0,)]
+        # A remembered "always allow" must not survive a rewind: it would auto-approve the
+        # very step the user rewound in order to reconsider it (WF2-R7).
+        self._allow_memory.clear()
         epoch = mutations.next_epoch(self.instances, paths, force=op.force)
         for path in paths:
             inst = self._instance(path)
@@ -1243,6 +1277,45 @@ class RunController:
             return
 
         if result.state == InstanceState.WAITING:
+            # Gate policy first (WF2-R7): an unattended run auto-approves low-risk gates so
+            # it is actually unattended, and a remembered "always allow" honours a decision
+            # the user already made. A DESTRUCTIVE gate still asks — an unreviewed
+            # destructive action is worse than a stalled run.
+            verdict = gate_policy.decide(
+                item.node.config or {},
+                item.node.id,
+                origin_kind=self.run.origin.kind,
+                mode=self.run.mode,
+                memory=self._allow_memory,
+            )
+            if verdict.approved:
+                inst.state = InstanceState.DONE
+                inst.completed_at = _now()
+                ref, preview = self.journal.store_output(
+                    item.path, {"approved": True, "auto": verdict.decision.value}
+                )
+                inst.output_ref = ref
+                if item.node.id:
+                    self._outputs[item.node.id] = preview
+                self.journal.write(
+                    journal_mod.GATE_RESOLVED,
+                    instance_path=item.path,
+                    node_id=item.node.id,
+                    epoch=inst.epoch,
+                    approved=True,
+                    answer={"auto": True},
+                    policy=verdict.to_dict(),
+                )
+                self._publish(
+                    "workflow_gate_resolved",
+                    {
+                        "node_id": item.node.id,
+                        "instance_path": item.path,
+                        "approved": True,
+                        "policy": verdict.to_dict(),
+                    },
+                )
+                return
             inst.state = InstanceState.WAITING
             # Wait-entry edge activation (WF2-R18): registering at entry rather than
             # completion is what stops a fan-out's join firing on its fast leg alone.
@@ -1302,6 +1375,22 @@ class RunController:
         inst.failure = result.failure
         inst.tokens = result.tokens
         self._decline(inst, result.declined_edges)
+
+        # An action provider may ASK rather than finish (WF2-R7). Checked before the
+        # success bookkeeping: a clarification is not an answer, and recording it as a
+        # completed output would let a downstream binding consume the question.
+        if item.node.kind == NodeKind.ACTION and result.state in SUCCESS_STATES:
+            ask = gate_policy.clarification_from_output(result.output)
+            if ask is not None:
+                inst.state = InstanceState.WAITING
+                inst.completed_at = None
+                ask.setdefault("node_id", item.node.id)
+                self.run.attention = ask
+                self._publish(
+                    "workflow_attention",
+                    {"node_id": item.node.id, "kind": ask.get("kind"), "ask": ask},
+                )
+                return
 
         if item.node.kind == NodeKind.ACTION:
             if result.state in SUCCESS_STATES and result.state != InstanceState.NO_CHANGE:
