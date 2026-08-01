@@ -530,6 +530,16 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # Gates the poll-based message sources (filesystem/channel apps). The UI
     # toggle calls /api/inbox/restart after flipping so the service re-attaches.
     "inbox.enabled": {"type": "bool"},
+    # WORKFLOWS-V2 Slice 0. Runtime-editable: these are the knobs a user reaches for
+    # WHILE something is going wrong — capping concurrency because a fan-out is starving
+    # the box, or shortening a stall timeout because a node is wedged. Requiring a
+    # restart to change them would mean restarting mid-run to fix a run.
+    "workflows.enabled": {"type": "bool"},
+    "workflows.max_active_runs": {"type": "int", "min": 1, "max": 100},
+    "workflows.max_concurrent_nodes": {"type": "int", "min": 1, "max": 64},
+    "workflows.default_node_timeout_total_secs": {"type": "int", "min": 0, "max": 86400},
+    "workflows.default_node_timeout_stall_secs": {"type": "int", "min": 0, "max": 86400},
+    "workflows.retention_per_def": {"type": "int", "min": 1, "max": 10000},
     # REMOTE-USER-AUTH C4 — the owner-login knobs. Runtime-editable so turning login on
     # or off, or loosening a lockout you tripped, takes effect on the next request without
     # a restart. The PASSWORD is deliberately NOT here and never will be: a credential is

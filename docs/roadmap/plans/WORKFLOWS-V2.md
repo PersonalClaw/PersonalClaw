@@ -1013,3 +1013,86 @@ Each slice is independently shippable and testable. Rev-2 scope grows the estima
   **NOT in this session:** Slice 0 (models/store/bindings/validator) onward. `defs.py`
   ships as the registry seam only — deliberately the minimum that keeps the provider-type
   parity guard honest.
+- 2026-08-01 — **DONE (Slice 0: scaffold + data model + store + bindings + validator).**
+  The four modules everything downstream types against, with the config section wired
+  through all four points. No engine yet — nothing here executes.
+
+  **`models.py` — the node algebra and the outcome model.** Dataclasses with explicit
+  `to_dict`/`from_dict` rather than a validation library, because the tolerant-reader rule
+  (WF2-R12) is the point: a spec written by a NEWER engine loads, unknown fields
+  round-trip losslessly through `extra`, and an unknown enum value falls back instead of
+  raising. The deliberate asymmetry: an unknown node **kind** DOES raise — the engine
+  cannot schedule what it cannot dispatch. Verified both directions.
+  - **Paths are the instance key**, not uuids: `root.children[1].cases[bug]`. That is what
+    lets a later rewind invalidate exactly one journal region by prefix.
+  - **Lanes derive from kind** (WF2-R21), never author-declared — a `config: {lane: llm}`
+    on a transform is ignored, tested. A foreach over minutes-long local-model actions
+    must not head-of-line-block a run's model calls.
+  - **`DEGRADED` is in `SUCCESS_STATES`.** Degrade, don't die: an absent optional
+    capability keeps a template working with visible provenance rather than failing it.
+  - **Only `TRANSIENT`/`NETWORK` retry.** Retrying a USER or PERMISSION failure burns
+    budget to reach the same failure. `cause_plain` and `remediation` are separate fields
+    because the widget renders the remediation as the actionable step.
+
+  **`bindings.py` — two resolution paths, one closed pipe set.** Whole-value refs preserve
+  the source TYPE (a foreach needs a real list); embedded refs stringify, with containers
+  through `json.dumps` because a Python repr's single quotes are not JSON and models
+  reproduce them badly. The failure asymmetry is the load-bearing part: "the node produced
+  null" flows through as a value, while "this reference does not resolve" raises a typed
+  `BindingError` carrying the expression. A silent empty string there is how a prompt
+  quietly loses its input and the run produces confident nonsense against no data.
+  Pipe arguments are LITERALS ONLY — an identifier would turn the closed set into an
+  expression language, and a spec is data the flywheel will later propose diffs to.
+
+  **`store.py` — SQLite for queries, files for bulk.** Same idiom as `loop/store.py` (WAL,
+  busy timeout, `CREATE TABLE IF NOT EXISTS` as the ladder). Rows hold only what queries
+  need; spec/outputs/journal live in `runs/<id>/`. A journal reaches megabytes, so a row
+  would make every status poll pay for it. `(root_run_id, status)` is indexed and a run
+  defaults to being its own root, so a run TREE is one query and no run is invisible to it
+  (WF2-R13). Corruption tolerance is a requirement, not defensiveness: a crash mid-append
+  leaves a half-written final journal line, so `read_jsonl` skips it — refusing the file
+  would turn one lost event into a lost run. Cancel is a FILE, so an intent issued while
+  the gateway is down still applies on restart.
+
+  **`validator.py` — accumulate, never throw.** Stable codes (`WF_MISSING_PROMPT`) an agent
+  branches on, plus `summary()` as one repromptable message. Nine distinct defects in a
+  deliberately-broken spec are all reported in a single pass — one-error-per-turn ping-pong
+  is the failure mode being designed out. Also: Kahn levels for cycle detection (documented
+  as DATA levels, explicitly NOT a schedule — container ordering is Slice 1's frontier),
+  branch case-coverage against a declared enum, and **the untrusted-origin lint as an
+  ERROR** (WF2-R9) — a `{{trigger.body}}` reaching a prompt without a sanitization pipe is
+  rejected, because advisory-only would leave prompt-injection defence to author discipline.
+
+  **DEVIATION — `WorkflowsConfig` reshaped, not just extended.** Phase 1 left it holding
+  only `enabled`. It now carries `max_active_runs`, per-lane `max_concurrent_nodes`, the
+  two-knob timeouts and `retention_per_def`, wired through the dataclass + `_meta`,
+  `load()`, `to_dict()` and the `_EDITABLE_CONFIG` PATCH allowlist with bounds. All six are
+  runtime-editable on purpose: these are the knobs a user reaches for WHILE something is
+  going wrong, and requiring a restart would mean restarting mid-run to fix a run. The
+  plan's `model_tiers` slot map is deferred to Slice 1, where the tier→model resolution
+  that consumes it lands — a config key with no reader is dead weight.
+
+  **`__post_init__` CLAMPS rather than rejects.** A hand-edited `max_concurrent_nodes: 0`
+  would deadlock every run; refusing to boot over it would be worse. Verified live: a
+  config with `0` and `-5` boots to `1`.
+
+  **LANDMINE — the provider-boundary residue rail fired, correctly.** The inline-credential
+  lint's token prefixes (`sk-`/`ghp_`/`hf_`/`AKIA`) are vendor literals in core, so
+  `test_provider_boundary_residue` flagged `validator.py`. That is the guard working: added
+  to `docs/architecture/provider-boundary-keeps.txt` with a judgment, same class as
+  `security.py`'s `xox[bpas]-` regexes — recognizing a key's SHAPE is secret DETECTION, not
+  vendor logic, and narrowing the list would silently stop catching those providers' keys.
+
+  **Gates:** `make lint` clean (black/isort/flake8 + mypy, 561 files) · `make test`
+  **9808 passed, 0 failed**. 110 new tests across four suites (20 models / 31 bindings /
+  30 store / 29 validator).
+
+  **Validated as a user** on an isolated dev home (:10801, never :10000), two boots: all
+  six config keys served by `GET /api/config/personalclaw` with correct defaults; a PATCH
+  of `workflows.max_concurrent_nodes` persisted (6 → 12); an out-of-range 9999 was REJECTED
+  with "must be between 1 and 64"; the kill-switch toggled; and a hand-edited nonsensical
+  config clamped to sane values on boot. **0 tracebacks.**
+
+  **NOT in this slice:** the frontier and engine (Slice 1). `defs.py` remains the registry
+  seam from Phase 1 — def CRUD, fs-watch and bundled sync land with the engine that reads
+  them, since a loader with no executor cannot be validated end to end.
