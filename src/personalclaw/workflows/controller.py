@@ -32,6 +32,7 @@ unbounded spend — the exact failure the cap exists to prevent.
 from __future__ import annotations
 
 import asyncio
+import calendar
 import contextlib
 import logging
 import time
@@ -75,6 +76,12 @@ from personalclaw.workflows.resilience import (
     escalation_artifact,
     retry_prompt,
 )
+from personalclaw.workflows.scope import ScopeMode
+from personalclaw.workflows.scope import allowed_write_paths as scope_allowed
+from personalclaw.workflows.scope import diff as scope_diff
+from personalclaw.workflows.scope import enforces_scope, scope_mode
+from personalclaw.workflows.scope import snapshot as scope_snapshot
+from personalclaw.workflows.scope import watch_roots as scope_watch_roots
 from personalclaw.workflows.tick import (
     Frontier,
     Limits,
@@ -619,6 +626,15 @@ class RunController:
         """
         total = self.services.node_timeout_total
         node = self._with_retry_hint(item)
+        # Write-scope snapshot BEFORE the node runs (WF2-R19). Only for nodes that opted
+        # in: the walk is real work, and a fan-out of fast transforms must not each pay
+        # for a tree scan.
+        allowed = scope_allowed(node.config or {}, self.services.cwd)
+        # The WATCHED set is wider than the ALLOWED set by necessity: an escape lands
+        # outside what is allowed, so snapshotting only the allowed paths would make a
+        # violation undetectable by construction.
+        watched = scope_watch_roots(node.config or {}, self.services.cwd)
+        before = scope_snapshot(watched) if enforces_scope(node.config or {}) else None
         coro = dispatch(
             node,
             ctx,
@@ -634,7 +650,7 @@ class RunController:
         )
         if total and total > 0:
             try:
-                return await asyncio.wait_for(coro, timeout=total)
+                result = await asyncio.wait_for(coro, timeout=total)
             except asyncio.TimeoutError:
                 return NodeResult(
                     state=InstanceState.FAILED,
@@ -646,7 +662,63 @@ class RunController:
                         recoverable=True,
                     ),
                 )
-        return await coro
+        else:
+            result = await coro
+        if before is not None:
+            result = self._check_write_scope(node, result, before, allowed, watched)
+        return result
+
+    def _check_write_scope(
+        self,
+        node: Node,
+        result: NodeResult,
+        before: Any,
+        allowed: list[str],
+        watched: list[str],
+    ) -> NodeResult:
+        """Diff the tree and flag writes that escaped the declared scope (WF2-R19).
+
+        DETECTIVE, not preventive: a real sandbox is the OS-seatbelt layer this leaves
+        room for. `warn` records and continues; `reject` flips the node to
+        `scope_violation` so the escape cannot pass as a clean success.
+        """
+        report = scope_diff(before, scope_snapshot(watched), allowed)
+        if report.clean:
+            return result
+        mode = scope_mode(node.config or {})
+        self.journal.write(
+            journal_mod.STEP_SCOPE,
+            instance_path="",
+            node_id=node.id,
+            mode=mode,
+            **report.to_dict(),
+        )
+        logger.warning(
+            "workflow %s node %s wrote outside its declared scope: %s",
+            self.run.id,
+            node.id or "?",
+            ", ".join(report.violations[:5]),
+        )
+        if mode != ScopeMode.REJECT:
+            # Recorded, outcome preserved — a warn-only default on an existing template is
+            # the difference between a useful signal and a broken run.
+            return result
+        return NodeResult(
+            state=InstanceState.SCOPE_VIOLATION,
+            output=result.output,
+            failure=Failure(
+                failure_class=FailureClass.PERMISSION,
+                cause_plain=(
+                    "node wrote outside its allowed_write_paths: "
+                    + ", ".join(report.violations[:5])
+                ),
+                remediation=(
+                    "add the path to the node's `allowed_write_paths`, or fix the node so "
+                    "it writes inside the run workspace"
+                ),
+                terminal_reason="scope_violation",
+            ),
+        )
 
     async def _await_progress(self) -> None:
         """Wait for the first in-flight node to finish, then apply every finished one.
@@ -1222,10 +1294,18 @@ def _now() -> str:
 
 
 def _epoch(ts: str | None) -> float:
+    """Parse a UTC `...Z` stamp to a real epoch.
+
+    `calendar.timegm`, NOT `time.mktime`: mktime reads the struct as LOCAL time, which
+    shifts a UTC stamp by the machine's offset. Here it is only ever used as a DIFFERENCE
+    of two stamps, so equal offsets cancelled and elapsed time came out right — except
+    across a DST boundary, where the two offsets differ and the run's duration was off by
+    an hour.
+    """
     if not ts:
         return 0.0
     try:
-        return time.mktime(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ"))
+        return float(calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")))
     except (TypeError, ValueError):
         return 0.0
 

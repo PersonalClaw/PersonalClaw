@@ -53,7 +53,7 @@ mandatory.
 | 1 | **Slice 2a** — extended outcome states through state/journal/ledger; typed attempt records + mutation-hint retries + structured retry payloads | G1 | ✅ DONE |
 | 2 | **Slice 2b** — engine-owned completion: verification ladder, `required_artifacts`, `gate.verify{script}`, fresh-judge invariant, closed verdict enum | G1 | ✅ DONE |
 | 3 | **Slice 2c** — deterministic circuit breaker in frontier; escalation artifact; budgets (node soft caps, extend gates, baseline_check, topology estimate); two-knob timeout warm-up split; foreach `on_item_error` + per-item checkpointing | G1 | ✅ DONE |
-| 4 | **Slice 3a** — effect ledger: idempotency keys, effect_status, redo_effects gate, caller idempotency dedupe, BYOI teardown | G2 | TODO |
+| 4 | **Slice 3a** — effect ledger: idempotency keys, effect_status, redo_effects gate, caller idempotency dedupe, BYOI teardown | G2 | ✅ DONE (#139) |
 | 5 | **Slice 3b** — v2 `run-workflow` action provider + `ALLOWED_HOOK_PROVIDERS`; write-scope enforcement (pre/post fs diff, scope_violation); termination (sticky cancel, protocol-violation, `workflow_audit`); secrets (`{{secret:KEY}}`, `_has*` stripping, RedactingSink) | G2 | TODO |
 | 6 | **Slice 4a** — `mutations.py`: op types incl. `run_from`, batch validator, spec-history writer, epoch/inputs-hash logic | G3 | TODO |
 | 7 | **Slice 4b** — binding-dependency cascade closure, engine-computed preview, `inputs_stale`, rollback-vs-revert, TOCTOU re-verify; mutation queue in the controller; grammar hardening a-f | G3 | TODO |
@@ -185,3 +185,19 @@ mandatory.
   run and no notice; (b) `model_tier_standard` defaults to `orchestration` not `background`,
   or `standard` and `fast` collapse to one model and the three tiers are decorative;
   (c) added `GateKind.LADDER` + `GateKind.JUDGE` rather than overloading `verify_command`.
+- 2026-08-01 — session 4 (Slice 3a, the effect ledger) DONE → **PR #139**. `effects.py`:
+  `sha256(run_id+instance_path+epoch)` identity, the 5-state effect lifecycle in
+  `events.jsonl`, the committed-effect redo boundary, teardown-before-redo, strict
+  one-object BYOI stdout parsing, and `CallerDedupe` for the Slice-6 tool surface.
+  10075 tests (+26). Validated live against the REAL bash provider: fired 1x and committed
+  `output_id=res-42`; an epoch bump without `redo_effects` blocked (`committed_effect`) with
+  the provider never dispatched — still 1x; with `redo_effects` the teardown received
+  `res-42` and the node re-fired exactly once.
+  DEVIATIONS: (a) **`BLOCKED` added to `TERMINAL_STATES`** — it means "the engine refused,
+  a human must decide", so leaving it schedulable made the frontier relaunch-and-refuse
+  forever (the silent hang the state exists to prevent); its absence also made
+  `_ROOT_TO_RUN[BLOCKED]` unreachable. 351 workflow tests confirm no regression.
+  (b) PR base is `main`, not `feature-wf2-slice2`: #138 squash-merged mid-session, so the
+  branch was rebased `--onto origin/main` to shed the duplicated pre-squash slice-2 content.
+  **Stacking lesson: when the predecessor PR merges mid-session, rebase onto the squashed
+  main rather than opening against a deleted branch.**
