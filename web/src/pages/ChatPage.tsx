@@ -33,6 +33,7 @@ import { InlineError } from '../ui/InlineError'
 import { ToolCard } from './chat/ToolCard'
 import { onToolResultFull } from './chat/toolResultBridge'
 import { SdlcProgressCard, sdlcRefFromTool } from './chat/SdlcProgressCard'
+import { WorkflowProgressCard, workflowRefFromTool } from './chat/WorkflowProgressCard'
 import { ApprovalCard } from './chat/ApprovalCard'
 import { ChatFilePanel } from './chat/ChatFilePanel'
 import { sameSessionTarget, type CommentTarget } from '../ui/content/commentTarget'
@@ -3013,6 +3014,10 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
       // instead of a bare tool log line — once its result has landed with an id.
       const sdlc = t.done ? sdlcRefFromTool(t.tool, t.output) : null
       if (sdlc) return <SdlcProgressCard key={seg.id || i} refObj={sdlc} />
+      // A workflow run started or inspected from chat renders as a live progress card for
+      // the same reason: a run is a living thing, not the frozen JSON the tool returned.
+      const wf = t.done ? workflowRefFromTool(t.tool, t.output) : null
+      if (wf) return <WorkflowProgressCard key={seg.id || i} refObj={wf} />
       return <ToolCard key={seg.id || i} seg={t} />
     }
     if (seg.kind === 'activity') return <ActivityLine key={i} seg={seg as ActivitySegment} />
@@ -3052,8 +3057,13 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
   // the work fold + render them at the top level between the work + the final answer.
   const isSdlc = (s: Segment) => s.kind === 'tool'
     && !!(s as ToolSegment).done && !!sdlcRefFromTool((s as ToolSegment).tool, (s as ToolSegment).output)
-  const sdlcNodes = segments.filter(isSdlc).map(renderItem).filter(Boolean)
-  const workNodes = workSegs.filter((s) => !isSdlc(s)).map(renderItem).filter(Boolean)
+  // A workflow card is live too, so it gets the same exemption: burying an auto-refreshing
+  // widget inside a collapsed disclosure hides the one thing the user came back to check.
+  const isWorkflow = (s: Segment) => s.kind === 'tool'
+    && !!(s as ToolSegment).done && !!workflowRefFromTool((s as ToolSegment).tool, (s as ToolSegment).output)
+  const isLiveCard = (s: Segment) => isSdlc(s) || isWorkflow(s)
+  const sdlcNodes = segments.filter(isLiveCard).map(renderItem).filter(Boolean)
+  const workNodes = workSegs.filter((s) => !isLiveCard(s)).map(renderItem).filter(Boolean)
   const finalNodes = finalSegs.map(renderItem).filter(Boolean)
   const hasFinal = finalNodes.length > 0
   // Collapse the work only when the turn is done AND produced a final answer to
