@@ -28,6 +28,7 @@ import json
 from typing import Any
 
 from personalclaw.workflows import service
+from personalclaw.workflows.context_block import needs_staging, staged_spec_echo
 
 #: Read-only tools — no state change, safe to call while thinking. Kept explicit so a
 #: reviewer can see at a glance which tools can be called freely.
@@ -486,6 +487,21 @@ def _fmt(body: dict[str, Any], *, summary: str = "") -> str:
 
 
 def _call_tool(name: str, args: dict[str, Any]) -> str:
+    """Dispatch one tool, appending the staged-turn spec echo where it applies.
+
+    The echo (WF2-R20f) is the whole reason inspect tools are worth calling before a
+    mutation: the model mutates what it just SAW rather than the spec it generated earlier,
+    which diverges from disk the moment anything else touches the run.
+    """
+    out = _dispatch(name, args or {})
+    if needs_staging(name):
+        echo = staged_spec_echo(str((args or {}).get("run_id", "") or ""))
+        if echo:
+            return f"{out}\n\n{echo}"
+    return out
+
+
+def _dispatch(name: str, args: dict[str, Any]) -> str:
     args = args or {}
     run_id = str(args.get("run_id", "") or "")
 

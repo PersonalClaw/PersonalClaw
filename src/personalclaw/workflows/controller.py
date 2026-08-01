@@ -255,6 +255,63 @@ class RunController:
             await self._terminal.wait()
         return self.run.status
 
+    async def wait_for_terminal(
+        self,
+        *,
+        timeout: float = 0.0,
+        progress_every: float = 2.0,
+        on_progress: Any = None,
+    ) -> RunStatus:
+        """Blocking-mode wait that RETURNS when a human is needed.
+
+        `run_to_completion` waits for the tick loop to exit. That is right for a run that
+        will finish on its own, but a blocking chat tool must also return when the run parks
+        on `needs_input`: nobody can answer the gate while the turn that would surface it is
+        still blocked, so waiting for terminal there is a guaranteed deadlock — the tool
+        holds the turn, the turn can't render the ask, the ask never gets answered.
+
+        `on_progress` fires every `progress_every` seconds with the current node states, so
+        the FE widget updates live during the tool's execution instead of showing nothing
+        until the end.
+        """
+        await self.start()
+        deadline = (time.monotonic() + timeout) if timeout > 0 else 0.0
+
+        while True:
+            if self._terminal.is_set():
+                break
+            # needs_input is a STOPPING point for a blocking caller, not a terminal state.
+            # Returning here is what makes the ask reachable.
+            if self.run.status == RunStatus.NEEDS_INPUT:
+                break
+            remaining = max(0.0, deadline - time.monotonic()) if deadline else 0.0
+            if deadline and remaining <= 0:
+                break
+            wait = min(progress_every, remaining) if deadline else progress_every
+            try:
+                await asyncio.wait_for(self._terminal.wait(), timeout=wait)
+                break
+            except asyncio.TimeoutError:
+                if on_progress is not None:
+                    try:
+                        on_progress(self.progress_snapshot())
+                    except Exception:
+                        # A broken observer must never affect the run it is watching.
+                        logger.debug("blocking-mode progress callback failed", exc_info=True)
+        return self.run.status
+
+    def progress_snapshot(self) -> dict[str, Any]:
+        """Node states for a live progress tick. Cheap: reads memory, not disk."""
+        return {
+            "run_id": self.run.id,
+            "status": self.run.status.value,
+            "tokens": self.run.total_tokens,
+            "nodes": [
+                {"instance_path": path, "state": inst.state.value}
+                for path, inst in sorted(self.instances.items())
+            ],
+        }
+
     async def stop(self) -> None:
         """Cancel the loop and every in-flight node. Does NOT write a terminal status:
         a stop is a process-lifecycle event, and a gateway shutdown must leave the run

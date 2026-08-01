@@ -1179,6 +1179,27 @@ class ContextBuilder:
         else:
             logger.info("🔍 Follow-up message — episodic memory skipped (trust ACP)")
 
+        # [ACTIVE WORKFLOWS] (WORKFLOWS-V2 §4): runs in flight right now, needs_input
+        # first. A run waiting on a human is the single most actionable thing in the
+        # session, and without this the user has to ask "is anything running?" — the
+        # assistant genuinely cannot see it otherwise.
+        #
+        # NEVER-BREAK-A-TURN: the helper swallows its own errors and returns "" on any
+        # failure. A context builder that raises takes the user's whole message with it,
+        # and a corrupt workflow row must never cost someone their turn.
+        try:
+            from personalclaw.workflows.context_block import active_workflows_block
+
+            # Unfiltered by project deliberately: `resolve_project_id` AUTO-CREATES a
+            # project when none resolves, and a read-only context block must not have
+            # side effects. A run in flight is worth surfacing regardless of project.
+            wf_block = active_workflows_block()
+            if wf_block:
+                parts.append(wf_block)
+                logger.info("Injected [ACTIVE WORKFLOWS] block (%d chars)", len(wf_block))
+        except Exception:
+            logger.debug("active-workflows block skipped", exc_info=True)
+
         # Force-loaded skills (goal-loop planner/quorum): a loop's confirmed
         # skill_ids load ACTIVELY every cycle, bypassing both the is_custom skip
         # (the loop worker is a custom agent) and passive trigger-matching. The
