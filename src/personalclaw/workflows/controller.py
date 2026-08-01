@@ -491,6 +491,8 @@ class RunController:
                 self._skip_by_id(op.node_id)
             elif op.kind == mutations.OpKind.SET_INPUT:
                 self.run.inputs.update(op.overrides)
+            elif op.kind == mutations.OpKind.FORK:
+                self._apply_fork(op)
 
         # Nodes whose inputs changed but which are NOT being re-run (WF2-R2 #3). Flagged
         # rather than silently serving an answer computed from inputs that no longer exist.
@@ -539,6 +541,40 @@ class RunController:
                 # the reset and the re-run.
                 self._outputs.pop(node.id, None)
             self.journal.invalidate_prefix(path)
+
+    def _apply_fork(self, op: mutations.Op) -> None:
+        """Branch a child run. THIS run is untouched — that is the whole point of fork.
+
+        The child is left in DRAFT: starting it is the caller's decision, because a fork is
+        usually created to be edited before it runs ("try a stricter judge"). Auto-starting
+        would race the edit it exists to receive.
+        """
+        from personalclaw.workflows.checkpoints import fork_run
+
+        try:
+            result = fork_run(
+                self.run,
+                self.spec,
+                self.instances,
+                checkpoint_id=op.checkpoint_id,
+                note=op.note,
+                now=_now(),
+            )
+        except ValueError as exc:
+            self.journal.write(
+                journal_mod.MUTATION_REJECTED,
+                actor="engine",
+                ops=[op.to_dict()],
+                issues=[{"code": "WF_MUT_UNKNOWN_CHECKPOINT", "message": str(exc), "node_id": ""}],
+            )
+            return
+        self.journal.write(
+            journal_mod.CHILD_RUN_ATTACH,
+            parent_run_id=self.run.id,
+            child_run_id=result.child.id,
+            node_id=op.node_id,
+        )
+        self._publish("workflow_forked", result.to_dict())
 
     def _skip_by_id(self, node_id: str) -> None:
         for path, node in _walk(self.root):
