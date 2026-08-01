@@ -53,6 +53,7 @@ from personalclaw.workflows.effects import (
     run_teardown,
 )
 from personalclaw.workflows.engine import NodeResult, dispatch
+from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.journal import CacheKey, Journal, inputs_hash, spec_region_hash
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
@@ -363,12 +364,181 @@ class RunController:
 
         if not self._inflight and not fr.ready and not fr.deferred:
             waiting = [p for p, i in self.instances.items() if i.state == InstanceState.WAITING]
+            gates = [p for p in waiting if self._is_gate(p)]
+            # A gate awaiting a HUMAN surfaces as needs_input IMMEDIATELY (WF2-R7): a run
+            # that parks quietly for 45s and only then surfaces is a run nobody knows to
+            # answer. Surfacing and terminating are separate, though — see below.
+            for path in gates:
+                self._ensure_continuation(path)
+            if gates and self.run.status != RunStatus.NEEDS_INPUT:
+                self._surface_needs_input()
             if waiting and self._next_wake_delay() is None:
-                # Parked on a human/external signal with no deadline: needs_input, which
-                # is a real surfaced state, not a hang.
+                # Nothing will wake this run: no deadline, no in-flight work. NOW it is
+                # terminal. With a deadline still pending the loop keeps ticking so the
+                # unattended timeout can actually fire — a surfaced run is waiting, not
+                # finished.
                 await self._finish(RunStatus.NEEDS_INPUT)
                 return True
         return False
+
+    def _surface_needs_input(self) -> None:
+        """Publish the needs-input state without ending the run.
+
+        Split from `_finish` deliberately: a gate with an unattended deadline must be
+        VISIBLE now and still able to time out later. Collapsing the two would force a
+        choice between surfacing promptly and honouring the timeout.
+        """
+        self.run.status = RunStatus.NEEDS_INPUT
+        self._save_run()
+        self._publish("workflow_run_update", {"status": RunStatus.NEEDS_INPUT.value})
+
+    def _is_gate(self, path: str) -> bool:
+        """Is this waiting instance a human-input gate (versus a `wait` deadline)?
+
+        A `wait` is parked on the CLOCK and resolves itself, so surfacing it as needs_input
+        would ask a human to answer something nobody asked them.
+        """
+        node = dict(_walk(self.root)).get(_base_path(path))
+        if node is None or node.kind != NodeKind.GATE:
+            return False
+        raw = str((node.config or {}).get("kind", "") or "")
+        return raw in ("approval", "event")
+
+    def _ensure_continuation(self, path: str) -> None:
+        """Mint a durable resume point for a waiting gate (WF2-R7), once per epoch.
+
+        Idempotent by (path, epoch): a run can pass through `needs_input` repeatedly as the
+        watchdog polls it, and a fresh token per poll would leave a pile of live approval
+        links for one question — each of them individually valid.
+        """
+        from personalclaw.workflows.human_input import (
+            create_continuation,
+            handoff_bundle,
+            list_continuations,
+        )
+
+        inst = self._instance(path)
+        for existing in list_continuations(self.run.id):
+            if existing.instance_path == path and existing.epoch == inst.epoch:
+                return
+        node = dict(_walk(self.root)).get(_base_path(path))
+        ask = dict(self.run.attention or {}) if self.run.attention else {}
+        outstanding = [
+            p for p, i in self.instances.items() if i.state not in TERMINAL_STATES and p != path
+        ]
+        cont = create_continuation(
+            self.run.id,
+            node_id=node.id if node else "",
+            instance_path=path,
+            epoch=inst.epoch,
+            resolved_inputs=self._resolved_for_path(path),
+            ask=ask,
+            handoff=handoff_bundle(
+                scope=self.run.workflow_name,
+                status="blocked on human input",
+                outstanding=outstanding,
+                checks_run=[p for p, i in self.instances.items() if i.state in SUCCESS_STATES],
+                next_steps=[f"answer the gate at {node.id if node else path}"],
+            ),
+        )
+        self._publish(
+            "workflow_needs_input",
+            {
+                "node_id": cont.node_id,
+                "instance_path": path,
+                "resume_token": cont.token,
+                "ask": cont.ask,
+                "handoff": cont.handoff,
+                "expires_at": cont.expires_at,
+            },
+        )
+
+    def _resolved_for_path(self, path: str) -> dict[str, Any]:
+        """What this node had already resolved — the field that makes a resume re-enter
+        the STEP rather than re-run the enclosing subgraph."""
+        node = dict(_walk(self.root)).get(_base_path(path))
+        if node is None:
+            return {}
+        deps = node_deps(node.config or {})
+        return {dep: self._outputs.get(dep) for dep in sorted(deps)}
+
+    def resume(self, token: str, answer: Any) -> dict[str, Any]:
+        """Answer a waiting gate. The out-of-band entry point (widget, inbox, HTTP, chat).
+
+        The answer is VALIDATED before the token is consumed: rejecting afterwards would
+        have already destroyed the token, leaving a dead link and an unanswered gate. Then
+        the token is consumed ATOMICALLY, so a double-click or a retried POST cannot replay
+        one approval into two actions.
+        """
+        from personalclaw.workflows.human_input import (
+            Ask,
+            consume_continuation,
+            expired_item,
+            load_continuation,
+        )
+
+        cont = load_continuation(self.run.id, token)
+        if cont is None:
+            return {"ok": False, "code": "WF_RESUME_UNKNOWN_TOKEN"}
+        if cont.expired:
+            consume_continuation(self.run.id, token)
+            item = expired_item(cont)
+            self._publish("workflow_needs_input", item)
+            return {"ok": False, "code": "WF_RESUME_EXPIRED", "item": item}
+
+        ask = Ask.from_dict(cont.ask)
+        problem = ask.validate_answer(answer)
+        if problem:
+            # Validated BEFORE consuming: the token survives so the user can correct it.
+            return {"ok": False, "code": "WF_RESUME_INVALID_ANSWER", "message": problem}
+
+        claimed = consume_continuation(self.run.id, token)
+        if claimed is None:
+            # Another resume won the race. Exactly one answer applies.
+            return {"ok": False, "code": "WF_RESUME_ALREADY_USED"}
+
+        inst = self._instance(cont.instance_path)
+        if inst.epoch != cont.epoch:
+            # The node was rewound under the token: applying it would land the answer in
+            # the wrong epoch, which is worse than refusing.
+            return {"ok": False, "code": "WF_RESUME_STALE_EPOCH"}
+
+        filled = ask.apply_defaults(answer)
+        approved = _is_approved(ask, filled)
+        inst.wake_at = 0.0
+        if approved:
+            inst.state = InstanceState.DONE
+            ref, preview = self.journal.store_output(
+                cont.instance_path, {"answer": filled, "approved": True}
+            )
+            inst.output_ref = ref
+            if cont.node_id:
+                self._outputs[cont.node_id] = preview
+        else:
+            inst.state = InstanceState.FAILED
+            inst.failure = Failure(
+                failure_class=FailureClass.USER,
+                cause_plain="the gate was denied",
+                remediation="adjust the work the gate rejects, then re-run from this node",
+                terminal_reason="denied",
+            )
+        inst.completed_at = _now()
+        self.journal.write(
+            journal_mod.GATE_RESOLVED,
+            instance_path=cont.instance_path,
+            node_id=cont.node_id,
+            epoch=cont.epoch,
+            approved=approved,
+            answer=filled,
+        )
+        self.run.attention = None
+        self._persist_state()
+        self._save_run()
+        self._publish(
+            "workflow_gate_resolved",
+            {"node_id": cont.node_id, "instance_path": cont.instance_path, "approved": approved},
+        )
+        return {"ok": True, "approved": approved, "node_id": cont.node_id}
 
     # ── mid-flight mutation (WF2-R2 / R20) ──
 
@@ -541,6 +711,10 @@ class RunController:
                 # the reset and the re-run.
                 self._outputs.pop(node.id, None)
             self.journal.invalidate_prefix(path)
+            # A pending approval for a node about to re-run would resume a step that no
+            # longer exists in that form (WF2-R7) — drop the token rather than let it land
+            # in the wrong epoch.
+            drop_continuations(self.run.id, instance_prefix=path)
 
     def _apply_fork(self, op: mutations.Op) -> None:
         """Branch a child run. THIS run is untouched — that is the whole point of fork.
@@ -893,6 +1067,9 @@ class RunController:
             completion=self.services.completion,
             get_provider=self.services.get_provider,
             verify=self.services.verify,
+            # The run's mode decides a gate's deadline: background times out fast and
+            # surfaces, blocking waits because a human is right there (WF2-R7).
+            mode=self.run.mode,
         )
         if total and total > 0:
             try:
@@ -1611,6 +1788,23 @@ def _preview(value: Any, limit: int = 500) -> Any:
             return str(value)[:limit]
         return text[:limit]
     return value
+
+
+def _is_approved(ask: Any, answer: Any) -> bool:
+    """Did the human say yes?
+
+    Only an `approval` ask can DENY — a text or form answer is data, not a verdict, and
+    treating an empty string as a denial would fail a gate the user actually answered.
+    """
+    from personalclaw.workflows.human_input import AskKind
+
+    if ask.kind != AskKind.APPROVAL:
+        return True
+    if isinstance(answer, bool):
+        return answer
+    if isinstance(answer, dict):
+        return bool(answer.get("approved"))
+    return False
 
 
 def _secret_resolver(key: str) -> str:

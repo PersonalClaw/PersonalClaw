@@ -67,6 +67,9 @@ STEP_ATTEMPT = "step_attempt"
 STEP_ESCALATED = "step_escalated"
 GATE_REJECTED = "gate_rejected"
 GATE_CRITERION = "gate_criterion"
+#: A human answered a waiting gate (WF2-R7). Journaled with the answer so a later reader
+#: knows WHO decided what, not merely that the run continued.
+GATE_RESOLVED = "gate_resolved"
 EFFECT = "effect"
 #: A node wrote outside its declared `allowed_write_paths` (WF2-R19). Ledgered whether
 #: the mode was warn or reject — an escape a `warn` run continued past still has to be
@@ -99,6 +102,7 @@ LEDGER_KINDS = frozenset(
         STEP_ESCALATED,
         GATE_REJECTED,
         GATE_CRITERION,
+        GATE_RESOLVED,
         EFFECT,
         STEP_SCOPE,
         MUTATION_REJECTED,

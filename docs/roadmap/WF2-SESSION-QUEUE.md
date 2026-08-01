@@ -58,7 +58,7 @@ mandatory.
 | 6 | **Slice 4a** — `mutations.py`: op types incl. `run_from`, batch validator, spec-history writer, epoch/inputs-hash logic | G3 | ✅ DONE (#141) |
 | 7 | **Slice 4b** — binding-dependency cascade closure, engine-computed preview, `inputs_stale`, rollback-vs-revert, TOCTOU re-verify; mutation queue in the controller; grammar hardening a-f | G3 | ✅ DONE (#142) |
 | 8 | **Slice 4c** — rewind (archive outputs + journal region, epoch bump, memoized replay); checkpoints + `fork`; property tests (rewind idempotence, cascade = binding closure, fork isolation) | G3 | ✅ DONE (#143) |
-| 9 | **Slice 5a** — typed ask payload, mode-dependent gate timeouts, `timed_out_unattended`; continuation records + durable resume tokens + expiry | G4 | TODO |
+| 9 | **Slice 5a** — typed ask payload, mode-dependent gate timeouts, `timed_out_unattended`; continuation records + durable resume tokens + expiry | G4 | ✅ DONE (#144) |
 | 10 | **Slice 5b** — action-node clarification → needs_input; auto-approve for trigger-origin; owner binding + default-DENY for remote gates; `gate{kind: event}` transient hold | G4 | TODO |
 | 11 | **Slice 6a** — `mcp_workflows.py`: the 19 chat tools incl. `workflow_observe`/`run_from`/`audit`/`manifest`; wire into `_AGGREGATED_CATEGORY_MODULES`; validation schemas | G5 | TODO |
 | 12 | **Slice 6b** — spec ingestion: strict mode + repromptable errors, dry-run-before-save, provenance actor, run-start preflight (`can_resolve_use_case`), generated manifest + CI drift test | G5 | TODO |
@@ -269,3 +269,21 @@ mandatory.
   Slice-4 gap is the journal-region attic (`journal/attic/v<NNN>/`): outputs are archived and
   the in-memory cache is invalidated, but the journal FILE stays append-only by contract, so
   region archival belongs with the retention sweep rather than here. Recorded, not faked.
+- 2026-08-01 — session 9 (Slice 5a, the human-input contract) DONE → **PR #144**
+  (stack #140→#141→#142→#143→#144). `human_input.py`: typed Ask (4 kinds, per-field types +
+  defaults + validation), continuation records with `resolved_inputs` + handoff bundle,
+  ATOMIC single-use consumption via unlink, typed `resume_expired`, mode-dependent gate
+  timeouts. `controller.resume()` is the out-of-band entry point for widget/inbox/HTTP/chat.
+  10313 tests (+46).
+  Validated live: a real run blocked with a handoff naming what had already run; an invalid
+  answer was refused with the token INTACT; a **fresh controller** (standing in for a gateway
+  restart between question and answer) approved it and the immediate second resume was
+  refused; the run completed with `deployed=true`; an expired token returned a typed item.
+  DEVIATIONS/DISCOVERIES: (a) **surfacing and terminating had to be split.** Giving
+  background gates a default deadline meant an unanswered gate had a wake time and stopped
+  reporting `needs_input` — it waited silently. `_surface_needs_input` publishes without
+  ending the run, so a gate is visible NOW and can still time out later. A regression pair
+  pins both, because an earlier cut broke whichever behaviour was written last.
+  (b) `wait` nodes are excluded from needs-input surfacing — parked on the clock, they
+  resolve themselves. (c) Rewind drops tokens PREFIX-SCOPED, not globally: dropping every
+  token on any rewind would cancel approvals a rewind cannot affect. Both directions tested.
