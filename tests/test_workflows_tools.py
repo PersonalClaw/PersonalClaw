@@ -82,6 +82,29 @@ class _MemProvider(defs_mod.WorkflowDefProvider):
         return self._defs.pop(name, None) is not None
 
 
+@pytest.fixture(autouse=True)
+def _clean_registry():
+    """Run every test in this module against an EMPTY def registry.
+
+    `defs._providers` is process-global, and these tests assert exact counts ("one def, from my
+    provider"). Registering into whatever a neighbour left behind makes them fail with
+    `7 == 1` — and only under a worker layout that happens to schedule the two files together,
+    which is why it reproduced in CI (4 workers) and not locally (18).
+
+    Starting CLEAN rather than adding a restore to every other module: the invariant this file
+    needs is "nothing but what I registered", and asserting it here is what makes it true
+    regardless of who else forgets. The prior registry is restored so a later module is
+    unaffected.
+    """
+    saved = dict(defs_mod._providers)
+    defs_mod._providers.clear()
+    try:
+        yield
+    finally:
+        defs_mod._providers.clear()
+        defs_mod._providers.update(saved)
+
+
 @pytest.fixture
 def provider():
     p = _MemProvider()
