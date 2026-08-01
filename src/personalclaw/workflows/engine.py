@@ -468,6 +468,7 @@ async def dispatch_gate(
     verify: Any = None,
     completion: Any = None,
     tiers: dict[str, str] | None = None,
+    mode: str = "background",
 ) -> NodeResult:
     """A checkpoint the engine — never the worker — resolves (WF2-R3).
 
@@ -663,13 +664,13 @@ async def dispatch_gate(
             tokens=_estimate_tokens(instruction, str(text)),
         )
 
-    # approval / event: park for a human or an external signal.
-    timeout_secs = cfg.get("timeout_secs")
-    wake = (
-        now + float(timeout_secs)
-        if isinstance(timeout_secs, (int, float)) and timeout_secs > 0
-        else 0.0
-    )
+    # approval / event: park for a human or an external signal. The deadline is
+    # MODE-DEPENDENT (WF2-R7): a background run parked forever on an approval nobody is
+    # watching is wedged, not waiting, so background gates time out fast and surface.
+    from personalclaw.workflows.human_input import gate_timeout_secs
+
+    timeout_secs = gate_timeout_secs(cfg, mode=mode)
+    wake = now + float(timeout_secs) if timeout_secs > 0 else 0.0
     return NodeResult(
         state=InstanceState.WAITING,
         wake_at=wake,
@@ -679,18 +680,19 @@ async def dispatch_gate(
 
 def _ask_payload(node: Node, cfg: dict[str, Any]) -> dict[str, Any]:
     """The typed human-input ask (WF2-R7). One renderer covers every gate, which is why
-    the shape is fixed here rather than left to each template."""
-    raw_kind = str(cfg.get("ask_kind", "approval") or "approval")
-    if raw_kind not in ("approval", "choice", "text", "form"):
-        raw_kind = "approval"
-    return {
-        "kind": raw_kind,
-        "prompt": str(cfg.get("prompt", "") or cfg.get("message", "") or "Approval needed"),
-        "fields": cfg.get("fields") or [],
-        "choices": cfg.get("choices") or [],
-        "node_id": node.id,
-        "unattended_suppress": bool(cfg.get("unattended_suppress", False)),
-    }
+    the shape is fixed by `human_input.Ask` rather than left to each template."""
+    from personalclaw.workflows.human_input import Ask
+
+    return Ask.from_dict(
+        {
+            "kind": cfg.get("ask_kind", "approval"),
+            "prompt": str(cfg.get("prompt", "") or cfg.get("message", "") or "Approval needed"),
+            "fields": cfg.get("fields") or [],
+            "choices": cfg.get("choices") or [],
+            "node_id": node.id,
+            "unattended_suppress": bool(cfg.get("unattended_suppress", False)),
+        }
+    ).to_dict()
 
 
 def apply_artifact_gate(node: Node, result: NodeResult, workspace: Any) -> NodeResult:
@@ -918,6 +920,7 @@ async def dispatch(
     get_provider: Any = None,
     verify: Any = None,
     timeout: int = 60,
+    mode: str = "background",
 ) -> NodeResult:
     """Route one node to its dispatcher.
 
@@ -939,6 +942,7 @@ async def dispatch(
         get_provider=get_provider,
         verify=verify,
         timeout=timeout,
+        mode=mode,
     )
     # One seam, so a new node kind cannot silently skip the artifact gate.
     return apply_artifact_gate(node, result, cwd or None)
@@ -958,6 +962,7 @@ async def _dispatch_inner(
     get_provider: Any = None,
     verify: Any = None,
     timeout: int = 60,
+    mode: str = "background",
 ) -> NodeResult:
     kind = node.kind
     clock = now or time.time()
@@ -977,7 +982,7 @@ async def _dispatch_inner(
         return await dispatch_wait(node, ctx, now=clock)
     if kind == NodeKind.GATE:
         return await dispatch_gate(
-            node, ctx, now=clock, verify=verify, completion=completion, tiers=tiers
+            node, ctx, now=clock, verify=verify, completion=completion, tiers=tiers, mode=mode
         )
     if kind == NodeKind.SUBWORKFLOW:
         # Nested runs land in Slice 10 with namespaced instances and child_run_attach.
