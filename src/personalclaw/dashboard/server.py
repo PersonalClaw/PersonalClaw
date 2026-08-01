@@ -971,8 +971,11 @@ async def start_dashboard(
 
     register_task_routes(app)
 
-    # Workflows — no routes until WORKFLOWS-V2 Slice 7 mounts the v2 run/def API.
-    # The old /api/workflows family (SOP CRUD) is gone with the feature.
+    # Workflows — the v2 run/def API (WORKFLOWS-V2 Slice 7a) over the same
+    # `workflows.service` the chat tools use, so the two surfaces cannot diverge.
+    from personalclaw.workflows.handlers import register_workflow_routes
+
+    register_workflow_routes(app)
 
     # The unified Loop engine — ONE /api/loops route family for every kind
     # (general/goal/code/design). Replaces the legacy /api/loops + /api/code routes

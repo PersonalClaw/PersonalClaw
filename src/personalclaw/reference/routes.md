@@ -57,6 +57,18 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/apps/{name}/token` — mint an app-scoped identity token.
 - `GET /api/apps/{name}/uninstall-preview` — classify shared deps (A3).
 - `POST /api/apps/{name}/update` — atomic update from ``{source, confirm?}``.
+- `GET /api/artifacts` — list (no content). Filters: tag, kind, q, source, source_path, project_id.
+- `POST /api/artifacts` — create (or bump an existing file-backed artifact).
+- `DELETE /api/artifacts/{slug}` — _(no summary)_
+- `GET /api/artifacts/{slug}` — full content (live-pointer read for file-backed).
+- `PATCH /api/artifacts/{slug}` — save (silent) or snapshot; or metadata-only.
+- `GET /api/artifacts/{slug}/events` — activity timeline (drops dashboard:ui).
+- `POST /api/artifacts/{slug}/events` — record a 'referenced' impression.
+- `GET /api/artifacts/{slug}/extract` — extracted text for a binary document artifact.
+- `GET /api/artifacts/{slug}/raw` — stream a binary artifact's bytes.
+- `POST /api/artifacts/{slug}/regenerate` — re-run image generation at this slug.
+- `GET /api/artifacts/{slug}/versions` — _(no summary)_
+- `GET /api/artifacts/{slug}/versions/{version}` — immutable historical content.
 - `GET /api/attachment-extract` — the extracted text content for an
 - `GET /api/auth-status` — Auth configuration status — mode, bind_host, and session validity.
 - `POST /api/auth/enroll/complete` — redeem a code for a device session.
@@ -196,6 +208,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/inbox/restart` — stop and reinitialize the inbox service.
 - `POST /api/inbox/seen` — mark items SEEN (the read/unread boundary).
 - `POST /api/inbox/send` — send a reply to an inbox item.
+- `GET /api/inbox/settings` — _(no summary)_
+- `PUT /api/inbox/settings` — _(no summary)_
 - `GET /api/inbox/status` — current config status.
 - `PUT /api/inbox/{id}` — update draft, status, etc.
 - `POST /api/inbox/{id}/draft` — generate draft reply on demand.
@@ -245,7 +259,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/knowledge/items/{id}/read-state` — unread | reading | read.
 - `GET /api/knowledge/items/{id}/related` — - items sharing entities with given item.
 - `GET /api/knowledge/items/{id}/thumbnail` — - serve a generated thumbnail (image/webp).
-- `GET /api/knowledge/providers` — - registered knowledge providers (native
+- `GET /api/knowledge/providers` — _(no summary)_
 - `POST /api/knowledge/regenerate-intelligence` — - re-run the full ingestion
 - `GET /api/knowledge/search-for-context` — _(no summary)_
 - `GET /api/knowledge/stats` — _(no summary)_
@@ -259,6 +273,15 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/lessons` — remove lessons by substring.
 - `GET /api/lessons` — _(no summary)_
 - `POST /api/lessons` — add a lesson (vector store or JSONL fallback).
+- `GET /api/lexicon/corrections` — list learned corrections (most-corrected first).
+- `POST /api/lexicon/corrections` — {heard, meant, always?} — record a learned fix
+- `PATCH /api/lexicon/corrections/{id}` — {auto_apply} — toggle 'always fix this'.
+- `POST /api/lexicon/rebuild` — resync graph-sourced terms from knowledge entities
+- `POST /api/lexicon/reset` — drop all terms + corrections (rebuild repopulates graph).
+- `GET /api/lexicon/terms` — list vocabulary terms.
+- `POST /api/lexicon/terms` — {canonical, aliases?} — add a manual term.
+- `DELETE /api/lexicon/terms/{id}` — remove a term entirely.
+- `PATCH /api/lexicon/terms/{id}` — {enabled?} — enable/disable (prune) a term.
 - `POST /api/logout` — revoke all active dashboard sessions.
 - `GET /api/logs` — SSE stream of live log entries.
 - `GET /api/logs/level` — current backend logger level.
@@ -367,11 +390,17 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/models/health` — derived per-provider health (breaker state, latency
 - `GET /api/models/local/{provider}/search` — search a searchable provider's
 - `DELETE /api/models/local/{provider}/{model}` — delete a downloaded local model.
+- `GET /api/models/use-cases/{use_case}/settings` — _(no summary)_
+- `PUT /api/models/use-cases/{use_case}/settings` — _(no summary)_
 - `DELETE /api/notifications` — delete a single notification by timestamp.
 - `GET /api/notifications` — _(no summary)_
 - `POST /api/notifications/ack` — mark a single notification as read.
 - `POST /api/notifications/ack-all` — mark all notifications as read.
 - `POST /api/notifications/clear` — clear all notifications.
+- `GET /api/notifications/rules` — the effective per-(source, kind) rule matrix.
+- `PUT /api/notifications/rules` — replace rules for the keys named in the body.
+- `GET /api/notifications/settings` — _(no summary)_
+- `PUT /api/notifications/settings` — _(no summary)_
 - `POST /api/notifications/unack` — mark a single notification as unread.
 - `GET /api/onboarding` — First-run onboarding signal.
 - `POST /api/optimizer/optimize` — rewrite a prompt using session context.
@@ -381,7 +410,13 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/portability/export` — download PersonalClaw state as zip.
 - `POST /api/portability/import` — upload and apply a PersonalClaw export zip.
 - `POST /api/portability/preview` — validate and preview a zip without applying.
+- `GET /api/projects` — _(no summary)_
+- `POST /api/projects` — _(no summary)_
+- `DELETE /api/projects/{project_id}` — _(no summary)_
+- `GET /api/projects/{project_id}` — _(no summary)_
+- `PUT /api/projects/{project_id}` — _(no summary)_
 - `POST /api/projects/{project_id}/context-adapters/regenerate` — _(no summary)_
+- `GET /api/projects/{project_id}/linked` — the work units scoped under this
 - `GET /api/prompt-snippets` — list reusable snippets via the provider.
 - `POST /api/prompt-snippets` — create a snippet.
 - `DELETE /api/prompt-snippets/{name}` — remove a snippet.
@@ -399,6 +434,19 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/prompts/{name}` — update an existing prompt template.
 - `POST /api/prompts/{name}/launch` — {variables} — instantiate a RUNNABLE template
 - `POST /api/prompts/{name}/render` — render a prompt template with the
+- `GET /api/providers` — _(no summary)_
+- `GET /api/providers/{name}` — _(no summary)_
+- `GET /api/providers/{name}/config` — _(no summary)_
+- `PATCH /api/providers/{name}/config` — _(no summary)_
+- `POST /api/providers/{name}/disable` — _(no summary)_
+- `POST /api/providers/{name}/enable` — _(no summary)_
+- `GET /api/providers/{name}/instances` — _(no summary)_
+- `POST /api/providers/{name}/instances` — _(no summary)_
+- `DELETE /api/providers/{name}/instances/{id}` — _(no summary)_
+- `GET /api/providers/{name}/instances/{id}` — _(no summary)_
+- `PUT /api/providers/{name}/instances/{id}` — _(no summary)_
+- `POST /api/providers/{name}/instances/{id}/test` — test connectivity.
+- `GET /api/providers/{name}/schema` — _(no summary)_
 - `GET /api/recent-projects` — list recently used project directories.
 - `GET /api/resilience/degraded` — per-surface no-model floor + availability.
 - `POST /api/reveal` — reveal a file/folder in Finder or open with default app.
@@ -457,9 +505,27 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/spawn/{agent_id}` — poll subagent status.
 - `GET /api/status` — _(no summary)_
 - `POST /api/stt/transcribe` — transcribe uploaded audio via the active STT model.
-- `GET /api/suggestions` — _(no summary)_
+- `GET /api/suggestions` — return pre-computed contextual suggestions.
 - `GET /api/system` — System information endpoint with live CPU, memory, network metrics.
 - `POST /api/system/restart` — bounce the gateway to apply committed backend
+- `GET /api/task-lists` — _(no summary)_
+- `POST /api/task-lists` — _(no summary)_
+- `DELETE /api/task-lists/{list_id}` — _(no summary)_
+- `GET /api/task-lists/{list_id}` — _(no summary)_
+- `PUT /api/task-lists/{list_id}` — _(no summary)_
+- `POST /api/task-lists/{list_id}/reset` — reset a Repeatable-project list: all
+- `GET /api/tasks` — _(no summary)_
+- `POST /api/tasks` — _(no summary)_
+- `POST /api/tasks/bulk` — validate-all-then-apply bulk create/update/delete.
+- `GET /api/tasks/graph` — adjacency + DependencyAnalysis (seam S3).
+- `GET /api/tasks/providers` — _(no summary)_
+- `GET /api/tasks/ready` — tasks startable now (no unfinished prerequisites).
+- `POST /api/tasks/search` — query + status/priority/tag/scope filters + sort.
+- `DELETE /api/tasks/{task_id}` — _(no summary)_
+- `GET /api/tasks/{task_id}` — _(no summary)_
+- `PUT /api/tasks/{task_id}` — _(no summary)_
+- `GET /api/tasks/{task_id}/comments` — _(no summary)_
+- `POST /api/tasks/{task_id}/comments` — _(no summary)_
 - `GET /api/terminal/sessions` — list active terminal sessions.
 - `POST /api/terminal/sessions` — create a new terminal session (returns session_id).
 - `DELETE /api/terminal/sessions/{session_id}` — kill a terminal session.
@@ -502,8 +568,29 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/uploads/{id}/complete` — assemble + scan + hand off to the target.
 - `PUT /api/uploads/{id}/part` — stream one part to disk (idempotent).
 - `POST /api/voice/synthesize` — sentence-chunked Piper TTS.
+- `GET /api/workflows` — _(no summary)_
+- `POST /api/workflows` — _(no summary)_
+- `GET /api/workflows/audit` — Diagnose/heal. `dry_run` defaults TRUE — a GET-shaped repair that ran by default
+- `GET /api/workflows/manifest` — the machine-readable self-description of this instance.
+- `GET /api/workflows/runs` — Paginated run list. Reads the store directly: this is a projection for a table, not
+- `POST /api/workflows/runs` — _(no summary)_
+- `GET /api/workflows/runs/{run_id}` — _(no summary)_
+- `POST /api/workflows/runs/{run_id}/cancel` — _(no summary)_
+- `GET /api/workflows/runs/{run_id}/continuations` — The pending resume tokens for a run — what a needs-input inbox renders.
+- `POST /api/workflows/runs/{run_id}/edit` — _(no summary)_
+- `GET /api/workflows/runs/{run_id}/events` — Per-run event stream, snapshot-then-subscribe.
+- `POST /api/workflows/runs/{run_id}/fork` — _(no summary)_
+- `GET /api/workflows/runs/{run_id}/outputs/{node_id}` — _(no summary)_
+- `POST /api/workflows/runs/{run_id}/pause` — _(no summary)_
+- `POST /api/workflows/runs/{run_id}/resume` — Answer a gate, or clear a pause.
+- `POST /api/workflows/runs/{run_id}/rewind` — _(no summary)_
+- `POST /api/workflows/runs/{run_id}/run-from` — _(no summary)_
+- `DELETE /api/workflows/{name}` — _(no summary)_
+- `GET /api/workflows/{name}` — _(no summary)_
 
 ## Websocket / internal routes
 
 - `GET /api/ws` — single multiplexed WebSocket for all real-time events.
 - `GET /api/ws/terminal/{session_id}` — WebSocket PTY for the built-in CLI panel.
+- `GET /mcp` — `GET /mcp` → 405. No SSE stream in v1 (spec-permitted).
+- `POST /mcp` — _(no summary)_

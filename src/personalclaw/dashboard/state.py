@@ -769,6 +769,11 @@ class DashboardState:
         # it. Deliberately NOT routed through ``notify``: that is the user-notification
         # gate (mute / severity / quiet-hours) and would silently eat engine events.
         self._workflow_sse = SseRegistry()
+        # The workflow supervisor (`WorkflowWatchdog`), attached at gateway boot. Declared
+        # here rather than set as a bare dynamic attribute so a reader can see it exists and
+        # that None is a real state — the REST handlers must tolerate a gateway whose
+        # workflows feature is disabled.
+        self.workflows: Any = None
         # Per-item knowledge ingestion progress (key ``knowledge:ingest:<item_id>``).
         # The ingest queue publishes node-graph progress here; the per-item /stream
         # endpoint serves it. (#30)

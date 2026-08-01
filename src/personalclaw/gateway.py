@@ -1851,6 +1851,21 @@ class GatewayOrchestrator:
                 ),
             )
             self.workflow_watchdog.start()
+            # Publish the supervisor so BOTH consumers can reach it: the REST handlers
+            # (Slice 7a) read `state.workflows`, and the `run-workflow` action provider
+            # reads `ActionServices.workflows`. Without this the routes create runs nobody
+            # drives, and the trigger provider returns "no supervisor available" — both
+            # already handle a None, but both are inert until this line runs.
+            if self.dashboard_state is not None:
+                self.dashboard_state.workflows = self.workflow_watchdog
+            try:
+                from personalclaw.action_providers.services import get_action_services
+
+                svc = get_action_services()
+                if svc is not None:
+                    svc.workflows = self.workflow_watchdog
+            except Exception:
+                logger.debug("could not attach the workflow supervisor to action services")
 
     async def _init_inbox(self) -> None:
         """Construct the Inbox service (state + store + on-demand AI triage).
