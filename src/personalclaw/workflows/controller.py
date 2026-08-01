@@ -1288,6 +1288,11 @@ class RunController:
             # For `subworkflow`: the child must be driven by the SAME supervisor that will adopt
             # it after a restart, so it is passed through rather than resolved from a global.
             supervisor=self.services.supervisor,
+            # Feeds the STALL clock (WF2-R5). Bound to this instance's path so a dispatcher cannot
+            # accidentally refresh a sibling's clock — and passed at all because without it
+            # `timeout_stall` fires on any node slower than the window, which makes the two timeout
+            # knobs one knob and kills a node that is visibly working.
+            on_progress=lambda path=item.path: self.note_progress(path),
         )
         if total and total > 0:
             try:

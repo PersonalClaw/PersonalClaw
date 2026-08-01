@@ -157,7 +157,8 @@ directory on `sys.path`, and registers its contributions through a typed
 | Chat & sessions | [chat-sessions.md](chat-sessions.md) | `session.py`, `dashboard/chat_*.py`, `history.py`, `context.py` |
 | Loops & projects | [loops.md](loops.md) | `loop/`, `planning/`, `grill.py`, `projects.py` |
 | Knowledge & memory | [knowledge-memory.md](knowledge-memory.md) | `knowledge/`, `vector_memory.py`, `memory_service.py` |
-| Tasks, triggers, workflows | [tasks-triggers.md](tasks-triggers.md) | `tasks/`, `schedule.py`, `event_triggers.py`, `workflows/` |
+| Tasks & triggers | [tasks-triggers.md](tasks-triggers.md) | `tasks/`, `schedule.py`, `event_triggers.py` |
+| Workflows | [workflows.md](workflows.md) | `workflows/` (engine, frontier, journal, mutation, templates) |
 | Inbox & channels | [inbox-channels.md](inbox-channels.md) | `inbox.py`, `inbox_service.py`, `channel_delivery.py` |
 | App platform | [app-platform.md](app-platform.md) | `apps/app_manager.py`, `apps/backend_runtime.py`, `apps/permissions.py` |
 | Security | [security.md](security.md) | `security.py`, `net/`, `auth/`, `sel.py`, `supply_chain.py` |

@@ -1,0 +1,292 @@
+# Workflows — the Deterministic Orchestration Engine
+
+A **workflow** is a declarative graph the engine executes: a spec tree of typed
+nodes, driven by one conductor per run, with every outcome journaled. Where a
+loop is an agent iterating toward a goal it judges for itself, a workflow is a
+shape the author decided in advance — so the engine can schedule it, resume it,
+edit it mid-flight, and rewind part of it without asking a model anything.
+
+The engine lives in `PersonalClaw/src/personalclaw/workflows/`.
+
+## The rule everything follows
+
+**A run has exactly one writer** (WF2-R10). The `RunController` tick loop under
+its own lock is it. Nothing else — not a dispatcher, not the watchdog, not an
+HTTP handler — writes a run's terminal status. Handlers *request*; the loop
+decides and writes.
+
+That single rule is what makes the hard features tractable:
+
+- **mid-flight mutation** is only safe if there is a well-defined moment when
+  nothing is being scheduled. Here that moment is "between scheduling steps,
+  holding the lock", which is why every mutation is *queued* and applied at the
+  controller's drain point rather than written directly;
+- **crash recovery** is only correct if terminal writes are serialized, or a
+  resumed run and a still-dying task race to disagree about the outcome.
+
+The tick loop is deliberately boring:
+
+```
+while not terminal:
+    drain cancel intent
+    compute frontier (pure)
+    launch admitted work
+    await *something* finishing
+    apply results, persist state
+```
+
+## Module layout
+
+| Module | Job |
+|---|---|
+| `models.py` | the spec algebra — node kinds, states, run/def records |
+| `tick.py` | `frontier()` — a PURE function from (spec, states) to what may run |
+| `controller.py` | the conductor: one per run, the only writer of run state |
+| `engine.py` | one dispatcher per node kind; the only place real work happens |
+| `bindings.py` | the `{{…}}` expression language and its closed pipe set |
+| `journal.py` | the resume cache and the Run Ledger (one append-only file, read two ways) |
+| `store.py` | persistence — runs, specs, state, outputs |
+| `mutations.py` | the typed edit grammar and its structural rules |
+| `checkpoints.py` | fork, revert, prune |
+| `human_input.py` | typed asks and durable resume tokens |
+| `gate_policy.py` | risk-scoped auto-approval |
+| `attention.py` | a waiting gate → a durable inbox row + one notification |
+| `context.py` | handoffs, carryover buckets, decision records |
+| `macros.py` | template macros, expanded at definition time |
+| `blocks.py` | shared prompt blocks, resolved at definition time |
+| `coalescer.py` | per-observer event batching in front of the SSE write |
+| `projection.py` | the schema-validated run snapshot |
+| `resilience.py` | retries, circuit breaker, budgets |
+| `preflight.py` | run-start checks — credentials, binaries, models, providers |
+| `audit.py` | the `workflow_audit` maintenance op (diagnose / heal) |
+| `scope.py` | filesystem write-scope enforcement by post-hoc diff |
+| `watchdog.py` | the supervisor: adoption, reaping, per-run publishing |
+
+## Containers do not execute
+
+A `sequence` has no work of its own — it is a scheduling policy over its
+children. So `frontier()` recurses into containers and only ever returns leaf
+work, and a container's state is **derived** from its children rather than
+stored. That is why `container_outcome()` exists and why nothing writes a
+container's state directly: after a rewind resets children, the container's
+verdict is recomputed instead of patched.
+
+One consequence worth knowing: an *untouched* container derives as `RUNNING`,
+not `PENDING` — "has unfinished children" is running by that definition. Code
+that asks "has this subtree started?" must look for recorded state, not derive.
+
+## Scheduling: three rules that carry the weight
+
+**Active-edge join gating (WF2-R18).** A join waits only on predecessors whose
+edge is on an actually-taken path. A `branch` picking `cases[bug]` leaves
+`cases[feat]` unreachable, and a join waiting on "all predecessors" would
+deadlock forever; a join firing on "any completed predecessor" fires early on a
+fan-out whose other legs are still waiting. Both directions are bugs. The rule
+that satisfies both: **a `needs` edge is satisfied by any TERMINAL predecessor,
+and unreachable paths are MADE terminal by marking them skipped.** Declines are
+recorded explicitly, never inferred from "the source routed elsewhere" —
+inferring would starve a sibling whose `needs` merely names the branch.
+
+The wait-entry subtlety: a `wait`/`gate` enters `WAITING` rather than
+completing, and `WAITING` is not terminal, so a join behind it keeps waiting
+instead of firing on the fast leg alone.
+
+**Typed lanes (WF2-R21).** Ready work is admitted per-lane by node kind, so a
+`foreach` over minute-long IO actions saturates the `io` lane while `llm` stages
+keep flowing. Excess stays `ready` — the next tick admits it.
+
+**Per-container concurrency.** A `foreach`'s `max_concurrency` caps items in
+flight independently of the lane caps. They answer different questions: a lane
+cap protects the *engine*, this protects the *run's shape* (this fan-out takes
+two at a time because each item holds a lock).
+
+`frontier()` reports `blocked` when nothing can run and nothing is running.
+That state is a deadlock, and naming it is the whole reason it is computed
+rather than assumed.
+
+## Node kinds
+
+Twelve, and no more. Every orchestration pattern is a *composition*:
+
+| Kind | Notes |
+|---|---|
+| `sequence` `parallel` `foreach` `loop` | containers; DAG shapes come from per-child `needs` |
+| `stage` | one subagent execution — tools, session, can spawn |
+| `infer` | exactly ONE bounded model call — no tools, no session |
+| `branch` | conditional dispatch on a binding |
+| `transform` | zero-token pure data reshaping |
+| `action` | zero-token action-provider dispatch |
+| `wait` `gate` | deadline / human-input |
+| `subworkflow` | a real nested CHILD run, depth ≤ 3 |
+
+`stage` and `infer` are separate kinds for a real reason: a template that needs
+a classification should not pay for a subagent, and the lane accounting depends
+on distinguishing them. A judge panel of five `infer` nodes is five bounded
+calls; the same panel as `stage` nodes is five concurrent sessions.
+
+**Action arguments go under `config.with`.** A flat argument beside `provider`
+reaches the provider as an empty config — it then reports its own required field
+missing for a value visibly present in the spec, and every downstream binding
+fails. Validation refuses the shape at authoring time.
+
+## Bindings
+
+`{{inputs.x}}`, `{{nodes.<id>.output}}`, `{{item}}`, `{{secret:KEY}}`, with a
+**closed** pipe set. No eval, no filesystem, no arbitrary expressions — a spec
+is user- and model-authored text, and an expression language would make it a
+code-execution surface. An unknown pipe is *refused*, never ignored: a silently
+dropped sanitization pipe leaves a spec that looks sanitized and is not.
+
+Two asymmetries that are easy to get backwards:
+
+- **a null output is a value; an unresolvable reference is an error** (WF2-R9). A
+  node that legitimately produced nothing hands `None` downstream and `default`
+  absorbs it. A binding naming something that does not exist raises — because
+  the silent alternative is a prompt with a hole in it, which produces confident
+  nonsense that reads like a real answer;
+- **declared input defaults are applied at run start**, not lazily at each
+  binding, so the run record shows the values the run actually used.
+
+## The journal: two jobs, one file
+
+**Resume cache.** Keyed by `(instance_path, epoch, inputs_hash,
+spec_region_hash)` — all four earn their place. `epoch` because a rewind bumps
+it, so a replayed region from a superseded epoch can never be mistaken for a hit
+on the current one. `inputs_hash` because an upstream change makes a cached
+output stale even when the node itself was untouched. `spec_region_hash` because
+editing a prompt and resuming would otherwise serve the pre-edit answer.
+
+A consequence: **a rewind produces no cache hit.** It bumps the epoch, and the
+epoch is part of the key, so the region correctly *misses*. The cache serves a
+resume; invalidation is what serves a rewind.
+
+**Run Ledger.** The event subset a downstream refiner reads. These are emission
+*requirements*: an evaluator that wants to know which model a step used, what it
+cost, and why it failed is starved if the engine only journals free text. The
+acceptance bar is that prompt → tool calls → output is reconstructable from
+ledger events alone.
+
+Everything written passes through `redact()` first. A journal is read by the
+flywheel, shipped in bug reports, and rendered in a UI — a credential reaching
+it is leaked to all three. Outputs past ~64KB, or matching a binary magic
+prefix, spill to a file and leave a typed `result_omitted` stub.
+
+## Mid-flight mutation
+
+A typed op grammar (`update_node`, `insert`, `delete`, `move`, `skip`, `rewind`,
+`run_from`, `fork`, …), and four things guard it:
+
+1. **A live controller is required.** Editing a run nobody drives would write
+   state with no one to apply it.
+2. **Batches are queued, applied at the drain point.** `edit_run` returns
+   `queued: true`; nothing has changed yet.
+3. **The frozen-region invariant.** A COMPLETED node cannot be edited — its
+   output is already downstream, and changing the spec that produced it would
+   make the run's own history a lie. The user's order is *rewind, then edit*.
+4. **TOCTOU re-verify + `expect_version`.** Two edits computed against the same
+   version cannot both apply; the second was reasoned about against state that
+   has moved. The version lives on `run.spec_version`.
+
+A rewind whose cascade would re-run completed work reports
+`needs_confirmation` and applies nothing until confirmed. The cascade is
+computed over the **binding-dependency graph**, not the container tree, so
+editing a node invalidates what actually reads it.
+
+## Timeouts: two knobs that mean different things
+
+`timeout_total` bounds wall time. `timeout_stall` bounds *silence*, and it is
+fed by progress — a long-but-progressing node survives, a wedged one does not.
+If nothing feeds the stall clock the two collapse into one and a node that is
+visibly working gets killed as wedged; the `on_progress` callback threaded
+through `dispatch` is what keeps them distinct.
+
+`0` means unbounded, for both. A cap the user did not ask for that silently
+halts work is worse than no cap.
+
+## Context lifecycle for long horizons (WF2-R6)
+
+Compaction keeps the *what* and drops the *why*, so a compacted loop
+re-litigates settled decisions and re-reads verified files. Three mechanisms:
+
+- **handoffs** — `session: fresh` (the default for iterated bodies). An
+  iteration writes verified state / changes / what is NOT verified / next
+  action, and the next iteration starts from that. `session: continuous`
+  injects nothing, because it already holds the previous iteration;
+- **carryover buckets** — typed, bounded, deduped facts (files touched with line
+  spans, claims verified, children spawned). Structure survives summarization;
+  prose does not;
+- **decision records** — `{choice, reason, rejected, constraints}`. The rejected
+  alternatives are load-bearing: without them a resumed run re-proposes the
+  option already dismissed.
+
+All three are journaled, so rewind and resume *replay* them rather than
+reconstructing a summary, and all three are bounded — an unbounded bucket is a
+transcript with extra steps.
+
+## Events
+
+Per-run SSE on `DashboardState.workflow_sse()` (key `workflow:<run_id>`), plus
+WebSocket refetch signals. Deliberately NOT routed through `notify()`: that is
+the user-notification gate behind mute/severity/quiet-hours, and a quiet-hours
+setting would silently eat a run's entire event stream.
+
+Every event carries `event_id` (deterministic), `seq` (monotonic) and `epoch`
+(the run's), stamped at ONE publish seam — a call site that forgot one would
+emit an event the FE cannot dedup or supersede, and that is invisible until a
+rewind duplicates a row. High-frequency node chatter is batched per observer
+into a `workflow_batch` frame; members keep publish order and their own
+envelopes, so batching is a transport optimization and nothing more.
+
+The FE folds events through one pure function (`workflowFold.ts`) with four
+guards: dedup by event id, epoch supersede-drop, node-keyed patches, and a
+per-node `seq` floor.
+
+## Genealogy and nesting
+
+`subworkflow` runs a named workflow as a real **child run** — its own journal,
+state map and terminal writer. That costs a row and a directory and buys
+everything that matters: the child can be rewound, resumed, forked and inspected
+on its own, and a crash mid-child leaves a child run to adopt rather than a
+half-written parent.
+
+`parent_run_id` answers "who spawned this?"; `root_run_id` answers "show me
+everything this request did", which at depth 3 the parent chain cannot. A
+`child_run_attach` ledger event records *which node* spawned it — the run row
+does not, and a rewind of that node needs it.
+
+Depth is capped at 3 and checked **before** anything is created: a workflow
+referencing itself would otherwise spawn runs until the process died.
+
+## Write scope (WF2-R19)
+
+Stage and action nodes declare `allowed_write_paths`; the engine snapshots the
+filesystem before the node and diffs after. Out-of-scope writes flag the node
+`scope_violation` in the ledger with the violating paths named.
+
+The load-bearing asymmetry: the **watched** set is wider than the **allowed**
+set. An escape lands outside what is allowed, so snapshotting only the allowed
+paths would make a violation undetectable by construction. Both sides are
+resolved (symlinks, `..`) at comparison time.
+
+Opt-in, deliberately: the tree walk is real work, and a fan-out of fast
+transforms must not each pay for one.
+
+## Templates
+
+Six ship in `workflows/bundled/`, served read-only from the package — an
+upgrade ships new templates with no "did the user edit it?" reconciliation. A
+user who wants to change one instantiates it and edits their copy.
+
+Authoring conventions, the lint that enforces them, and the macro/block
+libraries are documented in
+[`docs/guides/workflow-templates.md`](../guides/workflow-templates.md).
+
+## Where things are NOT
+
+- **no compaction ladder yet** — the two-layer proactive/error-triggered
+  summarizer from WF2-R6 needs a summarizer seam that does not exist;
+- **no `{{nodes.x.artifact}}` binding** — oversize outputs spill to a stub with
+  an `output_ref`, but the artifact-pointer binding form and `artifact_inspect`
+  action are unbuilt;
+- **no lifecycle gates** — per the owner's deferral, class-B changes are clean
+  breaks under the pre-1.0 banner until LIFECYCLE-DOCTRINE lands.
