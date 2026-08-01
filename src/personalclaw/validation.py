@@ -559,10 +559,6 @@ CRON_RESUME_SCHEMA = ToolSchema(
 # a lifecycle trigger can run too. run-prompt MUST be here or the lifecycle-trigger
 # create path rejects it even though the UI offers it.
 #
-# `run-workflow` is absent on purpose (WORKFLOWS-V2 Phase 1): its action provider is
-# deleted, and listing a provider that cannot be dispatched is worse than omitting it —
-# the trigger would validate, save, and then fail at run time. Slice 3 re-adds it
-# alongside the v2 provider, in the same commit.
 ALLOWED_HOOK_PROVIDERS = frozenset(
     {
         "bash",
@@ -573,6 +569,10 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         "create-task",
         "invoke-agent",
         "run-prompt",
+        # WORKFLOWS-V2 Slice 3: re-added in the SAME commit that re-registers the v2
+        # provider. Listing a provider that cannot be dispatched is worse than omitting
+        # it — the trigger would validate, save, and then fail at run time.
+        "run-workflow",
         # PLATFORM-LEGIBILITY §4.2: drive any enabled app's declared agentCallable
         # backend route (the ONE app-route action provider; per-app providers can't
         # be enumerated in a static frozenset).

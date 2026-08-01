@@ -68,6 +68,10 @@ STEP_ESCALATED = "step_escalated"
 GATE_REJECTED = "gate_rejected"
 GATE_CRITERION = "gate_criterion"
 EFFECT = "effect"
+#: A node wrote outside its declared `allowed_write_paths` (WF2-R19). Ledgered whether
+#: the mode was warn or reject — an escape a `warn` run continued past still has to be
+#: findable afterwards.
+STEP_SCOPE = "step_scope_violation"
 ITERATION = "iteration"
 USER_EDITED_MID_FLIGHT = "user_edited_mid_flight"
 CONSULTED = "consulted"
@@ -90,6 +94,7 @@ LEDGER_KINDS = frozenset(
         GATE_REJECTED,
         GATE_CRITERION,
         EFFECT,
+        STEP_SCOPE,
         ITERATION,
         USER_EDITED_MID_FLIGHT,
         CONSULTED,

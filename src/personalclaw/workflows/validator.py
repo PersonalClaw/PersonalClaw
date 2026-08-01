@@ -347,11 +347,20 @@ def _validate_bindings(res: ValidationResult, path: str, node: Node, *, strict: 
 
 
 def _looks_like_secret(value: str) -> bool:
+    """Delegates to `secrets.py`, the ONE credential-shape list.
+
+    This function used to carry its own prefix tuple. Two lists of vendor key shapes
+    inevitably drift — one gets a new provider and the other silently stops catching it —
+    and "which lint runs where" becomes unanswerable. The shapes live in `secrets.py`
+    (the documented provider-boundary keep) and both the save-time lint and this
+    validator read them from there.
+    """
+    from personalclaw.workflows.secrets import looks_like_credential
+
     v = value.strip()
-    if len(v) < 20 or " " in v:
+    if " " in v:
         return False
-    prefixes = ("sk-", "ghp_", "gho_", "github_pat_", "xoxb-", "xoxp-", "hf_", "AKIA")
-    return v.startswith(prefixes)
+    return looks_like_credential(v)
 
 
 def _validate_binding_targets(
