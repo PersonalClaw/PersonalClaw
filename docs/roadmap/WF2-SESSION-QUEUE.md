@@ -59,7 +59,7 @@ mandatory.
 | 7 | **Slice 4b** — binding-dependency cascade closure, engine-computed preview, `inputs_stale`, rollback-vs-revert, TOCTOU re-verify; mutation queue in the controller; grammar hardening a-f | G3 | ✅ DONE (#142) |
 | 8 | **Slice 4c** — rewind (archive outputs + journal region, epoch bump, memoized replay); checkpoints + `fork`; property tests (rewind idempotence, cascade = binding closure, fork isolation) | G3 | ✅ DONE (#143) |
 | 9 | **Slice 5a** — typed ask payload, mode-dependent gate timeouts, `timed_out_unattended`; continuation records + durable resume tokens + expiry | G4 | ✅ DONE (#144) |
-| 10 | **Slice 5b** — action-node clarification → needs_input; auto-approve for trigger-origin; owner binding + default-DENY for remote gates; `gate{kind: event}` transient hold | G4 | TODO |
+| 10 | **Slice 5b** — action-node clarification → needs_input; auto-approve for trigger-origin; owner binding + default-DENY for remote gates; `gate{kind: event}` transient hold | G4 | ✅ DONE (#145) |
 | 11 | **Slice 6a** — `mcp_workflows.py`: the 19 chat tools incl. `workflow_observe`/`run_from`/`audit`/`manifest`; wire into `_AGGREGATED_CATEGORY_MODULES`; validation schemas | G5 | TODO |
 | 12 | **Slice 6b** — spec ingestion: strict mode + repromptable errors, dry-run-before-save, provenance actor, run-start preflight (`can_resolve_use_case`), generated manifest + CI drift test | G5 | TODO |
 | 13 | **Slice 6c** — staged-turn contract for mutation tools; `[ACTIVE WORKFLOWS]` context block (never-break-a-turn); blocking-mode handler | G5 | TODO |
@@ -287,3 +287,16 @@ mandatory.
   (b) `wait` nodes are excluded from needs-input surfacing — parked on the clock, they
   resolve themselves. (c) Rewind drops tokens PREFIX-SCOPED, not globally: dropping every
   token on any rewind would cancel approvals a rewind cannot affect. Both directions tested.
+- 2026-08-01 — session 10 (Slice 5b) DONE → **PR #145** (stack #140→…→#145).
+  **Slice 5 is complete.** `gate_policy.py`: risk-scoped auto-approve (reusing
+  `tool_providers.RiskLevel`, NOT a new vocabulary), owner binding + default-DENY for remote
+  channels, `AllowMemory` (run-scoped, cleared on rewind), event-gate transient hold with
+  event preservation + bounded give-up, and `clarification_from_output` so ANY action node
+  can ask without a pre-placed gate. 10360 tests (+47).
+  Validated live: schedule-fired runs sailed through safe/caution and STOPPED at destructive
+  AND undeclared; an intruder's channel reply was refused with the token surviving for the
+  real owner; rewind cleared the remembered allow; an absent prerequisite held with
+  `preserve_event=True` while an invalid payload gave up; remote timeout denied.
+  KEY DECISION: **an undeclared gate defaults to DESTRUCTIVE.** Deny-by-default toward
+  higher risk means forgetting to classify a gate makes it ASK; the opposite default would
+  turn every unclassified gate in an unattended run into an unreviewed action.
