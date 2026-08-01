@@ -5,20 +5,25 @@ draft in the maintainer's voice for you to edit and post; it is deliberately not
 posted automatically — a community welcome written by an agent and signed by you
 would be the wrong start.
 
-**Where to post:** Discussions → Announcements, then pin it.
+## How to post it
 
-**Two things to do first (web UI only — the GitHub API cannot create discussion
-categories, verified 2026-07-31):**
+1. Open <https://github.com/PersonalClaw/PersonalClaw/discussions/new?category=announcements>
+2. **Title:** `Welcome — what this space is for`
+3. **Body:** everything below the `## Draft` heading. Every link in it is an absolute
+   URL, so it pastes safely — GitHub Discussions renders relative links unreliably,
+   which an earlier version of this draft would have tripped over.
+4. **Start discussion**, then pin it: the **⋯** menu on the new thread → **Pin discussion**.
 
-1. Add an **App Dev** category (format: Discussion) — "Building apps against the
-   PersonalClaw SDK: manifests, capabilities, permissions, the Store."
-2. Decide on **Roadmap Input**. The README and `roadmap.md` currently point roadmap
-   proposals at the default **Ideas** category, which works fine. Add a dedicated
-   category only if you want roadmap threads separated from general feature ideas —
-   if you do, update the two links in `README.md` and `docs/roadmap/roadmap.md`.
+Edit freely before posting — this is a guess at your voice, not a script.
 
-The defaults GitHub created (Announcements, General, Ideas, Polls, Q&A, Show and
-tell) already cover the rest of the plan's list.
+**Category status (2026-07-31):** ✅ **App Dev added by the owner.** The GitHub API
+cannot create discussion categories (no `createDiscussionCategory` mutation exists —
+verified against the GraphQL schema), so that step was necessarily manual.
+
+The defaults GitHub created (Announcements, General, Ideas, Polls, Q&A, Show and tell)
+cover the rest of the plan's list. **Roadmap Input is still optional:** `README.md` and
+`docs/roadmap/roadmap.md` currently route roadmap proposals to **Ideas**, which works.
+Say the word and both links get repointed if a dedicated category is added.
 
 ---
 
@@ -53,20 +58,20 @@ I built it for myself and then made it public, which shapes what this space is f
 
 One maintainer, so: honest latency rather than promised latency. Issues get triaged;
 Q&A gets answered when I can. Security reports go through
-[SECURITY.md](../../SECURITY.md) and jump the queue.
+[SECURITY.md](https://github.com/PersonalClaw/PersonalClaw/blob/main/SECURITY.md) and jump the queue.
 
 **Two honest warnings**
 
 It is **pre-1.0 and breaks data without migrations** — the README says so in a
 banner. Run `personalclaw snapshot` before upgrading. And it is a genuinely powerful
 agent on your own machine: read
-[the threat model](../security/threat-model.md) and
-[the limitations](../security/limitations.md) before pointing it at anything you care
+[the threat model](https://github.com/PersonalClaw/PersonalClaw/blob/main/docs/security/threat-model.md) and
+[the limitations](https://github.com/PersonalClaw/PersonalClaw/blob/main/docs/security/limitations.md) before pointing it at anything you care
 about, especially before exposing it to the internet.
 
 **Want to help?** The
 [good-first-issue](https://github.com/PersonalClaw/PersonalClaw/issues?q=is%3Aopen+label%3Agood-first-issue)
-label is the front door. [CONTRIBUTING.md](../../CONTRIBUTING.md) has the doctrine —
+label is the front door. [CONTRIBUTING.md](https://github.com/PersonalClaw/PersonalClaw/blob/main/CONTRIBUTING.md) has the doctrine —
 it is opinionated, and reading it first will save you a review cycle.
 
 Glad you're here.
