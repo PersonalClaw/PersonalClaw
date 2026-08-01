@@ -254,6 +254,35 @@ def _validate_shape(res: ValidationResult, path: str, node: Node) -> None:
     elif kind == NodeKind.ACTION:
         if not cfg.get("provider"):
             _add(res, "WF_MISSING_PROVIDER", "action needs a `provider`", path)
+        elif "with" not in cfg and "config" not in cfg:
+            # The engine reads a provider's arguments from `config.with` (`dispatch_action`).
+            # Arguments written FLAT beside `provider` reach the provider as an empty config, and
+            # it then reports its own required field missing — for a value that is visibly right
+            # there in the spec. Caught here because the run-time symptom points at the provider
+            # rather than at the authoring mistake, and because everything downstream of the
+            # failed action then fails on an unresolved binding, burying the cause.
+            extras = [k for k in cfg if k not in ("provider", "context", "payload")]
+            if extras:
+                # Arguments ARE present, just in the wrong place — the run would fail, so this is
+                # an error naming exactly what to move.
+                _add(
+                    res,
+                    "WF_ACTION_ARGS_NOT_NESTED",
+                    "action arguments go under `config.with` — move "
+                    + ", ".join(sorted(extras))
+                    + " into it",
+                    path,
+                )
+            else:
+                # No arguments at all: legitimate for a provider that needs none, so a warning
+                # rather than a refusal.
+                _add(
+                    res,
+                    "WF_ACTION_NO_ARGS",
+                    "action has no `config.with` — fine if the provider needs no arguments",
+                    path,
+                    SEVERITY_WARNING,
+                )
 
     elif kind == NodeKind.WAIT:
         if not (cfg.get("duration_secs") or cfg.get("until_ts")):

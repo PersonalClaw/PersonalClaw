@@ -195,7 +195,10 @@ personalclaw = [
     "eval/scenarios/*.json",
     "tests_fixtures/*/*",
     "skills/bundled/*/SKILL.md",
-    "workflows/bundled/*/WORKFLOW.md",
+    # The bundled template library (WF2 §6). `workflow.json`, not the `WORKFLOW.md` this line
+    # used to name: that filename was never produced by anything, so the wheel shipped an empty
+    # template library and only a real `pip install` would have shown it.
+    "workflows/bundled/*/workflow.json",
     "apps/native/*/app.json",
     "reference/*.md",
 ]

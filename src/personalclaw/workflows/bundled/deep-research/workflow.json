@@ -1,0 +1,122 @@
+{
+  "name": "deep-research",
+  "description": "Answer a research question by sweeping several search angles, reading each source, verifying the claims, and looping until a round turns up nothing new.",
+  "source": "bundled",
+  "provenance": "user",
+  "version": 1,
+  "tags": ["research", "general"],
+  "inputs": {
+    "question": {
+      "type": "string",
+      "required": true,
+      "help": "The question to answer. A specific question produces a usable answer; 'tell me about X' produces a summary."
+    },
+    "rounds": {
+      "type": "number",
+      "required": false,
+      "default": 3,
+      "help": "Maximum sweep rounds. The loop stops early when a round finds nothing new."
+    }
+  },
+  "metadata": {
+    "risk": "low",
+    "capabilities": ["research", "web"],
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Why did our p99 latency double after the 3.2 release? Check the changelog, the dependency diff, and anything in the issue tracker from that week."
+      },
+      {
+        "event": "mutation",
+        "description": "Skip the by-time angle — this isn't a regression, it's a design question. Add a by-entity sweep over the two competing libraries instead."
+      }
+    ]
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "deep_research",
+    "children": [
+      {
+        "kind": "infer",
+        "id": "triage",
+        "config": {
+          "model_tier": "fast",
+          "prompt": "Classify what this question needs.\n\ntier=lookup: one fact, one source. A sweep would be waste.\ntier=survey: needs several sources reconciled.\ntier=investigation: contested, or the answer depends on evidence that has to be assembled.\n\nReturn JSON: {\"tier\": \"lookup|survey|investigation\", \"why\": \"one line\"}.\n\nQuestion:\n{{inputs.question}}",
+          "schema": { "tier": "string", "why": "string" }
+        }
+      },
+      {
+        "kind": "branch",
+        "id": "entry",
+        "config": {
+          "on": "{{nodes.triage.output.tier}}",
+          "enum": ["lookup", "survey", "investigation"]
+        },
+        "cases": {
+          "lookup": {
+            "kind": "stage",
+            "id": "single_lookup",
+            "config": {
+              "prompt": "Find the answer to this question and cite where it came from. If the first source is ambiguous, say so rather than picking the reading you prefer.\n\nQuestion:\n{{inputs.question}}"
+            }
+          },
+          "survey": {
+            "macro": "research_sweep",
+            "id": "survey_sweep",
+            "config": {
+              "question": "{{inputs.question}}",
+              "modes": ["by-content", "by-entity"]
+            }
+          },
+          "investigation": {
+            "kind": "loop",
+            "id": "investigate",
+            "config": {
+              "mode": "until_dry",
+              "streak": 2,
+              "max_iterations": "{{inputs.rounds}}"
+            },
+            "body": {
+              "kind": "sequence",
+              "id": "round",
+              "children": [
+                {
+                  "macro": "research_sweep",
+                  "id": "round_sweep",
+                  "config": {
+                    "question": "{{inputs.question}}",
+                    "modes": ["by-content", "by-entity", "by-time"]
+                  }
+                },
+                {
+                  "kind": "infer",
+                  "id": "round_gaps",
+                  "config": {
+                    "model_tier": "standard",
+                    "prompt": "What is still MISSING after this round — a source not read, a claim not verified, an angle not tried? Return an empty list when the round genuinely added nothing new; that is what stops the loop, and inventing a gap to look thorough makes it run forever.\n\nReturn JSON: {\"new_findings\": [\"…\"], \"remaining_gaps\": [\"…\"]}.\n\nQuestion:\n{{inputs.question}}\n\nThis round found:\n{{nodes.round_sweep_read.output}}",
+                    "schema": { "new_findings": "array", "remaining_gaps": "array" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "kind": "infer",
+        "id": "synthesize",
+        "config": {
+          "model_tier": "reasoning",
+          "prompt": "Answer the question from what was gathered.\n\nLead with the answer, then the evidence for it. Where sources disagree, say so and say which you find more credible and why — a synthesis that averages a contradiction into a hedge is worse than either source alone. Name what remains unknown.\n\nReturn JSON: {\"answer\": \"…\", \"evidence\": [\"…\"], \"disagreements\": [\"…\"], \"unknowns\": [\"…\"], \"confidence\": \"high|medium|low\"}.\n\nQuestion:\n{{inputs.question}}\n\nGathered:\n{{nodes.entry.output}}",
+          "schema": {
+            "answer": "string",
+            "evidence": "array",
+            "disagreements": "array",
+            "unknowns": "array",
+            "confidence": "string"
+          }
+        }
+      }
+    ]
+  }
+}

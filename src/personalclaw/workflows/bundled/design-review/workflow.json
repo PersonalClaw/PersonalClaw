@@ -1,0 +1,79 @@
+{
+  "name": "design-review",
+  "description": "Review a design through independent lenses in parallel, score them, and stage a recommendation for a human. The judges cannot see each other's verdicts.",
+  "source": "bundled",
+  "provenance": "user",
+  "version": 1,
+  "tags": ["review", "design"],
+  "inputs": {
+    "design": {
+      "type": "string",
+      "required": true,
+      "help": "The design to review — a doc, a diff, a description, or a path to one."
+    },
+    "criteria": {
+      "type": "string",
+      "required": false,
+      "default": "Is it correct, safe to build, and usable by the people it is for?",
+      "help": "What the judges should measure against."
+    }
+  },
+  "metadata": {
+    "risk": "low",
+    "capabilities": ["review"],
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Review docs/design/new-scheduler.md. Weight feasibility highest — we have three weeks."
+      },
+      {
+        "event": "mutation",
+        "description": "Add a cost lens to the panel; this design triples our egress and nobody scored that."
+      }
+    ]
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "design_review",
+    "children": [
+      {
+        "macro": "judge_panel",
+        "id": "panel",
+        "config": {
+          "subject": "{{inputs.design}}",
+          "criteria": "{{inputs.criteria}}",
+          "model_tier": "reasoning",
+          "lenses": [
+            {
+              "name": "correctness",
+              "prompt": "Does it actually work? Look for cases the design does not handle, states it cannot represent, and assumptions it never checks."
+            },
+            {
+              "name": "feasibility",
+              "prompt": "Can this be built as described, by the people who will build it, in the time implied? Name the part most likely to blow the estimate."
+            },
+            {
+              "name": "ux",
+              "prompt": "What will using this feel like for the person it is for? Look for the step where they will get stuck and the error they will not understand."
+            }
+          ]
+        }
+      },
+      {
+        "kind": "stage",
+        "id": "recommendation",
+        "config": {
+          "prompt": "Write a recommendation from the panel's scores and findings.\n\nSay plainly whether to proceed, revise, or reconsider. Where the judges disagreed, do not average them — name the disagreement and say which lens you think should win here and why. A recommendation that hides a split verdict is the one that gets overturned later.\n\nDesign:\n{{inputs.design}}\n\nPanel:\n{{nodes.panel_synthesis.output}}"
+        }
+      },
+      {
+        "kind": "gate",
+        "id": "accept",
+        "config": {
+          "kind": "approval",
+          "prompt": "The panel has reviewed and a recommendation is ready. Approve to accept it, or deny to send it back with your own notes."
+        }
+      }
+    ]
+  }
+}

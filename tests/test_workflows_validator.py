@@ -285,12 +285,17 @@ class TestSecurityLint:
             assert validate_spec(spec).ok, pipe
 
     def test_untrusted_input_outside_a_prompt_is_allowed(self) -> None:
-        """The risk is prompt injection; the same value in a non-prompt field is fine."""
+        """The risk is prompt injection; the same value in a non-prompt field is fine.
+
+        Arguments under `with`, which is where the engine reads them from — a flat `ref_id`
+        beside `provider` is separately (and correctly) refused by the action-arg-shape check,
+        which would make this test pass or fail for the wrong reason.
+        """
         spec = _wrap(
             {
                 "kind": "action",
                 "id": "a",
-                "config": {"provider": "notify", "ref_id": "{{trigger.id}}"},
+                "config": {"provider": "notify", "with": {"ref_id": "{{trigger.id}}"}},
             }
         )
         assert validate_spec(spec).ok

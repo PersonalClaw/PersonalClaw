@@ -46,6 +46,9 @@ _STATUS_MAP: dict[str, tuple[int, str]] = {
     "WF_DEF_NAME_INVALID": (400, "invalid_request"),
     "WF_DEF_ROOT_REQUIRED": (400, "invalid_request"),
     "WF_DEF_INVALID": (422, "validation_failed"),
+    # 422 like a validation failure, because that is what it is: the spec is well-formed JSON
+    # whose macro invocation cannot be expanded. A 400 would suggest a malformed request body.
+    "WF_DEF_MACRO_INVALID": (422, "macro_invalid"),
     "WF_DEF_INLINE_SECRET": (422, "inline_secret"),
     "WF_DEF_NO_WRITABLE_PROVIDER": (409, "read_only"),
     "WF_DEF_SAVE_FAILED": (500, "save_failed"),
