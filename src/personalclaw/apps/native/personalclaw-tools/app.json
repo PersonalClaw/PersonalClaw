@@ -2,7 +2,7 @@
   "name": "personalclaw-tools",
   "version": "1.0.0",
   "displayName": "Core Tools",
-  "description": "Built-in cross-cutting agent tools \u2014 skill invocation, notifications, webhook listeners, the wait primitive, and loop control. (Web search/fetch live in Web Tools; subagents, memory, artifacts, and workflows each have their own provider.)",
+  "description": "Built-in cross-cutting agent tools — skill invocation, notifications, webhook listeners, the wait primitive, and loop control. (Web search/fetch live in Web Tools; subagents, memory, artifacts, and prompts each have their own provider.)",
   "icon": "Wrench",
   "author": "PersonalClaw",
   "tags": [
