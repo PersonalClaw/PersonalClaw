@@ -179,6 +179,17 @@ async def author_def(
     if not save:
         return _ok(saved=False, dry_run=True, **body)
 
+    # Dry-run-before-save for AGENT-authored defs (WF2-R12). A human saving a spec they
+    # wrote has already reviewed it; an agent's spec gets a preflight first, so a def that
+    # cannot possibly run is caught at authoring rather than at every future start. The
+    # findings are ATTACHED, not fatal: a template referencing a credential the user has not
+    # added yet is a legitimate thing to save.
+    dry_run_report: dict[str, Any] | None = None
+    if provenance == "chat":
+        from personalclaw.workflows.preflight import preflight as run_preflight
+
+        dry_run_report = run_preflight(spec).to_dict()
+
     writable = [
         p
         for p in (defs_mod.get_provider(n) for n in defs_mod.list_providers())
@@ -194,7 +205,13 @@ async def author_def(
     except Exception as exc:
         return _err("WF_DEF_SAVE_FAILED", f"could not save the definition: {exc}")
     raw = saved if isinstance(saved, dict) else getattr(saved, "to_dict", lambda: {})()
-    return _ok(saved=True, definition=secrets.strip_secrets(raw), **body)
+    return _ok(
+        saved=True,
+        definition=secrets.strip_secrets(raw),
+        provenance=provenance,
+        preflight=dry_run_report,
+        **body,
+    )
 
 
 async def delete_def(name: str) -> dict[str, Any]:
@@ -226,11 +243,15 @@ async def start_run(
     project_id: str = "",
     idempotency_key: str = "",
     blocking_timeout: float = 0.0,
+    skip_preflight: bool = False,
 ) -> dict[str, Any]:
     """Instantiate a def and start driving it.
 
     A caller idempotency key returns the EXISTING run rather than minting a second one — a
     retried tool call is a retry, not a new request (WF2-R1).
+
+    Preflight runs first unless explicitly skipped: a missing credential caught here costs
+    nothing, and caught at node 7 has already paid for six nodes of model calls.
     """
     from personalclaw.workflows.effects import START_DEDUPE
 
@@ -257,6 +278,26 @@ async def start_run(
             f"missing required input(s): {', '.join(missing)}",
             missing=missing,
         )
+
+    # Run-start preflight (WF2-R12): credentials, binaries, models and action providers.
+    # Blocking here rather than degrading at node 7, which has already paid for six nodes.
+    # `skip_preflight` exists for a deliberate override, and says so in the response.
+    if not skip_preflight:
+        from personalclaw.workflows.preflight import preflight as run_preflight
+
+        checks = run_preflight(spec)
+        if not checks.ok:
+            return _err(
+                "WF_RUN_PREFLIGHT_FAILED",
+                "the run cannot start: " + "; ".join(f.message for f in checks.errors),
+                preflight=checks.to_dict(),
+            )
+        if checks.warnings:
+            logger.info(
+                "workflow %s: starting with %d unverifiable requirement(s)",
+                name,
+                len(checks.warnings),
+            )
 
     run = store.create(
         WorkflowRun(

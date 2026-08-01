@@ -330,14 +330,18 @@ class TestRuns:
         otherwise a restart adopts the run a second time and two writers race."""
         await service.author_def(name="wf-run", root=SPEC_ROOT)
         sup = _FakeSupervisor()
-        body = await service.start_run(name="wf-run", supervisor=sup)
+        body = await service.start_run(name="wf-run", supervisor=sup, skip_preflight=True)
         assert body["ok"] and body["run_id"]
         assert sup.launched == [body["run_id"]]
 
     async def test_a_blocking_run_returns_the_final_state(self, provider) -> None:
         await service.author_def(name="wf-block", root=SPEC_ROOT)
         body = await service.start_run(
-            name="wf-block", mode="blocking", supervisor=_FakeSupervisor(), blocking_timeout=20
+            name="wf-block",
+            mode="blocking",
+            supervisor=_FakeSupervisor(),
+            blocking_timeout=20,
+            skip_preflight=True,
         )
         assert body["ok"] and body["blocking"]
         assert body["status"] == RunStatus.COMPLETE.value
@@ -352,7 +356,9 @@ class TestRuns:
             root=SPEC_ROOT,
             inputs={"since": {"type": "string", "required": True}},
         )
-        body = await service.start_run(name="wf-inp", supervisor=_FakeSupervisor())
+        body = await service.start_run(
+            name="wf-inp", supervisor=_FakeSupervisor(), skip_preflight=True
+        )
         assert not body["ok"] and body["code"] == "WF_RUN_MISSING_INPUTS"
         assert body["missing"] == ["since"]
 
@@ -362,12 +368,14 @@ class TestRuns:
             root=SPEC_ROOT,
             inputs={"since": {"type": "string", "required": True, "default": "1h"}},
         )
-        body = await service.start_run(name="wf-def-inp", supervisor=_FakeSupervisor())
+        body = await service.start_run(
+            name="wf-def-inp", supervisor=_FakeSupervisor(), skip_preflight=True
+        )
         assert body["ok"]
 
     async def test_no_supervisor_is_honest_about_not_starting(self, provider) -> None:
         await service.author_def(name="wf-nosup", root=SPEC_ROOT)
-        body = await service.start_run(name="wf-nosup", supervisor=None)
+        body = await service.start_run(name="wf-nosup", supervisor=None, skip_preflight=True)
         assert not body["ok"] and body["code"] == "WF_NO_SUPERVISOR"
         assert body["run_id"]  # created, and the response says so
 
@@ -377,8 +385,12 @@ class TestRuns:
         START_DEDUPE._entries.clear()
         await service.author_def(name="wf-idem", root=SPEC_ROOT)
         sup = _FakeSupervisor()
-        first = await service.start_run(name="wf-idem", supervisor=sup, idempotency_key="k1")
-        second = await service.start_run(name="wf-idem", supervisor=sup, idempotency_key="k1")
+        first = await service.start_run(
+            name="wf-idem", supervisor=sup, idempotency_key="k1", skip_preflight=True
+        )
+        second = await service.start_run(
+            name="wf-idem", supervisor=sup, idempotency_key="k1", skip_preflight=True
+        )
         assert second["run_id"] == first["run_id"] and second["deduped"]
         assert len(sup.launched) == 1
         START_DEDUPE._entries.clear()
@@ -389,7 +401,11 @@ class TestRuns:
     async def test_status_reports_node_level_progress(self, provider) -> None:
         await service.author_def(name="wf-stat", root=SPEC_ROOT)
         started = await service.start_run(
-            name="wf-stat", mode="blocking", supervisor=_FakeSupervisor(), blocking_timeout=20
+            name="wf-stat",
+            mode="blocking",
+            supervisor=_FakeSupervisor(),
+            blocking_timeout=20,
+            skip_preflight=True,
         )
         body = service.status(started["run_id"])
         assert body["ok"]
@@ -401,7 +417,11 @@ class TestRuns:
     async def test_output_returns_a_nodes_value(self, provider) -> None:
         await service.author_def(name="wf-out", root=SPEC_ROOT)
         started = await service.start_run(
-            name="wf-out", mode="blocking", supervisor=_FakeSupervisor(), blocking_timeout=20
+            name="wf-out",
+            mode="blocking",
+            supervisor=_FakeSupervisor(),
+            blocking_timeout=20,
+            skip_preflight=True,
         )
         body = service.output(started["run_id"], "seed")
         assert body["ok"] and body["output"] == {"n": 1}
@@ -409,7 +429,11 @@ class TestRuns:
     async def test_output_of_an_unknown_node_is_coded(self, provider) -> None:
         await service.author_def(name="wf-out2", root=SPEC_ROOT)
         started = await service.start_run(
-            name="wf-out2", mode="blocking", supervisor=_FakeSupervisor(), blocking_timeout=20
+            name="wf-out2",
+            mode="blocking",
+            supervisor=_FakeSupervisor(),
+            blocking_timeout=20,
+            skip_preflight=True,
         )
         assert service.output(started["run_id"], "ghost")["code"] == "WF_NODE_NOT_FOUND"
 
@@ -439,7 +463,7 @@ class TestControl:
         """Persisted, so a cancel issued while the gateway is down is still honoured."""
         await service.author_def(name="wf-can", root=SPEC_ROOT)
         sup = _FakeSupervisor()
-        started = await service.start_run(name="wf-can", supervisor=sup)
+        started = await service.start_run(name="wf-can", supervisor=sup, skip_preflight=True)
         body = service.cancel_run(started["run_id"], supervisor=sup)
         assert body["ok"] and store.cancel_requested(started["run_id"])
 
@@ -476,7 +500,11 @@ class TestControl:
         """Forking a finished result to explore an alternative is the main reason to fork."""
         await service.author_def(name="wf-fork", root=SPEC_ROOT)
         started = await service.start_run(
-            name="wf-fork", mode="blocking", supervisor=_FakeSupervisor(), blocking_timeout=20
+            name="wf-fork",
+            mode="blocking",
+            supervisor=_FakeSupervisor(),
+            blocking_timeout=20,
+            skip_preflight=True,
         )
         body = service.fork_run(started["run_id"], note="try again")
         assert body["ok"] and body["child_run_id"] != started["run_id"]
@@ -485,7 +513,7 @@ class TestControl:
     async def test_resume_with_no_pending_gate_is_coded(self, provider) -> None:
         await service.author_def(name="wf-res", root=SPEC_ROOT)
         sup = _FakeSupervisor()
-        started = await service.start_run(name="wf-res", supervisor=sup)
+        started = await service.start_run(name="wf-res", supervisor=sup, skip_preflight=True)
         body = service.resume_run(started["run_id"], supervisor=sup, answer=True)
         assert not body["ok"] and body["code"] in (
             "WF_NO_PENDING_GATE",
