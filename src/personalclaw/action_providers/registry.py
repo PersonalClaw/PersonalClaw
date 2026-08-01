@@ -85,3 +85,13 @@ def _ensure_default_providers_registered() -> None:
         )
 
         register_action_provider(CallAppRouteActionProvider())
+    if "artifact-update" not in _providers:
+        # WORKFLOWS-V2 Slice 9b (WF2-R15): the zero-token write a dashboard-style template uses
+        # to refresh its artifact. Added to ALLOWED_HOOK_PROVIDERS in the SAME commit — a
+        # provider in one set but not the other is the mismatch that makes a trigger save and
+        # then fail to run.
+        from personalclaw.action_providers.artifact_update_provider import (
+            ArtifactUpdateActionProvider,
+        )
+
+        register_action_provider(ArtifactUpdateActionProvider())

@@ -194,9 +194,11 @@ def _judge_panel(node: dict[str, Any]) -> dict[str, Any]:
                         + '\n\nReturn JSON: {"score": 0-10, "lens": "'
                         + label
                         + '", '
-                        '"findings": [Finding], "summary": "one line"}.\n'
-                        "A Finding is {severity: Critical|Major|Minor|Nit, location, problem, "
-                        "why, recommended_fix, status: Open}.\n\nSubject:\n" + str(subject)
+                        '"findings": [Finding], "summary": "one line"}.\n\n'
+                        # The shared block, not a fourth hand-written copy of the Finding record.
+                        # Resolved right after expansion, so the macro emits the REFERENCE and one
+                        # definition governs every review stage in the library.
+                        "{{block:finding-record}}\n\nSubject:\n" + str(subject)
                     ),
                     "schema": {
                         "score": "number",

@@ -649,13 +649,19 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
 
 
 def _plan(args: dict[str, Any]) -> str:
-    """Template-unaware v1 (WORKFLOWS-V2 §4).
+    """Scaffold + manifest, or a real TEMPLATE when one is named (WORKFLOWS-V2 §4, 9b).
 
-    Returns a SCAFFOLD plus the manifest, deliberately: the template-aware planner is
-    UNIVERSAL-PLANNING's, and inventing a half-planner here would have to be deleted when
-    the real one lands. What this does give the model is everything it needs to author the
+    Returns a SCAFFOLD deliberately when no template is given: the template-aware planner is
+    UNIVERSAL-PLANNING's, and inventing a half-planner here would have to be deleted when the
+    real one lands. What the scaffold does give the model is everything it needs to author the
     spec itself in the next turn — the shapes the engine accepts, and a starting tree it can
     edit — instead of guessing at a schema.
+
+    `template` was previously ACCEPTED AND IGNORED. A model that passed it got a generic
+    scaffold back and no indication its request had been dropped, which is worse than the
+    parameter not existing: it looks like the templates are useless. Now a named template
+    returns that template's real (macro-expanded, block-resolved) tree, so "plan me a deep
+    research workflow" starts from the shipped one instead of a three-node stub.
     """
     goal = str(args.get("goal", "") or "").strip()
     if not goal:
@@ -663,6 +669,10 @@ def _plan(args: dict[str, Any]) -> str:
     rigor = str(args.get("rigor", "standard") or "standard")
     if rigor not in ("minimal", "standard", "deep"):
         rigor = "standard"
+
+    template = str(args.get("template", "") or "").strip()
+    if template:
+        return _plan_from_template(goal, template)
 
     scaffold: dict[str, Any] = {
         "kind": "sequence",
@@ -732,3 +742,47 @@ def _plan(args: dict[str, Any]) -> str:
         "manifest": {k: v for k, v in service.manifest().items() if k != "ok"},
     }
     return _fmt(body, summary=f"Draft plan for: {goal}")
+
+
+def _plan_from_template(goal: str, template: str) -> str:
+    """Plan by starting from a real template's tree rather than a generic scaffold.
+
+    Returns the template's ALREADY-EXPANDED root (macros expanded, blocks resolved), because that
+    is what the model will edit and then hand to `workflow_author` — handing back the authored
+    form would make the model re-derive an expansion it cannot see the result of.
+
+    The steering examples come along: they are the template's own record of how it is driven, and
+    they are what turn "here is a tree" into "here is how this tree is used".
+    """
+    result = _run(service.get_def(template))
+    if not result.get("ok"):
+        available = _run(service.list_defs())
+        names = [d["name"] for d in available.get("defs", [])]
+        return (
+            f"Error [WF_PLAN_TEMPLATE_NOT_FOUND]: no workflow definition named "
+            f"{template!r}. Available: {', '.join(names) or 'none'}."
+        )
+
+    definition = result.get("definition") or {}
+    meta = definition.get("metadata") or {}
+    body = {
+        "ok": True,
+        "planner": "template-v1",
+        "goal": goal,
+        "template": template,
+        "proposed_root": definition.get("root"),
+        "template_inputs": definition.get("inputs") or {},
+        # How this template is actually driven — few-shot for the edit the model is about to make.
+        "steering_examples": meta.get("steering_examples") or [],
+        "next_step": (
+            f"Adapt this template's tree to the goal, then call workflow_author with save=false "
+            f"to validate it. To run {template!r} UNCHANGED, skip authoring and call "
+            f"workflow_start with its inputs instead — a template that already fits does not "
+            f"need a copy."
+        ),
+        "note": (
+            "This is the template's expanded tree: macros are already compiled to core nodes and "
+            "shared blocks are already substituted, so what you see is what the engine runs."
+        ),
+    }
+    return _fmt(body, summary=f"Plan for '{goal}' from template {template!r}")

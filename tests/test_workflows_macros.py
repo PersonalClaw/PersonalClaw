@@ -24,6 +24,7 @@ import copy
 
 import pytest
 
+from personalclaw.workflows.blocks import resolve_spec
 from personalclaw.workflows.macros import (
     MAX_DEPTH,
     MacroError,
@@ -32,6 +33,13 @@ from personalclaw.workflows.macros import (
     macro_names,
 )
 from personalclaw.workflows.validator import validate_spec
+
+
+def _pipeline(spec: dict) -> dict:
+    """Macros expanded THEN blocks resolved — the exact order `author_def` uses. The judge panel
+    emits a `{{block:finding-record}}` reference, so validating the expansion ALONE would flag it
+    as an unknown binding root: a test artifact, not a macro defect."""
+    return resolve_spec(expand_spec(spec))
 
 
 def _spec(node: dict) -> dict:
@@ -438,7 +446,7 @@ class TestExpansionsValidate:
             "name": "t",
             "root": {"kind": "sequence", "id": "root_seq", "children": copy.deepcopy(nodes)},
         }
-        result = validate_spec(expand_spec(spec), strict=True)
+        result = validate_spec(_pipeline(spec), strict=True)
         assert result.issues == [], [i.to_dict() for i in result.issues]
 
     def test_all_four_together_still_validate(self) -> None:
@@ -451,5 +459,5 @@ class TestExpansionsValidate:
                 if not any(c.get("id") == node.get("id") for c in children):
                     children.append(copy.deepcopy(node))
         spec = {"name": "t", "root": {"kind": "sequence", "id": "root_seq", "children": children}}
-        result = validate_spec(expand_spec(spec), strict=True)
+        result = validate_spec(_pipeline(spec), strict=True)
         assert result.issues == [], [i.to_dict() for i in result.issues]

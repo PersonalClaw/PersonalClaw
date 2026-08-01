@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from personalclaw.workflows.blocks import resolve_spec
 from personalclaw.workflows.bundled_defs import (
     BundledWorkflowDefProvider,
     bundled_root,
@@ -80,6 +81,13 @@ def _raw(name: str) -> dict:
     return json.loads((bundled_root() / name / "workflow.json").read_text(encoding="utf-8"))
 
 
+def _pipeline(spec: dict) -> dict:
+    """Macros expanded THEN blocks resolved — the exact order `author_def` and the bundled
+    provider use. Validating the raw spec instead would flag a `{{block:…}}` as an unknown
+    binding root, which is a test artifact rather than a template defect."""
+    return resolve_spec(expand_spec(spec))
+
+
 class TestLibraryContents:
     def test_all_six_templates_ship(self) -> None:
         assert set(template_names()) == EXPECTED
@@ -101,7 +109,7 @@ class TestEachTemplate:
     def test_it_validates_STRICTLY(self, name: str) -> None:
         """Strict, so a template does not ship a warning it then propagates to every run made
         from it. This is the only test that parses these files at all."""
-        result = validate_spec(expand_spec(_raw(name)), strict=True)
+        result = validate_spec(_pipeline(_raw(name)), strict=True)
         assert result.issues == [], [i.to_dict() for i in result.issues]
 
     def test_it_loads_as_a_WorkflowDef(self, name: str) -> None:
@@ -154,7 +162,7 @@ class TestEachTemplate:
         """A `{{nodes.x.output}}` naming a node that does not exist is a mid-run binding error —
         after the upstream nodes already spent their tokens. The validator checks this; this test
         exists so the failure is attributed to THIS template by name."""
-        result = validate_spec(expand_spec(_raw(name)), strict=True)
+        result = validate_spec(_pipeline(_raw(name)), strict=True)
         unknown = [i for i in result.issues if i.code == "WF_UNKNOWN_NODE_REF"]
         assert not unknown, [i.to_dict() for i in unknown]
 
@@ -163,7 +171,7 @@ class TestEachTemplate:
         already done real work. `ALLOWED_HOOK_PROVIDERS` is the registered catalog's mirror."""
         from personalclaw.validation import ALLOWED_HOOK_PROVIDERS
 
-        root = Node.from_dict(expand_spec(_raw(name))["root"])
+        root = Node.from_dict(_pipeline(_raw(name))["root"])
         for path, node in walk(root):
             if node.kind.value == "action":
                 provider = str((node.config or {}).get("provider", ""))
@@ -173,7 +181,7 @@ class TestEachTemplate:
         """The Store shows `risk` as the install-consent surface. A template that writes files
         and runs commands while declaring `low` misrepresents what accepting it means."""
         raw = _raw(name)
-        root = Node.from_dict(expand_spec(raw)["root"])
+        root = Node.from_dict(_pipeline(raw)["root"])
         writes = any(
             n.kind.value == "action" and str((n.config or {}).get("provider", "")) == "bash"
             for _p, n in walk(root)
@@ -192,7 +200,7 @@ class TestConventions:
         predicate like "no open Critical" is uniform, the widget renders findings identically,
         and the Run Ledger is minable by the flywheel."""
         for name in template_names():
-            text = json.dumps(expand_spec(_raw(name)))
+            text = json.dumps(_pipeline(_raw(name)))
             if "Finding" not in text:
                 continue
             for field in ("severity", "location", "problem", "why", "recommended_fix", "status"):
@@ -202,7 +210,7 @@ class TestConventions:
     def test_the_code_template_captures_a_baseline_before_it_mutates(self) -> None:
         """Without it, a failure after the change cannot be told apart from one that was already
         there — and someone debugs the wrong commit."""
-        root = Node.from_dict(expand_spec(_raw("code-implementation"))["root"])
+        root = Node.from_dict(_pipeline(_raw("code-implementation"))["root"])
         order = [(p, n) for p, n in walk(root)]
         baseline_at = next(i for i, (_p, n) in enumerate(order) if n.id == "baseline")
         first_mutating = next(i for i, (_p, n) in enumerate(order) if n.kind.value == "stage")
@@ -212,7 +220,7 @@ class TestConventions:
         """The blessed opening shape: an `infer` classification whose output selects among entry
         subgraphs, so a small task is not put through the deep path."""
         for name in ("produce-and-audit", "deep-research"):
-            expanded = expand_spec(_raw(name))
+            expanded = _pipeline(_raw(name))
             root = Node.from_dict(expanded["root"])
             kinds = {n.id: n.kind.value for _p, n in walk(root)}
             assert kinds.get("triage") == "infer", f"{name} has no triage classifier"
@@ -225,7 +233,7 @@ class TestConventions:
     def test_a_verification_gate_is_engine_executed_not_model_declared(self) -> None:
         """The code template's gate runs a COMMAND. A gate that asked the model whether it was
         done would make done-ness self-reported, which is the failure the gate exists for."""
-        root = Node.from_dict(expand_spec(_raw("code-implementation"))["root"])
+        root = Node.from_dict(_pipeline(_raw("code-implementation"))["root"])
         gates = [n for _p, n in walk(root) if n.kind.value == "gate"]
         assert any(str((g.config or {}).get("kind")) == "verify_command" for g in gates)
 
@@ -389,10 +397,48 @@ class TestActionArgShape:
     def test_every_bundled_action_node_nests_its_arguments(self) -> None:
         """The library-wide version of the same check: no template may ship the broken shape."""
         for name in template_names():
-            root = Node.from_dict(expand_spec(_raw(name))["root"])
+            root = Node.from_dict(_pipeline(_raw(name))["root"])
             for path, node in walk(root):
                 if node.kind.value != "action":
                     continue
                 cfg = node.config or {}
                 stray = [k for k in cfg if k not in ("provider", "with", "context", "payload")]
                 assert not stray, f"{name} at {path}: arguments outside `with`: {stray}"
+
+
+def test_the_shared_blocks_are_declared_as_package_data() -> None:
+    """Same class of bug as the templates' own line, with a worse failure: a template's
+    `{{block:…}}` reference that cannot resolve is a hard ERROR, so a wheel missing the blocks
+    would make every review template fail to load rather than merely lose a convention.
+    """
+    root = Path(__file__).resolve().parents[1]
+    text = (root / "pyproject.toml").read_text(encoding="utf-8")
+    block = re.search(r"\[tool\.setuptools\.package-data\](.*?)\n\[", text, re.S)
+    assert block, "could not find the package-data block"
+    assert "workflows/bundled/shared/*.md" in block.group(1)
+
+
+def test_the_shared_directory_is_not_mistaken_for_a_template() -> None:
+    """`bundled/shared/` sits beside the template directories. It holds no `workflow.json`, which
+    is what keeps it out of the listing — but a future change that globbed directories instead of
+    checking for the file would silently list "shared" as a template a user could run.
+    """
+    assert "shared" not in template_names()
+    assert not (bundled_root() / "shared" / "workflow.json").exists()
+
+
+def test_the_whole_library_passes_the_conventions_lint() -> None:
+    """The library-wide gate (WF2-R15). `validate_spec` answers "will it run"; the lint answers
+    "does it follow the conventions" — and the shipped library is held to CLEAN (no warnings
+    either), because a warning that ships propagates to every template copied from it.
+
+    Reported all at once rather than per-template, so a convention change shows its full blast
+    radius in one CI failure instead of six sequential ones.
+    """
+    from personalclaw.workflows.template_lint import lint_template
+
+    problems: list[str] = []
+    for name in template_names():
+        for finding in lint_template(_raw(name), bundled=True).findings:
+            problems.append(f"{name}: [{finding.severity}] {finding.code} {finding.message}")
+    assert not problems, "\n".join(problems)

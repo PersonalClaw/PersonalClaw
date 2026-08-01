@@ -199,6 +199,10 @@ personalclaw = [
     # used to name: that filename was never produced by anything, so the wheel shipped an empty
     # template library and only a real `pip install` would have shown it.
     "workflows/bundled/*/workflow.json",
+    # The shared conventions blocks templates cite (WF2-R15). Without this line the wheel ships
+    # templates whose `{{block:…}}` references cannot resolve — and an unresolvable reference is
+    # a hard error, so every review template would fail to load rather than degrade.
+    "workflows/bundled/shared/*.md",
     "apps/native/*/app.json",
     "reference/*.md",
 ]
