@@ -63,7 +63,7 @@ mandatory.
 | 11 | **Slice 6a** — `mcp_workflows.py`: the 19 chat tools incl. `workflow_observe`/`run_from`/`audit`/`manifest`; wire into `_AGGREGATED_CATEGORY_MODULES`; validation schemas | G5 | ✅ DONE (#147) |
 | 12 | **Slice 6b** — spec ingestion: strict mode + repromptable errors, dry-run-before-save, provenance actor, run-start preflight (`can_resolve_use_case`), generated manifest + CI drift test | G5 | ✅ DONE (#148) |
 | 13 | **Slice 6c** — staged-turn contract for mutation tools; `[ACTIVE WORKFLOWS]` context block (never-break-a-turn); blocking-mode handler | G5 | ✅ DONE (#149) |
-| 14 | **Slice 7a** — `handlers.py` REST routes for defs + runs; register in `dashboard/server.py`; per-run SSE stream endpoint | G6 | TODO |
+| 14 | **Slice 7a** — `handlers.py` REST routes for defs + runs; register in `dashboard/server.py`; per-run SSE stream endpoint | G6 | ✅ DONE (#150) |
 | 15 | **Slice 7b** — FE `pages/workflows/`: list page, def detail, run detail (snapshot-then-subscribe); `lib/api.ts` methods + nav entry | G6 | TODO |
 | 16 | **Slice 8a** — `WorkflowProgressCard.tsx`; event pipeline: dedup keys, deterministic ids, event-fold law, epoch-tagged supersede-drop, node-keyed patches | G7 | TODO |
 | 17 | **Slice 8b** — per-observer debounced coalescing (~25ms), schema-validated snapshot projection, `result_omitted` spill boundary; FE lifecycle-union registration + backend⊆FE test | G7 | TODO |
@@ -364,3 +364,28 @@ mandatory.
   JSON-only makes structure unreadable. Mutation tools do not re-echo (the model already
   knows what it changed).
   (d) never-break-a-turn is asserted on the CALL SITE in context.py, not just the helper.
+- 2026-08-01 — session 14 (Slice 7a, the REST API) DONE → **PR #150** (stack #149→#150).
+  `workflows/handlers.py`: 19 routes for defs + runs over the SAME `workflows.service` the
+  chat tools use, §2.2 error envelope with a one-place `_STATUS_MAP`, restricted-session
+  guard + SEL audit on every mutation, snapshot-then-subscribe per-run SSE that CLOSES for a
+  terminal run. Mounted in `dashboard/server.py`. 10543 tests (+50).
+  Validated live against a REAL aiohttp server over HTTP: save 201 → list → blocking run to
+  complete → status with both nodes done → `output='got 7'` → SSE emitting
+  `event: workflow_snapshot` then closing → fork 201 → manifest → a 404 in the exact §2.2
+  envelope → `/runs` returning a run list rather than a def named "runs".
+  DEVIATIONS/DISCOVERIES: (a) **TWO WIRING GAPS CLOSED.** The supervisor was built at boot
+  but never published, so `state.workflows` AND `ActionServices.workflows` were both None —
+  the routes would have created runs nobody drives and the `run-workflow` trigger provider
+  would have kept reporting "no supervisor available". Both now get it.
+  (b) **A pre-existing legibility gap fixed here because it hid this slice's work:** the
+  offline reference's AST walk was rooted at `dashboard/`, so entity families registered from
+  their own package were INVISIBLE. Widening it to the package surfaced **43 routes** — this
+  slice's 19 plus artifacts' and tasks' 24, which had NEVER been documented. Asserted both
+  ways so a future narrowing is caught.
+  (c) An unmapped service code returns 400, never 500 — a 500 tells a client to retry
+  something that can never succeed.
+  (d) mypy caught two real bugs pre-run: `_is_restricted_session` takes `(state, request)`,
+  and `dashboard_state` is Optional at that point.
+  (e) TEST LANDMINE: `make_mocked_request`'s default app is a MagicMock, so
+  `app.get("state")` returns a mock and the handler 500s on an awaited mock — masking what it
+  actually did. Pass a REAL `web.Application`.
