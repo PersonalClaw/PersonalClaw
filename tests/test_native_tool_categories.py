@@ -1,7 +1,7 @@
 """Regression guard for the native tool-category split (docs/plans/native-tool-categories.md).
 
 The monolithic personalclaw-core tool surface was split into 5 cohesive category
-tool-providers (core / subagents / memory / artifacts / workflows). Two invariants
+tool-providers (core / subagents / memory / artifacts / prompts). Two invariants
 hold the split together and must never silently drift:
 
 1. **In-process** — each category is its own provider in the tool registry, and every
@@ -29,7 +29,6 @@ import personalclaw.mcp_core as core
 # The category modules the aggregation root composes, and the providers they back.
 _CATEGORY_MODULES = [
     "personalclaw.mcp_artifacts",
-    "personalclaw.mcp_workflows",
     "personalclaw.mcp_prompts",
     "personalclaw.mcp_memory",
     "personalclaw.mcp_subagents",
@@ -39,7 +38,6 @@ _CATEGORY_PROVIDERS = {
     "personalclaw-subagents",
     "personalclaw-memory",
     "personalclaw-artifacts",
-    "personalclaw-workflows",
     "personalclaw-prompts",
 }
 # The cross-cutting tools that stay in residual core (not a single entity category).
@@ -143,7 +141,7 @@ def test_in_process_catalog_matches_aggregate_and_groups_by_provider():
     owner = {t.name: t.provider for t in tools}
     expectations = {
         "artifact_save": "personalclaw-artifacts",
-        "workflow_list": "personalclaw-workflows",
+        "prompt_render": "personalclaw-prompts",
         "memory_recall": "personalclaw-memory",
         "subagent_run": "personalclaw-subagents",
         "skill_invoke": "personalclaw-core",

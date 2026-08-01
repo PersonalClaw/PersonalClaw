@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, type ActionProvider, type PromptItem, type PromptVariable, type WorkflowItem } from '../../lib/api'
+import { api, type ActionProvider, type PromptItem, type PromptVariable } from '../../lib/api'
 import { Combobox } from '../../ui/Combobox'
 import { Field, TextArea } from '../../ui/forms'
 import { schemaProps, SchemaField, type WidgetMap } from '../tools/schema'
@@ -25,18 +25,19 @@ export function ActionConfig({ providers, provider, config, onProvider, onConfig
 
   const setField = (k: string, v: unknown) => onConfig({ ...config, [k]: v })
 
-  // Metadata-driven widgets: a schema field with x-meta.widget "prompt"/"workflow"
-  // renders a live, searchable picker of saved Prompts/Workflows instead of a
-  // free-text box. Loaded lazily. Clearing the picker (the X) leaves the field
-  // empty — which for run-prompt means "use loop.md" (T3).
+  // Metadata-driven widgets: a schema field with x-meta.widget "prompt" renders a
+  // live, searchable picker of saved Prompts instead of a free-text box. Loaded
+  // lazily. Clearing the picker (the X) leaves the field empty — which for
+  // run-prompt means "use loop.md" (T3).
+  //
+  // The "workflow" widget is gone with the run-workflow action provider
+  // (WORKFLOWS-V2 Phase 1). No provider declares that widget any more, so the
+  // registry below would never render it; Slice 3 restores both together.
   const [prompts, setPrompts] = useState<PromptItem[]>([])
-  const [workflows, setWorkflows] = useState<WorkflowItem[]>([])
   const needsPrompt = props.some(([, s]) => s['x-meta']?.widget === 'prompt')
-  const needsWorkflow = props.some(([, s]) => s['x-meta']?.widget === 'workflow')
   useEffect(() => {
     if (needsPrompt && prompts.length === 0) api.prompts('user').then(setPrompts).catch(() => {})
-    if (needsWorkflow && workflows.length === 0) api.workflows().then(setWorkflows).catch(() => {})
-  }, [needsPrompt, needsWorkflow])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [needsPrompt])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const widgets: WidgetMap = useMemo(() => ({
     prompt: ({ value, onChange, placeholder }) => (
@@ -45,13 +46,7 @@ export function ActionConfig({ providers, provider, config, onProvider, onConfig
         value={String(value ?? '')} onChange={onChange} placeholder={placeholder || 'Pick a saved prompt…'}
         emptyText="No saved prompts" />
     ),
-    workflow: ({ value, onChange, placeholder }) => (
-      <Combobox
-        options={workflows.map((w) => ({ value: w.id, label: w.name, description: w.description || undefined }))}
-        value={String(value ?? '')} onChange={onChange} placeholder={placeholder || 'Pick a saved workflow…'}
-        emptyText="No saved workflows" />
-    ),
-  }), [prompts, workflows])
+  }), [prompts])
 
   return (
     <div className="flex flex-col gap-l">

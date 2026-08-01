@@ -108,7 +108,6 @@ _SPECIAL = {
     # generic rule's out-of-range value would (correctly) come back clamped.
     ("memory", "push_min_confidence"): 0.55,
     ("skills", "auto_similarity_threshold"): 0.5,
-    ("workflows", "match_threshold"): 0.5,
     ("tools", "projection_rules"): [
         ProjectionRuleConfig(name="t", match_regex="^x", strategy="log")
     ],

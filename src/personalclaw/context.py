@@ -1032,6 +1032,11 @@ class ContextBuilder:
         system_prompt_suffix: str = "",
         resolved_agent_id: str = "",
         force_skill_ids: list[str] | None = None,
+        # Accepted and currently unused: the loop engine still resolves per-phase
+        # `workflow_ids` (a persisted column with live user data), but the injection
+        # that consumed them died with the old feature. Slice 6's `[ACTIVE WORKFLOWS]`
+        # block is what makes them mean something again. Dropping the parameter would
+        # force a matching edit in the loop capability contract for no gain.
         force_workflow_ids: list[str] | None = None,
     ) -> tuple[str, HookResult]:
         """Build the full message with context and hook processing.
@@ -1244,71 +1249,15 @@ class ContextBuilder:
                 except Exception:
                     logger.debug("skill usage record skipped (error)", exc_info=True)
 
-        # Workflow surfacing (scoped + semantic) — runs for ALL agents (unlike
-        # the default skills/context above, which custom agents skip). Scope
-        # gating already controls relevance precisely, and agent-scoped SOPs are
-        # specifically meant to surface on a particular (often custom/ACP) agent's
-        # turns — so this must not be gated on is_custom. Runs every turn (like
-        # triggered skills, NOT gated on is_new_session). Gated by
-        # config.workflows.enabled (kill-switch); never breaks a turn
-        # (surface_for_turn_sync swallows all errors → None).
-        try:
-            cfg = AppConfig.load()
-            if getattr(cfg.workflows, "enabled", True):
-                from personalclaw.workflows.surfacing import (
-                    TurnScope,
-                    render_injection,
-                    surface_for_turn_sync,
-                )
-
-                turn = TurnScope(
-                    session_key=session_key,
-                    agent=agent,
-                    cwd=cwd,  # == workspace scope (session.workspace_dir)
-                    # Agent-scoped SOPs match on the resolved binding id; fall
-                    # back to the bare agent name for native turns.
-                    agent_id=resolved_agent_id or (agent or ""),
-                )
-                emitted_wf: set[str] = set()
-                match = surface_for_turn_sync(text, turn)
-                if match:
-                    parts.append(render_injection(match) + "\n\n")
-                    emitted_wf.add(match.workflow.id)
-                    logger.info(
-                        "Surfaced workflow %s (scope=%s score=%.2f method=%s)",
-                        match.workflow.name,
-                        match.scope.value,
-                        match.score,
-                        match.method,
-                    )
-                # Force-included workflows (goal-loop planner/quorum): the loop's
-                # confirmed workflow_ids inject ACTIVELY every cycle, by id, on top
-                # of (and deduped against) the passive scope/text match above.
-                if force_workflow_ids:
-                    import asyncio as _asyncio
-
-                    from personalclaw.workflows.registry import list_all_workflows
-                    from personalclaw.workflows.surfacing import WorkflowMatch
-
-                    try:
-                        all_wf, _ = _asyncio.run(list_all_workflows(limit=1000))
-                    except RuntimeError:
-                        all_wf = []  # already in an event loop — skip (rare in this sync path)
-                    by_id = {w.id: w for w in all_wf}
-                    forced_wf: list[str] = []
-                    for wid in force_workflow_ids:
-                        wf = by_id.get(wid)
-                        if wf and wf.id not in emitted_wf:
-                            m = WorkflowMatch(
-                                workflow=wf, score=1.0, scope=wf.scope, method="forced"
-                            )
-                            parts.append(render_injection(m, all_wf) + "\n\n")
-                            emitted_wf.add(wf.id)
-                            forced_wf.append(wf.name)
-                    if forced_wf:
-                        logger.info("Force-included loop workflows: %s", ", ".join(forced_wf))
-        except Exception:
-            logger.debug("Workflow surfacing skipped (error)", exc_info=True)
+        # WORKFLOWS-V2 Phase 1: the old `[PREFERRED WORKFLOW …]` surfacing block stood
+        # here — embedding-matched SOPs injected passively every turn, plus a
+        # force-include path for goal-loop-confirmed ids. Deleted with the feature.
+        #
+        # Slice 6 puts an `[ACTIVE WORKFLOWS]` block in this exact spot, and it is a
+        # different thing on purpose: it lists the RUNNING workflows in this session
+        # with the next action each needs, rather than guessing which definition the
+        # turn resembles. Whatever lands here must keep the never-break-a-turn contract
+        # the old path honored (swallow everything → inject nothing).
 
         # Hook-injected context — apply to all agents
         if hook_result.action == HOOK_INJECT_CONTEXT:

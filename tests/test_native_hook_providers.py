@@ -222,9 +222,14 @@ def test_send_message_no_channel_falls_back_to_notify(monkeypatch):
 
 def test_hook_provider_allowlist_includes_all_action_providers():
     """The lifecycle-trigger create schema must accept every registered action
-    provider — incl. run-prompt/run-workflow/run-script — so a lifecycle trigger
-    can run anything a schedule trigger can (the UI offers them; the backend must
-    not reject them). Regression for the hardcoded allowlist that omitted them."""
+    provider — incl. run-prompt/run-script — so a lifecycle trigger can run anything
+    a schedule trigger can (the UI offers them; the backend must not reject them).
+    Regression for the hardcoded allowlist that omitted them.
+
+    `run-workflow` is absent both places while WORKFLOWS-V2 rebuilds (Phase 1 deleted
+    the provider; Slice 3 re-adds provider + allowlist entry together). The
+    registered-minus-allowed check below is what actually holds the invariant — it
+    catches a provider in one set and not the other, which is the real bug."""
     from personalclaw.action_providers.registry import (
         _ensure_default_providers_registered,
         list_action_providers,
@@ -235,5 +240,8 @@ def test_hook_provider_allowlist_includes_all_action_providers():
     registered = set(list_action_providers())
     missing = registered - set(ALLOWED_HOOK_PROVIDERS)
     assert not missing, f"action providers not accepted by lifecycle triggers: {missing}"
-    # Explicitly pin the T1/T2 providers.
-    assert {"run-prompt", "run-workflow"} <= set(ALLOWED_HOOK_PROVIDERS)
+    # Explicitly pin the T1 provider (T2's run-workflow returns with Slice 3).
+    assert {"run-prompt"} <= set(ALLOWED_HOOK_PROVIDERS)
+    # And the converse: nothing may sit in the allowlist without being registered,
+    # or a trigger validates, saves, and then fails at dispatch time.
+    assert "run-workflow" not in set(ALLOWED_HOOK_PROVIDERS) or "run-workflow" in registered

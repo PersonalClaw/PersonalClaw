@@ -379,6 +379,17 @@ TOOL_META: dict[str, dict[str, Any]] = {
         "error_codes": [],
         "examples": [{"summary": "Check which formats are available", "args": {}}],
     },
+    # ── personalclaw-prompts ─────────────────────────────────────────────────
+    "prompt_render": {
+        "response_type": "prompt.render.result",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Render a saved prompt with variables",
+                "args": {"prompt_id": "review", "vars": {"file": "server.py"}},
+            },
+        ],
+    },
     # ── personalclaw-memory ──────────────────────────────────────────────────
     "memory_remember": {
         "response_type": "memory.remember.result",
@@ -413,57 +424,6 @@ TOOL_META: dict[str, dict[str, Any]] = {
                 "summary": "Recall relevant memories for a topic",
                 "args": {"query": "how do I like commit messages", "deep": False},
             }
-        ],
-    },
-    # ── personalclaw-workflows ───────────────────────────────────────────────
-    "workflow_list": {
-        "response_type": "workflow.list",
-        "error_codes": [],
-        "examples": [{"summary": "List saved workflows", "args": {"scope": "global"}}],
-    },
-    "workflow_get": {
-        "response_type": "workflow.detail",
-        "error_codes": [],
-        "examples": [
-            {"summary": "Read a workflow definition", "args": {"workflow_id": "weekly-digest"}}
-        ],
-    },
-    "workflow_run": {
-        "response_type": "workflow.run.result",
-        "error_codes": [],
-        "examples": [{"summary": "Run a saved workflow", "args": {"workflow_id": "weekly-digest"}}],
-    },
-    "workflow_create": {
-        "response_type": "workflow.detail",
-        "error_codes": [],
-        "examples": [
-            {
-                "summary": "Create a two-step workflow",
-                "args": {
-                    "name": "weekly-digest",
-                    "steps": [{"tool": "knowledge_search", "args": {"query": "this week"}}],
-                },
-            },
-        ],
-    },
-    "workflow_promote": {
-        "response_type": "workflow.detail",
-        "error_codes": [],
-        "examples": [
-            {
-                "summary": "Promote a session workflow to global scope",
-                "args": {"workflow_id": "weekly-digest", "scope": "global"},
-            }
-        ],
-    },
-    "prompt_render": {
-        "response_type": "prompt.render.result",
-        "error_codes": [],
-        "examples": [
-            {
-                "summary": "Render a saved prompt with variables",
-                "args": {"prompt_id": "review", "vars": {"file": "server.py"}},
-            },
         ],
     },
     # ── personalclaw-subagents ───────────────────────────────────────────────

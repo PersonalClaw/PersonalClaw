@@ -645,6 +645,17 @@ class GatewayOrchestrator:
         except Exception:
             logger.warning("Agent config install failed", exc_info=True)
 
+        # Move any pre-v2 workflow SOPs aside (WORKFLOWS-V2 Phase 1). Idempotent and
+        # non-destructive: the user's own writing is preserved under
+        # `workflows/_legacy_sops/`, out of the way of the v2 def store that lands in
+        # the same parent. A no-op on every home that has none.
+        try:
+            from personalclaw.workflows.legacy import archive_legacy_sops
+
+            archive_legacy_sops(config_dir() / "workflows")
+        except Exception:
+            logger.debug("Legacy SOP archival skipped", exc_info=True)
+
         factory = self._cfg.create_provider_factory()
 
         # Memory, skills, hooks, lessons

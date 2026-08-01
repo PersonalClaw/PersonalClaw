@@ -473,31 +473,16 @@ export interface TaskComment { id: string; task_id: string; author: string; body
 // A decompose proposal — one task the loop intake suggests (index-based deps).
 export interface ApiProposedTask { title: string; description?: string; priority?: string; depends_on?: number[] }
 
-// A step is either an inline step (title + instruction) OR a reference to
-// another workflow (ref = workflow id) — enabling reusable, composed SOPs.
-// `ref` is forward-looking: the backend doesn't expand refs yet, so the UI
-// marks it "soon".
-export interface WorkflowStep { id?: string; title: string; instruction: string; ref?: string }
-export type WorkflowScope = 'global' | 'workspace' | 'agent' | 'session'
-// Workflow composition graph: nodes (this + referenced workflows), ref edges,
-// any detected cycles, and the depth-expanded step tree.
-export interface WorkflowGraph {
-  nodes: Array<{ id: string; name: string }>
-  edges: Array<{ from?: string; to?: string; source?: string; target?: string }>
-  cycles: string[][]
-  // Depth-expanded step tree. Each item carries provenance: source_workflow (the
-  // workflow this step came from) + depth (0 = the top workflow's own steps; >0 =
-  // pulled in via a ref-step). Matches composition.build_graph's emitted shape.
-  expanded: Array<{ title?: string; instruction?: string; source_workflow?: string; depth?: number }>
-}
-export interface WorkflowItem {
-  id: string; name: string; description: string; steps: WorkflowStep[]
-  tags?: string[]; scope?: WorkflowScope; scope_ref?: string; match_text?: string
-  enabled?: boolean; version?: string; provider?: string; created_at?: string; updated_at?: string
-}
-export interface WorkflowMatch {
-  eligible: Array<{ id: string; name: string; scope: string; scope_ref: string }>
-  match: { id: string; name: string; scope: string; score: number; method: string } | null
+// WORKFLOWS-V2 Phase 1: the old SOP types (WorkflowStep/Scope/Graph/Item/Match)
+// lived here. Slice 7 lands the v2 run/def types when its API mounts.
+//
+// Until then this is the minimal shape the loop plan-review pickers still type
+// against. Nothing populates it — the capability catalog's workflow half is empty
+// and both pickers are length-guarded — but the persisted `workflow_ids` field and
+// its UI plumbing stay, so v2 definitions can fill them without a second refactor.
+export interface WorkflowDefStub {
+  id: string; name: string; description?: string; enabled?: boolean
+  scope?: string; tags?: string[]; steps?: Array<{ id?: string; title: string; instruction?: string }>
 }
 // Prompt template (parametrized). Variables are TYPED — type ∈
 // text|textarea|number|boolean|select — and the content carries {{name}}
@@ -1584,10 +1569,6 @@ export const api = {
   tasksBulk: (op: 'create' | 'update' | 'delete', items: Array<Record<string, unknown>>) =>
     post<{ total: number; succeeded: number; failed: number; results?: unknown[]; errors?: unknown[] }>('/api/tasks/bulk', { op, items }),
 
-  // ── Workflow composition graph + scope promotion ──
-  workflowGraph: (id: string) => get<WorkflowGraph>(`/api/workflows/${encodeURIComponent(id)}/graph`),
-  promoteWorkflow: (id: string, scope: WorkflowScope, scope_ref?: string) =>
-    post<WorkflowItem>(`/api/workflows/${encodeURIComponent(id)}/promote`, { scope, scope_ref }),
 
   // ── Chat turn-level controls ──
   /** Silently prime the next turn with background context (no visible message, no turn). */
@@ -2017,13 +1998,6 @@ export const api = {
   resetTaskList: (id: string) => post<{ ok: boolean; reset_task_ids: string[] }>(`/api/task-lists/${encodeURIComponent(id)}/reset`, {}),
 
   // workflows
-  workflows: () => get<{ workflows: WorkflowItem[] }>('/api/workflows').then((d) => d.workflows),
-  createWorkflow: (body: Record<string, unknown>) => post<WorkflowItem>('/api/workflows', body),
-  updateWorkflow: (id: string, body: Record<string, unknown>) => put<WorkflowItem>(`/api/workflows/${encodeURIComponent(id)}`, body),
-  deleteWorkflow: (id: string) => del(`/api/workflows/${encodeURIComponent(id)}`),
-  previewWorkflowMatch: (query: string) => post<WorkflowMatch>('/api/workflows/preview-match', { query }),
-  workflowProviders: () => get<{ providers: string[] }>('/api/workflows/providers').then((d) => d.providers),
-  workflowsUsedBy: (agent: string) => get<{ agent: string; workflows: WorkflowItem[] }>(`/api/workflows/used-by/${encodeURIComponent(agent)}`).then((d) => d.workflows),
 
   // prompts
   prompts: (kind?: PromptKind) => get<PromptItem[]>(`/api/prompts${kind ? `?kind=${kind}` : ''}`),

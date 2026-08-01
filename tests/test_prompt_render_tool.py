@@ -71,13 +71,17 @@ class TestPromptsCategoryIsIndependent:
     replacement. WORKFLOWS-V2 Phase 1 deletes `mcp_workflows` wholesale, so anything
     still living there goes with it."""
 
-    def test_prompt_render_is_not_in_the_workflows_category(self):
-        from personalclaw.mcp_workflows import _list_tools as workflow_tools
+    def test_the_workflows_category_module_is_gone(self):
+        """Phase 1 deleted it — which is exactly why prompt_render moved out first."""
+        import importlib
 
-        names = {t["name"] for t in workflow_tools()}
-        assert "prompt_render" not in names, (
-            "prompt_render moved to mcp_prompts (Phase 0) — a copy left in "
-            "mcp_workflows would be deleted with that module in Phase 1"
+        try:
+            importlib.import_module("personalclaw.mcp_workflows")
+        except ModuleNotFoundError:
+            return
+        raise AssertionError(
+            "personalclaw.mcp_workflows still exists; prompt_render's relocation "
+            "assumed Phase 1 deletes it"
         )
 
     def test_prompts_module_does_not_import_workflows(self):

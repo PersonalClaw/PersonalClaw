@@ -470,23 +470,6 @@ IMAGE_GENERATE_SCHEMA = ToolSchema(
     ],
 )
 
-_WORKFLOW_SCOPES = frozenset({"global", "workspace", "agent", "session"})
-
-WORKFLOW_LIST_SCHEMA = ToolSchema(
-    tool_name="workflow_list",
-    fields=[
-        FieldSpec("scope", str, max_len=20, allowed=_WORKFLOW_SCOPES),
-        FieldSpec("tag", str, max_len=64),
-    ],
-)
-
-WORKFLOW_GET_SCHEMA = ToolSchema(
-    tool_name="workflow_get",
-    fields=[
-        FieldSpec("workflow_id", str, required=True, max_len=64),
-    ],
-)
-
 PROMPT_RENDER_SCHEMA = ToolSchema(
     tool_name="prompt_render",
     fields=[
@@ -499,28 +482,6 @@ SKILL_INVOKE_SCHEMA = ToolSchema(
     tool_name="skill_invoke",
     fields=[
         FieldSpec("name", str, required=True, max_len=128),
-    ],
-)
-
-WORKFLOW_CREATE_SCHEMA = ToolSchema(
-    tool_name="workflow_create",
-    fields=[
-        FieldSpec("name", str, required=True, max_len=64),
-        FieldSpec("description", str, max_len=MAX_SHORT_STRING),
-        FieldSpec("steps", list, item_type=dict, max_items=50),
-        FieldSpec("scope", str, max_len=20, allowed=_WORKFLOW_SCOPES),
-        FieldSpec("scope_ref", str, max_len=512),
-        FieldSpec("match_text", str, max_len=MAX_SHORT_STRING),
-        FieldSpec("tags", list, item_type=str, item_max_len=64, max_items=20),
-    ],
-)
-
-WORKFLOW_PROMOTE_SCHEMA = ToolSchema(
-    tool_name="workflow_promote",
-    fields=[
-        FieldSpec("workflow_id", str, required=True, max_len=64),
-        FieldSpec("scope", str, required=True, max_len=20, allowed=_WORKFLOW_SCOPES),
-        FieldSpec("scope_ref", str, max_len=512),
     ],
 )
 
@@ -595,8 +556,13 @@ CRON_RESUME_SCHEMA = ToolSchema(
 # bash/webhook/run-script are self-contained; the native actions reach in-process
 # services via the action service accessor. Mirrors the registered action-provider
 # catalog (action_providers.registry) — every provider a schedule trigger can run,
-# a lifecycle trigger can run too. run-prompt/run-workflow (T1/T2) MUST be here or
-# the lifecycle-trigger create path rejects them even though the UI offers them.
+# a lifecycle trigger can run too. run-prompt MUST be here or the lifecycle-trigger
+# create path rejects it even though the UI offers it.
+#
+# `run-workflow` is absent on purpose (WORKFLOWS-V2 Phase 1): its action provider is
+# deleted, and listing a provider that cannot be dispatched is worse than omitting it —
+# the trigger would validate, save, and then fail at run time. Slice 3 re-adds it
+# alongside the v2 provider, in the same commit.
 ALLOWED_HOOK_PROVIDERS = frozenset(
     {
         "bash",
@@ -607,7 +573,6 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         "create-task",
         "invoke-agent",
         "run-prompt",
-        "run-workflow",
         # PLATFORM-LEGIBILITY §4.2: drive any enabled app's declared agentCallable
         # backend route (the ONE app-route action provider; per-app providers can't
         # be enumerated in a static frozenset).
@@ -753,12 +718,7 @@ MCP_CORE_SCHEMAS: dict[str, ToolSchema] = {
     "artifact_versions": ARTIFACT_VERSIONS_SCHEMA,
     "artifact_delete": ARTIFACT_DELETE_SCHEMA,
     "image_generate": IMAGE_GENERATE_SCHEMA,
-    "workflow_list": WORKFLOW_LIST_SCHEMA,
-    "workflow_get": WORKFLOW_GET_SCHEMA,
-    "workflow_run": WORKFLOW_GET_SCHEMA,
     "prompt_render": PROMPT_RENDER_SCHEMA,
-    "workflow_create": WORKFLOW_CREATE_SCHEMA,
-    "workflow_promote": WORKFLOW_PROMOTE_SCHEMA,
     "skill_invoke": SKILL_INVOKE_SCHEMA,
 }
 

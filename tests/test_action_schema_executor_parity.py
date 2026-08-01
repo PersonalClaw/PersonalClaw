@@ -7,7 +7,7 @@ UNCONFIGURABLE from the UI — the exact failure behind:
   * #13  webhook empty settingsSchema
   * #21  create-task missing assignee/due/labels
   * #37  bash-action empty settingsSchema (command unconfigurable → every bash
-         hook failed "missing 'command' field"); run-prompt/run-workflow missing
+         hook failed "missing 'command' field"); run-prompt missing
          ``dry_run``.
 
 This test statically extracts each executor's ``action_config.get("<key>")`` /
@@ -44,7 +44,6 @@ _NATIVE_KEYS = {
     "notify": "notify_provider.py",
     "run-prompt": "run_prompt_provider.py",
     "run-script": "run_script_provider.py",
-    "run-workflow": "run_workflow_provider.py",
     "send-message": "send_message_provider.py",
 }
 
@@ -131,7 +130,9 @@ def test_bash_action_exposes_command():
     assert "command" in _manifest_props("bash")
 
 
-def test_run_prompt_and_workflow_expose_dry_run():
-    """#37: dry-run replay must be configurable from the Triggers UI."""
+def test_run_prompt_exposes_dry_run():
+    """#37: dry-run replay must be configurable from the Triggers UI.
+
+    run-workflow was asserted here too until WORKFLOWS-V2 Phase 1 deleted the
+    provider; Slice 3 re-adds it (with `dry_run`) and this assertion with it."""
     assert "dry_run" in _manifest_props("run-prompt")
-    assert "dry_run" in _manifest_props("run-workflow")

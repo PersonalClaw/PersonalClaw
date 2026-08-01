@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
-import { Code2, Plus, Trash2, X, Rocket, Hand, ChevronLeft, Loader2, ChevronUp, ChevronDown, FileText, Sparkle, Workflow, FolderOpen, Gauge } from 'lucide-react'
+import { Code2, Plus, Trash2, X, Rocket, Hand, ChevronLeft, Loader2, ChevronUp, ChevronDown, FileText, Sparkle, FolderOpen, Gauge } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { Button } from '../../ui/Button'
@@ -9,7 +9,7 @@ import { SquareIconButton } from '../../ui/SquareIconButton'
 import { CapRow, CapabilityPeekModal } from '../../ui/CapabilityPicker'
 import { Markdown } from '../../ui/Markdown'
 import { spring } from '../../design/motion'
-import { api, SDLC_STAGES, sdlcStageLabel, type Loop, type CodeStage, type PlanStep, type SkillItem, type WorkflowItem, type SkillSearchResult } from '../../lib/api'
+import { api, SDLC_STAGES, sdlcStageLabel, type Loop, type CodeStage, type PlanStep, type SkillItem, type SkillSearchResult, type WorkflowDefStub } from '../../lib/api'
 import type { CodeDraft } from './codeDraft'
 import { WorkspacePicker } from './WorkspacePicker'
 
@@ -50,7 +50,7 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
   // "Capabilities" summary — so the user SEES what the worker will load actively every
   // cycle before launching, instead of those picks being silently applied.
   const [installedSkills, setInstalledSkills] = useState<SkillItem[]>([])
-  const [installedWorkflows, setInstalledWorkflows] = useState<WorkflowItem[]>([])
+  const installedWorkflows: WorkflowDefStub[] = []  // filled by Slice 0's def store
   // The capabilities the loop will load actively every cycle — seeded from the loop's
   // baseline (the planner's threaded suggestions) and editable here before launch, so
   // the user can drop a mis-suggested skill or add one the planner missed. Persisted on
@@ -91,7 +91,9 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
       setWorkflowIds(new Set(p.workflow_ids ?? []))
     }).catch(() => setError('Could not load the project.'))
     api.skills().then(setInstalledSkills).catch(() => {})
-    api.workflows().then((w) => setInstalledWorkflows(w.filter((x) => x.enabled !== false))).catch(() => {})
+    // No workflow catalog until WORKFLOWS-V2 Slice 0 lands the def store. The
+    // picker below is length-guarded, so an empty list renders no section; the
+    // persisted `workflow_ids` field is left intact for the v2 defs to fill.
     api.uLoopPlanSession(draft.projectId).then((s) => {
       if (s) setArtifacts(s.steps.filter((st) => st.kind !== 'decomposition' && st.artifact && Object.keys(st.artifact).length > 0))
     }).catch(() => {})
@@ -326,8 +328,8 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
  *  launch. PLUS planner-suggested marketplace skills not yet on disk — installed in
  *  place (then auto-selected). Renders nothing when there's nothing installed AND
  *  nothing to install (the agent still trigger-matches skills as it goes). */
-function PlanCapabilities({ skills, workflows, skillIds, workflowIds, onToggleSkill, onToggleWorkflow, suggested, suggestedWf, marketplace, installing, installed, onInstall }: {
-  skills: SkillItem[]; workflows: WorkflowItem[]
+function PlanCapabilities({ skills, workflows, skillIds, workflowIds, onToggleSkill, suggested, suggestedWf, marketplace, installing, installed, onInstall }: {
+  skills: SkillItem[]; workflows: WorkflowDefStub[]
   skillIds: Set<string>; workflowIds: Set<string>
   onToggleSkill: (key: string) => void; onToggleWorkflow: (id: string) => void
   suggested: Set<string>; suggestedWf: Set<string>
@@ -337,7 +339,7 @@ function PlanCapabilities({ skills, workflows, skillIds, workflowIds, onToggleSk
   // Peek: which capability the user is previewing before committing it (skill content
   // fetched on open; workflow steps render from the in-hand item). Declared before the
   // empty-state early return so the hook order stays stable.
-  const [peek, setPeek] = useState<{ kind: 'skill' | 'workflow'; skill?: SkillItem; workflow?: WorkflowItem } | null>(null)
+  const [peek, setPeek] = useState<{ kind: 'skill'; skill?: SkillItem } | null>(null)
   // Hide marketplace suggestions already on disk (installed this session OR present in
   // the installed catalog under a key/name that often differs from the marketplace id).
   const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, '')
@@ -365,11 +367,8 @@ function PlanCapabilities({ skills, workflows, skillIds, workflowIds, onToggleSk
               checked={skillIds.has(s.key)} suggested={suggested.has(s.key)}
               onToggle={() => onToggleSkill(s.key)} onPeek={() => setPeek({ kind: 'skill', skill: s })} icon={<Sparkle size={14} />} />
           ))}
-          {orderedWorkflows.map((w) => (
-            <CapRow key={`w-${w.id}`} id={w.id} name={w.name || w.id} description={w.description}
-              checked={workflowIds.has(w.id)} suggested={suggestedWf.has(w.id)}
-              onToggle={() => onToggleWorkflow(w.id)} onPeek={() => setPeek({ kind: 'workflow', workflow: w })} icon={<Workflow size={14} />} />
-          ))}
+          {/* The workflow rows stood here — removed with the old feature
+              (WORKFLOWS-V2 Phase 1). Slice 7 restores a v2 def picker. */}
         </div>
       )}
       {/* Planner-suggested marketplace skills not yet installed — install in place. */}

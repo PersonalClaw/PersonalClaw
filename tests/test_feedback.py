@@ -221,25 +221,32 @@ class TestThresholds:
 
 
 class TestSurfacingSuppression:
-    @pytest.mark.asyncio
-    async def test_suppressed_workflow_stops_surfacing(self, monkeypatch):
-        from personalclaw.workflows import surfacing as wf_surf
+    """Suppression gating a real consumer.
 
-        class FakeWf:
-            id = "wf_abc"
-            enabled = True
-            scope = None
+    This used to drive `workflows.surfacing.eligible_workflows` end to end — the only
+    *gated* consumer Feedback-Signal ever had (its own S3 log records that skills
+    surfacing was deliberately left unwired). WORKFLOWS-V2 Phase 1 deleted that module,
+    so as of now **no runtime path consults `suppressed_producers()`**: the Settings
+    panel reads it for display, and `check_retire_candidates` proposes retirement, but
+    nothing is actually withheld.
 
-        # eligible before suppression, excluded after
-        async def fake_list(**kw):
-            return [FakeWf()], 1
+    That is an honest capability gap, not a silent one. The threshold machinery below
+    stays fully covered, and WORKFLOWS-V2 Slice 6 (workflow surfacing in chat) or the
+    Learning-Flywheel skill work is where a gated consumer returns; whichever lands
+    first should re-add an end-to-end case here.
+    """
 
-        monkeypatch.setattr("personalclaw.workflows.registry.list_all_workflows", fake_list)
-        monkeypatch.setattr(wf_surf, "_is_eligible", lambda wf, turn: True)
-        turn = wf_surf.TurnScope(cwd="", agent_id="", session_key="")
-        assert [w.id for w in await wf_surf.eligible_workflows(turn)] == ["wf_abc"]
+    def test_suppression_set_is_the_contract_a_consumer_reads(self):
+        """The shape a gate consumes: a set of (kind, id) pairs, membership-checked."""
         _drive_below_threshold(producer_kind="workflow_surfacing", producer_id="wf_abc")
-        assert await wf_surf.eligible_workflows(turn) == []
-        # clearing restores it
+        suppressed = fb.suppressed_producers()
+        assert ("workflow_surfacing", "wf_abc") in suppressed
+        assert all(isinstance(p, tuple) and len(p) == 2 for p in suppressed)
+        # Clearing restores eligibility — the round-trip a consumer depends on.
         fb.clear_producer("workflow_surfacing", "wf_abc")
-        assert [w.id for w in await wf_surf.eligible_workflows(turn)] == ["wf_abc"]
+        assert ("workflow_surfacing", "wf_abc") not in fb.suppressed_producers()
+
+    def test_workflow_surfacing_stays_in_the_producer_vocabulary(self):
+        """`PRODUCER_KINDS` is append-only: records on disk reference this label, so it
+        must not be removed just because its consumer is between implementations."""
+        assert "workflow_surfacing" in fb.PRODUCER_KINDS

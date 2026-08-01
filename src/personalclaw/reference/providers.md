@@ -27,7 +27,6 @@ The extension-provider taxonomy (the capability types an app can contribute) and
 - **notify-action** — type `action` / `` (enabled); capabilities: execute
 - **run-prompt-action** — type `action` / `` (enabled); capabilities: execute
 - **run-script-action** — type `action` / `` (enabled); capabilities: execute
-- **run-workflow-action** — type `action` / `` (enabled); capabilities: execute
 - **send-message-action** — type `action` / `` (enabled); capabilities: execute
 - **native-agents** — type `agent` / `` (enabled); capabilities: crud, acp
 - **filesystem-inbox** — type `inbox` / `` (enabled); capabilities: approvals, inputs
@@ -48,5 +47,3 @@ The extension-provider taxonomy (the capability types an app can contribute) and
 - **personalclaw-tasks-tools** — type `tool` / `` (enabled); capabilities: task
 - **personalclaw-tools** — type `tool` / `` (enabled); capabilities: skills, notification, system
 - **personalclaw-ui-docs** — type `tool` / `` (enabled); capabilities: ui_docs
-- **personalclaw-workflows** — type `tool` / `` (enabled); capabilities: workflows
-- **native-workflows** — type `workflow` / `` (enabled); capabilities: crud, scoped, semantic-match

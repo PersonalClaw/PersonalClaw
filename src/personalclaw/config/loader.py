@@ -1534,33 +1534,23 @@ class SecurityConfig:
 
 @dataclass
 class WorkflowsConfig:
-    """Surfacing config for workflow SOPs. The matcher embeds the user
-    intent, gates by scope, and injects the best-matching SOP above threshold."""
+    """Workflow engine config (WORKFLOWS-V2).
+
+    The old shape held surfacing knobs (`match_threshold` for the embedding matcher);
+    that feature is deleted, and the namespace is reused rather than renamed — the
+    plan's clean-break/namespace-reuse call. `enabled` keeps its meaning as the
+    feature kill-switch; the engine's own keys (max_active_runs, per-lane
+    max_concurrent_nodes, model_tiers, retention.*) arrive with Slice 0, each wired
+    through all four config points."""
 
     enabled: bool = field(
         default=True,
         metadata=_meta(
             "Enabled",
-            "When true, a scoped workflow SOP semantically matching the turn is "
-            "auto-injected as guidance. Acts as an instant kill-switch.",
+            "Master switch for the workflow engine. Turning it off stops new runs "
+            "from starting without touching stored definitions.",
         ),
     )
-    match_threshold: float = field(
-        default=0.62,
-        metadata=_meta(
-            "Match Threshold",
-            "Cosine-similarity threshold for surfacing a workflow (0.0-1.0). "
-            "Higher = stricter. The keyword fallback uses a fixed 0.7 word-overlap.",
-        ),
-    )
-
-    def __post_init__(self) -> None:
-        if not 0.0 <= self.match_threshold <= 1.0:
-            logger.warning(
-                "workflows.match_threshold %.2f out of range [0.0, 1.0], using 0.62",
-                self.match_threshold,
-            )
-            object.__setattr__(self, "match_threshold", 0.62)
 
 
 # ---------------------------------------------------------------------------
@@ -2620,7 +2610,6 @@ class AppConfig:
             ),
             workflows=WorkflowsConfig(
                 enabled=bool(workflows_data.get("enabled", True)),
-                match_threshold=float(workflows_data.get("match_threshold", 0.62)),
             ),
             learning=LearningConfig(
                 enabled=bool(learning_data.get("enabled", True)),
