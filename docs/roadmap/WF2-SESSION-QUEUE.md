@@ -73,7 +73,7 @@ mandatory.
 | 21 | **Slice 10a** — `foreach pipeline=true` streaming handoff; `loop until_dry`; `subworkflow` nesting (depth ≤3, namespaced, `child_run_attach`) | G9 | ✅ DONE (#158) |
 | 22 | **Slice 10b** — context lifecycle: `session: fresh` resets + journaled handoffs, typed carryover buckets, decision records, output offloading, two-layer compaction; run-level budget end-to-end; FE collapsible containers | G9 | ✅ DONE (#159) |
 | 23 | **Slice 11a** — end-to-end lifecycle test (create→run→edit→rewind→run_from→fork→complete); adversarial property tests (concurrent mutations, crash-during-execution, deep nesting, double-resume) | G10 | ✅ DONE (#160) |
-| 24 | **Slice 11b** — timeout-fires pair; active-edge pair; journal-replay harness CI-gated vs baseline; performance (50+ nodes <100ms, 1000-entry replay, coalesced widget); security (binding sandbox, RedactingSink coverage, write-scope escapes); architecture doc + template guide | G10 | TODO |
+| 24 | **Slice 11b** — timeout-fires pair; active-edge pair; journal-replay harness CI-gated vs baseline; performance (50+ nodes <100ms, 1000-entry replay, coalesced widget); security (binding sandbox, RedactingSink coverage, write-scope escapes); architecture doc + template guide | G10 | ✅ DONE (#161) |
 
 ## B. Learning Flywheel steps 1-4 (`-LEARNING-FLYWHEEL.md`) — engine-independent, may front-run
 
@@ -664,3 +664,40 @@ mandatory.
   service accepted it" and "the controller applied it", which every unit test stubs.
   (i) The security assertion for `compile(` needed a word-boundary regex: `re.compile` is ubiquitous
   and legitimate, and a test that cried wolf there would be turned off.
+- 2026-08-01 — session 24 (Slice 11b) DONE → **PR #161** (stack #152→…→#160→#161). New
+  `test_workflows_hardening.py` (31 tests: timeout pair, active-edge pair, journal-replay
+  properties, write-scope escapes, doc-accuracy gates); new `docs/architecture/workflows.md` +
+  `docs/guides/workflow-templates.md`, both indexed. 10983 py.
+  DEVIATIONS/DISCOVERIES:
+  (a) **BUG (real, shipped): `note_progress` had NO caller.** The stall clock was never fed, so
+  `timeout_stall` fired on any node slower than its window regardless of progress — the two timeout
+  knobs were ONE knob, and a visibly-working node was killed as wedged. Measured: a node working
+  steadily for 3s died at 1s with "no progress for 1s". Fixed by threading an `on_progress` callback
+  through `dispatch` and feeding it on a 0.5s heartbeat while a nested run is alive. Both halves of
+  the plan's pair now hold: a 2s working node survives a 1s window, a silent node is still killed.
+  (b) **The active-edge pair ALREADY EXISTED** (`test_workflows_tick.py` lines 225/237). Verified by
+  reading rather than assumed; this session added the end-to-end form (driven through a real run) and
+  the "join fires once the async leg settles" complement.
+  (c) **`STEP_STARTED` is deliberately NOT a LEDGER kind** — it lands in `journal.jsonl`, not
+  `events.jsonl`. The replay pairing had to be asserted over the journal, which is the file a resume
+  actually replays.
+  (d) `scope.diff()` returns a `ScopeReport` (`created`/`modified`/`deleted`/`violations`), not an
+  iterable of paths. `created` lists ALL writes; `violations` is the classification — asserting on
+  the latter is the point.
+  (e) `allowed_write_paths` does NOT resolve `..` — the DIFF resolves both sides at comparison time.
+  So the safety property was re-asserted at the comparison layer; testing the declared list for `..`
+  would have pinned an implementation detail that is not the property.
+  (f) The guide originally documented a `personalclaw workflow author` CLI that DOES NOT EXIST.
+  Corrected to the real surfaces (HTTP `save: false`, `workflow_author`, `workflow_plan --template`)
+  and verified against `--help`.
+  (g) Added **doc-accuracy CI gates**: every module named in the arch doc must exist AND every module
+  on disk must be documented; every lint code, macro and block the guide lists must be real; the
+  documented constants must match the code; the guide's `config.with` example is run through the
+  validator. The bidirectional module check immediately caught `preflight.py` and `audit.py` as
+  undocumented.
+  (h) **CI FIX (#160 was red, now fixed here): a def-registry leak reproducible ONLY at CI's worker
+  count.** `test_workflows_tools.py` asserts exact def counts ("1 def, from my provider") but
+  inherited whatever a neighbour left registered → `7 == 1`. Local `-n auto` (18 workers) never
+  scheduled the files together; CI's 4 did. Reproduced with `-n 4`, fixed by making that module start
+  from an EMPTY registry rather than adding a restore to every possible leaker — the invariant it
+  needs is "nothing but what I registered". Verified green at `-n 4` AND `-n auto`.

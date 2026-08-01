@@ -105,6 +105,26 @@ def _fail(cls: FailureClass, cause: str, remediation: str = "", **kw: Any) -> No
     )
 
 
+async def _wait_with_progress(controller: Any, timeout: float, on_progress: Any) -> Any:
+    """Wait for a child run, feeding the parent's stall clock while it works.
+
+    The heartbeat is what makes `timeout_stall` mean "silent" rather than "slow": a nested run that
+    legitimately takes ten minutes is progressing, and killing it as wedged would make nesting
+    unusable for exactly the long-horizon work it exists for. The interval is well under any sane
+    stall window, and each tick is one function call — the cost is nothing next to a child run.
+    """
+    if not callable(on_progress):
+        return await controller.wait_for_terminal(timeout=timeout)
+
+    task = asyncio.ensure_future(controller.wait_for_terminal(timeout=timeout))
+    while not task.done():
+        on_progress()
+        # `asyncio.wait` rather than a sleep-then-check: it returns as soon as the child settles, so
+        # a fast child is not padded by the heartbeat interval.
+        await asyncio.wait({task}, timeout=_PROGRESS_HEARTBEAT_SECS)
+    return task.result()
+
+
 def _failed_with(cls: FailureClass, cause: str, remediation: str, output: Any) -> NodeResult:
     """A FAILED result that still carries an output.
 
@@ -367,6 +387,10 @@ async def dispatch_branch(node: Node, ctx: BindingContext) -> NodeResult:
 #: is the realistic way to hit this, and it is always a bug.
 MAX_SUBWORKFLOW_DEPTH = 3
 
+#: How often a long wait feeds the parent's stall clock. Well under any sane `timeout_stall`, so a
+#: working child can never be mistaken for a silent one.
+_PROGRESS_HEARTBEAT_SECS = 0.5
+
 
 async def dispatch_subworkflow(
     node: Node,
@@ -376,6 +400,7 @@ async def dispatch_subworkflow(
     run_id: str = "",
     supervisor: Any = None,
     timeout: int = 60,
+    on_progress: Any = None,
 ) -> NodeResult:
     """Run a named workflow as a CHILD run, and wait for it (WF2-R13).
 
@@ -501,7 +526,11 @@ async def dispatch_subworkflow(
         )
 
     try:
-        status = await controller.wait_for_terminal(timeout=float(timeout or 0))
+        # A nested run is the clearest case of "slow but working": the child is ticking the whole
+        # time, so the parent's stall clock must not read the wait as silence. One call before the
+        # wait is NOT enough — the wait itself spans the window — so the clock is fed on a heartbeat
+        # for as long as the child is alive.
+        status = await _wait_with_progress(controller, float(timeout or 0), on_progress)
     except Exception as exc:
         return _failed_with(
             FailureClass.INTERNAL,
@@ -1124,6 +1153,11 @@ async def dispatch(
     #: CREATE and drive another run. Injected rather than imported so a test can nest without a
     #: gateway, and so the child is driven by the same supervisor that will adopt it on restart.
     supervisor: Any = None,
+    #: `() -> None` — feeds the STALL clock (WF2-R5). A dispatcher that does bounded work in
+    #: observable steps calls it; the controller resets `last_progress` on each call, which is what
+    #: makes `timeout_stall` mean "silent" rather than merely "slow". Without it the two timeout
+    #: knobs collapse into one and a steadily-working node is killed as wedged.
+    on_progress: Any = None,
 ) -> NodeResult:
     """Route one node to its dispatcher.
 
@@ -1147,6 +1181,7 @@ async def dispatch(
         timeout=timeout,
         mode=mode,
         supervisor=supervisor,
+        on_progress=on_progress,
     )
     # One seam, so a new node kind cannot silently skip the artifact gate.
     return apply_artifact_gate(node, result, cwd or None)
@@ -1168,6 +1203,7 @@ async def _dispatch_inner(
     timeout: int = 60,
     mode: str = "background",
     supervisor: Any = None,
+    on_progress: Any = None,
 ) -> NodeResult:
     kind = node.kind
     clock = now or time.time()
@@ -1191,7 +1227,13 @@ async def _dispatch_inner(
         )
     if kind == NodeKind.SUBWORKFLOW:
         return await dispatch_subworkflow(
-            node, ctx, depth=depth, run_id=run_id, supervisor=supervisor, timeout=timeout
+            node,
+            ctx,
+            depth=depth,
+            run_id=run_id,
+            supervisor=supervisor,
+            timeout=timeout,
+            on_progress=on_progress,
         )
     return _fail(
         FailureClass.INTERNAL,
