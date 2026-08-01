@@ -93,6 +93,7 @@ if TYPE_CHECKING:
     from personalclaw.dashboard.state import _ChatSession
     from personalclaw.inbox_service import InboxService
     from personalclaw.loop.watchdog import LoopWatchdog
+    from personalclaw.workflows.watchdog import WorkflowWatchdog
 
 logger = logging.getLogger(__name__)
 
@@ -313,6 +314,7 @@ class GatewayOrchestrator:
         self._running_script_ids: set[str] = set()  # zero-token jobs in flight
         self.heartbeat_svc: HeartbeatService | None = None
         self.loop_watchdog: "LoopWatchdog | None" = None
+        self.workflow_watchdog: "WorkflowWatchdog | None" = None
         self.inbox_svc: "InboxService | None" = None
         self.subagent_mgr: SubagentManager | None = None
         self._cron_injecting: dict[str, int] = {}  # parent_key → pending injection count
@@ -1828,6 +1830,55 @@ class GatewayOrchestrator:
             self.loop_watchdog = LoopWatchdog(self.dashboard_state, self.autonudge_svc)
             self.loop_watchdog.start()
 
+        # The workflow engine's supervisor. It adopts runs the
+        # store still thinks are live — after a restart NO run has a controller, so
+        # without this they sit in RUNNING forever, which a user reads as "still
+        # working" while nothing is.
+        if self._cfg.workflows.enabled:
+            from personalclaw.workflows.bundled_defs import register_bundled_provider
+            from personalclaw.workflows.controller import EngineServices
+            from personalclaw.workflows.native_defs import register_native_provider
+            from personalclaw.workflows.tick import Limits
+            from personalclaw.workflows.watchdog import WorkflowWatchdog
+
+            # The native filesystem def provider — where a user's OWN workflows live.
+            # `defs.py` is only a registry seam, so without this nothing writable is
+            # registered and saving a definition fails with "no writable provider" unless
+            # an app happens to contribute one.
+            register_native_provider()
+            # The shipped template library (Slice 9a). Read-only, served straight from the
+            # package — no boot-time copy into the user's home, so an upgrade ships new
+            # templates with no "did the user edit it?" reconciliation.
+            register_bundled_provider()
+
+            wf_cfg = self._cfg.workflows
+            self.workflow_watchdog = WorkflowWatchdog(
+                self.dashboard_state,
+                EngineServices(
+                    subagents=self.subagent_mgr,
+                    model_tiers=wf_cfg.model_tiers(),
+                    lane_limits=Limits(lanes=wf_cfg.lane_caps()),
+                    node_timeout_total=wf_cfg.default_node_timeout_total_secs,
+                    node_timeout_stall=wf_cfg.default_node_timeout_stall_secs,
+                ),
+            )
+            self.workflow_watchdog.start()
+            # Publish the supervisor so BOTH consumers can reach it: the REST handlers
+            # (Slice 7a) read `state.workflows`, and the `run-workflow` action provider
+            # reads `ActionServices.workflows`. Without this the routes create runs nobody
+            # drives, and the trigger provider returns "no supervisor available" — both
+            # already handle a None, but both are inert until this line runs.
+            if self.dashboard_state is not None:
+                self.dashboard_state.workflows = self.workflow_watchdog
+            try:
+                from personalclaw.action_providers.services import get_action_services
+
+                svc = get_action_services()
+                if svc is not None:
+                    svc.workflows = self.workflow_watchdog
+            except Exception:
+                logger.debug("could not attach the workflow supervisor to action services")
+
     async def _init_inbox(self) -> None:
         """Construct the Inbox service (state + store + on-demand AI triage).
 
@@ -2877,6 +2928,8 @@ class GatewayOrchestrator:
         # Stop services
         if self.loop_watchdog:
             await self.loop_watchdog.stop()
+        if self.workflow_watchdog:
+            await self.workflow_watchdog.stop()
         if self.cron_svc:
             await self.cron_svc.stop()
         if self.heartbeat_svc:

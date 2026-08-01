@@ -254,6 +254,35 @@ def _validate_shape(res: ValidationResult, path: str, node: Node) -> None:
     elif kind == NodeKind.ACTION:
         if not cfg.get("provider"):
             _add(res, "WF_MISSING_PROVIDER", "action needs a `provider`", path)
+        elif "with" not in cfg and "config" not in cfg:
+            # The engine reads a provider's arguments from `config.with` (`dispatch_action`).
+            # Arguments written FLAT beside `provider` reach the provider as an empty config, and
+            # it then reports its own required field missing — for a value that is visibly right
+            # there in the spec. Caught here because the run-time symptom points at the provider
+            # rather than at the authoring mistake, and because everything downstream of the
+            # failed action then fails on an unresolved binding, burying the cause.
+            extras = [k for k in cfg if k not in ("provider", "context", "payload")]
+            if extras:
+                # Arguments ARE present, just in the wrong place — the run would fail, so this is
+                # an error naming exactly what to move.
+                _add(
+                    res,
+                    "WF_ACTION_ARGS_NOT_NESTED",
+                    "action arguments go under `config.with` — move "
+                    + ", ".join(sorted(extras))
+                    + " into it",
+                    path,
+                )
+            else:
+                # No arguments at all: legitimate for a provider that needs none, so a warning
+                # rather than a refusal.
+                _add(
+                    res,
+                    "WF_ACTION_NO_ARGS",
+                    "action has no `config.with` — fine if the provider needs no arguments",
+                    path,
+                    SEVERITY_WARNING,
+                )
 
     elif kind == NodeKind.WAIT:
         if not (cfg.get("duration_secs") or cfg.get("until_ts")):
@@ -326,13 +355,29 @@ def _validate_bindings(res: ValidationResult, path: str, node: Node, *, strict: 
                 and not head.startswith("secret:")
                 and root_seg not in _UNTRUSTED_ROOTS
             ):
-                _add(
-                    res,
-                    "WF_UNKNOWN_BINDING_ROOT",
-                    f"binding root {root_seg!r} is not a known source",
-                    path,
-                    SEVERITY_WARNING,
-                )
+                if head.startswith("block:"):
+                    # A shared block reference that was never resolved. Reported as
+                    # ITSELF rather than as an unknown binding root: the two are resolved at
+                    # different times (blocks at authoring, bindings at run), so "not a known
+                    # source" sends the author looking for a node that was never the problem.
+                    # Reaching the validator at all means the resolve step was skipped or the
+                    # block does not exist — both worth naming precisely.
+                    _add(
+                        res,
+                        "WF_UNRESOLVED_BLOCK",
+                        f"shared block reference {head!r} was not resolved — the block may not "
+                        "exist, or this spec bypassed the authoring path that substitutes them",
+                        path,
+                        SEVERITY_WARNING,
+                    )
+                else:
+                    _add(
+                        res,
+                        "WF_UNKNOWN_BINDING_ROOT",
+                        f"binding root {root_seg!r} is not a known source",
+                        path,
+                        SEVERITY_WARNING,
+                    )
 
     # Inline secret-shaped values: a literal key in a spec would be persisted
     # to the journal and later read by the flywheel.
@@ -347,11 +392,20 @@ def _validate_bindings(res: ValidationResult, path: str, node: Node, *, strict: 
 
 
 def _looks_like_secret(value: str) -> bool:
+    """Delegates to `secrets.py`, the ONE credential-shape list.
+
+    This function used to carry its own prefix tuple. Two lists of vendor key shapes
+    inevitably drift — one gets a new provider and the other silently stops catching it —
+    and "which lint runs where" becomes unanswerable. The shapes live in `secrets.py`
+    (the documented provider-boundary keep) and both the save-time lint and this
+    validator read them from there.
+    """
+    from personalclaw.workflows.secrets import looks_like_credential
+
     v = value.strip()
-    if len(v) < 20 or " " in v:
+    if " " in v:
         return False
-    prefixes = ("sk-", "ghp_", "gho_", "github_pat_", "xoxb-", "xoxp-", "hf_", "AKIA")
-    return v.startswith(prefixes)
+    return looks_like_credential(v)
 
 
 def _validate_binding_targets(

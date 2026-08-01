@@ -988,6 +988,7 @@ _AGGREGATED_CATEGORY_MODULES = (
     "personalclaw.mcp_prompts",
     "personalclaw.mcp_memory",
     "personalclaw.mcp_subagents",
+    "personalclaw.mcp_workflows",
 )
 
 

@@ -353,6 +353,24 @@ def evaluate_alert(item: InboxItem, user_name: str = "") -> str:
     return rule.conditions.matches(text, user_name)
 
 
+def live_store(state: Any) -> "InboxStore | None":
+    """The RUNNING inbox service's store, or None when no service is up.
+
+    **Every writer must go through this.** The service holds its items in MEMORY and never
+    re-reads the file, so a writer that constructs its own `InboxStore()` writes a row the API
+    cannot see (`_get_inbox` serves the service's instance) and that the service's next save
+    silently overwrites. Found twice while wiring workflow gates: once raising a row that never
+    appeared, once resolving a row that stayed open after its gate was answered.
+
+    Type-checked, not duck-typed: a test's `MagicMock()` state answers every getattr, so an
+    attribute check alone would route real writes into a mock and the row would vanish. An
+    isinstance is the only thing that distinguishes a live store from an obliging fake.
+    """
+    svc = getattr(state, "_inbox_svc", None)
+    live = getattr(svc, "inbox", None) if svc is not None else None
+    return live if isinstance(live, InboxStore) else None
+
+
 def emit_attention_item(
     state: Any,
     *,
@@ -385,7 +403,7 @@ def emit_attention_item(
     a failure to persist must not also lose the notification, so delivery still happens).
     """
     resolved_kind = item_kind or kind
-    target = store
+    target = store or live_store(state)
     if target is None:
         target = InboxStore()
         try:
@@ -405,7 +423,12 @@ def emit_attention_item(
         channel=source,
         channel_name=source,
         thread_ts=None,
-        message=body or title,
+        # Title FIRST, then the body. `body or title` dropped the title whenever a body
+        # existed — so a workflow gate's row read "Waiting for your approval." and lost the
+        # actual question ("Ship the release to production?"), which is the one thing a user
+        # needs to decide from the list. Joined rather than either/or: the body is detail
+        # ABOUT the title, not a replacement for it.
+        message="\n\n".join(p for p in (title, body) if p),
         sender_id=source,
         sender_name=source,
         created_at=now,

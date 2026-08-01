@@ -34,6 +34,12 @@ class ActionServices:
     spawn_background: Callable[[Awaitable[Any]], Any]
     # The subagent manager invoke-agent (E3-P3) spawns child agents through.
     subagents: "SubagentManager | None" = None
+    # The workflow supervisor (`WorkflowWatchdog`) run-workflow starts runs through.
+    # Deliberately the SUPERVISOR, not a controller factory: it owns controller
+    # registration, so a provider-started run is visible to adoption and cancel. A
+    # provider-owned controller would be invisible to both, and a restart would start a
+    # second one alongside it — two writers on one run.
+    workflows: Any = None
 
 
 _services: "ActionServices | None" = None

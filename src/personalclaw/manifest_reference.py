@@ -82,20 +82,33 @@ def reference_dir() -> Path:
 # ── Route source (static AST, no app boot) ──────────────────────────────────
 
 
-def _handler_docstrings() -> dict[str, str]:
-    """Map every function name defined under ``dashboard/`` to its docstring.
+def _route_source_files() -> list[Path]:
+    """Every package file that could register or define an HTTP route.
 
-    A global index across the package: handlers are referenced at registration as
-    a bare name (``api_autonudge_list``) or an attribute (``handlers.api_spawn``,
+    The WHOLE package, not just ``dashboard/``. Entity route families live beside their
+    domain (``artifacts/handlers.py``, ``tasks/handlers.py``, ``workflows/handlers.py``) and
+    are mounted by ``server.py`` via a ``register_*_routes(app)`` call — so a walk rooted at
+    ``dashboard/`` sees the mount call but never the routes themselves, and those families
+    were silently missing from the offline reference. An agent reading the reference to find
+    an endpoint would conclude it does not exist.
+    """
+    import personalclaw
+
+    root = Path(personalclaw.__file__).parent
+    return sorted(p for p in root.rglob("*.py") if "__pycache__" not in p.parts)
+
+
+def _handler_docstrings() -> dict[str, str]:
+    """Map every function name in the package to its docstring.
+
+    A global index: handlers are referenced at registration as a bare name
+    (``api_autonudge_list``) or an attribute (``handlers.api_spawn``,
     ``_up.api_uploads_init``); in every form the callable's own name is the final
     identifier, so one flat name→docstring index resolves them all. First
     definition wins on the rare duplicate — deterministic under the sorted walk.
     """
-    import personalclaw.dashboard.server as server_mod
-
-    dash_dir = Path(server_mod.__file__).parent
     index: dict[str, str] = {}
-    for py in sorted(dash_dir.rglob("*.py")):
+    for py in _route_source_files():
         tree = ast.parse(py.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -116,20 +129,19 @@ def _handler_name(node: ast.expr | None) -> str:
 
 
 def _routes_from_ast() -> list[dict[str, Any]]:
-    """Every literal HTTP route registered under ``dashboard/``, with its summary.
+    """Every literal HTTP route registered in the package, with its summary.
 
     Same AST walk as the drift test's ``_literal_route_paths`` (no boot), extended
     to pair each path with the handler's docstring first line. Excluded routes
     (UI transport / app proxy — :data:`MANIFEST_EXCLUDE`) are dropped, matching the
-    live ``/api/manifest`` walk.
+    live ``/api/manifest`` walk. Scans the whole package (see
+    :func:`_route_source_files`) so entity families registered from outside
+    ``dashboard/`` are not invisible here.
     """
-    import personalclaw.dashboard.server as server_mod
-
     docs = _handler_docstrings()
-    dash_dir = Path(server_mod.__file__).parent
     seen: set[tuple[str, str]] = set()
     out: list[dict[str, Any]] = []
-    for py in sorted(dash_dir.rglob("*.py")):
+    for py in _route_source_files():
         tree = ast.parse(py.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):

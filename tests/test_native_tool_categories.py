@@ -32,6 +32,7 @@ _CATEGORY_MODULES = [
     "personalclaw.mcp_prompts",
     "personalclaw.mcp_memory",
     "personalclaw.mcp_subagents",
+    "personalclaw.mcp_workflows",
 ]
 _CATEGORY_PROVIDERS = {
     "personalclaw-core",
@@ -39,6 +40,7 @@ _CATEGORY_PROVIDERS = {
     "personalclaw-memory",
     "personalclaw-artifacts",
     "personalclaw-prompts",
+    "personalclaw-workflows",
 }
 # The cross-cutting tools that stay in residual core (not a single entity category).
 # skill_invoke + skill_search + skill_remember are the skill-library-spanning trio

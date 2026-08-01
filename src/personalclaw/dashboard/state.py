@@ -764,6 +764,16 @@ class DashboardState:
         # serves it. (The Code feature is the `code` kind on this ONE registry — the
         # old per-project _code_sse was orphaned at the unification cutover.)
         self._loop_sse = SseRegistry()
+        # Per-run workflow engine SSE (key ``workflow:<run_id>``) — the run controller
+        # publishes node/run lifecycle events here; the per-run /stream endpoint serves
+        # it. Deliberately NOT routed through ``notify``: that is the user-notification
+        # gate (mute / severity / quiet-hours) and would silently eat engine events.
+        self._workflow_sse = SseRegistry()
+        # The workflow supervisor (`WorkflowWatchdog`), attached at gateway boot. Declared
+        # here rather than set as a bare dynamic attribute so a reader can see it exists and
+        # that None is a real state — the REST handlers must tolerate a gateway whose
+        # workflows feature is disabled.
+        self.workflows: Any = None
         # Per-item knowledge ingestion progress (key ``knowledge:ingest:<item_id>``).
         # The ingest queue publishes node-graph progress here; the per-item /stream
         # endpoint serves it. (#30)
@@ -1227,6 +1237,10 @@ class DashboardState:
     def loop_sse(self) -> SseRegistry:
         """The per-loop SSE registry (key ``loop:<id>``) — serves every kind, incl. code."""
         return self._loop_sse
+
+    def workflow_sse(self) -> SseRegistry:
+        """The per-run workflow SSE registry (key ``workflow:<run_id>``)."""
+        return self._workflow_sse
 
     def knowledge_ingest_sse(self) -> SseRegistry:
         """Per-item knowledge ingestion SSE registry (key ``knowledge:ingest:<id>``)."""

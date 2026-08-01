@@ -70,13 +70,28 @@ def _ensure_default_providers_registered() -> None:
         from personalclaw.action_providers.run_prompt_provider import RunPromptActionProvider
 
         register_action_provider(RunPromptActionProvider())
-    # `run-workflow` is not registered: its provider is deleted with the old feature
-    # (WORKFLOWS-V2 Phase 1). Slice 3 re-registers it against the v2 engine, together
-    # with re-adding it to ALLOWED_HOOK_PROVIDERS — a provider in one set but not the
-    # other is exactly the mismatch that makes a trigger save and then fail to run.
+    if "run-workflow" not in _providers:
+        # Re-registered against the v2 engine, in the SAME commit
+        # that re-adds it to ALLOWED_HOOK_PROVIDERS — a provider in one set but not the
+        # other is the mismatch that makes a trigger save and then fail to run.
+        from personalclaw.action_providers.run_workflow_provider import (
+            RunWorkflowActionProvider,
+        )
+
+        register_action_provider(RunWorkflowActionProvider())
     if "call-app-route" not in _providers:
         from personalclaw.action_providers.call_app_route_provider import (
             CallAppRouteActionProvider,
         )
 
         register_action_provider(CallAppRouteActionProvider())
+    if "artifact-update" not in _providers:
+        # WORKFLOWS-V2 Slice 9b: the zero-token write a dashboard-style template uses
+        # to refresh its artifact. Added to ALLOWED_HOOK_PROVIDERS in the SAME commit — a
+        # provider in one set but not the other is the mismatch that makes a trigger save and
+        # then fail to run.
+        from personalclaw.action_providers.artifact_update_provider import (
+            ArtifactUpdateActionProvider,
+        )
+
+        register_action_provider(ArtifactUpdateActionProvider())

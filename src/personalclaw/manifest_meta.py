@@ -390,6 +390,181 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    # ── personalclaw-workflows ───────────────────────────────────────────────
+    "workflow_author": {
+        "response_type": "workflow.def.saved",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Validate a two-stage spec without saving it",
+                "args": {
+                    "name": "triage-inbox",
+                    "root": {
+                        "kind": "sequence",
+                        "id": "main",
+                        "children": [
+                            {
+                                "kind": "infer",
+                                "id": "classify",
+                                "config": {"prompt": "Classify: {{inputs.text}}"},
+                            }
+                        ],
+                    },
+                    "save": False,
+                },
+            },
+        ],
+    },
+    "workflow_plan": {
+        "response_type": "workflow.plan.draft",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Draft a plan from a goal",
+                "args": {"goal": "summarize new issues each morning", "rigor": "standard"},
+            },
+        ],
+    },
+    "workflow_list_defs": {
+        "response_type": "workflow.def.list",
+        "error_codes": [],
+        "examples": [{"summary": "List every workflow definition", "args": {}}],
+    },
+    "workflow_get_def": {
+        "response_type": "workflow.def.detail",
+        "error_codes": [],
+        "examples": [{"summary": "Read one definition", "args": {"name": "triage-inbox"}}],
+    },
+    "workflow_start": {
+        "response_type": "workflow.run.started",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Start a run in the background",
+                "args": {"name": "triage-inbox", "inputs": {"since": "1h"}},
+            },
+        ],
+    },
+    "workflow_status": {
+        "response_type": "workflow.run.status",
+        "error_codes": [],
+        "examples": [{"summary": "Check a run", "args": {"run_id": "a1b2c3d4"}}],
+    },
+    "workflow_observe": {
+        "response_type": "workflow.run.delta",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Watch a run for three seconds",
+                "args": {"run_id": "a1b2c3d4", "duration_ms": 3000},
+            },
+        ],
+    },
+    "workflow_edit": {
+        "response_type": "workflow.mutation.result",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Preview what editing a pending prompt would re-run",
+                "args": {
+                    "run_id": "a1b2c3d4",
+                    "ops": [
+                        {
+                            "op": "update_node",
+                            "node_id": "produce",
+                            "fields": {"prompt": "Be concise."},
+                        }
+                    ],
+                    "preview_only": True,
+                },
+            },
+        ],
+    },
+    "workflow_skip": {
+        "response_type": "workflow.mutation.result",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Skip a pending node",
+                "args": {"run_id": "a1b2c3d4", "node_ids": ["optional_review"]},
+            },
+        ],
+    },
+    "workflow_rewind": {
+        "response_type": "workflow.mutation.result",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Re-run a stage and everything reading its output",
+                "args": {"run_id": "a1b2c3d4", "node_id": "produce"},
+            },
+        ],
+    },
+    "workflow_run_from": {
+        "response_type": "workflow.mutation.result",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Redo only what follows a node",
+                "args": {"run_id": "a1b2c3d4", "node_id": "gather"},
+            },
+        ],
+    },
+    "workflow_fork": {
+        "response_type": "workflow.fork.result",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Branch a run to try an alternative",
+                "args": {"run_id": "a1b2c3d4", "note": "stricter judge"},
+            },
+        ],
+    },
+    "workflow_pause": {
+        "response_type": "workflow.run.paused",
+        "error_codes": [],
+        "examples": [{"summary": "Pause a run", "args": {"run_id": "a1b2c3d4"}}],
+    },
+    "workflow_resume": {
+        "response_type": "workflow.gate.resolved",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Approve a waiting gate",
+                "args": {"run_id": "a1b2c3d4", "answer": True},
+            },
+        ],
+    },
+    "workflow_cancel": {
+        "response_type": "workflow.run.cancelled",
+        "error_codes": [],
+        "examples": [{"summary": "Cancel a run", "args": {"run_id": "a1b2c3d4"}}],
+    },
+    "workflow_output": {
+        "response_type": "workflow.node.output",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Read a node's output",
+                "args": {"run_id": "a1b2c3d4", "node_id": "produce"},
+            },
+        ],
+    },
+    "workflow_audit": {
+        "response_type": "workflow.audit.report",
+        "error_codes": [],
+        "examples": [{"summary": "Report drifted runs without repairing", "args": {}}],
+    },
+    "workflow_manifest": {
+        "response_type": "workflow.manifest",
+        "error_codes": [],
+        "examples": [{"summary": "Get the authoring reference", "args": {}}],
+    },
+    "workflow_delete_def": {
+        "response_type": "workflow.def.deleted",
+        "error_codes": [],
+        "examples": [{"summary": "Delete a definition", "args": {"name": "old-workflow"}}],
+    },
     # ── personalclaw-memory ──────────────────────────────────────────────────
     "memory_remember": {
         "response_type": "memory.remember.result",

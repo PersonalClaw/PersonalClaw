@@ -108,6 +108,13 @@ class GateKind(str, Enum):
     VERIFY_SCRIPT = "verify_script"
     EVENT = "event"
     EXPRESSION = "expression"
+    #: An ordered static→runtime→system ladder with per-criterion hard thresholds. A hard
+    #: failure at any rung fails the gate — never averaged, because averaging lets a
+    #: confident model pass a gate it structurally failed.
+    LADDER = "ladder"
+    #: An LLM judge returning the CLOSED verdict enum (PASS|RETRY|ESCALATE|REJECT), run in
+    #: a session distinct from the producing node unless `self_judge` is set.
+    JUDGE = "judge"
 
 
 class SessionMode(str, Enum):
@@ -233,6 +240,10 @@ class InstanceState(str, Enum):
     PENDING = "pending"
     READY = "ready"
     RUNNING = "running"
+    #: Parked on something external — a `wait` deadline or a `gate` awaiting an answer.
+    #: Distinct from RUNNING because it consumes no executor slot: a run can sit in
+    #: WAITING for hours without holding a lane, and the watchdog wakes it.
+    WAITING = "waiting"
     DONE = "done"
     DEGRADED = "degraded"  # done, with a degraded_reason
     FAILED = "failed"
@@ -246,6 +257,9 @@ class InstanceState(str, Enum):
 
 
 #: States after which a node will not run again without an explicit mutation.
+#: BLOCKED belongs here: it is "the engine refused to proceed and a human must decide"
+#: — leaving it schedulable would relaunch-and-refuse forever, the silent hang the
+#: state exists to prevent. (Its absence also made `_ROOT_TO_RUN[BLOCKED]` unreachable.)
 TERMINAL_STATES = frozenset(
     {
         InstanceState.DONE,
@@ -256,6 +270,7 @@ TERMINAL_STATES = frozenset(
         InstanceState.SCOPE_VIOLATION,
         InstanceState.DISCARDED,
         InstanceState.ESCALATED,
+        InstanceState.BLOCKED,
         InstanceState.CANCELLED,
     }
 )
@@ -787,15 +802,29 @@ class NodeInstance:
     state: InstanceState = InstanceState.PENDING
     epoch: int = 0
     attempt: int = 0
-    #: Which outgoing edges are live — set when a `branch` picks a case. A join must
-    #: gate on ACTIVE edges, or an untaken branch deadlocks it forever.
-    active_edges: list[str] = field(default_factory=list)
+    #: Edges this node considered and did NOT take — recorded when a `branch` routes or
+    #: a gate rejects. The frontier marks a declined edge's target SKIPPED (terminal), so
+    #: a downstream join proceeds instead of waiting forever on it. Explicit
+    #: rather than inferred: routing among cases says nothing about a sibling whose
+    #: `needs` merely names this node.
+    declined_edges: list[str] = field(default_factory=list)
     degraded_reason: str = ""
     failure: Failure | None = None
     started_at: str | None = None
     completed_at: str | None = None
     output_ref: str = ""  # outputs/<path-hash>.json, or an artifact pointer
     tokens: int = 0
+    #: Unix deadline for a WAITING node — when the engine should look at it again.
+    #: PERSISTED, not in-memory: a `wait` or a timed gate must survive a gateway
+    #: restart. Held only in memory, a restart would leave every waiting run parked
+    #: forever with nothing scheduled to wake it.
+    wake_at: float = 0.0
+    #: A short label for the `foreach` item this instance is processing — what makes
+    #: "[3/12] auth.py" possible. PERSISTED because it is the only durable record of WHICH item
+    #: an instance was: the items list is re-resolved from a binding, and after the upstream
+    #: output changed (or a reload) the label would otherwise be unrecoverable. Empty for a
+    #: non-iterated node.
+    item_label: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -803,13 +832,15 @@ class NodeInstance:
             "state": self.state.value,
             "epoch": self.epoch,
             "attempt": self.attempt,
-            "active_edges": list(self.active_edges),
+            "declined_edges": list(self.declined_edges),
             "degraded_reason": self.degraded_reason,
             "failure": self.failure.to_dict() if self.failure else None,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "output_ref": self.output_ref,
             "tokens": self.tokens,
+            "wake_at": self.wake_at,
+            "item_label": self.item_label,
         }
 
     @classmethod
@@ -825,11 +856,13 @@ class NodeInstance:
             state=state,
             epoch=int(d.get("epoch", 0) or 0),
             attempt=int(d.get("attempt", 0) or 0),
-            active_edges=[str(e) for e in (d.get("active_edges") or [])],
+            declined_edges=[str(e) for e in (d.get("declined_edges") or [])],
             degraded_reason=str(d.get("degraded_reason", "") or ""),
             failure=Failure.from_dict(fail) if isinstance(fail, dict) else None,
             started_at=d.get("started_at"),
             completed_at=d.get("completed_at"),
             output_ref=str(d.get("output_ref", "") or ""),
             tokens=int(d.get("tokens", 0) or 0),
+            wake_at=float(d.get("wake_at", 0.0) or 0.0),
+            item_label=str(d.get("item_label", "") or ""),
         )

@@ -1393,6 +1393,428 @@ Search the web/src/ui design-system kit (components + design tokens) by keyword.
 }
 ```
 
+## personalclaw-workflows
+
+### `workflow_audit`
+
+Diagnose workflow runs that drifted — nodes stuck running, gates nobody can answer, expired waits, runs whose status was never written. Defaults to dry_run=true, which only REPORTS. Pass dry_run=false to repair; a run with a live controller is reported and left alone either way.
+
+**Response type:** `workflow.audit.report`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `dry_run` (boolean, optional) — true (default) = report only; false = repair.
+
+**Example — Report drifted runs without repairing:**
+
+```json
+{}
+```
+
+### `workflow_author`
+
+Save a workflow definition from an explicit DAG spec — the low-level authoring tool. Use when you already know the node structure; use workflow_plan instead to turn a natural-language goal into a spec. Pass save=false to VALIDATE ONLY and get the issue list back without writing anything, which is the cheap way to iterate. Never put a literal API key in the spec: reference credentials as {{secret:KEY}}.
+
+**Response type:** `workflow.def.saved`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `description` (string, optional)
+- `inputs` (object, optional) — Declared inputs: name → {type, required, default, help}.
+- `name` (string, required) — Definition name: lowercase letters, digits, hyphens.
+- `root` (object, required) — The root node of the spec tree. Call workflow_manifest for the node taxonomy, binding pipes and allowed shapes.
+- `save` (boolean, optional) — false = validate only, write nothing (default true).
+- `tags` (array, optional)
+
+**Example — Validate a two-stage spec without saving it:**
+
+```json
+{
+  "name": "triage-inbox",
+  "root": {
+    "children": [
+      {
+        "config": {
+          "prompt": "Classify: {{inputs.text}}"
+        },
+        "id": "classify",
+        "kind": "infer"
+      }
+    ],
+    "id": "main",
+    "kind": "sequence"
+  },
+  "save": false
+}
+```
+
+### `workflow_cancel`
+
+Cancel a run. The intent is persisted, so it is honoured even if the gateway restarts mid-cancel; in-flight nodes are stopped and the run finalizes as cancelled.
+
+**Response type:** `workflow.run.cancelled`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `run_id` (string, required) — The run id (from workflow_start).
+
+**Example — Cancel a run:**
+
+```json
+{
+  "run_id": "a1b2c3d4"
+}
+```
+
+### `workflow_delete_def`
+
+Delete a workflow definition. Existing runs of it are unaffected — they carry their own copy of the spec. Bundled templates cannot be deleted.
+
+**Response type:** `workflow.def.deleted`
+
+**Safety:** requires approval, risk: destructive
+
+**Parameters:**
+- `name` (string, required)
+
+**Example — Delete a definition:**
+
+```json
+{
+  "name": "old-workflow"
+}
+```
+
+### `workflow_edit`
+
+Edit a RUNNING workflow's unexecuted nodes. Ops: update_node, insert, delete, move, set_input, skip. Returns a cascade preview naming every node that would re-run; if it would re-run already-completed work you must resubmit with confirm_cascade=true. Running and finished nodes cannot be edited — rewind one first. Pass expect_version from workflow_status to avoid editing a spec that changed under you.
+
+**Response type:** `workflow.mutation.result`
+
+**Safety:** requires approval, risk: caution
+
+**Parameters:**
+- `confirm_cascade` (boolean, optional) — Accept re-running completed nodes.
+- `expect_version` (integer, optional)
+- `ops` (array, required) — Mutation ops. See workflow_manifest for the catalog.
+- `preview_only` (boolean, optional) — true = compute the cascade and queue NOTHING.
+- `run_id` (string, required) — The run id (from workflow_start).
+
+**Example — Preview what editing a pending prompt would re-run:**
+
+```json
+{
+  "ops": [
+    {
+      "fields": {
+        "prompt": "Be concise."
+      },
+      "node_id": "produce",
+      "op": "update_node"
+    }
+  ],
+  "preview_only": true,
+  "run_id": "a1b2c3d4"
+}
+```
+
+### `workflow_fork`
+
+Branch a NEW run from this one, leaving the original untouched — for exploring an alternative when the first result must be preserved. Works on a finished run. The fork shares the filesystem workspace and any external resources the original created; the response names exactly what is NOT isolated. The child starts as a draft so you can edit it before running it.
+
+**Response type:** `workflow.fork.result`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `checkpoint_id` (string, optional) — Fork from this checkpoint instead of current state.
+- `note` (string, optional) — Why this branch exists.
+- `run_id` (string, required) — The run id (from workflow_start).
+
+**Example — Branch a run to try an alternative:**
+
+```json
+{
+  "note": "stricter judge",
+  "run_id": "a1b2c3d4"
+}
+```
+
+### `workflow_get_def`
+
+Retrieve one workflow definition in full, including its node tree and declared inputs. Read-only. Credential values are replaced by _has_* presence flags — the definition tells you a key is SET, never what it is.
+
+**Response type:** `workflow.def.detail`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `name` (string, required)
+
+**Example — Read one definition:**
+
+```json
+{
+  "name": "triage-inbox"
+}
+```
+
+### `workflow_list_defs`
+
+List the available workflow definitions — the user's own plus any bundled template packs. Read-only. Start here when the user asks what workflows exist or which one to run.
+
+**Response type:** `workflow.def.list`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `source` (string, optional) — Filter by origin: 'user' or 'bundled'.
+- `tag` (string, optional) — Only defs carrying this tag.
+
+**Example — List every workflow definition:**
+
+```json
+{}
+```
+
+### `workflow_manifest`
+
+The authoring reference, generated from the engine itself: node kinds and their lanes, gate kinds, join and loop modes, binding pipes, mutation ops and outcome states. Read-only. Call this before authoring a spec by hand — it cannot drift from what the engine actually accepts.
+
+**Response type:** `workflow.manifest`
+
+**Safety:** requires approval
+
+**Parameters:**
+- _(no parameters)_
+
+**Example — Get the authoring reference:**
+
+```json
+{}
+```
+
+### `workflow_observe`
+
+Watch a run for a short bounded window and return what changed, with the events from that window. Read-only. Prefer this over repeated workflow_status calls: one call, one wait, a real delta. The window is clamped (100ms-30s) and returns early if the run finishes.
+
+**Response type:** `workflow.run.delta`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `duration_ms` (integer, optional) — How long to watch, in ms (default 5000, max 30000).
+- `run_id` (string, required) — The run id (from workflow_start).
+
+**Example — Watch a run for three seconds:**
+
+```json
+{
+  "duration_ms": 3000,
+  "run_id": "a1b2c3d4"
+}
+```
+
+### `workflow_output`
+
+Retrieve one node's structured output from a run. Read-only. Use after workflow_status shows the node is done, to read what it actually produced.
+
+**Response type:** `workflow.node.output`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `node_id` (string, required)
+- `run_id` (string, required) — The run id (from workflow_start).
+
+**Example — Read a node's output:**
+
+```json
+{
+  "node_id": "produce",
+  "run_id": "a1b2c3d4"
+}
+```
+
+### `workflow_pause`
+
+Pause a running workflow: in-flight nodes finish, nothing new launches. Resume with workflow_resume.
+
+**Response type:** `workflow.run.paused`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `run_id` (string, required) — The run id (from workflow_start).
+
+**Example — Pause a run:**
+
+```json
+{
+  "run_id": "a1b2c3d4"
+}
+```
+
+### `workflow_plan`
+
+Turn a natural-language goal into a workflow spec for review BEFORE anything runs. Returns a draft spec plus its validation issues; nothing is saved or started, so the user approves first. Use for 'set up a workflow that…' requests. To save the result, pass it to workflow_author.
+
+**Response type:** `workflow.plan.draft`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `goal` (string, required) — What the workflow should accomplish, in plain language.
+- `rigor` (string, optional) — How much structure to propose (default standard).
+- `template` (string, optional) — Optional: a template name to base the plan on.
+
+**Example — Draft a plan from a goal:**
+
+```json
+{
+  "goal": "summarize new issues each morning",
+  "rigor": "standard"
+}
+```
+
+### `workflow_resume`
+
+Answer a workflow that is waiting on a human, or clear a pause. For an approval gate pass answer=true/false; for a choice or form pass the value or object. With no answer this just lifts a pause. Each answer is consumed once — calling twice will not approve twice. If several gates are pending you must name one with resume_token.
+
+**Response type:** `workflow.gate.resolved`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `always_allow` (boolean, optional) — Auto-approve this same operation for the rest of THIS run (cleared if the run is rewound).
+- `answer` (any, optional) — true/false for an approval; a value or object otherwise.
+- `resume_token` (string, optional) — Which gate to answer (required if several are pending).
+- `run_id` (string, required) — The run id (from workflow_start).
+
+**Example — Approve a waiting gate:**
+
+```json
+{
+  "answer": true,
+  "run_id": "a1b2c3d4"
+}
+```
+
+### `workflow_rewind`
+
+Reset a node AND everything that consumes its output, so they re-run — the in-place fix for 'redo this stage with a better prompt'. Consumers are found through data bindings, not tree position, so a later sibling reading the node's output is reset too. Outputs are archived, not destroyed. If a node in the reset region already fired an external effect, pass redo_effects=true to deliberately fire it again.
+
+**Response type:** `workflow.mutation.result`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `force` (boolean, optional) — Re-run even where inputs are unchanged (skips cache).
+- `node_id` (string, required)
+- `redo_effects` (boolean, optional)
+- `run_id` (string, required) — The run id (from workflow_start).
+
+**Example — Re-run a stage and everything reading its output:**
+
+```json
+{
+  "node_id": "produce",
+  "run_id": "a1b2c3d4"
+}
+```
+
+### `workflow_run_from`
+
+Re-run only what comes AFTER a node, keeping that node's output as-is — 'redo the synthesis with the same gathered data'. Cheaper than rewind when the upstream work was expensive and correct.
+
+**Response type:** `workflow.mutation.result`
+
+**Safety:** requires approval, risk: caution
+
+**Parameters:**
+- `node_id` (string, required)
+- `run_id` (string, required) — The run id (from workflow_start).
+
+**Example — Redo only what follows a node:**
+
+```json
+{
+  "node_id": "gather",
+  "run_id": "a1b2c3d4"
+}
+```
+
+### `workflow_skip`
+
+Skip one or more pending nodes in a running workflow. A skipped node produces no output and its subtree is skipped with it, so anything binding its output will fail — skip leaves, or rewind and edit instead.
+
+**Response type:** `workflow.mutation.result`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `node_ids` (array, required)
+- `run_id` (string, required) — The run id (from workflow_start).
+
+**Example — Skip a pending node:**
+
+```json
+{
+  "node_ids": [
+    "optional_review"
+  ],
+  "run_id": "a1b2c3d4"
+}
+```
+
+### `workflow_start`
+
+Start a workflow run from a saved definition. mode='background' (default) returns immediately with a run id — poll with workflow_status or watch with workflow_observe. mode='blocking' waits for the run to finish and returns the final state, which suits a short workflow the user is waiting on. Pass idempotency_key when retrying so a retry returns the EXISTING run instead of starting a second one.
+
+**Response type:** `workflow.run.started`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `idempotency_key` (string, optional) — Caller-chosen key; a retry with the same key is deduped.
+- `inputs` (object, optional) — Values for the definition's declared inputs.
+- `mode` (string, optional)
+- `name` (string, required) — The definition to instantiate.
+- `project_id` (string, optional) — Optional project binding.
+
+**Example — Start a run in the background:**
+
+```json
+{
+  "inputs": {
+    "since": "1h"
+  },
+  "name": "triage-inbox"
+}
+```
+
+### `workflow_status`
+
+Current status of a run plus per-node progress and any failure detail. Read-only. For watching a run that is actively moving, workflow_observe is cheaper than calling this in a loop.
+
+**Response type:** `workflow.run.status`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `run_id` (string, required) — The run id (from workflow_start).
+
+**Example — Check a run:**
+
+```json
+{
+  "run_id": "a1b2c3d4"
+}
+```
+
 ## workflows-tools
 
 ### `code_map`

@@ -68,21 +68,23 @@ class TestPromptRenderDispatch:
 
 class TestPromptsCategoryIsIndependent:
     """The relocation is the point: Prompts must survive the workflow feature's
-    replacement. WORKFLOWS-V2 Phase 1 deletes `mcp_workflows` wholesale, so anything
-    still living there goes with it."""
+    replacement. Phase 1 deleted `mcp_workflows` wholesale (anything still living there
+    went with it), and Slice 6a rebuilt it as the v2 engine's tool surface. What the
+    relocation guarantees is not that the module is absent — it is back — but that
+    `prompt_render` no longer lives in it and Prompts does not depend on it."""
 
-    def test_the_workflows_category_module_is_gone(self):
-        """Phase 1 deleted it — which is exactly why prompt_render moved out first."""
+    def test_prompt_render_does_not_live_in_the_workflows_category(self):
+        """The relocation's actual invariant, and it survives the module's return: a
+        rebuilt `mcp_workflows` must not re-absorb the Prompts surface."""
         import importlib
 
         try:
-            importlib.import_module("personalclaw.mcp_workflows")
+            wf = importlib.import_module("personalclaw.mcp_workflows")
         except ModuleNotFoundError:
-            return
-        raise AssertionError(
-            "personalclaw.mcp_workflows still exists; prompt_render's relocation "
-            "assumed Phase 1 deletes it"
-        )
+            return  # deleted (between Phase 1 and Slice 6a) — trivially satisfied
+        names = {t["name"] for t in wf._list_tools()}
+        assert "prompt_render" not in names
+        assert all(n.startswith("workflow_") for n in names)
 
     def test_prompts_module_does_not_import_workflows(self):
         """A dependency back onto the doomed module would defeat the relocation."""

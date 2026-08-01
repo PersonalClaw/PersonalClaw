@@ -1,0 +1,128 @@
+{
+  "name": "project-planning",
+  "description": "Turn a goal into a plan: understand the scope, research the domain and audit what exists in parallel, then design an approach and stage it for review.",
+  "source": "bundled",
+  "provenance": "user",
+  "version": 1,
+  "tags": ["plan", "general"],
+  "inputs": {
+    "goal": {
+      "type": "string",
+      "required": true,
+      "help": "What you want to end up with. The plan is only as good as the goal is specific."
+    },
+    "constraints": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "help": "Time, people, technology or policy limits the plan has to respect."
+    },
+    "context_root": {
+      "type": "string",
+      "required": false,
+      "default": ".",
+      "help": "Where the audit leg should look for what already exists."
+    }
+  },
+  "metadata": {
+    "risk": "low",
+    "capabilities": ["research", "read"],
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Plan moving our notification delivery off the in-process queue. Constraints: no new infra, must ship incrementally."
+      },
+      {
+        "event": "mutation",
+        "description": "The audit found we already have half of this in loop/watchdog.py — re-run design-approach with that as the starting point rather than a greenfield."
+      }
+    ]
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "project_planning",
+    "children": [
+      {
+        "kind": "infer",
+        "id": "understand_scope",
+        "config": {
+          "model_tier": "reasoning",
+          "prompt": "Restate this goal as a scope: what is IN, what is explicitly OUT, and what is ambiguous enough that a planner would have to guess.\n\nName the ambiguities rather than resolving them — a plan built on a silent assumption fails later and more expensively than one that asked.\n\nReturn JSON: {\"in_scope\": [\"…\"], \"out_of_scope\": [\"…\"], \"ambiguities\": [\"…\"], \"success_looks_like\": \"…\"}.\n\nGoal:\n{{inputs.goal}}\n\nConstraints:\n{{inputs.constraints}}",
+          "schema": {
+            "in_scope": "array",
+            "out_of_scope": "array",
+            "ambiguities": "array",
+            "success_looks_like": "string"
+          }
+        }
+      },
+      {
+        "kind": "parallel",
+        "id": "investigate",
+        "children": [
+          {
+            "kind": "stage",
+            "id": "research_domain",
+            "config": {
+              "prompt": "Research how this problem is usually solved, and what the known failure modes are. Prefer sources that describe an actual outcome over ones that describe an intention.\n\nScope:\n{{nodes.understand_scope.output}}"
+            }
+          },
+          {
+            "kind": "stage",
+            "id": "audit_existing",
+            "config": {
+              "prompt": "Find what ALREADY exists here that bears on this goal — code, config, docs, prior attempts. The most common planning failure is proposing something that is half-built already.\n\nLook under: {{inputs.context_root}}\n\nScope:\n{{nodes.understand_scope.output}}"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "stage",
+        "id": "design_approach",
+        "config": {
+          "prompt": "Design the approach.\n\nStart from what the audit found already exists. Name the ONE decision the plan turns on, and say what you would do if it went the other way — a plan with no identified pivot has simply not found it yet.\n\nGoal:\n{{inputs.goal}}\n\nConstraints:\n{{inputs.constraints}}\n\nScope:\n{{nodes.understand_scope.output}}\n\nDomain research:\n{{nodes.research_domain.output}}\n\nWhat exists:\n{{nodes.audit_existing.output}}"
+        }
+      },
+      {
+        "kind": "infer",
+        "id": "plan_milestones",
+        "config": {
+          "model_tier": "reasoning",
+          "prompt": "Break the approach into milestones that each end in something demonstrable.\n\nEach milestone needs a name, what is true when it is done, and what it depends on. A milestone whose completion cannot be checked is a wish.\n\nReturn JSON: {\"milestones\": [{\"name\": \"…\", \"done_when\": \"…\", \"depends_on\": [\"…\"], \"risk\": \"low|medium|high\"}], \"critical_path\": [\"…\"]}.\n\nApproach:\n{{nodes.design_approach.output}}",
+          "schema": { "milestones": "array", "critical_path": "array" }
+        }
+      },
+      {
+        "macro": "judge_panel",
+        "id": "review_plan",
+        "config": {
+          "subject": "{{nodes.plan_milestones.output}}",
+          "criteria": "Is this plan achievable, correctly ordered, and honest about its risks?",
+          "model_tier": "standard",
+          "lenses": [
+            {
+              "name": "feasibility",
+              "prompt": "Which milestone will blow its estimate, and what is the plan's response when it does?"
+            },
+            {
+              "name": "ordering",
+              "prompt": "Is anything scheduled before the thing it depends on? Is there a cheaper order that de-risks earlier?"
+            },
+            {
+              "name": "honesty",
+              "prompt": "Which risk is understated, and which milestone's done_when could be claimed without actually being true?"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "gate",
+        "id": "accept_plan",
+        "config": {
+          "kind": "approval",
+          "prompt": "The plan is drafted and reviewed. Approve to accept it, or deny to send it back with your notes."
+        }
+      }
+    ]
+  }
+}
