@@ -62,7 +62,7 @@ mandatory.
 | 10 | **Slice 5b** — action-node clarification → needs_input; auto-approve for trigger-origin; owner binding + default-DENY for remote gates; `gate{kind: event}` transient hold | G4 | ✅ DONE (#145) |
 | 11 | **Slice 6a** — `mcp_workflows.py`: the 19 chat tools incl. `workflow_observe`/`run_from`/`audit`/`manifest`; wire into `_AGGREGATED_CATEGORY_MODULES`; validation schemas | G5 | ✅ DONE (#147) |
 | 12 | **Slice 6b** — spec ingestion: strict mode + repromptable errors, dry-run-before-save, provenance actor, run-start preflight (`can_resolve_use_case`), generated manifest + CI drift test | G5 | ✅ DONE (#148) |
-| 13 | **Slice 6c** — staged-turn contract for mutation tools; `[ACTIVE WORKFLOWS]` context block (never-break-a-turn); blocking-mode handler | G5 | TODO |
+| 13 | **Slice 6c** — staged-turn contract for mutation tools; `[ACTIVE WORKFLOWS]` context block (never-break-a-turn); blocking-mode handler | G5 | ✅ DONE (#149) |
 | 14 | **Slice 7a** — `handlers.py` REST routes for defs + runs; register in `dashboard/server.py`; per-run SSE stream endpoint | G6 | TODO |
 | 15 | **Slice 7b** — FE `pages/workflows/`: list page, def detail, run detail (snapshot-then-subscribe); `lib/api.ts` methods + nav entry | G6 | TODO |
 | 16 | **Slice 8a** — `WorkflowProgressCard.tsx`; event pipeline: dedup keys, deterministic ids, event-fold law, epoch-tagged supersede-drop, node-keyed patches | G7 | TODO |
@@ -344,3 +344,23 @@ mandatory.
   NOTE: 11 Slice-6a tool tests now pass `skip_preflight=True` — they inject a fake completion
   to test the ENGINE, while preflight tests the ENVIRONMENT (correctly model-less in a test
   home). Two new tests cover the ungated path so the gate is not merely skipped everywhere.
+- 2026-08-01 — session 13 (Slice 6c) DONE → **PR #149** (stack #147→#148→#149).
+  **Slice 6 is complete.** `workflows/context_block.py`: the `[ACTIVE WORKFLOWS]` block
+  (urgency-ordered, ask inline, run+length capped, names its own tools) and the staged-turn
+  spec echo (tree + source + `expect_version` + live node states, credentials stripped).
+  `controller.wait_for_terminal()` + `progress_snapshot()` for blocking mode. Wired into
+  `context.py:build_message`. 10493 tests (+35).
+  Validated live: a real gated run returned `needs_input` from blocking mode instead of
+  hanging; the block rendered as a chat turn sees it with the ask inline; the echo on a real
+  `workflow_status` carried `expect_version=1` and `#approve [waiting]`; a broken store
+  yielded "" not an exception.
+  KEY DECISIONS: (a) **blocking mode needed a NEW wait.** `run_to_completion` waits for the
+  tick loop to exit, which DEADLOCKS on needs_input — the tool holds the turn that would
+  render the ask, so the ask can never be answered. `wait_for_terminal` stops there and
+  returns the resume token in the same response.
+  (b) The block is NOT project-filtered: `resolve_project_id` AUTO-CREATES a project when
+  none resolves, and a read-only context block must not have side effects.
+  (c) The echo ships tree AND source together — tree-only invites invented field names,
+  JSON-only makes structure unreadable. Mutation tools do not re-echo (the model already
+  knows what it changed).
+  (d) never-break-a-turn is asserted on the CALL SITE in context.py, not just the helper.
