@@ -202,6 +202,10 @@ class RunController:
         #: event-gate path -> re-hold accounting. Bounded, because an unbounded hold is a
         #: wedge that looks like patience.
         self._event_holds: dict[str, gate_policy.HoldState] = {}
+        #: Monotonic SSE sequence. Separate from the journal's `seq`: the journal counts
+        #: persisted records, this counts published events, and conflating them would make a
+        #: consumer's gap detection fire on every unpublished journal write.
+        self._event_seq = 0
         self._outputs: dict[str, Any] = {}
         self._terminal = asyncio.Event()
         self._load_outputs()
@@ -976,6 +980,7 @@ class RunController:
                     "node_id": item.node.id,
                     "instance_path": item.path,
                     "status": state.value,
+                    "node_epoch": inst.epoch,
                     "cached": True,
                 },
             )
@@ -998,7 +1003,11 @@ class RunController:
             {
                 "node_id": item.node.id,
                 "instance_path": item.path,
-                "epoch": inst.epoch,
+                # The NODE's epoch, under the node key. Publishing it as `epoch` would
+                # override the envelope's RUN epoch and make this event look superseded to a
+                # consumer whose folded epoch came from a rewound sibling — `node_started`
+                # and `node_done` for the same node would then disagree about the run.
+                "node_epoch": inst.epoch,
             },
         )
 
@@ -1549,6 +1558,7 @@ class RunController:
                 "node_id": item.node.id,
                 "instance_path": item.path,
                 "status": result.state.value,
+                "node_epoch": inst.epoch,
                 "degraded_reason": result.degraded_reason,
                 "output_preview": _preview(result.output),
             },
@@ -1876,14 +1886,44 @@ class RunController:
         self._publish("workflow_run_update", {"status": status.value, "error": error})
 
     def _publish(self, event: str, payload: dict[str, Any]) -> None:
+        """Publish one event, stamped with the identity a consumer needs to fold safely.
+
+        Three fields are added HERE rather than at each of the twelve call sites, because a
+        call site that forgot one would produce an event the FE cannot dedup or supersede —
+        and that is invisible until a rewind duplicates a row (WF2-R11):
+
+        * `event_id` — deterministic (`<run>-evt-<n>`), so a re-emit is an idempotent no-op
+          rather than a second row.
+        * `seq` — monotonic per run, so a consumer can detect a gap or an out-of-order
+          delivery instead of silently folding backwards.
+        * `epoch` — the run's current epoch, so an event from a superseded epoch (a rewind
+          landed while it was in flight) is DROPPED instead of resurrecting stale state.
+          A payload that already carries a node-specific epoch keeps it.
+        """
         fn = self.services.publish
         if fn is None:
             return
-        body = {"run_id": self.run.id, **payload}
+        self._event_seq += 1
+        body: dict[str, Any] = {
+            "run_id": self.run.id,
+            "event_id": f"{self.run.id}-evt-{self._event_seq}",
+            "seq": self._event_seq,
+            "epoch": self._run_epoch(),
+            **payload,
+        }
         try:
             fn(event, body)
         except Exception:  # a broken observer must never kill a run
             logger.debug("workflow %s: publish %s failed", self.run.id, event, exc_info=True)
+
+    def _run_epoch(self) -> int:
+        """The run's current epoch — the max across instances.
+
+        A rewind bumps only the region it resets, so the RUN's epoch is the highest any node
+        has reached. Using a per-node epoch as the run's would let an untouched node's stale
+        value mark a fresh event as superseded.
+        """
+        return max((i.epoch for i in self.instances.values()), default=0)
 
 
 # ── module helpers ───────────────────────────────────────────────────────────

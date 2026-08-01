@@ -65,7 +65,7 @@ mandatory.
 | 13 | **Slice 6c** — staged-turn contract for mutation tools; `[ACTIVE WORKFLOWS]` context block (never-break-a-turn); blocking-mode handler | G5 | ✅ DONE (#149) |
 | 14 | **Slice 7a** — `handlers.py` REST routes for defs + runs; register in `dashboard/server.py`; per-run SSE stream endpoint | G6 | ✅ DONE (#150) |
 | 15 | **Slice 7b** — FE `pages/workflows/`: list page, def detail, run detail (snapshot-then-subscribe); `lib/api.ts` methods + nav entry | G6 | ✅ DONE (#152) |
-| 16 | **Slice 8a** — `WorkflowProgressCard.tsx`; event pipeline: dedup keys, deterministic ids, event-fold law, epoch-tagged supersede-drop, node-keyed patches | G7 | TODO |
+| 16 | **Slice 8a** — `WorkflowProgressCard.tsx`; event pipeline: dedup keys, deterministic ids, event-fold law, epoch-tagged supersede-drop, node-keyed patches | G7 | ✅ DONE (#153) |
 | 17 | **Slice 8b** — per-observer debounced coalescing (~25ms), schema-validated snapshot projection, `result_omitted` spill boundary; FE lifecycle-union registration + backend⊆FE test | G7 | TODO |
 | 18 | **Slice 8c** — typed ask renderer (approval/choice/text/form) in the attention banner + needs-input inbox projection; blocking-mode rendering; two-step delete; foreach progress rows; degraded rendering | G7 | TODO |
 | 19 | **Slice 9a** — author 6 bundled templates incl. `produce-and-audit`; macros (`judge_panel`, `verify_panel`, `route`, `research_sweep`) | G8 | TODO |
@@ -418,3 +418,24 @@ mandatory.
   (d) Three font sizes were off the documented ramp (0.875/0.6875rem) — snapped to real rungs.
   (e) The preflight model probe is now PINNED in its test rather than relying on ambient
   environment state.
+- 2026-08-01 — session 16 (Slice 8a) DONE → **PR #153** (stack #152→#153). The event
+  envelope stamped at the ONE `_publish` seam (`event_id` deterministic, `seq` monotonic,
+  `epoch` = the RUN's max, plus `node_epoch` on node events); `workflowFold.ts` (pure,
+  unit-locked, 4 guards); `WorkflowProgressCard` folding SSE through the SAME fold the run
+  page uses. 10559 py · 368 web (+39) · typecheck + build clean.
+  Validated live: captured 7 REAL frames off the wire (evt-9…evt-14) carrying the full
+  envelope; browser showed the resumed run Complete 3/3; `foldRealFrames.test.ts` asserts the
+  fold law against those exact frames.
+  DEVIATIONS/DISCOVERIES:
+  (a) **`workflow_node_started` overrode the run epoch** — it passed the NODE's epoch as
+  `epoch`, so `started` and `done` for one node reported DIFFERENT run epochs; a consumer
+  folding the lower one would treat the next real event as superseded and go permanently
+  silent. Node epoch now goes under `node_epoch`, and a STRUCTURAL test fails if any call
+  site re-introduces a bare `epoch` in a payload (the dicts are spread into the envelope, so
+  a regression would otherwise be invisible).
+  (b) **`seq` was in the envelope but the fold never used it.** Folding REAL captured frames
+  OUT OF ORDER regressed a node from Done back to Running. Added a PER-NODE seq floor —
+  per-node, not global, because two different nodes' events are independent and a global
+  floor would drop a legitimate sibling. **Found by replaying real frames, not fixtures.**
+  (c) `window.location.hash` in the card violated the url-navigation doctrine test; replaced
+  with a plain `<a href>` matching SdlcProgressCard.
