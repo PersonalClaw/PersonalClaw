@@ -24,9 +24,12 @@ run. A read that lazily started something would make polling a side-effecting ac
 from __future__ import annotations
 
 import logging
+import re
+import shutil
 import time
 from typing import Any
 
+from personalclaw.workflows import attention
 from personalclaw.workflows import defs as defs_mod
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import mutations, secrets, store
@@ -525,6 +528,52 @@ def cancel_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
     return _ok(run_id=run_id, cancel_requested=True)
 
 
+def delete_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
+    """Delete a TERMINAL run and its artifacts.
+
+    Refused while a run can still move. Deleting a live run would leave its controller writing
+    journal entries and terminal status to a row that no longer exists — the single-writer
+    discipline (WF2-R10) assumes the row outlives the writer. Cancel first, then delete: two
+    deliberate steps for two genuinely different intents.
+
+    Removes the run DIRECTORY as well as the row. A row-only delete would leave the journal,
+    outputs and continuations on disk forever, invisible to every surface — the run would look
+    gone while still costing the disk and still holding a live resume token.
+    """
+    run = store.get(run_id)
+    if run is None:
+        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    if run.status not in TERMINAL_RUN_STATUSES:
+        return _err(
+            "WF_RUN_NOT_TERMINAL",
+            f"run is {run.status.value}; cancel it before deleting",
+            status=run.status.value,
+        )
+    # A controller for a terminal run is finished but may still be registered; dropping it
+    # first means nothing holds a handle to a run being deleted.
+    controller = _live(run_id, supervisor)
+    if controller is not None and supervisor is not None:
+        try:
+            supervisor.forget(run_id)
+        except Exception:
+            logger.debug("could not unregister the controller for %s", run_id, exc_info=True)
+
+    # Traversal guard, same shape as `prune_fork`: the id reaches here from a URL, and a
+    # crafted one must not walk out of the runs root.
+    target = store.run_dir(run_id).resolve()
+    root = store.runs_root().resolve()
+    if root not in target.parents:
+        return _err("WF_RUN_DELETE_REFUSED", "refusing to delete a path outside the runs root")
+    if target.is_dir():
+        shutil.rmtree(target, ignore_errors=True)
+    # The inbox rows go too: a gate that was open when the run was cancelled would otherwise
+    # outlive the run entirely and be unanswerable forever. The state comes off the supervisor,
+    # which is what the route has — a delete is a request path, not the engine's own.
+    attention.resolve_run_items(getattr(supervisor, "_state", None), run_id)
+    deleted = store.delete(run_id)
+    return _ok(run_id=run_id, deleted=deleted)
+
+
 def pause_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
     """Stop launching new nodes; in-flight ones finish.
 
@@ -754,20 +803,35 @@ def _nodes_of(run_id: str) -> list[dict[str, Any]]:
                     ids[path] = node.id
         except ValueError:
             pass
+    # How many instances share each base path — the `12` in "[3/12]". Counted here rather than
+    # stored, so a rewind that re-expands a fan-out cannot leave a stale total behind.
+    totals: dict[str, int] = {}
+    for path in instances:
+        totals[path.split("#")[0].split("@")[0]] = (
+            totals.get(path.split("#")[0].split("@")[0], 0) + 1
+        )
+
     out: list[dict[str, Any]] = []
     for path in sorted(instances):
         inst = instances[path]
         base = path.split("#")[0].split("@")[0]
-        out.append(
-            {
-                "instance_path": path,
-                "node_id": ids.get(base, ""),
-                "state": inst.state.value,
-                "attempt": inst.attempt,
-                "degraded_reason": inst.degraded_reason,
-                "failure": inst.failure.to_dict() if inst.failure else None,
-            }
-        )
+        row: dict[str, Any] = {
+            "instance_path": path,
+            "node_id": ids.get(base, ""),
+            "state": inst.state.value,
+            "attempt": inst.attempt,
+            "degraded_reason": inst.degraded_reason,
+            "failure": inst.failure.to_dict() if inst.failure else None,
+        }
+        # Per-item foreach context (WF2-R5), included only for an actually-iterated instance:
+        # an `item_index` on a lone node would render "[1/1]", which is noise.
+        suffix = re.search(r"[#@](\d+)$", path)
+        if suffix and totals.get(base, 0) > 1:
+            row["item_index"] = int(suffix.group(1))
+            row["item_total"] = totals[base]
+            if inst.item_label:
+                row["item_label"] = inst.item_label
+        out.append(row)
     return out
 
 

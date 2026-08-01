@@ -39,7 +39,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from personalclaw.workflows import gate_policy
+from personalclaw.workflows import attention, gate_policy
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import mutations, store
 from personalclaw.workflows.bindings import BindingContext, node_deps
@@ -58,6 +58,7 @@ from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.journal import CacheKey, Journal, inputs_hash, spec_region_hash
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
+    TERMINAL_RUN_STATUSES,
     TERMINAL_STATES,
     Failure,
     FailureClass,
@@ -126,6 +127,12 @@ class EngineServices:
     #: `(event, payload) -> None` — SSE/WS publication. Never `state.notify`, which is
     #: the user-notification gate (mute/severity/quiet-hours) and would eat engine events.
     publish: Any = None
+    #: The dashboard state, for the ATTENTION path only (WF2-R7): a waiting gate raises a
+    #: durable inbox item + one notification. Separate from `publish` on purpose — `publish`
+    #: is the live event stream every open view folds, this is the "tell the human, durably"
+    #: path a closed browser must still reach. Without it a 3am scheduled run could park on a
+    #: gate and never be mentioned anywhere.
+    attention_state: Any = None
     model_tiers: dict[str, str] = field(default_factory=dict)
     lane_limits: Limits = field(default_factory=Limits)
     node_timeout_total: int = 900
@@ -520,6 +527,21 @@ class RunController:
                 "expires_at": cont.expires_at,
             },
         )
+        # …and DURABLY, to the inbox (WF2-R7). The SSE frame above only reaches a view that
+        # happens to be open; a scheduled run parking at 3am would otherwise wait in silence
+        # forever. Minted alongside the continuation so the two share the (path, epoch)
+        # idempotency — one row per question, not one per watchdog poll.
+        attention.raise_gate_item(
+            self.services.attention_state,
+            run_id=self.run.id,
+            workflow=self.run.workflow_name,
+            node_id=cont.node_id,
+            instance_path=path,
+            epoch=inst.epoch,
+            resume_token=cont.token,
+            ask=cont.ask,
+            handoff=cont.handoff,
+        )
 
     def _resolved_for_path(self, path: str) -> dict[str, Any]:
         """What this node had already resolved — the field that makes a resume re-enter
@@ -634,6 +656,10 @@ class RunController:
             "workflow_gate_resolved",
             {"node_id": cont.node_id, "instance_path": cont.instance_path, "approved": approved},
         )
+        # Close the inbox row this gate raised. A row that outlives its gate is worse than no
+        # row: the user opens it, finds nothing to answer, and stops trusting the surface.
+        # Scoped to the node, so a run with two concurrent gates keeps the other one open.
+        attention.resolve_gate_item(self.services.attention_state, self.run.id, cont.node_id)
         self._publish("workflow_run_update", {"status": self.run.status.value})
         # RESTART the tick loop. Answering a gate is the ONLY way a needs_input run gets work
         # again, and the loop that would schedule it has already exited — without this the
@@ -992,6 +1018,12 @@ class RunController:
         inst.state = InstanceState.RUNNING
         inst.started_at = _now()
         inst.attempt += 1
+        if item.has_item and not inst.item_label:
+            # Stamped once, at first launch. The items list is re-resolved from a binding on
+            # every tick, so after an upstream output changes the label would be unrecoverable
+            # — and a retry must show the item it originally got, not whatever now sits at that
+            # index.
+            inst.item_label = _item_label(item.item)
         if item.node.kind == NodeKind.ACTION:
             # ATTEMPTED goes down BEFORE dispatch: a crash between here and the outcome
             # must leave evidence the effect MAY have fired (WF2-R1).
@@ -1008,6 +1040,11 @@ class RunController:
                 # consumer whose folded epoch came from a rewound sibling — `node_started`
                 # and `node_done` for the same node would then disagree about the run.
                 "node_epoch": inst.epoch,
+                # Per-item foreach context (WF2-R5): what a "[3/12] refactor auth.py" row
+                # needs. A fan-out of twelve otherwise renders as twelve identical rows
+                # distinguishable only by an index suffix — technically correct and useless
+                # for telling which item is stuck.
+                **self._item_context(item),
             },
         )
 
@@ -1883,7 +1920,40 @@ class RunController:
         )
         if status == RunStatus.CANCELLED:
             store.clear_cancel(self.run.id)
+        if status in TERMINAL_RUN_STATUSES:
+            # A run that ended answers its own outstanding questions by ending: nothing about
+            # it is actionable now. Leaving the rows open would put a permanently unanswerable
+            # gate in the inbox — cancel a run mid-gate and the question survives the run.
+            # NEEDS_INPUT is deliberately not terminal here: that run is waiting, not finished.
+            attention.resolve_run_items(self.services.attention_state, self.run.id)
         self._publish("workflow_run_update", {"status": status.value, "error": error})
+
+    def _item_context(self, item: ReadyNode) -> dict[str, Any]:
+        """The per-item fields a foreach row renders (WF2-R5): `[i/total] label`.
+
+        Empty for a non-iterated node, so the payload does not carry meaningless keys — a
+        consumer branching on presence is simpler than one branching on a null.
+
+        The label is a SHORT stringification of the item, not the item: a fan-out over
+        twenty-field dicts would put twenty JSON blobs in the event stream, and a row can only
+        show a line anyway. The full value stays available through the node's output.
+        """
+        if not item.has_item:
+            return {}
+        out: dict[str, Any] = {}
+        if item.iter_index is not None:
+            out["item_index"] = item.iter_index
+            # DERIVED from the instance map rather than cached at expansion: the expander
+            # already created one instance per item, so counting siblings is the same number
+            # with no second copy of it to go stale after a rewind re-expands the fan-out.
+            base = _base_path(item.path)
+            total = sum(1 for p in self.instances if _base_path(p) == base)
+            if total > 1:
+                out["item_total"] = total
+        label = _item_label(item.item)
+        if label:
+            out["item_label"] = label
+        return out
 
     def _publish(self, event: str, payload: dict[str, Any]) -> None:
         """Publish one event, stamped with the identity a consumer needs to fold safely.
@@ -1927,6 +1997,37 @@ class RunController:
 
 
 # ── module helpers ───────────────────────────────────────────────────────────
+
+#: Max characters of a foreach item's label. A row shows one line, and a fan-out over long
+#: strings would otherwise put kilobytes of prose in the event stream for no gain.
+_ITEM_LABEL_MAX = 60
+
+
+def _item_label(item: Any) -> str:
+    """A short, human-readable label for one foreach item.
+
+    Prefers a NAMED field when the item is a dict, because a fan-out over records is the common
+    case and `{"path": "auth.py", …}` should read as `auth.py`, not as its JSON. Falls back to
+    a truncated stringification — something is always better than an index alone, which is
+    what the row already shows.
+    """
+    if isinstance(item, dict):
+        for key in ("label", "name", "title", "path", "id"):
+            value = item.get(key)
+            if isinstance(value, (str, int, float)) and str(value).strip():
+                return _clip(str(value))
+        return _clip(", ".join(f"{k}={v}" for k, v in list(item.items())[:3]))
+    if isinstance(item, (list, tuple)):
+        # A container's contents are not a label; its size is the only honest summary.
+        return f"{len(item)} items"
+    if item is None:
+        return ""
+    return _clip(str(item))
+
+
+def _clip(text: str) -> str:
+    text = " ".join(text.split())  # a newline inside a row breaks the layout
+    return text if len(text) <= _ITEM_LABEL_MAX else text[: _ITEM_LABEL_MAX - 1] + "…"
 
 
 def _now() -> str:

@@ -71,6 +71,10 @@ _STATUS_MAP: dict[str, tuple[int, str]] = {
     "WF_RESUME_NOT_OWNER": (403, "not_owner"),
     "WF_RESUME_STALE_EPOCH": (409, "stale_epoch"),
     "WF_FORK_FAILED": (400, "fork_failed"),
+    # 409, not 400: the request is well-formed and the state is the problem — a client can fix
+    # it by cancelling first, which a 400 ("you sent nonsense") would not suggest.
+    "WF_RUN_NOT_TERMINAL": (409, "not_terminal"),
+    "WF_RUN_DELETE_REFUSED": (400, "delete_refused"),
 }
 
 #: A validation-shaped service code we did not map explicitly still must not read as a
@@ -288,6 +292,21 @@ def _api_origin() -> Any:
 
 async def api_run_status(request: web.Request) -> web.Response:
     return _reply(service.status(request.match_info.get("run_id", "")))
+
+
+async def api_run_delete(request: web.Request) -> web.Response:
+    """Delete a terminal run and its artifacts.
+
+    SEL-audited like the other mutations: a delete is the one workflow action with no undo, so
+    an audit trail is what makes "where did that run go?" answerable.
+    """
+    denied = _guard(request, "workflow_run_delete")
+    if denied is not None:
+        return denied
+    run_id = request.match_info.get("run_id", "")
+    result = service.delete_run(run_id, supervisor=_supervisor(request))
+    _audit(request, "workflow_run_delete", "success" if result.get("ok") else "failure", run_id)
+    return _reply(result)
 
 
 async def api_run_output(request: web.Request) -> web.Response:
@@ -532,6 +551,7 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_get("/api/workflows/runs", api_runs_list)
     app.router.add_post("/api/workflows/runs", api_run_start)
     app.router.add_get("/api/workflows/runs/{run_id}", api_run_status)
+    app.router.add_delete("/api/workflows/runs/{run_id}", api_run_delete)
     app.router.add_get("/api/workflows/runs/{run_id}/events", api_run_events)
     app.router.add_get("/api/workflows/runs/{run_id}/continuations", api_run_continuations)
     app.router.add_get("/api/workflows/runs/{run_id}/outputs/{node_id}", api_run_output)

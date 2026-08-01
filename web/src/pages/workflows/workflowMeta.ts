@@ -68,6 +68,28 @@ export function nodeLabel(node: { node_id: string; instance_path: string }): str
   return node.instance_path
 }
 
+/** The per-item progress prefix for a `foreach` row — `[3/12] auth.py` (WF2-R5).
+ *
+ *  Returns '' for a non-iterated node, so a caller renders nothing rather than an empty
+ *  bracket. Twelve identical rows distinguishable only by an index suffix are technically
+ *  correct and useless for answering "which item is stuck?" — this is what makes them
+ *  distinguishable.
+ *
+ *  The counter renders 1-BASED: the engine's `item_index` is a 0-based array position, and
+ *  "[0/12]" reads as "none done yet" to a human rather than "the first one". */
+export function itemProgress(node: {
+  item_index?: number; item_total?: number; item_label?: string
+}): string {
+  const parts: string[] = []
+  if (typeof node.item_index === 'number') {
+    parts.push(node.item_total
+      ? `[${node.item_index + 1}/${node.item_total}]`
+      : `[${node.item_index + 1}]`)
+  }
+  if (node.item_label) parts.push(node.item_label)
+  return parts.join(' ')
+}
+
 /** Depth of an instance path, for indenting the node list into its tree shape. Counts the
  *  structural separators the engine's path grammar uses (`root.children[0].body`). */
 export function nodeDepth(instancePath: string): number {

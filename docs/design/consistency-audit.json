@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-08-01T19:23:18.823Z",
+  "generatedAt": "2026-08-01T20:05:26.999Z",
   "totals": {
     "driftHits": 7,
-    "filesScanned": 389,
+    "filesScanned": 390,
     "filesWithDrift": 6
   },
   "byCategory": {
@@ -461,6 +461,11 @@
     "pages/inbox/InboxSettingsPanel.tsx": {
       "raw-button": 0,
       "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/inbox/WorkflowGateActions.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
       "raw-dialog": 0
     },
     "pages/knowledge/AudioRecorder.tsx": {

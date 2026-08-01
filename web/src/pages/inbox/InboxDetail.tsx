@@ -8,6 +8,7 @@ import { Markdown } from '../../ui/Markdown'
 import { TextArea, Segmented } from '../../ui/forms'
 import { api, type InboxItem, type InboxClassification, type SkillProposalDetail } from '../../lib/api'
 import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, CLASSIFICATIONS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
+import { WorkflowGateActions } from './WorkflowGateActions'
 
 /** Inbox item triage panel: the full message + thread context, the triage
  *  verdict (classification + confidence), the AI-drafted reply (generate / edit),
@@ -53,6 +54,8 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
   const channelBacked = !NON_CHANNEL_ITEM_KINDS.includes(item.item_kind || 'message')
   const km = kindMeta(item.item_kind)
   const target = refTarget(item)
+  // A workflow gate is answerable in place (below), which changes what the deep link is for.
+  const answerableGate = item.item_kind === 'needs_input' && !!item.refs?.workflow
 
   return (
     <div className="flex flex-col gap-l">
@@ -122,10 +125,26 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
         <ProposalActions pid={item.refs.skill_proposal} onChanged={onChanged} navigate={navigate} />
       )}
 
+      {/* A workflow gate is answerable here too, for the same reason (WF2-R7): a row whose
+          only action is "go somewhere else" is a notification with extra steps. Renders the
+          SAME typed-ask component the run view uses, so there is one form implementation. */}
+      {answerableGate && (
+        <Section label="Waiting on you">
+          <WorkflowGateActions
+            runId={item.refs!.workflow!}
+            nodeId={item.refs?.workflow_node}
+            onChanged={onChanged}
+            navigate={navigate}
+          />
+        </Section>
+      )}
+
       {/* Deep link — for a non-channel item this REPLACES the reply machinery as the
           primary action: the answer to "a loop needs your input" is to go to the loop.
-          Skipped for proposals, which have their own actions above. */}
-      {!channelBacked && target && item.item_kind !== 'proposal' && (
+          Skipped for anything answerable in place above (proposals, workflow gates): the
+          in-place form already offers the run as its fallback, and two "go there" buttons for
+          one row reads as two different destinations. */}
+      {!channelBacked && target && item.item_kind !== 'proposal' && !answerableGate && (
         <Section label="Source">
           <Button size="sm" variant="secondary" onClick={() => navigate(target)}>
             <ExternalLink size={14} /> {refLabel(item)}

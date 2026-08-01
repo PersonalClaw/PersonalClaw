@@ -113,6 +113,16 @@ class WorkflowWatchdog:
         watchdog does not later adopt the same run a second time."""
         self._controllers[controller.run.id] = controller
 
+    def forget(self, run_id: str) -> bool:
+        """Drop a finished run's controller from the registry. True if one was held.
+
+        For deletion: nothing may hold a handle to a run whose row is about to disappear, or
+        the next poll would try to reconcile a run that no longer exists. Only ever called for
+        a TERMINAL run (`service.delete_run` refuses otherwise), so this cannot orphan a live
+        tick loop.
+        """
+        return self._controllers.pop(run_id, None) is not None
+
     async def launch(
         self, run: WorkflowRun, spec: dict[str, Any], *, depth: int = 0
     ) -> RunController:
@@ -135,6 +145,11 @@ class WorkflowWatchdog:
             get_provider=base.get_provider,
             verify=base.verify,
             publish=self._publisher(run.id),
+            # The attention path (WF2-R7): a waiting gate raises a durable inbox item + one
+            # notification. Handed the state directly rather than a callback, because
+            # `emit_attention_item` owns the item↔notification pairing and a callback here
+            # would be a second place that could get it wrong.
+            attention_state=self._state,
             model_tiers=dict(base.model_tiers),
             lane_limits=base.lane_limits,
             node_timeout_total=base.node_timeout_total,
