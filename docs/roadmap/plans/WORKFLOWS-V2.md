@@ -845,3 +845,83 @@ Each slice is independently shippable and testable. Rev-2 scope grows the estima
 | WF2-A1 | `step_cached` ledger event + `cached` flag on `workflow_node_done`; cache-hit regression pair (outside-closure cached / inside-closure re-run, ledger-asserted) | `workflows/journal.py`, `workflows/tick.py`, Slice 11 test file | edit-then-rerun fixture shows N cached + M re-run nodes exactly matching the binding closure; zero model calls for cached nodes |
 | WF2-A2 | Node inspection endpoint returning resolved prompt/inputs/output/attempts/ledger slice | `workflows/handlers.py`, `lib/api.ts` | endpoint returns the §5 reconstructability set for any terminal node; secrets absent (RedactingSink fixture) |
 | WF2-A3 | FE inspector drawer (run detail + widget node rows) with cached badge rendering | `web/src/pages/workflows/WorkflowRunDetail.tsx`, `WorkflowProgressCard.tsx` | a user can open any node and read its exact resolved prompt, inputs, and output; cached nodes visually distinct |
+
+---
+
+## Execution log
+
+- 2026-07-31 — **DONE (Phase 0: relocate shared code trapped in the old feature).**
+  The three §7 Phase-0 items, plus the premise audit that has to precede a 32-session
+  program. **No behavior change** — this is pure relocation, so Phase 1's deletion can
+  be surgical instead of collateral.
+
+  **Premise audit — all four §7 claims verified against code before touching anything:**
+  (a) `mcp_prompts.py` and `agents/identity.py` did not exist; (b) `resolve_agent_id` had
+  exactly ONE real consumer (`chat_runner.py:276`, through a thin `_resolve_agent_id`
+  wrapper) plus its tests; (c) `_CURRENT_AGENT_ID` is owned by `mcp_core` and used by
+  `mcp_workflows` only — so it stays in `mcp_core` for the new feature exactly as the plan
+  says; (d) the `workflow` `_TypeHandler` really does register into
+  `workflows/registry.py` (`providers/registry.py:224,229,628`), so the repoint-in-the-
+  same-commit rule in §7 is real. The old package is 1758 lines across 9 modules with 23
+  consumer files.
+
+  **T0.1 — `prompt_render` → `mcp_prompts.py` (new tool category).** Saved Prompts are
+  their own entity; the tool lived in `mcp_workflows` only because both were authored
+  together, and Phase 1 deletes that module **wholesale**. Registered through BOTH sites
+  the platform requires — `mcp_core._AGGREGATED_CATEGORY_MODULES` (the ACP MCP-server
+  surface: an unlisted module is invisible to every ACP agent) and a
+  `create_prompts_provider` factory reached via a new native app manifest
+  (`apps/native/personalclaw-prompts/app.json`), mirroring `personalclaw-artifacts`.
+  Removed from `mcp_workflows` in the same commit — no duplicate, no shim.
+
+  **T0.2 — `resolve_agent_id` → `agents/identity.py`.** `chat_runner` was importing an
+  identity rule across the workflow boundary. `composition.py` re-exports it so its own
+  callers keep working (that file dies in Phase 1 anyway); `chat_runner` now imports the
+  new home directly.
+
+  **T0.3 — no action needed**, per the audit above: `_CURRENT_AGENT_ID` has no consumer
+  outside `mcp_core`/`mcp_workflows`, so the plan's "if clean, keep it in mcp_core"
+  branch applies.
+
+  **DISCOVERY — a test file the §7 delete-list does not mention.**
+  `tests/test_prompt_render_tool.py` asserted the tool's LOCATION (`mcp_workflows._post`
+  patch targets), so it broke on the move and is repointed. Worth noting for Phase 1: §7's
+  test-deletion list is 8 files, but `test_prompt_render_tool.py` must NOT be deleted with
+  them — it now covers a surviving surface.
+
+  **LANDMINE CONFIRMED — a new tool category has FOUR registration points, not one.**
+  Two are code (aggregator tuple + provider factory/manifest) and two are guards that fail
+  only after the fact: `tests/test_native_tool_categories.py` deliberately duplicates the
+  aggregator list (`_CATEGORY_MODULES` + `_CATEGORY_PROVIDERS`) so a silent addition is
+  impossible, and the offline reference needs
+  `python -m personalclaw.manifest_reference` re-run (providers 28 → 29; tool count stays
+  66 — it MOVED, it was not added). All four updated.
+
+  **Three new boundary tests** pin the relocation so Phase 1 cannot quietly undo it:
+  `prompt_render` is absent from the workflows category, `mcp_prompts` imports nothing
+  workflow-related, and the aggregated ACP surface still exposes it.
+  `tests/test_agent_identity.py` (6 cases) rescues the identity coverage from
+  `test_workflows_composition.py`, which Phase 1 deletes — with two edge cases the
+  original lacked (all-absent → `""` not `None`; whitespace stripping).
+
+  **🔴 FINDING FOR PHASE 1 — the §7 delete-list has a gap that would break a SHIPPED
+  feature.** `workflows/surfacing.py:113` consults `feedback.suppressed_producers()`, and
+  `tests/test_feedback.py` asserts the `("workflow_surfacing", …)` producer pair round-trips
+  (lines 141-173). Deleting `workflows/surfacing.py` per §7 therefore breaks
+  Feedback-Signal S3's only *gated* consumer — its own execution log records that skills
+  surfacing was deliberately NOT wired, so workflow surfacing is the sole live one.
+  Phase 1 must either re-wire the suppression check into the v2 surfacing path or
+  re-scope those feedback assertions deliberately. **Not a blocker for Phase 0; recorded
+  before it becomes a surprise.**
+
+  **Gates:** `make lint` clean (black/isort/flake8 + mypy, 565 files) · `make test`
+  **9791 passed, 0 failed**. **Validated as a user** on an isolated dev home (:10777,
+  never :10000): created a saved prompt with two `{{variables}}` through the real API,
+  rendered it through the relocated tool end-to-end ("Report on the docs site for
+  platform."), confirmed `personalclaw-prompts` and `personalclaw-workflows` both appear
+  enabled in the Store, and confirmed each provider exposes exactly its own tools
+  (1 and 5). **0 tracebacks.**
+
+  **NOT in this session:** Phase 1 (delete the old feature) and Slice 0 (the new package).
+  Phase 0 stands alone and is strictly better without them — the shared code is no longer
+  hostage to a feature that is about to be deleted.

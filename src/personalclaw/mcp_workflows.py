@@ -88,33 +88,6 @@ def _list_tools() -> list[dict[str, Any]]:
             },
         },
         {
-            "name": "prompt_render",
-            "description": (
-                "Load a saved Prompt and render it with variable values filled in, "
-                "returning the final prompt text for you to act on. Saved Prompts are "
-                "reusable, parameterized instructions the user maintains (with "
-                "{{variable}} placeholders). Use when a defined prompt covers what you "
-                "need — e.g. to follow a standard report/checklist procedure on demand "
-                "for a specific subject. Pass values for the prompt's variables in "
-                "'vars'. Read-only: this returns the rendered text; you then carry it "
-                "out with your other tools."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "prompt_id": {
-                        "type": "string",
-                        "description": "The saved prompt name to render.",
-                    },
-                    "vars": {
-                        "type": "object",
-                        "description": "Values for the prompt's {{variable}} placeholders (name → value).",  # noqa: E501
-                    },
-                },
-                "required": ["prompt_id"],
-            },
-        },
-        {
             "name": "workflow_create",
             "description": (
                 "Author a new workflow SOP — an ordered, reusable playbook for a "
@@ -247,7 +220,8 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         # The LLM naturally passes the NAME (that's all workflow_list surfaces — the
         # opaque wf-<hash> id is never shown), but the GET route keys off the id and
         # 404s on a name. Resolve name→id via the list so a by-name reference works —
-        # matching prompt_render, whose sibling accepts the prompt NAME. Without this,
+        # matching `prompt_render` (now in mcp_prompts), which accepts the prompt NAME.
+        # Without this,
         # `workflow_run` on a named workflow 404s and the run silently fails.
         if d.get("error"):
             listing = _get("/api/workflows")
@@ -278,24 +252,6 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             if instr:
                 lines.append(f"     {instr}")
         return "\n".join(lines)
-
-    if name == "prompt_render":
-        pid = (args.get("prompt_id") or "").strip()
-        if not pid:
-            return "Error: prompt_id is required."
-        variables = args.get("vars") or {}
-        if not isinstance(variables, dict):
-            return "Error: 'vars' must be an object (variable name → value)."
-        d = _post(
-            f"/api/prompts/{urllib.parse.quote(pid)}/render",
-            {"variables": variables},
-        )
-        if d.get("error"):
-            return f"Error: {d['error']}"
-        rendered = (d.get("rendered") or "").strip()
-        if not rendered:
-            return f"Error: prompt {pid!r} rendered empty."
-        return f"Rendered prompt '{pid}' — carry out the following:\n\n{rendered}"
 
     if name == "workflow_create":
         wf_name = (args.get("name") or "").strip()

@@ -826,6 +826,31 @@ Read live progress of any project run — status, stage/phase progress, cycles, 
 }
 ```
 
+## personalclaw-prompts
+
+### `prompt_render`
+
+Load a saved Prompt and render it with variable values filled in, returning the final prompt text for you to act on. Saved Prompts are reusable, parameterized instructions the user maintains (with {{variable}} placeholders). Use when a defined prompt covers what you need — e.g. to follow a standard report/checklist procedure on demand for a specific subject. Pass values for the prompt's variables in 'vars'. Read-only: this returns the rendered text; you then carry it out with your other tools.
+
+**Response type:** `prompt.render.result`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `prompt_id` (string, required) — The saved prompt name to render.
+- `vars` (object, optional) — Values for the prompt's {{variable}} placeholders (name → value).
+
+**Example — Render a saved prompt with variables:**
+
+```json
+{
+  "prompt_id": "review",
+  "vars": {
+    "file": "server.py"
+  }
+}
+```
+
 ## personalclaw-schedule
 
 ### `schedule_add`
@@ -1369,29 +1394,6 @@ Search the web/src/ui design-system kit (components + design tokens) by keyword.
 ```
 
 ## personalclaw-workflows
-
-### `prompt_render`
-
-Load a saved Prompt and render it with variable values filled in, returning the final prompt text for you to act on. Saved Prompts are reusable, parameterized instructions the user maintains (with {{variable}} placeholders). Use when a defined prompt covers what you need — e.g. to follow a standard report/checklist procedure on demand for a specific subject. Pass values for the prompt's variables in 'vars'. Read-only: this returns the rendered text; you then carry it out with your other tools.
-
-**Response type:** `prompt.render.result`
-
-**Safety:** requires approval
-
-**Parameters:**
-- `prompt_id` (string, required) — The saved prompt name to render.
-- `vars` (object, optional) — Values for the prompt's {{variable}} placeholders (name → value).
-
-**Example — Render a saved prompt with variables:**
-
-```json
-{
-  "prompt_id": "review",
-  "vars": {
-    "file": "server.py"
-  }
-}
-```
 
 ### `workflow_create`
 

@@ -78,6 +78,18 @@ def create_workflows_provider(config: dict[str, Any] | None = None) -> ToolProvi
     )
 
 
+def create_prompts_provider(config: dict[str, Any] | None = None) -> ToolProvider:
+    """Extension factory for the ``personalclaw-prompts`` tool surface — in-process
+    over ``mcp_prompts`` (render the user's saved, parameterized Prompts)."""
+    from personalclaw.agents.native.tools import InProcessMcpToolProvider
+
+    return InProcessMcpToolProvider(
+        module="personalclaw.mcp_prompts",
+        provider_name="personalclaw-prompts",
+        display="PersonalClaw Prompts",
+    )
+
+
 def create_memory_provider(config: dict[str, Any] | None = None) -> ToolProvider:
     """Extension factory for the ``personalclaw-memory`` tool surface — in-process
     over ``mcp_memory`` (persistent lessons + on-demand recall)."""

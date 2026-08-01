@@ -984,6 +984,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 _AGGREGATED_CATEGORY_MODULES = (
     "personalclaw.mcp_artifacts",
     "personalclaw.mcp_workflows",
+    "personalclaw.mcp_prompts",
     "personalclaw.mcp_memory",
     "personalclaw.mcp_subagents",
 )
