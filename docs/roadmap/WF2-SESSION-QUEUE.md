@@ -61,7 +61,7 @@ mandatory.
 | 9 | **Slice 5a** — typed ask payload, mode-dependent gate timeouts, `timed_out_unattended`; continuation records + durable resume tokens + expiry | G4 | ✅ DONE (#144) |
 | 10 | **Slice 5b** — action-node clarification → needs_input; auto-approve for trigger-origin; owner binding + default-DENY for remote gates; `gate{kind: event}` transient hold | G4 | ✅ DONE (#145) |
 | 11 | **Slice 6a** — `mcp_workflows.py`: the 19 chat tools incl. `workflow_observe`/`run_from`/`audit`/`manifest`; wire into `_AGGREGATED_CATEGORY_MODULES`; validation schemas | G5 | ✅ DONE (#147) |
-| 12 | **Slice 6b** — spec ingestion: strict mode + repromptable errors, dry-run-before-save, provenance actor, run-start preflight (`can_resolve_use_case`), generated manifest + CI drift test | G5 | TODO |
+| 12 | **Slice 6b** — spec ingestion: strict mode + repromptable errors, dry-run-before-save, provenance actor, run-start preflight (`can_resolve_use_case`), generated manifest + CI drift test | G5 | ✅ DONE (#148) |
 | 13 | **Slice 6c** — staged-turn contract for mutation tools; `[ACTIVE WORKFLOWS]` context block (never-break-a-turn); blocking-mode handler | G5 | TODO |
 | 14 | **Slice 7a** — `handlers.py` REST routes for defs + runs; register in `dashboard/server.py`; per-run SSE stream endpoint | G6 | TODO |
 | 15 | **Slice 7b** — FE `pages/workflows/`: list page, def detail, run detail (snapshot-then-subscribe); `lib/api.ts` methods + nav entry | G6 | TODO |
@@ -324,3 +324,23 @@ mandatory.
   is `workflow_`-prefixed.
   (d) This category does NOT go over HTTP like its siblings — the engine is in-process, and
   a gateway round-trip to reach an object in the same process buys nothing.
+- 2026-08-01 — session 12 (Slice 6b, preflight + drift gate) DONE → **PR #148**
+  (stack #141→…→#148). `preflight.py`: credentials (declared ∪ REFERENCED `{{secret:}}`),
+  binaries, models (via the SAME `can_resolve_use_case` probe onboarding uses), action
+  providers. `start_run` gated with a `skip_preflight` override; agent-authored defs get a
+  dry-run report attached at save; nine manifest-drift assertions against the engine's enums.
+  10458 tests (+34).
+  Validated live against REAL infrastructure: the real probe refused an LLM workflow in a
+  home with no model; the real PATH flagged an absent binary and passed `sh`; the real
+  registry rejected `no-such-provider`; the real credential store flagged an
+  undeclared-but-referenced `{{secret:}}`; a pure-transform workflow demanded nothing.
+  KEY DECISIONS: (a) **missing is an ERROR, unverifiable is a WARNING** — refusing a run
+  because the CHECKER was offline is its own outage, so the two never collapse (tested both
+  ways). (b) The model check reuses onboarding's probe deliberately; a private capability
+  check would drift from what the bridge really resolves and greenlight unrunnable runs.
+  (c) A BOUND provider name is SKIPPED, not guessed at — guessing a binding's future value
+  produces a false failure. (d) A judge gate is checked on the `reasoning` tier because that
+  is what `dispatch_gate` actually uses, not what the node declares.
+  NOTE: 11 Slice-6a tool tests now pass `skip_preflight=True` — they inject a fake completion
+  to test the ENGINE, while preflight tests the ENVIRONMENT (correctly model-less in a test
+  home). Two new tests cover the ungated path so the gate is not merely skipped everywhere.
