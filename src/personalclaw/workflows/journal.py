@@ -74,6 +74,12 @@ EFFECT = "effect"
 STEP_SCOPE = "step_scope_violation"
 ITERATION = "iteration"
 USER_EDITED_MID_FLIGHT = "user_edited_mid_flight"
+#: A queued batch failed its TOCTOU re-verify (state moved under the preview). Journaled
+#: because a silently dropped mutation is indistinguishable from an applied one.
+MUTATION_REJECTED = "mutation_rejected"
+#: A done node whose inputs changed but which is NOT being re-run (WF2-R2 #3) — better a
+#: visible flag than an answer computed from inputs that no longer exist.
+INPUTS_STALE = "inputs_stale"
 CONSULTED = "consulted"
 CHILD_RUN_ATTACH = "child_run_attach"
 RUN_ABANDONED = "run_abandoned"
@@ -95,6 +101,8 @@ LEDGER_KINDS = frozenset(
         GATE_CRITERION,
         EFFECT,
         STEP_SCOPE,
+        MUTATION_REJECTED,
+        INPUTS_STALE,
         ITERATION,
         USER_EDITED_MID_FLIGHT,
         CONSULTED,
