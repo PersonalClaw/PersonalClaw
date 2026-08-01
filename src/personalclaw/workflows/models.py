@@ -257,6 +257,9 @@ class InstanceState(str, Enum):
 
 
 #: States after which a node will not run again without an explicit mutation.
+#: BLOCKED belongs here: it is "the engine refused to proceed and a human must decide"
+#: — leaving it schedulable would relaunch-and-refuse forever, the silent hang the
+#: state exists to prevent. (Its absence also made `_ROOT_TO_RUN[BLOCKED]` unreachable.)
 TERMINAL_STATES = frozenset(
     {
         InstanceState.DONE,
@@ -267,6 +270,7 @@ TERMINAL_STATES = frozenset(
         InstanceState.SCOPE_VIOLATION,
         InstanceState.DISCARDED,
         InstanceState.ESCALATED,
+        InstanceState.BLOCKED,
         InstanceState.CANCELLED,
     }
 )

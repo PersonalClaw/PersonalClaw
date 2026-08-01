@@ -394,14 +394,32 @@ class Journal:
         )
 
     def effect(
-        self, path: str, *, idempotency_key: str, effect_status: str, compensation_ref: str = ""
+        self,
+        path: str,
+        *,
+        idempotency_key: str,
+        effect_status: str,
+        epoch: int = 0,
+        node_id: str = "",
+        provider: str = "",
+        output_id: str = "",
+        compensation_ref: str = "",
+        detail: str = "",
     ) -> None:
+        """One effect-lifecycle event (WF2-R1). ATTEMPTED is written BEFORE dispatch, so
+        a crash between attempt and outcome leaves evidence the effect MAY have fired —
+        "unknown, possibly fired" and "never fired" demand different recovery."""
         self.write(
             EFFECT,
             instance_path=path,
             idempotency_key=idempotency_key,
             effect_status=effect_status,
+            epoch=int(epoch),
+            node_id=node_id,
+            provider=provider,
+            output_id=output_id,
             compensation_ref=compensation_ref,
+            detail=detail,
         )
 
     # ── resume cache ──
