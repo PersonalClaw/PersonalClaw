@@ -1,0 +1,20 @@
+{
+  "name": "personalclaw-workflows",
+  "version": "1.0.0",
+  "displayName": "Workflow Tools",
+  "description": "Author, run, steer and inspect composable workflows — save a DAG of stages, start runs, watch progress, edit or rewind a run mid-flight, and answer the gates it stops on.",
+  "icon": "Workflow",
+  "author": "PersonalClaw",
+  "tags": [
+    "tool",
+    "bundled"
+  ],
+  "provider": {
+    "type": "tool",
+    "implementation": "personalclaw.tool_providers.registry:create_workflows_provider",
+    "capabilities": [
+      "workflows"
+    ]
+  },
+  "native": true
+}

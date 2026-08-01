@@ -478,6 +478,191 @@ PROMPT_RENDER_SCHEMA = ToolSchema(
     ],
 )
 
+# ── Workflows (WORKFLOWS-V2 Slice 6a — the 19-tool chat surface) ──────────
+#
+# Argument-shape validation only. The SPEC's own validity (acyclicity, resolvable
+# bindings, branch coverage) is `workflows.validator`'s job and returns an issue
+# LIST the author can act on — collapsing that into one arg-validation error would
+# throw away the actionable half. So `root`/`ops` are checked as containers here and
+# validated for real downstream.
+_WF_RUN_ID_RE = re.compile(r"^[a-f0-9]{8}$")
+_WF_DEF_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+_WF_MODES = frozenset({"blocking", "background"})
+_WF_RIGOR = frozenset({"minimal", "standard", "deep"})
+
+WORKFLOW_AUTHOR_SCHEMA = ToolSchema(
+    tool_name="workflow_author",
+    fields=[
+        FieldSpec("name", str, required=True, max_len=63, pattern=_WF_DEF_NAME_RE),
+        FieldSpec("root", dict, required=True),
+        FieldSpec("description", str, max_len=2000),
+        FieldSpec("inputs", dict, default={}),
+        FieldSpec("tags", list, item_type=str, item_max_len=64, max_items=16),
+        FieldSpec("save", bool, default=True),
+    ],
+)
+
+WORKFLOW_PLAN_SCHEMA = ToolSchema(
+    tool_name="workflow_plan",
+    fields=[
+        FieldSpec("goal", str, required=True, max_len=MAX_LONG_STRING),
+        FieldSpec("rigor", str, max_len=16, allowed=_WF_RIGOR),
+        FieldSpec("template", str, max_len=63, pattern=_WF_DEF_NAME_RE),
+    ],
+)
+
+WORKFLOW_LIST_DEFS_SCHEMA = ToolSchema(
+    tool_name="workflow_list_defs",
+    fields=[
+        FieldSpec("tag", str, max_len=64),
+        FieldSpec("source", str, max_len=16),
+    ],
+)
+
+WORKFLOW_GET_DEF_SCHEMA = ToolSchema(
+    tool_name="workflow_get_def",
+    fields=[FieldSpec("name", str, required=True, max_len=63, pattern=_WF_DEF_NAME_RE)],
+)
+
+WORKFLOW_DELETE_DEF_SCHEMA = ToolSchema(
+    tool_name="workflow_delete_def",
+    fields=[FieldSpec("name", str, required=True, max_len=63, pattern=_WF_DEF_NAME_RE)],
+)
+
+WORKFLOW_START_SCHEMA = ToolSchema(
+    tool_name="workflow_start",
+    fields=[
+        FieldSpec("name", str, required=True, max_len=63, pattern=_WF_DEF_NAME_RE),
+        FieldSpec("inputs", dict, default={}),
+        FieldSpec("mode", str, max_len=16, allowed=_WF_MODES),
+        FieldSpec("project_id", str, max_len=MAX_SHORT_STRING),
+        FieldSpec("idempotency_key", str, max_len=128),
+    ],
+)
+
+WORKFLOW_STATUS_SCHEMA = ToolSchema(
+    tool_name="workflow_status",
+    fields=[FieldSpec("run_id", str, required=True, max_len=16, pattern=_WF_RUN_ID_RE)],
+)
+
+WORKFLOW_OBSERVE_SCHEMA = ToolSchema(
+    tool_name="workflow_observe",
+    fields=[
+        FieldSpec("run_id", str, required=True, max_len=16, pattern=_WF_RUN_ID_RE),
+        # Bounds mirror the service clamp. Validated here too so an out-of-range value is
+        # a named argument error rather than a silently different window than requested.
+        FieldSpec("duration_ms", int, min_val=100, max_val=30_000),
+    ],
+)
+
+WORKFLOW_OUTPUT_SCHEMA = ToolSchema(
+    tool_name="workflow_output",
+    fields=[
+        FieldSpec("run_id", str, required=True, max_len=16, pattern=_WF_RUN_ID_RE),
+        FieldSpec("node_id", str, required=True, max_len=128),
+    ],
+)
+
+WORKFLOW_EDIT_SCHEMA = ToolSchema(
+    tool_name="workflow_edit",
+    fields=[
+        FieldSpec("run_id", str, required=True, max_len=16, pattern=_WF_RUN_ID_RE),
+        FieldSpec("ops", list, required=True, item_type=dict, max_items=50),
+        FieldSpec("expect_version", int, min_val=1),
+        FieldSpec("confirm_cascade", bool, default=False),
+        FieldSpec("preview_only", bool, default=False),
+    ],
+)
+
+WORKFLOW_SKIP_SCHEMA = ToolSchema(
+    tool_name="workflow_skip",
+    fields=[
+        FieldSpec("run_id", str, required=True, max_len=16, pattern=_WF_RUN_ID_RE),
+        FieldSpec("node_ids", list, required=True, item_type=str, item_max_len=128, max_items=50),
+    ],
+)
+
+WORKFLOW_REWIND_SCHEMA = ToolSchema(
+    tool_name="workflow_rewind",
+    fields=[
+        FieldSpec("run_id", str, required=True, max_len=16, pattern=_WF_RUN_ID_RE),
+        FieldSpec("node_id", str, required=True, max_len=128),
+        FieldSpec("redo_effects", bool, default=False),
+        FieldSpec("force", bool, default=False),
+    ],
+)
+
+WORKFLOW_RUN_FROM_SCHEMA = ToolSchema(
+    tool_name="workflow_run_from",
+    fields=[
+        FieldSpec("run_id", str, required=True, max_len=16, pattern=_WF_RUN_ID_RE),
+        FieldSpec("node_id", str, required=True, max_len=128),
+    ],
+)
+
+WORKFLOW_FORK_SCHEMA = ToolSchema(
+    tool_name="workflow_fork",
+    fields=[
+        FieldSpec("run_id", str, required=True, max_len=16, pattern=_WF_RUN_ID_RE),
+        FieldSpec("checkpoint_id", str, max_len=16),
+        FieldSpec("note", str, max_len=2000),
+    ],
+)
+
+WORKFLOW_PAUSE_SCHEMA = ToolSchema(
+    tool_name="workflow_pause",
+    fields=[FieldSpec("run_id", str, required=True, max_len=16, pattern=_WF_RUN_ID_RE)],
+)
+
+WORKFLOW_CANCEL_SCHEMA = ToolSchema(
+    tool_name="workflow_cancel",
+    fields=[FieldSpec("run_id", str, required=True, max_len=16, pattern=_WF_RUN_ID_RE)],
+)
+
+WORKFLOW_RESUME_SCHEMA = ToolSchema(
+    tool_name="workflow_resume",
+    fields=[
+        FieldSpec("run_id", str, required=True, max_len=16, pattern=_WF_RUN_ID_RE),
+        # `answer` is deliberately UNTYPED: an approval is a bool, a choice a string, a
+        # form an object. Constraining it here would reject a legitimate form answer, and
+        # the ask's own `validate_answer` already checks it against the gate's real shape.
+        FieldSpec("resume_token", str, max_len=64),
+        FieldSpec("always_allow", bool, default=False),
+    ],
+)
+
+WORKFLOW_AUDIT_SCHEMA = ToolSchema(
+    tool_name="workflow_audit",
+    fields=[FieldSpec("dry_run", bool, default=True)],
+)
+
+WORKFLOW_MANIFEST_SCHEMA = ToolSchema(tool_name="workflow_manifest")
+
+#: Keyed by live tool name so `_validate_args`' lookup finds them (same contract as
+#: MCP_SCHEDULE_SCHEMAS — the key MUST match the schema's own tool_name).
+MCP_WORKFLOW_SCHEMAS: dict[str, ToolSchema] = {
+    "workflow_author": WORKFLOW_AUTHOR_SCHEMA,
+    "workflow_plan": WORKFLOW_PLAN_SCHEMA,
+    "workflow_list_defs": WORKFLOW_LIST_DEFS_SCHEMA,
+    "workflow_get_def": WORKFLOW_GET_DEF_SCHEMA,
+    "workflow_delete_def": WORKFLOW_DELETE_DEF_SCHEMA,
+    "workflow_start": WORKFLOW_START_SCHEMA,
+    "workflow_status": WORKFLOW_STATUS_SCHEMA,
+    "workflow_observe": WORKFLOW_OBSERVE_SCHEMA,
+    "workflow_output": WORKFLOW_OUTPUT_SCHEMA,
+    "workflow_edit": WORKFLOW_EDIT_SCHEMA,
+    "workflow_skip": WORKFLOW_SKIP_SCHEMA,
+    "workflow_rewind": WORKFLOW_REWIND_SCHEMA,
+    "workflow_run_from": WORKFLOW_RUN_FROM_SCHEMA,
+    "workflow_fork": WORKFLOW_FORK_SCHEMA,
+    "workflow_pause": WORKFLOW_PAUSE_SCHEMA,
+    "workflow_cancel": WORKFLOW_CANCEL_SCHEMA,
+    "workflow_resume": WORKFLOW_RESUME_SCHEMA,
+    "workflow_audit": WORKFLOW_AUDIT_SCHEMA,
+    "workflow_manifest": WORKFLOW_MANIFEST_SCHEMA,
+}
+
+
 SKILL_INVOKE_SCHEMA = ToolSchema(
     tool_name="skill_invoke",
     fields=[
