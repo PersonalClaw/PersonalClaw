@@ -12,7 +12,7 @@ Two roles:
       notify_attachment  — notify with a file attachment
       loop_nudge_stop    — halt the autonomous self-nudge loop
   (The entity-specific tool groups live in their own modules + providers —
-  ``mcp_subagents`` / ``mcp_memory`` / ``mcp_artifacts`` / ``mcp_workflows``.)
+  ``mcp_subagents`` / ``mcp_memory`` / ``mcp_artifacts`` / ``mcp_prompts``.)
 
 * **MCP-server composition root** — ``run_mcp_core_server`` runs as
   ``personalclaw mcp-core``, the single stdio MCP server an ACP CLI (claude-code/
@@ -78,9 +78,11 @@ def get_current_session_key() -> str:
     return _CURRENT_SESSION_KEY.get()
 
 
-# The turn's resolved agent binding id (native profile name | acp:<cli>/<modeId>),
-# in the form workflow ``scope_ref`` uses. The native loop publishes it so
-# ``workflow_create`` can auto-bind an agent/session-scoped SOP to the right owner.
+# The turn's resolved agent binding id (native profile name | acp:<cli>/<modeId>) —
+# see `agents.identity.resolve_agent_id` for the canonical form. Published by the
+# native loop so a tool can attribute or scope work to the agent that is running.
+# Kept here (not in the workflow package) because it is not workflow-specific: the
+# old `workflow_create` was its first consumer, not its owner.
 _CURRENT_AGENT_ID: contextvars.ContextVar[str] = contextvars.ContextVar(
     "personalclaw_current_agent_id", default=""
 )
@@ -983,7 +985,6 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 # Each entry is an importable module exposing ``_list_tools`` / ``_call_tool``.
 _AGGREGATED_CATEGORY_MODULES = (
     "personalclaw.mcp_artifacts",
-    "personalclaw.mcp_workflows",
     "personalclaw.mcp_prompts",
     "personalclaw.mcp_memory",
     "personalclaw.mcp_subagents",

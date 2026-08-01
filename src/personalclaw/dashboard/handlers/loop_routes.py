@@ -177,7 +177,8 @@ def _derive_name(task: str, limit: int = 60) -> str:
 
 async def _installed_capability_catalogs() -> tuple[list[dict], list[dict]]:
     """Installed skills + workflows ({id,name,description}) the classifier may rank.
-    Best-effort — empty on any failure."""
+    Best-effort — empty on any failure. The workflows half is empty until
+    WORKFLOWS-V2 Slice 0 (see below)."""
     skills: list[dict] = []
     workflows: list[dict] = []
     try:
@@ -193,15 +194,12 @@ async def _installed_capability_catalogs() -> tuple[list[dict], list[dict]]:
         ]
     except Exception:
         logger.debug("skills catalog for classify failed", exc_info=True)
-    try:
-        from personalclaw.workflows.registry import list_all_workflows
-
-        wfs, _ = await list_all_workflows()
-        workflows = [
-            {"id": w.id, "name": w.name, "description": getattr(w, "description", "")} for w in wfs
-        ]
-    except Exception:
-        logger.debug("workflows catalog for classify failed", exc_info=True)
+    # The workflow half stays EMPTY until WORKFLOWS-V2 Slice 0 lands the def store.
+    # The classifier prompts still ask for `suggested_workflow_ids`, and they instruct
+    # "use ONLY ids that appear in the catalog … empty when nothing fits" — so an empty
+    # catalog makes the model return an empty list, which is the correct answer while
+    # no workflows exist. Removing the field from the prompts instead would mean
+    # re-adding it (and re-tuning them) three slices later.
     return skills, workflows
 
 

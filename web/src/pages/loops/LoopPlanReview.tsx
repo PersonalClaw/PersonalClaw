@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowLeft, ArrowRight, Play, Plus, X, Sparkles, HelpCircle, AlertTriangle, Check, Download, Sparkle, Workflow, ChevronUp, ChevronDown, Loader2 } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Play, Plus, X, Sparkles, HelpCircle, AlertTriangle, Check, Download, Sparkle, ChevronUp, ChevronDown, Loader2 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
 import { SquareIconButton } from '../../ui/SquareIconButton'
@@ -9,7 +9,7 @@ import { CapRow, CapabilityPeekModal } from '../../ui/CapabilityPicker'
 import { Button } from '../../ui/Button'
 import { Segmented } from '../../ui/Segmented'
 import { spring } from '../../design/motion'
-import { api, type GoalLoop, type GoalType, type SkillItem, type WorkflowItem, type SkillSearchResult, type GrillPhase } from '../../lib/api'
+import { api, type GoalLoop, type GoalType, type SkillItem, type SkillSearchResult, type GrillPhase, type WorkflowDefStub } from '../../lib/api'
 import type { LoopDraft } from './loopDraft'
 import { loopToGoalLoop } from './goalAdapter'
 
@@ -103,7 +103,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
   // ── capabilities (IT-4): installed skills/workflows the loop loads each cycle,
   // pre-checked from the planner's suggestions; plus marketplace skills to install.
   const [installedSkills, setInstalledSkills] = useState<SkillItem[]>([])
-  const [installedWorkflows, setInstalledWorkflows] = useState<WorkflowItem[]>([])
+  const installedWorkflows: WorkflowDefStub[] = []  // filled by Slice 0's def store
   const [skillIds, setSkillIds] = useState<Set<string>>(new Set(draft.classification.suggested_skill_ids ?? []))
   const [workflowIds, setWorkflowIds] = useState<Set<string>>(new Set(draft.classification.suggested_workflow_ids ?? []))
   const [installing, setInstalling] = useState<Record<string, boolean>>({})
@@ -141,7 +141,9 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
     api.savedAgents().then((list) => { if (alive) setAgentNames(list.map((a) => a.name)) }).catch(() => {})
     // Installed capabilities for the picker (best-effort).
     api.skills().then((s) => { if (alive) setInstalledSkills(s) }).catch(() => {})
-    api.workflows().then((w) => { if (alive) setInstalledWorkflows(w.filter((x) => x.enabled !== false)) }).catch(() => {})
+    // No workflow catalog until WORKFLOWS-V2 Slice 0 lands the def store. The
+    // picker below is length-guarded, so an empty list renders no section; the
+    // persisted `workflow_ids` field is left intact for the v2 defs to fill.
     return () => { alive = false }
   }, [draft.loopId])  // eslint-disable-line
 
@@ -509,8 +511,8 @@ function GuidedDecomposition({ guided }: { guided: GuidedProps }) {
   )
 }
 
-function CapabilitiesStep({ skills, workflows, skillIds, workflowIds, onToggleSkill, onToggleWorkflow, suggestedSkillIds, suggestedWorkflowIds, marketplace, installed, installing, onInstall }: {
-  skills: SkillItem[]; workflows: WorkflowItem[]
+function CapabilitiesStep({ skills, skillIds, workflowIds, onToggleSkill, suggestedSkillIds, marketplace, installed, installing, onInstall }: {
+  skills: SkillItem[]; workflows: WorkflowDefStub[]
   skillIds: Set<string>; workflowIds: Set<string>
   onToggleSkill: (id: string) => void; onToggleWorkflow: (id: string) => void
   suggestedSkillIds: string[]; suggestedWorkflowIds: string[]
@@ -519,7 +521,6 @@ function CapabilitiesStep({ skills, workflows, skillIds, workflowIds, onToggleSk
 }) {
   // Suggested-first ordering so the planner's picks rise to the top.
   const orderedSkills = [...skills].sort((a, b) => Number(suggestedSkillIds.includes(b.key)) - Number(suggestedSkillIds.includes(a.key)))
-  const orderedWorkflows = [...workflows].sort((a, b) => Number(suggestedWorkflowIds.includes(b.id)) - Number(suggestedWorkflowIds.includes(a.id)))
   const selectedCount = skillIds.size + workflowIds.size
   // Hide marketplace suggestions that are ALREADY installed (this run or a prior
   // one). The planner suggests by marketplace id/name and doesn't know what's on
@@ -533,7 +534,7 @@ function CapabilitiesStep({ skills, workflows, skillIds, workflowIds, onToggleSk
   // Peek: which capability the user is previewing (skill content fetched on open;
   // workflow steps render from the in-hand item). Lets them study a suggestion
   // before committing it to the loop.
-  const [peek, setPeek] = useState<{ kind: 'skill' | 'workflow'; skill?: SkillItem; workflow?: WorkflowItem } | null>(null)
+  const [peek, setPeek] = useState<{ kind: 'skill'; skill?: SkillItem } | null>(null)
   return (
     <div className="flex flex-col gap-l max-w-[680px] mx-auto py-l">
       <div className="flex flex-col gap-1">
@@ -557,17 +558,10 @@ function CapabilitiesStep({ skills, workflows, skillIds, workflowIds, onToggleSk
         )}
       </Section>
 
-      {orderedWorkflows.length > 0 && (
-        <Section label={`Workflows · ${workflows.length} installed`}>
-          <div className="flex flex-col gap-1.5">
-            {orderedWorkflows.map((w) => (
-              <CapRow key={w.id} id={w.id} name={w.name} description={w.description}
-                checked={workflowIds.has(w.id)} suggested={suggestedWorkflowIds.includes(w.id)}
-                onToggle={() => onToggleWorkflow(w.id)} onPeek={() => setPeek({ kind: 'workflow', workflow: w })} icon={<Workflow size={14} />} />
-            ))}
-          </div>
-        </Section>
-      )}
+      {/* The workflow picker section stood here. Removed with the old feature
+          (WORKFLOWS-V2 Phase 1): with no catalog it could only ever render empty,
+          and a length-guarded block that can never be true is dead code. Slice 7
+          brings back a v2 def picker; `workflow_ids` still persists meanwhile. */}
 
       {marketplaceToShow.length > 0 && (
         <Section label="Suggested to install — from the marketplace">
@@ -628,7 +622,7 @@ function PhaseCapPicker({ label, options, selected, onChange }: {
 /** One editable phase card in the execution plan. */
 function PhaseCard({ phase, index, total, skills, workflows, agentNames, onChange, onRemove, onMoveUp, onMoveDown }: {
   phase: PlanPhase; index: number; total: number
-  skills: SkillItem[]; workflows: WorkflowItem[]; agentNames: string[]
+  skills: SkillItem[]; workflows: WorkflowDefStub[]; agentNames: string[]
   onChange: (p: PlanPhase) => void; onRemove: () => void
   onMoveUp: () => void; onMoveDown: () => void
 }) {
@@ -678,7 +672,7 @@ function PhaseCard({ phase, index, total, skills, workflows, agentNames, onChang
 
 function PlanStep({ phases, setPhases, skills, workflows, agentNames }: {
   phases: PlanPhase[]; setPhases: (p: PlanPhase[]) => void
-  skills: SkillItem[]; workflows: WorkflowItem[]; agentNames: string[]
+  skills: SkillItem[]; workflows: WorkflowDefStub[]; agentNames: string[]
 }) {
   const update = (i: number, p: PlanPhase) => setPhases(phases.map((x, j) => (j === i ? p : x)))
   const remove = (i: number) => setPhases(phases.filter((_, j) => j !== i))
@@ -750,7 +744,7 @@ function QuestionStep({ q, index, total, value, onChange, onAdvance }: {
 function LaunchStep({ loop, title, goalType, subGoals, verifyCommand, skillIds, workflowIds, installedSkills, installedWorkflows, phases, answered, totalQ }: {
   loop: GoalLoop; title: string; goalType: GoalType; subGoals: string[]
   verifyCommand: string; skillIds: string[]; workflowIds: string[]
-  installedSkills: SkillItem[]; installedWorkflows: WorkflowItem[]
+  installedSkills: SkillItem[]; installedWorkflows: WorkflowDefStub[]
   phases: PlanPhase[]; answered: number; totalQ: number
 }) {
   const typeLabel = GOAL_TYPES.find((t) => t.id === goalType)?.label ?? goalType

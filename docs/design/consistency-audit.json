@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-07-30T09:55:28.259Z",
+  "generatedAt": "2026-08-01T02:15:39.271Z",
   "totals": {
     "driftHits": 7,
-    "filesScanned": 387,
+    "filesScanned": 380,
     "filesWithDrift": 6
   },
   "byCategory": {
@@ -215,11 +215,11 @@
     }
   ],
   "a11y": {
-    "outlineNoneCount": 136,
-    "outlineNoneFiles": 59,
+    "outlineNoneCount": 134,
+    "outlineNoneFiles": 58,
     "localFocusVisibleFiles": 13,
     "reducedMotionFiles": 8,
-    "animatedFiles": 155,
+    "animatedFiles": 153,
     "hasGlobalReducedMotion": true,
     "hasGlobalFocusRing": true
   },
@@ -765,11 +765,6 @@
     },
     "pages/triggers/ActionConfig.tsx": {
       "raw-button": 0,
-      "raw-input": 2,
-      "raw-dialog": 0
-    },
-    "pages/workflows/WorkflowForm.tsx": {
-      "raw-button": 2,
       "raw-input": 2,
       "raw-dialog": 0
     }
