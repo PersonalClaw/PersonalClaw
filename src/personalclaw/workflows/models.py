@@ -819,6 +819,12 @@ class NodeInstance:
     #: restart. Held only in memory, a restart would leave every waiting run parked
     #: forever with nothing scheduled to wake it.
     wake_at: float = 0.0
+    #: A short label for the `foreach` item this instance is processing (WF2-R5) — what makes
+    #: "[3/12] auth.py" possible. PERSISTED because it is the only durable record of WHICH item
+    #: an instance was: the items list is re-resolved from a binding, and after the upstream
+    #: output changed (or a reload) the label would otherwise be unrecoverable. Empty for a
+    #: non-iterated node.
+    item_label: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -834,6 +840,7 @@ class NodeInstance:
             "output_ref": self.output_ref,
             "tokens": self.tokens,
             "wake_at": self.wake_at,
+            "item_label": self.item_label,
         }
 
     @classmethod
@@ -857,4 +864,5 @@ class NodeInstance:
             output_ref=str(d.get("output_ref", "") or ""),
             tokens=int(d.get("tokens", 0) or 0),
             wake_at=float(d.get("wake_at", 0.0) or 0.0),
+            item_label=str(d.get("item_label", "") or ""),
         )

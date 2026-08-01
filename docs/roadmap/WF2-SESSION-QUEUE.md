@@ -67,7 +67,7 @@ mandatory.
 | 15 | **Slice 7b** — FE `pages/workflows/`: list page, def detail, run detail (snapshot-then-subscribe); `lib/api.ts` methods + nav entry | G6 | ✅ DONE (#152) |
 | 16 | **Slice 8a** — `WorkflowProgressCard.tsx`; event pipeline: dedup keys, deterministic ids, event-fold law, epoch-tagged supersede-drop, node-keyed patches | G7 | ✅ DONE (#153) |
 | 17 | **Slice 8b** — per-observer debounced coalescing (~25ms), schema-validated snapshot projection, `result_omitted` spill boundary; FE lifecycle-union registration + backend⊆FE test | G7 | ✅ DONE (#154) |
-| 18 | **Slice 8c** — typed ask renderer (approval/choice/text/form) in the attention banner + needs-input inbox projection; blocking-mode rendering; two-step delete; foreach progress rows; degraded rendering | G7 | TODO |
+| 18 | **Slice 8c** — typed ask renderer (approval/choice/text/form) in the attention banner + needs-input inbox projection; blocking-mode rendering; two-step delete; foreach progress rows; degraded rendering | G7 | ✅ DONE (#155) |
 | 19 | **Slice 9a** — author 6 bundled templates incl. `produce-and-audit`; macros (`judge_panel`, `verify_panel`, `route`, `research_sweep`) | G8 | TODO |
 | 20 | **Slice 9b** — conventions pack (triage-first, Finding record, baseline capture, `bundled/shared/`, template-lint, steering_examples); `artifact_update` provider; bundled-sync; FE template picker | G8 | TODO |
 | 21 | **Slice 10a** — `foreach pipeline=true` streaming handoff; `loop until_dry`; `subworkflow` nesting (depth ≤3, namespaced, `child_run_attach`) | G9 | TODO |
@@ -470,3 +470,38 @@ mandatory.
   (f) `workflow_node_progress` was NOT added to the FE union or the allowlist: no call site
   publishes it yet (it arrives with Slice 8c's foreach progress rows), and registering it now
   would be a dead path.
+- 2026-08-01 — session 18 (Slice 8c) DONE → **PR #155** (stack #152→#153→#154→#155). New
+  `attention.py` (a waiting gate raises a durable inbox row + ONE notification via
+  `emit_attention_item`, deduped per run/path/EPOCH, resolved on answer scoped to the node, and
+  cleared when a run ends); `WorkflowGateActions` answering the gate IN the inbox through the
+  same `WorkflowAsk` the run view uses; `service.delete_run` + `DELETE /api/workflows/runs/{id}`
+  + two-step armed delete in the run list; per-item foreach rows (`[3/12] auth.py`) with the
+  label persisted on the instance. 10669 py · 387 web · typecheck + build clean.
+  Validated live: a gate raised a `pending` row carrying the real question; approving FROM THE
+  INBOX completed the run and flipped the row to `handled`; the two-step delete 404'd the run and
+  removed its directory; deleting a `needs_input` run was refused 409 naming the fix; a named
+  fan-out rendered `[1/3] auth.py` … `[3/3] handlers.py`.
+  DEVIATIONS/DISCOVERIES:
+  (a) **The plan's "typed ask renderer" and "degraded rendering" were already done** in Session
+  15 (`WorkflowAsk.tsx`, `nodeLook`'s degraded-as-success-adjacent tone). This session built what
+  was genuinely missing — and the watchdog's comment claiming user-facing moments "go through
+  notify separately" described work that had NEVER been done: a gate reached nobody who wasn't
+  already watching the run view.
+  (b) **EVERY attention row was written to a detached store.** `emit_attention_item` built a
+  fresh `InboxStore()`, but the running service holds items in MEMORY and never re-reads the
+  file — so the row hit disk and `/api/inbox` (which serves the service's instance) stayed empty,
+  and the service's next save would overwrite it. Affected every attention kind (loop gates,
+  proposals, mirrored approvals), not just workflows. Fixed with a shared `inbox.live_store(state)`,
+  **isinstance-checked** because a test's `MagicMock` answers every getattr and would swallow real
+  writes silently.
+  (c) **`message=body or title` discarded the title** whenever a body existed — a gate's row read
+  "Waiting for your approval." and LOST the actual question. Now joined title-then-body.
+  (d) **The resolve side had (b) all over again**: closing a row in a detached copy left it open
+  after its gate was answered. Found by clicking Approve in a REAL BROWSER and watching the row
+  survive. `resolve_gate_item`/`resolve_run_items` now take the state.
+  (e) `NodeInstance.item_label` added (persisted): the items list is re-resolved from a binding,
+  so after an upstream output changes the label would be unrecoverable, and a retry must show the
+  item it originally got rather than whatever now sits at that index.
+  (f) `WorkflowWatchdog.forget(run_id)` added — nothing may hold a controller handle to a run whose
+  row is about to disappear.
+  (g) The offline reference needed regenerating for the new DELETE route (its drift guard caught it).

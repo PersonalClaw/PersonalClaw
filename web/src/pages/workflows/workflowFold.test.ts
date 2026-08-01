@@ -361,3 +361,44 @@ describe('workflowRefFromTool', () => {
     expect(workflowRefFromTool(undefined, '{"run_id": "a1b2c3d4"}')).toBeNull()
   })
 })
+
+describe('per-item foreach context (WF2-R5)', () => {
+  it('a node_started carries the item fields onto the node', () => {
+    const vm = foldSnapshot(snap())
+    const out = foldEvent(vm, 'workflow_node_started', ev({
+      event_id: 'e1', instance_path: 'root.children[1]', node_id: 'analyze',
+      item_index: 2, item_total: 12, item_label: 'auth.py',
+    }))
+    const node = out.nodes.find((n) => n.instance_path === 'root.children[1]')
+    expect(node).toMatchObject({ item_index: 2, item_total: 12, item_label: 'auth.py' })
+  })
+
+  it('a node_done CARRIES FORWARD the label rather than clearing it', () => {
+    // The item context arrives on `node_started` and is not re-sent on `node_done`. Without
+    // the carry-forward, an item would lose the label that identified it the instant it
+    // succeeded — the rows a user most wants to read would be the blank ones.
+    const vm = foldSnapshot(snap())
+    const started = foldEvent(vm, 'workflow_node_started', ev({
+      event_id: 'e1', instance_path: 'root.children[1]', item_index: 0, item_total: 3, item_label: 'a.py',
+    }))
+    const done = foldEvent(started, 'workflow_node_done', ev({
+      event_id: 'e2', seq: 2, instance_path: 'root.children[1]', status: 'done',
+    }))
+    const node = done.nodes.find((n) => n.instance_path === 'root.children[1]')
+    expect(node?.state).toBe('done')
+    expect(node?.item_label).toBe('a.py')
+    expect(node?.item_total).toBe(3)
+  })
+
+  it('a fresh value overrides the carried one', () => {
+    // A rewind re-expanding a fan-out can legitimately put a different item at an index.
+    const vm = foldSnapshot(snap())
+    const first = foldEvent(vm, 'workflow_node_started', ev({
+      event_id: 'e1', instance_path: 'root.children[1]', item_label: 'old.py',
+    }))
+    const second = foldEvent(first, 'workflow_node_started', ev({
+      event_id: 'e2', seq: 2, instance_path: 'root.children[1]', item_label: 'new.py',
+    }))
+    expect(second.nodes.find((n) => n.instance_path === 'root.children[1]')?.item_label).toBe('new.py')
+  })
+})

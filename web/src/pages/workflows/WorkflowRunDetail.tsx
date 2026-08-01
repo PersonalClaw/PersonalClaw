@@ -6,7 +6,7 @@ import { QuietButton } from '../../ui/QuietButton'
 import { api, type WorkflowContinuation, type WorkflowRunDetailData } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { confirm } from '../../ui/dialog'
-import { fmtElapsed, isTerminal, nodeDepth, nodeLabel, nodeLook, runLook } from './workflowMeta'
+import { fmtElapsed, isTerminal, itemProgress, nodeDepth, nodeLabel, nodeLook, runLook } from './workflowMeta'
 import { useWorkflowStream } from './useWorkflowStream'
 import { WorkflowAsk } from './WorkflowAsk'
 
@@ -178,7 +178,16 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
                   >
                     <NIcon size={14} className={`shrink-0 ${nl.tone}${nl.spin ? ' animate-spin' : ''}`} />
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-on-surface text-[0.8125rem]">{nodeLabel(n)}</div>
+                      <div className="flex min-w-0 items-center gap-s">
+                        <span className="truncate text-on-surface text-[0.8125rem]">{nodeLabel(n)}</span>
+                        {/* The per-item label (WF2-R5): what makes one row of a twelve-item
+                            fan-out identifiable. Dimmed — it is which, not what. */}
+                        {itemProgress(n) && (
+                          <span className="min-w-0 shrink truncate text-on-surface-low text-[0.75rem] tabular-nums">
+                            {itemProgress(n)}
+                          </span>
+                        )}
+                      </div>
                       {(n.degraded_reason || n.failure?.cause_plain) && (
                         <div className="truncate text-on-surface-low text-[0.75rem]">
                           {n.degraded_reason || n.failure?.cause_plain}

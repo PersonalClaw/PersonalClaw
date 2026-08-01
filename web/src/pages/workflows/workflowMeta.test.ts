@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fmtElapsed, isTerminal, nodeDepth, nodeLabel, nodeLook, runLook } from './workflowMeta'
+import { fmtElapsed, isTerminal, itemProgress, nodeDepth, nodeLabel, nodeLook, runLook } from './workflowMeta'
 import { WORKFLOW_LIFECYCLE } from './useWorkflowStream'
 
 // ── The engine's outcome vocabulary must survive into the UI ────────────────
@@ -157,5 +157,34 @@ describe('WORKFLOW_LIFECYCLE', () => {
 
   it('does not include the snapshot event — that has its own dedicated listener', () => {
     expect(WORKFLOW_LIFECYCLE).not.toContain('workflow_snapshot')
+  })
+})
+
+// ── Per-item foreach progress (WF2-R5, Slice 8c) ────────────────────────────
+//
+// A twelve-item fan-out renders as twelve rows whose only difference is an index suffix —
+// technically correct and useless for answering "which item is stuck?". This is what makes
+// them distinguishable.
+describe('itemProgress', () => {
+  it('renders a 1-based counter with the total', () => {
+    // 1-based deliberately: the engine's item_index is a 0-based array position, and "[0/12]"
+    // reads to a human as "none done yet" rather than "the first one".
+    expect(itemProgress({ item_index: 0, item_total: 12, item_label: 'auth.py' }))
+      .toBe('[1/12] auth.py')
+    expect(itemProgress({ item_index: 11, item_total: 12 })).toBe('[12/12]')
+  })
+
+  it('drops the denominator when no total is known', () => {
+    expect(itemProgress({ item_index: 2 })).toBe('[3]')
+  })
+
+  it('renders a label with no index', () => {
+    expect(itemProgress({ item_label: 'auth.py' })).toBe('auth.py')
+  })
+
+  it('is empty for a non-iterated node', () => {
+    // So the caller renders nothing rather than an empty bracket.
+    expect(itemProgress({})).toBe('')
+    expect(itemProgress({ item_label: '' })).toBe('')
   })
 })

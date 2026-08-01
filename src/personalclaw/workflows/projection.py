@@ -57,6 +57,11 @@ NODE_FIELDS: tuple[tuple[str, tuple[type, ...], bool], ...] = (
     ("attempt", (int, type(None)), False),
     ("degraded_reason", (str,), False),
     ("failure", (dict, type(None)), False),
+    # Per-item foreach context (WF2-R5). Optional by nature: only an iterated instance has one,
+    # and requiring it would make every ordinary node's projection invalid.
+    ("item_index", (int,), False),
+    ("item_total", (int,), False),
+    ("item_label", (str,), False),
 )
 
 _RUN_STATUSES = frozenset(s.value for s in RunStatus)

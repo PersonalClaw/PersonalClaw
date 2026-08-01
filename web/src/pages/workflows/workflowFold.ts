@@ -40,6 +40,10 @@ export interface WorkflowEventEnvelope {
   status?: string
   degraded_reason?: string
   cached?: boolean
+  /** Per-item foreach context (WF2-R5), present only on an iterated node's events. */
+  item_index?: number
+  item_total?: number
+  item_label?: string
   [key: string]: unknown
 }
 
@@ -245,6 +249,12 @@ function patchNode(
     attempt: existing?.attempt,
     degraded_reason: (env.degraded_reason as string) || '',
     failure: existing?.failure ?? null,
+    // Per-item context arrives on `node_started` and is NOT re-sent on `node_done` — so it is
+    // carried forward rather than overwritten, or a finished item would lose the label that
+    // identified it the moment it succeeded.
+    item_index: env.item_index ?? existing?.item_index,
+    item_total: env.item_total ?? existing?.item_total,
+    item_label: env.item_label ?? existing?.item_label,
   }
 
   const nodes = existing
