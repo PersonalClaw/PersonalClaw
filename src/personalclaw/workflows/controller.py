@@ -41,6 +41,16 @@ from typing import Any
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import store
 from personalclaw.workflows.bindings import BindingContext
+from personalclaw.workflows.effects import (
+    EffectRecord,
+    EffectStatus,
+    committed_effect,
+    effect_history,
+    idempotency_key,
+    output_id_of,
+    redo_blocked,
+    run_teardown,
+)
 from personalclaw.workflows.engine import NodeResult, dispatch
 from personalclaw.workflows.journal import CacheKey, Journal, inputs_hash, spec_region_hash
 from personalclaw.workflows.models import (
@@ -112,6 +122,10 @@ class EngineServices:
     node_timeout_total: int = 900
     node_timeout_stall: int = 300
     cwd: str = ""
+    #: `(command, output_id) -> (ok, detail)` — effect teardown execution. Injected so
+    #: tests never run real teardown subprocesses; production defaults to the
+    #: subprocess runner in `effects.run_teardown`.
+    teardown_runner: Any = None
 
 
 @dataclass
@@ -164,6 +178,11 @@ class RunController:
         #: Whether the 80% budget warning has already been emitted (once per run, not
         #: once per node — repeating it every node would bury the signal).
         self._budget_warned = False
+        #: path -> effect records, folded from the ledger at construction so a RESUMED
+        #: run knows which effects already committed. Without the rehydrate, a crash
+        #: between commit and completion double-fires on resume — the exact hole the
+        #: ledger closes (WF2-R1).
+        self._effects: dict[str, list[EffectRecord]] = effect_history(run.id)
         self._outputs: dict[str, Any] = {}
         self._terminal = asyncio.Event()
         self._load_outputs()
@@ -413,9 +432,16 @@ class RunController:
             )
             return
 
+        if not await self._effect_preflight(item, inst):
+            return
+
         inst.state = InstanceState.RUNNING
         inst.started_at = _now()
         inst.attempt += 1
+        if item.node.kind == NodeKind.ACTION:
+            # ATTEMPTED goes down BEFORE dispatch: a crash between here and the outcome
+            # must leave evidence the effect MAY have fired (WF2-R1).
+            self._record_effect(item, inst, EffectStatus.ATTEMPTED)
         self._persist_state()
         self.journal.step_started(item.path, item.node.id, epoch=inst.epoch, lane=item.lane)
         self._publish(
@@ -432,6 +458,137 @@ class RunController:
         self._inflight[item.path] = _InFlight(
             task=task, ready=item, started=now, last_progress=now, cache_key=key
         )
+
+    # ── effect ledger (WF2-R1) ──
+
+    def _effect_key(self, item: ReadyNode, inst: NodeInstance) -> str:
+        return idempotency_key(self.run.id, item.path, inst.epoch)
+
+    def _record_effect(
+        self,
+        item: ReadyNode,
+        inst: NodeInstance,
+        status: EffectStatus,
+        *,
+        key: str = "",
+        **fields: Any,
+    ) -> None:
+        """Journal one effect event and fold it into the in-memory history, so a
+        same-process re-read agrees with what a resumed process would reconstruct.
+
+        `key` overrides the derived key for records about a PRIOR epoch's effect — a
+        COMPENSATED must carry the committed effect's own key, or `committed_effect`
+        can never match the two and the boundary never clears.
+        """
+        record = EffectRecord(
+            instance_path=item.path,
+            idempotency_key=key or self._effect_key(item, inst),
+            effect_status=status,
+            epoch=inst.epoch,
+            node_id=item.node.id,
+            provider=str((item.node.config or {}).get("provider", "") or ""),
+            output_id=str(fields.get("output_id", "") or ""),
+            compensation_ref=str(fields.get("compensation_ref", "") or ""),
+        )
+        self.journal.effect(
+            item.path,
+            idempotency_key=record.idempotency_key,
+            effect_status=status.value,
+            epoch=inst.epoch,
+            node_id=record.node_id,
+            provider=record.provider,
+            output_id=record.output_id,
+            compensation_ref=record.compensation_ref,
+            detail=str(fields.get("detail", "") or ""),
+        )
+        self._effects.setdefault(item.path, []).append(record)
+
+    async def _effect_preflight(self, item: ReadyNode, inst: NodeInstance) -> bool:
+        """The committed-effect boundary, enforced before an action node re-executes.
+
+        Returns False when the node was refused (a terminal state was written). Only
+        ACTION nodes are side-effecting dispatches; every other kind passes through.
+        A same-epoch retry passes too — it reuses the same idempotency key, which an
+        idempotent receiver dedupes, so it is the retry contract working, not a
+        double-fire.
+        """
+        if item.node.kind != NodeKind.ACTION:
+            return True
+        committed = committed_effect(self._effects.get(item.path, []))
+        if committed is None or committed.epoch == inst.epoch:
+            return True
+        if redo_blocked(item.node.config or {}, committed, inst.epoch):
+            inst.state = InstanceState.BLOCKED
+            inst.completed_at = _now()
+            inst.failure = Failure(
+                failure_class=FailureClass.USER,
+                cause_plain=(
+                    f"node {item.node.id or item.path} has a committed external effect "
+                    f"from epoch {committed.epoch}; re-running would fire it again"
+                ),
+                remediation=(
+                    "set `redo_effects: true` on the node to deliberately re-fire "
+                    "(a declared teardown runs first), or skip the node"
+                ),
+                terminal_reason="committed_effect",
+            )
+            self.journal.step_failed(
+                item.path,
+                item.node.id,
+                epoch=inst.epoch,
+                failure=inst.failure,
+                attempt=inst.attempt,
+                retries_exhausted=True,
+            )
+            self._persist_state()
+            self._publish(
+                "workflow_node_done",
+                {
+                    "node_id": item.node.id,
+                    "instance_path": item.path,
+                    "status": InstanceState.BLOCKED.value,
+                    "degraded_reason": "committed_effect",
+                },
+            )
+            return False
+        # redo_effects: true — tear down the committed resource first, then proceed.
+        if committed.compensation_ref:
+            runner = self.services.teardown_runner
+            ok, detail = await run_teardown(
+                committed.compensation_ref, committed.output_id, runner=runner
+            )
+            if not ok:
+                # A failed teardown leaves an UNKNOWN external state; proceeding would
+                # stack a second resource on top of a live first one.
+                inst.state = InstanceState.BLOCKED
+                inst.completed_at = _now()
+                inst.failure = Failure(
+                    failure_class=FailureClass.INTERNAL,
+                    cause_plain=f"effect teardown failed: {detail}"[:500],
+                    remediation="fix the teardown command, or clean up the external "
+                    "resource manually and clear redo_effects",
+                    terminal_reason="teardown_failed",
+                )
+                self.journal.step_failed(
+                    item.path,
+                    item.node.id,
+                    epoch=inst.epoch,
+                    failure=inst.failure,
+                    attempt=inst.attempt,
+                    retries_exhausted=True,
+                )
+                self._persist_state()
+                return False
+            self._record_effect(
+                item,
+                inst,
+                EffectStatus.COMPENSATED,
+                key=committed.idempotency_key,
+                output_id=committed.output_id,
+                compensation_ref=committed.compensation_ref,
+                detail=detail[:500],
+            )
+        return True
 
     def _with_retry_hint(self, item: ReadyNode) -> Node:
         """On a retry, hand the dispatcher a node whose prompt carries the correction.
@@ -621,6 +778,11 @@ class RunController:
             )
             self._attempts.setdefault(item.path, []).append(record)
             if self._should_retry(item, inst, result):
+                if item.node.kind == NodeKind.ACTION:
+                    # Same epoch, same idempotency key: the receiver can dedupe. The
+                    # RETRIED record keeps the ledger honest about how many dispatches
+                    # the external system may have seen.
+                    self._record_effect(item, inst, EffectStatus.RETRIED)
                 inst.state = InstanceState.PENDING
                 self.journal.write(
                     journal_mod.STEP_ATTEMPT,
@@ -645,6 +807,21 @@ class RunController:
         inst.failure = result.failure
         inst.tokens = result.tokens
         self._decline(inst, result.declined_edges)
+
+        if item.node.kind == NodeKind.ACTION:
+            if result.state in SUCCESS_STATES and result.state != InstanceState.NO_CHANGE:
+                # COMMITTED captures the teardown ref AT COMMIT TIME: a later spec edit
+                # must not change what tears down an already-provisioned resource.
+                self._record_effect(
+                    item,
+                    inst,
+                    EffectStatus.COMMITTED,
+                    output_id=output_id_of(result.output),
+                    compensation_ref=str((item.node.config or {}).get("teardown", "") or ""),
+                )
+            elif result.state == InstanceState.NO_CHANGE:
+                # The provider reported `skip` — nothing fired, and the ledger says so.
+                self._record_effect(item, inst, EffectStatus.SKIPPED)
 
         if result.state in SUCCESS_STATES:
             ref, preview = self.journal.store_output(item.path, result.output)
