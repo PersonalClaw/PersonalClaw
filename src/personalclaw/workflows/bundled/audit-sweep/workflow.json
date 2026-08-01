@@ -4,7 +4,10 @@
   "source": "bundled",
   "provenance": "user",
   "version": 1,
-  "tags": ["audit", "review"],
+  "tags": [
+    "audit",
+    "review"
+  ],
   "inputs": {
     "target": {
       "type": "string",
@@ -26,7 +29,10 @@
   },
   "metadata": {
     "risk": "medium",
-    "capabilities": ["review", "write"],
+    "capabilities": [
+      "review",
+      "write"
+    ],
     "steering_examples": [
       {
         "event": "kickoff",
@@ -59,8 +65,10 @@
               "id": "find_correctness",
               "config": {
                 "model_tier": "reasoning",
-                "prompt": "Find CORRECTNESS problems: logic that is wrong, cases not handled, states that cannot be represented, assumptions never checked.\n\nReturn JSON: {\"findings\": [Finding]}. A Finding is {severity: Critical|Major|Minor|Nit, location, problem, why, recommended_fix, status: Open}.\n\nAn empty list is a valid and useful answer. Inventing a finding to look thorough makes the loop run forever and teaches the reader to ignore the output.\n\nFocus: {{inputs.focus}}\n\nTarget:\n{{inputs.target}}",
-                "schema": { "findings": "array" }
+                "prompt": "Find CORRECTNESS problems: logic that is wrong, cases not handled, states that cannot be represented, assumptions never checked.\n\nFocus: {{inputs.focus}}\n\nTarget:\n{{inputs.target}}\n\nReturn JSON: {\"findings\": [Finding]}.\n\n{{block:finding-record}}",
+                "schema": {
+                  "findings": "array"
+                }
               }
             },
             {
@@ -68,8 +76,10 @@
               "id": "find_safety",
               "config": {
                 "model_tier": "reasoning",
-                "prompt": "Find SAFETY problems: anything that could destroy data, leak a credential, escape its scope, or fire an irreversible action without a check.\n\nReturn JSON: {\"findings\": [Finding]} with the same Finding shape as the other finders.\n\nAn empty list is a valid answer.\n\nFocus: {{inputs.focus}}\n\nTarget:\n{{inputs.target}}",
-                "schema": { "findings": "array" }
+                "prompt": "Find SAFETY problems: anything that could destroy data, leak a credential, escape its scope, or fire an irreversible action without a check.\n\nFocus: {{inputs.focus}}\n\nTarget:\n{{inputs.target}}\n\nReturn JSON: {\"findings\": [Finding]}.\n\n{{block:finding-record}}",
+                "schema": {
+                  "findings": "array"
+                }
               }
             },
             {
@@ -77,8 +87,10 @@
               "id": "find_clarity",
               "config": {
                 "model_tier": "standard",
-                "prompt": "Find CLARITY problems: things a competent reader would misread, names that lie about what they do, and behaviour no comment explains where the reason is not obvious.\n\nReturn JSON: {\"findings\": [Finding]} with the same Finding shape as the other finders.\n\nAn empty list is a valid answer.\n\nFocus: {{inputs.focus}}\n\nTarget:\n{{inputs.target}}",
-                "schema": { "findings": "array" }
+                "prompt": "Find CLARITY problems: things a competent reader would misread, names that lie about what they do, and behaviour no comment explains where the reason is not obvious.\n\nFocus: {{inputs.focus}}\n\nTarget:\n{{inputs.target}}\n\nReturn JSON: {\"findings\": [Finding]}.\n\n{{block:finding-record}}",
+                "schema": {
+                  "findings": "array"
+                }
               }
             }
           ]
@@ -124,7 +136,10 @@
           "config": {
             "model_tier": "reasoning",
             "prompt": "What did this round MISS? An angle not swept, a claim not verified, a part of the target never read. Return an empty list when the round genuinely covered everything — that is what stops the loop.\n\nReturn JSON: {\"new_findings\": [\"…\"], \"uncovered\": [\"…\"]}.\n\nTarget:\n{{inputs.target}}\n\nThis round:\n{{nodes.verify_confirmed.output}}",
-            "schema": { "new_findings": "array", "uncovered": "array" }
+            "schema": {
+              "new_findings": "array",
+              "uncovered": "array"
+            }
           }
         }
       ]

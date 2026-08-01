@@ -767,6 +767,11 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # the same trigger validation as a user-authored hook — a registered provider
         # missing from this set is one the scheduler would refuse to dispatch.
         "notification-digest",
+        # WORKFLOWS-V2 Slice 9b (WF2-R15): writes resolved content into an artifact with upsert
+        # semantics — the zero-token refresh a dashboard-style template does instead of spawning
+        # a subagent to paste text. Registered in the action-provider registry in the same
+        # commit as this line.
+        "artifact-update",
     }
 )
 

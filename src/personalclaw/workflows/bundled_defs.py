@@ -31,6 +31,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+from personalclaw.workflows.blocks import BlockError, resolve_spec
 from personalclaw.workflows.defs import WorkflowDefProvider
 from personalclaw.workflows.macros import MacroError, expand_spec
 from personalclaw.workflows.models import SPEC_SEMVER, WorkflowDef, valid_name
@@ -115,7 +116,10 @@ def _read_cached(name: str, mtime_ns: int) -> WorkflowDef | None:
 
     try:
         expanded = expand_spec(raw)
-    except MacroError as exc:
+        # Blocks AFTER macros: a macro emits block references, so resolving first would leave
+        # the ones it produced unresolved. Same order as the save path.
+        expanded = resolve_spec(expanded)
+    except (MacroError, BlockError) as exc:
         # Dropped from the listing, not fatal: the listing is how a user finds the working
         # templates, and one bad macro must not hide the other five.
         logger.warning("bundled template %s: macro expansion failed — %s", name, exc)

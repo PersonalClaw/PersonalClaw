@@ -500,12 +500,23 @@ export interface WorkflowNode {
 export interface WorkflowDefSummary {
   name: string; description: string; source: string; version: number; tags: string[]; provider: string
 }
+// One declared input. Named (rather than inlined on WorkflowDef) because the run dialog builds
+// its fields from these, and a picker that could not reference the type would re-describe it.
+export interface WorkflowInputParam {
+  type?: string; required?: boolean; default?: unknown; help?: string
+}
 export interface WorkflowDef {
   name: string; description?: string; version?: number; source?: string; provenance?: string
   root: WorkflowNode
-  inputs?: Record<string, { type?: string; required?: boolean; default?: unknown; help?: string }>
+  inputs?: Record<string, WorkflowInputParam>
   tags?: string[]
-  metadata?: { risk?: string; requirements?: Record<string, string[]> }
+  metadata?: {
+    risk?: string
+    requirements?: Record<string, string[]>
+    // How the template is driven (WF2-R15) — surfaced in the picker so a user choosing a
+    // template can see a concrete example rather than inferring one from the node tree.
+    steering_examples?: Array<{ event?: string; description?: string }>
+  }
 }
 export type WorkflowRunStatus =
   'draft' | 'running' | 'paused' | 'needs_input' | 'complete' | 'failed' | 'cancelled' | 'escalated'

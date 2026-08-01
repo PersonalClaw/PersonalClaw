@@ -5,11 +5,12 @@ import { EmptyState, ListRow, Loading } from '../../ui/ListScaffold'
 import { SearchField } from '../../ui/SearchField'
 import { Segmented } from '../../ui/Segmented'
 import { QuietButton } from '../../ui/QuietButton'
-import { api, type WorkflowDefSummary, type WorkflowRunSummary } from '../../lib/api'
+import { api, type WorkflowDef, type WorkflowDefSummary, type WorkflowRunSummary } from '../../lib/api'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
-import { confirmDelete } from '../../ui/dialog'
+import { confirmDelete, promptForm } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
 import { fmtElapsed, isTerminal, runLook } from './workflowMeta'
+import { coerceInputs, inputFields, startsWithoutInput } from './templateStart'
 
 const TABS = [
   { key: 'runs', label: 'Runs' },
@@ -65,8 +66,37 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
   }, [defs, q])
 
   const start = useCallback(async (name: string) => {
+    // Every bundled template declares a required input, and starting with none is refused by the
+    // engine (`WF_RUN_MISSING_INPUTS`) — so before this, every shipped template was unstartable
+    // from the UI. Fetch the definition, ask for what it declares, then start.
+    let def: WorkflowDef | null = null
     try {
-      const res = await api.startWorkflowRun({ name })
+      def = (await api.workflowDef(name)).definition
+    } catch {
+      // A definition that cannot be read still gets a start attempt: the engine's own error is
+      // more informative than one this page could invent, and a transient read failure should not
+      // block a run the user asked for.
+    }
+
+    let inputs: Record<string, unknown> | undefined
+    if (def && !startsWithoutInput(def.inputs)) {
+      const fields = inputFields(def.inputs)
+      const example = def.metadata?.steering_examples?.find((e) => e.event === 'kickoff')
+      const answers = await promptForm({
+        title: `Run ${name}`,
+        // The template's own kickoff example, shown as the body: it is a concrete instance of
+        // what this workflow is for, which is far more use than the description at the moment of
+        // filling the form in.
+        body: example?.description ? `For example: ${example.description}` : def.description,
+        fields,
+        confirmLabel: 'Run',
+      })
+      if (answers === null) return  // cancelled
+      inputs = coerceInputs(answers, def.inputs)
+    }
+
+    try {
+      const res = await api.startWorkflowRun(inputs ? { name, inputs } : { name })
       navigate(`workflows/runs/${res.run_id}`)
     } catch (e) {
       // A preflight refusal is the common case and it is ACTIONABLE (missing credential, no

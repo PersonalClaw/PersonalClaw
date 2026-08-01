@@ -355,13 +355,29 @@ def _validate_bindings(res: ValidationResult, path: str, node: Node, *, strict: 
                 and not head.startswith("secret:")
                 and root_seg not in _UNTRUSTED_ROOTS
             ):
-                _add(
-                    res,
-                    "WF_UNKNOWN_BINDING_ROOT",
-                    f"binding root {root_seg!r} is not a known source",
-                    path,
-                    SEVERITY_WARNING,
-                )
+                if head.startswith("block:"):
+                    # A shared block reference (WF2-R15) that was never resolved. Reported as
+                    # ITSELF rather than as an unknown binding root: the two are resolved at
+                    # different times (blocks at authoring, bindings at run), so "not a known
+                    # source" sends the author looking for a node that was never the problem.
+                    # Reaching the validator at all means the resolve step was skipped or the
+                    # block does not exist — both worth naming precisely.
+                    _add(
+                        res,
+                        "WF_UNRESOLVED_BLOCK",
+                        f"shared block reference {head!r} was not resolved — the block may not "
+                        "exist, or this spec bypassed the authoring path that substitutes them",
+                        path,
+                        SEVERITY_WARNING,
+                    )
+                else:
+                    _add(
+                        res,
+                        "WF_UNKNOWN_BINDING_ROOT",
+                        f"binding root {root_seg!r} is not a known source",
+                        path,
+                        SEVERITY_WARNING,
+                    )
 
     # Inline secret-shaped values (WF2-R14): a literal key in a spec would be persisted
     # to the journal and later read by the flywheel.

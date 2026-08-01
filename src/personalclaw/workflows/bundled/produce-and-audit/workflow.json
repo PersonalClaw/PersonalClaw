@@ -98,7 +98,7 @@
         "id": "audit",
         "config": {
           "model_tier": "reasoning",
-          "prompt": "Audit the artifact below. READ-ONLY: report findings, change nothing — an auditor that edits is no longer an independent check, and the next reviewer cannot tell what was found from what was fixed.\n\nJudge against the acceptance criteria when given; against the subject otherwise. Be specific about location — 'the third paragraph' is actionable, 'the tone' is not.\n\nReturn JSON: {\"findings\": [Finding], \"verdict\": \"pass|revise\"}.\nA Finding is {severity: Critical|Major|Minor|Nit, location, problem, why, recommended_fix, status: Open}.\n\nSeverity means: Critical = wrong or unusable as delivered. Major = a reader would be misled or blocked. Minor = a real flaw that does not block. Nit = preference.\n\nSubject:\n{{inputs.subject}}\n\nAcceptance criteria:\n{{inputs.acceptance}}\n\nArtifact:\n{{nodes.produce.output}}",
+          "prompt": "Audit the artifact below. READ-ONLY: report findings, change nothing — an auditor that edits is no longer an independent check, and the next reviewer cannot tell what was found from what was fixed.\n\nJudge against the acceptance criteria when given; against the subject otherwise.\n\nReturn JSON: {\"findings\": [Finding], \"verdict\": \"pass|revise\"}.\n\n{{block:finding-record}}\n\nSubject:\n{{inputs.subject}}\n\nAcceptance criteria:\n{{inputs.acceptance}}\n\nArtifact:\n{{nodes.produce.output}}",
           "schema": { "findings": "array", "verdict": "string" }
         }
       },

@@ -29,10 +29,10 @@ import shutil
 import time
 from typing import Any
 
-from personalclaw.workflows import attention
+from personalclaw.workflows import attention, blocks
 from personalclaw.workflows import defs as defs_mod
 from personalclaw.workflows import journal as journal_mod
-from personalclaw.workflows import macros, mutations, secrets, store
+from personalclaw.workflows import macros, mutations, secrets, store, template_lint
 from personalclaw.workflows.models import (
     TERMINAL_RUN_STATUSES,
     InstanceState,
@@ -168,7 +168,10 @@ async def author_def(
     # pattern (their edit would be regenerated over).
     try:
         spec = macros.expand_spec(spec)
-    except macros.MacroError as exc:
+        # Blocks AFTER macros, not before: a macro emits block references (the judge panel cites
+        # the Finding record), and resolving first would leave those unresolved in the output.
+        spec = blocks.resolve_spec(spec)
+    except (macros.MacroError, blocks.BlockError) as exc:
         return _err("WF_DEF_MACRO_INVALID", str(exc), repromptable=True)
     # The EXPANDED root is what gets written, so the stored spec, the validated spec and the
     # spec the engine runs are the same tree.
@@ -190,6 +193,11 @@ async def author_def(
         "valid": result.ok,
         "issues": [i.to_dict() for i in result.issues],
         "levels": result.levels,
+        # Conventions ADVICE, attached and never fatal (WF2-R15). A user's own half-finished
+        # workflow is theirs to leave rough, so the lint informs rather than refuses — but an
+        # author who never sees it cannot follow a convention they were not told about. The
+        # bundled library is held to lint-clean by test instead.
+        "lint": template_lint.lint_template(spec).to_dict(),
     }
     if not result.ok:
         return _err("WF_DEF_INVALID", "the spec did not validate", **body, repromptable=True)
@@ -295,6 +303,12 @@ async def start_run(
             f"missing required input(s): {', '.join(missing)}",
             missing=missing,
         )
+    # Declared defaults are APPLIED, not merely documented. Before this they were validated and
+    # then ignored: a template declaring `acceptance` with a default and a run that omitted it
+    # failed on `binding failed: unresolved reference at 'acceptance'` — so every optional input
+    # was a landmine, and a template could only be run by passing every key it declared. Found by
+    # starting a bundled template from the UI with its optional field left blank.
+    inputs = _with_declared_defaults(spec, inputs or {})
 
     # Run-start preflight (WF2-R12): credentials, binaries, models and action providers.
     # Blocking here rather than degrading at node 7, which has already paid for six nodes.
@@ -772,6 +786,11 @@ def manifest() -> dict[str, Any]:
         mutation_ops=[o.value for o in mutations.OpKind],
         instance_states=[s.value for s in InstanceState],
         run_statuses=[s.value for s in RunStatus],
+        # Authoring sugar, in the manifest because the manifest is what an authoring model reads
+        # to learn the shapes it may write. A macro or block absent here is one a model will
+        # never use, so the library would be dead weight.
+        macros=macros.macro_names(),
+        shared_blocks=blocks.block_names(),
     )
 
 
@@ -804,6 +823,32 @@ def _missing_required_inputs(spec: dict[str, Any], provided: dict[str, Any]) -> 
             continue
         missing.append(str(key))
     return sorted(missing)
+
+
+def _with_declared_defaults(spec: dict[str, Any], provided: dict[str, Any]) -> dict[str, Any]:
+    """Fill in every declared input the caller omitted, using its declared default.
+
+    Applied at RUN START, once, so the run record shows the values the run actually used — a run
+    whose inputs were completed lazily at each binding would leave a record that does not explain
+    its own behaviour.
+
+    A declared input with NO default still gets a key, valued "": the alternative is a binding
+    error on an input the template said was optional, which is the bug this function exists to
+    fix. An optional input's whole meaning is "the workflow works without it".
+
+    The caller's value always wins, including an explicit empty string — a user who deliberately
+    cleared a field is not asking for the default back.
+    """
+    declared = spec.get("inputs") or {}
+    if not isinstance(declared, dict):
+        return provided
+    out = dict(provided)
+    for key, meta in declared.items():
+        if key in out:
+            continue
+        default = meta.get("default") if isinstance(meta, dict) else None
+        out[str(key)] = "" if default is None else default
+    return out
 
 
 def _nodes_of(run_id: str) -> list[dict[str, Any]]:
