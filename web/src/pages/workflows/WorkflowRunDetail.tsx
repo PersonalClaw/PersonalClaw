@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, GitBranch, Pause, RotateCcw, SkipForward, X } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronRight, GitBranch, Pause, RotateCcw, SkipForward, X } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Loading } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
 import { api, type WorkflowContinuation, type WorkflowRunDetailData } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { confirm } from '../../ui/dialog'
-import { fmtElapsed, isTerminal, itemProgress, nodeDepth, nodeLabel, nodeLook, runLook } from './workflowMeta'
+import { fmtElapsed, isTerminal, itemProgress, nodeLabel, nodeLook, runLook } from './workflowMeta'
+import { buildTree, initialCollapsed, summarize, summaryLabel, visibleRows } from './nodeTree'
 import { useWorkflowStream } from './useWorkflowStream'
 import { WorkflowAsk } from './WorkflowAsk'
 
@@ -116,6 +117,30 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
     [run],
   )
 
+  // Collapsible containers (WF2 Slice 10b). The `deep-research` template expands to 21 rows and 18
+  // of them are one untaken subgraph — the three that matter are buried in the ones that did not
+  // run.
+  const rows = useMemo(() => buildTree(nodes), [nodes])
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  // Seeded ONCE per run, not on every poll: re-deriving would slam a subtree shut the moment it
+  // finished, right as the user was reading it. `touched` is what makes the seeding one-shot while
+  // still re-seeding when the user navigates to a different run.
+  const seeded = useRef<string>('')
+  useEffect(() => {
+    if (!run || seeded.current === run.run_id) return
+    seeded.current = run.run_id
+    setCollapsed(initialCollapsed(buildTree(run.nodes ?? []), run.nodes ?? []))
+  }, [run])
+  const toggle = useCallback((path: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }, [])
+  const shownRows = useMemo(() => visibleRows(rows, collapsed), [rows, collapsed])
+
   return (
     <div className="flex h-full flex-col">
       <TopBar
@@ -165,17 +190,33 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
             </div>
 
             <div className="flex flex-col gap-2xs">
-              {nodes.map((n) => {
+              {shownRows.map(({ node: n, depth, descendants, collapsible }) => {
                 const nl = nodeLook(n.state)
                 const NIcon = nl.icon
-                const depth = nodeDepth(n.instance_path)
                 const canReenter = !isTerminal(run.status) && !!n.node_id
+                const isCollapsed = collapsed.has(n.instance_path)
+                const summary = collapsible ? summarize(descendants, nodes) : null
                 return (
                   <div
                     key={n.instance_path}
                     className="group flex items-center gap-m rounded-lg px-s py-xs hover:bg-surface-high"
                     style={{ paddingLeft: `calc(var(--space-s) + ${depth} * 1rem)` }}
                   >
+                    {/* The disclosure control, only where it earns its place: a container with one
+                        child costs a click and saves a row. */}
+                    {collapsible ? (
+                      <button
+                        type="button"
+                        onClick={() => toggle(n.instance_path)}
+                        className="shrink-0 text-on-surface-low transition-colors hover:text-on-surface"
+                        title={isCollapsed ? `Show ${descendants.length} nested steps` : 'Collapse'}
+                        aria-expanded={!isCollapsed}
+                      >
+                        {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                      </button>
+                    ) : (
+                      <span className="w-[14px] shrink-0" />
+                    )}
                     <NIcon size={14} className={`shrink-0 ${nl.tone}${nl.spin ? ' animate-spin' : ''}`} />
                     <div className="min-w-0 flex-1">
                       <div className="flex min-w-0 items-center gap-s">
@@ -185,6 +226,14 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
                         {itemProgress(n) && (
                           <span className="min-w-0 shrink truncate text-on-surface-low text-[0.75rem] tabular-nums">
                             {itemProgress(n)}
+                          </span>
+                        )}
+                        {/* What a collapsed subtree DID, counted by state rather than reduced to a
+                            percentage: "18 skipped" says the branch was not taken and "17 done · 1
+                            failed" says exactly where to look. A progress bar says neither. */}
+                        {isCollapsed && summary && (
+                          <span className="min-w-0 shrink truncate text-on-surface-low text-[0.75rem]">
+                            {summaryLabel(summary)}
                           </span>
                         )}
                       </div>

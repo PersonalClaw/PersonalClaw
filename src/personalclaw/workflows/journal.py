@@ -87,6 +87,12 @@ CONSULTED = "consulted"
 CHILD_RUN_ATTACH = "child_run_attach"
 RUN_ABANDONED = "run_abandoned"
 CRYSTALLIZED = "crystallized"
+#: Context-lifecycle records (WF2-R6). Journaled rather than held in memory so a rewind or fork
+#: REPLAYS them — a handoff reconstructed after the fact is a summary, which is the thing it exists
+#: to replace.
+HANDOFF = "handoff"
+CARRYOVER = "carryover"
+DECISION = "decision"
 RUN_STARTED = "run_started"
 RUN_FINISHED = "run_finished"
 
@@ -113,6 +119,9 @@ LEDGER_KINDS = frozenset(
         CHILD_RUN_ATTACH,
         RUN_ABANDONED,
         CRYSTALLIZED,
+        HANDOFF,
+        CARRYOVER,
+        DECISION,
     }
 )
 
@@ -470,6 +479,46 @@ class Journal:
 
     def consulted(self, path: str, node_id: str, *, ref: str) -> None:
         self.write(CONSULTED, instance_path=path, node_id=node_id, ref=ref)
+
+    def handoff(
+        self, path: str, node_id: str, *, epoch: int, iteration: int, handoff: dict
+    ) -> None:
+        """One iteration's handoff to the next (WF2-R6).
+
+        Journaled, not held in memory: a rewind to iteration 3 must replay iteration 2's handoff,
+        and an in-memory one would be lost — leaving the replayed iteration to reconstruct from a
+        transcript, which is the summarization failure the handoff exists to avoid.
+        """
+        self.write(
+            HANDOFF,
+            instance_path=path,
+            node_id=node_id,
+            epoch=epoch,
+            iteration=iteration,
+            **handoff,
+        )
+
+    def carryover(
+        self, path: str, node_id: str, *, epoch: int, iteration: int, buckets: dict
+    ) -> None:
+        """The typed facts that survive a session reset."""
+        self.write(
+            CARRYOVER,
+            instance_path=path,
+            node_id=node_id,
+            epoch=epoch,
+            iteration=iteration,
+            **buckets,
+        )
+
+    def decision(self, path: str, node_id: str, *, epoch: int, decision: dict) -> None:
+        """A settled choice and why (WF2-R6).
+
+        The rejected alternatives are the point: compaction keeps "we used X" and drops "we
+        rejected Y because", so a resumed run re-proposes Y with nothing in its context saying it
+        was already dismissed.
+        """
+        self.write(DECISION, instance_path=path, node_id=node_id, epoch=epoch, **decision)
 
     def child_run_attach(self, parent_run_id: str, child_run_id: str, node_id: str) -> None:
         self.write(
