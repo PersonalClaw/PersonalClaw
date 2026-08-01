@@ -327,8 +327,30 @@ async def start_run(
         return _err("WF_RUN_LAUNCH_FAILED", f"could not start the run: {exc}", run_id=run.id)
 
     if run.mode == "blocking":
-        status = await controller.run_to_completion(timeout=blocking_timeout or 0.0)
-        return _ok(run_id=run.id, status=status.value, blocking=True, nodes=_nodes_of(run.id))
+        # `wait_for_terminal`, NOT `run_to_completion`: a blocking caller must also return
+        # when the run parks on needs_input, or the tool holds the turn that would render
+        # the ask and nothing can ever answer it.
+        status = await controller.wait_for_terminal(
+            timeout=blocking_timeout or 0.0,
+            on_progress=lambda snap: controller._publish("workflow_progress", snap),
+        )
+        body = _ok(run_id=run.id, status=status.value, blocking=True, nodes=_nodes_of(run.id))
+        if status == RunStatus.NEEDS_INPUT:
+            # Hand the caller what it needs to answer, in the same response — otherwise the
+            # model has to guess that a second call is required and which token to use.
+            from personalclaw.workflows.human_input import list_continuations
+
+            pending = list_continuations(run.id)
+            body["needs_input"] = [
+                {
+                    "node_id": c.node_id,
+                    "resume_token": c.token,
+                    "ask": c.ask,
+                    "handoff": c.handoff,
+                }
+                for c in pending
+            ]
+        return body
     return _ok(run_id=run.id, status=RunStatus.RUNNING.value, blocking=False)
 
 
