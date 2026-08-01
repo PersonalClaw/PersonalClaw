@@ -56,7 +56,7 @@ mandatory.
 | 4 | **Slice 3a** — effect ledger: idempotency keys, effect_status, redo_effects gate, caller idempotency dedupe, BYOI teardown | G2 | ✅ DONE (#139) |
 | 5 | **Slice 3b** — v2 `run-workflow` action provider + `ALLOWED_HOOK_PROVIDERS`; write-scope enforcement (pre/post fs diff, scope_violation); termination (sticky cancel, protocol-violation, `workflow_audit`); secrets (`{{secret:KEY}}`, `_has*` stripping, RedactingSink) | G2 | ✅ DONE (#140) |
 | 6 | **Slice 4a** — `mutations.py`: op types incl. `run_from`, batch validator, spec-history writer, epoch/inputs-hash logic | G3 | ✅ DONE (#141) |
-| 7 | **Slice 4b** — binding-dependency cascade closure, engine-computed preview, `inputs_stale`, rollback-vs-revert, TOCTOU re-verify; mutation queue in the controller; grammar hardening a-f | G3 | TODO |
+| 7 | **Slice 4b** — binding-dependency cascade closure, engine-computed preview, `inputs_stale`, rollback-vs-revert, TOCTOU re-verify; mutation queue in the controller; grammar hardening a-f | G3 | ✅ DONE (#142) |
 | 8 | **Slice 4c** — rewind (archive outputs + journal region, epoch bump, memoized replay); checkpoints + `fork`; property tests (rewind idempotence, cascade = binding closure, fork isolation) | G3 | TODO |
 | 9 | **Slice 5a** — typed ask payload, mode-dependent gate timeouts, `timed_out_unattended`; continuation records + durable resume tokens + expiry | G4 | TODO |
 | 10 | **Slice 5b** — action-node clarification → needs_input; auto-approve for trigger-origin; owner binding + default-DENY for remote gates; `gate{kind: event}` transient hold | G4 | TODO |
@@ -237,3 +237,19 @@ mandatory.
   NOTES: `rewind`/`run_from`/`fork` are spec-level no-ops here by design — they change
   INSTANCE STATE and run identity, which Slice 4c owns; `inline_subworkflow` is a typed
   refusal until Slice 10. Both are explicit, not silent.
+- 2026-08-01 — session 7 (Slice 4b, the mutation queue) DONE → **PR #142** (stack:
+  #140→#141→#142). `submit_mutation` (validate + queue + synchronous preview + confirm gate
+  + `expect_version`), `_drain_mutations` at the documented safe point with the **TOCTOU
+  re-verify**, rewind/run_from state reset, `store.archive_output` (attic, not delete),
+  `inputs_stale` journaling, spec-history writing. 10224 tests (+25).
+  Validated live: unconfirmed rewind refused with nothing queued; confirmed reset exactly
+  ['analyze','report'] leaving gather/unrelated done; 2 outputs archived; re-run cost
+  exactly 2 model calls; `spec_history/v002.json` + 1 journaled edit.
+  DEVIATION/BUGFIX: **`_terminal` stayed set after a loop exited**, so a controller
+  restarted in place after a rewind returned the PREVIOUS run's status instantly without
+  waiting for the new work. `start()` now clears it. Found by the end-to-end rewind test —
+  not by inspection, which is the argument for driving the real thing.
+  NOTE: rollback-vs-revert is only half-landed. `rewind` (rollback: hard reset with
+  preserved forward refs) is done; `revert` (inverse-patch ONE node's effects, 409 with the
+  conflict named on overlapping later state) needs the checkpoint machinery from 4c to
+  identify what "later state" is, so it moves to session 8. Recorded rather than faked.
