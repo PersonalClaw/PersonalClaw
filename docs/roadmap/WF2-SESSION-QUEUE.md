@@ -60,7 +60,7 @@ mandatory.
 | 8 | **Slice 4c** — rewind (archive outputs + journal region, epoch bump, memoized replay); checkpoints + `fork`; property tests (rewind idempotence, cascade = binding closure, fork isolation) | G3 | ✅ DONE (#143) |
 | 9 | **Slice 5a** — typed ask payload, mode-dependent gate timeouts, `timed_out_unattended`; continuation records + durable resume tokens + expiry | G4 | ✅ DONE (#144) |
 | 10 | **Slice 5b** — action-node clarification → needs_input; auto-approve for trigger-origin; owner binding + default-DENY for remote gates; `gate{kind: event}` transient hold | G4 | ✅ DONE (#145) |
-| 11 | **Slice 6a** — `mcp_workflows.py`: the 19 chat tools incl. `workflow_observe`/`run_from`/`audit`/`manifest`; wire into `_AGGREGATED_CATEGORY_MODULES`; validation schemas | G5 | TODO |
+| 11 | **Slice 6a** — `mcp_workflows.py`: the 19 chat tools incl. `workflow_observe`/`run_from`/`audit`/`manifest`; wire into `_AGGREGATED_CATEGORY_MODULES`; validation schemas | G5 | ✅ DONE (#147) |
 | 12 | **Slice 6b** — spec ingestion: strict mode + repromptable errors, dry-run-before-save, provenance actor, run-start preflight (`can_resolve_use_case`), generated manifest + CI drift test | G5 | TODO |
 | 13 | **Slice 6c** — staged-turn contract for mutation tools; `[ACTIVE WORKFLOWS]` context block (never-break-a-turn); blocking-mode handler | G5 | TODO |
 | 14 | **Slice 7a** — `handlers.py` REST routes for defs + runs; register in `dashboard/server.py`; per-run SSE stream endpoint | G6 | TODO |
@@ -300,3 +300,27 @@ mandatory.
   KEY DECISION: **an undeclared gate defaults to DESTRUCTIVE.** Deny-by-default toward
   higher risk means forgetting to classify a gate makes it ASK; the opposite default would
   turn every unclassified gate in an unattended run into an unreviewed action.
+- 2026-08-01 — session 11 (Slice 6a, the chat tool surface) DONE → **PR #147**
+  (stack #141→…→#147). `workflows/service.py` (the ONE implementation Slice 7a's REST routes
+  will also call), `mcp_workflows.py` (19 tools, coded never-raising results),
+  `MCP_WORKFLOW_SCHEMAS` in validation.py, all 19 `manifest_meta` entries. All FOUR
+  registration points wired incl. the regenerated offline reference. 10424 tests (+63).
+  Validated live end to end: manifest generated from the engine's enums; plan → dry-run
+  author (nothing written) → save → list; a `ghp_` literal REFUSED; a blocking run through
+  the real engine completed with correct output; fork named its 3 shared axes; 4 error paths
+  coded and readable; audit defaulted to dry-run.
+  DEVIATIONS/DISCOVERIES: (a) **`_run` used bare `asyncio.run`**, which raises "cannot be
+  called from a running event loop" when the caller is async. Production is safe (the native
+  runtime uses a thread executor) but a surface contracted to never raise must not depend on
+  its caller — it now detects a running loop and completes on a worker thread. FOUND BY
+  DRIVING IT FROM AN ASYNC SCRIPT, not by a unit test (which called it from sync context and
+  never hit it). Pinned by an async-context test.
+  (b) `error_codes` in manifest_meta stay EMPTY: that registry is the `ERR_`-prefixed
+  AgentError ENVELOPE, a different channel from these `WF_*` result-body codes. Declaring
+  them there would put one failure in two vocabularies (the drift test enforces the
+  registry, which is append-only).
+  (c) Two Phase-1 assertions that `mcp_workflows` is ABSENT were correct then, obsolete now.
+  Retargeted to the surviving invariant: `prompt_render` does not live there and every tool
+  is `workflow_`-prefixed.
+  (d) This category does NOT go over HTTP like its siblings — the engine is in-process, and
+  a gateway round-trip to reach an object in the same process buys nothing.
