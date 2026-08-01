@@ -540,6 +540,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "workflows.default_node_timeout_total_secs": {"type": "int", "min": 0, "max": 86400},
     "workflows.default_node_timeout_stall_secs": {"type": "int", "min": 0, "max": 86400},
     "workflows.retention_per_def": {"type": "int", "min": 1, "max": 10000},
+    "workflows.max_concurrent_llm_nodes": {"type": "int", "min": 1, "max": 32},
+    "workflows.max_concurrent_io_nodes": {"type": "int", "min": 1, "max": 32},
+    "workflows.model_tier_reasoning": {"type": "str", "max_len": 32},
+    "workflows.model_tier_standard": {"type": "str", "max_len": 32},
+    "workflows.model_tier_fast": {"type": "str", "max_len": 32},
     # REMOTE-USER-AUTH C4 — the owner-login knobs. Runtime-editable so turning login on
     # or off, or loosening a lockout you tripped, takes effect on the next request without
     # a restart. The PASSWORD is deliberately NOT here and never will be: a credential is

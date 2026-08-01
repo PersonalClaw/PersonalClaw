@@ -1096,3 +1096,74 @@ Each slice is independently shippable and testable. Rev-2 scope grows the estima
   **NOT in this slice:** the frontier and engine (Slice 1). `defs.py` remains the registry
   seam from Phase 1 — def CRUD, fs-watch and bundled sync land with the engine that reads
   them, since a loader with no executor cannot be validated end to end.
+
+- **DONE — Slice 1: Pure Frontier Core + Engine** (2026-08-01)
+
+  `tick.py` (pure frontier + lanes + loop-exit), `engine.py` (node dispatchers),
+  `controller.py` (single-writer tick loop), `journal.py` (resume cache + Run Ledger),
+  `watchdog.py` (crash recovery + retention). Config: per-lane caps + the `model_tiers`
+  slot map through all four points. Wired into `gateway.py` (`WorkflowWatchdog` start/stop)
+  and `dashboard/state.py` (`workflow_sse` registry, key `workflow:<run_id>`).
+
+  **DEVIATION — active edges are recorded as DECLINED, not ACTIVE (WF2-R18).** The plan
+  says the frontier consults an active-edge set. Implementing it that way produced a real
+  deadlock, found by running the plan's own regression case: a `branch` records routing
+  among its CASES, but a sibling's `needs: [router]` is a plain ordering edge onto the
+  branch as a whole. Inferring "not active ⇒ blocked" starved that sibling forever. The
+  mechanism is inverted to record only edges explicitly DECLINED, and unreachable paths are
+  made TERMINAL by marking them SKIPPED — a `needs` edge is then satisfied by any terminal
+  predecessor. Same guarantee in both directions, no starvation. `NodeInstance.active_edges`
+  → `declined_edges`.
+
+  **A `branch` is a real node, not pure structure.** It evaluates its selector, records the
+  routing decision, and produces `{"case": label}` for downstream bindings — so it is
+  dispatched, and its own state gates its cases.
+
+  **Container state is DERIVED, never stored.** Testing a container's stored state in the
+  frontier skipped past a branch's selected case. Every container consults `_derive`, so a
+  rewind that resets children cannot leave a stale container verdict behind.
+
+  **TWO BUGS FOUND BY DRIVING A REAL RUN, both invisible to the unit tests:**
+  (1) a `wait` deadline lived only in controller memory, so a restart left every waiting run
+  parked forever reporting `needs_input` — `NodeInstance.wake_at` is now persisted;
+  (2) a woken `wait` wrote its output to memory only, so after a restart a binding on it
+  resolved to `None` — it now goes through `store_output`. Both have regression tests.
+
+  **A mutation sweep found a real test gap.** Deleting `redact()` from the journal WRITE
+  path left all 160 tests green — node-output redaction is separately applied and masked it.
+  Two tests added (every persisted record + the returned record); the mutation is now caught.
+
+  **mypy caught a wiring bug before it ever ran:** the gateway attribute is `subagent_mgr`,
+  not `subagents`, which would have failed every `stage` node at runtime.
+
+  **Gates:** `make lint` clean (black/isort/flake8 + mypy, 566 files) · `make test`
+  **9973 passed, 0 failed** (was 9808). 165 new tests across four suites (42 tick /
+  45 engine / 51 controller / 27 watchdog); 85–94% coverage on the new modules.
+  Mutation-verified: 7 targeted mutations, all caught.
+
+  **Validated as a user against a REAL provider** (Bedrock, `global.anthropic.claude-opus-5`,
+  isolated dev home on :10805 — never :10000):
+  · a 3-node triage workflow classified a real bug report, routed on the classification,
+    skipped both untaken paths, and produced a correct root-cause diagnosis (9.8s);
+  · a 3-way judge panel with `join: quorum` ran concurrently (4.5s), then resumed in 0.0s
+    with **5 `step_cached` events and zero model calls**;
+  · a `foreach` fan-out returned schema-conformant JSON per item (fenced output stripped);
+  · an unresolvable binding failed as USER class with actionable remediation, not a traceback;
+  · lane caps are real, not decorative: the same spec took 5.5s at `llm=1` vs 2.7s at
+    `llm=3` — a measured **2.0x** speedup;
+  · crash recovery: killed mid-run, the watchdog adopted the run, step A was NOT re-run, and
+    its output survived into step B;
+  · a fresh gateway boot logs `workflow watchdog started` with **0 tracebacks**.
+
+  **ARCC was not queried (MCP server unavailable in this session).** Standard practice
+  applied to the security-relevant surfaces: every journal write passes through `redact()`
+  before touching disk (verified live — a `sk-…` in model output never lands); the retention
+  sweep refuses any path escaping the runs root (a stored `run_id` is not a trust boundary);
+  `{{secret:KEY}}` resolves through an injected resolver so unit tests never touch real
+  credentials; and `MAX_WF_DEPTH` is the first CODE check on spawn recursion — the previous
+  contract was a sentence in a system prompt.
+
+  **NOT in this slice:** `defs.py` def CRUD / fs-watch / bundled sync (no authoring surface
+  consumes them until Slice 6/7); `subworkflow` execution (Slice 10 — it returns a typed
+  refusal rather than a silent skip); the effect ledger (Slice 3); mid-flight mutation
+  (Slice 4). Retry currently re-runs a fresh attempt; mutation-hint injection is Slice 2.

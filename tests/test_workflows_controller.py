@@ -1,0 +1,908 @@
+"""The controller and journal — end-to-end runs against a temp home.
+
+These are the integration tests for the slice: a real spec, a real journal on disk, real
+state persistence, with only the model call faked. Everything writes under a monkeypatched
+`config_dir`, so nothing here can touch a real home.
+
+The load-bearing assertions:
+
+* **the resume cache re-runs exactly the binding closure** (WF2-A1) — after editing one
+  node's prompt, that node and its dependents re-run and nothing else does, asserted from
+  the LEDGER rather than from logs;
+* **budget is pre-charged on resume** (WF2-R4) — a resumed run inherits its spend, or a
+  crash loop becomes unbounded;
+* **timeouts actually fire** (WF2-R5) — the studied cautionary case is an engine that
+  shipped a no-op node timeout nobody noticed, because timeouts only run under failure;
+* **credentials never reach the journal** — it is read by the flywheel, shipped in bug
+  reports, and rendered in a UI.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+
+import pytest
+
+from personalclaw.workflows import journal as J
+from personalclaw.workflows import store
+from personalclaw.workflows.controller import EngineServices, RunController
+from personalclaw.workflows.journal import CacheKey, Journal, inputs_hash, spec_region_hash
+from personalclaw.workflows.models import (
+    Failure,
+    FailureClass,
+    InstanceState,
+    NodeInstance,
+    RunBudget,
+    RunStatus,
+    WorkflowRun,
+)
+from personalclaw.workflows.tick import Limits
+
+pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home(tmp_path, monkeypatch):
+    """Every test gets its own config dir. Destructive-by-nature tests (retention sweeps)
+    must never see a real home."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr("personalclaw.workflows.store.config_dir", lambda: home)
+    return home
+
+
+def _make_run(spec: dict, inputs: dict | None = None, **kw) -> WorkflowRun:
+    run = store.create(
+        WorkflowRun(id="", workflow_name=spec.get("name", "wf"), inputs=inputs or {}, **kw)
+    )
+    store.write_spec(run.id, spec)
+    return run
+
+
+def _echo(tag: str = ""):
+    calls: list[str] = []
+
+    async def fn(prompt, *, use_case="background", output_type=None):
+        calls.append(prompt)
+        return f"{tag}out{len(calls)}"
+
+    fn.calls = calls  # type: ignore[attr-defined]
+    return fn
+
+
+SEQ_SPEC = {
+    "name": "seq",
+    "root": {
+        "kind": "sequence",
+        "id": "s",
+        "children": [
+            {"kind": "transform", "id": "seed", "config": {"expr": {"n": 7}}},
+            {
+                "kind": "infer",
+                "id": "think",
+                "config": {"prompt": "double {{nodes.seed.output.n}}"},
+            },
+            {"kind": "transform", "id": "final", "config": {"expr": "got {{nodes.think.output}}"}},
+        ],
+    },
+}
+
+
+class TestHappyPath:
+    async def test_a_sequence_completes_and_threads_bindings(self) -> None:
+        run = _make_run(SEQ_SPEC)
+        fn = _echo()
+        c = RunController(run, SEQ_SPEC, services=EngineServices(completion=fn))
+        assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+        assert fn.calls == ["double 7"]
+        assert c._outputs["final"] == "got out1"
+
+    async def test_state_is_persisted_for_every_node(self) -> None:
+        run = _make_run(SEQ_SPEC)
+        c = RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
+        await c.run_to_completion(timeout=20)
+        on_disk = store.read_state(run.id)
+        assert len(on_disk) == 3
+        assert all(i.state == InstanceState.DONE for i in on_disk.values())
+
+    async def test_the_run_row_carries_terminal_metadata(self) -> None:
+        run = _make_run(SEQ_SPEC)
+        c = RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
+        await c.run_to_completion(timeout=20)
+        saved = store.get(run.id)
+        assert saved.status == RunStatus.COMPLETE
+        assert saved.started_at and saved.completed_at
+        assert saved.total_tokens > 0
+
+    async def test_events_are_published_for_the_widget(self) -> None:
+        seen: list[tuple[str, dict]] = []
+        run = _make_run(SEQ_SPEC)
+        c = RunController(
+            run,
+            SEQ_SPEC,
+            services=EngineServices(completion=_echo(), publish=lambda e, p: seen.append((e, p))),
+        )
+        await c.run_to_completion(timeout=20)
+        kinds = [e for e, _ in seen]
+        assert "workflow_run_update" in kinds
+        assert kinds.count("workflow_node_started") == 3
+        assert kinds.count("workflow_node_done") == 3
+        assert all("run_id" in p for _, p in seen)
+
+    async def test_a_broken_observer_cannot_kill_a_run(self) -> None:
+        def boom(event, payload):
+            raise RuntimeError("observer exploded")
+
+        run = _make_run(SEQ_SPEC)
+        c = RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo(), publish=boom))
+        assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+
+
+class TestResumeCache:
+    """WF2-A1: the acceptance bar is that this is answerable from the LEDGER."""
+
+    async def _run_once(self, spec, fn, run=None):
+        run = run or _make_run(spec)
+        run.status = RunStatus.RUNNING
+        c = RunController(run, spec, services=EngineServices(completion=fn))
+        for inst in c.instances.values():
+            inst.state = InstanceState.PENDING  # re-schedule everything
+        await c.run_to_completion(timeout=20)
+        return run, c
+
+    def _spec(self, second: str) -> dict:
+        return {
+            "name": "cache",
+            "root": {
+                "kind": "sequence",
+                "id": "s",
+                "children": [
+                    {"kind": "infer", "id": "n1", "config": {"prompt": "first"}},
+                    {"kind": "infer", "id": "n2", "config": {"prompt": second}},
+                    {
+                        "kind": "infer",
+                        "id": "n3",
+                        "config": {"prompt": "third {{nodes.n2.output}}"},
+                    },
+                ],
+            },
+        }
+
+    async def test_an_unchanged_resume_makes_zero_model_calls(self) -> None:
+        spec = self._spec("second")
+        fn = _echo()
+        run, _ = await self._run_once(spec, fn)
+        assert len(fn.calls) == 3
+        await self._run_once(spec, fn, store.get(run.id))
+        assert len(fn.calls) == 3, "a cached node re-ran"
+        cached = [r for r in J.ledger(run.id) if r["kind"] == J.STEP_CACHED]
+        assert len(cached) == 3
+        assert all(r.get("cached") is True for r in cached)
+
+    async def test_editing_a_prompt_re_runs_exactly_the_binding_closure(self) -> None:
+        """n2's own spec changed, and n3's INPUTS changed. n1 is outside the closure and
+        must stay cached — that is the difference between a targeted re-run and redoing
+        the whole run."""
+        fn = _echo()
+        run, _ = await self._run_once(self._spec("second"), fn)
+        before = len(fn.calls)
+        await self._run_once(self._spec("second EDITED"), fn, store.get(run.id))
+        assert len(fn.calls) - before == 2
+        assert fn.calls[-2] == "second EDITED"
+        assert fn.calls[-1].startswith("third ")
+
+    async def test_a_cached_failure_is_never_served(self) -> None:
+        """Replaying a cached failure would make a transient error permanent across a
+        resume."""
+        jr = Journal("r1")
+        key = CacheKey(path="root", epoch=0, inputs_hash="h", spec_hash="s")
+        jr.step_failed("root", "n", epoch=0, failure=Failure(cause_plain="x"))
+        jr.write(J.STEP_COMPLETED, cache_key=key.to_str(), state=InstanceState.FAILED.value)
+        assert Journal("r1").lookup(key) is None
+
+    async def test_the_cache_key_needs_all_four_parts(self) -> None:
+        """Dropping any one produces a cache that serves stale answers."""
+        a = CacheKey("root", 0, "i1", "s1")
+        for other in (
+            CacheKey("root2", 0, "i1", "s1"),
+            CacheKey("root", 1, "i1", "s1"),
+            CacheKey("root", 0, "i2", "s1"),
+            CacheKey("root", 0, "i1", "s2"),
+        ):
+            assert a.to_str() != other.to_str()
+
+    async def test_a_rewind_invalidates_by_path_prefix(self) -> None:
+        jr = Journal("r2")
+        for path in ("root.children[0]", "root.children[1]", "root.children[1].body"):
+            jr.write(
+                J.STEP_COMPLETED,
+                cache_key=CacheKey(path, 0, "h", "s").to_str(),
+                state=InstanceState.DONE.value,
+            )
+        assert jr.invalidate_prefix("root.children[1]") == 2
+        assert jr.lookup(CacheKey("root.children[0]", 0, "h", "s")) is not None
+
+
+class TestSpecHashing:
+    def test_a_child_edit_does_not_invalidate_its_parent(self) -> None:
+        """Children are excluded from the region hash deliberately: editing a child must
+        invalidate the child, not silently re-run its completed container."""
+        parent_a = {
+            "kind": "sequence",
+            "id": "s",
+            "config": {"x": 1},
+            "children": [{"kind": "transform", "id": "c", "config": {"expr": "1"}}],
+        }
+        parent_b = {
+            "kind": "sequence",
+            "id": "s",
+            "config": {"x": 1},
+            "children": [{"kind": "transform", "id": "c", "config": {"expr": "2"}}],
+        }
+        assert spec_region_hash(parent_a) == spec_region_hash(parent_b)
+
+    def test_the_node_s_own_config_does_invalidate_it(self) -> None:
+        a = {"kind": "infer", "id": "i", "config": {"prompt": "one"}}
+        b = {"kind": "infer", "id": "i", "config": {"prompt": "two"}}
+        assert spec_region_hash(a) != spec_region_hash(b)
+
+    def test_hashing_is_key_order_independent(self) -> None:
+        assert inputs_hash({"a": 1, "b": 2}) == inputs_hash({"b": 2, "a": 1})
+
+
+class TestRetry:
+    async def test_a_retryable_failure_retries_within_its_budget(self) -> None:
+        attempts = {"n": 0}
+
+        async def flaky(prompt, *, use_case="background", output_type=None):
+            attempts["n"] += 1
+            if attempts["n"] < 3:
+                raise ConnectionError("network unreachable")
+            return "recovered"
+
+        spec = {
+            "name": "rt",
+            "root": {
+                "kind": "infer",
+                "id": "i",
+                "config": {"prompt": "go", "retry": {"max_attempts": 3}},
+            },
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(completion=flaky))
+        assert await c.run_to_completion(timeout=25) == RunStatus.COMPLETE
+        assert attempts["n"] == 3
+
+    async def test_a_non_retryable_failure_is_tried_exactly_once(self) -> None:
+        """Retrying a permission error burns budget to reach the same failure."""
+        attempts = {"n": 0}
+
+        async def denied(prompt, *, use_case="background", output_type=None):
+            attempts["n"] += 1
+            raise PermissionError("unauthorized")
+
+        spec = {
+            "name": "nort",
+            "root": {
+                "kind": "infer",
+                "id": "i",
+                "config": {"prompt": "go", "retry": {"max_attempts": 5}},
+            },
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(completion=denied))
+        assert await c.run_to_completion(timeout=25) == RunStatus.FAILED
+        assert attempts["n"] == 1
+
+    async def test_exhausted_retries_journal_retries_exhausted(self) -> None:
+        async def always_flaky(prompt, *, use_case="background", output_type=None):
+            raise ConnectionError("network down")
+
+        spec = {
+            "name": "ex",
+            "root": {
+                "kind": "infer",
+                "id": "i",
+                "config": {"prompt": "go", "retry": {"max_attempts": 2}},
+            },
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(completion=always_flaky))
+        await c.run_to_completion(timeout=25)
+        failures = [r for r in J.ledger(run.id) if r["kind"] == J.STEP_FAILED]
+        assert any(r.get("retries_exhausted") for r in failures)
+        assert failures[-1]["failure_signature"]["failing_node"] == "i"
+
+    async def test_no_retry_modes_blocks_a_class_that_would_otherwise_retry(self) -> None:
+        attempts = {"n": 0}
+
+        async def flaky(prompt, *, use_case="background", output_type=None):
+            attempts["n"] += 1
+            raise ConnectionError("network unreachable")
+
+        spec = {
+            "name": "nrm",
+            "root": {
+                "kind": "infer",
+                "id": "i",
+                "config": {
+                    "prompt": "go",
+                    "retry": {"max_attempts": 4, "no_retry_modes": ["network"]},
+                },
+            },
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(completion=flaky))
+        await c.run_to_completion(timeout=25)
+        assert attempts["n"] == 1
+
+
+class TestTimeouts:
+    """WF2-R5: both knobs proven live, not decorative."""
+
+    async def test_timeout_total_actually_fires(self) -> None:
+        async def hang(prompt, *, use_case="background", output_type=None):
+            await asyncio.sleep(30)
+            return "never"
+
+        spec = {"name": "to", "root": {"kind": "infer", "id": "i", "config": {"prompt": "go"}}}
+        run = _make_run(spec)
+        c = RunController(
+            run,
+            spec,
+            services=EngineServices(completion=hang, node_timeout_total=1, node_timeout_stall=0),
+        )
+        started = time.time()
+        assert await c.run_to_completion(timeout=20) == RunStatus.FAILED
+        assert time.time() - started < 10
+        assert c.instances["root"].failure.failure_class == FailureClass.TIMEOUT
+
+    async def test_a_long_but_progressing_node_is_not_killed(self) -> None:
+        async def slow(prompt, *, use_case="background", output_type=None):
+            await asyncio.sleep(1.5)
+            return "finished slowly"
+
+        spec = {"name": "ok", "root": {"kind": "infer", "id": "i", "config": {"prompt": "go"}}}
+        run = _make_run(spec)
+        c = RunController(
+            run,
+            spec,
+            services=EngineServices(completion=slow, node_timeout_total=30, node_timeout_stall=20),
+        )
+        assert await c.run_to_completion(timeout=25) == RunStatus.COMPLETE
+
+
+class TestWaitAndGates:
+    async def test_a_wait_resolves_at_its_deadline(self) -> None:
+        """The controller resolves it rather than re-dispatching: a dispatcher is
+        stateless, so re-entry would recompute `now + duration` and wait forever."""
+        spec = {"name": "w", "root": {"kind": "wait", "id": "w", "config": {"duration_secs": 1}}}
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices())
+        started = time.time()
+        assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+        assert 0.8 <= time.time() - started < 8
+
+    async def test_an_unanswered_gate_surfaces_needs_input(self) -> None:
+        spec = {
+            "name": "g",
+            "root": {"kind": "gate", "id": "g", "config": {"kind": "approval", "prompt": "ok?"}},
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices())
+        assert await c.run_to_completion(timeout=20) == RunStatus.NEEDS_INPUT
+        assert c.run.attention["kind"] == "approval"
+
+    async def test_a_wait_deadline_survives_a_restart(self) -> None:
+        """Found by driving a real run: the deadline lived only in the controller's
+        memory, so a restart left every waiting run parked forever with nothing scheduled
+        to wake it — the run reported `needs_input` and never recovered."""
+        spec = {
+            "name": "wpersist",
+            "root": {"kind": "wait", "id": "w", "config": {"duration_secs": 300}},
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices())
+        await c.start()
+        for _ in range(40):
+            await asyncio.sleep(0.1)
+            if c.instances.get("root", NodeInstance("root")).state == InstanceState.WAITING:
+                break
+        await c.stop()
+
+        on_disk = store.read_state(run.id)["root"]
+        assert on_disk.state == InstanceState.WAITING
+        assert on_disk.wake_at > 0, "the deadline was not persisted"
+
+        # A fresh controller (a restarted gateway) must still know when to wake it.
+        c2 = RunController(store.get(run.id), spec, services=EngineServices())
+        assert c2._next_wake_delay() is not None
+
+    async def test_a_woken_wait_persists_its_output(self) -> None:
+        """Also found live: the output was written to memory only, so after a restart a
+        binding on the wait node resolved to None."""
+        spec = {
+            "name": "wout",
+            "root": {
+                "kind": "sequence",
+                "id": "s",
+                "children": [
+                    {"kind": "wait", "id": "w", "config": {"duration_secs": 1}},
+                    {
+                        "kind": "transform",
+                        "id": "after",
+                        "config": {"expr": "{{nodes.w.output}}"},
+                    },
+                ],
+            },
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices())
+        assert await c.run_to_completion(timeout=25) == RunStatus.COMPLETE
+        assert store.read_output(run.id, "root.children[0]") == {"waited": True}
+        assert store.read_state(run.id)["root.children[0]"].output_ref
+
+    async def test_a_timed_out_gate_fails_rather_than_wedging(self) -> None:
+        """An unattended run must surface this, and it is NOT a pass — nobody approved
+        anything (WF2-R7)."""
+        spec = {
+            "name": "gt",
+            "root": {"kind": "gate", "id": "g", "config": {"kind": "approval", "timeout_secs": 1}},
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices())
+        assert await c.run_to_completion(timeout=20) == RunStatus.FAILED
+        assert c.instances["root"].failure.terminal_reason == "timed_out_unattended"
+
+
+class TestCancellation:
+    async def test_a_sticky_cancel_intent_terminates_the_run(self) -> None:
+        async def slow(prompt, *, use_case="background", output_type=None):
+            await asyncio.sleep(10)
+            return "x"
+
+        spec = {
+            "name": "c",
+            "root": {
+                "kind": "sequence",
+                "id": "s",
+                "children": [
+                    {"kind": "infer", "id": "a", "config": {"prompt": "1"}},
+                    {"kind": "infer", "id": "b", "config": {"prompt": "2"}},
+                ],
+            },
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(completion=slow))
+        await c.start()
+        await asyncio.sleep(0.2)
+        c.request_cancel()
+        assert await c.run_to_completion(timeout=20) == RunStatus.CANCELLED
+
+    async def test_the_intent_survives_with_no_controller_running(self) -> None:
+        """A cancel issued while the gateway is down must still be honoured, so it is a
+        file rather than in-memory state."""
+        run = _make_run(SEQ_SPEC)
+        store.request_cancel(run.id)
+        assert store.cancel_requested(run.id)
+        store.clear_cancel(run.id)
+        assert not store.cancel_requested(run.id)
+
+    async def test_stop_leaves_a_run_resumable_rather_than_failed(self) -> None:
+        """A gateway shutdown is a process event, not a run outcome."""
+
+        async def slow(prompt, *, use_case="background", output_type=None):
+            await asyncio.sleep(10)
+            return "x"
+
+        spec = {"name": "s", "root": {"kind": "infer", "id": "i", "config": {"prompt": "p"}}}
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(completion=slow))
+        await c.start()
+        await asyncio.sleep(0.2)
+        await c.stop()
+        assert store.get(run.id).status == RunStatus.RUNNING
+
+
+class TestBudget:
+    async def test_a_breach_pauses_resumably_rather_than_failing(self) -> None:
+        """SOFT budgets: killing the run would discard completed work the user paid for."""
+
+        async def chatty(prompt, *, use_case="background", output_type=None):
+            return "x" * 4000
+
+        spec = {
+            "name": "b",
+            "root": {
+                "kind": "sequence",
+                "id": "s",
+                "children": [
+                    {"kind": "infer", "id": f"n{i}", "config": {"prompt": "p"}} for i in range(4)
+                ],
+            },
+        }
+        run = _make_run(spec, budget=RunBudget(max_tokens=100))
+        c = RunController(run, spec, services=EngineServices(completion=chatty))
+        assert await c.run_to_completion(timeout=25) == RunStatus.PAUSED
+        assert "budget" in c.run.error_message
+
+    async def test_resume_pre_charges_from_the_ledger(self) -> None:
+        """WF2-R4 invariant #1: without this a crash loop mints a fresh budget every
+        restart and spends without bound."""
+        run = _make_run(SEQ_SPEC)
+        c = RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
+        await c.run_to_completion(timeout=20)
+        spent = store.get(run.id).total_tokens
+        assert spent > 0
+
+        fresh = store.get(run.id)
+        fresh.total_tokens = 0  # simulate a row that lost its counter
+        fresh.status = RunStatus.RUNNING
+        c2 = RunController(fresh, SEQ_SPEC, services=EngineServices(completion=_echo()))
+        await c2._prepare()
+        assert c2.run.total_tokens >= spent
+
+
+class TestRedaction:
+    async def test_a_credential_in_node_output_never_reaches_disk(self) -> None:
+        """The journal is read by the flywheel, shipped in bug reports, and rendered in a
+        UI — a credential reaching it leaks to all three."""
+        secret = "sk-" + "a" * 40
+
+        async def leaky(prompt, *, use_case="background", output_type=None):
+            return f"your key is {secret} keep it safe"
+
+        spec = {
+            "name": "red",
+            "root": {"kind": "infer", "id": "i", "config": {"prompt": "give me a key"}},
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(completion=leaky))
+        await c.run_to_completion(timeout=20)
+        blob = "".join(
+            p.read_text(errors="replace") for p in store.run_dir(run.id).rglob("*") if p.is_file()
+        )
+        assert secret not in blob
+
+    def test_redact_walks_nested_structures(self) -> None:
+        secret = "ghp_" + "b" * 36
+        out = J.redact({"a": [{"token": secret}], "b": secret})
+        assert secret not in str(out)
+
+    def test_every_journal_record_is_redacted_on_the_way_out(self) -> None:
+        """The write path itself, not just node outputs. A ledger field carrying a
+        credential — a failure message quoting a request header, a resolved prompt with an
+        inlined key — leaks exactly as badly as an output would."""
+        secret = "sk-" + "c" * 40
+        jr = Journal("redwrite")
+        jr.step_failed(
+            "root",
+            "n",
+            epoch=0,
+            failure=Failure(cause_plain=f"auth failed for {secret}"),
+        )
+        jr.write("custom", nested={"deep": [secret]})
+        for name in (J.JOURNAL_FILE, J.EVENTS_FILE):
+            for rec in store.read_jsonl("redwrite", name):
+                assert secret not in str(rec), name
+
+    def test_the_returned_record_is_the_redacted_one(self) -> None:
+        """`write()` returns what it persisted, so a caller echoing the record to an event
+        stream cannot re-leak what the journal just scrubbed."""
+        secret = "xoxb-" + "d" * 30
+        rec = Journal("redret").write("custom", token=secret)
+        assert secret not in str(rec)
+
+    def test_redaction_leaves_ordinary_text_alone(self) -> None:
+        assert J.redact("just a normal sentence") == "just a normal sentence"
+
+
+class TestLedger:
+    async def test_step_completed_carries_every_flywheel_required_field(self) -> None:
+        """These are emission REQUIREMENTS — a downstream refiner is starved without
+        them."""
+        run = _make_run(SEQ_SPEC)
+        c = RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
+        await c.run_to_completion(timeout=20)
+        rec = [r for r in J.ledger(run.id) if r["kind"] == J.STEP_COMPLETED][0]
+        for f in (
+            "node_id",
+            "instance_path",
+            "duration_secs",
+            "tokens",
+            "retries",
+            "model",
+            "provider",
+            "cost_usd",
+            "resolved_prompt_ref",
+            "epoch",
+        ):
+            assert f in rec, f
+
+    async def test_the_resolved_prompt_is_journaled_for_replay(self) -> None:
+        """Acceptance bar: prompt → output must be reconstructable from the ledger."""
+        run = _make_run(SEQ_SPEC)
+        c = RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
+        await c.run_to_completion(timeout=20)
+        infer = [
+            r for r in J.ledger(run.id) if r["kind"] == J.STEP_COMPLETED and r["node_id"] == "think"
+        ][0]
+        ref = infer["resolved_prompt_ref"]
+        assert ref
+        assert store.read_output(run.id, "root.children[1]::prompt") == "double 7"
+
+    async def test_event_ids_are_deterministic_so_a_re_emit_is_idempotent(self) -> None:
+        jr = Journal("evt")
+        a = jr.write("x")
+        b = jr.write("x")
+        assert a["event_id"] == "evt-evt-1"
+        assert b["event_id"] == "evt-evt-2"
+
+    async def test_ledger_kinds_land_in_both_files(self) -> None:
+        jr = Journal("both")
+        jr.step_skipped("root", "n", epoch=0)
+        assert len(store.read_jsonl("both", J.JOURNAL_FILE)) == 1
+        assert len(store.read_jsonl("both", J.EVENTS_FILE)) == 1
+
+    async def test_a_non_ledger_kind_stays_out_of_events(self) -> None:
+        jr = Journal("one")
+        jr.write(J.STEP_STARTED, instance_path="root")
+        assert len(store.read_jsonl("one", J.JOURNAL_FILE)) == 1
+        assert store.read_jsonl("one", J.EVENTS_FILE) == []
+
+    async def test_run_totals_aggregate_the_ledger(self) -> None:
+        run = _make_run(SEQ_SPEC)
+        c = RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
+        await c.run_to_completion(timeout=20)
+        totals = J.run_totals(run.id)
+        assert totals["steps_completed"] == 3
+        assert totals["steps_failed"] == 0
+        assert totals["tokens"] > 0
+
+    async def test_an_oversized_output_spills_and_leaves_a_typed_stub(self) -> None:
+        """A reader must be able to tell the data exists rather than parsing a truncated
+        string."""
+        jr = Journal("big")
+        ref, preview = jr.store_output("root", "x" * (J.MAX_INLINE_OUTPUT_BYTES + 100))
+        assert isinstance(preview, dict)
+        assert preview["result_omitted"] is True
+        assert preview["output_ref"] == ref
+        assert len(store.read_output("big", "root")) > J.MAX_INLINE_OUTPUT_BYTES
+
+
+class TestBranchAndJoinIntegration:
+    async def test_an_untaken_branch_does_not_deadlock_a_live_run(self) -> None:
+        """WF2-R18 regression #1, end to end."""
+        spec = {
+            "name": "j",
+            "root": {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    {
+                        "kind": "branch",
+                        "id": "router",
+                        "config": {"on": "{{inputs.kind}}"},
+                        "cases": {
+                            "bug": {"kind": "transform", "id": "fix", "config": {"expr": "fixed"}},
+                            "feat": {
+                                "kind": "transform",
+                                "id": "build",
+                                "config": {"expr": "built"},
+                            },
+                        },
+                    },
+                    {
+                        "kind": "transform",
+                        "id": "merge",
+                        "needs": ["router"],
+                        "config": {"expr": "merged after {{nodes.router.output.case}}"},
+                    },
+                ],
+            },
+        }
+        run = _make_run(spec, {"kind": "bug"})
+        c = RunController(run, spec, services=EngineServices())
+        assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+        assert c._outputs["merge"] == "merged after bug"
+        assert "build" not in c._outputs
+        assert c.instances["root.children[0].cases[feat]"].state == InstanceState.SKIPPED
+
+    async def test_an_async_fan_out_join_waits_for_the_slowest_leg(self) -> None:
+        """WF2-R18 regression #2, end to end: the timing IS the assertion."""
+        spec = {
+            "name": "f",
+            "root": {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    {"kind": "transform", "id": "fast", "config": {"expr": "quick"}},
+                    {"kind": "wait", "id": "slow1", "config": {"duration_secs": 1}},
+                    {"kind": "wait", "id": "slow2", "config": {"duration_secs": 2}},
+                    {
+                        "kind": "transform",
+                        "id": "join",
+                        "needs": ["fast", "slow1", "slow2"],
+                        "config": {"expr": "joined {{nodes.fast.output}}"},
+                    },
+                ],
+            },
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices())
+        started = time.time()
+        assert await c.run_to_completion(timeout=25) == RunStatus.COMPLETE
+        assert time.time() - started >= 1.8, "the join fired before the slow legs finished"
+        assert c._outputs["join"] == "joined quick"
+
+    async def test_a_skipped_subtree_is_skipped_all_the_way_down(self) -> None:
+        """Skipping only the case root would leave its children pending, and the derived
+        container state would then read the branch as unfinished forever."""
+        spec = {
+            "name": "sub",
+            "root": {
+                "kind": "branch",
+                "id": "r",
+                "config": {"on": "{{inputs.k}}"},
+                "cases": {
+                    "a": {"kind": "transform", "id": "ca", "config": {"expr": "1"}},
+                    "b": {
+                        "kind": "sequence",
+                        "id": "cb",
+                        "children": [
+                            {"kind": "transform", "id": "x", "config": {"expr": "2"}},
+                            {"kind": "transform", "id": "y", "config": {"expr": "3"}},
+                        ],
+                    },
+                },
+            },
+        }
+        run = _make_run(spec, {"k": "a"})
+        c = RunController(run, spec, services=EngineServices())
+        assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+        skipped = [p for p, i in c.instances.items() if i.state == InstanceState.SKIPPED]
+        assert "root.cases[b]" in skipped
+        assert "root.cases[b].children[0]" in skipped
+        assert "root.cases[b].children[1]" in skipped
+
+
+class TestForeachAndLoopIntegration:
+    async def test_a_foreach_runs_one_body_instance_per_item(self) -> None:
+        spec = {
+            "name": "fe",
+            "root": {
+                "kind": "sequence",
+                "id": "s",
+                "children": [
+                    {"kind": "transform", "id": "seed", "config": {"expr": ["a", "b", "c"]}},
+                    {
+                        "kind": "foreach",
+                        "id": "fan",
+                        "config": {"items": "{{nodes.seed.output}}"},
+                        "body": {"kind": "infer", "id": "w", "config": {"prompt": "do {{item}}"}},
+                    },
+                ],
+            },
+        }
+        run = _make_run(spec)
+        fn = _echo()
+        c = RunController(run, spec, services=EngineServices(completion=fn))
+        assert await c.run_to_completion(timeout=25) == RunStatus.COMPLETE
+        assert sorted(fn.calls) == ["do a", "do b", "do c"]
+
+    async def test_a_counted_loop_runs_exactly_n_iterations(self) -> None:
+        spec = {
+            "name": "lp",
+            "root": {
+                "kind": "loop",
+                "id": "l",
+                "config": {"mode": "counted", "n": 3},
+                "body": {"kind": "transform", "id": "b", "config": {"expr": "i{{iter}}"}},
+            },
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices())
+        assert await c.run_to_completion(timeout=25) == RunStatus.COMPLETE
+        assert len([p for p in c.instances if "@" in p]) == 3
+
+    async def test_until_dry_exits_on_a_clean_sweep(self) -> None:
+        calls = {"n": 0}
+
+        async def sweeper(prompt, *, use_case="background", output_type=None):
+            calls["n"] += 1
+            return "" if calls["n"] >= 2 else "found something"
+
+        spec = {
+            "name": "dry",
+            "root": {
+                "kind": "loop",
+                "id": "l",
+                "config": {"mode": "until_dry", "streak": 1, "max_iterations": 6},
+                "body": {"kind": "infer", "id": "b", "config": {"prompt": "sweep {{iter}}"}},
+            },
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(completion=sweeper))
+        assert await c.run_to_completion(timeout=25) == RunStatus.COMPLETE
+        assert calls["n"] == 2
+
+    async def test_loop_iterations_are_journaled_for_the_circuit_breaker(self) -> None:
+        """N identical error signatures in a row is a thrash the breaker can detect at
+        zero LLM cost — it needs these records to do it."""
+        spec = {
+            "name": "it",
+            "root": {
+                "kind": "loop",
+                "id": "l",
+                "config": {"mode": "counted", "n": 2},
+                "body": {"kind": "transform", "id": "b", "config": {"expr": "x"}},
+            },
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices())
+        await c.run_to_completion(timeout=25)
+        iters = [r for r in J.ledger(run.id) if r["kind"] == J.ITERATION]
+        assert len(iters) == 2
+        assert {r["iteration"] for r in iters} == {0, 1}
+
+
+class TestLaneEnforcement:
+    async def test_a_lane_cap_serializes_over_capacity_work(self) -> None:
+        order: list[tuple[str, str]] = []
+
+        async def track(prompt, *, use_case="background", output_type=None):
+            order.append(("start", prompt))
+            await asyncio.sleep(0.3)
+            order.append(("end", prompt))
+            return "x"
+
+        spec = {
+            "name": "ln",
+            "root": {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    {"kind": "infer", "id": "a", "config": {"prompt": "pa"}},
+                    {"kind": "infer", "id": "b", "config": {"prompt": "pb"}},
+                ],
+            },
+        }
+        run = _make_run(spec)
+        c = RunController(
+            run,
+            spec,
+            services=EngineServices(
+                completion=track, lane_limits=Limits(lanes={"llm": 1, "io": 1, "compute": 8})
+            ),
+        )
+        assert await c.run_to_completion(timeout=25) == RunStatus.COMPLETE
+        assert order[0][0] == "start" and order[1][0] == "end"
+
+    async def test_independent_lanes_do_not_block_each_other(self) -> None:
+        """The whole point of typed lanes: a saturated io lane must not stall llm work."""
+        spec = {
+            "name": "mix",
+            "root": {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    {"kind": "infer", "id": "i", "config": {"prompt": "p"}},
+                    {"kind": "transform", "id": "t", "config": {"expr": "1"}},
+                ],
+            },
+        }
+        run = _make_run(spec)
+        c = RunController(
+            run,
+            spec,
+            services=EngineServices(
+                completion=_echo(), lane_limits=Limits(lanes={"llm": 1, "io": 1, "compute": 8})
+            ),
+        )
+        assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
