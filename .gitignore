@@ -80,8 +80,13 @@ eval_results/
 .playwright-mcp/
 playwright-responses/
 
-# Bare local dev gateway home (make serve creates $(CURDIR)/.dev-home)
-/.dev-home/
+# Bare local dev gateway home (make serve creates $(CURDIR)/.dev-home).
+# GLOB, not a fixed name: every dev home holds live credentials (.local_secret,
+# session_key, sel_hmac.key), so an ad-hoc `.dev-home-<something>` for a one-off
+# validation run must be ignored by default rather than each name being added
+# after the fact. A `git add -A` in a repo root with an unignored dev home stages
+# secrets — do not narrow this back to an exact match.
+/.dev-home*/
 # e2e harness dev home (playwright.config.ts recipe)
 /.dev-home-e2e/
 # Seeded marketing-screenshot home (the release runbook clones .dev-home into this).
