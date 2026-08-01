@@ -96,91 +96,11 @@ def test_real_preferences_not_env_failures(text):
 
 
 # ── trigger gate ──
-
-
-def test_gate_fires_on_correction():
-    assert (
-        atr.should_review(
-            enabled=True,
-            is_ephemeral=False,
-            correction=True,
-            tool_calls=0,
-            min_tool_calls=4,
-            correction_heuristic=True,
-        )
-        is True
-    )
-
-
-def test_gate_fires_on_enough_tools():
-    assert (
-        atr.should_review(
-            enabled=True,
-            is_ephemeral=False,
-            correction=False,
-            tool_calls=4,
-            min_tool_calls=4,
-            correction_heuristic=True,
-        )
-        is True
-    )
-
-
-def test_gate_skips_when_disabled():
-    assert (
-        atr.should_review(
-            enabled=False,
-            is_ephemeral=False,
-            correction=True,
-            tool_calls=9,
-            min_tool_calls=4,
-            correction_heuristic=True,
-        )
-        is False
-    )
-
-
-def test_gate_skips_ephemeral():
-    assert (
-        atr.should_review(
-            enabled=True,
-            is_ephemeral=True,
-            correction=True,
-            tool_calls=9,
-            min_tool_calls=4,
-            correction_heuristic=True,
-        )
-        is False
-    )
-
-
-def test_gate_skips_low_signal_turn():
-    assert (
-        atr.should_review(
-            enabled=True,
-            is_ephemeral=False,
-            correction=False,
-            tool_calls=1,
-            min_tool_calls=4,
-            correction_heuristic=True,
-        )
-        is False
-    )
-
-
-def test_gate_correction_heuristic_off_falls_to_tools():
-    # With the heuristic off, a correction alone doesn't qualify — only tool count.
-    assert (
-        atr.should_review(
-            enabled=True,
-            is_ephemeral=False,
-            correction=True,
-            tool_calls=0,
-            min_tool_calls=4,
-            correction_heuristic=False,
-        )
-        is False
-    )
+#
+# The gate itself moved to `personalclaw.learning.gate.LearningGate` (one decision
+# per event, shared by all three cadences). Its behaviour — including every case
+# `should_review` used to cover — is tested in `tests/test_learning_gate.py`; the
+# pure content filters above stay here because they remain this module's own.
 
 
 # ── capture (run_after_turn_review) ──

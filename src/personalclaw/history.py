@@ -1082,7 +1082,7 @@ class HistoryConsolidator:
             and _now >= self._plan_next_check
         ):
             try:
-                from personalclaw.context_management import plan_memory_path
+                from personalclaw.plan_memory import plan_memory_path
 
                 path = plan_memory_path()
                 if path.exists():
@@ -1111,11 +1111,11 @@ class HistoryConsolidator:
                 self._plan_next_check = _time.monotonic() + 60
                 return
 
-            from personalclaw.context_management import (
+            from personalclaw.llm_helpers import stream_and_collect
+            from personalclaw.plan_memory import (
                 build_plan_consolidation_prompt,
                 save_plan_lessons,
             )
-            from personalclaw.llm_helpers import stream_and_collect
 
             prompt = build_plan_consolidation_prompt()
             if not prompt:

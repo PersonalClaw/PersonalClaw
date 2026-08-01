@@ -430,3 +430,45 @@ Frontmatter gains an optional declaration so resources are addressable without a
 - **Duplicating §2.4.** The single largest risk in this amendment. §2.4's ranked slot allocator with L0/L1/L2 degradation is the authority for *how much of an entity* reaches a prompt; E1.1 adds only a **new, deeper tier for skill resources**. A task that reimplements tiering in `skills/` is out of scope and should be refused (escalation E6).
 - **Resource sprawl.** A skill with many resources re-creates the tool-explosion problem one level down. Mitigated by the L0 catalog being one line per resource and by curator aging of unused resources — and worth watching in real use.
 - **Promotion noise.** Retroactive promotion could flood the proposal queue. §2.2's decision memory and §2.3's curator already bound this; the amendment deliberately reuses them rather than adding a second gate.
+
+---
+
+## Execution log
+
+- **2026-08-01 — DONE — Migration step 1 (Capture): hygiene + gate + staging.**
+  Branch `feature-wf2-flywheel-capture`, PR #163. New `learning/` package with the three
+  §2.1 unifications: `gate.py` (one eligibility decision per event, consumed by every
+  cadence), `hygiene.py` (untrusted-invisible + system-injection + env-failure +
+  grounding + session scoring + the shared `min_evidence` constant), `staging.py` (the
+  R19 append-only log with FLUSH_OK/FLUSH_PRODUCED/FLUSH_ERROR outcome records, batch
+  gate with input-hash idempotence, cost metering, provenance pointers, health/prune).
+  Config: `learning.min_evidence`, `learning.staging_enabled`, `learning.min_session_score`
+  wired through all four points and verified live. `learning.db` added to
+  snapshot/portability (copy-never-merge). `context_management.py` split; the plan-format
+  and plan-memory half extracted to `plan_memory.py`. 11060 tests (+77), lint clean,
+  green at `-n 4` and `-n auto`, seam validated against the real dev home.
+
+- **DEVIATION — `should_review` deleted, not deprecated.** The plan says "unify"; after the
+  rewire it had zero production callers, and clean-break doctrine says the replaced
+  mechanism goes in the same change. Coverage migrated to `test_learning_gate.py`.
+
+- **DEVIATION — permission and worthwhileness are two fields.** The plan describes ONE
+  eligibility result. Implementing it as one boolean would have forced the same
+  carve-out that made facet capture ungated (a cheap path cannot express "allowed but not
+  worth an LLM"). `GateDecision` carries both; `__bool__` is the strict answer.
+
+- **DISCOVERY — the fence filter's first implementation was wrong, and measurement caught
+  it.** `fence_untrusted` emits `<untrusted_content source=web>`; a bare-literal match
+  found nothing on exactly the spans carrying provenance, so a planted injection survived.
+  Now matched with a tag-aware regex derived from the constant. This is the plan's success
+  criterion 4 — it would have shipped false.
+
+- **DISCOVERY — ordering is a privacy property.** Permission must be settled before the
+  message is read at all; classifying a restricted session's text is already a read of
+  content its memory_mode excluded. Pinned by a test.
+
+- **NOT DONE (deliberately, out of step-1 scope):** the extract/decide two-phase split and
+  the pre-compaction flush both need the proposal queue (step 3) to route into — building
+  them now would mean writing against a contract step 3 defines. `lessons.jsonl` deletion
+  is step 2 by the plan's own re-tiering. The staging tier is wired to the per-turn cadence;
+  session-end and run-end consume the same gate/hygiene/staging API when their steps land.

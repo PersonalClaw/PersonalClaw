@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-08-01T20:07:11.838Z",
+  "generatedAt": "2026-08-01T23:57:30.741Z",
   "totals": {
     "driftHits": 7,
-    "filesScanned": 390,
+    "filesScanned": 392,
     "filesWithDrift": 6
   },
   "byCategory": {
@@ -771,6 +771,11 @@
     "pages/triggers/ActionConfig.tsx": {
       "raw-button": 0,
       "raw-input": 2,
+      "raw-dialog": 0
+    },
+    "pages/workflows/WorkflowRunDetail.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
       "raw-dialog": 0
     }
   },

@@ -545,6 +545,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "workflows.model_tier_reasoning": {"type": "str", "max_len": 32},
     "workflows.model_tier_standard": {"type": "str", "max_len": 32},
     "workflows.model_tier_fast": {"type": "str", "max_len": 32},
+    # LEARNING-FLYWHEEL capture: the knobs worth changing without a restart. The
+    # evidence floor and the session-score threshold are how an owner tunes how
+    # eagerly the system learns, and staging can be turned off if the log is
+    # unwanted — so all three are live-editable.
+    "learning.min_evidence": {"type": "int", "min": 1, "max": 20},
+    "learning.staging_enabled": {"type": "bool"},
+    "learning.min_session_score": {"type": "float", "min": 0.0, "max": 1.0},
     # REMOTE-USER-AUTH C4 — the owner-login knobs. Runtime-editable so turning login on
     # or off, or loosening a lockout you tripped, takes effect on the next request without
     # a restart. The PASSWORD is deliberately NOT here and never will be: a credential is

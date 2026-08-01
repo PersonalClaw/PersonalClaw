@@ -79,7 +79,7 @@ mandatory.
 
 | # | Session | PR group | Status |
 |---|---|---|---|
-| 25 | Capture: three cadences, one gate, one hygiene policy, one staging log | G11 | TODO |
+| 25 | Capture: three cadences, one gate, one hygiene policy, one staging log | G11 | ✅ DONE (#163) |
 | 26 | Propose: one queue, four kinds, decision memory, fingerprint anti-refile | G11 | TODO |
 | 27 | Curate: one usage store, one decay kernel, hardened curator | G12 | TODO |
 | 28 | Inject: two surfacing engines → one ranked slot allocator | G12 | TODO |
@@ -701,3 +701,63 @@ mandatory.
   scheduled the files together; CI's 4 did. Reproduced with `-n 4`, fixed by making that module start
   from an EMPTY registry rather than adding a restore to every possible leaker — the invariant it
   needs is "nothing but what I registered". Verified green at `-n 4` AND `-n auto`.
+
+### Session 25 — Learning Flywheel step 1: Capture (`feature-wf2-flywheel-capture`, PR #163)
+
+New `learning/` package: `gate.py` (LearningGate), `hygiene.py` (one capture policy),
+`staging.py` (append-only log + flush outcome records). Config: 3 knobs through all four
+wiring points. `context_management.py` split; `plan_memory.py` extracted. 11060 tests
+(+77), lint clean at 599 files, green at `-n 4` AND `-n auto`.
+
+**Deviations and findings:**
+
+(a) **DELETED `after_turn_review.should_review`** rather than leaving it beside the gate.
+  Zero production callers remained after the rewire, and clean-break doctrine says the
+  replaced mechanism goes in the same change. Its six test cases migrated to
+  `test_learning_gate.py`, which also covers the two things the old boolean structurally
+  could not express (permitted-vs-worthwhile, registry-sourced suppression).
+
+(b) **Permission and worthwhileness are SEPARATE fields, not one boolean.** The old
+  single `should_review` is exactly why preference-facet capture ran UNGATED at
+  chat_runner.py:150 — a cheap heuristic could not express "allowed, but not worth an
+  LLM", so the carve-out bypassed the gate entirely. `GateDecision.permitted` /
+  `.worthwhile` keeps the carve-out's intent while routing it through one gate;
+  `__bool__` returns the STRICT answer so an `if decision:` cannot accidentally
+  authorize an expensive pass.
+
+(c) **MEASURED BUG in my own first implementation:** `security.fence_untrusted` emits
+  `<untrusted_content source=web>`, so matching the bare `UNTRUSTED_OPEN` literal found
+  NOTHING on exactly the spans that carry provenance. A planted injection passed straight
+  through the filter. Every fence in production names a source. Fixed with a tag-aware
+  regex derived FROM the constant, and covered for all four real sources.
+
+(d) **System-marker matching is a PREFIX test, not a search.** A 200-char window flagged a
+  user *quoting* `[Subagent completion event]` while asking about it — silently disabling
+  learning for that turn. Every emitter (`gateway.py`, `subagent.py`, `chat_runner.py`)
+  builds `f"[marker]\n{body}"`, so a prefix test matches exactly what the platform
+  produces. Markers were read from the emitting code, never guessed.
+
+(e) **Ordering is a privacy property:** permission must be settled WITHOUT reading the
+  message. Classifying the text of a restricted session — even with a free regex — reads
+  content its memory_mode promised was out of scope. Caught by an existing
+  `test_temporary_chat` assertion; now pinned by
+  `test_a_denied_session_is_never_classified`.
+
+(f) **`_ChatSession` defines `__slots__`,** so stashing the turn's decision on the session
+  raised `AttributeError`. The decision is threaded as an argument instead — which also
+  makes the sharing visible at the call site rather than implicit in object state.
+
+(g) **`context_management.py` split on the seam that already existed.** It held two
+  unrelated subjects: resource-growth limits, and a plan-format parser + plan-memory
+  journal. `build_stage_context` (zero callers) and `rephrase_plan` moved to the plan side
+  — `rephrase_plan` reads generic but its whole job is restating *this* format. Step 5's
+  plan-memory absorption is now a file deletion, not surgery on a live module.
+
+(h) **learning.db is COPIED, never merged,** on import. Merging two capture logs would
+  double-count evidence occurrences, and `learning.min_evidence` is what decides whether a
+  pattern is real — a merge would manufacture proposals out of a restore rather than out of
+  the user's behaviour.
+
+(i) **`MIN_EVIDENCE_DEFAULT` is asserted equal to the config default.** The plan's claim is
+  "ONE shared number"; two consumers reading different sources is the failure that claim
+  exists to prevent, so a test pins them together.

@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
+from personalclaw.learning.staging import StagingStore
 from personalclaw.portability import (
     EXPORT_EXCLUDE,
     _is_excluded,
@@ -83,6 +84,17 @@ def fake_personalclaw_home(tmp_path):
     )
     conn.commit()
     conn.close()
+
+    # learning.db (the capture staging log + flush outcome records)
+    learn = StagingStore(pc)
+    learn.stage(
+        cadence="per_turn",
+        kind="lesson",
+        content="Chose sqlite because the json file corrupted under writes",
+    )
+    with learn.flush("per_turn") as _result:
+        _result["staged"] = 1
+    learn.close()
 
     # workspace/memory/
     mem_dir = pc / "workspace" / "memory"
@@ -439,6 +451,60 @@ class TestImportMerge:
             assert "user.name" in keys  # from import
             assert "user.team" in keys  # pre-existing
             conn.close()
+        finally:
+            os.unlink(str(zip_path))
+
+    def test_import_copies_learning_db_when_absent(self, patched_config_dir, tmp_path):
+        """The staging log travels, so capture history survives a move.
+
+        A restored home that reports "no capture activity" because the log was
+        left behind is indistinguishable from a broken capture path — the exact
+        ambiguity the outcome records exist to remove.
+        """
+        zip_path = self._make_export(patched_config_dir)
+        try:
+            target = tmp_path / "target_learn"
+            target.mkdir()
+            with patch("personalclaw.portability.config_dir", return_value=target):
+                with patch.dict(os.environ, {"PERSONALCLAW_HOME": str(target)}):
+                    apply_import_zip(zip_path, mode="merge")
+
+            restored = StagingStore(target)
+            try:
+                assert restored.path.is_file()
+                assert len(restored.pending()) == 1
+                assert restored.health()["passes"] == 1
+            finally:
+                restored.close()
+        finally:
+            os.unlink(str(zip_path))
+
+    def test_import_never_merges_two_staging_logs(self, patched_config_dir, tmp_path):
+        """An existing log is left alone rather than merged.
+
+        Merging would double-count evidence occurrences, and the evidence floor
+        (`learning.min_evidence`) is what decides whether a pattern is real — so a
+        merge would manufacture proposals out of a restore rather than out of the
+        user's actual behaviour.
+        """
+        zip_path = self._make_export(patched_config_dir)
+        try:
+            target = tmp_path / "target_learn_existing"
+            target.mkdir()
+            local = StagingStore(target)
+            local.stage(cadence="per_turn", kind="lesson", content="a local signal only")
+            local.close()
+
+            with patch("personalclaw.portability.config_dir", return_value=target):
+                with patch.dict(os.environ, {"PERSONALCLAW_HOME": str(target)}):
+                    apply_import_zip(zip_path, mode="merge")
+
+            after = StagingStore(target)
+            try:
+                contents = [e.content for e in after.pending()]
+                assert contents == ["a local signal only"]
+            finally:
+                after.close()
         finally:
             os.unlink(str(zip_path))
 
