@@ -556,10 +556,17 @@ class TestDispatchTable:
         assert r.failure.failure_class == FailureClass.INTERNAL
         assert "engine bug" in r.failure.remediation
 
-    async def test_subworkflow_refuses_explicitly_rather_than_silently_skipping(self) -> None:
-        """A silent skip would make a spec look like it ran the nested work."""
+    async def test_subworkflow_without_a_supervisor_is_an_ENGINE_failure(self) -> None:
+        """Nesting landed in Slice 10a; this used to assert "not executable yet".
+
+        With no supervisor injected the dispatcher cannot create a child run, and that is an
+        engine WIRING problem rather than a spec problem — the distinction matters because a USER
+        classification would send someone hunting their own spec for a bug that is ours. The
+        nesting behaviour itself is covered by `test_workflows_nesting.py`.
+        """
         r = await dispatch(
             _n({"kind": "subworkflow", "id": "w", "config": {"ref": "child"}}), _ctx()
         )
         assert r.state == InstanceState.FAILED
-        assert "not executable yet" in r.failure.cause_plain
+        assert r.failure.failure_class == FailureClass.INTERNAL
+        assert "supervisor" in r.failure.cause_plain
