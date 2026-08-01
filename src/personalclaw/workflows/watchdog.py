@@ -34,8 +34,10 @@ from typing import Any
 
 from personalclaw import shutdown_event
 from personalclaw.workflows import store
+from personalclaw.workflows.coalescer import EventCoalescer
 from personalclaw.workflows.controller import _ROOT_TO_RUN, EngineServices, RunController
 from personalclaw.workflows.models import (
+    TERMINAL_RUN_STATUSES,
     TERMINAL_STATES,
     InstanceState,
     Node,
@@ -47,6 +49,10 @@ from personalclaw.workflows.tick import frontier
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECS = 5
+
+#: Terminal status strings, for the publish-side flush check. The enum values rather than the
+#: enum: the payload carries a serialized status, not a member.
+_TERMINAL_VALUES = frozenset(s.value for s in TERMINAL_RUN_STATUSES)
 
 
 def registry_key(run_id: str) -> str:
@@ -69,6 +75,11 @@ class WorkflowWatchdog:
         #: Consecutive poll failures. A persistently broken poll should be loud in the
         #: log rather than silently retrying forever.
         self._consec_errors = 0
+        #: Coalesced delivery (WF2-R11 batch-5). ONE coalescer for the whole supervisor, so
+        #: its windows are keyed by observer across every run rather than one debounce state
+        #: per run — a browser watching two runs should not get two independent timers
+        #: fighting over the same connection.
+        self._coalescer = EventCoalescer(self._raw_publish)
 
     # ── lifecycle ──
 
@@ -82,6 +93,10 @@ class WorkflowWatchdog:
             with contextlib.suppress(Exception):
                 await controller.stop()
         self._controllers.clear()
+        # Flush before the loop goes away: a pending batch's timer would never fire, and the
+        # events in it are the LAST ones a watching client sees before shutdown.
+        with contextlib.suppress(Exception):
+            self._coalescer.flush_all()
         if self._task and not self._task.done():
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -134,30 +149,47 @@ class WorkflowWatchdog:
         mute/severity/quiet-hours, and routing engine events through it would let a
         quiet-hours setting silently eat a run's entire event stream. Genuinely
         user-facing moments (needs_input, failure) go through `notify` separately.
+
+        Every event goes through the coalescer, which batches the high-frequency per-node
+        chatter and passes everything else straight through (WF2-R11 batch-5). A run's last
+        events are flushed on termination by `_flush_run`, so nothing is stranded in a
+        window whose timer outlives the run.
         """
-        state = self._state
-        if state is None:
+        if self._state is None:
             return None
 
         key = registry_key(run_id)
 
         def publish(event: str, payload: dict[str, Any]) -> None:
-            try:
-                registry = getattr(state, "workflow_sse", None)
-                if callable(registry):
-                    registry().publish(key, event, payload)
-            except Exception:
-                logger.debug("workflow sse publish failed", exc_info=True)
-            try:
-                broadcast = getattr(state, "_broadcast", None)
-                if callable(broadcast) and event == "workflow_run_update":
-                    # WS envelopes are refetch SIGNALS, not payloads (the DashboardLive
-                    # convention) — the client refetches on receipt.
-                    broadcast({"type": "workflow_run_update", "run_id": run_id})
-            except Exception:
-                logger.debug("workflow ws broadcast failed", exc_info=True)
+            self._coalescer.publish(key, event, payload)
+            if event == "workflow_run_update" and payload.get("status") in _TERMINAL_VALUES:
+                # A terminal run publishes nothing further, so any batch still accumulating
+                # behind this status would sit until its timer fired — on a stream the FE has
+                # already closed (a terminal run's SSE closes immediately). Flush now.
+                self._coalescer.flush(key)
 
         return publish
+
+    def _raw_publish(self, key: str, event: str, payload: Any) -> None:
+        """The coalescer's sink: the actual SSE write plus the WS refetch signal."""
+        state = self._state
+        if state is None:
+            return
+        try:
+            registry = getattr(state, "workflow_sse", None)
+            if callable(registry):
+                registry().publish(key, event, payload)
+        except Exception:
+            logger.debug("workflow sse publish failed", exc_info=True)
+        try:
+            broadcast = getattr(state, "_broadcast", None)
+            if callable(broadcast) and event == "workflow_run_update":
+                # WS envelopes are refetch SIGNALS, not payloads (the DashboardLive
+                # convention) — the client refetches on receipt.
+                run_id = key.split(":", 1)[1] if ":" in key else key
+                broadcast({"type": "workflow_run_update", "run_id": run_id})
+        except Exception:
+            logger.debug("workflow ws broadcast failed", exc_info=True)
 
     # ── poll ──
 

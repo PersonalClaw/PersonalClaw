@@ -653,7 +653,26 @@ class TestRunEvents:
 
         source = inspect.getsource(H.api_run_events)
         assert "on_connect" in source and "workflow_snapshot" in source
-        assert source.index("service.status") < source.index("registry.hub")
+        assert source.index("project(run_id)") < source.index("registry.hub")
+
+    async def test_the_snapshot_goes_out_validated(self) -> None:
+        """Through `projection.project`, not a raw service read: the widget builds its whole
+        view-model from this ONE frame, so a malformed field corrupts it rather than degrading
+        it — and the symptom would surface in a browser console instead of here."""
+        import inspect
+
+        from personalclaw.workflows.projection import validate_snapshot
+
+        source = inspect.getsource(H.api_run_events)
+        assert "from personalclaw.workflows.projection import project" in source
+
+        run = store.create(WorkflowRun(id="", workflow_name="w"))
+        store.write_spec(run.id, {"name": "w", "root": {"kind": "transform", "id": "a"}})
+        from personalclaw.workflows.projection import project
+
+        snap, issues = project(run.id)
+        assert issues == []
+        assert validate_snapshot(snap) == []
 
     async def test_a_terminal_run_closes_rather_than_holding_open(self) -> None:
         """Events will never arrive for a finished run; holding the connection is a leak."""

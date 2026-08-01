@@ -478,8 +478,14 @@ async def api_run_events(request: web.Request) -> web.Response | web.StreamRespo
     miss everything between connect and the first event, and then render a run that looks
     stalled. A TERMINAL run closes immediately instead of holding a connection open forever
     waiting for events that will never arrive.
+
+    The snapshot is schema-validated before transmission (`projection.project`): the widget
+    builds its entire view-model from this one frame, so a malformed field does not degrade
+    the widget, it corrupts it — and the failure would surface in a browser console rather
+    than here where it is one line to fix.
     """
     from personalclaw.workflows.models import TERMINAL_RUN_STATUSES
+    from personalclaw.workflows.projection import project
     from personalclaw.workflows.watchdog import registry_key
 
     run_id = request.match_info.get("run_id", "")
@@ -498,7 +504,8 @@ async def api_run_events(request: web.Request) -> web.Response | web.StreamRespo
         )
 
     key = registry_key(run_id)
-    snapshot = json.dumps({k: v for k, v in service.status(run_id).items() if k != "ok"})
+    snap, _issues = project(run_id)
+    snapshot = json.dumps(snap)
     return await stream_response(
         request,
         registry.hub(key),
