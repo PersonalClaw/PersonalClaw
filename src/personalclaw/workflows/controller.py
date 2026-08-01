@@ -620,13 +620,44 @@ class RunController:
             answer=filled,
         )
         self.run.attention = None
+        # The run has work again, so it is no longer surfaced as blocked. Written BEFORE the
+        # loop restarts so a status read between the two never reports a stale needs_input.
+        if self.run.status == RunStatus.NEEDS_INPUT:
+            self.run.status = RunStatus.RUNNING
         self._persist_state()
         self._save_run()
         self._publish(
             "workflow_gate_resolved",
             {"node_id": cont.node_id, "instance_path": cont.instance_path, "approved": approved},
         )
+        self._publish("workflow_run_update", {"status": self.run.status.value})
+        # RESTART the tick loop. Answering a gate is the ONLY way a needs_input run gets work
+        # again, and the loop that would schedule it has already exited — without this the
+        # answer lands, the node flips DONE, and the run sits there forever with its
+        # downstream nodes never launched. Found by driving the real UI: every unit test
+        # called `run_to_completion` by hand afterwards and so never saw it.
+        self._resume_loop()
         return {"ok": True, "approved": approved, "node_id": cont.node_id}
+
+    def _resume_loop(self) -> None:
+        """Relaunch the tick loop if it has exited and the run is not terminal.
+
+        Scheduled rather than awaited: `resume` is called from a request handler, and
+        blocking that handler until the run finishes would turn every approval into a
+        long-poll.
+        """
+        if self.run.is_terminal:
+            return
+        if self._task is not None and not self._task.done():
+            return  # still running — it will pick the woken node up on its next tick
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop (a sync caller in a test): the watchdog adopts the run instead.
+            logger.debug("workflow %s: no running loop to resume on", self.run.id)
+            return
+        self._terminal.clear()
+        self._task = asyncio.create_task(self._tick_loop())
 
     # ── mid-flight mutation (WF2-R2 / R20) ──
 

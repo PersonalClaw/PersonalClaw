@@ -1836,8 +1836,15 @@ class GatewayOrchestrator:
         # working" while nothing is.
         if self._cfg.workflows.enabled:
             from personalclaw.workflows.controller import EngineServices
+            from personalclaw.workflows.native_defs import register_native_provider
             from personalclaw.workflows.tick import Limits
             from personalclaw.workflows.watchdog import WorkflowWatchdog
+
+            # The native filesystem def provider — where a user's OWN workflows live.
+            # `defs.py` is only a registry seam, so without this nothing writable is
+            # registered and saving a definition fails with "no writable provider" unless
+            # an app happens to contribute one.
+            register_native_provider()
 
             wf_cfg = self._cfg.workflows
             self.workflow_watchdog = WorkflowWatchdog(

@@ -403,6 +403,59 @@ class TestResume:
         assert result["ok"] and result["approved"]
 
 
+class TestAnsweringRestartsTheRun:
+    """Regression, found by driving the real UI. Answering a gate is the ONLY way a
+    needs_input run gets work again — and the tick loop that would schedule it has already
+    exited. Without a restart the answer lands, the node flips DONE, and the run sits there
+    forever with its downstream nodes never launched.
+
+    Every earlier test called `run_to_completion` by hand after resuming, which masked it
+    completely: the manual call WAS the missing restart."""
+
+    async def test_the_run_finishes_on_its_own_after_an_answer(self) -> None:
+        import asyncio
+
+        c, status = await _blocked({"timeout_secs": 0})
+        assert status == RunStatus.NEEDS_INPUT
+        token = HI.list_continuations(c.run.id)[0].token
+
+        # Answer, then WAIT — no manual run_to_completion. The run must drive itself.
+        assert c.resume(token, True)["ok"]
+        for _ in range(100):
+            if c.run.status == RunStatus.COMPLETE:
+                break
+            await asyncio.sleep(0.05)
+
+        assert (
+            c.run.status == RunStatus.COMPLETE
+        ), f"run stalled at {c.run.status.value} — the tick loop did not restart"
+        # And the downstream node actually ran, reading the gate's answer.
+        assert c.instances["root.children[2]"].state == InstanceState.DONE
+        assert c._outputs["after"] == "went true"
+
+    async def test_the_status_leaves_needs_input_immediately(self) -> None:
+        """A status read between the answer and the loop's first tick must not report a
+        stale needs_input — the UI polls exactly there."""
+        c, _status = await _blocked({"timeout_secs": 0})
+        token = HI.list_continuations(c.run.id)[0].token
+        c.resume(token, True)
+        assert c.run.status != RunStatus.NEEDS_INPUT
+        assert store.get(c.run.id).status != RunStatus.NEEDS_INPUT
+
+    async def test_a_denied_gate_finishes_too(self) -> None:
+        """A denial is an ANSWER, not a hang — the run must reach a terminal state."""
+        import asyncio
+
+        c, _status = await _blocked({"timeout_secs": 0})
+        token = HI.list_continuations(c.run.id)[0].token
+        c.resume(token, False)
+        for _ in range(100):
+            if c.run.is_terminal:
+                break
+            await asyncio.sleep(0.05)
+        assert c.run.is_terminal and c.run.status == RunStatus.FAILED
+
+
 class TestRewindDropsTokens:
     async def test_rewinding_the_gate_drops_its_pending_token(self) -> None:
         """A token for a node about to re-run would resume a step that no longer exists in

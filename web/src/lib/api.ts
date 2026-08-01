@@ -474,15 +474,77 @@ export interface TaskComment { id: string; task_id: string; author: string; body
 export interface ApiProposedTask { title: string; description?: string; priority?: string; depends_on?: number[] }
 
 // WORKFLOWS-V2 Phase 1: the old SOP types (WorkflowStep/Scope/Graph/Item/Match)
-// lived here. Slice 7 lands the v2 run/def types when its API mounts.
+// lived here. Slice 7b lands the v2 run/def types below, now that the API mounts.
 //
-// Until then this is the minimal shape the loop plan-review pickers still type
-// against. Nothing populates it — the capability catalog's workflow half is empty
-// and both pickers are length-guarded — but the persisted `workflow_ids` field and
-// its UI plumbing stay, so v2 definitions can fill them without a second refactor.
+// The stub stays: it is the shape the loop plan-review pickers type against, and the
+// persisted `workflow_ids` field still flows through them. Kept separate from
+// `WorkflowDef` rather than merged, because the picker wants a flat label list while a
+// def is a node TREE — collapsing them would force the picker to understand the spec.
 export interface WorkflowDefStub {
   id: string; name: string; description?: string; enabled?: boolean
   scope?: string; tags?: string[]; steps?: Array<{ id?: string; title: string; instruction?: string }>
+}
+
+// ── WORKFLOWS-V2 (Slice 7b) ──
+// A node in a spec tree. Kind-specific settings live in `config` (the backend's
+// tolerant-reader contract), so this type stays valid as node kinds gain fields.
+export interface WorkflowNode {
+  kind: string; id?: string
+  children?: WorkflowNode[]
+  body?: WorkflowNode
+  cases?: Record<string, WorkflowNode>
+  default?: WorkflowNode
+  config?: Record<string, unknown>
+  needs?: string[]
+}
+export interface WorkflowDefSummary {
+  name: string; description: string; source: string; version: number; tags: string[]; provider: string
+}
+export interface WorkflowDef {
+  name: string; description?: string; version?: number; source?: string; provenance?: string
+  root: WorkflowNode
+  inputs?: Record<string, { type?: string; required?: boolean; default?: unknown; help?: string }>
+  tags?: string[]
+  metadata?: { risk?: string; requirements?: Record<string, string[]> }
+}
+export type WorkflowRunStatus =
+  'draft' | 'running' | 'paused' | 'needs_input' | 'complete' | 'failed' | 'cancelled' | 'escalated'
+// A node INSTANCE. `instance_path` is the engine's addressing key (a foreach body
+// produces many instances of one node id), so it — not node_id — is the list key.
+export interface WorkflowNodeState {
+  instance_path: string; node_id: string; state: string; attempt?: number
+  degraded_reason?: string
+  failure?: { class?: string; cause_plain?: string; remediation?: string; terminal_reason?: string } | null
+}
+export interface WorkflowRunSummary {
+  id: string; workflow_name: string; status: WorkflowRunStatus; spec_version: number
+  created_at: string; started_at?: string | null; completed_at?: string | null
+  elapsed_seconds?: number; total_tokens?: number; error_message?: string
+  attention?: Record<string, unknown> | null
+  project_id?: string; mode?: string
+}
+export interface WorkflowRunDetailData {
+  run_id: string; workflow: string; status: WorkflowRunStatus; spec_version: number
+  error?: string; attention?: Record<string, unknown> | null
+  tokens?: number; elapsed_secs?: number
+  nodes: WorkflowNodeState[]
+}
+// One pending human-input gate. `ask` is the typed payload ONE renderer covers
+// (approval|choice|text|form), so the inbox card and the run view share a component.
+export interface WorkflowContinuation {
+  resume_token: string; node_id: string; instance_path: string
+  ask: { kind?: string; prompt?: string; choices?: string[]; fields?: Array<{ name: string; type?: string; label?: string; required?: boolean; choices?: string[] }> }
+  handoff: { scope?: string; status?: string; outstanding?: string[]; checks_run?: string[]; next_steps?: string[]; risks?: string[] }
+  expires_at: number; expired: boolean
+}
+export interface WorkflowCascadePreview {
+  rerun: string[]; stale: string[]; skipped: string[]; committed_effects: string[]; needs_confirmation: boolean
+}
+export interface WorkflowManifest {
+  spec_semver: string
+  node_kinds: Array<{ kind: string; container: boolean; lane: string }>
+  gate_kinds: string[]; join_modes: string[]; loop_modes: string[]; item_error_policies: string[]
+  pipes: string[]; mutation_ops: string[]; instance_states: string[]; run_statuses: string[]
 }
 // Prompt template (parametrized). Variables are TYPED — type ∈
 // text|textarea|number|boolean|select — and the content carries {{name}}
@@ -2514,6 +2576,58 @@ export const api = {
   fileWatchUrl: (path: string, resolve = false) => `/api/file-watch?path=${encodeURIComponent(path)}${resolve ? '&resolve=1' : ''}`,
   /** SSE URL for out-of-band config-tree changes (config.json/agents/skills/workflows). */
   configFsStreamUrl: () => `/api/config-fs/stream`,
+
+  // ── workflows v2 (composable runs over a node DAG) ──
+  // Every method hits `/api/workflows`, which the backend serves from the SAME
+  // `workflows.service` the chat tools call — so the UI and an agent can never disagree
+  // about what an operation does.
+  workflowDefs: (f?: { tag?: string; source?: string }) => {
+    const qs = new URLSearchParams(Object.entries(f ?? {}).filter(([, v]) => v) as [string, string][]).toString()
+    return get<{ defs: WorkflowDefSummary[]; total: number }>(`/api/workflows${qs ? `?${qs}` : ''}`)
+  },
+  workflowDef: (name: string) =>
+    get<{ definition: WorkflowDef; provider: string }>(`/api/workflows/${encodeURIComponent(name)}`),
+  saveWorkflowDef: (body: { name: string; root: WorkflowNode; description?: string; inputs?: Record<string, unknown>; tags?: string[]; save?: boolean }) =>
+    post<{ saved: boolean; definition?: WorkflowDef; valid: boolean; issues: Array<{ code: string; message: string; path?: string; severity?: string }>; levels?: string[][] }>('/api/workflows', body),
+  deleteWorkflowDef: (name: string) => del(`/api/workflows/${encodeURIComponent(name)}`),
+
+  workflowRuns: (f?: { workflow?: string; status?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams(
+      Object.entries(f ?? {}).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => [k, String(v)]),
+    ).toString()
+    return get<{ runs: WorkflowRunSummary[]; total: number; limit: number; offset: number }>(`/api/workflows/runs${qs ? `?${qs}` : ''}`)
+  },
+  startWorkflowRun: (body: { name: string; inputs?: Record<string, unknown>; mode?: 'blocking' | 'background'; project_id?: string; idempotency_key?: string }) =>
+    post<{ run_id: string; status: string; blocking?: boolean; needs_input?: WorkflowContinuation[] }>('/api/workflows/runs', body),
+  workflowRun: (id: string) => get<WorkflowRunDetailData>(`/api/workflows/runs/${encodeURIComponent(id)}`),
+  workflowRunOutput: (id: string, nodeId: string) =>
+    get<{ run_id: string; node_id: string; instance_path: string; state: string; output: unknown }>(
+      `/api/workflows/runs/${encodeURIComponent(id)}/outputs/${encodeURIComponent(nodeId)}`),
+  workflowContinuations: (id: string) =>
+    get<{ continuations: WorkflowContinuation[] }>(`/api/workflows/runs/${encodeURIComponent(id)}/continuations`),
+  // `preview_only` computes the cascade and queues NOTHING — the what-if a user sees
+  // before accepting an edit that would re-run completed work.
+  editWorkflowRun: (id: string, body: { ops: Array<Record<string, unknown>>; expect_version?: number; confirm_cascade?: boolean; preview_only?: boolean }) =>
+    post<{ ok?: boolean; queued?: boolean; preview: WorkflowCascadePreview; issues: Array<{ code: string; message: string; node_id?: string }> }>(
+      `/api/workflows/runs/${encodeURIComponent(id)}/edit`, body),
+  cancelWorkflowRun: (id: string) => post<{ run_id: string; cancel_requested: boolean }>(`/api/workflows/runs/${encodeURIComponent(id)}/cancel`),
+  pauseWorkflowRun: (id: string) => post<{ run_id: string; pause_requested: boolean }>(`/api/workflows/runs/${encodeURIComponent(id)}/pause`),
+  resumeWorkflowRun: (id: string, body: { answer?: unknown; resume_token?: string; always_allow?: boolean }) =>
+    post<{ ok?: boolean; approved?: boolean; node_id?: string; resumed?: boolean }>(`/api/workflows/runs/${encodeURIComponent(id)}/resume`, body),
+  rewindWorkflowRun: (id: string, body: { node_id: string; redo_effects?: boolean; force?: boolean }) =>
+    post<{ ok?: boolean; preview: WorkflowCascadePreview }>(`/api/workflows/runs/${encodeURIComponent(id)}/rewind`, body),
+  workflowRunFrom: (id: string, body: { node_id: string }) =>
+    post<{ ok?: boolean; preview: WorkflowCascadePreview }>(`/api/workflows/runs/${encodeURIComponent(id)}/run-from`, body),
+  forkWorkflowRun: (id: string, body?: { checkpoint_id?: string; note?: string }) =>
+    post<{ child_run_id: string; fork_axis: string; shared_axes: string[]; isolation_notes: string[] }>(
+      `/api/workflows/runs/${encodeURIComponent(id)}/fork`, body ?? {}),
+  workflowAudit: (dryRun = true) =>
+    get<{ healthy: boolean; dry_run: boolean; runs_scanned: number; counts: Record<string, number>; findings: Array<{ kind: string; run_id: string; detail: string; heal: string; healed: boolean }> }>(
+      `/api/workflows/audit?dry_run=${dryRun ? 'true' : 'false'}`),
+  workflowManifest: () => get<WorkflowManifest>('/api/workflows/manifest'),
+  // Bare URL for EventSource — auth rides the same-origin cookie, as with every other
+  // per-resource stream.
+  workflowRunStreamUrl: (id: string) => `/api/workflows/runs/${encodeURIComponent(id)}/events`,
 
   // ── artifacts (named, versioned content — a curated subset of files) ──
   artifacts: (f?: { tag?: string; kind?: string; q?: string; source?: string; source_path?: string }) => {
