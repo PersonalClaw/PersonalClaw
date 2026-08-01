@@ -57,7 +57,7 @@ mandatory.
 | 5 | **Slice 3b** — v2 `run-workflow` action provider + `ALLOWED_HOOK_PROVIDERS`; write-scope enforcement (pre/post fs diff, scope_violation); termination (sticky cancel, protocol-violation, `workflow_audit`); secrets (`{{secret:KEY}}`, `_has*` stripping, RedactingSink) | G2 | ✅ DONE (#140) |
 | 6 | **Slice 4a** — `mutations.py`: op types incl. `run_from`, batch validator, spec-history writer, epoch/inputs-hash logic | G3 | ✅ DONE (#141) |
 | 7 | **Slice 4b** — binding-dependency cascade closure, engine-computed preview, `inputs_stale`, rollback-vs-revert, TOCTOU re-verify; mutation queue in the controller; grammar hardening a-f | G3 | ✅ DONE (#142) |
-| 8 | **Slice 4c** — rewind (archive outputs + journal region, epoch bump, memoized replay); checkpoints + `fork`; property tests (rewind idempotence, cascade = binding closure, fork isolation) | G3 | TODO |
+| 8 | **Slice 4c** — rewind (archive outputs + journal region, epoch bump, memoized replay); checkpoints + `fork`; property tests (rewind idempotence, cascade = binding closure, fork isolation) | G3 | ✅ DONE (#143) |
 | 9 | **Slice 5a** — typed ask payload, mode-dependent gate timeouts, `timed_out_unattended`; continuation records + durable resume tokens + expiry | G4 | TODO |
 | 10 | **Slice 5b** — action-node clarification → needs_input; auto-approve for trigger-origin; owner binding + default-DENY for remote gates; `gate{kind: event}` transient hold | G4 | TODO |
 | 11 | **Slice 6a** — `mcp_workflows.py`: the 19 chat tools incl. `workflow_observe`/`run_from`/`audit`/`manifest`; wire into `_AGGREGATED_CATEGORY_MODULES`; validation schemas | G5 | TODO |
@@ -253,3 +253,19 @@ mandatory.
   preserved forward refs) is done; `revert` (inverse-patch ONE node's effects, 409 with the
   conflict named on overlapping later state) needs the checkpoint machinery from 4c to
   identify what "later state" is, so it moves to session 8. Recorded rather than faked.
+- 2026-08-01 — session 8 (Slice 4c) DONE → **PR #143** (stack #140→#141→#142→#143).
+  **Slice 4 is complete.** `checkpoints.py`: checkpoints (instance map + spec version, NOT
+  outputs), `fork_run` (own run dir, `root_run_id` propagation, copied journal prefix +
+  outputs, `fork_axis` disambiguator, SHARED_AXES surfaced), `prune_fork` (traversal-refusing),
+  `revert_node`/`revert_paths` (409-style refusal with dependents NAMED). The `fork` op is
+  wired through the mutation queue; the child lands in DRAFT deliberately (a fork exists to
+  be edited before it runs — auto-starting would race that edit). All six plan-named
+  property tests landed. 10267 tests (+43).
+  Validated live: **a fork of a complete run resumed with ZERO model calls** (the cache-key
+  claim proven, not asserted); parent byte-identical after fork; `root_run_id` stable across
+  a fork-of-a-fork; revert of a consumed node refused with `dependents=['b']` while the leaf
+  was allowed; `prune_fork('../../etc')` refused.
+  NOTE: session 7's carried-over `revert` is now landed here, as planned. The remaining
+  Slice-4 gap is the journal-region attic (`journal/attic/v<NNN>/`): outputs are archived and
+  the in-memory cache is invalidated, but the journal FILE stays append-only by contract, so
+  region archival belongs with the retention sweep rather than here. Recorded, not faked.
