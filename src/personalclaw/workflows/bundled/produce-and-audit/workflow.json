@@ -1,0 +1,116 @@
+{
+  "name": "produce-and-audit",
+  "description": "Research a subject, produce an artifact, then audit it against a read-only QC gate. Domain-neutral: the thing produced can be a document, a config, a plan or a report.",
+  "source": "bundled",
+  "provenance": "user",
+  "version": 1,
+  "tags": ["produce", "review", "general"],
+  "inputs": {
+    "subject": {
+      "type": "string",
+      "required": true,
+      "help": "What to produce. A sentence is enough; the triage step decides how much work it warrants."
+    },
+    "artifact_kind": {
+      "type": "string",
+      "required": false,
+      "default": "document",
+      "help": "What form the output should take — document, config, plan, report."
+    },
+    "acceptance": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "help": "What 'good' means here. Left empty, the audit judges against the subject alone."
+    }
+  },
+  "metadata": {
+    "risk": "low",
+    "capabilities": ["research", "write"],
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Produce a one-page migration plan for moving our cron jobs to the new scheduler. Acceptance: names every job, flags the two that share state."
+      },
+      {
+        "event": "mutation",
+        "description": "The audit found three Major findings — re-run the produce step with them as constraints rather than patching the artifact."
+      }
+    ]
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "produce_and_audit",
+    "children": [
+      {
+        "kind": "infer",
+        "id": "triage",
+        "config": {
+          "model_tier": "fast",
+          "prompt": "Classify how much work this subject warrants.\n\ntier=light: a known, bounded thing — write it directly.\ntier=standard: needs a look around first.\ntier=deep: unfamiliar or contested; needs a real sweep before writing.\n\nReturn JSON: {\"tier\": \"light|standard|deep\", \"why\": \"one line\"}.\n\nSubject:\n{{inputs.subject}}",
+          "schema": { "tier": "string", "why": "string" }
+        }
+      },
+      {
+        "kind": "branch",
+        "id": "gather",
+        "config": {
+          "on": "{{nodes.triage.output.tier}}",
+          "enum": ["light", "standard", "deep"]
+        },
+        "cases": {
+          "light": {
+            "kind": "transform",
+            "id": "no_research",
+            "config": {
+              "expr": {
+                "findings": [],
+                "note": "Triaged light — writing directly from the subject."
+              }
+            }
+          },
+          "standard": {
+            "kind": "stage",
+            "id": "look_around",
+            "config": {
+              "prompt": "Gather what is needed to produce this well. Read the obvious sources, note what you found, and say plainly what you could NOT establish — an unanswered question named is worth more than a confident guess.\n\nSubject:\n{{inputs.subject}}"
+            }
+          },
+          "deep": {
+            "macro": "research_sweep",
+            "id": "sweep",
+            "config": {
+              "question": "{{inputs.subject}}",
+              "modes": ["by-content", "by-entity", "by-time"]
+            }
+          }
+        }
+      },
+      {
+        "kind": "stage",
+        "id": "produce",
+        "config": {
+          "prompt": "Produce the {{inputs.artifact_kind}} for the subject below, using what the gather step established.\n\nWrite the thing itself, not a description of it. Where the research left a gap, say so inline rather than filling it with something plausible.\n\nSubject:\n{{inputs.subject}}\n\nWhat was gathered:\n{{nodes.gather.output}}\n\nAcceptance criteria:\n{{inputs.acceptance}}"
+        }
+      },
+      {
+        "kind": "infer",
+        "id": "audit",
+        "config": {
+          "model_tier": "reasoning",
+          "prompt": "Audit the artifact below. READ-ONLY: report findings, change nothing — an auditor that edits is no longer an independent check, and the next reviewer cannot tell what was found from what was fixed.\n\nJudge against the acceptance criteria when given; against the subject otherwise. Be specific about location — 'the third paragraph' is actionable, 'the tone' is not.\n\nReturn JSON: {\"findings\": [Finding], \"verdict\": \"pass|revise\"}.\nA Finding is {severity: Critical|Major|Minor|Nit, location, problem, why, recommended_fix, status: Open}.\n\nSeverity means: Critical = wrong or unusable as delivered. Major = a reader would be misled or blocked. Minor = a real flaw that does not block. Nit = preference.\n\nSubject:\n{{inputs.subject}}\n\nAcceptance criteria:\n{{inputs.acceptance}}\n\nArtifact:\n{{nodes.produce.output}}",
+          "schema": { "findings": "array", "verdict": "string" }
+        }
+      },
+      {
+        "kind": "gate",
+        "id": "quality_gate",
+        "config": {
+          "kind": "expression",
+          "expr": "{{nodes.audit.output.verdict}} == 'pass'",
+          "prompt": "The audit found issues worth your decision. Approve to accept the artifact as-is, or deny and re-run `produce` with the findings as constraints."
+        }
+      }
+    ]
+  }
+}

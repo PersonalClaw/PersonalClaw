@@ -68,7 +68,7 @@ mandatory.
 | 16 | **Slice 8a** — `WorkflowProgressCard.tsx`; event pipeline: dedup keys, deterministic ids, event-fold law, epoch-tagged supersede-drop, node-keyed patches | G7 | ✅ DONE (#153) |
 | 17 | **Slice 8b** — per-observer debounced coalescing (~25ms), schema-validated snapshot projection, `result_omitted` spill boundary; FE lifecycle-union registration + backend⊆FE test | G7 | ✅ DONE (#154) |
 | 18 | **Slice 8c** — typed ask renderer (approval/choice/text/form) in the attention banner + needs-input inbox projection; blocking-mode rendering; two-step delete; foreach progress rows; degraded rendering | G7 | ✅ DONE (#155) |
-| 19 | **Slice 9a** — author 6 bundled templates incl. `produce-and-audit`; macros (`judge_panel`, `verify_panel`, `route`, `research_sweep`) | G8 | TODO |
+| 19 | **Slice 9a** — author 6 bundled templates incl. `produce-and-audit`; macros (`judge_panel`, `verify_panel`, `route`, `research_sweep`) | G8 | ✅ DONE (#156) |
 | 20 | **Slice 9b** — conventions pack (triage-first, Finding record, baseline capture, `bundled/shared/`, template-lint, steering_examples); `artifact_update` provider; bundled-sync; FE template picker | G8 | TODO |
 | 21 | **Slice 10a** — `foreach pipeline=true` streaming handoff; `loop until_dry`; `subworkflow` nesting (depth ≤3, namespaced, `child_run_attach`) | G9 | TODO |
 | 22 | **Slice 10b** — context lifecycle: `session: fresh` resets + journaled handoffs, typed carryover buckets, decision records, output offloading, two-layer compaction; run-level budget end-to-end; FE collapsible containers | G9 | TODO |
@@ -505,3 +505,28 @@ mandatory.
   (f) `WorkflowWatchdog.forget(run_id)` added — nothing may hold a controller handle to a run whose
   row is about to disappear.
   (g) The offline reference needed regenerating for the new DELETE route (its drift guard caught it).
+- 2026-08-01 — session 19 (Slice 9a) DONE → **PR #156** (stack #152→#153→#154→#155→#156).
+  New `macros.py` (4 macros expanding at DEFINITION time in `author_def`, before validation and
+  before the write — so the journal/resume-cache/rewind never learn macros exist and a user can
+  hand-edit an expansion); new `bundled/` with all six templates + `bundled_defs.py` (read-only
+  provider served straight from the package, registered at gateway boot). 10796 py · 387 web.
+  Validated live: all six served as `source=bundled`; `produce-and-audit` triaged `standard`,
+  took the `look_around` leg and SKIPPED the two untaken entry subgraphs with macro-expanded nodes
+  rendering as ordinary rows; two templates parked correctly on approval gates.
+  DEVIATIONS/DISCOVERIES:
+  (a) **Flat action arguments deadlock a run.** `code-implementation` wrote bash args flat beside
+  `provider`, but the engine reads them from `config.with` (`dispatch_action`). Bash got an EMPTY
+  config and reported "missing 'command' field" for a command visibly in the spec — then every
+  downstream binding failed and the run died as "deadlocked". Three cascading symptoms, none
+  naming the cause. Fixed + the validator now refuses the shape at authoring time
+  (`WF_ACTION_ARGS_NOT_NESTED`, naming which keys to move; argument-less = warning only). One
+  existing validator test's fixture used the broken shape and was corrected.
+  (b) **The wheel would have shipped an EMPTY template library.** `pyproject.toml` declared
+  `workflows/bundled/*/WORKFLOW.md` — a filename nothing has ever produced. Editable installs
+  looked perfect; only a real `pip install` would have shown it. Corrected to `workflow.json` and
+  pinned by a test, since `pyproject.toml` is the only place it is observable.
+  (c) A boolean `branch` enum does NOT work: `[true,false]` stringifies to Python's `True`/`False`
+  and will never match `"true"`/`"false"` case keys. `audit-sweep`'s fix toggle uses an expression
+  GATE instead, which is the honest construct for a boolean.
+  (d) No `bundled/shared/` prompt-block library yet and no template-lint — both are Slice 9b's
+  explicit scope, so they were left rather than half-built here.

@@ -1,0 +1,155 @@
+{
+  "name": "code-implementation",
+  "description": "Implement a change with a baseline captured first, per-file work pipelined, and a real verification gate before anything is staged for review.",
+  "source": "bundled",
+  "provenance": "user",
+  "version": 1,
+  "tags": [
+    "code",
+    "implement"
+  ],
+  "inputs": {
+    "task": {
+      "type": "string",
+      "required": true,
+      "help": "What to implement. Specific beats broad — this template plans from what you write."
+    },
+    "verify_command": {
+      "type": "string",
+      "required": false,
+      "default": "make lint && make test",
+      "help": "The command that decides whether the change is done. The gate runs it and does not take the model's word for it."
+    },
+    "baseline_command": {
+      "type": "string",
+      "required": false,
+      "default": "make lint && make test",
+      "help": "Run BEFORE any edit, so a failure afterwards can be told apart from one that was already there."
+    }
+  },
+  "metadata": {
+    "risk": "high",
+    "capabilities": [
+      "read",
+      "write",
+      "execute"
+    ],
+    "requirements": {
+      "binaries": [
+        "git"
+      ]
+    },
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Add a --dry-run flag to the snapshot command. Verify with: make lint && pytest tests/test_snapshot.py"
+      },
+      {
+        "event": "mutation",
+        "description": "The plan missed the CLI help text — splice a file into the foreach for docs/cli.md before the verify gate."
+      }
+    ]
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "code_implementation",
+    "children": [
+      {
+        "kind": "action",
+        "id": "baseline",
+        "config": {
+          "provider": "bash",
+          "with": {
+            "command": "{{inputs.baseline_command}}",
+            "allow_failure": true
+          }
+        }
+      },
+      {
+        "kind": "stage",
+        "id": "plan",
+        "config": {
+          "prompt": "Plan this change.\n\nList the files to touch and what changes in each. Read enough of the code first that the plan reflects what is there rather than what would be convenient — a plan that names a function which does not exist costs more than no plan.\n\nReturn the file list explicitly; the next step fans out over it.\n\nTask:\n{{inputs.task}}\n\nBaseline (what was already failing before any edit):\n{{nodes.baseline.output}}"
+        }
+      },
+      {
+        "kind": "infer",
+        "id": "file_list",
+        "config": {
+          "model_tier": "fast",
+          "prompt": "Extract just the file list from the plan below, in the order they should be worked.\n\nReturn JSON: {\"files\": [{\"path\": \"…\", \"change\": \"one line\"}]}.\n\nPlan:\n{{nodes.plan.output}}",
+          "schema": {
+            "files": "array"
+          }
+        }
+      },
+      {
+        "kind": "foreach",
+        "id": "per_file",
+        "config": {
+          "items": "{{nodes.file_list.output.files}}",
+          "pipeline": true,
+          "on_item_error": "halt",
+          "max_concurrency": 2
+        },
+        "body": {
+          "kind": "sequence",
+          "id": "file_work",
+          "children": [
+            {
+              "kind": "stage",
+              "id": "implement",
+              "config": {
+                "prompt": "Make this one file's change. Match the surrounding code's idiom, naming and comment density — a file that reads as though a different person wrote one function is harder to maintain than a slightly worse but consistent one.\n\nFile: {{item.path}}\nChange: {{item.change}}\n\nThe whole task, for context:\n{{inputs.task}}"
+              }
+            },
+            {
+              "kind": "action",
+              "id": "file_check",
+              "config": {
+                "provider": "bash",
+                "with": {
+                  "command": "{{inputs.verify_command}}",
+                  "allow_failure": true
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "gate",
+        "id": "verify",
+        "config": {
+          "kind": "verify_command",
+          "verify": {
+            "command": "{{inputs.verify_command}}",
+            "until": "success",
+            "max_iters": 3
+          },
+          "prompt": "Verification is still failing after its retries. Approve to accept the change as-is, or deny to stop here."
+        }
+      },
+      {
+        "kind": "infer",
+        "id": "regression_check",
+        "config": {
+          "model_tier": "standard",
+          "prompt": "Compare the baseline against the final verification. Classify each difference as: regression (this change broke it), pre-existing (it was already failing), or resolved (this change fixed it).\n\nThe distinction is the point — a pre-existing failure blamed on this change sends someone to debug the wrong commit.\n\nReturn JSON: {\"regressions\": [\"…\"], \"pre_existing\": [\"…\"], \"resolved\": [\"…\"]}.\n\nBaseline:\n{{nodes.baseline.output}}\n\nFinal:\n{{nodes.verify.output}}",
+          "schema": {
+            "regressions": "array",
+            "pre_existing": "array",
+            "resolved": "array"
+          }
+        }
+      },
+      {
+        "kind": "stage",
+        "id": "commit_review",
+        "config": {
+          "prompt": "Summarize the change for review: what it does, why it is shaped this way, and what a reviewer should look at hardest.\n\nName any regression the check found. Do NOT commit — this is the review hand-off, and committing here would take the decision away from whoever is reading it.\n\nTask:\n{{inputs.task}}\n\nRegression check:\n{{nodes.regression_check.output}}"
+        }
+      }
+    ]
+  }
+}

@@ -32,7 +32,7 @@ from typing import Any
 from personalclaw.workflows import attention
 from personalclaw.workflows import defs as defs_mod
 from personalclaw.workflows import journal as journal_mod
-from personalclaw.workflows import mutations, secrets, store
+from personalclaw.workflows import macros, mutations, secrets, store
 from personalclaw.workflows.models import (
     TERMINAL_RUN_STATUSES,
     InstanceState,
@@ -160,6 +160,20 @@ async def author_def(
         "tags": tags or [],
         "provenance": provenance,
     }
+
+    # Macros expand HERE, before validation and before the write — so what is stored, what is
+    # validated and what the engine runs are the same core nodes. Expanding at run time
+    # instead would mean the journal, the resume cache and the rewind cascade all had to know
+    # macros exist, and a user could never hand-edit the expansion to graduate from the
+    # pattern (their edit would be regenerated over).
+    try:
+        spec = macros.expand_spec(spec)
+    except macros.MacroError as exc:
+        return _err("WF_DEF_MACRO_INVALID", str(exc), repromptable=True)
+    # The EXPANDED root is what gets written, so the stored spec, the validated spec and the
+    # spec the engine runs are the same tree.
+    expanded_root = spec.get("root")
+    root = expanded_root if isinstance(expanded_root, dict) else root
 
     inline = secrets.find_inline_secrets(spec)
     if inline:
