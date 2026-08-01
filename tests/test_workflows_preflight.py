@@ -307,9 +307,16 @@ class TestStartRunIsGated:
         monkeypatch.setattr("personalclaw.workflows.store.config_dir", lambda: home)
         return home
 
-    async def test_a_run_needing_an_unconfigured_model_is_refused(self) -> None:
+    async def test_a_run_needing_an_unconfigured_model_is_refused(self, monkeypatch) -> None:
         """The whole point: caught here it costs nothing; caught at node 7 it has already
-        paid for six nodes."""
+        paid for six nodes.
+
+        The model probe is PINNED rather than left to the ambient environment: relying on
+        "this temp home happens to have no model" makes the test pass or fail on whatever
+        else configured a provider in the same process."""
+        monkeypatch.setattr(
+            "personalclaw.providers.provider_bridge.can_resolve_use_case", lambda uc: False
+        )
         from personalclaw.workflows import defs as defs_mod
         from personalclaw.workflows import service
 

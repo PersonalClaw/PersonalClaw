@@ -5,7 +5,7 @@ import {
   MessageSquare, Bell, ListChecks, Zap,
   Inbox, Files, FileCode, BookOpen, Users, Wrench, Sparkles,
   FileText, Settings, Terminal, Loader2, FolderKanban, Blocks,
-  LayoutDashboard, Compass,
+  LayoutDashboard, Compass, Workflow,
 } from 'lucide-react'
 import { NavRail, type NavItem } from '../ui/NavRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
@@ -42,6 +42,7 @@ const TriggersSection = lazy(() => import('../pages/triggers/TriggersSection').t
 const TasksSection = lazy(() => import('../pages/tasks/TasksSection').then((m) => ({ default: m.TasksSection })))
 const ProjectsSection = lazy(() => import('../pages/projects/ProjectsSection').then((m) => ({ default: m.ProjectsSection })))
 const PromptsSection = lazy(() => import('../pages/prompts/PromptsSection').then((m) => ({ default: m.PromptsSection })))
+const WorkflowsSection = lazy(() => import('../pages/workflows/WorkflowsSection').then((m) => ({ default: m.WorkflowsSection })))
 const SkillsPage = lazy(() => import('../pages/skills/SkillsPage').then((m) => ({ default: m.SkillsPage })))
 const ToolsPage = lazy(() => import('../pages/tools/ToolsPage').then((m) => ({ default: m.ToolsPage })))
 const KnowledgeSection = lazy(() => import('../pages/knowledge/KnowledgeSection').then((m) => ({ default: m.KnowledgeSection })))
@@ -74,6 +75,7 @@ const NAV: NavItem[] = [
   { id: 'tools', label: 'Tools', icon: Wrench, section: 'Capabilities' },
   { id: 'skills', label: 'Skills', icon: Sparkles, section: 'Capabilities' },
   { id: 'prompts', label: 'Prompts', icon: FileText, section: 'Capabilities' },
+  { id: 'workflows', label: 'Workflows', icon: Workflow, section: 'Capabilities' },
   // Apps group: the Store (browse/install) + each installed app's contributed UI
   // pages are injected here dynamically at render (see appNavItems).
   { id: 'apps', label: 'Store', icon: Blocks, section: 'Apps' },
@@ -110,6 +112,7 @@ function renderPage(active: string, r: RouteProps) {
     case 'artifacts': return <ArtifactsSection {...r} />
     case 'terminal': return <TerminalPage {...r} />
     case 'prompts': return <PromptsSection {...r} />
+    case 'workflows': return <WorkflowsSection {...r} />
     case 'skills': return <SkillsPage {...r} />
     case 'tools': return <ToolsPage {...r} />
     case 'agents': return <AgentsSection {...r} />

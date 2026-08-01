@@ -1,0 +1,213 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowLeft, GitBranch, Pause, RotateCcw, SkipForward, X } from 'lucide-react'
+import { TopBar } from '../../ui/TopBar'
+import { Loading } from '../../ui/ListScaffold'
+import { QuietButton } from '../../ui/QuietButton'
+import { api, type WorkflowContinuation, type WorkflowRunDetailData } from '../../lib/api'
+import { notify } from '../../app/appSdk'
+import { confirm } from '../../ui/dialog'
+import { fmtElapsed, isTerminal, nodeDepth, nodeLabel, nodeLook, runLook } from './workflowMeta'
+import { useWorkflowStream } from './useWorkflowStream'
+import { WorkflowAsk } from './WorkflowAsk'
+
+/** One workflow run, live (WORKFLOWS-V2 Slice 7b).
+ *
+ *  Snapshot-then-subscribe: the SSE endpoint writes the full status BEFORE the stream
+ *  opens, so the first frame populates the view. A lifecycle event is a REFETCH CUE, not a
+ *  patch source — the engine's own status projection stays the single truth, and applying
+ *  partial patches here would let the view drift from the run it claims to show.
+ *
+ *  A terminal run does not subscribe at all: its stream would close immediately anyway, and
+ *  the status it already has is final. */
+export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
+  const [run, setRun] = useState<WorkflowRunDetailData | null>(null)
+  const [conts, setConts] = useState<WorkflowContinuation[]>([])
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  // Coalesce refetches: a fan-out completing fires many node_done events at once, and one
+  // request per event would hammer the gateway for the same answer.
+  const pending = useRef<number | null>(null)
+
+  const refetch = useCallback(async () => {
+    try {
+      const [status, continuations] = await Promise.all([
+        api.workflowRun(runId),
+        api.workflowContinuations(runId).catch(() => ({ continuations: [] })),
+      ])
+      setRun(status)
+      setConts(continuations.continuations)
+    } catch {
+      /* a transient read failure keeps the last good view rather than blanking it */
+    } finally {
+      setLoading(false)
+    }
+  }, [runId])
+
+  useEffect(() => { refetch() }, [refetch])
+
+  const scheduleRefetch = useCallback(() => {
+    if (pending.current !== null) return
+    pending.current = window.setTimeout(() => { pending.current = null; refetch() }, 250)
+  }, [refetch])
+
+  useEffect(() => () => { if (pending.current !== null) window.clearTimeout(pending.current) }, [])
+
+  const live = !!run && !isTerminal(run.status)
+  useWorkflowStream(runId, live, {
+    onSnapshot: (snap) => { setRun(snap); setLoading(false) },
+    onLifecycle: () => scheduleRefetch(),
+  })
+
+  const act = useCallback(async (label: string, fn: () => Promise<unknown>) => {
+    setBusy(true)
+    try {
+      await fn()
+      await refetch()
+    } catch (e) {
+      notify(e instanceof Error ? e.message : `${label} failed`)
+    } finally {
+      setBusy(false)
+    }
+  }, [refetch])
+
+  const answer = useCallback(async (cont: WorkflowContinuation, value: unknown, alwaysAllow: boolean) => {
+    await act('Answer', () => api.resumeWorkflowRun(runId, {
+      answer: value, resume_token: cont.resume_token, always_allow: alwaysAllow,
+    }))
+  }, [act, runId])
+
+  const rewind = useCallback(async (nodeId: string) => {
+    const ok = await confirm({
+      title: `Re-run "${nodeId}"?`,
+      body: 'This node and everything that reads its output will run again. Previous outputs are archived, not lost.',
+      confirmLabel: 'Re-run',
+    })
+    if (ok) await act('Rewind', () => api.rewindWorkflowRun(runId, { node_id: nodeId }))
+  }, [act, runId])
+
+  const runFrom = useCallback(async (nodeId: string) => {
+    await act('Run from', () => api.workflowRunFrom(runId, { node_id: nodeId }))
+  }, [act, runId])
+
+  const cancel = useCallback(async () => {
+    const ok = await confirm({
+      title: 'Cancel this run?',
+      body: 'In-flight steps are stopped. Completed work is kept.',
+      confirmLabel: 'Cancel run',
+      danger: true,
+    })
+    if (ok) await act('Cancel', () => api.cancelWorkflowRun(runId))
+  }, [act, runId])
+
+  const fork = useCallback(async () => {
+    await act('Fork', async () => {
+      const res = await api.forkWorkflowRun(runId, { note: 'branched from the run view' })
+      notify(`Forked to ${res.child_run_id}. Not isolated: ${res.shared_axes.length} shared axes.`)
+    })
+  }, [act, runId])
+
+  const look = run ? runLook(run.status) : null
+  const StatusIcon = look?.icon
+
+  // Sorted by instance path so the list reads in the spec's own order, and indented to its
+  // tree shape — a flat list of twenty node ids is unreadable on a real workflow.
+  const nodes = useMemo(
+    () => [...(run?.nodes ?? [])].sort((a, b) => a.instance_path.localeCompare(b.instance_path)),
+    [run],
+  )
+
+  return (
+    <div className="flex h-full flex-col">
+      <TopBar
+        keepCornerPadding
+        left={<div className="flex min-w-0 items-center gap-m">
+          <QuietButton onClick={onBack} title="Back to workflows"><ArrowLeft size={13} /> Workflows</QuietButton>
+          {run && <span data-type="title-l" className="truncate text-on-surface">{run.workflow}</span>}
+          {look && StatusIcon && (
+            <span className={`inline-flex shrink-0 items-center gap-1 text-[0.75rem] ${look.tone}`}>
+              <StatusIcon size={13} className={look.spin ? 'animate-spin' : ''} /> {look.label}
+            </span>
+          )}
+        </div>}
+        right={run && !isTerminal(run.status) ? (
+          <div className="flex items-center gap-xs">
+            <QuietButton onClick={() => act('Pause', () => api.pauseWorkflowRun(runId))} title="Pause — in-flight steps finish">
+              <Pause size={13} /> Pause
+            </QuietButton>
+            <QuietButton onClick={cancel} title="Cancel this run"><X size={13} /> Cancel</QuietButton>
+          </div>
+        ) : run ? (
+          <QuietButton onClick={fork} title="Branch a new run from this one; the original is untouched">
+            <GitBranch size={13} /> Fork
+          </QuietButton>
+        ) : undefined}
+      />
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-l">
+        {loading && !run ? <Loading /> : !run ? (
+          <p className="text-on-surface-low text-[0.8125rem]">This run could not be loaded.</p>
+        ) : (
+          <div className="mx-auto flex max-w-[var(--content-width)] flex-col gap-l">
+            {/* Pending asks come FIRST: they are the only thing here a user can act on. */}
+            {conts.map((c) => (
+              <WorkflowAsk key={c.resume_token} continuation={c} busy={busy} onAnswer={answer} />
+            ))}
+
+            {run.error && (
+              <p className="text-danger text-[0.8125rem]">{run.error}</p>
+            )}
+
+            <div className="flex flex-wrap items-center gap-l text-on-surface-low text-[0.75rem]">
+              <span>run <span className="font-mono">{run.run_id}</span></span>
+              <span>spec v{run.spec_version}</span>
+              {run.tokens ? <span className="tabular-nums">{run.tokens.toLocaleString()} tokens</span> : null}
+              {run.elapsed_secs ? <span className="tabular-nums">{fmtElapsed(run.elapsed_secs)}</span> : null}
+            </div>
+
+            <div className="flex flex-col gap-2xs">
+              {nodes.map((n) => {
+                const nl = nodeLook(n.state)
+                const NIcon = nl.icon
+                const depth = nodeDepth(n.instance_path)
+                const canReenter = !isTerminal(run.status) && !!n.node_id
+                return (
+                  <div
+                    key={n.instance_path}
+                    className="group flex items-center gap-m rounded-lg px-s py-xs hover:bg-surface-high"
+                    style={{ paddingLeft: `calc(var(--space-s) + ${depth} * 1rem)` }}
+                  >
+                    <NIcon size={14} className={`shrink-0 ${nl.tone}${nl.spin ? ' animate-spin' : ''}`} />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-on-surface text-[0.8125rem]">{nodeLabel(n)}</div>
+                      {(n.degraded_reason || n.failure?.cause_plain) && (
+                        <div className="truncate text-on-surface-low text-[0.75rem]">
+                          {n.degraded_reason || n.failure?.cause_plain}
+                        </div>
+                      )}
+                      {/* The remediation is a DIFFERENT fact from the cause — it is the next
+                          action, and dropping it leaves the user with a diagnosis only. */}
+                      {n.failure?.remediation && (
+                        <div className="truncate text-on-surface-low text-[0.75rem]">{n.failure.remediation}</div>
+                      )}
+                    </div>
+                    <span className={`shrink-0 text-[0.75rem] ${nl.tone}`}>{nl.label}</span>
+                    {canReenter && (
+                      <span className="flex shrink-0 items-center gap-2xs opacity-0 transition-opacity group-hover:opacity-100">
+                        <QuietButton onClick={() => rewind(n.node_id)} title="Re-run this node and everything reading its output">
+                          <RotateCcw size={12} />
+                        </QuietButton>
+                        <QuietButton onClick={() => runFrom(n.node_id)} title="Re-run only what comes after, keeping this output">
+                          <SkipForward size={12} />
+                        </QuietButton>
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

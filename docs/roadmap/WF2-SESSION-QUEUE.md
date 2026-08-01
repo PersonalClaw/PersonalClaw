@@ -64,7 +64,7 @@ mandatory.
 | 12 | **Slice 6b** — spec ingestion: strict mode + repromptable errors, dry-run-before-save, provenance actor, run-start preflight (`can_resolve_use_case`), generated manifest + CI drift test | G5 | ✅ DONE (#148) |
 | 13 | **Slice 6c** — staged-turn contract for mutation tools; `[ACTIVE WORKFLOWS]` context block (never-break-a-turn); blocking-mode handler | G5 | ✅ DONE (#149) |
 | 14 | **Slice 7a** — `handlers.py` REST routes for defs + runs; register in `dashboard/server.py`; per-run SSE stream endpoint | G6 | ✅ DONE (#150) |
-| 15 | **Slice 7b** — FE `pages/workflows/`: list page, def detail, run detail (snapshot-then-subscribe); `lib/api.ts` methods + nav entry | G6 | TODO |
+| 15 | **Slice 7b** — FE `pages/workflows/`: list page, def detail, run detail (snapshot-then-subscribe); `lib/api.ts` methods + nav entry | G6 | ✅ DONE (#152) |
 | 16 | **Slice 8a** — `WorkflowProgressCard.tsx`; event pipeline: dedup keys, deterministic ids, event-fold law, epoch-tagged supersede-drop, node-keyed patches | G7 | TODO |
 | 17 | **Slice 8b** — per-observer debounced coalescing (~25ms), schema-validated snapshot projection, `result_omitted` spill boundary; FE lifecycle-union registration + backend⊆FE test | G7 | TODO |
 | 18 | **Slice 8c** — typed ask renderer (approval/choice/text/form) in the attention banner + needs-input inbox projection; blocking-mode rendering; two-step delete; foreach progress rows; degraded rendering | G7 | TODO |
@@ -389,3 +389,32 @@ mandatory.
   (e) TEST LANDMINE: `make_mocked_request`'s default app is a MagicMock, so
   `app.get("state")` returns a mock and the handler 500s on an awaited mock — masking what it
   actually did. Pass a REAL `web.Application`.
+- 2026-08-01 — session 15 (Slice 7b, the workflows UI) DONE → **PR #152** (stack #150→#152).
+  **Slice 7 is complete.** `pages/workflows/`: list (runs-first, needs_input sorted top),
+  def detail (tree + inputs + requirements), live run detail (snapshot-then-subscribe),
+  `WorkflowAsk` (ONE renderer for all 4 ask kinds), `useWorkflowStream` (full 10-event
+  union), `workflowMeta` (status presentation, degraded≠failure). api.ts types + 18 methods.
+  Nav entry under Capabilities. 10547 py tests · 329 web tests (+22) · typecheck + build clean.
+  VALIDATED AS A USER in a real browser: nav renders; list showed "1 waiting on you"; the run
+  view rendered the typed approval with its handoff and live states; clicking Approve drove
+  the run to Complete via SSE with `deliver` appearing, the header swapping to Fork, and
+  elapsed filling in; 0 console errors.
+  DEVIATIONS/DISCOVERIES:
+  (a) **BLOCKER CLEARED — the native def provider did not exist.** `defs.py` is only a
+  registry SEAM, so with no app installed NOTHING writable was registered and every save
+  failed `WF_DEF_NO_WRITABLE_PROVIDER` — a dead end for the whole feature. Slice 0 deferred
+  it ("a loader with no executor can't be validated end to end"); the executor exists now, so
+  `native_defs.py` landed here. Version advances on EVERY save (a run pins the version it
+  started from; reusing one makes `expect_version` meaningless).
+  (b) **A REAL BUG THE UI FOUND THAT UNIT TESTS MASKED.** Answering a gate wrote the node DONE
+  but never restarted the tick loop — already exited when the run went needs_input — so the
+  run sat forever with downstream nodes unlaunched. Every earlier test called
+  `run_to_completion` BY HAND after resuming, and that manual call WAS the missing restart.
+  `resume()` now clears needs_input + relaunches; 3 regression tests fail without the fix.
+  **Lesson: a test that hand-drives the thing under test can hide the absence of the very
+  mechanism it is testing.**
+  (c) Added the workflow SSE drift guard to `test_transport_doctrine.py` (backend publishes ⊆
+  FE listens), verified by deleting an event and watching it fail.
+  (d) Three font sizes were off the documented ramp (0.875/0.6875rem) — snapped to real rungs.
+  (e) The preflight model probe is now PINNED in its test rather than relying on ambient
+  environment state.
