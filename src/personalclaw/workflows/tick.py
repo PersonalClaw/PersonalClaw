@@ -496,7 +496,27 @@ def _visit_foreach(
     fr: Frontier,
 ) -> None:
     """One body instance per item. Item paths are `<path>.body#<i>` — the `#i` suffix is
-    what lets many instances of one body node coexist in a flat state map."""
+    what lets many instances of one body node coexist in a flat state map.
+
+    **On `pipeline` (WF2-R5).** The plan describes it as "no barrier between stages". Measured
+    against the real engine, there is no barrier to remove: because each item's body is an
+    independent subtree and the frontier is re-derived every tick, item 0 enters stage 2 as soon as
+    its own stage 1 finishes, regardless of where the other items are. Streaming handoff is
+    already the engine's only behaviour, and a `pipeline: false` that imposed a barrier would be
+    NEW machinery whose sole purpose is to make fan-outs slower.
+
+    So `pipeline` is accepted, documented and non-semantic for scheduling — and the knob that
+    genuinely governs a fan-out's shape is `max_concurrency`.
+
+    **`max_concurrency`** caps how many ITEMS are in flight at once, independent of the global lane
+    caps. Without it a fan-out over fifty files occupies every compute slot in the engine and
+    starves the rest of the run; with it a template can say "two at a time" and mean it. Unset is
+    unbounded, which is right for the common case of a handful of cheap items.
+
+    An item counts against the cap from its first launched node until its whole body is terminal:
+    the point of the cap is usually a scarce resource an item holds for its duration (a checkout, a
+    lock, a rate-limited endpoint), and releasing it between stages would defeat that.
+    """
     if node.body is None:
         return
     items = _resolve_items(node, ctx)
@@ -510,10 +530,44 @@ def _visit_foreach(
         ist = _state_of(states, ipath)
         if ist == InstanceState.FAILED and policy == ItemErrorPolicy.HALT:
             return
+
+    cap = _max_concurrency(node)
+
+    # Which items are ALREADY under way. Counted from the state map rather than tracked, so a
+    # resumed run re-derives the same answer instead of restarting a fan-out it had half-finished.
+    #
+    # "Started" is decided by whether the item's subtree has any RECORDED state — NOT by
+    # `_derive`: `container_outcome` maps "every child still pending" to RUNNING (a container with
+    # unfinished children is running by its definition), so an untouched item derives as RUNNING
+    # too and every item would look in-flight. That made the cap admit everything, which is the
+    # bug this comment exists to prevent a future reader from reintroducing.
+    def _started(ipath: str) -> bool:
+        prefix = f"{ipath}."
+        return any(p == ipath or p.startswith(prefix) for p in states)
+
+    in_flight = 0
+    if cap:
+        for idx in range(len(items)):
+            ipath = f"{path}.body#{idx}"
+            if not _started(ipath):
+                continue
+            if _is_terminal(_derive(node.body, ipath, states, edges, iterations, ctx)):
+                continue
+            in_flight += 1
+
     for idx, value in enumerate(items):
         ipath = f"{path}.body#{idx}"
         if _is_terminal(_state_of(states, ipath)):
             continue
+        if cap and not _started(ipath):
+            # An item already under way is visited regardless — it holds its slot either way, and
+            # skipping it would stall its remaining stages forever. Only a NEW item needs a slot.
+            if in_flight >= cap:
+                # Slot exhausted. NOT recorded as deferred: `deferred` means "ready but the lane is
+                # full", and an unstarted item of a capped foreach is not ready — the cap is a
+                # property of the container, not of lane pressure.
+                continue
+            in_flight += 1
         _visit(
             node.body,
             ipath,
@@ -675,6 +729,23 @@ def _resolve_items(node: Node, ctx: BindingContext) -> list[Any] | None:
     if value is None:
         return None
     return [value]
+
+
+def _max_concurrency(node: Node) -> int:
+    """A `foreach`'s per-container item cap, or 0 for unbounded.
+
+    Separate from the lane caps because they answer different questions: a lane cap protects the
+    ENGINE (four concurrent model calls across all runs), and this protects the RUN's shape (this
+    fan-out takes two at a time because each item holds a lock). A fan-out over fifty files with
+    no cap occupies every compute slot and starves everything else in the run.
+    """
+    raw = (node.config or {}).get("max_concurrency")
+    # A true int only. `int(1.5)` truncates to 1 and `int(True)` is 1, so a coercing read would let
+    # a spec typo silently serialize a fan-out to one item at a time — the most expensive possible
+    # misreading, and invisible because the run still succeeds.
+    if not isinstance(raw, int) or isinstance(raw, bool):
+        return 0
+    return raw if raw > 0 else 0
 
 
 def _item_error_policy(node: Node) -> ItemErrorPolicy:

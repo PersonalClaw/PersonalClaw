@@ -105,6 +105,20 @@ def _fail(cls: FailureClass, cause: str, remediation: str = "", **kw: Any) -> No
     )
 
 
+def _failed_with(cls: FailureClass, cause: str, remediation: str, output: Any) -> NodeResult:
+    """A FAILED result that still carries an output.
+
+    `_fail` forwards its kwargs to `Failure`, which has no output field — but a failed subworkflow
+    must still hand back the child run id, or the user is told a nested run failed with no way to
+    find it.
+    """
+    return NodeResult(
+        state=InstanceState.FAILED,
+        output=output,
+        failure=Failure(failure_class=cls, cause_plain=cause, remediation=remediation),
+    )
+
+
 # ── binding helpers ──────────────────────────────────────────────────────────
 
 
@@ -344,6 +358,191 @@ async def dispatch_branch(node: Node, ctx: BindingContext) -> NodeResult:
         state=InstanceState.DONE,
         output={"case": label},
         declined_edges=sorted(set(declined)),
+    )
+
+
+#: Nesting ceiling (WF2 §1). Three levels is deep enough for "a workflow that calls a workflow
+#: that calls a leaf", and shallow enough that a runaway recursion is caught in three frames
+#: rather than after the process has spawned hundreds of runs. A workflow that references itself
+#: is the realistic way to hit this, and it is always a bug.
+MAX_SUBWORKFLOW_DEPTH = 3
+
+
+async def dispatch_subworkflow(
+    node: Node,
+    ctx: BindingContext,
+    *,
+    depth: int = 0,
+    run_id: str = "",
+    supervisor: Any = None,
+    timeout: int = 60,
+) -> NodeResult:
+    """Run a named workflow as a CHILD run, and wait for it (WF2-R13).
+
+    **A real child run, not an inlined subtree.** The child gets its own run id, its own journal,
+    its own state map and its own terminal-status writer. That costs a row and a directory, and it
+    buys the things that matter: the child can be rewound, resumed, forked and inspected on its
+    own; a crash mid-child leaves a child run to adopt rather than a half-written parent; and the
+    parent's journal stays readable instead of interleaving two graphs' events.
+
+    **Genealogy is threaded, so a nested tree is queryable.** `parent_run_id` names the immediate
+    parent and `root_run_id` names the top of the tree — both are needed: the parent answers "who
+    spawned this?", and the root answers "show me everything this user request did", which is the
+    query a widget and the ledger actually run.
+
+    **Depth is capped at 3 and checked BEFORE anything is created.** A workflow that references
+    itself would otherwise spawn runs until the process died, each one with a row and a directory
+    to clean up. Refused as a USER failure with the ref named, because the fix is in the spec.
+
+    **Waited on, not fired and forgotten.** A subworkflow node's whole purpose is to produce an
+    output the parent binds to; returning `launched` (the `run-workflow` provider's contract) would
+    make `{{nodes.child.output}}` resolve to nothing. The wait is bounded by the node's timeout,
+    and a timeout leaves the child RUNNING — it is a real run and killing it would discard work the
+    parent merely stopped waiting for.
+    """
+    cfg = node.config or {}
+    ref = str(cfg.get("ref", "") or "").strip()
+    if not ref:
+        return _fail(
+            FailureClass.USER,
+            "subworkflow node has no `ref`",
+            "set `config.ref` to a workflow definition name (optionally `name@version`)",
+        )
+    # `name@version` — the version is parsed off and ignored for resolution, because a def
+    # provider serves one current version per name. Kept in the ref so a spec can RECORD which
+    # version it was written against.
+    name = ref.split("@", 1)[0]
+
+    if depth + 1 > MAX_SUBWORKFLOW_DEPTH:
+        return _fail(
+            FailureClass.USER,
+            f"subworkflow nesting would exceed depth {MAX_SUBWORKFLOW_DEPTH} at {ref!r}",
+            "flatten one level, or check whether the workflow references itself",
+        )
+    if supervisor is None:
+        return _fail(
+            FailureClass.INTERNAL,
+            "no workflow supervisor is available to run a subworkflow",
+            "this is an engine wiring problem — the controller must pass its supervisor",
+        )
+
+    from personalclaw.workflows import defs as defs_mod
+    from personalclaw.workflows import store
+    from personalclaw.workflows.models import (
+        TERMINAL_RUN_STATUSES,
+        OriginKind,
+        RunOrigin,
+        RunStatus,
+        WorkflowRun,
+    )
+
+    definition = None
+    for provider_name in defs_mod.list_providers():
+        provider = defs_mod.get_provider(provider_name)
+        if provider is None:
+            continue
+        try:
+            found = await provider.get_def(name)
+        except Exception:
+            continue
+        if found is not None:
+            definition = found
+            break
+    if definition is None:
+        return _fail(
+            FailureClass.USER,
+            f"no workflow definition named {name!r}",
+            "check the name, or list the available definitions",
+        )
+
+    spec = definition if isinstance(definition, dict) else definition.to_dict()
+
+    # Inputs are RESOLVED against the parent's context before the child is created, so the child
+    # receives values rather than bindings it has no way to interpret — its own `{{nodes.…}}`
+    # namespace is a different graph's.
+    raw_inputs = cfg.get("inputs") if isinstance(cfg.get("inputs"), dict) else {}
+    child_inputs: dict[str, Any] = {}
+    for key, value in (raw_inputs or {}).items():
+        try:
+            child_inputs[str(key)] = resolve(value, ctx)
+        except BindingError as exc:
+            return _fail(
+                FailureClass.USER,
+                f"subworkflow input {key!r} did not resolve: {exc}",
+                "check the referenced node id and field exist",
+            )
+
+    parent = store.get(run_id) if run_id else None
+    child = store.create(
+        WorkflowRun(
+            id="",
+            workflow_name=name,
+            status=RunStatus.DRAFT,
+            inputs=child_inputs,
+            mode="background",
+            parent_run_id=run_id or None,
+            # The ROOT, not the parent: "everything this user request did" is the query that
+            # matters, and at depth 3 the parent alone cannot answer it.
+            root_run_id=(parent.root_run_id if parent else "") or run_id or "",
+            project_id=parent.project_id if parent else "",
+            origin=RunOrigin(kind=OriginKind.SUBAGENT_TOOL, trigger_id=node.id),
+        )
+    )
+    store.write_spec(child.id, spec)
+
+    try:
+        controller = await supervisor.launch(child, spec, depth=depth + 1)
+    except Exception as exc:
+        return _failed_with(
+            FailureClass.INTERNAL,
+            f"could not start subworkflow {name!r}: {exc}",
+            "check the gateway log for the child run's launch failure",
+            {"child_run_id": child.id},
+        )
+
+    try:
+        status = await controller.wait_for_terminal(timeout=float(timeout or 0))
+    except Exception as exc:
+        return _failed_with(
+            FailureClass.INTERNAL,
+            f"subworkflow {name!r} failed while running: {exc}",
+            "inspect the child run directly",
+            {"child_run_id": child.id},
+        )
+
+    # The child's own outputs, node-id keyed — what the parent's `{{nodes.child.output.x}}` reads.
+    child_outputs: dict[str, Any] = {}
+    try:
+        for path, inst in store.read_state(child.id).items():
+            if inst.output_ref:
+                value = store.read_output(child.id, path)
+                if value is not None:
+                    child_outputs[path.split(".")[-1].split("#")[0].split("@")[0]] = value
+    except Exception:
+        logger.debug("subworkflow %s: could not collect child outputs", child.id, exc_info=True)
+
+    payload: dict[str, Any] = {
+        "child_run_id": child.id,
+        "workflow": name,
+        "status": status.value if hasattr(status, "value") else str(status),
+        "outputs": child_outputs,
+    }
+
+    if status not in TERMINAL_RUN_STATUSES:
+        # needs_input or a wait timeout: the child is alive and a human (or its own deadline) will
+        # move it. DEGRADED rather than FAILED — the parent stopped waiting, the child did not fail.
+        return NodeResult(
+            state=InstanceState.DEGRADED,
+            output=payload,
+            degraded_reason=f"subworkflow is still {payload['status']}",
+        )
+    if status == RunStatus.COMPLETE:
+        return NodeResult(state=InstanceState.DONE, output=payload)
+    return _failed_with(
+        FailureClass.USER,
+        f"subworkflow {name!r} ended {payload['status']}",
+        f"inspect child run {child.id} for the failing node",
+        payload,
     )
 
 
@@ -921,6 +1120,10 @@ async def dispatch(
     verify: Any = None,
     timeout: int = 60,
     mode: str = "background",
+    #: The run supervisor, for `subworkflow` only — it is the one dispatcher that needs to
+    #: CREATE and drive another run. Injected rather than imported so a test can nest without a
+    #: gateway, and so the child is driven by the same supervisor that will adopt it on restart.
+    supervisor: Any = None,
 ) -> NodeResult:
     """Route one node to its dispatcher.
 
@@ -943,6 +1146,7 @@ async def dispatch(
         verify=verify,
         timeout=timeout,
         mode=mode,
+        supervisor=supervisor,
     )
     # One seam, so a new node kind cannot silently skip the artifact gate.
     return apply_artifact_gate(node, result, cwd or None)
@@ -963,6 +1167,7 @@ async def _dispatch_inner(
     verify: Any = None,
     timeout: int = 60,
     mode: str = "background",
+    supervisor: Any = None,
 ) -> NodeResult:
     kind = node.kind
     clock = now or time.time()
@@ -985,13 +1190,8 @@ async def _dispatch_inner(
             node, ctx, now=clock, verify=verify, completion=completion, tiers=tiers, mode=mode
         )
     if kind == NodeKind.SUBWORKFLOW:
-        # Nested runs land in Slice 10 with namespaced instances and child_run_attach.
-        # Until then this is an explicit, typed refusal — never a silent skip that makes
-        # a spec look like it ran.
-        return _fail(
-            FailureClass.USER,
-            "subworkflow nodes are not executable yet",
-            "inline the child workflow's nodes, or wait for nested-run support",
+        return await dispatch_subworkflow(
+            node, ctx, depth=depth, run_id=run_id, supervisor=supervisor, timeout=timeout
         )
     return _fail(
         FailureClass.INTERNAL,

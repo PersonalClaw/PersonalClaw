@@ -138,6 +138,10 @@ class EngineServices:
     node_timeout_total: int = 900
     node_timeout_stall: int = 300
     cwd: str = ""
+    #: The run supervisor, for `subworkflow` nesting (WF2-R13). A child run must be driven by the
+    #: same supervisor that will adopt it on restart, so it is threaded through rather than looked
+    #: up from a global — which would also make nesting untestable without a gateway.
+    supervisor: Any = None
     #: `(command, output_id) -> (ok, detail)` — effect teardown execution. Injected so
     #: tests never run real teardown subprocesses; production defaults to the
     #: subprocess runner in `effects.run_teardown`.
@@ -1238,6 +1242,9 @@ class RunController:
             # The run's mode decides a gate's deadline: background times out fast and
             # surfaces, blocking waits because a human is right there (WF2-R7).
             mode=self.run.mode,
+            # For `subworkflow`: the child must be driven by the SAME supervisor that will adopt
+            # it after a restart, so it is passed through rather than resolved from a global.
+            supervisor=self.services.supervisor,
         )
         if total and total > 0:
             try:
@@ -1541,6 +1548,16 @@ class RunController:
                 # The provider reported `skip` — nothing fired, and the ledger says so.
                 self._record_effect(item, inst, EffectStatus.SKIPPED)
 
+        if item.node.kind == NodeKind.SUBWORKFLOW and isinstance(result.output, dict):
+            child_id = str(result.output.get("child_run_id", "") or "")
+            if child_id:
+                # The genealogy link, in the LEDGER (WF2-R13) — written whether the child
+                # succeeded or not, because "which child run did this node spawn?" is exactly the
+                # question a failed nesting raises. The run row's `parent_run_id` records the same
+                # edge, but only the ledger says WHICH NODE spawned it, which is what a rewind of
+                # that node needs in order to know what it is invalidating.
+                self.journal.child_run_attach(self.run.id, child_id, item.node.id)
+
         if result.state in SUCCESS_STATES:
             ref, preview = self.journal.store_output(item.path, result.output)
             inst.output_ref = ref
@@ -1564,6 +1581,16 @@ class RunController:
                 output_ref=ref,
             )
         else:
+            if result.output is not None:
+                # A FAILED node's output is normally nothing worth keeping — but some failures
+                # carry the only pointer to the work they left behind. A failed `subworkflow`
+                # hands back its `child_run_id`, and dropping it tells the user a nested run
+                # failed with no way to find it. Stored on the instance, not in `_outputs`: a
+                # downstream binding must still see this node as having produced nothing.
+                # NOT `_preview` as the throwaway name: that is a module-level function used a few
+                # lines below, and shadowing it made every failing node crash the tick.
+                ref, _unused = self.journal.store_output(item.path, result.output)
+                inst.output_ref = ref
             self.journal.step_failed(
                 item.path,
                 item.node.id,

@@ -150,6 +150,11 @@ class WorkflowWatchdog:
             # `emit_attention_item` owns the item↔notification pairing and a callback here
             # would be a second place that could get it wrong.
             attention_state=self._state,
+            # Itself, for `subworkflow` nesting (WF2-R13): a child run has to be driven by the
+            # supervisor that will also adopt it after a restart. Passing a different one would
+            # leave the child un-reconciled, which is exactly the two-writers hazard the
+            # controller registry exists to prevent.
+            supervisor=self,
             model_tiers=dict(base.model_tiers),
             lane_limits=base.lane_limits,
             node_timeout_total=base.node_timeout_total,
