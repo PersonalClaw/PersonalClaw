@@ -14,6 +14,7 @@ from __future__ import annotations
 import pytest
 
 from personalclaw.workflows import store
+from personalclaw.workflows.coalescer import BATCH_EVENT
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import (
     InstanceState,
@@ -260,10 +261,19 @@ class TestPublisher:
         wd = WorkflowWatchdog(_State(), EngineServices())
         controller = await wd.launch(run, SPEC)
         await controller.run_to_completion(timeout=20)
+        await wd.stop()  # flushes any window still open, so nothing is stranded
         assert published
         assert all(k == f"workflow:{run.id}" for k, _, _ in published)
-        assert "workflow_node_done" in {e for _, e, _ in published}
-        await wd.stop()
+        # Node events are COALESCED (WF2-R11 batch-5), so they may arrive inside a
+        # `workflow_batch` envelope. Unwrap before asserting: the claim is that the event
+        # reaches the run's key, not that the transport declined to batch it.
+        names = set()
+        for _key, event, data in published:
+            if event == BATCH_EVENT:
+                names.update(m["event"] for m in data["events"])
+            else:
+                names.add(event)
+        assert "workflow_node_done" in names
 
     async def test_a_broken_sse_registry_cannot_kill_a_run(self) -> None:
         class _State:

@@ -148,6 +148,75 @@ def redact(value: Any) -> Any:
     return value
 
 
+# ── binary detection ─────────────────────────────────────────────────────────
+
+#: Magic prefixes for the formats a node output plausibly picks up — an action provider
+#: reading a file, a screenshot tool, a fetched asset. Not exhaustive by design: this is a
+#: cheap "is this obviously not text" check, and the size boundary catches whatever slips
+#: through. Bytes rather than str because that is what a magic number IS.
+_MAGIC_PREFIXES: tuple[bytes, ...] = (
+    b"\x89PNG\r\n\x1a\n",  # PNG
+    b"\xff\xd8\xff",  # JPEG
+    b"GIF87a",
+    b"GIF89a",
+    b"%PDF-",
+    b"\x1f\x8b",  # gzip
+    b"PK\x03\x04",  # zip / docx / xlsx / jar
+    b"BZh",  # bzip2
+    b"\xfd7zXZ\x00",  # xz
+    b"\x7fELF",
+    b"OggS",
+    b"RIFF",  # wav / avi / webp container
+)
+
+#: The SAME formats as they arrive base64-encoded. This is the realistic carrier: a node
+#: output is JSON, and JSON cannot hold arbitrary bytes — so a screenshot tool or a fetched
+#: asset reaches the journal base64'd, and a raw-byte check alone would miss every one of
+#: them. Prefixes are long enough (7+ chars of a fixed header) that a false positive on prose
+#: is not a practical concern.
+_BASE64_PREFIXES: tuple[str, ...] = (
+    "iVBORw0KGgo",  # PNG
+    "/9j/",  # JPEG
+    "R0lGODdh",  # GIF87a
+    "R0lGODlh",  # GIF89a
+    "JVBERi0",  # %PDF-
+    "H4sI",  # gzip
+    "UEsDBB",  # zip
+    "f0VMRg",  # ELF
+)
+
+
+def is_binary_payload(value: Any) -> bool:
+    """True when ``value`` is a string whose leading bytes match a known binary format.
+
+    Content-based, so it catches a small binary an inline-size check never would: a 400-byte
+    PNG is under every threshold and still meaningless inline — mojibake in the widget, a
+    poisoned `{{nodes.x.output}}` binding, wasted context if it reaches a model.
+
+    Both carriers are checked. Raw bytes decoded into a `str` are recovered with latin-1
+    (which maps codepoints 0-255 back to the identical bytes) rather than UTF-8 — a PNG's
+    leading `\\x89` UTF-8-encodes to TWO bytes, so a UTF-8 round-trip silently fails to match
+    any magic number, which is exactly the bug this comment exists to prevent. Base64 is the
+    other carrier, and in practice the more common one.
+
+    Only strings are inspected. A dict or list is structure the engine created, and treating
+    a container as binary because one leaf looked like a PNG would spill a whole useful
+    output over one field.
+    """
+    if not isinstance(value, str) or not value:
+        return False
+    head = value[:16]
+    try:
+        raw = head.encode("latin-1")
+    except UnicodeEncodeError:
+        # Codepoints above 255: genuinely text (or surrogate-escaped bytes, which latin-1
+        # cannot hold either). Fall back so a lone astral character cannot mask a match.
+        raw = head.encode("utf-8", errors="surrogateescape")
+    if any(raw.startswith(m) for m in _MAGIC_PREFIXES):
+        return True
+    return value[:16].startswith(_BASE64_PREFIXES)
+
+
 # ── hashing ──────────────────────────────────────────────────────────────────
 
 
@@ -485,25 +554,44 @@ class Journal:
     # ── output spilling ──
 
     def store_output(self, path: str, output: Any) -> tuple[str, Any]:
-        """Persist a node output, spilling oversized payloads to a file.
+        """Persist a node output, spilling oversized or binary payloads to a file.
 
-        Returns `(output_ref, inline_preview)`. The preview is what bindings and the
-        widget read inline; anything over the boundary leaves a typed stub so a reader
-        knows the data exists rather than seeing a truncated string it might parse.
+        Returns `(output_ref, inline_preview)`. The preview is what bindings and the widget
+        read inline; anything past the boundary leaves a typed `result_omitted` stub so a
+        reader knows the data exists rather than seeing a truncated string it might parse.
+
+        Two spill reasons, both about what an inline value costs downstream:
+
+        * `oversize` — over :data:`MAX_INLINE_OUTPUT_BYTES`. The same boundary the live chat
+          sanitizer uses; a 5MB tool result must not become a 5MB journal line that every
+          later read re-parses, nor a 5MB SSE frame.
+        * `binary` — a magic-prefix match (PNG, JPEG, PDF, gzip, zip, ELF…). Detected by
+          CONTENT, not size: a 400-byte PNG is under every threshold and still meaningless
+          inline — it would render as mojibake in the widget, poison a `{{nodes.x.output}}`
+          binding, and (if it reached a model) burn context on noise. Path-agnostic because
+          a node's output is not a filename.
+
+        The stub always carries `bytes` and `output_ref`, so the full value stays one read
+        away and the stub itself explains why it is a stub.
         """
         safe = redact(output)
         encoded = _stable_json(safe)
-        if len(encoded.encode("utf-8")) <= MAX_INLINE_OUTPUT_BYTES:
-            ref = store.write_output(self.run_id, path, safe)
-            return ref, safe
+        size = len(encoded.encode("utf-8"))
         ref = store.write_output(self.run_id, path, safe)
-        stub = {
+
+        reason = None
+        if is_binary_payload(safe):
+            reason = "binary"
+        elif size > MAX_INLINE_OUTPUT_BYTES:
+            reason = "oversize"
+        if reason is None:
+            return ref, safe
+        return ref, {
             "result_omitted": True,
-            "reason": "oversize",
-            "bytes": len(encoded.encode("utf-8")),
+            "reason": reason,
+            "bytes": size,
             "output_ref": ref,
         }
-        return ref, stub
 
 
 # ── ledger queries ───────────────────────────────────────────────────────────

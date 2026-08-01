@@ -147,6 +147,46 @@ def test_workflow_engine_sse_events_are_all_registered_in_the_frontend():
     )
 
 
+def test_the_coalesced_batch_frame_is_registered_and_its_members_are_foldable():
+    """The coalescer (WF2-R11 batch-5) introduces a frame that is NOT a lifecycle event: it
+    is an envelope around several. Two ways that drifts, both silent:
+
+    1. the batch frame itself has no FE listener — EventSource drops it, and every batched
+       node update (i.e. every fan-out) vanishes while single events still work, so the
+       widget looks correct on small specs and broken on large ones;
+    2. an event is added to the backend's coalescing allowlist but not to the FE union — it
+       would be batched into a frame whose unwrapper then discards it as unknown.
+
+    Both are pinned here because neither surfaces in a test that does not read both files.
+    """
+    coalescer = _read("src/personalclaw/workflows/coalescer.py")
+    fe = _read("web/src/pages/workflows/useWorkflowStream.ts")
+
+    batch_event = re.search(r'BATCH_EVENT = "([a-z_]+)"', coalescer)
+    assert batch_event, "couldn't find BATCH_EVENT in coalescer.py"
+    assert f"'{batch_event.group(1)}'" in fe, (
+        f"the backend emits a coalesced {batch_event.group(1)!r} frame the FE never listens "
+        f"for — every batched fan-out update would be silently dropped"
+    )
+    assert (
+        "addEventListener(WORKFLOW_BATCH_EVENT" in fe
+    ), "the batch frame name is declared but no listener is registered for it"
+
+    allowlist = re.search(r"COALESCING_EVENTS = frozenset\(\s*\{([^}]*)\}", coalescer)
+    assert allowlist, "couldn't find COALESCING_EVENTS in coalescer.py"
+    coalescing = set(re.findall(r'"(workflow_[a-z_]+)"', allowlist.group(1)))
+
+    m = re.search(r"export const WORKFLOW_LIFECYCLE = \[([^\]]*)\]", fe)
+    assert m
+    registered = set(re.findall(r"'(workflow_[a-z_]+)'", m.group(1)))
+
+    missing = coalescing - registered
+    assert not missing, (
+        f"events the backend coalesces but the FE union does not list: {sorted(missing)} — "
+        f"they'd be batched and then discarded by unwrapBatch as unknown."
+    )
+
+
 def test_code_cockpit_sse_events_are_all_registered_in_the_frontend():
     """The Code cockpit subscribes to the SAME unified per-loop feed (P16 pointed it at
     the shared useRunStream), but a code loop ALSO publishes code-specific events from the
