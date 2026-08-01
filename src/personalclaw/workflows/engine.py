@@ -42,6 +42,12 @@ from personalclaw.workflows.models import (
     Node,
     NodeKind,
 )
+from personalclaw.workflows.verify import (
+    Verdict,
+    check_required_artifacts,
+    parse_verdict,
+    run_ladder,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +61,7 @@ WF_DEPTH_KEY = "__wf_depth"
 #: mapping to a real provider, so a template stays portable across provider setups.
 DEFAULT_MODEL_TIERS = {
     "reasoning": "reasoning",
-    "standard": "background",
+    "standard": "orchestration",
     "fast": "background",
 }
 
@@ -460,6 +466,8 @@ async def dispatch_gate(
     *,
     now: float,
     verify: Any = None,
+    completion: Any = None,
+    tiers: dict[str, str] | None = None,
 ) -> NodeResult:
     """A checkpoint the engine — never the worker — resolves (WF2-R3).
 
@@ -543,6 +551,118 @@ async def dispatch_gate(
             "fix the reported problems and re-run this node",
         )
 
+    if kind == GateKind.LADDER:
+        criteria = cfg.get("criteria")
+        if not isinstance(criteria, list) or not criteria:
+            return _fail(
+                FailureClass.USER,
+                "ladder gate has no `criteria`",
+                "declare an ordered list of criteria with rung + threshold",
+            )
+        if verify is None:
+            return _fail(
+                FailureClass.INTERNAL,
+                "no verifier wired for this gate",
+                "the engine did not provide a verify callable",
+            )
+        # Each criterion is evaluated by the injected verifier; the RULES (order, no-skip,
+        # no-averaging) live in run_ladder, which stays pure and unit-testable.
+        evaluated: dict[str, Any] = {}
+        for crit in criteria:
+            name = str((crit or {}).get("name", "") or "criterion")
+            try:
+                evaluated[name] = await verify(crit)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                return NodeResult(state=InstanceState.FAILED, failure=_classify_exception(exc))
+        ladder = run_ladder(criteria, evaluated)
+        if ladder.passed:
+            return NodeResult(state=InstanceState.DONE, output=ladder.to_dict())
+        return NodeResult(
+            state=InstanceState.FAILED,
+            output=ladder.to_dict(),
+            failure=Failure(
+                failure_class=FailureClass.USER,
+                cause_plain=f"verification ladder rejected at the {ladder.stopped_at} rung",
+                remediation="fix the failing criterion; a hard failure is never averaged away",
+            ),
+        )
+
+    if kind == GateKind.JUDGE:
+        prompt = str(cfg.get("prompt", "") or "")
+        if not prompt.strip():
+            return _fail(
+                FailureClass.USER,
+                "judge gate has no `prompt`",
+                "add the rubric the judge should apply",
+            )
+        fn = completion
+        if fn is None:
+            from personalclaw.llm_helpers import one_shot_completion
+
+            fn = one_shot_completion
+        # A judge reasons, so it resolves on the reasoning tier unless told otherwise —
+        # and the closed enum is demanded explicitly, because a judge that answers in
+        # prose forces the scheduler to route on parsed sentiment.
+        use_case = resolve_use_case(node, tiers) if node.config.get("model_tier") else "reasoning"
+        instruction = (
+            f"{prompt}\n\nRespond with EXACTLY ONE word, one of: "
+            "PASS, RETRY, ESCALATE, REJECT. No other text."
+        )
+        try:
+            text = await fn(instruction, use_case=use_case, output_type=None)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            return NodeResult(
+                state=InstanceState.FAILED,
+                failure=_classify_exception(exc),
+                resolved_prompt=instruction,
+            )
+        verdict = parse_verdict(text)
+        if verdict is None:
+            # An unparseable verdict is a PROTOCOL failure, never a silent pass: guessing
+            # would make a control-flow decision out of noise.
+            return NodeResult(
+                state=InstanceState.FAILED,
+                failure=Failure(
+                    failure_class=FailureClass.PROTOCOL,
+                    cause_plain=f"judge returned no recognizable verdict: {str(text)[:120]}",
+                    remediation="tighten the rubric, or use a ladder gate for a "
+                    "deterministic check",
+                ),
+                resolved_prompt=instruction,
+                tokens=_estimate_tokens(instruction, str(text)),
+            )
+        state = {
+            Verdict.PASS: InstanceState.DONE,
+            Verdict.RETRY: InstanceState.FAILED,
+            Verdict.ESCALATE: InstanceState.ESCALATED,
+            Verdict.REJECT: InstanceState.FAILED,
+        }[verdict]
+        failure = None
+        if verdict in (Verdict.RETRY, Verdict.REJECT):
+            failure = Failure(
+                failure_class=(
+                    FailureClass.TRANSIENT if verdict == Verdict.RETRY else FailureClass.USER
+                ),
+                cause_plain=f"judge returned {verdict.value}",
+                remediation=(
+                    "the engine will retry"
+                    if verdict == Verdict.RETRY
+                    else "address the judge's rubric and re-run the producing node"
+                ),
+                recoverable=verdict == Verdict.RETRY,
+            )
+        return NodeResult(
+            state=state,
+            output={"verdict": verdict.value},
+            failure=failure,
+            resolved_prompt=instruction,
+            tokens=_estimate_tokens(instruction, str(text)),
+        )
+
     # approval / event: park for a human or an external signal.
     timeout_secs = cfg.get("timeout_secs")
     wake = (
@@ -571,6 +691,51 @@ def _ask_payload(node: Node, cfg: dict[str, Any]) -> dict[str, Any]:
         "node_id": node.id,
         "unattended_suppress": bool(cfg.get("unattended_suppress", False)),
     }
+
+
+def apply_artifact_gate(node: Node, result: NodeResult, workspace: Any) -> NodeResult:
+    """Refuse a node's completion until its declared `required_artifacts` exist (WF2-R3).
+
+    Applied at the dispatch seam rather than inside each producing dispatcher, so a new
+    node kind inherits the gate instead of silently skipping it. A node that CLAIMS to have
+    written files but did not is the single most common way agent-declared completion lies.
+    """
+    patterns = (node.config or {}).get("required_artifacts")
+    if not isinstance(patterns, list) or not patterns:
+        return result
+    if result.state not in (InstanceState.DONE, InstanceState.DEGRADED):
+        return result  # already failing; the artifact gate adds nothing
+    if workspace is None:
+        return NodeResult(
+            state=InstanceState.FAILED,
+            output=result.output,
+            failure=Failure(
+                failure_class=FailureClass.INTERNAL,
+                cause_plain="required_artifacts declared but the run has no workspace",
+                remediation="the engine did not provide a workspace path for this run",
+            ),
+        )
+    from pathlib import Path
+
+    check = check_required_artifacts([str(p) for p in patterns], Path(workspace))
+    if check.satisfied:
+        payload = result.output
+        # The digests ride along so the ledger can later tell whether the artifact that
+        # satisfied the gate is still the one on disk.
+        if isinstance(payload, dict):
+            payload = {**payload, "artifacts": check.digests}
+        result.output = payload
+        return result
+    return NodeResult(
+        state=InstanceState.FAILED,
+        output=result.output,
+        failure=Failure(
+            failure_class=FailureClass.USER,
+            cause_plain=("required artifacts missing: " + ", ".join(check.missing)),
+            remediation="the node reported success without producing its declared files; "
+            "check where it actually wrote them",
+        ),
+    )
 
 
 # ── output contract (WF2-R8) ─────────────────────────────────────────────────
@@ -760,6 +925,40 @@ async def dispatch(
     supposed to recurse into containers and only ever hand back leaves. It is reported as
     INTERNAL so the distinction stays visible in the ledger.
     """
+    clock = now or time.time()
+    result = await _dispatch_inner(
+        node,
+        ctx,
+        now=clock,
+        subagents=subagents,
+        depth=depth,
+        run_id=run_id,
+        cwd=cwd,
+        tiers=tiers,
+        completion=completion,
+        get_provider=get_provider,
+        verify=verify,
+        timeout=timeout,
+    )
+    # One seam, so a new node kind cannot silently skip the artifact gate.
+    return apply_artifact_gate(node, result, cwd or None)
+
+
+async def _dispatch_inner(
+    node: Node,
+    ctx: BindingContext,
+    *,
+    now: float = 0.0,
+    subagents: Any = None,
+    depth: int = 0,
+    run_id: str = "",
+    cwd: str = "",
+    tiers: dict[str, str] | None = None,
+    completion: Any = None,
+    get_provider: Any = None,
+    verify: Any = None,
+    timeout: int = 60,
+) -> NodeResult:
     kind = node.kind
     clock = now or time.time()
     if kind == NodeKind.TRANSFORM:
@@ -777,7 +976,9 @@ async def dispatch(
     if kind == NodeKind.WAIT:
         return await dispatch_wait(node, ctx, now=clock)
     if kind == NodeKind.GATE:
-        return await dispatch_gate(node, ctx, now=clock, verify=verify)
+        return await dispatch_gate(
+            node, ctx, now=clock, verify=verify, completion=completion, tiers=tiers
+        )
     if kind == NodeKind.SUBWORKFLOW:
         # Nested runs land in Slice 10 with namespaced instances and child_run_attach.
         # Until then this is an explicit, typed refusal — never a silent skip that makes

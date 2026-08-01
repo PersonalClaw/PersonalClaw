@@ -1615,8 +1615,13 @@ class WorkflowsConfig:
         ),
     )
     model_tier_standard: str = field(
-        default="background",
-        metadata=_meta("Model Tier — Standard", "Use case for the `standard` tier."),
+        default="orchestration",
+        metadata=_meta(
+            "Model Tier — Standard",
+            "Use case for the `standard` tier. Distinct from `fast` on purpose: if both "
+            "collapsed to one use case the three tiers would be decorative, and a node "
+            "asking for a mid-capability model would silently get the cheapest one.",
+        ),
     )
     model_tier_fast: str = field(
         default="background",
@@ -1662,7 +1667,7 @@ class WorkflowsConfig:
         # real axis rather than letting a node fail at dispatch time.
         for name, fallback in (
             ("model_tier_reasoning", "reasoning"),
-            ("model_tier_standard", "background"),
+            ("model_tier_standard", "orchestration"),
             ("model_tier_fast", "background"),
         ):
             if not str(getattr(self, name, "") or "").strip():
@@ -2745,7 +2750,7 @@ class AppConfig:
                     workflows_data.get("model_tier_reasoning", "reasoning") or "reasoning"
                 ),
                 model_tier_standard=str(
-                    workflows_data.get("model_tier_standard", "background") or "background"
+                    workflows_data.get("model_tier_standard", "orchestration") or "orchestration"
                 ),
                 model_tier_fast=str(
                     workflows_data.get("model_tier_fast", "background") or "background"

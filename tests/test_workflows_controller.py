@@ -906,3 +906,170 @@ class TestLaneEnforcement:
             ),
         )
         assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+
+
+class TestResilienceIntegration:
+    """Slice 2's mechanisms as the controller actually drives them."""
+
+    async def test_a_retry_receives_the_correction_hint(self) -> None:
+        """The whole mechanism: a blind retry reproduces the same failure, so the next
+        attempt must be told what went wrong."""
+        prompts: list[str] = []
+
+        async def flaky(prompt, *, use_case="background", output_type=None):
+            prompts.append(prompt)
+            if len(prompts) == 1:
+                raise ConnectionError("network unreachable")
+            return "recovered"
+
+        spec = {
+            "name": "hint",
+            "root": {
+                "kind": "infer",
+                "id": "i",
+                "config": {"prompt": "do the thing", "retry": {"max_attempts": 3}},
+            },
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(completion=flaky))
+        assert await c.run_to_completion(timeout=25) == RunStatus.COMPLETE
+        assert len(prompts) == 2
+        assert "PREVIOUS ATTEMPTS FAILED" in prompts[1]
+        assert "CORRECTION:" in prompts[1]
+
+    async def test_a_foreach_retry_does_not_leak_into_sibling_prompts(self) -> None:
+        """The spec node is shared across every item, so the hint must go on a COPY."""
+        prompts: list[str] = []
+        failed_once = {"done": False}
+
+        async def flaky(prompt, *, use_case="background", output_type=None):
+            prompts.append(prompt)
+            if "b" in prompt and not failed_once["done"]:
+                failed_once["done"] = True
+                raise ConnectionError("network unreachable")
+            return "ok"
+
+        spec = {
+            "name": "fehint",
+            "root": {
+                "kind": "foreach",
+                "id": "f",
+                "config": {"items": ["a", "b", "c"], "on_item_error": "skip"},
+                "body": {
+                    "kind": "infer",
+                    "id": "w",
+                    "config": {"prompt": "item {{item}}", "retry": {"max_attempts": 2}},
+                },
+            },
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(completion=flaky))
+        await c.run_to_completion(timeout=30)
+        polluted = [p for p in prompts if "item a" in p and "PREVIOUS ATTEMPTS" in p]
+        assert not polluted, "one item's failure leaked into a sibling's prompt"
+
+    async def test_attempt_records_reach_the_ledger(self) -> None:
+        async def always_flaky(prompt, *, use_case="background", output_type=None):
+            raise ConnectionError("network down")
+
+        spec = {
+            "name": "att",
+            "root": {
+                "kind": "infer",
+                "id": "i",
+                "config": {"prompt": "go", "retry": {"max_attempts": 3}},
+            },
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(completion=always_flaky))
+        await c.run_to_completion(timeout=25)
+        attempts = [r for r in J.ledger(run.id) if r["kind"] == J.STEP_ATTEMPT]
+        assert len(attempts) >= 1
+        assert attempts[0]["failure_class"] == "network"
+        assert attempts[0]["error_signature"]
+
+    async def test_exhausted_retries_produce_the_escalation_artifact(self) -> None:
+        """Not just a failure: five named options let a human act."""
+
+        async def always_flaky(prompt, *, use_case="background", output_type=None):
+            raise ConnectionError("network down")
+
+        spec = {
+            "name": "esc",
+            "root": {
+                "kind": "infer",
+                "id": "i",
+                "config": {"prompt": "go", "retry": {"max_attempts": 2}},
+            },
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(completion=always_flaky))
+        await c.run_to_completion(timeout=25)
+        esc = [r for r in J.ledger(run.id) if r["kind"] == J.STEP_ESCALATED]
+        assert len(esc) == 1
+        assert esc[0]["reason"] == "retries_exhausted"
+        assert len(esc[0]["options"]) == 5
+        assert c.run.attention["kind"] == "escalation"
+
+    async def test_the_breaker_stops_a_thrashing_loop_with_no_model_calls(self) -> None:
+        """A 20-iteration loop returning identical output must not run 20 times."""
+        spec = {
+            "name": "thrash",
+            "root": {
+                "kind": "loop",
+                "id": "l",
+                "config": {"mode": "counted", "n": 20, "identical_streak": 2},
+                "body": {"kind": "transform", "id": "b", "config": {"expr": "same every time"}},
+            },
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices())
+        assert await c.run_to_completion(timeout=30) == RunStatus.ESCALATED
+        iterations = [p for p in c.instances if "@" in p]
+        assert len(iterations) <= 4, f"the thrash ran {len(iterations)} times"
+        assert c.instances["root"].state == InstanceState.ESCALATED
+
+    async def test_escalated_is_distinct_from_failed(self) -> None:
+        """ "I gave up, a human must decide" is a different fact from "this broke"."""
+        spec = {
+            "name": "esc2",
+            "root": {
+                "kind": "loop",
+                "id": "l",
+                "config": {"mode": "counted", "n": 10, "identical_streak": 2},
+                "body": {"kind": "transform", "id": "b", "config": {"expr": "x"}},
+            },
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices())
+        status = await c.run_to_completion(timeout=30)
+        assert status == RunStatus.ESCALATED
+        assert status != RunStatus.FAILED
+
+    async def test_the_budget_warning_fires_once_before_the_cap(self) -> None:
+        warnings: list[dict] = []
+
+        async def chatty(prompt, *, use_case="background", output_type=None):
+            return "x" * 400
+
+        spec = {
+            "name": "warn",
+            "root": {
+                "kind": "sequence",
+                "id": "s",
+                "children": [
+                    {"kind": "infer", "id": f"n{i}", "config": {"prompt": "p"}} for i in range(6)
+                ],
+            },
+        }
+        run = _make_run(spec, budget=RunBudget(max_tokens=400))
+        c = RunController(
+            run,
+            spec,
+            services=EngineServices(
+                completion=chatty,
+                publish=lambda e, p: warnings.append(p) if p.get("budget_warning") else None,
+            ),
+        )
+        assert await c.run_to_completion(timeout=30) == RunStatus.PAUSED
+        assert len(warnings) == 1, "the warning must fire exactly once per run"

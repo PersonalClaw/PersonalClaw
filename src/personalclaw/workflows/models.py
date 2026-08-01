@@ -108,6 +108,13 @@ class GateKind(str, Enum):
     VERIFY_SCRIPT = "verify_script"
     EVENT = "event"
     EXPRESSION = "expression"
+    #: An ordered static→runtime→system ladder with per-criterion hard thresholds. A hard
+    #: failure at any rung fails the gate — never averaged, because averaging lets a
+    #: confident model pass a gate it structurally failed (WF2-R3).
+    LADDER = "ladder"
+    #: An LLM judge returning the CLOSED verdict enum (PASS|RETRY|ESCALATE|REJECT), run in
+    #: a session distinct from the producing node unless `self_judge` is set.
+    JUDGE = "judge"
 
 
 class SessionMode(str, Enum):

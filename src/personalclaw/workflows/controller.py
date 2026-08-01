@@ -55,6 +55,16 @@ from personalclaw.workflows.models import (
     RunStatus,
     WorkflowRun,
 )
+from personalclaw.workflows.resilience import (
+    Attempt,
+    BreakerState,
+    attempt_from_failure,
+    check_breaker,
+    check_budget,
+    error_signature,
+    escalation_artifact,
+    retry_prompt,
+)
 from personalclaw.workflows.tick import (
     Frontier,
     Limits,
@@ -146,6 +156,14 @@ class RunController:
         self._declined_edges: set[str] = self._collect_declined_edges()
         self._iterations: dict[str, int] = {}
         self._dry_streaks: dict[str, int] = {}
+        #: path -> the attempts already made. Feeds the correction hint on the next try,
+        #: and the escalation artifact when retries run out.
+        self._attempts: dict[str, list[Attempt]] = {}
+        #: loop path -> breaker evidence. Cheap counters; the breaker costs no model call.
+        self._breakers: dict[str, BreakerState] = {}
+        #: Whether the 80% budget warning has already been emitted (once per run, not
+        #: once per node — repeating it every node would bury the signal).
+        self._budget_warned = False
         self._outputs: dict[str, Any] = {}
         self._terminal = asyncio.Event()
         self._load_outputs()
@@ -277,6 +295,8 @@ class RunController:
             status = _ROOT_TO_RUN.get(fr.outcome or InstanceState.DONE, RunStatus.COMPLETE)
             await self._finish(status)
             return True
+
+        self._check_budget_warning()
 
         if self._budget_exceeded():
             # SOFT budget: pause resumably rather than fail. The user can extend and
@@ -413,6 +433,26 @@ class RunController:
             task=task, ready=item, started=now, last_progress=now, cache_key=key
         )
 
+    def _with_retry_hint(self, item: ReadyNode) -> Node:
+        """On a retry, hand the dispatcher a node whose prompt carries the correction.
+
+        Returns the node UNCHANGED on a first attempt and for kinds with no prompt, so
+        the common path pays nothing. A copy is returned rather than mutating the spec
+        node: the spec is shared across every instance of a `foreach` body, and editing it
+        in place would leak one item's failure into every sibling's prompt.
+        """
+        attempts = self._attempts.get(item.path)
+        if not attempts:
+            return item.node
+        prompt = (item.node.config or {}).get("prompt")
+        if not isinstance(prompt, str) or not prompt:
+            return item.node
+        import copy
+
+        node = copy.deepcopy(item.node)
+        node.config["prompt"] = retry_prompt(prompt, attempts)
+        return node
+
     async def _execute(self, item: ReadyNode, ctx: BindingContext) -> NodeResult:
         """Run a dispatcher under the total-timeout knob.
 
@@ -421,8 +461,9 @@ class RunController:
         because timeouts only ever execute under failure.
         """
         total = self.services.node_timeout_total
+        node = self._with_retry_hint(item)
         coro = dispatch(
-            item.node,
+            node,
             ctx,
             now=time.time(),
             subagents=self.services.subagents,
@@ -570,18 +611,33 @@ class RunController:
                 )
             return
 
-        # Retry, when the failure class says it is worth spending on.
-        if result.state == InstanceState.FAILED and self._should_retry(item, inst, result):
-            inst.state = InstanceState.PENDING
-            self.journal.step_failed(
-                item.path,
-                item.node.id,
-                epoch=inst.epoch,
-                failure=result.failure or Failure(),
-                attempt=inst.attempt,
-                retries_exhausted=False,
+        # Retry, when the failure class says it is worth spending on. The attempt is
+        # RECORDED before the retry so the next one can be corrected rather than blind —
+        # a blind retry re-sends the same prompt and reproduces the same failure.
+        if result.state == InstanceState.FAILED:
+            failure = result.failure or Failure()
+            record = attempt_from_failure(
+                inst.attempt, failure, tokens=result.tokens, duration_secs=duration
             )
-            return
+            self._attempts.setdefault(item.path, []).append(record)
+            if self._should_retry(item, inst, result):
+                inst.state = InstanceState.PENDING
+                self.journal.write(
+                    journal_mod.STEP_ATTEMPT,
+                    instance_path=item.path,
+                    node_id=item.node.id,
+                    epoch=inst.epoch,
+                    **record.to_dict(),
+                )
+                self.journal.step_failed(
+                    item.path,
+                    item.node.id,
+                    epoch=inst.epoch,
+                    failure=failure,
+                    attempt=inst.attempt,
+                    retries_exhausted=False,
+                )
+                return
 
         inst.state = result.state
         inst.completed_at = _now()
@@ -627,6 +683,15 @@ class RunController:
                     "input_hash": entry.cache_key.inputs_hash,
                 },
             )
+            # Retries are spent. Produce the typed escalation artifact rather than just
+            # dying: five named options let a human act, where a bare "it failed" leaves
+            # them to invent the next move (WF2-R4).
+            self._escalate(
+                item.path,
+                item.node.id,
+                reason="retries_exhausted",
+                detail=(result.failure.cause_plain if result.failure else ""),
+            )
 
         self._advance_loop(item)
         self._publish(
@@ -659,6 +724,44 @@ class RunController:
             return False
         return inst.attempt < max_attempts
 
+    def _escalate(self, path: str, node_id: str, *, reason: str, detail: str = "") -> None:
+        """Record the escalation artifact and surface it as run attention.
+
+        Journaled AND surfaced: journaling alone leaves an unattended run looking merely
+        failed, and surfacing alone loses the evidence a later reader needs.
+        """
+        artifact = escalation_artifact(
+            node_id, reason=reason, detail=detail, attempts=self._attempts.get(path, [])
+        )
+        # The artifact already carries `node_id` and `kind`; splatting it alongside
+        # explicit kwargs would collide on both.
+        self.journal.write(
+            journal_mod.STEP_ESCALATED,
+            instance_path=path,
+            **{k: v for k, v in artifact.items() if k != "kind"},
+        )
+        self.run.attention = artifact
+        self._publish(
+            "workflow_attention",
+            {"node_id": node_id, "kind": "escalation", "ask": artifact},
+        )
+
+    def _check_budget_warning(self) -> None:
+        """Emit the 80% warning ONCE per run, so a user can extend before work stops."""
+        cap = getattr(self.run.budget, "max_tokens", 0) or 0
+        verdict = check_budget(self.run.total_tokens, int(cap))
+        if verdict.warn and not self._budget_warned:
+            self._budget_warned = True
+            self._publish(
+                "workflow_run_update",
+                {
+                    "status": self.run.status.value,
+                    "budget_warning": verdict.reason,
+                    "spent": verdict.spent,
+                    "cap": verdict.cap,
+                },
+            )
+
     def _decline(self, inst: NodeInstance, edges: list[str]) -> None:
         if not edges:
             return
@@ -683,6 +786,36 @@ class RunController:
             self._dry_streaks[parent_path] = self._dry_streaks.get(parent_path, 0) + 1
         else:
             self._dry_streaks[parent_path] = 0
+
+        # Feed the breaker, then consult it BEFORE the next iteration. Deterministic and
+        # LLM-free: a loop thrashing on the same error is the most common autonomous-run
+        # failure, and paying a model to notice it would be slower and less reliable.
+        inst = self._instance(item.path)
+        breaker = self._breakers.setdefault(parent_path, BreakerState())
+        breaker.record(
+            signature=error_signature(inst.failure) if inst.failure else "",
+            output=output,
+            tokens=inst.tokens,
+        )
+        verdict = check_breaker(node, breaker)
+        if verdict.tripped:
+            loop_inst = self._instance(parent_path)
+            # ESCALATED, deliberately NOT FAILED: "I gave up and a human must decide" is a
+            # different fact from "this broke", and collapsing them loses what the user
+            # needs to act on.
+            loop_inst.state = InstanceState.ESCALATED
+            loop_inst.completed_at = _now()
+            self.journal.iteration(
+                parent_path,
+                node.id,
+                iteration=iteration,
+                outcome=f"breaker:{verdict.reason}",
+                error_signature=breaker.error_signatures[-1] if breaker.error_signatures else "",
+                tokens=inst.tokens,
+            )
+            self._escalate(parent_path, node.id, reason=verdict.reason, detail=verdict.detail)
+            return
+
         ctx = BindingContext(
             inputs=self.run.inputs,
             node_outputs=self._outputs,
