@@ -60,6 +60,11 @@ STEP_COMPLETED = "step_completed"
 STEP_FAILED = "step_failed"
 STEP_SKIPPED = "step_skipped"
 STEP_CACHED = "step_cached"
+#: One try at one node — typed, so a retry gets actionable feedback rather than prose,
+#: and so the flywheel can later see WHICH corrections actually worked (WF2-R4).
+STEP_ATTEMPT = "step_attempt"
+#: Retries spent or the breaker tripped — a typed decision record, not a bare failure.
+STEP_ESCALATED = "step_escalated"
 GATE_REJECTED = "gate_rejected"
 GATE_CRITERION = "gate_criterion"
 EFFECT = "effect"
@@ -80,6 +85,8 @@ LEDGER_KINDS = frozenset(
         STEP_FAILED,
         STEP_SKIPPED,
         STEP_CACHED,
+        STEP_ATTEMPT,
+        STEP_ESCALATED,
         GATE_REJECTED,
         GATE_CRITERION,
         EFFECT,
