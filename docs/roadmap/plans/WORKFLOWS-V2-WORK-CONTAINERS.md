@@ -886,3 +886,71 @@ implementation. 58 tests, driven against a REAL git repo.
   the workspace and the ff-only refresh for named workspaces need the run-record schema. The cockpit
   diff panel and the two verb buttons are FE work on this contract. Container mode (§4.4) remains
   opt-in and deferred by the plan.
+
+### 2026-08-02 — session 53 (introspection checklist) DONE
+
+`workflows/introspection.py` (new): the nine-question checklist as a checkable contract, RunStats as a
+pure journal projection, verification debt, said-no gate statistics with a sample-gated fake-check
+badge, per-template p50/p95 cards, and the Proof section. 43 tests, driven against real journals
+written by the engine's own `Journal`.
+
+- **No metrics store was added.** The plan is explicit — "pass-rate, failure distribution and latency
+  percentiles are queries over this — not a separate metrics store" — so every number here is a
+  projection over `journal.ledger()`. A test asserts the projection agrees with the engine's own
+  `run_totals()` on tokens/cost/steps, because two aggregates over one stream that disagreed would
+  make the cockpit and the run row show different numbers with no way to tell which was right.
+
+- **DISCOVERY — `GATE_REJECTED` is declared in `journal.py` and emitted NOWHERE.** A said-no metric
+  reading it would report zero rejections for every gate in the library and therefore flag all of them
+  as fake checks — a warning badge on everything, which is the same as no badge. Rejections are
+  derived from `GATE_RESOLVED`'s own `approved` field instead, which the controller does write on both
+  the auto-approve and human-resolution paths. A drift test pins this: it matches the shape of an
+  actual emitter (`write(... GATE_REJECTED`) rather than any mention, so it does not fail on its own
+  explanation, and it was verified to catch both a qualified and a bare-name emitter while ignoring
+  the declaration, a docstring reference, and a read/filter.
+
+- **DISCOVERY — a `step_attempt` on a non-gate created a gate-table row.** Attributing every attempt
+  event made `publish` (an action) appear in the said-no table with `total: 0` and a 0.0 pass rate — a
+  row that reads as a gate which has never passed anything, in a table whose credibility is the only
+  reason anyone reads it. Retries are now attributed only to nodes already known to be gates.
+
+- **The fake-check badge requires a SAMPLE.** "0 rejections in 0 runs" and "0 rejections in 40 runs"
+  are different claims, and only the second is evidence. A badge firing on the third run of a new
+  template would teach the user to ignore badges before the metric had ever been right. One real
+  rejection clears it permanently — the gate has demonstrated it can say no, which is all the badge
+  was testing for.
+
+- **Verification debt is counted by BINDING, not adjacency.** A node whose output a later gate consumed
+  is verified even with three nodes between them; counting "the next node is a gate" would report a
+  correctly-verified reviewer as debt, and a debt number that flags correct structure gets ignored.
+  The warn threshold is deliberately NOT zero, because a plan legitimately contains zero-token actions
+  whose output IS the check (S42's contract lint already exempts them).
+
+- **p50 and p95, never a mean.** A mean hides both the typical case and the bad one: one runaway run
+  moves it, and nothing tells you whether the usual run is cheap. Percentiles are nearest-rank rather
+  than interpolated, so every reported figure is a run that actually happened — with the handful of
+  runs a personal instance accumulates, an interpolated p95 invents a value between two real runs. A
+  template with ONE run still gets a card, because withholding it would leave the newest template (the
+  one most likely to be surprising) invisible on the surface that answers "what is costing money".
+
+- **The failure rate counts RUNS, not steps.** A run with four failed steps is one bad run; counting
+  steps would make a single messy run look like a systemic problem.
+
+- **The nine questions are named in CODE.** `checklist_gaps` reports which the supplied state cannot
+  answer, which is what turns "glanceable" from a taste claim into a validation script — a surface
+  rendering eight of nine has a specific hole. An empty value counts as ANSWERED: "nothing is blocked"
+  is an answer, and treating it as a gap would make an idle instance look broken.
+
+- **The Proof section states its own caveats.** A section with no evidence and no warning is the worst
+  possible surface, because it looks like proof. High verification debt plus a confident summary is
+  exactly the shape that makes unattended work untrustworthy, so the debt earns an explicit warning.
+  The summary reports counts rather than a verdict — a summary that said "succeeded" would be the run
+  grading itself.
+
+- **NOT DONE:** the cockpit and hub FE that render these projections (chip ribbon, cost/latency strip,
+  template cards, Proof section, warning badges) — this session delivers the contract they read.
+  Trajectory replay needs the resolved-prompt and context-snapshot payloads the journal records but
+  does not yet expose as a timeline projection. The live touched-items feed needs the knowledge/artifact
+  mutation events to carry run attribution, which S47's lineage started but only for artifacts. Making
+  `GATE_REJECTED` a real event (so a rejection is a first-class journal fact rather than a derived one)
+  is a journal-format change Self-Verification's replay harness gates.
