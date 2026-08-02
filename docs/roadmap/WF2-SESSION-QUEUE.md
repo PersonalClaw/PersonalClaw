@@ -1328,3 +1328,64 @@ wiring points. 11829 tests (+79), lint clean at 612 files, validated against the
   payload, `also_artifact` dual-write, and the async enrichment/backfill loop all belong to that
   provider pair. Nothing yet WRITES `kind`/`logical_key`/`content_hash` on the live ingest path —
   the columns exist and are indexed, and populating them is the persist provider's job.
+
+### Session 35 — Knowledge Synthesis: the provider pair (`feature-wf2-knowledge-providers`, PR NOT OPENED — push blocked)
+
+`action_providers/knowledge_persist_provider.py` + `knowledge_retrieve_provider.py`, registered in
+the action registry AND `ALLOWED_HOOK_PROVIDERS`, plus node provenance threaded through
+`dispatch_action`. 11870 tests (+41), lint clean at 614 files. The three-node pattern was driven
+end-to-end through the live engine, including an idempotent re-run.
+
+**Deviations and findings — six defects, every one found by measuring:**
+
+(a) **`items_fts` has NO triggers.** It is an EXTERNAL-CONTENT fts5 index over a view, so a row
+  written with plain SQL is simply not searchable. Every retrieve fell through to
+  `substring_fallback` until the persist provider synced the index — and a substring fallback looks
+  identical in the output to a working hybrid search, so the whole retrieval tier would have been
+  quietly useless. The store's own docstring warns that `'rebuild'` against a stale content target
+  WIPES THE INDEX AND REPORTS SUCCESS, so this uses the delete-then-insert pattern the store's
+  existing manual sync sites use.
+
+(b) **The FTS delete has to read the OLD values BEFORE the row is rewritten.** `items_fts_src` is a
+  VIEW over the live row, so reading it after the UPDATE returns the NEW content and the delete
+  removes nothing. Measured: "aardvark" still matched after the body had been replaced with
+  "buffalo". Fixed with `_fts_snapshot` taken pre-write.
+
+(c) **The hybrid retriever's scores are RRF (~1/(60+rank)), not cosine.** A top hit scores about
+  0.033. My 0.30 "relevance cliff", borrowed from cosine space, rejected EVERY hybrid result — the
+  provider silently returned nothing on a store that plainly contained the answer. The cliff now
+  applies only to tiers whose scores are similarities; create-safety uses RANK for fused results.
+
+(d) **`HybridRetriever.search` does not return `kind`,** or any of the timestamp columns. So the
+  kind filter matched nothing (every hit had `kind: None`) and every freshness reading was zero,
+  both silently. Added `_enrich` to fill them from the store.
+
+(e) **Both tag tables have NOT NULL timestamp columns** (`tags.created_at`, `item_tags.added_at`).
+  Omitting them made every tag insert fail, and my broad `except` swallowed it so cleanly that a
+  measurement run showed `tags: []` with no error anywhere. Now logged at WARNING with a returned
+  count — best-effort has to be best-effort about something that works.
+
+(f) **`ActionContext` carries only `event`/`context`/`payload`.** Reading `ctx.run_id` (as my first
+  cut did) silently produced "workflow:unknown" for every persisted item. Provenance now comes from
+  `ctx.payload`, and `dispatch_action` threads `node_id` in. The RUN id is genuinely unavailable at
+  that seam — `dispatch_action` does not receive the run and `BindingContext` does not carry it — so
+  the provider degrades to a node-scoped ref and says so rather than the engine growing a parameter
+  nothing else needs yet.
+
+(g) **"Always included" and "always first" are different guarantees.** The `overview` was inserted
+  only when absent from the hits, so when it WAS a hit it stayed wherever ranking put it — measured,
+  second, behind a plain fact. It is now promoted rather than inserted.
+
+(h) **Create-safety is rank AND tier, not rank alone.** A substring hit that merely shared a common
+  word ranked first for an unrelated query and was reported `probable`. A top-ranked substring match
+  is a coincidence of characters; a top-ranked semantic or keyword match is evidence. The asymmetry
+  is deliberate: `unknown` leaves a duplicate for the curator, while a wrong `probable` silently
+  overwrites unrelated knowledge and no later pass can tell it happened.
+
+(i) **NOT DONE:** the `ops` op-list payload, `also_artifact` dual-write, `read_when` MATCHING at
+  retrieve time (the triggers are stored and returned; matching them against node task text is
+  retrieval-side work that belongs with session 37's synthesizer), the `coverage_gap` run-journal
+  EVENT (the flag is in the payload; journaling it needs the ledger seam), and the async
+  enrichment/backfill loop (`_enqueue_enrichment` is a best-effort hook whose target
+  `knowledge.ingest.enqueue_item` does not exist yet — it degrades silently by design, and the
+  backfill that covers what the queue missed is session 37's).
