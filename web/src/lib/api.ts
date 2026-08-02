@@ -2630,6 +2630,18 @@ export const api = {
   // intents, and one button doing both would delete work a user only meant to stop.
   deleteWorkflowRun: (id: string) => del(`/api/workflows/runs/${encodeURIComponent(id)}`),
   pauseWorkflowRun: (id: string) => post<{ run_id: string; pause_requested: boolean }>(`/api/workflows/runs/${encodeURIComponent(id)}/pause`),
+  // Mid-run steering (LOOPS-EVOLUTION R14): queued, then consumed at the next iteration
+  // boundary. Queued rather than applied because injecting mid-iteration races the
+  // worker's own state — and because the alternative today is cancel-and-restart, which
+  // throws away the cycle context that made steering worth doing.
+  steerWorkflowRun: (id: string, body: { text: string }) =>
+    post<{ ok?: boolean; run_id?: string; queued?: number; error?: { code: string; message: string } }>(
+      `/api/workflows/runs/${encodeURIComponent(id)}/steer`, body),
+  // Shown as pending in the UI: a queued instruction the user cannot see is
+  // indistinguishable from one that was dropped, and they will queue it again.
+  workflowSteering: (id: string) =>
+    get<{ run_id: string; pending: Array<{ text: string; queued_at: string }>; count: number }>(
+      `/api/workflows/runs/${encodeURIComponent(id)}/steering`),
   resumeWorkflowRun: (id: string, body: { answer?: unknown; resume_token?: string; always_allow?: boolean }) =>
     post<{ ok?: boolean; approved?: boolean; node_id?: string; resumed?: boolean }>(`/api/workflows/runs/${encodeURIComponent(id)}/resume`, body),
   rewindWorkflowRun: (id: string, body: { node_id: string; redo_effects?: boolean; force?: boolean }) =>
