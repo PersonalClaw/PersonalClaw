@@ -647,3 +647,74 @@ fingerprint dedup, fan-out caps and the write-rejection rule. 92 tests.
   The `push_refresh()`/WS refresh hint and the `TaskCreated`/`TaskCompleted` hook events are surface
   wiring on the same seam. FE `taskMeta` STATUSES mapping for the new `SKIPPED` column and the
   `blocked_kind` badge are FE work. The granularity lint (R2) belongs with SOP migration in session 58.
+
+### 2026-08-02 — session 56 (verified done + enforcement) DONE
+
+`workflows/verified_done.py` (new): engine-owned criterion execution over the existing
+`loop/gates` tristate, pass-state gating, the three-actor transition matrix, the weighted acceptance
+schema, cascade-fail over the binding graph, the stuck-work sweep and idempotent timing. 70 tests.
+
+- **The tristate was VERIFIED by running the real machinery**, not assumed. `run_verify_command`
+  returns `None` for a missing binary AND for a command the safety screen refuses (`rm -rf /` →
+  `None`, logged as "refusing to run"). Both matter: reading `None` as a pass makes a broken check
+  indistinguishable from a passing one, and the broken one is silent. `UNRUNNABLE` also wins over
+  `FAILED` when both are present — "one check failed and one could not run" is a criterion nobody has
+  evaluated, and calling it a failure sends the user after the wrong problem.
+
+- **DISCOVERY — gating on `Verdict.passed` alone blocked every CRITERION-FREE task.** An empty verdict
+  is `None` (nothing was evaluated), so a task with no `done_criterion` — which is most tasks —
+  projected as permanently BLOCKED. Caught by checking against the EXISTING seam rather than my own
+  reasoning: `Task.can_mark_complete` already documents that "a task with no exit criteria is freely
+  completable". Two seams disagreeing about the same question would make completability depend on
+  which one ran. A test now pins the agreement.
+
+- **A worker does not judge its own work, at BOTH levels.** The node-level version is the engine
+  running the criterion; the task-level version is the actor matrix refusing `AGENT → done`. The
+  agent's allowed set is `{blocked}` with kinds `{needs_input, capability}` — it may PROPOSE and may
+  not CLAIM. It specifically may not file its own failure as `transient`, because that is requesting
+  its own retry. The refusal names the alternative, since a refusal that does not say what to do reads
+  as the feature being broken.
+
+- **A USER may not SKIP a task.** A skip is a routing decision the run makes, so a user who wants work
+  skipped asks the run (`workflow_skip`) and the board and the run agree afterwards. The engine may
+  record any outcome — it observed the work, and restricting it would mean an engine that saw a
+  failure could not record one.
+
+- **Every check must pass, and the score is for the REPORT.** An acceptance criterion with a failed
+  check has not been met; 0.8 is not "mostly done", it is one unmet requirement. The weighting exists
+  because the author said which checks matter, and a zero weight is treated as 1 rather than as
+  "ignore" — a check that ran and failed is information, and silently dropping it would let an author
+  disable a check by typo. A malformed check is DROPPED and reported, never treated as passing.
+
+- **The cascade follows the BINDING graph.** Driven on a graph with a later sibling reading the failed
+  node's output — the shape a tree walk misses, and the one where an unblocked task is most
+  misleading. Transitive (a cascaded block cascades onward), terminates on a dependency cycle
+  (verified with an alarm), leaves unrelated work alone, and notifies ONCE: a parallel fan-in failure
+  produces N events in milliseconds, and N alerts for one cause is how a user mutes the channel that
+  was about to tell them something important. Clearing covers exactly the set the block covered — a
+  dependent left blocked after its prerequisite recovered is the same lie in the other direction.
+
+- **The sweep REPORTS rather than fixes.** Auto-resolving a stall would hide the condition that caused
+  it and the same stall would recur with nothing recorded. It is tolerant of unparseable timestamps
+  for the same reason a diagnostics pass exists at all: raising on one bad row would stop it reporting
+  every other stall. A task with NO timestamps is not flagged — absence is not staleness, and flagging
+  it would put every freshly-created task on the strip.
+
+- **`cancelled` is sticky and `started_at` is written once.** Projection is an idempotent REBUILD —
+  the normal path — so without stickiness every rebuild would resurrect work someone deliberately
+  stopped. And a retry that rewrote `started_at` would make a task running for an hour look
+  thirty-seconds old, which is exactly the field the heartbeat sweep reads to decide whether work has
+  stalled.
+
+- **`done_without_evidence` takes `Any`, deliberately.** The sweep reads status off a provider-supplied
+  object, and a provider handing back a raw string must get a truthful answer rather than a type
+  error; the identity comparison makes a non-status value read as "not done", which is the safe
+  direction.
+
+- **NOT DONE:** the engine call sites — criterion execution is decided here and performed by the
+  caller (one implementation of the tristate and one safety screen, both already in `loop/gates`), and
+  wiring it into the controller's completion path needs the S55 materialization call site that is
+  itself still pending. The `intake_refresh` Run Ledger event, the debounced `state.notify()` call and
+  the Tasks-board stuck-work strip are surface wiring on this contract. The clean-exit checklist
+  template belongs with the bundled-template work in §8; the granularity lint belongs with SOP
+  migration in session 58.

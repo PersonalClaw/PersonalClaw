@@ -88,6 +88,7 @@ while not terminal:
 | `introspection.py` | the nine-question checklist, RunStats as a pure journal projection, verification debt, said-no gate statistics with a sample-gated fake-check badge, per-template p50/p95 cards, and the Proof section |
 | `project_export.py` | project export/import: the allowlisted portable set, per-entity sha256 in a versioned manifest, secrets as presence flags only, import refusals (unsafe member, digest/size mismatch, unknown schema) and `imported-N` collision slots |
 | `materialize.py` | tasks as a projection of run state: the exhaustive state→status table, `blocked_kind` derivation, fingerprint dedup, fan-out caps with a parent counter, the managed/produced/standalone split and the engine-owned-field write rejection |
+| `verified_done.py` | engine-owned criterion execution over the `loop/gates` tristate, pass-state gating, the three-actor transition matrix, the weighted acceptance schema, cascade-fail over the binding graph, the stuck-work sweep and idempotent timing |
 | `scope.py` | filesystem write-scope enforcement by post-hoc diff |
 | `watchdog.py` | the supervisor: adoption, reaping, per-run publishing |
 
