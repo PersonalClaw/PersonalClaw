@@ -331,6 +331,12 @@ def _prompt_use_case_for(session_key: str | None, explicit: str = "") -> str:
         or sk.startswith("cron:")
         or sk.startswith("cron_")
         or sk.startswith("subagent:")
+        # A run-owned stage session (WORK-CONTAINERS §5.1, S50). Measured: without this an owned
+        # session resolved to the `chat` prompt — a stage worker framed as a conversational
+        # assistant, which is the wrong framing for unattended work and the same near-miss the
+        # `loop_`/`loop:` entry above already documents. Behaviour keying stays on `_app`; this is
+        # only the PROMPT use-case, which is prefix-derived by design here.
+        or sk.startswith("workflow:")
     ):
         return "background"
     return explicit or "chat"
