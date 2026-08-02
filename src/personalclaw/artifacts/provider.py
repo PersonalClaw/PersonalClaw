@@ -76,6 +76,12 @@ class ArtifactProvider(ABC):
         session_id: str | None = None,
         project_id: str = "",
         collection: str = "",
+        #: Provenance recorded on the lifecycle EVENT (S47). `ArtifactEvent.metadata` and
+        #: `clean_event_metadata` already existed but only `record_impression` could reach
+        #: them, so a workflow could compute a run/node lineage and had nowhere to put it —
+        #: the artifact landed with no record of what produced it. A named parameter, not an
+        #: open passthrough.
+        event_metadata: dict | None = None,
     ) -> Artifact: ...
 
     @abstractmethod
@@ -92,6 +98,7 @@ class ArtifactProvider(ABC):
         description: str | None = None,
         tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
         collection: str | None = None,
+        event_metadata: dict | None = None,
     ) -> Artifact | None: ...
 
     def revert(
