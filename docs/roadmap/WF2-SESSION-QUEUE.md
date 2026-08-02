@@ -88,7 +88,7 @@ mandatory.
 
 | # | Session | PR group | Status |
 |---|---|---|---|
-| 29 | Judge contract + `runtime_hints` spec; typed verdict enum; judge isolation; deterministic pre-tier + `fallback_check` | G13 | ✅ CODE DONE — PUSH BLOCKED |
+| 29 | Judge contract + `runtime_hints` spec; typed verdict enum; judge isolation; deterministic pre-tier + `fallback_check` | G13 | ✅ DONE (#168) |
 | 30 | Engine loop-node middleware: breaker + fingerprinting + escalation ladder + failure-class routing; fresh-session protocol; interrupt queue | G13 | TODO |
 | 31 | Author the 8 template YAML specs + integration tests through the engine | G14 | TODO |
 | 32 | Calibration + acceptance instrumentation: rubric contract, verdict ledger, divergence events, template lint, nodding-loop detector | G14 | TODO |
