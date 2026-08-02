@@ -1137,3 +1137,71 @@ through the live API.
   `tick.evaluate` porting) and it overlaps `code-implementation`, which already ships. Reconciling
   the two is a judgement about whether to replace a working template or add a second beside it,
   which is a product decision rather than a mechanical port.
+
+### Session 32 — Loops Evolution: calibration + acceptance instrumentation (`feature-wf2-loops-calibration`, PR NOT OPENED — push blocked)
+
+`workflows/judge_calibration.py` (verdict ledger, divergence records, the nodding-loop detector,
+stuck detection, the judge canary, the hardening-loop exemplars) + six anti-pattern lint rules and
+the five-moves audit in `template_lint.py`. 11697 tests (+68), lint clean at 609 files.
+
+**Deviations and findings:**
+
+(a) **FIVE false positives from my own first draft of the lint rules — all on the SHIPPED
+  library, none of them real template defects.** In order: the amnesiac rule accepted only
+  `{{last.}}`/`{{iter.}}` when `{{nodes.}}` inside a loop body is equally cross-iteration
+  state; the nodding rule demanded a field literally named `verdict` when `refuted: boolean`
+  routes just as well; it demanded `tools_posture: verify` from `infer` nodes, which have no
+  tools BY DEFINITION; the tangled rule required `progress_field` when `streak` alone is a
+  valid `until_dry` exit, and required a literal int `max_iterations` when a binding
+  (`{{inputs.rounds}}`) is a perfectly good cap; and the blind rule only recognised verifiers
+  with "judge" in the name, missing `verify_refute`, `completeness_critic` and `round_gaps`.
+
+  Each was fixed **at the rule**, not exempted at the call site. `KNOWN_ANTI_PATTERNS` is
+  empty and a test asserts it stays empty. A lint that cries wolf on the library it ships
+  with is a lint authors learn to ignore, which is worse than no lint.
+
+(b) **I nearly shipped one of those false positives as a "real finding".** I had written
+  `audit-sweep`'s amnesiac flag into the queue as a genuine latent defect with a reasoned
+  exemption — and the `test_the_known_finding_is_still_real` self-check I wrote alongside it is
+  what proved the exemption wrong once the rule was fixed. Worth recording because the
+  plausible-sounding write-up was the dangerous part, not the rule.
+
+(c) **A verdict record keeps DISCARDED iterations** (`status="discard"`). A ledger of only the
+  verdicts that stuck cannot answer "does this judge ever reject?", and excluding them would
+  let a template look like a nodder precisely BECAUSE its judge was forcing rewinds.
+
+(d) **`pass_rate` and `median_overall` return None, not 0.0, on no data** — 0.0 reads as
+  "always fails", which is a different and alarming claim.
+
+(e) **`false_pass_rate` is reported SEPARATELY from any accuracy figure.** An instrument that
+  is 90% accurate but wrong in the dangerous direction every time is not 90% good, and one
+  averaged number would hide exactly that.
+
+(f) **A probe that could not RUN is not a blind judge.** `calibrated=None` is distinct from
+  `False`; declaring a judge untrustworthy because the probe broke would halt runs for an
+  infrastructure problem. The separation threshold is asserted equal to
+  `loop/instrument._CANARY_MIN_SEPARATION` — a second threshold would make the same judge
+  trustworthy to one caller and blind to another.
+
+(g) **A malformed `scores` field raised `AttributeError`,** which my `except (TypeError,
+  ValueError)` did not name — so the "degrades gracefully" docstring was false. Fixing it
+  raised the better question: such a row is still USABLE (its verdict is what the detector
+  counts), so it is now kept with empty scores rather than dropped. Dropping it would lose a
+  real rejection over a secondary field.
+
+(h) **`OBSTRUCTING` (never passes) does NOT block a template from becoming default,** while
+  `NODDING` does. Both are broken, but obstruction fails work that should pass — visible and
+  annoying — whereas nodding passes work that should fail, invisibly.
+
+(i) **Validated against the REAL Bedrock verdict captured in session 29:** it journals, round-
+  trips with its `prompt_version` intact, reads as `discriminating` inside a realistic 10-run
+  history, and a simulated human override becomes a labelled `false_reject` exemplar with the
+  user's reasoning verbatim.
+
+(j) **NOT DONE:** the calibration is not yet CALLED from the run path — nothing emits
+  `judge_verdict` / `judge_divergence` events yet (the kinds are registered and the FE union
+  knows them, from session 30). Wiring the emit points means touching the controller tick and
+  the human-override UI, which is session 33's FE work. The `probe_judge` template-save-time
+  hook is likewise deferred: `assess_separation` is pure and tested, but the probe that FEEDS
+  it needs a live model call on the save path, and putting a model call in a save is a latency
+  decision worth making deliberately rather than in passing.

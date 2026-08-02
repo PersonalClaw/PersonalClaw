@@ -906,3 +906,27 @@ These loop-engine behaviors are baked into `gateway._fire`, the watchdog, and th
 
 - **DISCOVERY — `continue_on_error` is not an engine key.** I invented it; the bundled action-arg
   guard caught it. The real form is `allow_failure` inside `with`.
+
+- **2026-08-01 — CODE DONE (push blocked) — Calibration + acceptance instrumentation (session 32).**
+  Branch `feature-wf2-loops-calibration`. `workflows/judge_calibration.py`: the verdict ledger
+  (discarded iterations included), divergence records with a typed direction, the nodding-loop
+  detector with a generous minimum sample, free stuck detection, the judge canary sharing
+  `loop/instrument`'s threshold, and hardening-loop exemplars ordered dangerous-direction-first.
+  Six anti-pattern lint rules + the five-moves audit in `template_lint.py`. 11697 tests.
+
+- **DISCOVERY — five false positives from my own first draft of the anti-pattern rules,** every one
+  on the shipped library and none a real template defect: `{{nodes.}}` is cross-iteration state;
+  `refuted: boolean` routes as well as `verdict`; `infer` nodes have no tools by definition;
+  `streak` alone is a valid until_dry exit and a bound `max_iterations` is a valid cap; and
+  verifiers exist under the names `verify_refute`, `completeness_critic` and `round_gaps`. All
+  fixed at the rule; `KNOWN_ANTI_PATTERNS` is empty and a test keeps it that way.
+
+- **DISCOVERY — I nearly recorded one of those as a genuine defect,** complete with a reasoned
+  exemption, and the self-check test written alongside it is what disproved it. The plausible
+  write-up was the risk, not the rule.
+
+- **NOT DONE — the calibration is not wired into the run path.** Nothing emits `judge_verdict` /
+  `judge_divergence` yet; the kinds are registered and the FE union knows them (session 30), but the
+  emit points sit in the controller tick and the human-override UI, which is session 33. The
+  save-time `probe_judge` hook is deferred deliberately: a model call on the save path is a latency
+  decision, not a detail.
