@@ -809,3 +809,64 @@ Where each new piece plugs into the pluggable-provider architecture (nothing her
   the stated fallback. `revise{step_ref, comment}` exists as the patch grammar but is not yet an
   answer verb on `workflow_resume` — that is an engine-surface change belonging with the autonomy
   work in session 44.
+
+### 2026-08-02 — session 44 (autonomy + risk) DONE
+
+`workflows/autonomy.py` (new): the risk-signal registry, autonomy floors and offers, HITL/AFK
+attention typing compiled to the engine's own `require_hitl`, the confirmation matrix, the three
+interrupts, and earned trust. `_autonomy_surface` ships it from `_plan` alongside the review surface
+from session 43. 82 tests in `tests/test_workflows_autonomy.py`.
+
+- **The registry reuses the engine's `RiskLevel` rather than declaring a second vocabulary.** A
+  private gradient would drift from the one the approval UI already renders, and two gradients
+  disagreeing about the same node is how a user learns to ignore both. Every signal states a
+  CONSEQUENCE, not just a name: an informed-consent question built from `destructive_op hit` is not
+  informed, while "this can delete data that cannot be recovered" is a decision a person can make.
+
+- **DISCOVERY — three measured false positives, all found by scanning the SHIPPED library rather
+  than fixtures.** (1) A bare `\btruncate\b` matched `| truncate(1500)` and flagged THREE templates
+  as destructive for shortening a string in a prompt. (2) A bare `\bcredential\b` fired on
+  `audit-sweep`'s finder, whose entire job is to look FOR credential-handling problems — reading
+  about a risk is not taking one. (3) Generic production patterns fired on "write a report about our
+  production architecture". All three are now action-shaped (verb + target, or write-verb +
+  preposition), and each is pinned by a regression test. A scanner that fires on a template doing
+  its job gets suppressed wholesale, and the real findings go with it.
+
+- **DISCOVERY — the provider check `continue`d past the pattern scan.** A `run-script` node whose
+  argument said `drop table users` was reported only as "uses the `run-script` provider" — the same
+  verdict on far worse evidence. Capability and content are now both recorded, because a reviewer
+  triaging by evidence needs to see which one fired.
+
+- **The scan reads action ARGUMENTS, not just prompts.** A `bash` node's danger is entirely in its
+  command; a scan that read only prompts would miss every action node's actual payload. A command
+  assembled from a binding cannot be scanned at plan time at all, which is why `bash` is dangerous
+  by capability whatever its literal argument says.
+
+- **Silent honor and silent refusal are both failures.** Honoring `unattended` on a plan that deletes
+  production is the obvious one; quietly downgrading it is the one that makes a user distrust the
+  control and stop reading it. A request above the ceiling produces exactly ONE consent question
+  naming the consequence. Live-measured: `code-implementation` (uses `bash`) is capped at per-stage
+  with `unattended` absent from the offer, while `publish-article` earns unattended and still stops
+  at its approval gate — `compile_require_hitl(..., Mode.UNATTENDED)["approve"]` is `True`, because
+  an approval gate exists to pause for a person and no mode retires it.
+
+- **A single failure RESETS earned trust rather than averaging it away.** Twenty clean runs and one
+  failure earns nothing: a template that broke once is one whose next run deserves eyes, and
+  averaging is how earned trust becomes a rubber stamp. A first run is report-only for the same
+  reason — the cost is one extra approval, and the alternative is discovering the behaviour by having
+  it happen. The commitment stamps mode, executor and environment TOGETHER, since
+  unattended-in-a-worktree and unattended-on-the-real-filesystem are different grants.
+
+- **An author's explicit `require_hitl` is never downgraded.** The author knows something the scanner
+  does not, and a scanner that overrode them would make the declaration useless. Containers are not
+  typed at all: a sequence is a scheduling policy, and putting a stop on something that does no work
+  is a pause a user cannot act on.
+
+- **NOT DONE:** permission pre-approval as durable session allow-rules needs the approval store's
+  scope model (an autonomy-mode grant is not a tool grant, and conflating them would widen a tool
+  approval into a mode approval); per-template p50/p95 spend needs Run Ledger aggregation that the
+  Evaluation-Substrate plan owns; mid-run demotion (dropping from unattended to per-stage when a
+  risk appears at runtime rather than plan time) needs a controller seam this session does not touch
+  — `should_interrupt` is the plan-time half of it. `revise{step_ref, comment}` as an answer verb on
+  `workflow_resume` carried forward from session 43 remains unwired for the same reason: it is an
+  engine-surface change, and the seam belongs with the entry surfaces in session 45.

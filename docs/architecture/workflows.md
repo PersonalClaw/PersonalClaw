@@ -73,6 +73,7 @@ while not terminal:
 | `generation.py` | the generated planning prompt, the mechanical self-check, repair-not-regenerate, and the decline path |
 | `contracts.py` | derived parameter schemas, per-stage done-means contracts and their lint, and blocking-vs-open decision typing |
 | `revision.py` | typed merge-by-id patches, the NO_UPDATE sentinel, TTL'd draft sketches, and the announce-block review surface |
+| `autonomy.py` | the risk-signal registry, autonomy floors and offers, HITL/AFK typing compiled to `require_hitl`, the confirmation matrix, the three interrupts, earned trust |
 | `scope.py` | filesystem write-scope enforcement by post-hoc diff |
 | `watchdog.py` | the supervisor: adoption, reaping, per-run publishing |
 
