@@ -91,6 +91,7 @@ while not terminal:
 | `verified_done.py` | engine-owned criterion execution over the `loop/gates` tristate, pass-state gating, the three-actor transition matrix, the weighted acceptance schema, cascade-fail over the binding graph, the stuck-work sweep and idempotent timing |
 | `confirmation.py` | the one durable ConfirmationRequest record: construction-time redacted previews, per-type expiry policy, the four-verb resolution vocabulary, `require_hitl`, per-stage mute, tool profiles and the DagView approve/deny card |
 | `surfacing.py` | SOP surfacing discipline: the `surface_mode` ladder (off/passive/suggest), trigger-phrase lint + collision check, the shared `!`-negative veto plus planning/paste/named-workflow vetoes, one-source-two-wrappers rendering with a verbatim digest fence, per-def graduation, SOP migration and the reachability doctor |
+| `surfacing_channels.py` | The two non-semantic surfacing channels plus the contracts that gate a suggestion: cadence/recency (freshness gradient, overdue-first sort, once-daily escalation throttle, last-completed derived from real run history), workspace fingerprint packs (weighted globs, bounded scan, propose-don't-enable with per-project dismissal), layered scope resolution with visible shadowing and per-stage overlays, the three-state requirements preflight, schema-driven parameter pre-fill, and the reachability doctor + trigger-accuracy fixtures |
 | `scope.py` | filesystem write-scope enforcement by post-hoc diff |
 | `watchdog.py` | the supervisor: adoption, reaping, per-run publishing |
 

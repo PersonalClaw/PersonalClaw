@@ -829,3 +829,73 @@ Decisions worth recording:
 
 - **NOT DONE:** the cadence and fingerprint channels, layered scope resolution, parameter pre-fill,
   and the reachability doctor surface are all session-59 scope, as the queue splits them.
+
+### S59 — Surfacing channels + resolution (`workflows/surfacing_channels.py`, 113 tests) — DONE
+
+Probed the seams live before writing a line. Three findings, one of which changed the design:
+
+- **The `create-task` hook silently drops unknown keys.** Measured: an action config carrying
+  `linked_def` and `workflow_binding` returned `success=True` and created a task whose
+  `workflow_binding` was `None`, with neither value in the persisted JSON —
+  `CreateTaskActionProvider.execute` renders `title_template`/`body_template` and passes through
+  only `priority`/`project`/`assignee`/`due`/`labels`. The plan's "materialized tasks carry an
+  explicit bidirectional link block" would therefore have been a control that runs, reports
+  success and enforces nothing. **DEVIATION:** the link block lives in the cadence ledger (which
+  has to hold the throttle timestamp anyway, so one record holds both directions), and
+  `escalation_action` emits ONLY keys the provider actually reads — pinned by a test that fails if
+  a future key is added blind.
+
+- **`WorkflowDef` has no `scope`, `cadence_days`, `fingerprint` or `overrides` field yet**
+  (measured against `dataclasses.fields`). So this session's records are standalone and def-side
+  wiring belongs to the session that adds the fields. Asserting against a field that does not
+  exist is how a test passes while the feature is absent.
+
+- **A pre-existing suite-wide test-isolation leak, root-caused and fixed.** `test_workflows_api`'s
+  preflight-422 test failed in the full xdist run at 13715→13826 tests purely because the
+  distribution shifted. Bisected to THREE files that register provider entries into the
+  process-global `get_default_registry()` singleton and never remove them
+  (`test_can_resolve_use_case`, `test_provider_resolution_unify`, `test_provider_create_bedrock`).
+  A leaked CHAT-capable entry makes `preflight`'s `can_resolve_use_case` probe succeed, so the run
+  STARTED (202) instead of being refused (422) — a workflow ran because an unrelated file left a
+  model provider behind. Confirmed pre-existing by reproducing the two-file pairing on a clean
+  tree. Fixed with ONE snapshot-and-restore autouse fixture in `tests/conftest.py` alongside the
+  other process-global guards; a name-list fixture was tried first and missed `MyCloud2`, which is
+  why the shipped version snapshots. Registered TYPES are left alone (idempotent, and a type with
+  no entry resolves nothing).
+
+Decisions worth recording:
+
+- **NEVER_RUN is its own freshness band.** A checklist authored yesterday has not failed to run;
+  reporting it as maximally stale on day one trains a user to ignore the column. It surfaces
+  overdue-first but does NOT auto-materialize — an authored-and-never-run def is a draft, and a
+  "you are overdue" task for something never started reads as the system malfunctioning.
+- **Lateness sorts PROPORTIONALLY.** Absolute lateness parks every long-cadence def permanently at
+  the top of the list.
+- **Last-completed is DERIVED from `store.list_runs`,** never cached on the def: a cached stamp and
+  the run table disagree the first time a run is deleted. A broken store degrades to "never run"
+  rather than raising — the channel runs inside a turn.
+- **Escalation throttles per DAY, not per tick,** as the plan states; a tick-rate throttle puts one
+  task on the board per scheduler pass.
+- **A pack with no predicates scores 0.0, not 1.0.** A pack matching everything would propose
+  itself in every directory — the over-firing failure this channel exists to avoid. The scan is
+  bounded (`MAX_SCAN_FILES`) and skips vendor dirs: a fingerprint inside `node_modules` describes a
+  dependency, not this project.
+- **`propose_packs` carries `enabled_anything=False` as a FIELD.** Propose-don't-enable as
+  something a test can check, not a docstring claim.
+- **A DISABLED def neither shadows nor wins.** Calling it shadowed would tell the user something
+  else is winning when nothing is. An unknown scope sorts widest, so a scope this build cannot read
+  never shadows a def the user explicitly wrote.
+- **Availability is probed in order (installed → enabled → available)** and a probe that RAISES
+  reads as UNAVAILABLE. An availability hook is code from a removable bundle; treating its crash as
+  a pass surfaces a suggestion that dies at dispatch — the exact failure preflight prevents.
+- **`all_filled` is re-derived from the schema,** never trusted from the extractor, and
+  `suggestion_inputs` never emits a placeholder: a placeholder passes the engine's presence check
+  and then executes a step against a made-up value.
+- **The doctor accepts ANY channel** (trigger, cadence, pack, index). Checking only `match_text`
+  would report every cadence-only def as broken, which trains a user to ignore the doctor. `off` is
+  not a finding — it is a deliberate choice and explicit invocation always works.
+
+- **NOT DONE:** the def-side fields (`cadence_days`, `scope`, `fingerprint`, `overrides`) and the
+  templates-list UI (freshness gradient, scope chips, grouped pack proposal) — the plan assigns the
+  surfaces to §7/session 7, and the fields land with the def-model session. The semantic channel
+  (channel 1) is untouched by design: it is the existing mechanism.
