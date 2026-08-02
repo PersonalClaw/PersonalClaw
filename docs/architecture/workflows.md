@@ -83,6 +83,7 @@ while not terminal:
 | `batch_compile.py` | batch `subagent_run` compiled to a `parallel[stage...]` run: the N≥2 threshold, capability classes, the single-writer lint, static depth rejection, typed leaf outputs compiled to `output_contract`, and the safety-filtered recall view |
 | `workspace.py` | the `workspace` provisioning block (mode/preserve/setup/teardown/env), reserved-var rejection, the secret-filtered spawn env with presence-only flags, and tolerant `.folder.yaml` contracts |
 | `ownership.py` | run-owned session keys (`workflow:<run>:<node>`), the SEL + prompt-use-case registrations, incognito/temporary inheritance read from both the durable line and the live registry, and the engine-level learning-node skip |
+| `needs_input.py` | the NeedsInputItem card (block kind, blocker, attempted, evidence, recommendation, one decision), owner binding, once-only staleness re-notify, and the refs round trip |
 | `scope.py` | filesystem write-scope enforcement by post-hoc diff |
 | `watchdog.py` | the supervisor: adoption, reaping, per-run publishing |
 

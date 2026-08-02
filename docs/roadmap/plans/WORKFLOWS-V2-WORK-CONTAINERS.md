@@ -748,3 +748,67 @@ entry; `engine.dispatch_stage` gained the skip and the owned parent key. 79 test
   by §5.1 itself (it touches `session_map.py`/`sync_bridge.py`/Slack bridging); only new `workflow:`
   keys are introduced here. The completion-summary mirror into the launching session needs the
   blocking-run path.
+
+### 2026-08-02 — session 51 (needs-input inbox) DONE
+
+`workflows/needs_input.py` (new): the NeedsInputItem card, owner binding, once-only staleness
+re-notify, and the refs round trip. `attention.raise_gate_item` now attaches the structured card. 71
+tests.
+
+- **Most of this session's nominal scope ALREADY EXISTED and was not rebuilt.** `attention.py` already
+  projects a waiting gate into the inbox via `emit_attention_item`, already dedups per
+  `(run, instance_path, epoch)`, already carries the resume token in `refs`, and `ItemKind.NEEDS_INPUT`
+  plus `NON_CHANNEL_KINDS` were already registered. The genuine gaps were the STRUCTURE (blocker /
+  attempted / evidence / recommendation, one decision), owner binding, and staleness re-notify.
+
+- **DISCOVERY — the block classifier matched failure classes that do not exist.** The first version
+  keyed on `dependency`, `capability` and `config`; the engine's real `FailureClass` values are
+  `user`, `transient`, `network`, `permission`, `protocol`, `budget`, `timeout`, `internal`. So every
+  capability failure fell through to "a decision" and the card asked the user to decide about a
+  missing credential instead of telling them to add one. Fixed by enumerating the real enum, plus a
+  parametrized sweep over EVERY value so a future class cannot land on a default by accident. Two
+  consequences of reading the real list: `budget` is a capability block (a spent budget needs a human
+  to raise it), and `protocol`/`internal` are deliberately NOT transient — filing a bug as retryable
+  means it retries forever while nobody is told.
+
+- **A transient block is not user-actionable.** Surfacing a rate limit as a decision asks the user to
+  do the system's waiting, and it trains them to click through cards — which is how a real approval
+  gets clicked through too.
+
+- **Owner binding is anti-hijack, and an UNBOUND card is deliberately open.** Only the requesting
+  session may satisfy an owned item, because a gate surfaced into a shared channel would otherwise be
+  answerable by anyone who sees it. But a card with no owner is answerable from anywhere: a run the
+  user started themselves should be answerable from whichever surface they are at, and requiring an
+  owner match there would mean starting a run in chat and being unable to answer it from the
+  dashboard. The refusal NAMES the owner, since "not allowed" leaves the user unable to act.
+
+- **Staleness reminds exactly once, and the counter is what makes the cap real.** Reminding without
+  incrementing would remind every sweep, which is the failure the cap exists to prevent. A `seen`
+  card can still be reminded — seen is the read/unread boundary, not an answer, and a card the user
+  glanced at and left is exactly what a reminder is for.
+
+- **The card rides the EXISTING free-form `refs` dict.** The inbox is a general attention store shared
+  with channel messages, so widening `InboxItem`'s schema for one item kind would make every other
+  kind carry empty workflow fields. Today's keys (`workflow`, `workflow_name`, `workflow_node`,
+  `resume_token`) are preserved verbatim so a surface written against them keeps working, and the
+  card's inputs are all OPTIONAL — a required argument would have made the existing gate path a
+  breaking change for a payload most callers cannot yet supply.
+
+- **`attempted` earns the recommendation its credibility.** The same suggestion reads as a guess
+  without it and as a considered next step with it. Failed attempts are KEPT: a log showing only
+  successes would make a five-attempt struggle look like a first-try block, and the user would wonder
+  why the system gave up so fast. Evidence is trimmed to 600 chars because an inbox row is a glance
+  and the full detail is one deep link away.
+
+- **Validated live against a real `InboxStore`** (via the `live_store` type-check seam, which the
+  module's own docstring warns is isinstance-checked precisely so a MagicMock cannot absorb real
+  writes): the row the inbox holds carries the card, the evidence is trimmed, the owner blocks a
+  stranger, and the legacy refs keys survive.
+
+- **NOT DONE:** journal-event reification (§6.1 asks for needs-input/approval as first-class journal
+  event types so the inbox is a pure projection) — the emit path is imperative today and converting it
+  is a journal-format change that Self-Verification's replay harness gates; `permission_suggestions` +
+  `updated_input` on the reply contract (modify-and-approve) needs `workflow_resume`'s answer grammar,
+  the same engine-surface change carried forward from S43/S45; the cross-project inbox aggregation
+  view, count pills, digest-batching and the Open Decisions lane are FE work; OS-level notification
+  routing already exists behind `notification_allowed()` and is deliberately untouched.
