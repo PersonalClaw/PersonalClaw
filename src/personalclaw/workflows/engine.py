@@ -617,6 +617,20 @@ async def dispatch_action(
 
     action_config = dict(cfg.get("with") or cfg.get("config") or {})
     payload = dict(cfg.get("payload") or {})
+    # Run/node provenance in the payload, so a provider can attribute what it wrote without
+    # the template having to restate ids it cannot know. `knowledge-persist` auto-fills
+    # `source_ref` from these — without them every persisted item would be unattributed, and
+    # an unattributed knowledge item cannot be traced back to the run that made it.
+    # Node provenance in the payload, so a provider can attribute what it wrote without the
+    # template restating an id it cannot know. `knowledge-persist` auto-fills `source_ref`
+    # from this — an unattributed knowledge item cannot be traced back to what made it.
+    #
+    # NODE id only: `dispatch_action` does not receive the run, and neither does
+    # `BindingContext` carry it. Threading the run id down here would mean changing the
+    # signature of every dispatcher plus the tick loop that calls them, which is a wider
+    # change than this session's scope — so the provider degrades to a node-scoped ref and
+    # says so, rather than the engine growing a parameter nothing else needs yet.
+    payload.setdefault("node_id", getattr(node, "id", "") or "")
     context = ActionContext(
         event="workflow_node", context=str(cfg.get("context", "") or ""), payload=payload
     )

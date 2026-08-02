@@ -95,3 +95,19 @@ def _ensure_default_providers_registered() -> None:
         )
 
         register_action_provider(ArtifactUpdateActionProvider())
+    if "knowledge-persist" not in _providers:
+        # KNOWLEDGE-SYNTHESIS §2.1/§2.2: the zero-token write/read pair a synthesis template
+        # uses, so a retrieve → synthesize → persist pattern spends ONE model call rather than
+        # three. Added to ALLOWED_HOOK_PROVIDERS in the SAME commit — a provider in one set but
+        # not the other is the mismatch that makes a trigger save and then fail to run.
+        from personalclaw.action_providers.knowledge_persist_provider import (
+            KnowledgePersistActionProvider,
+        )
+
+        register_action_provider(KnowledgePersistActionProvider())
+    if "knowledge-retrieve" not in _providers:
+        from personalclaw.action_providers.knowledge_retrieve_provider import (
+            KnowledgeRetrieveActionProvider,
+        )
+
+        register_action_provider(KnowledgeRetrieveActionProvider())

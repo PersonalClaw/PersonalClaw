@@ -593,3 +593,29 @@ Templates are the plan's proof-of-life — field-tested shapes with real daily c
   module is pure and store-agnostic so the session-35 provider pair (`knowledge_persist` /
   `knowledge_retrieve`) can be written against it without re-deriving the identity rules. The `ops`
   payload, `also_artifact` dual-write and async enrichment/backfill belong to that pair.
+
+- **2026-08-01 — CODE DONE (push blocked) — The provider pair (session 35 of the WF2 queue).**
+  Branch `feature-wf2-knowledge-providers`. `knowledge-persist` (idempotent, error-as-return, claims
+  with mention accumulation, tags, TTL, FTS sync) and `knowledge-retrieve` (degradation ladder with
+  strategy telemetry, create-safety, freshness, per-result detail caps, always-first overview,
+  coverage-gap reporting). Both registered in the action registry AND `ALLOWED_HOOK_PROVIDERS` in the
+  same commit. Node provenance threaded through `dispatch_action`. 11870 tests.
+
+- **DISCOVERY — six defects, all found by measuring rather than reading.** `items_fts` is an
+  external-content index with NO triggers, so a plain SQL write is not searchable and every retrieve
+  degraded to substring silently; the FTS delete must read the OLD values before the row is rewritten
+  (a view over the live row returns the new ones, so the delete removed nothing); the hybrid
+  retriever fuses with RRF so its ~0.033 scores were rejected wholesale by a cosine-space 0.30 cliff;
+  it does not return `kind` or the timestamp columns, so the kind filter matched nothing and freshness
+  read zero; both tag tables have NOT NULL timestamps, so every tag insert failed inside a swallowing
+  `except`; and `ActionContext` has no `run_id` attribute, so provenance read as "unknown".
+
+- **Validated end-to-end through the live engine:** a three-node retrieve → persist → confirm
+  template. First run: coverage gap, create, then a hybrid hit with `safety=exists`. Second run of the
+  same template: the SAME `item_id`, `created: false`, "identical content already stored — idempotent
+  no-op". That is the property the whole session exists to provide.
+
+- **NOT DONE:** the `ops` payload, `also_artifact` dual-write, retrieve-time `read_when` matching, the
+  `coverage_gap` ledger event, and the async enrichment/backfill loop — the last is a deliberate
+  best-effort hook whose target does not exist yet, and the backfill covering what the queue missed
+  belongs to session 37.
