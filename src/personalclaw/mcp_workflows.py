@@ -797,6 +797,41 @@ def _plan(args: dict[str, Any]) -> str:
     return _fmt(body, summary=f"Draft plan for: {goal}")
 
 
+def _autonomy_surface(definition: dict) -> dict:
+    """The risk scan, the autonomy offer, and the confirmations the recommended mode will raise.
+
+    Best-effort like the other surfaces. A missing autonomy block must not stop a plan reaching the
+    user — but note the asymmetry: the ENGINE's own gate policy still governs what actually runs, so
+    a failure here loses advice, never enforcement.
+    """
+    try:
+        from personalclaw.workflows import autonomy as autonomy_mod
+
+        spec = {"inputs": definition.get("inputs") or {}, "root": definition.get("root") or {}}
+        meta = definition.get("metadata") or {}
+        raw_floor = str(meta.get("autonomy_floor", "") or "") if isinstance(meta, dict) else ""
+        floor = None
+        if raw_floor:
+            try:
+                floor = autonomy_mod.Mode(raw_floor)
+            except ValueError:
+                logger.debug("unknown autonomy_floor %r — ignoring", raw_floor)
+
+        hits = autonomy_mod.scan_risk(spec)
+        offer = autonomy_mod.offer_autonomy(spec, template_floor=floor, hits=hits)
+        confirmations = autonomy_mod.build_confirmations(spec, offer.recommended)
+        return {
+            "risk": [h.to_dict() for h in hits],
+            "autonomy": offer.to_dict(),
+            "attention": {k: v.value for k, v in autonomy_mod.type_attention(spec, hits).items()},
+            "require_hitl": autonomy_mod.compile_require_hitl(spec, offer.recommended),
+            "confirmations": [c.to_dict() for c in confirmations],
+        }
+    except Exception:
+        logger.debug("autonomy surface unavailable", exc_info=True)
+        return {}
+
+
 def _review_surface(goal: str, definition: dict, routing: dict | None) -> dict:
     """The announce block, a structural cost estimate, and the plan as markdown.
 
@@ -1006,6 +1041,10 @@ def _plan_from_template(goal: str, template: str, *, routing: dict | None = None
         # ordering — detection and risk decide whether to read on; the pipeline is what they read
         # if they do.
         **_review_surface(goal, definition, routing),
+        # UP-R4/R6: what autonomy this plan may be RUN at, and what it will stop for. Computed at
+        # plan time so "this will stop you twice" is a fact before approval rather than a discovery
+        # made while waiting.
+        **_autonomy_surface(definition),
         "proposed_root": definition.get("root"),
         "template_inputs": definition.get("inputs") or {},
         # How this template is actually driven — few-shot for the edit the model is about to make.
