@@ -545,3 +545,70 @@ lineage, evidence bundles, the terminal handoff report, the append-only results 
   cockpit's structured version diffs and multi-view output tabs are FE work on the
   `contentTypes.ts` registry; the per-run file drop and outbox need the multipart ingestion route and
   its approval gate. Sessions 48-54 own the rest of section F.
+
+### 2026-08-02 — session 48 (subagent batch hardening) DONE
+
+`workflows/batch_compile.py` (new): the N≥2 threshold rule, capability classes, the single-writer
+lint, static depth rejection, typed leaf outputs compiled to the engine's existing `output_contract`,
+the lineage env, and the safety-filtered recall view. 52 tests.
+
+- **The threshold rule is the ergonomics.** N=1 stays a raw spawn — "go check X while I keep chatting"
+  is chat-native delegation, and a run record plus project resolution on it is ceremony the personal
+  feel does not survive. N≥2 compiles and gains the journal, per-branch retry, resume-after-restart
+  and fork.
+
+- **DISCOVERY — per-leaf error isolation is NOT the default, contrary to my first implementation.**
+  I emitted `on_error: "continue"` and wrote a comment claiming the container default already
+  isolated failures. Driving `derive_state` showed the opposite: a `parallel` with `join: all` (the
+  default) goes FAILED the moment one child fails, so one bad leaf would have sunk a five-way
+  fan-out — the exact inverse of "four still return". And `"continue"` is not a value the engine
+  recognizes at all (it checks `fail_run`, defaulting to `null_continue`). The compile now emits
+  `join: quorum, quorum: 1`, measured: DONE with one leaf failed, FAILED when all fail.
+
+- **DISCOVERY — four emitted config keys were read by nothing.** `workspace`, `capability`,
+  `tool_posture` and `timeout_secs` all went into node config; a grep of the engine found no reader
+  for any of them. In a module whose entire subject is least-privilege, keys that look like
+  enforcement and enforce nothing is the worst version of this bug — a caller reads
+  `"read_only": true` in the spec and believes it. Unenforced declarations now travel in a separate
+  `postures` map, and `CompileResult.unenforced()` names which seam each one still needs (the
+  tool-handler depth flag, the §4.1 workspace block, and the fact that the engine's node timeout is
+  per-RUN with no per-node override to bind to).
+
+- **Typed outputs compile into the EXISTING `output_contract`.** The engine already validates it
+  before any binding resolves; a second validator over one field would disagree eventually, with the
+  one that ran last winning silently. Schema fields with no contract equivalent are DROPPED rather
+  than approximated — an approximated check that passes malformed data is worse than no check,
+  because it is believed.
+
+- **Capability classes default to `research`** — the safe direction to be wrong in. A research leaf
+  that needed to write fails visibly and is re-declared; a mutating leaf that only needed to read has
+  ambient write access nobody asked for. The write-marker list is deliberately over-inclusive so a
+  newly-added write tool is denied by default; an allowlist of known writers would silently admit
+  every tool added after it was written. Orchestration tools are denied at EVERY depth, because a
+  leaf that can spawn can fan out without a budget and the depth counter alone would let it happen
+  once per level.
+
+- **Static depth rejection, not just a counter.** Today's no-recursion rule is prompt-level, so a
+  leaf that decided to fan out again would succeed once per level before any counter noticed. The
+  depth check also fires below the compile threshold: a single task at depth is still a spawn a leaf
+  should not be making, and returning `compiled: False` with no finding would read as "nothing to see
+  here".
+
+- **A research leaf declaring writes is an ERROR, a multi-writer collision is a WARN.** The first is a
+  contradiction only the author can resolve; the second may be disjoint regions of one directory, and
+  refusing would block a legitimate fan-out — but it must be said, because two workers writing one
+  file lose an update while both report success.
+
+- **The recall view fails CLOSED.** If `security.redact` raises, the view is withheld rather than
+  shown unredacted: failing closed costs the projection, failing open costs a credential. Redaction
+  goes through that existing chokepoint rather than a local pattern set, because a second redactor
+  drifts and the drift shows up as a credential in a UI.
+
+- **NOT DONE:** the actual `mcp_subagents.subagent_run` cutover to call `compile_batch` — the compile
+  and its contract are the mechanism, but routing the tool through it needs the spawn path to apply
+  the postures, and applying them needs the tool-handler seam that does not exist yet (§3 says so
+  explicitly: "NOT per-context tool filtering, which doesn't exist"). Shipping the route without the
+  seam would replace a working fire-and-forget batch with one that claims least-privilege it does not
+  have. Also not done: TTL-bound scoped file sessions, the sibling-awareness wrapper, N-variant
+  comparison metrics, and the agent-roster projection + drift check (R16) — the roster is a
+  `config.json agents{}` projection, which is a Platform-Legibility-shaped change, not a batch one.
