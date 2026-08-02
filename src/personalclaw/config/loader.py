@@ -1329,6 +1329,25 @@ class KnowledgeConfig:
             "summary loses more detail than it saves space.",
         ),
     )
+    session_brief_max_tokens: int = field(
+        default=800,
+        metadata=_meta(
+            "Session Brief Budget",
+            "Token ceiling for the project digest injected at the start of every workflow run in "
+            "a project. Small by default because it is paid on EVERY run — a generous budget "
+            "becomes a permanent cost nobody attributes to the right feature. Items are dropped "
+            "whole when the budget binds, and the brief says how many it left out.",
+        ),
+    )
+    conflict_model_pass: bool = field(
+        default=True,
+        metadata=_meta(
+            "Semantic Conflict Check",
+            "After the free deterministic check, send claims it could not separate to one "
+            "fast-model call to look for contradictions. Off leaves only the provable conflicts "
+            "flagged — cheaper, and it still catches the numeric and polarity cases.",
+        ),
+    )
     consolidate_min_hours: int = field(
         default=6,
         metadata=_meta(
@@ -2938,6 +2957,10 @@ class AppConfig:
                 lint_every_n_persists=int(knowledge_data.get("lint_every_n_persists", 12) or 12),
                 consolidate_min_cluster=int(knowledge_data.get("consolidate_min_cluster", 5) or 5),
                 consolidate_min_hours=int(knowledge_data.get("consolidate_min_hours", 6) or 6),
+                session_brief_max_tokens=int(
+                    knowledge_data.get("session_brief_max_tokens", 800) or 800
+                ),
+                conflict_model_pass=bool(knowledge_data.get("conflict_model_pass", True)),
             ),
             security=SecurityConfig(
                 denied_commands=[

@@ -667,9 +667,9 @@ def test_the_lint_template_defaults_to_not_applying():
 
 
 def _open(home):
-    from personalclaw.knowledge.store import KnowledgeStore
+    from personalclaw.knowledge.store import KnowledgeStore, knowledge_db_path
 
-    return KnowledgeStore(db_path=str(home / "knowledge" / "knowledge.db"))
+    return KnowledgeStore(db_path=str(knowledge_db_path()))
 
 
 def _count(home) -> int:

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import pathlib
 from collections import defaultdict
 from datetime import datetime
 from uuid import uuid4
@@ -193,6 +194,25 @@ class SimpleDiGraph:
 
     def predecessors(self, nid: str):
         return iter(self._rev.get(nid, {}))
+
+
+def knowledge_db_path() -> pathlib.Path:
+    """THE knowledge database path. One store, one path.
+
+    `<home>/workspace/knowledge/knowledge.db` — the path the dashboard's `AppState` has always
+    used. Measured live: the providers were opening `<home>/knowledge/knowledge.db` instead, so a
+    workflow wrote to a second database the UI could never read. Both writes "succeeded", both
+    reads "worked", and the store the user browsed simply never contained what their workflows
+    persisted. A split-brain with no error on either side.
+
+    Every knowledge reader and writer must come through here rather than composing the path
+    again, because a second copy of the path is how the split-brain happened in the first place.
+    """
+    from personalclaw.config.loader import config_dir
+
+    path = config_dir() / "workspace" / "knowledge" / "knowledge.db"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 class KnowledgeStore:

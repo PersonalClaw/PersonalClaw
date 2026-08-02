@@ -438,6 +438,6 @@ def test_the_engine_threads_node_identity_into_the_action_payload():
 
 
 def _open(home):
-    from personalclaw.knowledge.store import KnowledgeStore
+    from personalclaw.knowledge.store import KnowledgeStore, knowledge_db_path
 
-    return KnowledgeStore(db_path=home / "knowledge" / "knowledge.db")
+    return KnowledgeStore(db_path=str(knowledge_db_path()))

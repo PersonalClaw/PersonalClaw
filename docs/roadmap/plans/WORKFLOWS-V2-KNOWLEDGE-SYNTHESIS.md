@@ -684,3 +684,40 @@ Templates are the plan's proof-of-life — field-tested shapes with real daily c
   so filing there needs either a seventh kind or a mislabel — the extension belongs to the flywheel
   plan that owns the enum. The template persists a TTL'd `probe` tagged `proposal` instead.
   Contradiction-at-persist (§3.2) and typed-edge inference are session 38's.
+
+- **2026-08-01 — CODE DONE (push blocked) — Contradiction + retrieval polish (session 38 of the WF2 queue).**
+  Branch `feature-wf2-contradiction`. `knowledge/contradiction.py` + `knowledge/session_brief.py`, the
+  persist-time conflict pass with typed-edge writes, the `fenced_sources` binding filter, read-only
+  conflict/relations routes, a `ConflictPanel` Knowledge view, two config knobs. 12123 tests.
+
+- **DISCOVERY — a PRE-EXISTING split-brain in the knowledge store path.** The dashboard's `AppState`
+  opens `<home>/workspace/knowledge/knowledge.db`; every provider from sessions 35-38 composed
+  `<home>/knowledge/knowledge.db`. Workflow-persisted knowledge landed in a second database the UI
+  could never read — both writes "succeeded", both reads "worked", and the browsed store simply never
+  contained what workflows wrote. Found only by driving the new conflicts route live after a workflow
+  had written a conflict. Now ONE `knowledge_db_path()` in `store.py`, all four call sites through it,
+  plus a test asserting no module composes the path itself.
+
+- **DISCOVERY — six more silent-failure bugs.** The numeric conflict branch skipped the similarity
+  gate (two unrelated properties of one subject read as a conflict); the prose-negation rule was
+  UNREACHABLE behind the SPO gate, which requires the very decomposition those statements fail;
+  plain Jaccard is the wrong instrument for a polarity comparison because negating ADDS tokens
+  (measured 0.60 vs a 0.75 floor — added `core_similarity`); conflict details built from the
+  normalized object lost the decimal point; the neighbour scan searched FTS for CLAIM text, which
+  is not in the index, so it found nothing unless a claim echoed its item's title; and the edge
+  write used RUN provenance as a row id, so the foreign key silently wrote nothing while the
+  conflict record looked correct.
+
+- **DEVIATION — no resolve endpoint, deliberately.** Both claims are always kept and the precedence
+  ladder returns "" for two same-tier sources. Deciding a conflict is a judgement about the sources;
+  a resolve route would invite the system to discard evidence irreversibly.
+
+- **Validated live:** a workflow persisted two contradicting claims, the conflict was flagged at
+  ingest with `prefer` favouring the user-origin decision, both API routes returned it (edges from
+  both directions with resolved titles), and a second run read `{{brief.count}} = 2` with the
+  decision ranked first and every item fenced.
+
+- **NOT DONE:** the model-tier conflict pass is built and tested but unwired to a live model — that
+  needs a `stage` node, since an LLM call inside an action provider is what the action/stage split
+  exists to prevent. Background typed-edge inference beyond `contradicts` is parse-ready but unwired.
+  The `coverage_gap` → persist-proposal loop and the template slate are session 39's.

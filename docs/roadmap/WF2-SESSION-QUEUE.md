@@ -102,7 +102,7 @@ mandatory.
 | 35 | The provider pair: `knowledge_persist` + `knowledge_retrieve`, allowlist, native `search()`, three-node pattern end-to-end | G16 | ✅ CODE DONE — PUSH BLOCKED |
 | 36 | Engine additions: `until_cancelled` loop mode + seen-set, `{{siblings.*}}`/`{{previous.output}}`, buffer-seal wait, adaptive delay clamp | G17 | ✅ CODE DONE — PUSH BLOCKED |
 | 37 | Consolidation + maintenance: reflect mechanics, `knowledge-health`/`lint`/`gap-healing` templates, proposal routing, differential refresh | G17 | ✅ CODE DONE — PUSH BLOCKED |
-| 38 | Contradiction + retrieval polish: persist-time conflict pass, typed-edge inference, contradiction UI, Session Brief, fencing filter | G18 | TODO |
+| 38 | Contradiction + retrieval polish: persist-time conflict pass, typed-edge inference, contradiction UI, Session Brief, fencing filter | G18 | ✅ CODE DONE — PUSH BLOCKED |
 | 39 | Template slate + long-run validation (idempotent re-runs, bounded cycle cost, seen-set across restart) | G18 | TODO |
 
 ## E. Universal Planning (`-UNIVERSAL-PLANNING.md`) — needs engine + Loops templates
@@ -1544,3 +1544,85 @@ knowledge draft, so filing there would mean either a seventh kind or mislabellin
 persists a TTL'd `probe` item tagged `proposal` instead, and the enum extension belongs with the
 flywheel plan that owns it. Contradiction detection at persist time (§3.2) and the typed-edge
 inference pass are session 38's.
+
+### Session 38 — Knowledge Synthesis: contradiction + retrieval polish (`feature-wf2-contradiction`, PR NOT OPENED — push blocked)
+
+`knowledge/contradiction.py` (two-tier conflict detection, source-precedence ladder, typed-edge
+vocabulary, memoization) and `knowledge/session_brief.py` (bounded project digest), the persist-time
+conflict pass with edge writes, the `fenced_sources` binding filter, two read-only API routes, a
+`ConflictPanel` mounted as a Knowledge view, and two config knobs. 12123 tests (+64), lint clean at
+619 files, frontend typecheck + 440 tests green.
+
+**DISCOVERY — a PRE-EXISTING split-brain in the knowledge store path, and it invalidated part of
+sessions 35-37's premise.** The dashboard's `AppState` has always opened
+`<home>/workspace/knowledge/knowledge.db`. Every provider built in sessions 35-38 composed
+`<home>/knowledge/knowledge.db` instead. So a workflow persisted knowledge into a SECOND database
+the UI could never read: both writes "succeeded", both reads "worked", and the store the user
+browsed simply never contained what their workflows wrote. Found only by driving the new conflicts
+route through the live gateway after a workflow had written a conflict — the route returned an empty
+list while the data sat in the other file. There is now ONE `knowledge_db_path()` helper in
+`store.py`, all four call sites go through it, and a test asserts no module composes the path itself
+(a second copy is how this happened).
+
+**Deviations and findings:**
+
+(a) **The numeric conflict branch skipped the similarity gate.** Measured: "The M2 has 8 cores" and
+  "The M2 has 16 gigabytes of unified memory" were reported as a numeric conflict — two unrelated
+  properties of one subject. The gate now applies to numeric objects too.
+
+(b) **The prose-negation rule was UNREACHABLE.** It sat behind the SPO subject gate, which requires
+  a successful decomposition — and the statements it exists for ("does not need", where the
+  predicate set has `needs`) are exactly the ones decomposition fails on. Measured: "needs a
+  restart" vs "does not need a restart" returned None. Moved ahead of the gate.
+
+(c) **Plain Jaccard is the wrong instrument for a polarity comparison.** Negating a claim ADDS
+  tokens and changes inflection, so the score is systematically depressed for exactly the pair the
+  rule wants to catch — measured at 0.60 against a 0.75 floor. Added `core_similarity`, which
+  strips negations and auxiliaries first, and verified it still refuses two DIFFERENT negated
+  claims.
+
+(d) **Conflict details were built from the normalized object,** which strips the decimal point, so
+  a "4.2 vs 9.1" conflict rendered as "4 2 seconds vs 9 1 seconds" — it reads as a formatting bug
+  and hides the actual claim.
+
+(e) **The neighbour scan searched FTS for claim text, and claims are not in the FTS index.** It
+  carries title/content/tags; claims live in `file_metadata`. So the scan found nothing whenever a
+  claim did not echo its item's title — and my first manual test passed only because the titles
+  happened to contain the claim's words, which is the worst kind of passing test. Added a
+  claim-bearing recency scan alongside the FTS half.
+
+(f) **The edge write used the claim's `source_ref`, which is RUN provenance
+  ("workflow:node:b"), not a row id.** The foreign key silently wrote nothing while the conflict
+  record looked correct, so the item metadata and the graph disagreed about whether the store knew
+  about a contradiction. Edges are now written after the upsert, from the recorded conflicts.
+
+(g) **`_fts_safe`:** a claim is prose and prose contains FTS5 operators, so an unquoted
+  `4.2s (measured)` is a syntax error the broad except would swallow into "no neighbours" — which
+  reads exactly like "no conflicts".
+
+(h) **`KnowledgeRelation` already existed** for ENTITY-level relations with a different shape. Mine
+  is `KnowledgeItemRelation`; shadowing the existing name broke three call sites in
+  `KnowledgeDetailPage`.
+
+(i) **mypy caught `load_config()`, which does not exist** (`AppConfig.load()` does) — a runtime
+  crash in the brief path that no test would have reached, since the brief degrades silently by
+  design.
+
+(j) **Deliberately NO resolve endpoint.** Conflicts are flagged at ingest and BOTH claims are always
+  kept. Deciding which source to trust is a judgement about the sources, which is the owner's; a
+  "resolve" route would invite the system to discard evidence, and a discarded claim is
+  unrecoverable. The precedence ladder returns "" for two same-tier sources rather than
+  manufacturing authority out of arrival order.
+
+**Validated live** through the dev gateway: a workflow persisted two contradicting claims, the
+conflict was detected at ingest with `prefer: left` correctly favouring the user-origin decision,
+`GET /api/knowledge/conflicts` returned it, `GET /api/knowledge/items/{id}/relations` showed the
+`contradicts` edge from BOTH directions with resolved titles, and a second run read
+`{{brief.count}} = 2` / `{{brief.text}}` with the decision ranked first and every item fenced.
+
+**NOT DONE:** the model-tier conflict pass is BUILT and tested (prompt, memo key, verdict parsing,
+confidence ceiling) but is NOT wired to a live model call — that needs a `stage` node in a template
+rather than an action provider, since an LLM call inside an action is exactly what the action/stage
+split exists to prevent; the deterministic tier ships wired. Background typed-edge INFERENCE beyond
+`contradicts` is likewise parse-ready but unwired. The `coverage_gap` → persist-proposal loop is
+still session 39's, along with the template slate.
