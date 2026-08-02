@@ -89,7 +89,7 @@ mandatory.
 | # | Session | PR group | Status |
 |---|---|---|---|
 | 29 | Judge contract + `runtime_hints` spec; typed verdict enum; judge isolation; deterministic pre-tier + `fallback_check` | G13 | ✅ DONE (#168) |
-| 30 | Engine loop-node middleware: breaker + fingerprinting + escalation ladder + failure-class routing; fresh-session protocol; interrupt queue | G13 | TODO |
+| 30 | Engine loop-node middleware: breaker + fingerprinting + escalation ladder + failure-class routing; fresh-session protocol; interrupt queue | G13 | ✅ DONE (#169) |
 | 31 | Author the 8 template YAML specs + integration tests through the engine | G14 | TODO |
 | 32 | Calibration + acceptance instrumentation: rubric contract, verdict ledger, divergence events, template lint, nodding-loop detector | G14 | TODO |
 | 33 | FE + coexistence: template picker, cockpit live-follow, interrupt-queue UI, legacy alias layer, as-a-user validation of all 8 | G15 | TODO |
@@ -1024,3 +1024,56 @@ isolation). `runtime_hints` on `WorkflowDef`. 11379 tests (+124), lint clean at 
   YAML specs are session 31. This session builds the enforcement primitives those depend on.
   `loop/judge.py` is deliberately NOT unified yet — LOOPS-EVOLUTION converges loops onto v2 in
   its own slices, and unifying pre-emptively would be wasted motion.
+
+### Session 30 — Loops Evolution: loop-node middleware (`feature-wf2-loops-middleware`, PR NOT OPENED — push blocked)
+
+`workflows/loop_middleware.py`: failure classification (7 classes + unknown), tool-argument
+fingerprinting, the Continue→Nudge→Escalate→Halt ladder, failure-class routing with per-class
+entry rungs, recoverable-class headroom, the structured "never silence" brief, and the atomic
+interrupt queue. 4 new ledger kinds wired into the FE `RUN_LIFECYCLE` union with a bidirectional
+drift test. 11442 tests (+63), lint clean at 608 files, full FE gate green (typecheck + 427 tests
++ build).
+
+**Deviations and findings:**
+
+(a) **Built ON TOP of the existing `resilience.check_breaker`, not over it.** That breaker
+  (Slice 2c) already catches max-iterations, error-streak, identical-output, and token cap. This
+  adds only the tiers that need more than counters (call fingerprinting, failure-class routing,
+  the nudge tier) — re-implementing the four it already has would have been duplication dressed as
+  completeness.
+
+(b) **`fresh_session`/`model_switch` ESCALATE, they do not HALT.** My first cut mapped every
+  non-classified-retry rung to HALT, which made the entire middle of the ladder dead code — "try a
+  clean session" became "ask the human". Added a distinct `Action.ESCALATE`; only SURFACE halts.
+
+(c) **`attempt_cap` bounds attempts WITHIN a rung, not ladder position.** Measured: applied as a
+  position cap, `restart_from_scratch` was unreachable under the plan's OWN declared values (cap 3,
+  5-rung ladder) — a configured rung that can never be selected. Added `attempts_at_rung`; a
+  reachability test now walks the whole ladder and asserts every rung is selected.
+
+(d) **`MiddlewareVerdict.__bool__` RAISES.** After last session's `DecayVerdict.__bool__` /
+  `if verdict` bug, this verdict object refuses a truth value outright — `if verdict` must be
+  written `if verdict.action is ...`. A convenience truthiness on a verdict is a trap.
+
+(e) **Recoverable classes (429, 5xx, timeouts) never consume a rung** and get 3× headroom before a
+  halt — burning the escalation ladder on a rate limit surfaces a run that would have succeeded.
+  Classification checks rate-limit/context-overflow FIRST, since their messages also contain the
+  generic words a broader pattern would claim.
+
+(f) **The nudge names the STALL SHAPE when the failure class is UNKNOWN,** and does so on EVERY
+  nudge, not just the first (measured: cycles 4-5 fell back to generic text). "You ran the
+  identical command three times" is precise advice; "change your approach" is not.
+
+(g) **4 new ledger kinds (`breaker_trip`, `steering`, `judge_verdict`, `judge_divergence`) MUST be
+  in the FE `RUN_LIFECYCLE` union** — EventSource silently drops unregistered types. A drift test
+  reads `useRunStream.ts` and asserts every one is present; I verified it FAILS when a kind is
+  removed, because an untested guard is no guard.
+
+(h) **NOT DONE (needs live-engine wiring, out of this session's deterministic-primitives scope):**
+  the middleware is not yet CALLED from the `RunController` tick — that is the seam where the
+  loop-node execution path consumes it, and wiring it means touching the single-writer tick loop
+  under a live run, which the interrupt-queue and fresh-session-retry integration (R7 lifecycle
+  protocol: 5-field handoff, repair-vs-restart, executor_caps gating across the 3 ACP dialects)
+  properly belong to. The R13 context-overflow recovery (reactive one-shot compaction) needs the
+  summarizer seam the architecture doc already records as absent. This session is the pure
+  decision layer those consume; it is fully unit- and sequence-validated in isolation.

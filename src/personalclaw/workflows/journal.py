@@ -95,6 +95,14 @@ CARRYOVER = "carryover"
 DECISION = "decision"
 RUN_STARTED = "run_started"
 RUN_FINISHED = "run_finished"
+#: LOOPS-EVOLUTION R4/R14: the middleware's own observable events. `breaker_trip` and
+#: `steering` are ledger kinds because a refiner needs to know a run was nudged or
+#: steered — a verdict that followed a human's mid-run instruction is not evidence about
+#: the template, and without the event there is no way to tell the two apart.
+BREAKER_TRIP = "breaker_trip"
+STEERING = "steering"
+JUDGE_VERDICT = "judge_verdict"
+JUDGE_DIVERGENCE = "judge_divergence"
 
 #: The subset a downstream refiner reads. Named so a drift test can assert the engine
 #: still emits all of them.
@@ -122,6 +130,10 @@ LEDGER_KINDS = frozenset(
         HANDOFF,
         CARRYOVER,
         DECISION,
+        BREAKER_TRIP,
+        STEERING,
+        JUDGE_VERDICT,
+        JUDGE_DIVERGENCE,
     }
 )
 

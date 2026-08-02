@@ -62,6 +62,7 @@ while not terminal:
 | `judge_contract.py` | the typed verdict enum, rubric ratchet, engine-computed overall, forbidden-mode denylist |
 | `judge_pretier.py` | the free rule tier that runs BEFORE any judge model call, plus the deterministic `fallback_check` |
 | `judge_actors.py` | the actor-transition invariant (a worker may never reach `done`) and judge isolation |
+| `loop_middleware.py` | the breaker's next tier: call fingerprinting, failure-class routing, the Continue→Nudge→Escalate→Halt ladder, the interrupt queue |
 | `scope.py` | filesystem write-scope enforcement by post-hoc diff |
 | `watchdog.py` | the supervisor: adoption, reaping, per-run publishing |
 

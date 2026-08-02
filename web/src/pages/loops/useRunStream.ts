@@ -25,6 +25,10 @@ export const RUN_LIFECYCLE = [
   'needs_input', 'failed', 'ratchet_regression', 'plan_step', 'phase_advance', 'rolled_back',
   'queued', 'autopilot', 'deleted', 'judge_blind', 'ship_blocked',
   'stage_advance', 'stage_stalled', 'gate_check', 'task_started', 'task_done', 'blocked',
+  // LOOPS-EVOLUTION R4/R14 middleware events. These MUST be listed here: EventSource
+  // silently DROPS event types it has no listener for, so an unregistered event is not a
+  // rendering bug you can see — it is an event that never arrives.
+  'breaker_trip', 'steering', 'judge_verdict', 'judge_divergence',
 ] as const
 
 export type RunLifecycleEvent = (typeof RUN_LIFECYCLE)[number]
