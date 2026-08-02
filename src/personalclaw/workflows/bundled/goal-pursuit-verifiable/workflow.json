@@ -1,0 +1,178 @@
+{
+  "name": "goal-pursuit-verifiable",
+  "version": 1,
+  "description": "Pursue a goal that has a command proving it — the command is the judge of record.",
+  "source": "bundled",
+  "provenance": "bundled",
+  "tags": [
+    "loop",
+    "goal",
+    "verifiable"
+  ],
+  "inputs": {
+    "task": {
+      "type": "string",
+      "required": true,
+      "help": "What you want to achieve."
+    },
+    "verify_command": {
+      "type": "string",
+      "required": true,
+      "help": "The command that proves it. This is the goal in executable form — if it passes, the work is done."
+    },
+    "scope": {
+      "type": "string",
+      "default": ".",
+      "help": "Working directory for the work and the verification."
+    }
+  },
+  "runtime_hints": {
+    "judge": {
+      "rubric": [
+        {
+          "criterion": "the verify command passes",
+          "target_score": 2
+        },
+        {
+          "criterion": "the change is minimal and scoped",
+          "target_score": 2
+        }
+      ],
+      "ratchet": "strict",
+      "stop_condition": {
+        "consecutive_clean": 2
+      },
+      "marginal_threshold": 2.0,
+      "freedom_level": "medium",
+      "judge_isolation": "fresh",
+      "fallback_check": "command_exit_code",
+      "forbidden_success_modes": [
+        "test deleted or skipped",
+        "verify command weakened or replaced",
+        "output stubbed or placeholder"
+      ]
+    },
+    "execution": {
+      "depth": "balanced",
+      "escalation": {
+        "attempt_cap": 3,
+        "ladder": [
+          "classified_retry",
+          "fresh_session",
+          "surface"
+        ]
+      },
+      "breaker": {
+        "fingerprint_window": 3,
+        "no_progress_stop": 5
+      }
+    }
+  },
+  "metadata": {
+    "risk": "high",
+    "capabilities": [
+      "read",
+      "write",
+      "execute"
+    ],
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Make `pytest tests/test_parser.py` pass without touching the test file"
+      },
+      {
+        "event": "mutation",
+        "description": "The verify command was wrong — change it to the integration suite instead"
+      }
+    ]
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "root",
+    "children": [
+      {
+        "kind": "action",
+        "id": "baseline",
+        "config": {
+          "provider": "bash",
+          "with": {
+            "command": "{{inputs.verify_command}}",
+            "allow_failure": true
+          }
+        }
+      },
+      {
+        "kind": "stage",
+        "id": "plan",
+        "config": {
+          "prompt": "Plan the change that makes the verify command pass.\n\nThe command and its CURRENT output:\n{{inputs.verify_command}}\n{{nodes.baseline.output}}\n\nThat output is the baseline — what was already failing before you touched anything. Distinguishing your breakage from pre-existing breakage later depends entirely on having read it now.\n\nGoal:\n{{inputs.task}}\n\nRead the relevant code under {{inputs.scope}} before planning. A plan that names a function which does not exist costs more than no plan.\n\nReturn JSON: {\"diagnosis\": string, \"files_to_change\": [string], \"approach\": string}",
+          "schema": {
+            "diagnosis": "string",
+            "files_to_change": "array",
+            "approach": "string"
+          },
+          "model_tier": "standard"
+        }
+      },
+      {
+        "kind": "loop",
+        "id": "work",
+        "config": {
+          "mode": "until",
+          "condition": "{{last.output.command_passed}}",
+          "max_iterations": 8,
+          "timeout_stall_secs": 1200
+        },
+        "body": {
+          "kind": "sequence",
+          "id": "attempt",
+          "children": [
+            {
+              "kind": "stage",
+              "id": "fix",
+              "config": {
+                "prompt": "Make the smallest change that moves the verify command toward passing, then stop.\n\nGoal:\n{{inputs.task}}\n\nApproach:\n{{nodes.plan.output.approach}}\n\nLast attempt:\n{{last.output.summary}}\n\nDo NOT change the verify command, delete tests, or skip them. Those make the command pass without making the goal true, and an independent judge checks for exactly that.\n\nIf the same fix has failed twice, your diagnosis is wrong rather than your execution — say so and try a different one.\n\nReturn JSON: {\"summary\": string, \"command_passed\": boolean, \"evidence\": string}",
+                "schema": {
+                  "summary": "string",
+                  "command_passed": "boolean",
+                  "evidence": "string"
+                },
+                "model_tier": "standard",
+                "tools_posture": "full"
+              }
+            },
+            {
+              "kind": "stage",
+              "id": "judge",
+              "config": {
+                "prompt": "You are verifying work you did not do. Assume it produced nothing until the artifacts prove otherwise.\n\nDo not talk yourself into approving. Your job is not to be agreeable to the worker — it is to be right on behalf of the user, who is not reading this and cannot check it themselves.\n\nGoal:\n{{inputs.task}}\n\nThe command that decides it:\n{{inputs.verify_command}}\n\nBaseline before any edit:\n{{nodes.baseline.output}}\n\nRubric — score each 0, 1 or 2, citing evidence for each:\n  - the verify command passes (target 2)\n  - the change is minimal and scoped (target 2)\n\nThese passes are forbidden. Actively check they did NOT happen:\n  - test deleted or skipped\n  - verify command weakened or replaced\n  - output stubbed or placeholder\n\nRun the verify command yourself. Compare against the baseline: a failure that was already there is not this change's fault, and blaming it for one is how a correct change gets rejected.\n\nRe-run any command the evidence cites; read the artifacts yourself. A claim you did not verify is not evidence, however plausible it reads.\n\nIf you genuinely cannot tell — artifacts missing, command will not run — say so in cannot_judge rather than guessing. A refusal is useful; a coin-flip dressed as a verdict is not.\n\nExpect two or three revision cycles on real work. Reporting real issues is the normal outcome, and zero issues on a first pass is itself worth a second look.\n\nReturn JSON: {\"reasoning\": string, \"verdict\": \"PASS\"|\"REJECT\"|\"REPLAN\"|\"ESCALATE\"|\"NEEDS_INPUT\", \"scores\": {criterion: integer}, \"evidence_refs\": [string], \"proof\": string, \"cannot_judge\": string}",
+                "schema": {
+                  "reasoning": "string",
+                  "verdict": "string",
+                  "scores": "object",
+                  "evidence_refs": "array",
+                  "proof": "string",
+                  "cannot_judge": "string"
+                },
+                "model_tier": "reasoning",
+                "tools_posture": "verify",
+                "isolation": "fresh"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "gate",
+        "id": "verify",
+        "config": {
+          "kind": "verify_command",
+          "verify": {
+            "command": "{{inputs.verify_command}}",
+            "cwd": "{{inputs.scope}}"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -90,7 +90,7 @@ mandatory.
 |---|---|---|---|
 | 29 | Judge contract + `runtime_hints` spec; typed verdict enum; judge isolation; deterministic pre-tier + `fallback_check` | G13 | ✅ CODE DONE — PUSH BLOCKED |
 | 30 | Engine loop-node middleware: breaker + fingerprinting + escalation ladder + failure-class routing; fresh-session protocol; interrupt queue | G13 | ✅ CODE DONE — PUSH BLOCKED |
-| 31 | Author the 8 template YAML specs + integration tests through the engine | G14 | TODO |
+| 31 | Author the 8 template YAML specs + integration tests through the engine | G14 | ✅ CODE DONE — PUSH BLOCKED |
 | 32 | Calibration + acceptance instrumentation: rubric contract, verdict ledger, divergence events, template lint, nodding-loop detector | G14 | TODO |
 | 33 | FE + coexistence: template picker, cockpit live-follow, interrupt-queue UI, legacy alias layer, as-a-user validation of all 8 | G15 | TODO |
 
@@ -1077,3 +1077,63 @@ drift test. 11442 tests (+63), lint clean at 608 files, full FE gate green (type
   properly belong to. The R13 context-overflow recovery (reactive one-shot compaction) needs the
   summarizer seam the architecture doc already records as absent. This session is the pure
   decision layer those consume; it is fully unit- and sequence-validated in isolation.
+
+### Session 31 — Loops Evolution: the loop-kind templates (`feature-wf2-loops-templates`, PR NOT OPENED — push blocked)
+
+Five new bundled templates (`goal-pursuit-open-ended`, `goal-pursuit-verifiable`, `general-project`,
+`design-project`, `diagnose-run`) + `tests/test_workflows_loop_templates.py` (132 tests).
+11629 tests (+187), lint clean at 608 files, all 11 templates verified in a built wheel and
+through the live API.
+
+**Deviations and findings:**
+
+(a) **FIVE new templates, not eight.** The plan's §"Per-Kind Template Designs" describes six
+  families; `deep-research` (the research-loop descendant) ALREADY SHIPS from Slice 9a, and the
+  `goal-pursuit-monitor` variant is **not buildable yet** — its design is a parked run driven by
+  `set_onetime_task`/`set_recurring_task`, tools that belong to AUTOMATION-SUBSTRATE and do not
+  exist (verified: no such symbol anywhere in the tree). Authoring it would mean shipping a
+  template whose central mechanism silently no-ops. Recorded rather than faked.
+
+(b) **`{{defaults.runtime_hints.judge.rubric}}` IS NOT A VALID BINDING.** The plan's YAML uses it
+  throughout; the engine's binding roots are `inputs`/`nodes`/`item`/`iter`/`last` only
+  (validator.py:346), and it was flagged as `WF_UNKNOWN_BINDING_ROOT`. Rubrics and forbidden-mode
+  lists are therefore INLINED into judge prompts — also more legible to the judge than a rendered
+  data structure. A test now asserts every declared rubric criterion and forbidden mode actually
+  appears in a judge prompt, because a rubric the judge never sees scores nothing.
+
+(c) **Two more spec-key mismatches in the plan's YAML,** both caught by the validator: a gate's
+  kind is `config.kind`, not `gate_kind`; an `until` loop needs `config.condition`, not
+  `config.until`.
+
+(d) **`continue_on_error` does not exist** — I invented it for the baseline action. The bundled
+  action-arg guard (a landmine recorded from an earlier session) caught it: the real key is
+  `allow_failure` INSIDE `with`, as `code-implementation` already does.
+
+(e) **`design-project` shipped with NO JUDGE in my first cut** — its refinement loop exited on a
+  self-reported `issues_resolved`, which is exactly the "no agent certifies its own work" rule the
+  plan calls the platform's oldest. My own structural test caught it; added a fresh-isolated
+  read-only judge.
+
+(f) **The terminal `accept` gate lacked the anti-leniency line.** It is the LAST check before the
+  run reports success to the user, so it is the one place that most needs "do not talk yourself
+  into approving".
+
+(g) **A prose collision with a convention gate:** "Finding issues is the normal outcome" tripped
+  `test_every_review_stage_uses_the_canonical_Finding_record`, which greps for the literal
+  "Finding". Reworded to "Reporting real issues…" — the doctrine was worth keeping, the capital F
+  was incidental.
+
+(h) **Two of my own tests were wrong, not the templates:** `_judges()` classified any
+  `tools_posture: verify` stage as a judge (diagnose-run's trace stage is read-only because it
+  reads a LEDGER), and `required` + `default: null` is the LOADER's normalization rather than an
+  authoring conflict.
+
+(i) **`EXPECTED` in `test_workflows_bundled.py` grew 6 → 11,** so the pre-existing convention suite
+  now holds the new templates to every gate it applies to the originals — strict validation,
+  lint-clean-as-bundled, canonical Finding record, action-arg nesting, name/dir agreement.
+
+(j) **NOT DONE:** the monitor variant (a), and the `code-project` SDLC template — the plan's design
+  for it is the largest of the six (WIP=1 enforcement, four structural gates, an initializer stage,
+  `tick.evaluate` porting) and it overlaps `code-implementation`, which already ships. Reconciling
+  the two is a judgement about whether to replace a working template or add a second beside it,
+  which is a product decision rather than a mechanical port.
