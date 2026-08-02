@@ -647,14 +647,18 @@ def route(
     gates, multi-turn stages or a schema is a RUN (it needs the engine); a def explicitly
     marked guided is a BLUEPRINT; everything else is passive text.
 
-    Gates decide first. A def with an approval gate CANNOT be a blueprint — a blueprint has no
-    engine, so there is nothing to pause, and rendering a gate as a numbered message would show
-    the user an approval that approves nothing.
+    Gates decide FIRST, before `surface_mode`. A def with an approval gate CANNOT be a blueprint —
+    a blueprint has no engine, so there is nothing to pause, and rendering a gate as a numbered
+    message would show the user an approval that approves nothing.
+
+    Measured (S61): short-circuiting on `off` BEFORE the structural check reported a gated def as
+    PASSIVE, which tells a caller it may be injected as text and silently drops the gate. This
+    function answers "what IS this def" — whether it may surface is S58's `veto_reasons`, which is a
+    separate question with a separate answer. What `off` does govern is BLUEPRINT: materializing a
+    guided conversation for a def the user switched off would put it on screen anyway.
     """
-    if surface_mode == "off":
-        return SurfaceRoute.PASSIVE
     if has_gates or has_schema or max_turns > 1:
         return SurfaceRoute.RUN
-    if guided:
+    if guided and surface_mode != "off":
         return SurfaceRoute.BLUEPRINT
     return SurfaceRoute.PASSIVE

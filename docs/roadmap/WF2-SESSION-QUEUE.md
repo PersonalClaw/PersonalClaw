@@ -140,7 +140,8 @@ mandatory.
 | 58 | Surfacing core: `surface_mode` enum, trigger-phrase `match_text` + collision check, metadata split + lints, one-source-two-wrappers injection, SOP migration | G28 | ✅ DONE (#198) |
 | 59 | Surfacing channels + resolution: cadence channel + overdue escalation, fingerprint channel + packs, layered scope resolution, parameter pre-fill, reachability doctor | G29 | ✅ DONE (#199) |
 | 60 | Pool + templates: frontier/next projections, evented unblock, TTL'd leases, write-time acyclicity, lifecycle events, seed template library | G29 | ✅ DONE (#200) |
-| 61 | UX + validation: composer chips, validated deep-links, checklist edit UX, config four-point wiring, end-to-end as-a-user sweep | G30 | TODO |
+| 61 | Def-side surfacing fields (`DefMetadata`: surface_mode, cadence_days, escalation, packs, hands_off_to, guided) + the def→record adapter — RE-SCOPED from UX, which was unbuildable: the fields S55-S60 read did not exist | G30 | ✅ DONE (#201) |
+| 61b | UX + validation (deferred from 61): composer chips, validated deep-links, checklist edit UX, templates-list freshness/scope/pack rendering, config four-point wiring, FE stream unions, end-to-end as-a-user sweep | G30 | TODO |
 
 ## H. Automation Substrate (`-AUTOMATION-SUBSTRATE.md`) — final step needs Loops Phase 4
 

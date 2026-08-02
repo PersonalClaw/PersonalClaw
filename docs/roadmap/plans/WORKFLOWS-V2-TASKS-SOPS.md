@@ -967,3 +967,60 @@ Decisions worth recording:
   would mean writing them twice. The lease WRITE path (flocked read-modify-write on the task JSON)
   and the `TaskComplete` emission call site are single-line wirings into `tasks/native.py` that
   belong with §7's wiring session; the decision rules they implement are complete and tested here.
+
+### S61 — Def-side surfacing fields + the def→record adapter (33 tests) — DONE (RE-SCOPED)
+
+**RE-SCOPE, recorded as a deviation.** The queue names session 61 "UX + validation: composer chips,
+validated deep-links, checklist edit UX, config four-point wiring, end-to-end as-a-user sweep".
+Measured before starting: **every mechanism S55-S60 built is unreachable from an authored def.**
+`WorkflowDef`/`DefMetadata` had no `surface_mode`, `cadence_days`, `escalation`, `packs`,
+`hands_off_to` or `guided` field (checked against `dataclasses.fields`), and no core module imports
+`materialize`, `verified_done`, `confirmation`, `pool` or `surfacing_channels` — they are pure
+decision modules with no callers. A composer chip for a def that cannot declare
+`surface_mode`, or a templates list sorting by a `cadence_days` that does not exist, would be UI
+over nothing; the end-to-end as-a-user sweep the session ends with cannot pass either. So this
+session took the actual blocker — the def-side fields plus ONE adapter per record type — and the FE
+surfaces + the sweep move to the next session, which will have something to drive.
+
+Findings:
+
+- **The fields went on `DefMetadata`, typed, not in `extra`.** That block's own comment records why:
+  `from_dict` drops what it does not name, and annotating all 18 bundled templates with `keywords`
+  once left the matcher reading 0 of 18 while running on description overlap at 0.02-0.22
+  confidence. A field in an open dict is a field the reader treats as absent.
+
+- **Coercion goes in the SAFE direction, per field.** An unknown `surface_mode` reads as `off` (a
+  typo must not start surfacing); an unknown `escalation` reads as `manual` (materializes nothing);
+  a negative `cadence_days` clamps to 0 rather than being kept, because a negative cadence makes
+  every comparison read as overdue and a fat-fingered `-7` would nag forever; a non-numeric cadence
+  is 0 rather than a load failure, since def metadata is hand-authored YAML; `guided` must be the
+  boolean `True`, matching §4's `require_hitl` rule.
+
+- **A test that passed for the WRONG reason, caught by measuring.** `Node.cases` is a **dict**
+  keyed by label, not a list. The first version of the branch fixture built a list, `models.walk`
+  raised `AttributeError`, and `route_from_def`'s except-branch swallowed it and returned RUN — so
+  the assertion "a gate buried in branch cases routes to RUN" passed while proving nothing about
+  traversal. Fixed the fixture; the assertion now exercises the real walk.
+
+- **`route()`'s `off` short-circuit was WRONG, and S60's test had pinned the wrong behaviour.**
+  Returning PASSIVE for an `off` def BEFORE the structural check reported a **gated** def as
+  passive — which tells a caller it may be injected as text and silently drops the gate. Structure
+  now decides first: `route` answers "what IS this def", and whether it may surface is
+  `surfacing.veto_reasons`, a separate question with a separate answer. What `off` still governs is
+  BLUEPRINT, because materializing a guided conversation for a def the user switched off would put
+  it on screen anyway. The S60 test was updated to the corrected rule with the measurement recorded.
+
+- **One adapter per record type, not per call site.** `meta_from_def`, `cadence_from_def`,
+  `handoffs_from_def`, `doctor_entry`, `route_from_def`. Two readers of the same fields drift, and
+  the drift shows as a def that surfaces through one path and not the other for identical metadata —
+  S58's `drift()` check applied to the fields themselves. The adapter deliberately does NOT
+  re-implement tolerance (`from_dict` already coerced), and `doctor_entry` is built centrally
+  because a surface assembling that dict itself would forget `packs` and report every pack-gated def
+  as unreachable. `cadence_from_def` takes the run facts as PARAMETERS: a channel that queried per
+  def would issue one query per template on every list render.
+
+- **NOT DONE (moves to the next session):** composer chips, validated deep-links, checklist edit UX,
+  the templates-list freshness/scope/pack rendering, config four-point wiring, the FE stream-union
+  registrations, and the end-to-end as-a-user sweep. Also still unwired: the lease write path, the
+  `TaskComplete` emission call site, and the confirmation resolve endpoints — all single call sites
+  into existing files, now unblocked because the def can finally declare what they read.
