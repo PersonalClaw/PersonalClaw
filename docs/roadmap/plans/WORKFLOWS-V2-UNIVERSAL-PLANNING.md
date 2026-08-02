@@ -870,3 +870,93 @@ from session 43. 82 tests in `tests/test_workflows_autonomy.py`.
   — `should_interrupt` is the plan-time half of it. `revise{step_ref, comment}` as an answer verb on
   `workflow_resume` carried forward from session 43 remains unwired for the same reason: it is an
   engine-surface change, and the seam belongs with the entry surfaces in session 45.
+
+### 2026-08-02 — session 45 (grill + entry surfaces + template pipeline) DONE — Universal Planning CLOSED
+
+Four new modules, all pure: `grill_protocol.py` (the structured `rigor: deep` protocol),
+`rigor.py` (the cheap end of the axis), `template_pipeline.py` (mining, discover-then-freeze,
+the nudge, entity scrubbing), `eval_specs.py` (per-template benchmarks derived from the artifact).
+`_plan` gains a `rigor_note`, the fast-path refinement gate, and a `_grill_surface`. 286 new tests.
+
+- **The existing `grill.py` was NOT replaced.** It is the vendor-neutral `assess → recall →
+  decompose → save` machinery and the plan's ABSORB note reads as a rewrite; treating it as one
+  would have deleted a seam the goal loops and the chat skill both use. The protocol sits on top:
+  recommendation-bearing questions, the channel split, pacing, probes, Step-0, prohibitions.
+
+- **Facts are looked up, not asked — mechanically.** A question is routed to a lookup channel or it
+  is asked, never both. The three channels stay separate callables (memory recall, knowledge search,
+  the brownfield pass) because a merged "context fetch" would make it impossible to say which
+  subsystem answered, and the plan states that boundary normatively.
+
+- **DISCOVERY — an arbitrary asymmetry in the lookup router.** The hand-listed codebase phrases had
+  `which file` and `what module` but not `which module`, so a natural phrasing fell through to ASK.
+  An asymmetric router is worse than a narrow one: it works often enough that nobody notices the
+  half that does not. Replaced with an interrogative × noun cross-product, which removes the class.
+
+- **A deferral is never a confirmed requirement.** "You decide" / "no preference" / "idk" fold into
+  ASSUMPTIONS with the recommendation attached, and an unanswered load-bearing question with no
+  recommendation is an OPEN QUESTION that blocks emission. Three lists, so a guess can never be
+  presented as something the user said.
+
+- **Prohibitions are frozen and reach every worker.** The block is injected into each model-bearing
+  node rather than the root — a worker reads its own config, so a root-level prohibition is one
+  nobody sees. Zero-token nodes are skipped. The boundary answer splits on newlines and semicolons
+  but NOT commas: "don't touch prod, staging, or CI" is one boundary, and shredding it into three
+  partial ones produces three weaker rules.
+
+- **DISCOVERY — the fast path was inert from the only surface that can request it.** `workflow_plan`'s
+  published rigor vocabulary is `minimal`/`standard`/`deep`, and `is_fast` matched only the literal
+  `fast`. A caller asking for `minimal` got the standard path plus a note saying so. The same bug in
+  `rigor_note` printed "Fast path (rigor=standard …)", a note contradicting its own headline. Both
+  now share one `_FAST_WORDS` alias set.
+
+- **DISCOVERY — the risk half of the deep-rigor trigger was present and inert.** The plan makes ANY
+  risk-registry hit force `rigor: deep` and `deep_triggered` implemented it, but nothing was feeding
+  it hits — so a destructive plan the classifier happened to call `standard` went ungrilled.
+  `_grill_surface` now runs session 44's `scan_risk` over the proposed tree. Verified live: a `bash`
+  node running `rm -rf /var/data` triggers the grill on an intent classified STANDARD.
+
+- **The refinement gate lands after the first OUTPUT, not at the end.** The whole premise of the fast
+  path is refining against something built; a gate at the end refines nothing. A bare single-node
+  root (the shape the fast path produces most often) is wrapped into a sequence rather than skipped —
+  refusing there would make the mechanism inert exactly where it matters. Scheduling is idempotent.
+
+- **The acceptance ratchet is append-only and deduplicated by exact text.** A criteria list that can
+  shrink is one where a later revision silently drops the check an earlier failure earned. Two
+  SIMILAR criteria are both kept: collapsing them would be the planner deciding they are the same.
+  `revise_from_artifact` deliberately does NOT edit nodes — that stays with session 43's merge-by-id,
+  because a second edit path is a second chance to silently rewrite a stage nobody complained about.
+
+- **A denial is a decision, in mining.** A tool the user refused in the session never enters the
+  mined permission signature, even if a later call succeeded. A miner counting only successes would
+  re-request it, which reads as the system overriding the user rather than forgetting.
+
+- **Entity scrubbing is deliberately conservative.** Sentence-initial capitals are skipped (measured
+  as the single largest source of junk slots — otherwise every prompt's first word becomes a
+  parameter), `NON_ENTITY_TOKENS` is the single point of truth so a domain acronym cannot be
+  parameterized in one path and not another, and one entity across two stages binds ONE input.
+
+- **DISCOVERY — two defects in the derived eval, both found by running it on the real library.**
+  (1) A hand-rolled tree walk over guessed key names (`branches`/`then`/`otherwise`) found **4 of 13**
+  nodes in `deep-research` and 2 of 8 in `audit-sweep`: the engine's branch children live under
+  `cases`/`default_case`, so every branch subtree was silently skipped. Replaced with the engine's
+  own `walk` over a typed `Node`. (2) Testing for `stage` alone reported `deep-research` — which
+  makes five `infer` model calls — as "all nodes are deterministic — the outputs are facts, not
+  opinions", filing it as needing no judge. A confident false claim about the exact property the
+  eval exists to check. Now uses the engine's `LLM_KINDS`. After both fixes only `knowledge-health`
+  is genuinely judge-free, where before three templates were.
+
+- **The eval names what it cannot grade.** `graded_checks` says what a judge would have to assess and
+  leaves the judging to LEARNING-FLYWHEEL; `graded_note` explains an empty list, because an empty
+  list with no explanation reads as "nothing to grade", which is a claim. The suite reports the
+  free/graded split so a passing CI run cannot be read as "every template was evaluated".
+
+- **NOT DONE:** the QuestionSlider widget, the streaming render, and the `suggest_template` chat tool
+  registration are frontend/tool-surface work — `Round.to_ask()` returns the engine's own typed `Ask`
+  precisely so no planner-specific renderer is needed, and the nudge's anti-nag state has no
+  persistence seam in this session (it takes a `NudgeState` the caller owns). `source_session_id` on
+  `workflow_plan` is unwired: `mine_session` takes parsed records so the rules are testable, but
+  resolving a session id to a transcript path belongs with the tool-schema change. The grounding A/B
+  harness (UP-R13.2) needs the judge LEARNING-FLYWHEEL owns. `revise{step_ref, comment}` as a
+  `workflow_resume` answer verb remains carried forward — twice now — because it is an engine-surface
+  change and every planning session has correctly declined to reach into the resume grammar.

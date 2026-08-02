@@ -28,7 +28,9 @@ import json
 import logging
 from typing import Any
 
+from personalclaw.workflows import grill_protocol as grill_mod
 from personalclaw.workflows import intent as intent_mod
+from personalclaw.workflows import rigor as rigor_mod
 from personalclaw.workflows import service
 from personalclaw.workflows.context_block import needs_staging, staged_spec_echo
 
@@ -766,6 +768,15 @@ def _plan(args: dict[str, Any]) -> str:
 
     grounded = _grounding_for(goal, classified)
 
+    # S45: the rigor axis, applied to the SCAFFOLD path only — a matched template returned above
+    # already carries a tested shape, and stapling a refinement gate onto it would refine against a
+    # structure nobody asked to change.
+    proposed = (grounded or {}).get("skeleton") or scaffold
+    fast_spec = {"root": proposed}
+    if rigor_mod.is_fast(classified, requested=requested):
+        fast_spec = rigor_mod.schedule_refinement(fast_spec)
+        proposed = fast_spec["root"]
+
     body = {
         "ok": True,
         # Renamed: this is no longer a bare structural stub. It carries the live grounding bundle,
@@ -780,8 +791,12 @@ def _plan(args: dict[str, Any]) -> str:
             "intent": classified.to_dict(),
             "match": match.to_dict() if match is not None else {"reason": "matcher unavailable"},
         },
-        "proposed_root": (grounded or {}).get("skeleton") or scaffold,
+        "proposed_root": proposed,
+        # S45: which rigor path ran and why. A user who got a thin plan needs to know it was the
+        # fast path rather than the planner doing badly.
+        "rigor_note": rigor_mod.rigor_note(classified, requested=requested),
         **({"grounding": grounded} if grounded else {}),
+        **_grill_surface(goal, classified, {"root": proposed}),
         "next_step": (
             "Adapt this tree to the goal, then call workflow_author with save=false to "
             "validate it before saving."
@@ -795,6 +810,57 @@ def _plan(args: dict[str, Any]) -> str:
         "manifest": {k: v for k, v in service.manifest().items() if k != "ok"},
     }
     return _fmt(body, summary=f"Draft plan for: {goal}")
+
+
+def _grill_surface(goal: str, classified: Any, spec: dict | None = None) -> dict:
+    """The `rigor: deep` protocol's plan-time half: whether to grill, and the stress probes.
+
+    The ROUNDS are not built here, and that is deliberate. A round needs the planner's recommended
+    answers, and a recommendation is what makes deep grilling fast rather than tedious — emitting
+    rounds with empty recommendations would ship the tedium without the speed. So this surface
+    reports the trigger and the probes (both derivable with no model call) and hands the caller the
+    protocol's own vocabulary to build rounds with.
+
+    The risk scan is passed through rather than skipped: the plan makes ANY risk-registry hit
+    force `rigor: deep`, and `deep_triggered` implements it — but measured, nothing was feeding it
+    hits, so that half of the trigger was present and inert. A destructive plan the classifier
+    happened to call `standard` would have gone ungrilled.
+
+    Best-effort: a missing grill block loses advice, never enforcement.
+    """
+    try:
+        hits = []
+        if spec:
+            from personalclaw.workflows.autonomy import scan_risk
+
+            hits = scan_risk(spec)
+        triggered, why = grill_mod.deep_triggered(classified, hits)
+        if not triggered:
+            return {}
+        probes = grill_mod.stress_probes(goal)
+        return {
+            "grill": {
+                "triggered": True,
+                "why": why,
+                "protocol": {
+                    "questions_ship_recommendations": True,
+                    "batch_at": 3,
+                    "max_batch": grill_mod.MAX_BATCH,
+                    "escape_hatch": grill_mod.OTHER,
+                    "boundary_question": grill_mod.BOUNDARY_QUESTION,
+                    "lookup_channels": [c.value for c in grill_mod.Channel if c.value != "ask"],
+                },
+                "stress_probes": [p.to_dict() for p in probes],
+                "note": (
+                    "Ship every question WITH your recommended answer as its default, route "
+                    "discoverable facts to a lookup channel instead of asking, and treat an "
+                    "unanswered load-bearing question as a BLOCKER rather than assuming a value."
+                ),
+            }
+        }
+    except Exception:
+        logger.debug("grill surface failed", exc_info=True)
+        return {}
 
 
 def _autonomy_surface(definition: dict) -> dict:
