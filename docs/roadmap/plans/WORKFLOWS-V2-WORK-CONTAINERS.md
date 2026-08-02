@@ -612,3 +612,73 @@ the lineage env, and the safety-filtered recall view. 52 tests.
   have. Also not done: TTL-bound scoped file sessions, the sibling-awareness wrapper, N-variant
   comparison metrics, and the agent-roster projection + drift check (R16) — the roster is a
   `config.json agents{}` projection, which is a Platform-Legibility-shaped change, not a batch one.
+
+### 2026-08-02 — session 49 (run workspace + environment) DONE
+
+`workflows/workspace.py` (new): the `workspace` provisioning block, reserved-var rejection, the
+secret-filtered spawn env with presence-only flags, and tolerant `.folder.yaml` contracts. 72 tests.
+
+**ARCC was not queried (MCP server unavailable in this session).** Standard practice applied instead:
+secrets stay in the existing credential seam (`{{secret:KEY}}` + the credential store), values never
+reach a run record/journal/UI, and every surface shows presence flags only.
+
+- **`scratch` is the default mode and `in_place` is never one.** Being wrong about isolation should
+  cost a copy, not the original — `in_place` is the mode in which a destructive step runs against
+  real state, which is the shape of the deleted-real-model incident. An unknown mode is FATAL rather
+  than defaulted, because defaulting would silently run in a mode nobody chose and the modes differ
+  in exactly the way that matters.
+
+- **A greedy `preserve_patterns` entry is refused.** `**` copies the whole tree into the workspace it
+  is being isolated from, which defeats the isolation. But real patterns matter: a worktree with no
+  `.env` is one where every build fails, and a user whose first isolated run cannot install
+  dependencies concludes isolation is broken rather than unconfigured.
+
+- **DISCOVERY — the shared secret-hint list missed provider-specific credential shapes.** Wiring the
+  env filter measured `GITHUB_PAT` as NON-secret, so a run declaring inherit-from-host would have
+  passed a GitHub personal access token straight into a leaf's environment. A hint list is only as
+  good as its worst-covered credential, and bespoke names are exactly what a generic list misses.
+  Widened `SECRET_KEY_HINTS` (the SHARED list in `secrets.py`, not a second one) with `_pat`, `pat_`,
+  `session_key`, `access_key`, `refresh`, `signing`, `webhook` — then checked the other direction:
+  `PATTERN_FILE`, `COMPATIBILITY`, `NODE_ENV`, `PORT` and `LANG` all still read as non-secret.
+
+- **An ungranted secret is ABSENT, not empty.** An empty string reads to a child as "this credential
+  is configured and blank", producing an authentication failure rather than a
+  missing-configuration error — the first is far harder to diagnose. Withheld keys are RETURNED so
+  the cockpit can say "2 declared secrets were not granted" instead of a child failing invisibly.
+
+- **`{"VAR": null}` means inherit, which is a third state.** Different from omitting the key (absent)
+  and from `""` (set and empty). Inheritance is still FILTERED: a host var that is itself a secret
+  must be granted explicitly, or "inherit my environment" becomes a blanket credential grant.
+
+- **A reserved env var is REJECTED, not overridden.** `HOME`, `PATH`, `PYTHONPATH`, the `XDG_`/`LD_`/
+  `DYLD_`/`PERSONALCLAW_` prefixes: redirecting any of them relocates every config file, credential
+  store and binary the system resolves through them — including the machinery enforcing every other
+  rule in the module.
+
+- **Order is the provisioning contract.** preserve → setup → run, and teardown → delete. An
+  `npm install` that runs before `.npmrc` is copied in reaches for the wrong registry; a teardown
+  that runs after deletion runs against a directory that no longer holds the services or artifacts it
+  was meant to stop and sync. Setup is marker-guarded and content-addressed, because setup runs on
+  EVERY resume by contract — a `git clone` that re-runs fails, and a setup block that fails on resume
+  makes resume unusable. A marker keyed by index would skip an edited step as though it had run.
+
+- **Folder contracts are tolerant by construction.** Every problem is a warning; an unparseable
+  contract yields defaults plus a warning, because the alternative is a directory that becomes
+  unusable over a typo in a metadata file. Unknown fields are KEPT, not dropped — a round-trip that
+  lost them would corrupt a newer app's contract when an older core rewrote the file (the
+  23-of-25-dropped-memories class). `transient` is the fallback lifecycle: content that should have
+  been permanent and got cleaned is recoverable from the run that made it, while content that should
+  have been transient and persisted is a leak nobody notices. `agent_writable` defaults to False,
+  because defaulting to writable would make every folder that forgot to declare a permission an open
+  one — and forgetting is the common case. `immutable` + `agent_writable` resolves toward the safety
+  declaration and reports the conflict.
+
+- **NOT DONE:** actual provisioning I/O — `plan_provisioning` returns the ordered plan and the caller
+  performs it; wiring it into the controller's run-start path is a controller change this session
+  does not open. PID-liveness lock files outside the workspace, `preserved_workspace_path` on the run
+  record, reuse-with-safe-ff-only-refresh for named workspaces, and the Apply Locally / Checkout
+  Branch verbs need the run-record schema and the code cockpit (session 52 owns worktrees). Container
+  mode (§4.4) is opt-in and explicitly deferred to last by the plan. The two new config defaults
+  (`workspace_default_mode`, `workspace_teardown_on_expiry`) are not wired: the four-point config
+  contract needs a `WorkflowsConfig` field plus `_EDITABLE_CONFIG` plus an FE control, and adding a
+  knob nothing reads yet would be the inert-control class this program keeps finding.
