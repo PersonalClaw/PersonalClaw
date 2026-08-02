@@ -71,6 +71,7 @@ while not terminal:
 | `grounding.py` | the grounding bundle: node taxonomy, provider signatures (three discovery tiers), MCP servers, binding roots, model capability |
 | `patterns.py` | the seven proven graph shapes, their slots, when each is WRONG, and the deterministic shape pick |
 | `generation.py` | the generated planning prompt, the mechanical self-check, repair-not-regenerate, and the decline path |
+| `contracts.py` | derived parameter schemas, per-stage done-means contracts and their lint, and blocking-vs-open decision typing |
 | `scope.py` | filesystem write-scope enforcement by post-hoc diff |
 | `watchdog.py` | the supervisor: adoption, reaping, per-run publishing |
 

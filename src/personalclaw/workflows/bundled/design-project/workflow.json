@@ -18,11 +18,6 @@
       "type": "string",
       "default": "",
       "help": "Hard constraints. The judge checks these were honoured rather than quietly dropped."
-    },
-    "max_iterations": {
-      "type": "integer",
-      "default": 5,
-      "help": "Refinement cap. The loop exits earlier when no issues remain."
     }
   },
   "runtime_hints": {
@@ -168,7 +163,7 @@
         "config": {
           "mode": "until",
           "condition": "{{last.output.issues_resolved}}",
-          "max_iterations": 5,
+          "max_iterations": 6,
           "timeout_stall_secs": 600
         },
         "body": {

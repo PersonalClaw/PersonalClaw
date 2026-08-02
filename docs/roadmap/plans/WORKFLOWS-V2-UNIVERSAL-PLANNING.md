@@ -718,3 +718,51 @@ Where each new piece plugs into the pluggable-provider architecture (nothing her
   execution is built (`repair_prompt`, `MAX_REPAIR_ATTEMPTS`) but not driven — the loop that calls a
   model, self-checks, and re-prompts needs the model plumbing that lands with session 43's review
   cycle.
+
+- **2026-08-02 — DONE (#181) — Contracts + parameterization (session 42 of the WF2 queue).**
+  Branch `feature-wf2-planning-contracts`. `workflows/contracts.py`: `resolve_unfilled_inputs()` +
+  `template_types()` + the extraction contract (UP-R8), per-stage done-means contracts with their
+  lint (UP-R3), and blocking-vs-open decision typing (UP-R16). Wired into `workflow_plan`'s template
+  path as the review surface. 12417 tests (+97), lint clean at 625 files.
+
+- **DISCOVERY — THREE of eighteen shipped templates declared an input nothing read.** The derived
+  schema found them immediately, which is the whole point of deriving it. `knowledge-lint` offered
+  `apply` while its node hardcoded `false` — a user could set it, see no effect, and get no error;
+  now wired through. `design-project` and `general-project` offered loop caps nothing consulted.
+
+- **DEVIATION — the phantom loop-cap inputs were DELETED, not wired.** Wiring them to the loops'
+  `max_iterations` looked like the obvious fix and broke a real invariant:
+  `test_every_loop_has_a_real_exit_and_a_hard_cap` requires the cap to be a statically verifiable
+  literal, and a binding makes it a string at spec time. A user-supplied cap can also be a value
+  that never fires — so offering it would be offering to weaken a safety invariant. An input nothing
+  reads is a control that lies; the honest fix is removing it.
+
+- **DISCOVERY — the contract lint found SIX templates ending on a write with nothing establishing
+  the work was right.** Five are this program's own and now carry a machine check:
+  `knowledge-synthesis` (is the synthesis grounded in its sources?), `thesis-tracker` (is the thesis
+  still falsifiable?), `rich-ingest` (did the lenses stay inside the transcript?), `gap-healing` (are
+  the drafts supported by the excerpts?), and `knowledge-lint` (did the merge keep every distinct
+  detail — checked per cluster, where the loss would happen). `publish-article` had only a human
+  APPROVAL: nobody verified the revision addressed the accuracy findings before it was stored as
+  reference, so a judge now runs before the gate. **Recorded not fixed:** `design-review`,
+  `diagnose-run` and `project-planning` (Slice 9a) have the same gap — retrofitting templates this
+  session did not author, blind, is how an unvalidated gate lands.
+
+- **The lint was TOO STRICT twice, and both exemptions are measured.** A stage whose output a
+  verified stage consumes is checked THROUGH it (the reviewer's findings are what the judge reads),
+  so demanding a gate per stage would turn a three-stage plan into a six-node ceremony. And an
+  ALL-DETERMINISTIC plan is exempt entirely — `knowledge-health` is every-node-zero-token, so its
+  output already IS the check, and paying a model to form an opinion about arithmetic is the kind of
+  finding that gets a rule suppressed wholesale, taking the real findings with it.
+
+- **Decision typing is mechanical, with two safe-direction overrides.** A gate whose output feeds a
+  downstream binding is blocking; ambiguity that changes no execution path lands as an Open Decision
+  on the finished summary. Destructive-risk and approval gates are ALWAYS blocking whatever the
+  bindings say — auto-proceeding past "may I delete this?" because nothing consumed the answer is
+  the one classification error with an unrecoverable cost.
+
+- **NOT DONE:** the triage-first convention (UP-R11) and `escalate-and-reclassify` as a named
+  mutation — the convention is encodable in the pattern registry, but the mutation is an engine op
+  and belongs with the review/revision cycle in session 43. The preflight step the planner should
+  emit (aggregating requirements one hop from referenced providers) needs the provider-requirement
+  data the grounding bundle does not yet carry.

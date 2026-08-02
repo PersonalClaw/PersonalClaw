@@ -797,6 +797,36 @@ def _plan(args: dict[str, Any]) -> str:
     return _fmt(body, summary=f"Draft plan for: {goal}")
 
 
+def _contract_review(definition: dict) -> dict:
+    """The derived form, the per-stage contracts, and the typed decisions.
+
+    Best-effort: a review surface is an enhancement to the plan, and a contract derivation that
+    failed must not stop the user launching a template that works. Returns `{}` rather than partial
+    keys so a caller cannot mistake an error for "this template has no contracts".
+    """
+    try:
+        from personalclaw.workflows import contracts as contracts_mod
+
+        spec = {
+            "inputs": definition.get("inputs") or {},
+            "root": definition.get("root") or {},
+        }
+        stage_contracts = contracts_mod.derive_contracts(spec)
+        decisions = contracts_mod.type_decisions(spec)
+        return {
+            "parameters": [p.to_dict() for p in contracts_mod.resolve_unfilled_inputs(spec)],
+            "parameter_types": contracts_mod.template_types(spec),
+            "declared_but_unused": contracts_mod.declared_but_unused(spec),
+            "stage_contracts": [c.to_dict() for c in stage_contracts],
+            "contract_issues": contracts_mod.contract_issues(stage_contracts),
+            "decisions": [d.to_dict() for d in decisions],
+            "open_decisions": contracts_mod.open_decisions(decisions),
+        }
+    except Exception:
+        logger.debug("contract review unavailable", exc_info=True)
+        return {}
+
+
 def _grounding_for(goal: str, classified: Any) -> dict | None:
     """The grounding bundle, the picked shape, and the generated prompt.
 
@@ -901,6 +931,10 @@ def _plan_from_template(goal: str, template: str, *, routing: dict | None = None
         # needs to know which happened: an auto-matched template is a decision to check, a named
         # one is a decision already made.
         **({"routing": routing} if routing else {}),
+        # UP-R3/R8/R16: the review surface. Derived from the tree rather than declared, so the
+        # launch form and the spec cannot disagree — measured, three shipped templates offered an
+        # input nothing read.
+        **_contract_review(definition),
         "proposed_root": definition.get("root"),
         "template_inputs": definition.get("inputs") or {},
         # How this template is actually driven — few-shot for the edit the model is about to make.
