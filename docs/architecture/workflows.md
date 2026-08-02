@@ -85,6 +85,7 @@ while not terminal:
 | `ownership.py` | run-owned session keys (`workflow:<run>:<node>`), the SEL + prompt-use-case registrations, incognito/temporary inheritance read from both the durable line and the live registry, and the engine-level learning-node skip |
 | `needs_input.py` | the NeedsInputItem card (block kind, blocker, attempted, evidence, recommendation, one decision), owner binding, once-only staleness re-notify, and the refs round trip |
 | `worktrees.py` | code-kind run worktrees on the proven `loop/worktree.py` machinery: preserve-in, marker-guarded setup, resume safety, teardown-before-deletion, the per-run branch, the machinery-free review diff, and the two reintegration verbs |
+| `introspection.py` | the nine-question checklist, RunStats as a pure journal projection, verification debt, said-no gate statistics with a sample-gated fake-check badge, per-template p50/p95 cards, and the Proof section |
 | `scope.py` | filesystem write-scope enforcement by post-hoc diff |
 | `watchdog.py` | the supervisor: adoption, reaping, per-run publishing |
 
