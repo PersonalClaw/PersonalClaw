@@ -797,6 +797,73 @@ def _plan(args: dict[str, Any]) -> str:
     return _fmt(body, summary=f"Draft plan for: {goal}")
 
 
+def _review_surface(goal: str, definition: dict, routing: dict | None) -> dict:
+    """The announce block, a structural cost estimate, and the plan as markdown.
+
+    Best-effort like the contract review: a header is an enhancement, and a failure to render one
+    must not stop a working plan reaching the user.
+    """
+    try:
+        from personalclaw.workflows import contracts as contracts_mod
+        from personalclaw.workflows import revision as revision_mod
+
+        spec = {"inputs": definition.get("inputs") or {}, "root": definition.get("root") or {}}
+        stage_contracts = contracts_mod.derive_contracts(spec)
+        decisions = contracts_mod.type_decisions(spec)
+        cost = revision_mod.estimate_cost(spec)
+
+        intent = None
+        match = None
+        if routing:
+            from personalclaw.workflows import intent as intent_mod
+            from personalclaw.workflows.matcher import Candidate, MatchResult
+
+            raw_intent = routing.get("intent") or {}
+            if raw_intent.get("rigor"):
+                # Rebuilt rather than threaded: the routing dict has already crossed a JSON
+                # boundary, and re-deriving from the goal would classify twice and could disagree
+                # with what the caller was shown.
+                intent = intent_mod.Intent(
+                    rigor=intent_mod.Rigor(raw_intent["rigor"]),
+                    stakes=intent_mod.Level(raw_intent.get("stakes", "low")),
+                    irreversible=bool(raw_intent.get("irreversible")),
+                    shape=str(raw_intent.get("shape", "") or ""),
+                    signals=raw_intent.get("signals") or {},
+                )
+            raw_match = routing.get("match") or {}
+            if raw_match.get("primary"):
+                match = MatchResult(
+                    primary=str(raw_match["primary"]),
+                    confidence=float(raw_match.get("confidence") or 0.0),
+                    reason=str(raw_match.get("reason", "") or ""),
+                )
+                _ = Candidate  # imported for the type's side of the contract
+
+        header = revision_mod.announce_block(
+            intent=intent, match=match, contracts=stage_contracts, decisions=decisions, cost=cost
+        )
+        return {
+            "announce": header,
+            "cost_estimate": cost,
+            "plan_markdown": revision_mod.plan_markdown(
+                spec, goal=goal, header=header, contracts=stage_contracts
+            ),
+            "inferred": revision_mod.inferred_chips(spec, goal),
+            "revision_grammar": {
+                "no_update_sentinel": revision_mod.NO_UPDATE,
+                "ops": ["replace", "add", "remove", "annotate"],
+                "semantics": (
+                    "merge by node id — same id replaces, new id adds, absent id is preserved "
+                    "untouched. Emit ONLY changed steps; a whole-spec rewrite re-rolls the stages "
+                    "nobody complained about."
+                ),
+            },
+        }
+    except Exception:
+        logger.debug("review surface unavailable", exc_info=True)
+        return {}
+
+
 def _contract_review(definition: dict) -> dict:
     """The derived form, the per-stage contracts, and the typed decisions.
 
@@ -935,6 +1002,10 @@ def _plan_from_template(goal: str, template: str, *, routing: dict | None = None
         # launch form and the spec cannot disagree — measured, three shipped templates offered an
         # input nothing read.
         **_contract_review(definition),
+        # UP-R4/R7: the announce block, the cost shape, and the markdown artifact. Veto-first
+        # ordering — detection and risk decide whether to read on; the pipeline is what they read
+        # if they do.
+        **_review_surface(goal, definition, routing),
         "proposed_root": definition.get("root"),
         "template_inputs": definition.get("inputs") or {},
         # How this template is actually driven — few-shot for the edit the model is about to make.

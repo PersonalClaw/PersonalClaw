@@ -72,6 +72,7 @@ while not terminal:
 | `patterns.py` | the seven proven graph shapes, their slots, when each is WRONG, and the deterministic shape pick |
 | `generation.py` | the generated planning prompt, the mechanical self-check, repair-not-regenerate, and the decline path |
 | `contracts.py` | derived parameter schemas, per-stage done-means contracts and their lint, and blocking-vs-open decision typing |
+| `revision.py` | typed merge-by-id patches, the NO_UPDATE sentinel, TTL'd draft sketches, and the announce-block review surface |
 | `scope.py` | filesystem write-scope enforcement by post-hoc diff |
 | `watchdog.py` | the supervisor: adoption, reaping, per-run publishing |
 

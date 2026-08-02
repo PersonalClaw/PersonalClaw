@@ -766,3 +766,46 @@ Where each new piece plugs into the pluggable-provider architecture (nothing her
   and belongs with the review/revision cycle in session 43. The preflight step the planner should
   emit (aggregating requirements one hop from referenced providers) needs the provider-requirement
   data the grounding bundle does not yet carry.
+
+- **2026-08-02 — DONE (#182) — Review + revision (session 43 of the WF2 queue).**
+  Branch `feature-wf2-planning-review`. `workflows/revision.py`: typed merge-by-id patches with the
+  `NO_UPDATE` sentinel, TTL'd draft sketches, the announce-block review surface, a structural cost
+  estimate, plan-as-markdown, and inferred-vs-stated chips. Wired into both `workflow_plan` paths.
+  12467 tests (+50), lint clean at 626 files.
+
+- **The load-bearing property: an untouched stage CANNOT change.** The merge walks the original tree
+  and substitutes; it never rebuilds. "Absent means preserved" is therefore structural rather than a
+  promise — there is no code path that writes an untouched node.
+
+- **Every refusal is deliberate.** A `replace` naming a node that does not exist is REJECTED rather
+  than silently converted to an `add` (inventing a stage the user never asked for); a duplicate `add`
+  is rejected with "use replace"; an `add` naming a missing anchor is rejected rather than appended,
+  because a silent relocation is the kind nobody reviews; and a `replace` cannot RENAME its node,
+  since that would break every binding pointing at it when the user asked to change the stage rather
+  than re-address it.
+
+- **DISCOVERY — the announce block and the contract lint disagreed about the same plan.** The header
+  reported "Unchecked: review-accuracy, review-clarity, store, record-decision" on `publish-article`
+  while the lint deliberately exempts all four (two feed a verified stage, two are zero-token). Two
+  views of one plan disagreeing is worse than either alone: the user believes the scarier one, and
+  the lint they might have trusted looks wrong. The header now applies the same exemptions.
+
+- **DISCOVERY — the EXPIRED sketch reason was one-shot.** Dropping a stale sketch on read is right (a
+  sweep needs a clock nobody owns), but without a tombstone the second attempt on the same id
+  reported "unknown sketch" — losing the distinction that tells a user their revision was reasonable
+  and the draft merely aged out. A bounded tombstone set keeps the honest answer available.
+
+- **The cost estimate returns COUNTS, never a price.** A dollar figure derived from a node count is a
+  confident number built on an unknown per-call cost, and a user who sees "$0.42" believes it. It
+  multiplies through fan-out (a stage inside a foreach is not one call) and NAMES unbounded loops
+  separately rather than folding them in — an unbounded loop makes the number a floor, and
+  presenting a floor as an estimate understates the one case that runs away.
+
+- **NOT DONE:** the streaming render (progressive buffer-append re-parse, shimmer on in-flight steps)
+  is a frontend concern with no backend seam in this session — the plan tool returns a complete
+  surface, and streaming it needs the SSE events the plan lists for `RUN_LIFECYCLE`, which belong
+  with a UI slice. The one small-model naming call (`{title, description, per-step labels}`) is
+  likewise unwired: `plan_markdown` uses deterministic labels from each node's own config, which is
+  the stated fallback. `revise{step_ref, comment}` exists as the patch grammar but is not yet an
+  answer verb on `workflow_resume` — that is an engine-surface change belonging with the autonomy
+  work in session 44.
