@@ -36,7 +36,18 @@
         "event": "mutation",
         "description": "Skip the orphan check this run — I know about those and they're deliberate."
       }
-    ]
+    ],
+    "keywords": [
+      "knowledge health",
+      "check the store",
+      "stubs",
+      "orphans",
+      "broken links"
+    ],
+    "example_outputs": [
+      "a deterministic report of what is wrong in the knowledge store"
+    ],
+    "when_not_to_use": "reports only — it never edits the store"
   },
   "root": {
     "kind": "sequence",

@@ -75,6 +75,19 @@
         "event": "mutation",
         "description": "Skip the comparison — just tell me which node failed and why"
       }
+    ],
+    "keywords": [
+      "diagnose",
+      "why did it fail",
+      "root cause",
+      "debug",
+      "what went wrong"
+    ],
+    "example_outputs": [
+      "a root cause with the evidence that establishes it"
+    ],
+    "shapes": [
+      "triage"
     ]
   },
   "root": {

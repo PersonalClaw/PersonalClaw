@@ -4,20 +4,50 @@
   "source": "bundled",
   "provenance": "user",
   "version": 1,
-  "tags": ["knowledge", "writing"],
+  "tags": [
+    "knowledge",
+    "writing"
+  ],
   "inputs": {
-    "topic": {"type": "string", "required": true, "help": "What to write about."},
-    "audience": {"type": "string", "required": false, "default": "a technical peer", "help": "Who it is for. Drives the register, and the reviewers judge against it."}
+    "topic": {
+      "type": "string",
+      "required": true,
+      "help": "What to write about."
+    },
+    "audience": {
+      "type": "string",
+      "required": false,
+      "default": "a technical peer",
+      "help": "Who it is for. Drives the register, and the reviewers judge against it."
+    }
   },
   "metadata": {
     "risk": "medium",
-    "capabilities": ["knowledge", "write"],
+    "capabilities": [
+      "knowledge",
+      "write"
+    ],
     "cost_tier": "metered",
     "why_two_reviewers": "One reviewer asked for both accuracy and readability trades one against the other inside a single answer. Two independent lenses disagree visibly, which is the useful signal.",
     "why_gate_records_a_decision": "The journal records that a gate was approved; a `kind: decision` item records WHY. Without it, a later run re-opens a settled question and the approval is invisible to it.",
     "steering_examples": [
-      {"event": "kickoff", "description": "Write up the cold start investigation for a technical peer, then show me before it gets stored."},
-      {"event": "mutation", "description": "The accuracy reviewer is right about the second claim — cut it rather than hedging it."}
+      {
+        "event": "kickoff",
+        "description": "Write up the cold start investigation for a technical peer, then show me before it gets stored."
+      },
+      {
+        "event": "mutation",
+        "description": "The accuracy reviewer is right about the second claim — cut it rather than hedging it."
+      }
+    ],
+    "keywords": [
+      "write an article",
+      "publish",
+      "draft a post",
+      "write it up for others"
+    ],
+    "example_outputs": [
+      "a reviewed, approved, stored article"
     ]
   },
   "root": {
@@ -30,7 +60,11 @@
         "label": "What do we know?",
         "config": {
           "provider": "knowledge-retrieve",
-          "with": {"query": "{{inputs.topic}}", "top_k": 8, "detail": "compact"}
+          "with": {
+            "query": "{{inputs.topic}}",
+            "top_k": 8,
+            "detail": "compact"
+          }
         }
       },
       {
@@ -40,14 +74,26 @@
         "config": {
           "model_tier": "standard",
           "prompt": "Write an article about {{inputs.topic}} for {{inputs.audience}}.\n\nGrounding (cite as [n]):\n{{nodes.context.output.items | fenced_sources}}\n\nGround every claim in the sources. Where they do not cover something, say so rather than filling the gap — an article that reads as complete while resting on nothing is worse than one with a visible hole.",
-          "schema": {"title": "string", "body": "string", "claims": [{"id": "string", "statement": "string", "confidence": "number"}]}
+          "schema": {
+            "title": "string",
+            "body": "string",
+            "claims": [
+              {
+                "id": "string",
+                "statement": "string",
+                "confidence": "number"
+              }
+            ]
+          }
         }
       },
       {
         "kind": "parallel",
         "id": "review",
         "label": "Two reviewers",
-        "config": {"join": "all"},
+        "config": {
+          "join": "all"
+        },
         "children": [
           {
             "kind": "stage",
@@ -56,7 +102,18 @@
             "config": {
               "model_tier": "reasoning",
               "prompt": "Review this draft for ACCURACY only. Which claims are unsupported by the cited sources, overstated, or wrong?\n\n{{nodes.draft.output.body}}\n\nSources:\n{{nodes.context.output.items | fenced_sources}}\n\nReturn nothing rather than manufacturing a finding.",
-              "schema": {"findings": [{"severity": "string", "location": "string", "problem": "string", "why": "string", "recommended_fix": "string", "status": "string"}]}
+              "schema": {
+                "findings": [
+                  {
+                    "severity": "string",
+                    "location": "string",
+                    "problem": "string",
+                    "why": "string",
+                    "recommended_fix": "string",
+                    "status": "string"
+                  }
+                ]
+              }
             }
           },
           {
@@ -66,7 +123,18 @@
             "config": {
               "model_tier": "fast",
               "prompt": "Review this draft for CLARITY for {{inputs.audience}} — structure, jargon, and whether the point arrives before the reader gives up. Not accuracy; another reviewer has that.\n\n{{nodes.draft.output.body}}",
-              "schema": {"findings": [{"severity": "string", "location": "string", "problem": "string", "why": "string", "recommended_fix": "string", "status": "string"}]}
+              "schema": {
+                "findings": [
+                  {
+                    "severity": "string",
+                    "location": "string",
+                    "problem": "string",
+                    "why": "string",
+                    "recommended_fix": "string",
+                    "status": "string"
+                  }
+                ]
+              }
             }
           }
         ]
@@ -78,7 +146,20 @@
         "config": {
           "model_tier": "standard",
           "prompt": "Revise the draft against both reviews.\n\nDraft:\n{{nodes.draft.output.body}}\n\nAccuracy findings:\n{{nodes.review-accuracy.output.findings | json}}\n\nClarity findings:\n{{nodes.review-clarity.output.findings | json}}\n\nWhere the two reviews pull in opposite directions, favour accuracy and say in `tradeoffs` what readability you gave up. A claim you cannot support gets CUT, not hedged.",
-          "schema": {"title": "string", "body": "string", "tradeoffs": ["string"], "claims": [{"id": "string", "statement": "string", "confidence": "number"}]}
+          "schema": {
+            "title": "string",
+            "body": "string",
+            "tradeoffs": [
+              "string"
+            ],
+            "claims": [
+              {
+                "id": "string",
+                "statement": "string",
+                "confidence": "number"
+              }
+            ]
+          }
         }
       },
       {
@@ -103,7 +184,9 @@
             "content": "{{nodes.revise.output.body}}",
             "claims": "{{nodes.revise.output.claims}}",
             "citations": "{{nodes.context.output.items | map('item_id')}}",
-            "tags": ["article"]
+            "tags": [
+              "article"
+            ]
           }
         }
       },
@@ -118,8 +201,13 @@
             "title": "Published — {{nodes.revise.output.title}}",
             "content": "Approved for storage after two-lens review. Tradeoffs accepted: {{nodes.revise.output.tradeoffs | json}}",
             "summary": "The owner approved publishing this article.",
-            "citations": ["{{nodes.store.output.item_id}}"],
-            "tags": ["decision", "article"]
+            "citations": [
+              "{{nodes.store.output.item_id}}"
+            ],
+            "tags": [
+              "decision",
+              "article"
+            ]
           }
         }
       }

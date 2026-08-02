@@ -48,7 +48,19 @@
         "event": "mutation",
         "description": "The plan missed the CLI help text — splice a file into the foreach for docs/cli.md before the verify gate."
       }
-    ]
+    ],
+    "keywords": [
+      "implement",
+      "build",
+      "add a feature",
+      "write the code",
+      "fix the bug",
+      "make it work"
+    ],
+    "example_outputs": [
+      "working code with passing tests"
+    ],
+    "when_not_to_use": "not for deciding WHAT to build — use project-planning first"
   },
   "root": {
     "kind": "sequence",

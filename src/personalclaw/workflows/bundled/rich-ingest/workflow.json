@@ -38,6 +38,16 @@
         "event": "mutation",
         "description": "The facts lens is pulling in boilerplate from the meeting template — drop it and keep the rest."
       }
+    ],
+    "keywords": [
+      "ingest",
+      "transcript",
+      "meeting notes",
+      "process this document",
+      "pull the decisions out"
+    ],
+    "example_outputs": [
+      "typed knowledge items and real tasks from one raw document"
     ]
   },
   "root": {

@@ -612,3 +612,54 @@ Where each new piece plugs into the pluggable-provider architecture (nothing her
 7. First run of a newly saved template executes report-only; after N verified successes the approval dialog suggests promotion, and remembers the user's last choice for that template.
 8. The CI routing-fixture suite passes with ≥85% deterministic-tier accuracy and zero LLM calls; the grounding A/B shows first-try-valid ≥4/5 on the representative task set.
 9. A jotted line in the watched scratchpad appears as a PROPOSED plan in the needs-input inbox with a source backlink — and is never auto-executed.
+
+## Execution log
+
+- **2026-08-02 — CODE DONE (push blocked) — Matching + classification (session 40 of the WF2 queue).**
+  Branch `feature-wf2-planning-match`. `workflows/intent.py` (no-LLM 4-dimension classifier + rigor
+  routing), `workflows/matcher.py` (T1-T5), typed match metadata on `DefMetadata`, all 18 bundled
+  templates annotated, `tests/fixtures/planner_routing.json` as the CI gate, both wired into
+  `workflow_plan`. 12251 tests.
+
+- **The accuracy number was earned, not asserted.** Fixtures were written FIRST from how a user
+  actually types, then measured: **68% on first contact** against the plan's 85% bar. One root cause —
+  a request with NO signal collapsed to TRIVIAL, so "add a retry to the ingest queue" took the
+  cheapest path. Absence of evidence is not evidence of simplicity. Four measure-fix rounds reached
+  100% on fixtures, 4/4 shapes, and 13/13 against the REAL bundled library.
+
+- **DISCOVERY — nine classifier defects**, each a measured miss: TRIVIAL was unreachable (required an
+  explicit certainty word that nothing emits); time pressure was checked after stakes, so an outage
+  routed DEEP; `quick` read as urgency when it is a size; `delete`/`drop` sat in both the stakes and
+  irreversible lists and HIGH wins ties, making the `scratch` de-escalator unreachable; a signal-less
+  MEDIUM both blocked the cheap paths and read as not-complex; high stakes short-circuited to FAST so
+  a changelog got less planning than a retry; breadth was not a signal, so a codebase-wide rename read
+  as a one-liner; a domain noun counted as a unit of scale; and the uncertainty list lacked the bare
+  "why".
+
+- **DISCOVERY — seven matcher defects.** `DefMetadata` is a CLOSED dataclass whose `from_dict` drops
+  unnamed keys, so annotating 18 templates left the matcher reading 0/18 while still reporting
+  matches — the match surface is now typed fields. `TemplateProfile.from_def` called `.get()` on that
+  dataclass and silently got nothing. Confidence saturated at the ceiling for every clean match (a
+  number that never varies carries no information). The T3 shape penalty could not unseat a keyword
+  hit, so a monitor intent matched a review template. Hard-excluding every candidate crashed.
+  Literal-phrase keyword matching missed "why did that run fail" against `"why did it fail"`. And the
+  matcher read templates from DISK while the plan tool resolved them through registered providers —
+  outside a booted gateway the router proposed a name the loader could not find and turned a working
+  scaffold into an error.
+
+- **DEVIATION — the "delete dead chat plan-mode" task is not actionable as written.** That split
+  already happened: the plan-mode half is `plan_memory.py`, whose own docstring says it becomes
+  deletable once this plan replaces the format. It is NOT dead — `history.py` (2 sites) and
+  `dashboard/chat_title.py` import it live, with test coverage. Deleting it now would break three
+  live surfaces to front-run a replacement that does not exist until session 41.
+
+- **Validated end to end** in the real runtime: audit intent → `audit-sweep` @0.79 (T3), "why did
+  that run fail" → `diagnose-run` @0.59 (T1), synthesis intent → `knowledge-synthesis` @0.80, each
+  returning the template's expanded tree plus steering examples. A monitor-shaped intent correctly
+  reports that no template serves it (session 39 deferred `market-monitor` for want of `net.fetch`)
+  and falls back to a scaffold rather than forcing a wrong shape.
+
+- **NOT DONE:** T4 (embedding tie-break) and T5 (summarize-then-rematch) are built and unit-tested
+  but not wired to a live embedder or model in `workflow_plan` — both need plumbing that lands with
+  session 41's grounding work. Hybrid composition returns the names to compose without building the
+  subworkflow spec; `presets`/`lighter_path` are surfaced but not yet acted on.

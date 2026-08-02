@@ -4,7 +4,11 @@
   "source": "bundled",
   "provenance": "user",
   "version": 1,
-  "tags": ["produce", "review", "general"],
+  "tags": [
+    "produce",
+    "review",
+    "general"
+  ],
   "inputs": {
     "subject": {
       "type": "string",
@@ -26,7 +30,10 @@
   },
   "metadata": {
     "risk": "low",
-    "capabilities": ["research", "write"],
+    "capabilities": [
+      "research",
+      "write"
+    ],
     "steering_examples": [
       {
         "event": "kickoff",
@@ -36,6 +43,14 @@
         "event": "mutation",
         "description": "The audit found three Major findings — re-run the produce step with them as constraints rather than patching the artifact."
       }
+    ],
+    "keywords": [
+      "produce and check",
+      "make it and verify",
+      "write then review"
+    ],
+    "example_outputs": [
+      "a deliverable that has been independently checked"
     ]
   },
   "root": {
@@ -48,7 +63,10 @@
         "config": {
           "model_tier": "fast",
           "prompt": "Classify how much work this subject warrants.\n\ntier=light: a known, bounded thing — write it directly.\ntier=standard: needs a look around first.\ntier=deep: unfamiliar or contested; needs a real sweep before writing.\n\nReturn JSON: {\"tier\": \"light|standard|deep\", \"why\": \"one line\"}.\n\nSubject:\n{{inputs.subject}}",
-          "schema": { "tier": "string", "why": "string" }
+          "schema": {
+            "tier": "string",
+            "why": "string"
+          }
         }
       },
       {
@@ -56,7 +74,11 @@
         "id": "gather",
         "config": {
           "on": "{{nodes.triage.output.tier}}",
-          "enum": ["light", "standard", "deep"]
+          "enum": [
+            "light",
+            "standard",
+            "deep"
+          ]
         },
         "cases": {
           "light": {
@@ -81,7 +103,11 @@
             "id": "sweep",
             "config": {
               "question": "{{inputs.subject}}",
-              "modes": ["by-content", "by-entity", "by-time"]
+              "modes": [
+                "by-content",
+                "by-entity",
+                "by-time"
+              ]
             }
           }
         }
@@ -99,7 +125,10 @@
         "config": {
           "model_tier": "reasoning",
           "prompt": "Audit the artifact below. READ-ONLY: report findings, change nothing — an auditor that edits is no longer an independent check, and the next reviewer cannot tell what was found from what was fixed.\n\nJudge against the acceptance criteria when given; against the subject otherwise.\n\nReturn JSON: {\"findings\": [Finding], \"verdict\": \"pass|revise\"}.\n\n{{block:finding-record}}\n\nSubject:\n{{inputs.subject}}\n\nAcceptance criteria:\n{{inputs.acceptance}}\n\nArtifact:\n{{nodes.produce.output}}",
-          "schema": { "findings": "array", "verdict": "string" }
+          "schema": {
+            "findings": "array",
+            "verdict": "string"
+          }
         }
       },
       {

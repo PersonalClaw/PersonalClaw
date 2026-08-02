@@ -25,10 +25,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
 
+from personalclaw.workflows import intent as intent_mod
 from personalclaw.workflows import service
 from personalclaw.workflows.context_block import needs_staging, staged_spec_echo
+
+logger = logging.getLogger(__name__)
 
 #: Read-only tools — no state change, safe to call while thinking. Kept explicit so a
 #: reviewer can see at a glance which tools can be called freely.
@@ -666,13 +670,49 @@ def _plan(args: dict[str, Any]) -> str:
     goal = str(args.get("goal", "") or "").strip()
     if not goal:
         return "Error [WF_PLAN_GOAL_REQUIRED]: 'goal' is required."
-    rigor = str(args.get("rigor", "standard") or "standard")
-    if rigor not in ("minimal", "standard", "deep"):
-        rigor = "standard"
 
     template = str(args.get("template", "") or "").strip()
     if template:
+        # An explicitly user-named template WINS. The router's job is choosing when nobody has
+        # chosen; overriding a stated request would make the matcher an obstacle.
         return _plan_from_template(goal, template)
+
+    # UNIVERSAL-PLANNING S1: classify, then match, before any generation. Both are zero-token and
+    # offline-safe, so this runs on every plan rather than only when a model is reachable.
+    classified = intent_mod.classify(goal)
+    requested = str(args.get("rigor", "") or "").strip()
+    if requested in ("minimal", "standard", "deep"):
+        rigor = requested
+    elif requested:
+        # An INVALID value is a caller error. Substituting the classifier's opinion would hide it —
+        # the caller asked for something and would get something else with no indication. The
+        # documented fallback stands.
+        rigor = "standard"
+    else:
+        # ABSENT: defer to the classifier. `trivial`/`fast` map onto the tool's existing three-value
+        # vocabulary rather than widening it — the schema is a published contract, and a fourth
+        # value would break every caller that validates against it.
+        rigor = {
+            intent_mod.Rigor.TRIVIAL: "minimal",
+            intent_mod.Rigor.FAST: "minimal",
+            intent_mod.Rigor.STANDARD: "standard",
+            intent_mod.Rigor.DEEP: "deep",
+        }[classified.rigor]
+
+    match = _match_library(goal, classified)
+    if match is not None and match.matched and _def_resolvable(match.primary):
+        # A matched template beats a scaffold: starting from a shipped shape means the plan inherits
+        # a tested structure instead of a three-node stub.
+        #
+        # `_def_resolvable` first: the matcher reads bundled templates from DISK, while
+        # `_plan_from_template` resolves through the service's registered providers. Outside a
+        # booted gateway those disagree, and the router proposed a real name the loader could not
+        # find —
+        # turning a working scaffold into WF_PLAN_TEMPLATE_NOT_FOUND. A router that breaks the
+        # fallback is worse than one that never matched.
+        return _plan_from_template(
+            goal, match.primary, routing={"intent": classified.to_dict(), "match": match.to_dict()}
+        )
 
     scaffold: dict[str, Any] = {
         "kind": "sequence",
@@ -729,6 +769,12 @@ def _plan(args: dict[str, Any]) -> str:
         "planner": "scaffold-v1",
         "goal": goal,
         "rigor": rigor,
+        # The routing is reported even when nothing matched: "no template fit, and here is why"
+        # is the answer that tells a reader whether to add a template or fix a keyword list.
+        "routing": {
+            "intent": classified.to_dict(),
+            "match": match.to_dict() if match is not None else {"reason": "matcher unavailable"},
+        },
         "proposed_root": scaffold,
         "next_step": (
             "Adapt this tree to the goal, then call workflow_author with save=false to "
@@ -744,7 +790,46 @@ def _plan(args: dict[str, Any]) -> str:
     return _fmt(body, summary=f"Draft plan for: {goal}")
 
 
-def _plan_from_template(goal: str, template: str) -> str:
+def _def_resolvable(name: str) -> bool:
+    """Can `_plan_from_template` actually load this name?
+
+    Asked BEFORE routing to it, because the matcher and the loader read different sources and a
+    proposal the loader cannot honour replaces a usable scaffold with an error.
+    """
+    if not name:
+        return False
+    try:
+        return bool(_run(service.get_def(name)).get("ok"))
+    except Exception:
+        logger.debug("def resolvability check failed for %r", name, exc_info=True)
+        return False
+
+
+def _match_library(goal: str, classified: Any) -> Any:
+    """Match the goal against the bundled library. Returns None when the matcher cannot run.
+
+    None rather than an empty result, so the caller can say "matcher unavailable" instead of
+    reporting a confident no-match it never actually computed — the two mean different things to
+    whoever is deciding whether to add a template.
+    """
+    try:
+        from personalclaw.workflows import bundled_defs
+        from personalclaw.workflows.matcher import TemplateProfile, match_template
+
+        profiles = []
+        for name in bundled_defs.template_names():
+            spec = bundled_defs.read_template(name)
+            if spec is not None:
+                profiles.append(TemplateProfile.from_def(spec))
+        if not profiles:
+            return None
+        return match_template(goal, profiles, shape=getattr(classified, "shape", ""))
+    except Exception:
+        logger.debug("template matching unavailable", exc_info=True)
+        return None
+
+
+def _plan_from_template(goal: str, template: str, *, routing: dict | None = None) -> str:
     """Plan by starting from a real template's tree rather than a generic scaffold.
 
     Returns the template's ALREADY-EXPANDED root (macros expanded, blocks resolved), because that
@@ -770,6 +855,10 @@ def _plan_from_template(goal: str, template: str) -> str:
         "planner": "template-v1",
         "goal": goal,
         "template": template,
+        # Present when the ROUTER chose this template, absent when the caller named it. A reader
+        # needs to know which happened: an auto-matched template is a decision to check, a named
+        # one is a decision already made.
+        **({"routing": routing} if routing else {}),
         "proposed_root": definition.get("root"),
         "template_inputs": definition.get("inputs") or {},
         # How this template is actually driven — few-shot for the edit the model is about to make.

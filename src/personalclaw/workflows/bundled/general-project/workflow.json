@@ -81,6 +81,15 @@
         "event": "mutation",
         "description": "Only touch the user-facing strings — leave the log lines alone"
       }
+    ],
+    "keywords": [
+      "project",
+      "plan and execute",
+      "get this done",
+      "multi-step"
+    ],
+    "example_outputs": [
+      "a finished multi-step piece of work"
     ]
   },
   "root": {
