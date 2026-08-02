@@ -857,3 +857,25 @@ These loop-engine behaviors are baked into `gateway._fire`, the watchdog, and th
   came back correctly shaped and REJECTED thin evidence unprompted; the contract then caught both
   a rubber-stamp (same zero scores flipped to PASS) and a deterministic contradiction (PASS vs
   failed check → escalate).
+
+- **2026-08-01 — CODE DONE (push blocked) — Engine loop-node middleware (session 30 of the WF2 queue).**
+  Branch `feature-wf2-loops-middleware`. `workflows/loop_middleware.py`: 7-way failure
+  classification, tool-argument fingerprinting, the Continue→Nudge→Escalate→Halt ladder with
+  per-class entry rungs, recoverable-class headroom (no rung burned on a 429), the structured
+  never-silence brief, and the atomic interrupt queue. 4 new ledger kinds registered in the FE
+  `RUN_LIFECYCLE` union with a bidirectional drift test. 11442 tests, full FE gate green.
+
+- **DISCOVERY — two dead-configuration bugs in my own first cut, both caught by measuring the walk.**
+  (1) Every non-classified-retry rung mapped to HALT, making the ladder's middle unreachable — fixed
+  with a distinct ESCALATE action. (2) `attempt_cap` applied as a ladder-POSITION cap made
+  `restart_from_scratch` unreachable under the plan's own values — fixed by counting attempts within
+  a rung. A rung that can never be selected reads as a working feature; only walking the whole ladder
+  exposes it.
+
+- **DEVIATION — built on top of `resilience.check_breaker`, not replacing it.** The Slice-2c breaker
+  already catches four stalls; this adds only the tiers needing more than counters.
+
+- **NOT DONE — the middleware is a pure decision layer, not yet wired into the `RunController` tick.**
+  That wiring (plus the R7 fresh-session lifecycle protocol and R13 reactive compaction, which needs
+  the absent summarizer seam) is the live-engine integration those consume. Validated in isolation on
+  a full simulated stall sequence.
