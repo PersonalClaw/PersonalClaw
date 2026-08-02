@@ -1,0 +1,95 @@
+{
+  "name": "gap-healing",
+  "description": "Find entities the store keeps referencing but has never written down, draft the missing entries, and file them as proposals for review — never as direct writes.",
+  "source": "bundled",
+  "provenance": "user",
+  "version": 1,
+  "tags": [
+    "knowledge",
+    "maintenance"
+  ],
+  "inputs": {
+    "min_mentions": {
+      "type": "number",
+      "required": false,
+      "default": 3,
+      "help": "How many distinct items must reference a name before the gap is worth drafting."
+    }
+  },
+  "metadata": {
+    "risk": "low",
+    "capabilities": [
+      "knowledge"
+    ],
+    "cost_tier": "metered",
+    "why_proposals": "A drafted entry nobody reviewed becomes a citable source for the next draft, and two generations later the store cites itself as evidence. Direct-write healing is the studied anti-pattern; this template files proposals and stops.",
+    "run_after": [
+      "knowledge-health"
+    ],
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Find names the store keeps referencing but never wrote up, and draft entries for review."
+      },
+      {
+        "event": "mutation",
+        "description": "Only draft the ones with at least five referencing items — the rest are too thin."
+      }
+    ]
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "root",
+    "children": [
+      {
+        "kind": "action",
+        "id": "gaps",
+        "label": "Find phantom hubs",
+        "config": {
+          "provider": "knowledge-gaps",
+          "with": {
+            "min_mentions": "{{inputs.min_mentions}}"
+          }
+        }
+      },
+      {
+        "kind": "stage",
+        "id": "draft",
+        "label": "Draft the missing entries",
+        "config": {
+          "model_tier": "fast",
+          "prompt": "These names are referenced by several stored items but have no item of their own:\n\n{{nodes.gaps.output.gaps | json}}\n\nWhat the store already SAYS about each, quoted from the referencing items:\n\n{{nodes.gaps.output.excerpts | json}}\n\nFor each name, draft a short entry using ONLY the excerpts above. Where they are too thin to say anything, set sufficient_evidence false and say what is missing — a thin honest entry is useful and a confident invented one is not.",
+          "schema": {
+            "drafts": [
+              {
+                "entity": "string",
+                "title": "string",
+                "body": "string",
+                "sufficient_evidence": "boolean"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "kind": "action",
+        "id": "file",
+        "label": "File as proposals",
+        "config": {
+          "provider": "knowledge-persist",
+          "with": {
+            "kind": "probe",
+            "title": "Knowledge gaps — {{nodes.gaps.output.count}} referenced but unwritten",
+            "content": "{{nodes.draft.output.drafts | json}}",
+            "summary": "Drafted entries for referenced-but-missing entities, pending review.",
+            "tags": [
+              "gap-healing",
+              "proposal"
+            ],
+            "ttl": "30d"
+          }
+        }
+      }
+    ]
+  }
+}

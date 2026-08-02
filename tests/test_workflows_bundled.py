@@ -61,6 +61,12 @@ EXPECTED = {
     "general-project",
     "design-project",
     "diagnose-run",
+    # The knowledge maintenance trio (KNOWLEDGE-SYNTHESIS §3.4), ordered cheapest first: health
+    # is zero-LLM and gates the other two, because linting a stub spends a model call to
+    # discover it is a stub.
+    "knowledge-health",
+    "knowledge-lint",
+    "gap-healing",
 }
 
 

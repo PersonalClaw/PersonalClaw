@@ -1389,3 +1389,158 @@ end-to-end through the live engine, including an idempotent re-run.
   enrichment/backfill loop (`_enqueue_enrichment` is a best-effort hook whose target
   `knowledge.ingest.enqueue_item` does not exist yet — it degrades silently by design, and the
   backfill that covers what the queue missed is session 37's).
+
+### Session 36 — Knowledge Synthesis: long-run engine additions (`feature-wf2-engine-longrun`, PR NOT OPENED — push blocked)
+
+`workflows/longrun.py` (item identity, persistent seen-set, bounded sibling views, convergence
+guard, lineage caps, adaptive-delay clamp, buffer-seal, run-continuity, web hygiene), the
+`until_cancelled` loop mode with a real reaper, `{{siblings.*}}` / `{{previous.output}}` with the
+`window`/`unseen`/`significant`/`full`/`hygiene`/`clamp` pipes, buffer-seal `wait`, and four new
+ledger kinds. 11957 tests (+87), lint clean at 615 files. Driven end-to-end through the live
+engine: the sibling view grew 2→4→8 across cycles, `previous.output` chained each cycle to its
+predecessor, the seen-set journaled one novel item per cycle, and the run COMPLETED rather than
+hanging.
+
+**PREMISE MISMATCH (E1) — resolved in place, not escalated.** The plan states a watcher is
+cancelled by "a sibling completing in a `join: any` parallel". Measured, that does not happen:
+`container_outcome` checks for non-terminal children BEFORE the ANY rule, so a parallel whose
+watcher is still running reads RUNNING and the run never completes. That check is deliberate and
+documented (tick.py's own header: a join must not fire early on a fan-out whose other legs are
+still waiting), so changing join semantics would have broken the rule it was protecting. Instead
+`reap_watchers` is a separate, narrower pure rule: inside a `join: any`/`quorum` parallel, an
+`until_cancelled` loop is reaped once enough of its NON-watcher siblings have succeeded. Recorded
+as a DEVIATION rather than a BLOCKED because the plan's *intent* — the watcher stops when its
+work is done — was buildable exactly as written; only its stated mechanism was wrong.
+
+**Three PRE-EXISTING engine defects found by running the plan's flagship shape.** All three are
+about instance-path handling below an iteration marker, all three were live on `main`, and all
+three made container-bodied loops unusable — a shape five SHIPPED templates already use:
+
+(a) **`_base_path` truncated at the last marker** instead of removing the marker, so
+  `root.children[0].body@0.children[0]` resolved to the body SEQUENCE. Live effect: a `wait`
+  nested in a loop body was looked up as its parent sequence, `_wake_due_nodes` read it as a
+  gate, and every cycle failed with "gate timed out with no answer" — for a template containing
+  no gate at all.
+
+(b) **`_loop_parent` required the path to END at `@N`.** It always does for a leaf body and never
+  for a container one, so `int("0.children[2]")` raised, `_advance_loop` returned silently, the
+  loop never advanced, and the run DEADLOCKED after exactly one iteration.
+
+(c) **Instance paths were sorted as strings,** so `body@10` sorted before `body@2`. "Oldest
+  first" silently became wrong at the tenth iteration — the window would keep the wrong items
+  and `previous.output` would return the wrong cycle. Ten cycles in is later than any short test
+  reaches, which is why it survived.
+
+Fixing (b) required a fourth change: a container-bodied loop calls `_advance_loop` once per LEAF,
+so the counter now advances only when the whole body is terminal, derived through the scheduler's
+own `derive_state` (promoted from private) rather than a second notion of completeness that could
+disagree with it.
+
+**Other deviations and findings:**
+
+- **The default sibling view is applied at RESOLUTION time, not in `as_root`.** Filtering in
+  `as_root` made `| full` inert: the opt-out could only ever see items the default had already
+  dropped — a control that looks present and does nothing.
+- **`siblings.<id>.output` FLATTENS iteration envelopes.** Without it `| full` returned 1 item
+  out of 60 and `| unseen` returned nothing at all, because an envelope carries no item identity.
+- **`| full` means full** — no filter AND no window. The first cut still windowed at 20, so the
+  opt-out silently didn't.
+- **`previous` absent is the first cycle, not an unresolvable reference.** Every diff-aware
+  template in the plan is written `{{previous.output.summary | default('None yet')}}`; raising
+  would make each fail on its own first cycle. `nodes.typo.output` still raises.
+- **`unseen` with no engine seen-set RAISES.** A silently inert `unseen` is the exact failure it
+  exists to prevent: the watcher keeps working and costs grow every cycle with no indication why.
+- **`_enclosing_parallel` walks OUTWARD.** A watcher's synthesize stage sits at
+  `…children[1].body@3.children[0]`, whose nearest `.children[N]` prefix is the body SEQUENCE —
+  stopping there returned no siblings for the one node in the template that needs them.
+- **An empty buffer never seals, including on the stale path.** A stale-flush of nothing would
+  pay for a synthesis of no new material every hour forever — the cost the volume trigger exists
+  to avoid.
+- **A garbage adaptive-delay proposal falls back to the CONFIGURED delay, not the floor** — "the
+  model returned nonsense" must not make the loop faster.
+- **Two new validator errors**, because both failures are silent hangs or silent spends:
+  `WF_UNREAPABLE_WATCHER` (no reaper and no `max_iterations` — including a parallel of nothing
+  but watchers, which can never satisfy its own join) and `WF_WATCHER_NO_WAIT` (a watcher with no
+  wait cycles as fast as the model answers). Plus `WF_BAD_SEAL` / `WF_SEAL_NO_FLUSH`.
+- **NOT DONE:** the `transform(hygiene|unseen)` preset as a node-level shorthand (the pipes ship;
+  the preset is template sugar), LLM-summarize for oversized sibling payloads (deterministic
+  truncate ships as the fallback that must always work — the model path belongs with the
+  synthesizer), and the run-continuity injection SITE (`roll_continuity`/`continuity_header` ship
+  and are tested; wiring them onto the trigger record is recurring-run work in session 37).
+
+### Session 37 — Knowledge Synthesis: consolidation + maintenance (`feature-wf2-knowledge-maintenance`, PR NOT OPENED — push blocked)
+
+`knowledge/consolidation.py` (gate stack, deterministic pre-dedup, injectable-metric clustering,
+lineage caps, health checks, differential refresh, phantom hubs, lint cadence), three maintenance
+action providers (`knowledge-health` / `knowledge-consolidate` / `knowledge-gaps`), the three
+bundled templates, and four config knobs through all four wiring points. 12059 tests (+102), lint
+clean at 617 files.
+
+**Deviations and findings — every one measured, not read:**
+
+(a) **The plan's 0.75 cluster threshold is an EMBEDDING number, and the default metric is token
+  overlap.** Measured: six human paraphrases of one fact score 0.12-0.36 pairwise on token
+  Jaccard, so a 0.75 cut clustered NOTHING — a pass that ran, reported success, and consolidated
+  zero items every single time. This is the same defect class as session 35's cosine-cliff-vs-RRF
+  bug: a threshold is meaningless without its number space. Fixed by making the metric injectable
+  (cosine over the store's embeddings when one is configured) and making the DEFAULT THRESHOLD
+  FOLLOW THE METRIC — `TOKEN_CLUSTER_SIMILARITY = 0.30` (cross-topic pairs measure below 0.10)
+  versus the plan's 0.75 for cosine.
+
+(b) **The plan's `<100-char body` stub rule over-fires on exactly the content the store is for.**
+  "Cold start latency measured 4.2s on the M2 after a fresh boot" is 83 characters and a complete,
+  useful fact; six of those reported as six stubs trains the reader to ignore the report, which
+  costs more than the stubs do. A stub is now short AND unspecific: a body containing a number, a
+  path, an identifier or a version is making a claim regardless of length.
+
+(c) **`items_fts` is keyed by ROWID, not by the item's text id.** Comparing the two marked EVERY
+  item unindexed — a report claiming seven problems on a healthy seven-item store. The reindex
+  path had the mirror bug: inserting keyed on the text id writes an entry no search will ever
+  match, which is worse than the gap it repaired because the report then says it is fixed.
+
+(d) **`knowledge.content_hash()` is keyword-only, and `items.item_type` is NOT NULL.** My
+  hand-rolled INSERT hit both. Fixed by routing the consolidated write THROUGH
+  `knowledge-persist` instead — which also gets the FTS sync, the idempotency check and the
+  provenance ref right. Two writers to one table means every fix to one has to be remembered for
+  the other.
+
+(e) **The persist provider silently DROPPED a `metadata=` argument.** It forwards a named
+  allowlist, so the entire lineage the consolidation pass depends on never reached the row and
+  nothing errored. Added `lineage` as an explicit named key rather than opening the passthrough:
+  an open dict would let any caller clobber `claims` or `logical_key`, and a caller that silently
+  wiped the claim ledger would be indistinguishable from one that never wrote it.
+
+(f) **The first `gap-healing` draft passed `min_mentions` AS a `knowledge-retrieve` query** — it
+  reads plausibly in a spec and searches the store for the string "3". Phantom-hub detection is
+  not a search; it is a set difference between what items REFERENCE and what items EXIST, so it
+  became its own zero-token provider. It also carries EXCERPTS: a model given a bare name writes
+  what it already believes about that name, which is the invention the template exists to avoid.
+
+(g) **An empty buffer / empty store is HEALTHY, and a declined pass is a SUCCESS.** Reporting
+  problems on a fresh install would make the maintenance cadence start by crying wolf, and failing
+  the node when there is nothing to do would make a healthy frequent schedule look broken every
+  time it ran.
+
+(h) **An embedder returning None must not be cached as an empty vector.** A cosine against `[]`
+  is either a crash or a meaningless 0.0, and 0.0 silently means "unrelated" — so that item would
+  never cluster with anything, forever. Falls back to the token metric for that pair only.
+
+(i) **The health template's node label "Findings" collided with the library's canonical
+  Finding-record convention check** (a substring test over the whole spec). Renamed to "Health
+  report": this node reports store health, not review findings.
+
+**Validated live** through the dev gateway on a seeded 6-item store: all three templates appear in
+the Store; `knowledge-health` ran clean (`item_count: 6`, zero false stubs, zero false unindexed);
+`knowledge-gaps` found the `[[Provisioned Concurrency]]` phantom hub with 6 referrers and grounded
+excerpts; `knowledge-consolidate` clustered all six paraphrases with the doctrine in its prompt and
+correctly refused to write (dry run by default). The apply path, archival with back-references, and
+the second-pass gate were validated against a real store in-process.
+
+**NOT DONE:** `gap-healing`'s LLM drafting stage was NOT observed to completion live (the Bedrock
+subagent call was still running after ~5 minutes and was cancelled; the `stage` mechanics it uses
+are validated by earlier sessions). Also not done: routing gap drafts into the LEARNING-FLYWHEEL
+`proposals.enqueue` queue — that queue's `Kind` enum is CLOSED to six kinds and none of them is a
+knowledge draft, so filing there would mean either a seventh kind or mislabelling one; the template
+persists a TTL'd `probe` item tagged `proposal` instead, and the enum extension belongs with the
+flywheel plan that owns it. Contradiction detection at persist time (§3.2) and the typed-edge
+inference pass are session 38's.

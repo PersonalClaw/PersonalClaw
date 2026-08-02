@@ -66,6 +66,19 @@ class BindingContext:
     iter_index: int | None = None  # loop iteration
     last_output: Any = None  # loop body's previous iteration
     has_last: bool = False
+    #: sibling node id → the outputs it has accumulated across iterations. A LIST, because a
+    #: watcher reads a sibling that is still producing: a single "current output" would show
+    #: only the newest cycle and the synthesizer would never see a trend
+    #: (KNOWLEDGE-SYNTHESIS §4.2).
+    sibling_outputs: dict[str, list[Any]] | None = None
+    #: The prior successful cycle/run of this template, for diff-aware synthesis. `has_previous`
+    #: distinguishes "the first run, legitimately" from "the reference is wrong" — the first is a
+    #: `| default(...)` case and the second must raise.
+    previous_output: Any = None
+    has_previous: bool = False
+    #: The engine-maintained seen-set, for the `unseen` pipe. A callable rather than the set
+    #: itself so bindings hold no engine state.
+    seen_filter: Any = None
     #: Resolver for `{{secret:KEY}}`. Injected so nothing here reads the credential
     #: store directly — that also keeps secrets out of unit tests by default.
     secret_resolver: Any = None
@@ -83,6 +96,16 @@ class BindingContext:
             root["iter"] = self.iter_index
         if self.has_last:
             root["last"] = {"output": self.last_output}
+        if self.sibling_outputs is not None:
+            # RAW here. The default filter/window is applied at RESOLUTION time instead — see
+            # `_default_sibling_view`. Filtering here would make `| full` inert: the opt-out
+            # would only ever see items the default had already dropped, which is a control
+            # that looks present and does nothing.
+            root["siblings"] = {
+                sid: {"output": list(outs)} for sid, outs in self.sibling_outputs.items()
+            }
+        if self.has_previous:
+            root["previous"] = {"output": self.previous_output}
         return root
 
 
@@ -181,6 +204,104 @@ def _pipe_slugify(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
 
 
+# ── long-run pipes (KNOWLEDGE-SYNTHESIS §4.2) ──
+
+
+def _pipe_window(value: Any, size: Any = None) -> Any:
+    """`window(20)` — the most recent N items.
+
+    Distinct from `slice(-20)` because the intent is different and the intent is what a
+    reader needs: a window BOUNDS growth, and naming it that way is what makes a template
+    review notice its absence on an unbounded sibling read.
+    """
+    from personalclaw.workflows import longrun
+
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise BindingError("window expects a list")
+    try:
+        n = longrun.DEFAULT_SYNTHESIS_WINDOW if size is None else int(size)
+    except (TypeError, ValueError) as exc:
+        raise BindingError("window size must be an integer") from exc
+    if n <= 0:
+        raise BindingError("window size must be positive")
+    return value[-n:] if len(value) > n else value
+
+
+def _pipe_unseen(value: Any, *, _seen: Any = None) -> Any:
+    """`unseen` — the engine's persistent seen-set applied.
+
+    Resolution injects the filter; with none available this raises rather than passing
+    everything through. A silently inert `unseen` is the whole failure it exists to prevent:
+    the watcher keeps working, costs grow every cycle, and nothing indicates why.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise BindingError("unseen expects a list")
+    if _seen is None:
+        raise BindingError("unseen needs an engine seen-set (only valid inside a loop body)")
+    result = _seen(value)
+    return result if isinstance(result, list) else []
+
+
+def _pipe_significant(value: Any, threshold: Any = None) -> Any:
+    """`significant(0.7)` — drop items a producer marked unimportant."""
+    from personalclaw.workflows import longrun
+
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise BindingError("significant expects a list")
+    try:
+        cut = longrun.DEFAULT_SIGNIFICANCE_THRESHOLD if threshold is None else float(threshold)
+    except (TypeError, ValueError) as exc:
+        raise BindingError("significance threshold must be a number") from exc
+    return [i for i in value if longrun.significance_of(i) >= cut]
+
+
+def _pipe_full(value: Any) -> Any:
+    """`full` — the explicit opt-out from the default sibling view.
+
+    A no-op ON the value: what it really does is suppress the default filter/window, which
+    resolution detects by seeing this pipe in the chain. It exists as a named pipe because
+    "I know this is unbounded and I want it" should be visible in the template, not implied
+    by the absence of something.
+    """
+    return value
+
+
+def _pipe_hygiene(value: Any) -> Any:
+    """`hygiene` — the web-item junk filter, so monitoring templates don't each write one."""
+    from personalclaw.workflows import longrun
+
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise BindingError("hygiene expects a list")
+    return longrun.web_hygiene(value)
+
+
+def _pipe_clamp(value: Any, low: Any = 0, high: Any = 1) -> Any:
+    """`clamp(30, 86400)` — bound a number a model proposed."""
+    try:
+        lo, hi = float(low), float(high)
+    except (TypeError, ValueError) as exc:
+        raise BindingError("clamp bounds must be numbers") from exc
+    if lo > hi:
+        raise BindingError("clamp lower bound exceeds upper bound")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        try:
+            number = float(str(value).strip())
+        except (TypeError, ValueError) as exc:
+            raise BindingError("clamp expects a number") from exc
+    else:
+        number = float(value)
+    bounded = max(lo, min(hi, number))
+    return int(bounded) if float(bounded).is_integer() else bounded
+
+
 #: Sanitization pipes exist so a template author can neutralize untrusted content
 #: inline; the spec lint (validator) is what makes their use non-optional on
 #: untrusted-origin bindings.
@@ -196,7 +317,18 @@ PIPES: dict[str, Any] = {
     "xml_escape": _pipe_xml_escape,
     "truncate": _pipe_truncate,
     "slugify": _pipe_slugify,
+    "window": _pipe_window,
+    "unseen": _pipe_unseen,
+    "significant": _pipe_significant,
+    "full": _pipe_full,
+    "hygiene": _pipe_hygiene,
+    "clamp": _pipe_clamp,
 }
+
+#: Pipes that suppress the default sibling view. `window` and `significant` count: a template
+#: that stated its own bound has said what it wants, and silently applying the default on top
+#: would make an explicit `window(50)` mean 20.
+_EXPLICIT_VIEW_PIPES = frozenset({"full", "window", "significant", "unseen"})
 
 
 def _parse_pipe_args(raw: str) -> list[Any]:
@@ -283,6 +415,15 @@ def resolve_expr(expr: str, ctx: BindingContext) -> Any:
     """Resolve ONE expression body (no braces) through its pipe chain."""
     parts = [p.strip() for p in expr.split("|")]
     head = parts[0]
+    pipe_names = {m.group(1) for m in (_PIPE_RE.match(p) for p in parts[1:]) if m}
+
+    # `previous` absent is the FIRST cycle/run, which is normal — not an unresolvable
+    # reference. Every diff-aware template in the plan is written as
+    # `{{previous.output.summary | default('None yet')}}`, and raising here would make each one
+    # fail on its own first cycle unless it grew a branch node for the case. Distinct from
+    # `nodes.typo.output`, which really is an authoring error.
+    if _is_previous_ref(head) and not ctx.has_previous:
+        return _run_pipes(None, parts[1:], expr, ctx)
 
     if head.startswith("secret:"):
         key = head[len("secret:") :].strip()
@@ -296,7 +437,23 @@ def resolve_expr(expr: str, ctx: BindingContext) -> Any:
     else:
         value = _walk_path(ctx.as_root(), head, expr)
 
-    for raw_pipe in parts[1:]:
+    # `siblings.<id>.output` always FLATTENS iteration envelopes to items — that is what the
+    # reference means, and without it `| full` / `| window(N)` / `| unseen` each operated on a
+    # list of N envelopes: measured, `| full` returned 1 item out of 60 and `| unseen` returned
+    # nothing, because an envelope carries no item identity.
+    #
+    # The bounded VIEW is separate, and defaulted here rather than in `as_root` so `| full` can
+    # genuinely opt out instead of filtering an already-filtered list (§4.2).
+    if _is_sibling_ref(head):
+        value = _flatten_sibling(value)
+        if not (pipe_names & _EXPLICIT_VIEW_PIPES):
+            value = _default_sibling_view(value)
+
+    return _run_pipes(value, parts[1:], expr, ctx)
+
+
+def _run_pipes(value: Any, raw_pipes: list[str], expr: str, ctx: BindingContext) -> Any:
+    for raw_pipe in raw_pipes:
         m = _PIPE_RE.match(raw_pipe)
         if not m:
             raise BindingError(f"malformed pipe {raw_pipe!r}", expr)
@@ -305,12 +462,48 @@ def resolve_expr(expr: str, ctx: BindingContext) -> Any:
         if fn is None:
             raise BindingError(f"unknown pipe {name!r}", expr)
         try:
-            value = fn(value, *_parse_pipe_args(arg_src))
+            if name == "unseen":
+                value = _pipe_unseen(value, _seen=ctx.seen_filter)
+            else:
+                value = fn(value, *_parse_pipe_args(arg_src))
         except BindingError as be:
             raise BindingError(str(be), expr) from be
         except TypeError as exc:
             raise BindingError(f"bad arguments for pipe {name!r}", expr) from exc
     return value
+
+
+def _is_sibling_ref(head: str) -> bool:
+    segs = [s for s in head.split(".") if s]
+    return len(segs) >= 1 and segs[0] == "siblings"
+
+
+def _is_previous_ref(head: str) -> bool:
+    segs = [s for s in head.split(".") if s]
+    return len(segs) >= 1 and segs[0] == "previous"
+
+
+def _flatten_sibling(value: Any) -> Any:
+    """Iteration envelopes → items. See `longrun._flatten_outputs` on which carrier keys."""
+    from personalclaw.workflows import longrun
+
+    if not isinstance(value, list):
+        return value
+    return longrun._flatten_outputs(value)
+
+
+def _default_sibling_view(value: Any) -> Any:
+    """The bounded, significance-filtered default for a sibling read.
+
+    Bounded by default because the unbounded failure is invisible: nothing errors, the run
+    just costs more every cycle until it hits a context limit hours in. An explicit `| full`
+    is a template author saying they accept that.
+    """
+    from personalclaw.workflows import longrun
+
+    if not isinstance(value, list):
+        return value
+    return longrun.sibling_view(value)
 
 
 def _stringify(value: Any) -> str:

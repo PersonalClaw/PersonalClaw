@@ -111,3 +111,16 @@ def _ensure_default_providers_registered() -> None:
         )
 
         register_action_provider(KnowledgeRetrieveActionProvider())
+    if "knowledge-health" not in _providers:
+        # KNOWLEDGE-SYNTHESIS §3.4: the maintenance tier, split by COST. `knowledge-health` is
+        # zero-token and safe to run on every write; `knowledge-consolidate` is expensive, gated,
+        # and dry-run by default. Both added to ALLOWED_HOOK_PROVIDERS in the same commit.
+        from personalclaw.action_providers.knowledge_maintain_provider import (
+            KnowledgeConsolidateActionProvider,
+            KnowledgeGapsActionProvider,
+            KnowledgeHealthActionProvider,
+        )
+
+        register_action_provider(KnowledgeHealthActionProvider())
+        register_action_provider(KnowledgeConsolidateActionProvider())
+        register_action_provider(KnowledgeGapsActionProvider())

@@ -1303,6 +1303,40 @@ class KnowledgeConfig:
             "high-traffic claim cannot grow its evidence list without bound.",
         ),
     )
+    synthesis_window: int = field(
+        default=20,
+        metadata=_meta(
+            "Synthesis Window",
+            "How many recent findings a long-running watcher's synthesis stage sees per cycle. "
+            "Without a window, cycle 50 carries all 50 cycles of findings and every cycle costs "
+            "more than the last — a run that gets slower and more expensive until it hits a "
+            "context limit, with nothing indicating why.",
+        ),
+    )
+    lint_every_n_persists: int = field(
+        default=12,
+        metadata=_meta(
+            "Knowledge Lint Cadence",
+            "Writes between semantic lint passes. Counted in WRITES rather than hours: a store "
+            "nobody added to does not need linting, and a busy week needs it more than once.",
+        ),
+    )
+    consolidate_min_cluster: int = field(
+        default=5,
+        metadata=_meta(
+            "Smallest Consolidation Cluster",
+            "Fewest related items worth spending one model call to merge. Below about five, a "
+            "summary loses more detail than it saves space.",
+        ),
+    )
+    consolidate_min_hours: int = field(
+        default=6,
+        metadata=_meta(
+            "Hours Between Consolidation Passes",
+            "Floor between consolidation sweeps. The pass is expensive and its input barely "
+            "changes minute to minute, so a tighter cadence pays repeatedly for the same answer.",
+        ),
+    )
 
 
 @dataclass
@@ -2900,6 +2934,10 @@ class AppConfig:
                 report_budget_chars=int(knowledge_data.get("report_budget_chars", 40000) or 40000),
                 default_ttl=str(knowledge_data.get("default_ttl", "") or ""),
                 max_mentions_per_claim=int(knowledge_data.get("max_mentions_per_claim", 20) or 20),
+                synthesis_window=int(knowledge_data.get("synthesis_window", 20) or 20),
+                lint_every_n_persists=int(knowledge_data.get("lint_every_n_persists", 12) or 12),
+                consolidate_min_cluster=int(knowledge_data.get("consolidate_min_cluster", 5) or 5),
+                consolidate_min_hours=int(knowledge_data.get("consolidate_min_hours", 6) or 6),
             ),
             security=SecurityConfig(
                 denied_commands=[

@@ -16,6 +16,7 @@ making it advisory would leave it to template-author discipline.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -138,7 +139,7 @@ def validate_node_tree(root: Node, *, strict: bool = False) -> ValidationResult:
             else:
                 ids_seen[node.id] = path
 
-        _validate_shape(res, path, node)
+        _validate_shape(res, path, node, tree=dict(nodes))
         _validate_bindings(res, path, node, strict=strict)
 
     _validate_binding_targets(res, nodes, ids_seen)
@@ -148,8 +149,51 @@ def validate_node_tree(root: Node, *, strict: bool = False) -> ValidationResult:
     return res
 
 
-def _validate_shape(res: ValidationResult, path: str, node: Node) -> None:
-    """Kind-specific structural requirements."""
+def _in_reapable_parallel(path: str, tree: dict[str, Node]) -> bool:
+    """Is this node inside a `parallel` that can reap it?
+
+    `join: any` or a met-able `quorum`, AND at least one non-watcher sibling to be the leg that
+    finishes. A parallel of nothing but watchers can never satisfy its own join, so it is just
+    as immortal as a bare loop.
+    """
+    matches = list(re.finditer(r"\.children\[\d+\]", path))
+    if not matches:
+        return False
+    parent_path = path[: matches[-1].start()]
+    parent = tree.get(parent_path)
+    if parent is None or parent.kind != NodeKind.PARALLEL:
+        return False
+    join = str((parent.config or {}).get("join", "all") or "all")
+    if join not in (JoinMode.ANY.value, JoinMode.QUORUM.value):
+        return False
+    return any(
+        not (
+            c.kind == NodeKind.LOOP
+            and str((c.config or {}).get("mode", "") or "") == LoopMode.UNTIL_CANCELLED.value
+        )
+        for c in parent.children
+    )
+
+
+def _has_wait(node: Node) -> bool:
+    """Does this subtree contain a `wait`? Subtree, not direct child: the wait is normally
+    inside the watcher body's `sequence`, which is the shape every template in the plan uses."""
+    return any(n.kind == NodeKind.WAIT for _p, n in walk(node))
+
+
+def _positive_int(raw: Any) -> bool:
+    return isinstance(raw, int) and not isinstance(raw, bool) and raw > 0
+
+
+def _validate_shape(
+    res: ValidationResult, path: str, node: Node, *, tree: dict[str, Node] | None = None
+) -> None:
+    """Kind-specific structural requirements.
+
+    `tree` is the whole path→node map, needed by the rules that are about a node's RELATIONSHIP
+    to the spec around it — a watcher's reapability depends on its parent's join mode, which is
+    unknowable from the node alone.
+    """
     kind = node.kind
     cfg = node.config or {}
 
@@ -215,6 +259,31 @@ def _validate_shape(res: ValidationResult, path: str, node: Node) -> None:
             streak = cfg.get("streak", 1)
             if not isinstance(streak, int) or streak < 1:
                 _add(res, "WF_BAD_STREAK", "until_dry needs a positive `streak`", path)
+        elif mode == LoopMode.UNTIL_CANCELLED:
+            # A watcher has no self-terminating condition, so SOMETHING outside it must be able
+            # to stop it. `reap_watchers` does that only inside a `join: any`/`quorum` parallel;
+            # anywhere else the loop is immortal and the run never completes — a silent hang,
+            # which is the worst outcome for an unattended run.
+            if not _in_reapable_parallel(path, tree or {}) and not cfg.get("max_iterations"):
+                _add(
+                    res,
+                    "WF_UNREAPABLE_WATCHER",
+                    "until_cancelled needs either a `join: any`/`quorum` parallel sibling to "
+                    "reap it or a `max_iterations` cap — otherwise the run never ends",
+                    path,
+                )
+            body = node.body
+            if body is not None and not _has_wait(body):
+                # A watcher with no wait in its body spins as fast as the model answers, which
+                # burns a whole budget in minutes. The one long-run failure that is expensive
+                # rather than merely slow.
+                _add(
+                    res,
+                    "WF_WATCHER_NO_WAIT",
+                    "until_cancelled body has no `wait` — it will cycle as fast as the model "
+                    "responds and exhaust the run budget",
+                    path,
+                )
 
     elif kind == NodeKind.BRANCH:
         if not cfg.get("on"):
@@ -285,8 +354,35 @@ def _validate_shape(res: ValidationResult, path: str, node: Node) -> None:
                 )
 
     elif kind == NodeKind.WAIT:
-        if not (cfg.get("duration_secs") or cfg.get("until_ts")):
-            _add(res, "WF_MISSING_WAIT", "wait needs duration_secs or until_ts", path)
+        seal = cfg.get("seal")
+        if seal is not None and not isinstance(seal, dict):
+            _add(res, "WF_BAD_SEAL", "wait `seal` must be an object", path)
+            seal = None
+        if isinstance(seal, dict):
+            # One mistake, one issue. An empty `seal: {}` previously reported three
+            # (missing-wait + bad-seal + no-flush), and three issues for one typo is how a
+            # validation report stops being read.
+            if not _positive_int(seal.get("threshold")) and not _positive_int(seal.get("tokens")):
+                _add(
+                    res,
+                    "WF_BAD_SEAL",
+                    "buffer seal needs a positive `threshold` (items) or `tokens`",
+                    path,
+                )
+            elif not _positive_int(seal.get("flush_stale_after_secs")):
+                # Without a stale flush, a slow trickle never seals: the buffer sits below
+                # threshold indefinitely and the synthesis the watcher exists for never runs.
+                # Nothing errors — the watcher just quietly does nothing, forever.
+                _add(
+                    res,
+                    "WF_SEAL_NO_FLUSH",
+                    "buffer seal has no `flush_stale_after_secs` — a trickle of items would "
+                    "never reach the threshold and never synthesize",
+                    path,
+                    SEVERITY_WARNING,
+                )
+        elif not (cfg.get("duration_secs") or cfg.get("until_ts")):
+            _add(res, "WF_MISSING_WAIT", "wait needs duration_secs, until_ts or seal", path)
 
     elif kind == NodeKind.GATE:
         raw = str(cfg.get("kind", "") or "")

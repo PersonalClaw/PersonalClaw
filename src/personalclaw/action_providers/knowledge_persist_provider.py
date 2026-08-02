@@ -175,6 +175,24 @@ class KnowledgePersistActionProvider(ActionProvider):
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
 
+        # `lineage` carries a consolidation pass's `parent_ids` / `reflection_count` /
+        # `compression_ratio`. A NAMED key rather than an open `metadata` passthrough: an open
+        # dict would let any caller overwrite `claims` or `logical_key`, and a caller that
+        # silently clobbered the claim ledger would be indistinguishable from one that never
+        # wrote it. (Measured: passing `metadata=` was silently DROPPED here, so the whole
+        # lineage the consolidation pass depends on never reached the row.)
+        raw_lineage = cfg.get("lineage")
+        if isinstance(raw_lineage, dict):
+            for key in (
+                "parent_ids",
+                "reflection_count",
+                "consolidated",
+                "compression_ratio",
+                "source_count",
+            ):
+                if key in raw_lineage:
+                    metadata[key] = raw_lineage[key]
+
         for key in ("read_when", "citations", "source", "extraction"):
             if cfg.get(key):
                 metadata[key] = cfg[key]
