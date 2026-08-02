@@ -63,6 +63,7 @@ while not terminal:
 | `judge_pretier.py` | the free rule tier that runs BEFORE any judge model call, plus the deterministic `fallback_check` |
 | `judge_actors.py` | the actor-transition invariant (a worker may never reach `done`) and judge isolation |
 | `loop_middleware.py` | the breaker's next tier: call fingerprinting, failure-class routing, the Continue→Nudge→Escalate→Halt ladder, the interrupt queue |
+| `judge_calibration.py` | the nodding-loop detector, divergence records, stuck detection, and the verdict ledger they read |
 | `scope.py` | filesystem write-scope enforcement by post-hoc diff |
 | `watchdog.py` | the supervisor: adoption, reaping, per-run publishing |
 
