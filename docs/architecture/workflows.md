@@ -59,6 +59,9 @@ while not terminal:
 | `resilience.py` | retries, circuit breaker, budgets |
 | `preflight.py` | run-start checks — credentials, binaries, models, providers |
 | `audit.py` | the `workflow_audit` maintenance op (diagnose / heal) |
+| `judge_contract.py` | the typed verdict enum, rubric ratchet, engine-computed overall, forbidden-mode denylist |
+| `judge_pretier.py` | the free rule tier that runs BEFORE any judge model call, plus the deterministic `fallback_check` |
+| `judge_actors.py` | the actor-transition invariant (a worker may never reach `done`) and judge isolation |
 | `scope.py` | filesystem write-scope enforcement by post-hoc diff |
 | `watchdog.py` | the supervisor: adoption, reaping, per-run publishing |
 
@@ -280,6 +283,47 @@ user who wants to change one instantiates it and edits their copy.
 Authoring conventions, the lint that enforces them, and the macro/block
 libraries are documented in
 [`docs/guides/workflow-templates.md`](../guides/workflow-templates.md).
+
+## The judge contract: self-approval is impossible, not discouraged
+
+A loop that judges its own work converges on whatever the worker finds easiest to
+claim. Prompt doctrine ("be skeptical") is advice, and advice loses to a worker being
+scored on completion. So four mechanisms are structural rather than instructional:
+
+**The worker actor may never reach `done`.** It can reach `waiting` or `review`; the
+terminal transition belongs to a judge or gate actor (`judge_actors.check_transition`).
+A worker claiming completion produces a `review` — a *request* for adjudication, not
+the adjudication. A `done` from a worker is REDIRECTED rather than refused, because the
+work may genuinely be finished and the right answer is to route it to a checker.
+
+**A PASS without cited proof is invalid.** Rejected by the contract, not frowned upon.
+A completion record without proof is a claim, and the point of a checker is to stop
+accepting claims.
+
+**The rubric ratchets; the overall is engine-computed.** Under `ratchet: strict` any
+criterion below target fails the stage — no averaging, because averaging is how a
+broken deliverable passes on the strength of its documentation. The overall score is
+recomputed from dimension scores server-side; the model's own overall survives only as
+metadata, so drift between them is visible instead of authoritative.
+
+**The judge never sees worker narration.** `assemble_judge_evidence` keeps
+user/spec/tool-call/tool-output roles and drops assistant prose entirely. A worker
+cannot argue its way to a PASS if its arguments never reach the judge — stronger than
+any instruction to discount them. Provenance ("attempt 4 of 5") is stripped too: it
+tells a judge how much patience is left, which is exactly the pressure that produces a
+lenient pass.
+
+Beneath all of it, `judge_pretier` runs the free rules first — empty output, admitted
+give-ups, tool errors, stub markers, missing referenced files, zero artifacts. Loop
+judges run every cycle, so a rule-solvable failure reaching the model costs tokens on
+every iteration forever. The pre-tier can prove work is *unfinished*; it can never
+issue a PASS, since a cheap approval would recreate self-approval with extra steps.
+
+`fallback_check` is a standing cross-check, not only a degradation path: when the
+deterministic check FAILED and the judge passed anyway, the verdict auto-escalates. A
+judge that passes what `exit 1` failed is either wrong or being gamed, and both need a
+human. The check is tristate — `None` means "could not run", and collapsing that into
+failure would turn an uninstalled linter into a broken deliverable.
 
 ## Where things are NOT
 

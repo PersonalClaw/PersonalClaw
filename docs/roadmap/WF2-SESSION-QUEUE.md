@@ -88,7 +88,7 @@ mandatory.
 
 | # | Session | PR group | Status |
 |---|---|---|---|
-| 29 | Judge contract + `runtime_hints` spec; typed verdict enum; judge isolation; deterministic pre-tier + `fallback_check` | G13 | TODO |
+| 29 | Judge contract + `runtime_hints` spec; typed verdict enum; judge isolation; deterministic pre-tier + `fallback_check` | G13 | ✅ CODE DONE — PUSH BLOCKED |
 | 30 | Engine loop-node middleware: breaker + fingerprinting + escalation ladder + failure-class routing; fresh-session protocol; interrupt queue | G13 | TODO |
 | 31 | Author the 8 template YAML specs + integration tests through the engine | G14 | TODO |
 | 32 | Calibration + acceptance instrumentation: rubric contract, verdict ledger, divergence events, template lint, nodding-loop detector | G14 | TODO |
@@ -956,3 +956,71 @@ through all four points. 11255 tests (+45), lint clean at 604 files.
   deferred: the L0/L1/L2 tiers are consumed by the allocator but not yet PERSISTED per
   entity (that is a store change across four entity types), and `skills/surfacing.py`'s
   embedding cache generalization waits on that.
+
+### Session 29 — Loops Evolution: the judge contract (`feature-wf2-loops-judge`, PR NOT OPENED)
+
+> **BLOCKED on publication only.** `git push` is denied at the permission layer (it succeeded for
+> sessions 24-28 in the same run, so something changed mid-run). Commit `064ea34` is complete and
+> fully gated; it is NOT on origin and no PR exists. The earlier `#167` in this file was a
+> placeholder I should not have written — corrected. Code work continues on later sessions, which
+> branch from the local `feature-wf2-loops-judge`; publication of the whole tail needs one push.
+
+`workflows/judge_contract.py` (typed verdict enum, rubric ratchet, engine-computed overall,
+forbidden-mode denylist, N-sample median), `judge_pretier.py` (the free rule tier + the
+tristate `fallback_check`), `judge_actors.py` (the worker-never-completes invariant + judge
+isolation). `runtime_hints` on `WorkflowDef`. 11379 tests (+124), lint clean at 607 files.
+
+**Deviations and findings:**
+
+(a) **The forbidden-mode denylist was INERT on realistic phrasing.** My first matcher required
+  EVERY long word of a mode string to be present, so "the test was deleted" missed "test deleted
+  OR skipped" — the phrase lists alternatives, not a conjunction. Measured against 6 real
+  admissions: only 2 matched. This is the worst kind of control failure — present, plausible,
+  and doing nothing. Fixed to require TWO distinct stemmed signals (one word appears in innocent
+  prose constantly), and re-phrased the defaults to two-signal forms so "value hardcoded to
+  satisfy assertion" is its own entry rather than a buried alternative. 6/6 caught, 4/4 clean
+  after.
+
+(b) **`DecayVerdict.__bool__`-style trap avoided here on purpose:** `JudgeVerdict` has `.valid`
+  and `.passed` as SEPARATE properties, never a `__bool__`. "Well-formed" and "approved" are
+  different questions, and after last session's `if verdict` bug I did not give this object a
+  truthiness at all.
+
+(c) **The worker's `done` is REDIRECTED to `review`, not rejected.** The work may genuinely be
+  finished; erroring would strand the run, and silently accepting would defeat the invariant.
+  An unknown actor, by contrast, falls to `failed` — defaulting an unrecognized actor to
+  permissive would be the exact hole the invariant closes.
+
+(d) **`cross_model` isolation refuses a same-FAMILY judge,** not just a same-model one —
+  same-family judges share the blind spots they are meant to catch. Family is a crude prefix
+  match on purpose: a registry of exact lineages would go stale toward falsely reporting
+  independence.
+
+(e) **`fallback_check` is TRISTATE and a standing cross-check.** None ("could not run") never
+  reads as failure — reused from `loop/gates.run_verify_command`'s exit-127→None discipline. A
+  judge PASS while the deterministic check FAILED auto-escalates; a judge that passes what
+  `exit 1` failed is either wrong or being gamed.
+
+(f) **The pre-tier can never issue a PASS** — only REJECT or pass-through. A cheap approval would
+  recreate self-approval with extra steps. It proves work UNFINISHED (empty / gave-up / tool
+  error / stub / missing artifact / no output), and only what survives is worth a model call.
+
+(g) **The session-24 docs gate caught the three new modules undocumented** — worked exactly as
+  built; added them plus a judge-contract section to `docs/architecture/workflows.md`.
+
+(h) **Real-model validated through the LIVE dev gateway** (bare-process provider registry is
+  empty — providers load gateway-side only). claude-sonnet-5 via Bedrock returned a correctly-
+  shaped verdict and REJECTED thin evidence unprompted; the contract then caught the rubber-stamp
+  (same zero-scored evidence flipped to PASS → rejected on the ratchet) and the deterministic
+  contradiction (well-formed PASS + failed check → escalated).
+
+(i) **Two test premises of MINE were wrong, not the code:** a tautological `== 1 or True`
+  assertion, and an empty `stop_condition` expected to floor to 1 when `.get(k, 2)` correctly
+  returns the default. Both corrected.
+
+(j) **NOT DONE (this session is the contract + invariants only, per the queue split):** the
+  engine loop-node MIDDLEWARE that consumes these (breaker, fingerprinting, escalation ladder,
+  failure-class routing, fresh-session protocol, interrupt queue) is session 30; the 8 template
+  YAML specs are session 31. This session builds the enforcement primitives those depend on.
+  `loop/judge.py` is deliberately NOT unified yet — LOOPS-EVOLUTION converges loops onto v2 in
+  its own slices, and unifying pre-emptively would be wasted motion.

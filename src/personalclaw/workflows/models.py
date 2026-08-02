@@ -545,6 +545,14 @@ class WorkflowDef:
     metadata: DefMetadata = field(default_factory=DefMetadata)
     on_overlap: OverlapPolicy = OverlapPolicy.SKIP
     tags: list[str] = field(default_factory=list)
+    #: Opaque to the engine CORE: rendered into stage prompts via bindings
+    #: (`{{defaults.runtime_hints.judge.rubric}}`) and consumed by a small set of
+    #: engine-ENFORCED invariants (judge isolation, the actor transition rule, the
+    #: proof precondition). Deliberately a free dict rather than a typed dataclass —
+    #: templates author it as YAML, and a schema here would force every new hint
+    #: through a core change. `judge_contract.hints_from_dict` parses the half the
+    #: engine enforces, leniently, defaulting to the STRICT reading.
+    runtime_hints: dict[str, Any] = field(default_factory=dict)
     created_at: str = ""
     updated_at: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
@@ -563,6 +571,7 @@ class WorkflowDef:
             "metadata",
             "on_overlap",
             "tags",
+            "runtime_hints",
             "created_at",
             "updated_at",
         }
@@ -582,6 +591,7 @@ class WorkflowDef:
             "on_overlap": self.on_overlap.value,
             "root": self.root.to_dict(),
             "tags": list(self.tags),
+            "runtime_hints": dict(self.runtime_hints),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -612,6 +622,9 @@ class WorkflowDef:
             metadata=DefMetadata.from_dict(d.get("metadata") or {}),
             on_overlap=overlap,
             tags=[str(t) for t in (d.get("tags") or [])],
+            runtime_hints=(
+                dict(d["runtime_hints"]) if isinstance(d.get("runtime_hints"), dict) else {}
+            ),
             created_at=str(d.get("created_at", "") or ""),
             updated_at=str(d.get("updated_at", "") or ""),
             extra={k: v for k, v in d.items() if k not in cls._KNOWN},
