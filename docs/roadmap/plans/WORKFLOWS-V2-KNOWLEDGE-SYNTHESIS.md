@@ -563,3 +563,33 @@ Templates are the plan's proof-of-life — field-tested shapes with real daily c
 8. The rich-ingest template turns one meeting transcript into typed knowledge items + created tasks in one pass — and writes nothing to memory.db (asserted in the test).
 9. The `publish-article` workflow goes draft → dual-review → revise → gate → persist, appending a `kind: decision` item at the gate.
 10. With no LLM provider bound, `knowledge_persist` still files entries (`extraction: heuristic`) and the enrichment workflow upgrades them when a provider returns.
+
+---
+
+## Execution log
+
+- **2026-08-01 — CODE DONE (push blocked) — Store semantics groundwork (session 34 of the WF2 queue).**
+  Branch `feature-wf2-knowledge-store`. `knowledge/semantics.py`: the 10-kind taxonomy, logical
+  identity (`{kind}:{normalized_title}`, unicode/case/punctuation-folded), content + chunk hashing,
+  `1-∏(1-cᵢ)` confidence aggregation with a hard sub-1.0 ceiling, claims/mentions with
+  source-dedup and `invalid_at` supersession, freshness from `last_verified`/`expires_at`, the
+  create/update/reinforce/no-op decision, and the 5-verb typed item relations.
+  `knowledge/schema_conventions.py`: the write-once `schema.md` contract. `store.py`: five additive
+  columns, the `item_relations` table, and the logical-key index. `KnowledgeConfig` through all four
+  wiring points. 11829 tests.
+
+- **DEVIATION — `KnowledgeConfig` did not exist.** The plan reads as though it were an existing
+  dataclass gaining fields; it was created from scratch through all four points (dataclass + `_meta`,
+  `AppConfig` field, `load()` mapping + section read, `to_dict`, `_EDITABLE_CONFIG`).
+
+- **DISCOVERY — three of my own defects, each caught by measuring rather than reading.** The
+  logical-key index had to be created inside `_migrate` (the schema block runs before the column
+  exists — it failed on a fresh db and silently no-opped on an upgraded one). My index test was
+  asserting against a `sqlite3.Row` repr and so could never fail, which is how the missing index went
+  unnoticed until the assertion was fixed. And confidence aggregation reached exactly 1.0 at ten
+  sources, contradicting its own docstring and making such a claim unfalsifiable.
+
+- **NOT DONE — nothing writes the new columns yet.** They exist, are indexed, and the semantics
+  module is pure and store-agnostic so the session-35 provider pair (`knowledge_persist` /
+  `knowledge_retrieve`) can be written against it without re-deriving the identity rules. The `ops`
+  payload, `also_artifact` dual-write and async enrichment/backfill belong to that pair.

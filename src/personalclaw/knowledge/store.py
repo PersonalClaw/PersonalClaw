@@ -355,6 +355,24 @@ class KnowledgeStore:
                 created_at TEXT NOT NULL
             );
 
+            -- Typed ITEM-level edges (KNOWLEDGE-SYNTHESIS §3.2), sibling to the
+            -- entity-level table below. Deliberately item-fields-plus-report rather than a
+            -- graph database: five verbs, upserted on (source, target, relation).
+            CREATE TABLE IF NOT EXISTS item_relations (
+                source_item_id TEXT NOT NULL REFERENCES items(id),
+                target_item_id TEXT NOT NULL REFERENCES items(id),
+                relation_type TEXT NOT NULL,
+                confidence REAL DEFAULT 1.0,
+                provenance TEXT DEFAULT 'extracted',
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (source_item_id, target_item_id, relation_type)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_item_relations_source
+                ON item_relations(source_item_id);
+            CREATE INDEX IF NOT EXISTS idx_item_relations_target
+                ON item_relations(target_item_id);
+
             CREATE INDEX IF NOT EXISTS idx_entity_relations_source_id
                 ON entity_relations(source_id);
             CREATE INDEX IF NOT EXISTS idx_entity_relations_target_id
@@ -419,6 +437,21 @@ class KnowledgeStore:
         ("thumbnail_path", "TEXT"),
         ("file_path", "TEXT"),
         ("file_metadata", "TEXT DEFAULT '{}'"),
+        # KNOWLEDGE-SYNTHESIS §2.1: the typed taxonomy, distinct from `item_type` (which
+        # routes the ingestion graph). Nullable so every existing row stays valid.
+        ("kind", "TEXT"),
+        # The derived logical identity `{kind}:{normalized_title}` (semantics.logical_key).
+        # Indexed, because lookup-before-write happens on every persist and a table scan
+        # there would make idempotency cost more than the duplicate it prevents.
+        ("logical_key", "TEXT"),
+        # A hash of what was persisted, so a retried/rewound write is a no-op rather than
+        # a second copy.
+        ("content_hash", "TEXT"),
+        # Separate from `updated_at`: an item re-CHECKED yesterday is fresh even if it was
+        # written a year ago, and collapsing the two loses exactly that distinction.
+        ("last_verified", "TEXT"),
+        # Optional absolute expiry for knowledge that goes stale on a known clock.
+        ("expires_at", "TEXT"),
         ("word_count", "INTEGER DEFAULT 0"),
         ("is_pinned", "INTEGER DEFAULT 0"),
         ("is_archived", "INTEGER DEFAULT 0"),
@@ -452,6 +485,12 @@ class KnowledgeStore:
         for col, decl in self._NEW_ITEM_COLUMNS:
             if col not in cols:
                 self.db.execute(f"ALTER TABLE items ADD COLUMN {col} {decl}")
+        # The logical-key index is created HERE rather than in the schema block, because
+        # that block runs before `_migrate` adds the column — a CREATE INDEX there fails on a
+        # fresh db and silently no-ops on an upgraded one. Creating it after the ALTERs is the
+        # only ordering that works for both. Lookup-before-write runs on every persist, so
+        # without this the plan is a full SCAN (measured, not assumed).
+        self.db.execute("CREATE INDEX IF NOT EXISTS idx_items_logical_key ON items(logical_key)")
         # Clean break: drop the legacy chunk/source model from existing DBs. A
         # previously-chunked doc collapses to its first row (chunk_index 0); the
         # extra chunk rows + their mentions/relations are removed. Legacy tables are

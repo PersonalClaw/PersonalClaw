@@ -98,7 +98,7 @@ mandatory.
 
 | # | Session | PR group | Status |
 |---|---|---|---|
-| 34 | Store semantics: `kind`/`logical_key`/`last_verified`/`expires_at`, `item_relations`, hashing, `KnowledgeConfig` four-point wiring, `schema.md` | G16 | TODO |
+| 34 | Store semantics: `kind`/`logical_key`/`last_verified`/`expires_at`, `item_relations`, hashing, `KnowledgeConfig` four-point wiring, `schema.md` | G16 | ✅ CODE DONE — PUSH BLOCKED |
 | 35 | The provider pair: `knowledge_persist` + `knowledge_retrieve`, allowlist, native `search()`, three-node pattern end-to-end | G16 | TODO |
 | 36 | Engine additions: `until_cancelled` loop mode + seen-set, `{{siblings.*}}`/`{{previous.output}}`, buffer-seal wait, adaptive delay clamp | G17 | TODO |
 | 37 | Consolidation + maintenance: reflect mechanics, `knowledge-health`/`lint`/`gap-healing` templates, proposal routing, differential refresh | G17 | TODO |
@@ -1267,3 +1267,64 @@ green.
   as-a-user validation of all 8 templates is bounded by the same run-path gap. These are honestly the
   back half of "FE + coexistence" and belong with the engine-integration session that consumes the
   three decision layers built in 30/32/33.
+
+### Session 34 — Knowledge Synthesis: store semantics (`feature-wf2-knowledge-store`, PR NOT OPENED — push blocked)
+
+`knowledge/semantics.py` (typed kinds, logical identity, content/chunk hashing, confidence
+aggregation, claims/mentions, freshness, the idempotency decision, typed item relations),
+`knowledge/schema_conventions.py` (the `schema.md` conventions contract), the five additive columns
++ `item_relations` table + logical-key index in `store.py`, and `KnowledgeConfig` through all four
+wiring points. 11829 tests (+79), lint clean at 612 files, validated against the real dev-home store.
+
+**Deviations and findings:**
+
+(a) **`KnowledgeConfig` did not exist** — the plan says "four-point wiring" as though it were an
+  existing dataclass gaining fields. Created it from scratch: dataclass + `_meta` on every field,
+  the `AppConfig` field, the `load()` mapping AND its `knowledge_data` section read, the `to_dict`
+  entry, and four entries in `_EDITABLE_CONFIG`. A test asserts all four points, because omitting
+  any one makes a knob silently inert.
+
+(b) **`report_budget_chars` would have been a knob that does nothing.** My first cut had
+  `check_persist` read the module constant. Added `effective_budgets()` which consults config, and
+  verified with a real config file that a 100-char budget actually rejects a 500-char report. A
+  misconfigured `0` is treated as unset rather than as "nothing may be written".
+
+(c) **The logical-key index needed to be created in `_migrate`, not the schema block.** The schema
+  block runs BEFORE `_migrate` adds the column, so a `CREATE INDEX` there fails on a fresh db and
+  silently no-ops on an upgraded one — I hit both. Creating it after the ALTERs is the only ordering
+  that works for either.
+
+(d) **My own index test was asserting nothing.** It matched `str(sqlite3.Row)` — an object repr —
+  against "index", which can never contain it. Reading the `detail` column instead revealed the
+  index genuinely was missing (plan: `SCAN items`), which is how the real gap in (c) surfaced. A
+  test that cannot fail is worse than no test.
+
+(e) **Confidence aggregation reached exactly 1.0 at ten sources,** contradicting my own docstring.
+  A claim at 1.0 is unfalsifiable — no later contradiction can lower it — so `MAX_CONFIDENCE = 0.999`
+  is now a hard ceiling, and a test asserts it across 1/2/10/50 sources.
+
+(f) **Aggregation is `1 - ∏(1 - cᵢ)`, deliberately not a sum or a mean.** Three sources at 0.6 give
+  0.936: more than any one, less than certainty. Summing exceeds 1.0; averaging makes corroboration
+  WEAKEN a strong claim, which is the opposite of what agreement means.
+
+(g) **The same source twice is not two confirmations.** Mentions dedupe on `source_ref`, or one loud
+  source could manufacture consensus with itself.
+
+(h) **Supersession sets `invalid_at` and never deletes** — "what was true when" stays queryable,
+  which is the difference between a knowledge base and a cache.
+
+(i) **`schema.md` is written once and never overwritten.** An owner's conventions are the one thing
+  in the store the system has no business editing; a "helpful" refresh would discard the reasoning
+  they encode. Loading is bounded at a LINE boundary (half a convention is worse than none), and an
+  absent document returns "" rather than silently adopting the defaults.
+
+(j) **Migration verified additive on a simulated pre-migration db:** columns dropped back out, then
+  reopened through the store — every column returns, `item_relations` is recreated, and the existing
+  row survives. Re-opening twice is safe.
+
+(k) **NOT DONE (this session is the groundwork the next one consumes):** `knowledge_persist` /
+  `knowledge_retrieve` are session 35 — the semantics module is pure and store-agnostic on purpose,
+  so the providers can be written against it without re-deriving identity rules. The `ops` op-list
+  payload, `also_artifact` dual-write, and the async enrichment/backfill loop all belong to that
+  provider pair. Nothing yet WRITES `kind`/`logical_key`/`content_hash` on the live ingest path —
+  the columns exist and are indexed, and populating them is the persist provider's job.

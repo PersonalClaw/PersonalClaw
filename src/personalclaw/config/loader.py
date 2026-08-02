@@ -1247,6 +1247,65 @@ class LearningConfig:
 
 
 @dataclass
+class KnowledgeConfig:
+    """Knowledge-store semantics (WORKFLOWS-V2-KNOWLEDGE-SYNTHESIS §2.1).
+
+    The knobs here all govern how much a synthesis loop is allowed to write and how long
+    what it wrote stays trusted. They are config rather than constants because the right
+    answer depends on how the owner uses the store: a research-heavy user wants larger
+    reports, and someone tracking fast-moving facts wants shorter default expiry.
+    """
+
+    idempotent_persist: bool = field(
+        default=True,
+        metadata=_meta(
+            "Idempotent Knowledge Writes",
+            "Resolve a knowledge write by its logical identity (kind + title) and skip it "
+            "entirely when the content is unchanged. This is what stops a retried, resumed "
+            "or rewound synthesis node from writing a second near-identical article that "
+            "later reads as independent corroboration. Off = every persist inserts.",
+        ),
+    )
+    require_citations: bool = field(
+        default=True,
+        metadata=_meta(
+            "Require Citations On Synthesis",
+            "Refuse to store a synthesized item (insight, report, overview) with no "
+            "citations unless it is explicitly marked unsourced. An unsourced synthesis is "
+            "indistinguishable from a confident guess once it is being retrieved as fact.",
+        ),
+    )
+    report_budget_chars: int = field(
+        default=40_000,
+        metadata=_meta(
+            "Report Size Budget",
+            "Largest a single `report` knowledge item may be, in characters. Exceeding it "
+            "returns a condense-and-retry error rather than failing the run, so the "
+            "synthesizing stage can shorten and try again.",
+        ),
+    )
+    default_ttl: str = field(
+        default="",
+        metadata=_meta(
+            "Default Knowledge Expiry",
+            "Optional default expiry for newly persisted items (e.g. `30d`, `12h`). Blank "
+            "means knowledge does not expire unless a write asks for it. Expiry demotes an "
+            "item in retrieval rather than deleting it — a stale fact is still evidence of "
+            "what was believed.",
+        ),
+    )
+    max_mentions_per_claim: int = field(
+        default=20,
+        metadata=_meta(
+            "Max Sources Per Claim",
+            "How many independent sources a single claim will accumulate before it stops "
+            "recording new ones. Confidence saturates long before this; the cap exists so a "
+            "high-traffic claim cannot grow its evidence list without bound.",
+        ),
+    )
+
+
+@dataclass
 class EgressConfig:
     """Operator overrides for the outbound egress guard (``personalclaw.net``).
 
@@ -2331,6 +2390,10 @@ class AppConfig:
         default_factory=LearningConfig,
         metadata=_meta("Learning", "Per-turn self-improvement review configuration."),
     )
+    knowledge: KnowledgeConfig = field(
+        default_factory=KnowledgeConfig,
+        metadata=_meta("Knowledge", "Knowledge-store write semantics and expiry."),
+    )
     workflows: WorkflowsConfig = field(
         default_factory=WorkflowsConfig,
         metadata=_meta("Workflows", "Workflow SOP surfacing configuration."),
@@ -2502,6 +2565,10 @@ class AppConfig:
         learning_data = data.get("learning", {})
         if not isinstance(learning_data, dict):
             learning_data = {}
+
+        knowledge_data = data.get("knowledge", {})
+        if not isinstance(knowledge_data, dict):
+            knowledge_data = {}
 
         security_data = data.get("security", {})
         if not isinstance(security_data, dict):
@@ -2827,6 +2894,13 @@ class AppConfig:
                 curator_enabled=bool(learning_data.get("curator_enabled", True)),
                 propose_quota_per_run=int(learning_data.get("propose_quota_per_run", 5) or 5),
             ),
+            knowledge=KnowledgeConfig(
+                idempotent_persist=bool(knowledge_data.get("idempotent_persist", True)),
+                require_citations=bool(knowledge_data.get("require_citations", True)),
+                report_budget_chars=int(knowledge_data.get("report_budget_chars", 40000) or 40000),
+                default_ttl=str(knowledge_data.get("default_ttl", "") or ""),
+                max_mentions_per_claim=int(knowledge_data.get("max_mentions_per_claim", 20) or 20),
+            ),
             security=SecurityConfig(
                 denied_commands=[
                     str(p) for p in security_data.get("denied_commands", []) if isinstance(p, str)
@@ -3058,6 +3132,7 @@ class AppConfig:
             "skills": asdict(self.skills),
             "workflows": asdict(self.workflows),
             "learning": asdict(self.learning),
+            "knowledge": asdict(self.knowledge),
             "security": asdict(self.security),
             "auth": asdict(self.auth),
             "guardrails": asdict(self.guardrails),
