@@ -430,6 +430,13 @@ class SecurityEventLog:
 
 def _infer_source(session_key: str) -> str:
     """Infer the source interface from a session key."""
+    # A run-owned stage session (WORK-CONTAINERS §5.1, S50). Registered HERE because this is the
+    # function `log_tool_call` actually calls — a helper elsewhere that returned "workflow" would
+    # have been a parallel path the audit log never consults, leaving every run-owned tool call
+    # recorded as `channel`, the catch-all where unrecognized keys silently land. That makes "what
+    # did the run do" unanswerable from the log even though every event is in it.
+    if session_key.startswith("workflow:"):
+        return "workflow"
     if session_key.startswith("dashboard:"):
         return "dashboard"
     if session_key.startswith("cron:"):

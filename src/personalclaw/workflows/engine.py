@@ -33,7 +33,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from personalclaw.workflows import longrun
+from personalclaw.workflows import longrun, ownership
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
 from personalclaw.workflows.models import (
     Failure,
@@ -304,6 +304,16 @@ async def dispatch_stage(
             "check the prompt template and its bindings",
         )
 
+    # A run that inherited a temporary/incognito origin skips its learning nodes OUTRIGHT
+    # (WORK-CONTAINERS §5.1, S50). Skipping at the engine is the primary control: letting the node
+    # run and trusting the persist provider's own gate would make correctness depend on every write
+    # path checking a flag, and a write path added later would leak by default. DEGRADED rather than
+    # FAILED — the node was deliberately not run, which is a success with a machine-readable
+    # reason.
+    skip, skip_why = _restriction_skip(cfg, run_id)
+    if skip:
+        return NodeResult(state=InstanceState.DEGRADED, output=None, degraded_reason=skip_why)
+
     if subagents is None:
         return _fail(
             FailureClass.INTERNAL,
@@ -313,6 +323,10 @@ async def dispatch_stage(
 
     info = subagents.spawn(
         task=prompt,
+        # The run OWNS this session (§5.1): `workflow:<run_id>:<node_id>`. Passed as the parent key
+        # so the spawn's own audit + session plumbing attributes it to the run rather than to
+        # whatever chat happened to start it.
+        parent_session_key=ownership.owned_key(run_id, node.id or "node"),
         agent=str(cfg.get("agent", "") or ""),
         max_turns=int(cfg.get("max_turns", 0) or 0),
         cwd=cwd,
@@ -428,7 +442,8 @@ async def dispatch_subworkflow(
     **Waited on, not fired and forgotten.** A subworkflow node's whole purpose is to produce an
     output the parent binds to; returning `launched` (the `run-workflow` provider's contract) would
     make `{{nodes.child.output}}` resolve to nothing. The wait is bounded by the node's timeout,
-    and a timeout leaves the child RUNNING — it is a real run and killing it would discard work the
+    and a timeout leaves the child RUNNING — it is a real run and killing it would discard work
+    the
     parent merely stopped waiting for.
     """
     cfg = node.config or {}
@@ -534,7 +549,8 @@ async def dispatch_subworkflow(
     try:
         # A nested run is the clearest case of "slow but working": the child is ticking the whole
         # time, so the parent's stall clock must not read the wait as silence. One call before the
-        # wait is NOT enough — the wait itself spans the window — so the clock is fed on a heartbeat
+        # wait is NOT enough — the wait itself spans the window — so the clock is fed on a
+        # heartbeat
         # for as long as the child is alive.
         status = await _wait_with_progress(controller, float(timeout or 0), on_progress)
     except Exception as exc:
@@ -565,7 +581,8 @@ async def dispatch_subworkflow(
 
     if status not in TERMINAL_RUN_STATUSES:
         # needs_input or a wait timeout: the child is alive and a human (or its own deadline) will
-        # move it. DEGRADED rather than FAILED — the parent stopped waiting, the child did not fail.
+        # move it. DEGRADED rather than FAILED — the parent stopped waiting, the child did not
+        # fail.
         return NodeResult(
             state=InstanceState.DEGRADED,
             output=payload,
@@ -1068,8 +1085,42 @@ def apply_artifact_gate(node: Node, result: NodeResult, workspace: Any) -> NodeR
     )
 
 
+def _restriction_skip(cfg: dict[str, Any], run_id: str) -> tuple[bool, str]:
+    """Whether a restricted run must skip this node, resolved from the RUN's inherited mode.
+
+    The mode lives on the run record, not on the node — a node cannot know whether the run it
+    belongs
+    to was launched from an incognito chat. Best-effort: if the run cannot be read, nothing is
+    skipped, because a lookup failure must not silently stop doing the work the user asked for. The
+    fail-closed direction in this feature is about the memory MODE (an unknown mode reads as
+    restricted), not about whether the run executes.
+    """
+    if not run_id:
+        return False, ""
+    try:
+        from personalclaw.workflows import store
+
+        # `store.get`, not `store.load` — and the mode lives in the run's `extra` dict, not a
+        # column.
+        # Measured: an earlier version called `store.load()` and read `run.memory_mode`; NEITHER
+        # exists, so the helper would have raised on every stage and the `except` would have
+        # swallowed
+        # it — an enforcement control that silently never fires, which is the exact class this
+        # program keeps finding. `extra` is already persisted and round-tripped, so the mode
+        # needs no
+        # schema change.
+        run = store.get(run_id)
+        raw = (getattr(run, "extra", None) or {}).get(ownership.RUN_MODE_KEY, "") if run else ""
+        mode = ownership.parse_mode(raw)
+    except Exception:
+        logger.debug("restriction lookup failed for run %s", run_id, exc_info=True)
+        return False, ""
+    return ownership.skips_node(cfg, mode)
+
+
 def apply_publish(node: Node, result: NodeResult, *, run_id: str = "") -> NodeResult:
-    """Publish a node's output as an Artifact when it declares `publish:` (WORK-CONTAINERS §2, S47).
+    """Publish a node's output as an Artifact when it declares `publish:` (WORK-CONTAINERS §2,
+    S47).
 
     At the dispatch seam beside the artifact gate, so a new node kind inherits publishing
     rather than
@@ -1185,7 +1236,8 @@ def apply_publish(node: Node, result: NodeResult, *, run_id: str = "") -> NodeRe
 def _with_publish(result: NodeResult, payload: dict[str, Any]) -> NodeResult:
     """Attach the publish outcome to the node's output without disturbing it.
 
-    A string output stays reachable at its original binding path — wrapping it in a dict would break
+    A string output stays reachable at its original binding path — wrapping it in a dict would
+    break
     every `{{nodes.x.output}}` downstream, so publishing a node's output would change what its
     consumers read.
     """

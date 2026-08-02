@@ -682,3 +682,69 @@ reach a run record/journal/UI, and every surface shows presence flags only.
   (`workspace_default_mode`, `workspace_teardown_on_expiry`) are not wired: the four-point config
   contract needs a `WorkflowsConfig` field plus `_EDITABLE_CONFIG` plus an FE control, and adding a
   knob nothing reads yet would be the inert-control class this program keeps finding.
+
+### 2026-08-02 — session 50 (session ownership + incognito enforcement) DONE
+
+`workflows/ownership.py` (new): run-owned session keys, the two seam registrations, incognito/temporary
+inheritance, and the engine-level learning-node skip. `sel.py` + `context.py` each gained one prefix
+entry; `engine.dispatch_stage` gained the skip and the owned parent key. 79 tests.
+
+- **Two seams had to learn `workflow:`, and BOTH were fixed at the function that is actually called.**
+  `sel._infer_source` is what `log_tool_call` invokes, so a helper elsewhere returning "workflow"
+  would have been a parallel path the audit log never consults — every run-owned tool call would
+  still record as `channel`, the catch-all, making "what did the run do" unanswerable from the log
+  even though every event is in it. Same for `context._prompt_use_case_for`: without the entry an
+  owned session resolved to the `chat` prompt, framing a stage worker as a conversational assistant.
+  Both verified with a no-regression sweep over every existing prefix.
+
+- **Behaviour keys off `_app`, not the key prefix** — verified in code (`gateway.py` and
+  `chat_runner.py` both branch on `session._app == "loop"`). The `loop_`/`loop:` prefix-match in the
+  prompt resolver is a known near-miss the plan says not to repeat, so ownership sets `_app` and the
+  key is only an identifier.
+
+- **DISCOVERY — the engine helper called a PHANTOM API.** The first version used `store.load()` and
+  read `run.memory_mode`; NEITHER exists (`store.get` is the real reader, and there is no such
+  field). Wrapped in a best-effort `except`, that would have raised on every stage and been
+  swallowed — an enforcement control that silently never fires, which is the exact class this program
+  keeps producing. The mode now lives in `WorkflowRun.extra` (already persisted and round-tripped),
+  so no schema change is needed, and a test asserts `store.load` does NOT exist so a future rename
+  cannot re-introduce the phantom.
+
+- **DISCOVERY — my own test wrote two runs into the REAL `~/.personalclaw`.** Patching
+  `personalclaw.config.loader.config_dir` does NOT reach `workflows.store`, which imports `config_dir`
+  at module level. The runs then leaked into `test_context`'s `active_workflows_block()` assertions —
+  two failures that passed in isolation and failed only in the full xdist mix. Root-caused rather
+  than reruns: switched to patching `workflows.store.config_dir` (the established convention in
+  `test_workflows_run_delete._isolated_home`), added an `_assert_isolated` guard so a future
+  mis-patch fails loudly instead of writing to a real home, and cleaned the two leaked rows plus
+  their two empty run dirs out of the real home after verifying the db held nothing else.
+
+- **An unrecognized `memory_mode` parses as INCOGNITO, not NORMAL.** The value exists because someone
+  asked for privacy; a typo or a newer mode name this build does not know must not read as "record
+  everything". A lost note is recoverable, a memory the user believed was never written is not. The
+  distinction against ABSENCE is deliberate: no recorded mode means the run predates the feature or
+  came from an unrestricted origin, both genuinely unrestricted.
+
+- **Inheritance reads BOTH sources**, following `session_search.is_restricted`'s precedent rather than
+  inventing a third store: the durable JSONL line first (it survives a restart), then the
+  process-global registry (it only knows sessions this process has seen). Checking only the registry
+  would mean a gateway restart silently un-marks every incognito run in flight.
+
+- **The engine SKIPS learning nodes outright in a restricted run** — the primary control, DEGRADED
+  rather than FAILED because the node was deliberately not run. Trusting each persist provider's own
+  gate would make correctness depend on every write path checking a flag, and a path added later
+  would leak by default. Nodes can also DECLARE `persists_memory: true`, which is how an
+  app-contributed writer opts in rather than leaking past a hardcoded provider list.
+
+- **`temporary` needs BOTH registry marks.** `is_temporary` gates reads while `is_restricted` (true
+  for either) gates writes, so marking only temporary would leave the write gate depending on one
+  function's internals. The marks are RETURNED as names rather than performed, keeping the module
+  testable without mutating process-global state every other test shares.
+
+- **NOT DONE:** the actual `session_restrictions` marking and JSONL `memory_mode` write at run start —
+  `restriction_calls` and `durable_metadata` are the contract, but performing them needs the run-start
+  path in the controller/service, and stamping `extra` there is a service change this session does not
+  open. Converting EXISTING `loop-<id>`/`cron:<id>` sessions to run-ownership is explicitly scoped OUT
+  by §5.1 itself (it touches `session_map.py`/`sync_bridge.py`/Slack bridging); only new `workflow:`
+  keys are introduced here. The completion-summary mirror into the launching session needs the
+  blocking-run path.
