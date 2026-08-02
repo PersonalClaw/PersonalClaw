@@ -619,3 +619,35 @@ Templates are the plan's proof-of-life — field-tested shapes with real daily c
   `coverage_gap` ledger event, and the async enrichment/backfill loop — the last is a deliberate
   best-effort hook whose target does not exist yet, and the backfill covering what the queue missed
   belongs to session 37.
+
+- **2026-08-01 — CODE DONE (push blocked) — Long-run engine additions (session 36 of the WF2 queue).**
+  Branch `feature-wf2-engine-longrun`. `workflows/longrun.py` + the `until_cancelled` loop mode and
+  its reaper, `{{siblings.*}}`/`{{previous.output}}` with the `window`/`unseen`/`significant`/`full`/
+  `hygiene`/`clamp` pipes, buffer-seal `wait`, adaptive-delay clamp, four ledger kinds, two new
+  validator errors. 11957 tests.
+
+- **DEVIATION (premise mismatch, resolved in place) — `join: any` does NOT cancel a watcher.** The
+  plan says it does; measured, `container_outcome` checks for non-terminal children before the ANY
+  rule, so the run never completes. That check is deliberate (a join must not fire early on a
+  fan-out). So reaping is a separate pure rule, `reap_watchers`, rather than a change to join
+  semantics. The plan's intent was buildable as written; only its stated mechanism was wrong.
+
+- **DISCOVERY — three PRE-EXISTING engine defects, all live on `main`, all found by running the
+  plan's flagship shape.** `_base_path` truncated at the last iteration marker instead of removing
+  it, so a `wait` inside a loop body was looked up as its parent sequence and read as a gate ("gate
+  timed out with no answer", for a template with no gate); `_loop_parent` required the path to END
+  at `@N`, so a container-bodied loop never advanced and the run deadlocked after one iteration; and
+  instance paths sorted as strings, so `body@10` preceded `body@2` and "oldest first" silently
+  became wrong at the tenth cycle. Five SHIPPED templates use container-bodied loops. Fixing the
+  second also required advancing the counter only when the whole body is terminal, derived through
+  the scheduler's own `derive_state` rather than a second notion of completeness.
+
+- **Validated end-to-end through the live engine:** the sibling view grew 2→4→8 across cycles as the
+  worker produced, `previous.output` chained each cycle to its predecessor, the seen-set journaled
+  one novel item per cycle, and `watcher_reaped` fired with `accompanied_work_complete` — the run
+  COMPLETED in 10s instead of hanging forever.
+
+- **NOT DONE:** the `transform(hygiene|unseen)` node preset (the pipes ship), LLM-summarize for
+  oversized sibling payloads (deterministic truncate ships as the always-works fallback), and the
+  run-continuity INJECTION SITE (the functions ship and are tested; wiring them onto the trigger
+  record is session 37's recurring-run work).

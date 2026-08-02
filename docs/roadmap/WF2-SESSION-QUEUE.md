@@ -100,7 +100,7 @@ mandatory.
 |---|---|---|---|
 | 34 | Store semantics: `kind`/`logical_key`/`last_verified`/`expires_at`, `item_relations`, hashing, `KnowledgeConfig` four-point wiring, `schema.md` | G16 | ✅ CODE DONE — PUSH BLOCKED |
 | 35 | The provider pair: `knowledge_persist` + `knowledge_retrieve`, allowlist, native `search()`, three-node pattern end-to-end | G16 | ✅ CODE DONE — PUSH BLOCKED |
-| 36 | Engine additions: `until_cancelled` loop mode + seen-set, `{{siblings.*}}`/`{{previous.output}}`, buffer-seal wait, adaptive delay clamp | G17 | TODO |
+| 36 | Engine additions: `until_cancelled` loop mode + seen-set, `{{siblings.*}}`/`{{previous.output}}`, buffer-seal wait, adaptive delay clamp | G17 | ✅ CODE DONE — PUSH BLOCKED |
 | 37 | Consolidation + maintenance: reflect mechanics, `knowledge-health`/`lint`/`gap-healing` templates, proposal routing, differential refresh | G17 | TODO |
 | 38 | Contradiction + retrieval polish: persist-time conflict pass, typed-edge inference, contradiction UI, Session Brief, fencing filter | G18 | TODO |
 | 39 | Template slate + long-run validation (idempotent re-runs, bounded cycle cost, seen-set across restart) | G18 | TODO |
@@ -1389,3 +1389,81 @@ end-to-end through the live engine, including an idempotent re-run.
   enrichment/backfill loop (`_enqueue_enrichment` is a best-effort hook whose target
   `knowledge.ingest.enqueue_item` does not exist yet — it degrades silently by design, and the
   backfill that covers what the queue missed is session 37's).
+
+### Session 36 — Knowledge Synthesis: long-run engine additions (`feature-wf2-engine-longrun`, PR NOT OPENED — push blocked)
+
+`workflows/longrun.py` (item identity, persistent seen-set, bounded sibling views, convergence
+guard, lineage caps, adaptive-delay clamp, buffer-seal, run-continuity, web hygiene), the
+`until_cancelled` loop mode with a real reaper, `{{siblings.*}}` / `{{previous.output}}` with the
+`window`/`unseen`/`significant`/`full`/`hygiene`/`clamp` pipes, buffer-seal `wait`, and four new
+ledger kinds. 11957 tests (+87), lint clean at 615 files. Driven end-to-end through the live
+engine: the sibling view grew 2→4→8 across cycles, `previous.output` chained each cycle to its
+predecessor, the seen-set journaled one novel item per cycle, and the run COMPLETED rather than
+hanging.
+
+**PREMISE MISMATCH (E1) — resolved in place, not escalated.** The plan states a watcher is
+cancelled by "a sibling completing in a `join: any` parallel". Measured, that does not happen:
+`container_outcome` checks for non-terminal children BEFORE the ANY rule, so a parallel whose
+watcher is still running reads RUNNING and the run never completes. That check is deliberate and
+documented (tick.py's own header: a join must not fire early on a fan-out whose other legs are
+still waiting), so changing join semantics would have broken the rule it was protecting. Instead
+`reap_watchers` is a separate, narrower pure rule: inside a `join: any`/`quorum` parallel, an
+`until_cancelled` loop is reaped once enough of its NON-watcher siblings have succeeded. Recorded
+as a DEVIATION rather than a BLOCKED because the plan's *intent* — the watcher stops when its
+work is done — was buildable exactly as written; only its stated mechanism was wrong.
+
+**Three PRE-EXISTING engine defects found by running the plan's flagship shape.** All three are
+about instance-path handling below an iteration marker, all three were live on `main`, and all
+three made container-bodied loops unusable — a shape five SHIPPED templates already use:
+
+(a) **`_base_path` truncated at the last marker** instead of removing the marker, so
+  `root.children[0].body@0.children[0]` resolved to the body SEQUENCE. Live effect: a `wait`
+  nested in a loop body was looked up as its parent sequence, `_wake_due_nodes` read it as a
+  gate, and every cycle failed with "gate timed out with no answer" — for a template containing
+  no gate at all.
+
+(b) **`_loop_parent` required the path to END at `@N`.** It always does for a leaf body and never
+  for a container one, so `int("0.children[2]")` raised, `_advance_loop` returned silently, the
+  loop never advanced, and the run DEADLOCKED after exactly one iteration.
+
+(c) **Instance paths were sorted as strings,** so `body@10` sorted before `body@2`. "Oldest
+  first" silently became wrong at the tenth iteration — the window would keep the wrong items
+  and `previous.output` would return the wrong cycle. Ten cycles in is later than any short test
+  reaches, which is why it survived.
+
+Fixing (b) required a fourth change: a container-bodied loop calls `_advance_loop` once per LEAF,
+so the counter now advances only when the whole body is terminal, derived through the scheduler's
+own `derive_state` (promoted from private) rather than a second notion of completeness that could
+disagree with it.
+
+**Other deviations and findings:**
+
+- **The default sibling view is applied at RESOLUTION time, not in `as_root`.** Filtering in
+  `as_root` made `| full` inert: the opt-out could only ever see items the default had already
+  dropped — a control that looks present and does nothing.
+- **`siblings.<id>.output` FLATTENS iteration envelopes.** Without it `| full` returned 1 item
+  out of 60 and `| unseen` returned nothing at all, because an envelope carries no item identity.
+- **`| full` means full** — no filter AND no window. The first cut still windowed at 20, so the
+  opt-out silently didn't.
+- **`previous` absent is the first cycle, not an unresolvable reference.** Every diff-aware
+  template in the plan is written `{{previous.output.summary | default('None yet')}}`; raising
+  would make each fail on its own first cycle. `nodes.typo.output` still raises.
+- **`unseen` with no engine seen-set RAISES.** A silently inert `unseen` is the exact failure it
+  exists to prevent: the watcher keeps working and costs grow every cycle with no indication why.
+- **`_enclosing_parallel` walks OUTWARD.** A watcher's synthesize stage sits at
+  `…children[1].body@3.children[0]`, whose nearest `.children[N]` prefix is the body SEQUENCE —
+  stopping there returned no siblings for the one node in the template that needs them.
+- **An empty buffer never seals, including on the stale path.** A stale-flush of nothing would
+  pay for a synthesis of no new material every hour forever — the cost the volume trigger exists
+  to avoid.
+- **A garbage adaptive-delay proposal falls back to the CONFIGURED delay, not the floor** — "the
+  model returned nonsense" must not make the loop faster.
+- **Two new validator errors**, because both failures are silent hangs or silent spends:
+  `WF_UNREAPABLE_WATCHER` (no reaper and no `max_iterations` — including a parallel of nothing
+  but watchers, which can never satisfy its own join) and `WF_WATCHER_NO_WAIT` (a watcher with no
+  wait cycles as fast as the model answers). Plus `WF_BAD_SEAL` / `WF_SEAL_NO_FLUSH`.
+- **NOT DONE:** the `transform(hygiene|unseen)` preset as a node-level shorthand (the pipes ship;
+  the preset is template sugar), LLM-summarize for oversized sibling payloads (deterministic
+  truncate ships as the fallback that must always work — the model path belongs with the
+  synthesizer), and the run-continuity injection SITE (`roll_continuity`/`continuity_header` ship
+  and are tested; wiring them onto the trigger record is recurring-run work in session 37).

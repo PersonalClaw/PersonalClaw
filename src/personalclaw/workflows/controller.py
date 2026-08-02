@@ -35,6 +35,7 @@ import asyncio
 import calendar
 import contextlib
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -43,7 +44,7 @@ from personalclaw.workflows import attention
 from personalclaw.workflows import context as context_mod
 from personalclaw.workflows import gate_policy
 from personalclaw.workflows import journal as journal_mod
-from personalclaw.workflows import mutations, store
+from personalclaw.workflows import longrun, mutations, store
 from personalclaw.workflows.bindings import BindingContext, node_deps
 from personalclaw.workflows.effects import (
     EffectRecord,
@@ -65,6 +66,7 @@ from personalclaw.workflows.models import (
     Failure,
     FailureClass,
     InstanceState,
+    LoopMode,
     Node,
     NodeInstance,
     NodeKind,
@@ -91,11 +93,21 @@ from personalclaw.workflows.tick import (
     Frontier,
     Limits,
     ReadyNode,
+    derive_state,
     frontier,
     loop_should_continue,
+    reap_watchers,
 )
 
 logger = logging.getLogger(__name__)
+
+#: A loop/foreach iteration marker: `@2` or `#3`. Anchored on the digits so a `#` inside a node
+#: id cannot be mistaken for one.
+_INSTANCE_MARKER_RE = re.compile(r"[@#]\d+")
+
+#: A LOOP iteration marker specifically (`@2`), capturing the number. Distinct from the foreach
+#: marker (`#3`) because only a loop has an iteration counter to advance.
+_LOOP_MARKER_RE = re.compile(r"@(\d+)")
 
 #: How long a tick waits for in-flight work before re-deriving the frontier. Bounded so a
 #: WAITING deadline or an externally-answered gate is noticed promptly.
@@ -198,6 +210,11 @@ class RunController:
         self._handoffs: dict[str, context_mod.Handoff] = {}
         self._carryover: dict[str, context_mod.Carryover] = {}
         self._decisions: dict[str, list[context_mod.Decision]] = {}
+        #: Long-run watcher state (KNOWLEDGE-SYNTHESIS §4.1), keyed by the loop's path. Journaled
+        #: on every cycle and replayed on resume: held only in memory it would reset on every
+        #: gateway restart, which is precisely when a months-long watcher is most likely to be
+        #: interrupted — and a reset seen-set silently re-processes everything it already paid for.
+        self._seen: dict[str, longrun.SeenSet] = {}
         #: path -> the attempts already made. Feeds the correction hint on the next try,
         #: and the escalation artifact when retries run out.
         self._attempts: dict[str, list[Attempt]] = {}
@@ -423,6 +440,12 @@ class RunController:
         self._drain_mutations()
 
         self._wake_due_nodes()
+
+        # Watchers are reaped BEFORE the frontier, so a reaped watcher is already terminal in
+        # this step's derivation and the run completes on the same tick its work finished.
+        # After the frontier it would take an extra tick, and on the last tick of a run,
+        # never — the completion check would have already read the watcher as RUNNING.
+        self._reap_watchers()
 
         fr = self._frontier()
 
@@ -963,6 +986,62 @@ class RunController:
             inst.completed_at = _now()
             self.journal.step_skipped(
                 target, node.id if node else "", epoch=inst.epoch, actor="engine"
+            )
+        self._persist_state()
+
+    def _reap_watchers(self) -> None:
+        """Stop `until_cancelled` watchers whose accompanied work has finished.
+
+        CANCELLED, not DONE: the watcher did not reach a natural end, and recording it as a
+        success would make a run that was cut short indistinguishable from one that finished
+        its cadence. But it also must not fail the run — being reaped is the DESIGNED end of
+        a watcher, so `container_outcome` under `join: any` reads a cancelled watcher
+        alongside a succeeded worker as DONE.
+
+        A reaped watcher's in-flight body node is cancelled too. Without that, a watcher
+        parked in a 5-minute `wait` would keep the run alive for the rest of that wait after
+        its reason to exist was already gone.
+        """
+        paths = reap_watchers(
+            self.root, {p: i.state for p, i in self.instances.items()}, iterations=self._iterations
+        )
+        if not paths:
+            return
+        for path in paths:
+            inst = self._instance(path)
+            if inst.state in TERMINAL_STATES:
+                continue
+            inst.state = InstanceState.CANCELLED
+            inst.completed_at = _now()
+            node = dict(_walk(self.root)).get(_base_path(path))
+            node_id = node.id if node else ""
+            self.journal.write(
+                journal_mod.WATCHER_REAPED,
+                instance_path=path,
+                node_id=node_id,
+                iterations=int(self._iterations.get(path, 0)),
+                reason="accompanied_work_complete",
+            )
+            for sub in [p for p in self.instances if p.startswith(f"{path}.")]:
+                sub_inst = self.instances[sub]
+                if sub_inst.state in TERMINAL_STATES:
+                    continue
+                sub_inst.state = InstanceState.CANCELLED
+                sub_inst.completed_at = _now()
+            for entry in [
+                e for p, e in self._inflight.items() if p == path or p.startswith(f"{path}.")
+            ]:
+                entry.task.cancel()
+            for key in [p for p in self._inflight if p == path or p.startswith(f"{path}.")]:
+                self._inflight.pop(key, None)
+            self._publish(
+                "workflow_node_done",
+                {
+                    "node_id": node_id,
+                    "instance_path": path,
+                    "status": InstanceState.CANCELLED.value,
+                    "degraded_reason": "watcher_reaped",
+                },
             )
         self._persist_state()
 
@@ -1749,8 +1828,14 @@ class RunController:
         parent_path, iteration = _loop_parent(item.path)
         if parent_path is None:
             return
-        node = dict(_walk(self.root)).get(parent_path)
+        node = dict(_walk(self.root)).get(_base_path(parent_path))
         if node is None or node.kind != NodeKind.LOOP:
+            return
+        if not self._iteration_complete(node, parent_path, iteration):
+            # A CONTAINER-bodied loop calls this once per leaf. Advancing on the first one
+            # would end the iteration mid-cycle: the wait would complete, the counter would
+            # move, and the synthesize stage after it would be scheduled into the NEXT
+            # iteration's path — where nothing had produced its inputs.
             return
         output = self._outputs.get(item.node.id)
         if _is_dry(output):
@@ -1809,6 +1894,10 @@ class RunController:
             error_signature="",
             tokens=0,
         )
+        # Mark the seen-set only now — AFTER the iteration succeeded. Marking at read time
+        # means a cycle that dies mid-synthesis has already suppressed items it never
+        # processed, and nothing will ever surface them again (§4.1).
+        self._mark_seen(parent_path, node, output)
         # Capture what this iteration hands to the next, BEFORE the counter advances (WF2-R6).
         # Journaled rather than held in memory so a rewind to this iteration replays the handoff
         # it actually had, instead of reconstructing one from a transcript that no longer exists —
@@ -1820,6 +1909,56 @@ class RunController:
             loop_inst = self._instance(parent_path)
             loop_inst.state = InstanceState.DONE
             loop_inst.completed_at = _now()
+
+    def _iteration_complete(self, node: Node, parent_path: str, iteration: int) -> bool:
+        """Has this loop iteration's WHOLE body reached a terminal state?
+
+        Derived through the same `frontier` machinery the scheduler uses, so "the body finished"
+        means exactly what it means everywhere else. A leaf body is trivially complete on its own
+        completion; a container body is complete only when its children are.
+        """
+        if node.body is None:
+            return True
+        state = derive_state(
+            node.body,
+            f"{parent_path}.body@{iteration}",
+            {p: i.state for p, i in self.instances.items()},
+            declined_edges=self._declined_edges,
+            outputs=self._outputs,
+            inputs=self.run.inputs,
+            iterations=self._iterations,
+        )
+        return state in TERMINAL_STATES
+
+    # ── long-run watcher state (KNOWLEDGE-SYNTHESIS §4) ──
+
+    def _mark_seen(self, parent_path: str, node: Node, output: Any) -> None:
+        """Record what a successful cycle consumed, and journal the whole set.
+
+        Only for loops that actually accumulate — a `counted` loop over three review passes
+        has no items and no reason to carry a seen-set. Keyed by the loop's path so two
+        watchers in the same run keep independent sets: a shared one would have each watcher
+        suppressing the other's novel items, and the symptom (a watcher that mysteriously
+        finds nothing) points nowhere near the cause.
+        """
+        cfg = node.config or {}
+        if str(cfg.get("mode", "") or "") != LoopMode.UNTIL_CANCELLED.value:
+            return
+        items = longrun._flatten_outputs([output])
+        if not items:
+            return
+        seen = self._seen.setdefault(parent_path, longrun.SeenSet())
+        added = seen.mark_all(items)
+        if not added:
+            return
+        self.journal.write(
+            journal_mod.SEEN_SET,
+            instance_path=parent_path,
+            node_id=node.id,
+            seen=seen.to_dict(),
+            added=added,
+            total=len(seen),
+        )
 
     # ── context lifecycle (WF2-R6) ──
 
@@ -1899,7 +2038,12 @@ class RunController:
         try:
             records = journal_mod.ledger(
                 self.run.id,
-                kinds={journal_mod.HANDOFF, journal_mod.CARRYOVER, journal_mod.DECISION},
+                kinds={
+                    journal_mod.HANDOFF,
+                    journal_mod.CARRYOVER,
+                    journal_mod.DECISION,
+                    journal_mod.SEEN_SET,
+                },
             )
         except Exception:
             logger.debug("run %s: could not read the context ledger", self.run.id, exc_info=True)
@@ -1921,6 +2065,12 @@ class RunController:
                     decision = context_mod.Decision.from_dict(rec)
                     if not decision.empty:
                         self._decisions.setdefault(path, []).append(decision)
+                elif kind == journal_mod.SEEN_SET:
+                    # Each record carries the WHOLE set at that point, so the last one wins —
+                    # the same reason as CARRYOVER. A delta encoding would be smaller but would
+                    # make a partially-unreadable ledger reconstruct a WRONG set rather than an
+                    # old one, and an old seen-set only costs tokens.
+                    self._seen[path] = longrun.SeenSet.from_dict(rec.get("seen") or {})
             except Exception:
                 logger.debug("run %s: skipping unreadable context record", self.run.id)
 
@@ -1951,14 +2101,102 @@ class RunController:
     # ── binding context ──
 
     def _context_for(self, item: ReadyNode) -> BindingContext:
+        watcher_path = self._enclosing_watcher(item.path)
+        seen = self._seen.get(watcher_path) if watcher_path else None
         return BindingContext(
             inputs=dict(self.run.inputs),
             node_outputs=dict(self._outputs),
             item=item.item,
             has_item=item.has_item,
             iter_index=item.iter_index,
+            sibling_outputs=self._sibling_outputs(item.path),
+            previous_output=self._previous_output(item.path),
+            has_previous=self._previous_output(item.path) is not None,
+            seen_filter=seen.unseen if seen else None,
             secret_resolver=_secret_resolver,
         )
+
+    def _sibling_outputs(self, path: str) -> dict[str, list[Any]] | None:
+        """Accumulated outputs of the node's siblings inside its enclosing `parallel`.
+
+        A LIST per sibling and not just its current output: a watcher reads a sibling that is
+        still producing, so "the output" is the wrong shape — the synthesizer needs the
+        accumulation to see a trend, which is the whole reason the binding exists (§4.2).
+
+        Accumulated from the JOURNAL rather than from `self._outputs`, because a loop body
+        overwrites its node-id output every iteration: reading the live map would show cycle
+        50 and nothing before it, and the window/seen-set machinery would have nothing to
+        bound.
+        """
+        tree = dict(_walk(self.root))
+        container = _enclosing_parallel(path, tree)
+        if container is None:
+            return None
+        node = tree.get(_base_path(container))
+        if node is None or not node.children:
+            return None
+        out: dict[str, list[Any]] = {}
+        for index, child in enumerate(node.children):
+            cpath = f"{container}.children[{index}]"
+            if path == cpath or path.startswith(f"{cpath}."):
+                continue  # a node is not its own sibling
+            if not child.id:
+                continue
+            out[child.id] = self._accumulated_outputs(cpath)
+        return out or None
+
+    def _accumulated_outputs(self, subtree: str) -> list[Any]:
+        """Every output a subtree has produced, oldest first.
+
+        Read from the journal's stored outputs so loop iterations accumulate instead of the
+        newest overwriting the rest.
+        """
+        acc: list[Any] = []
+        for spath in sorted(
+            (p for p in self.instances if p == subtree or p.startswith(f"{subtree}.")),
+            key=_natural_key,
+        ):
+            inst = self.instances[spath]
+            if inst.state not in SUCCESS_STATES or not inst.output_ref:
+                continue
+            # By INSTANCE PATH, not by `output_ref`: the ref is already the run-relative file
+            # path, and `read_output` derives the filename from what it is given — passing the
+            # ref would hash a hash and read nothing, silently, forever.
+            value = store.read_output(self.run.id, spath)
+            if value is not None:
+                acc.append(value)
+        return acc
+
+    def _previous_output(self, path: str) -> Any:
+        """The prior successful cycle of the enclosing loop, for diff-aware synthesis.
+
+        Distinct from `{{last.output}}`, which is the previous iteration of the loop the node
+        is IN. `previous` is the prior cycle of the whole watcher body, which for a `sequence`
+        body is what a synthesis stage actually wants: its own last report, not the output of
+        whichever node happened to run before it.
+        """
+        watcher = self._enclosing_watcher(path)
+        if watcher is None:
+            return None
+        current = int(self._iterations.get(watcher, 0))
+        if current <= 0:
+            return None
+        node = dict(_walk(self.root)).get(watcher)
+        if node is None or node.body is None:
+            return None
+        prior = self._accumulated_outputs(f"{watcher}.body@{current - 1}")
+        return prior[-1] if prior else None
+
+    def _enclosing_watcher(self, path: str) -> str | None:
+        """The nearest enclosing `until_cancelled` loop path, or None."""
+        for candidate, node in _walk(self.root):
+            if node.kind != NodeKind.LOOP:
+                continue
+            if str((node.config or {}).get("mode", "") or "") != LoopMode.UNTIL_CANCELLED.value:
+                continue
+            if path == candidate or path.startswith(f"{candidate}."):
+                return candidate
+        return None
 
     def _resolved_inputs(self, item: ReadyNode, ctx: BindingContext) -> dict[str, Any]:
         """What actually reached this node — the cache's `inputs_hash` input.
@@ -2265,31 +2503,76 @@ def _walk(root: Node) -> list[tuple[str, Node]]:
 
 
 def _base_path(path: str) -> str:
-    """Strip the foreach/loop instance suffix, yielding the SPEC path.
+    """Strip foreach/loop instance MARKERS, yielding the SPEC path.
 
     `root.body#3` and `root.body@2` are instances of the same spec node; the state map is
     keyed by instance, but the spec lookup needs the shared path.
+
+    Removes each `@N`/`#N` marker in place rather than truncating at the last one. Truncating
+    was wrong for any node BELOW an iteration marker:
+    `root.children[0].body@0.children[0]` became `root.children[0].body`, so the spec lookup
+    returned the body SEQUENCE instead of the wait inside it. Measured live: a `wait` nested in
+    a loop body was read as a gate by `_wake_due_nodes` and every cycle failed with "gate timed
+    out with no answer" — for a template containing no gate at all. Every container-bodied
+    loop and foreach was affected, which is the shape the watcher templates use.
     """
-    for sep in ("#", "@"):
-        idx = path.rfind(sep)
-        if idx > 0:
-            return path[:idx]
-    return path
+    return _INSTANCE_MARKER_RE.sub("", path)
+
+
+def _enclosing_parallel(path: str, tree: dict[str, Node]) -> str | None:
+    """The path of the nearest enclosing `parallel`, walking OUTWARD.
+
+    Not just the nearest `.children[N]` prefix: a watcher's synthesize stage sits at
+    `…children[1].body@3.children[0]`, whose nearest prefix is the BODY SEQUENCE. Stopping
+    there returned no siblings for the one node in the whole template that needs them —
+    measured, and silent, because a missing `siblings` root reads as "this node has no
+    siblings" rather than as an error.
+
+    Nearest-first among genuine parallels, so a nested parallel resolves to the inner one: a
+    node's siblings are the legs of ITS parallel, not an outer one's.
+    """
+    matches = list(re.finditer(r"\.children\[\d+\]", path))
+    for match in reversed(matches):
+        candidate = path[: match.start()]
+        if not candidate:
+            continue
+        node = tree.get(_base_path(candidate))
+        if node is not None and node.kind == NodeKind.PARALLEL:
+            return candidate
+    return None
+
+
+def _natural_key(path: str) -> list[Any]:
+    """Sort instance paths NUMERICALLY on their indices.
+
+    A plain string sort puts `children[10]` before `children[2]` and `body@10` before `body@2`,
+    so "oldest first" silently became wrong at the tenth iteration — the window would keep the
+    wrong items and `previous.output` would return the wrong cycle. Ten cycles in is late enough
+    that no short test would ever see it.
+    """
+    return [int(tok) if tok.isdigit() else tok for tok in re.split(r"(\d+)", path)]
 
 
 def _loop_parent(path: str) -> tuple[str | None, int]:
-    """`root.children[0].body@2` → `("root.children[0]", 2)`."""
-    idx = path.rfind("@")
-    if idx <= 0:
+    """`root.children[0].body@2` → `("root.children[0]", 2)`.
+
+    The marker need not END the path. A loop whose body is a CONTAINER puts its leaf work
+    deeper — `root.children[1].body@0.children[2]` — and the old form required the path to end
+    at `@N`, so `int("0.children[2]")` raised, `_advance_loop` returned silently, the loop never
+    advanced, and the run deadlocked after exactly one iteration. Measured live, and five
+    shipped templates use container-bodied loops.
+
+    The INNERMOST marker wins, so a loop nested inside another loop's body advances itself
+    rather than its parent.
+    """
+    matches = list(_LOOP_MARKER_RE.finditer(path))
+    if not matches:
         return None, 0
-    try:
-        iteration = int(path[idx + 1 :])
-    except ValueError:
-        return None, 0
-    body = path[:idx]
+    match = matches[-1]
+    body = path[: match.start()]
     if not body.endswith(".body"):
         return None, 0
-    return body[: -len(".body")], iteration
+    return body[: -len(".body")], int(match.group(1))
 
 
 def _is_dry(output: Any) -> bool:

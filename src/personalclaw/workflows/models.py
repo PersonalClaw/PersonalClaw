@@ -94,6 +94,12 @@ class LoopMode(str, Enum):
     COUNTED = "counted"
     UNTIL = "until"
     UNTIL_DRY = "until_dry"  # clean-streak termination
+    #: Runs until something OUTSIDE it says stop — a sibling in a `join: any` parallel
+    #: completing, user cancellation, or the run's timeout. The cleanest expression of a
+    #: watcher/monitor, and the only mode with no self-terminating condition, which is why
+    #: it is the only one that requires an external reaper (`reap_watchers`) to be a
+    #: bounded run rather than an immortal one.
+    UNTIL_CANCELLED = "until_cancelled"
 
 
 class ItemErrorPolicy(str, Enum):

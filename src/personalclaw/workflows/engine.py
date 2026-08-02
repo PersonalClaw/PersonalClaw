@@ -33,6 +33,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw.workflows import longrun
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
 from personalclaw.workflows.models import (
     Failure,
@@ -687,19 +688,99 @@ async def dispatch_wait(node: Node, ctx: BindingContext, *, now: float) -> NodeR
         return NodeResult(state=InstanceState.FAILED, failure=failure)
     until = cfg.get("until_ts")
     duration = cfg.get("duration_secs")
+    seal = cfg.get("seal")
+
+    if isinstance(seal, dict):
+        # Buffer-seal (KNOWLEDGE-SYNTHESIS §4.3): a VOLUME trigger instead of a clock. Ready
+        # now when the buffer is full, otherwise a short re-check wait — the stale-flush
+        # deadline is the ceiling, so a trickle still synthesizes eventually.
+        #
+        # A quiet week costs zero model calls this way; wall-clock cadence has it exactly
+        # backwards, paying for a synthesis of nothing every interval.
+        return _dispatch_seal(seal, ctx, now=now)
+
     if isinstance(until, (int, float)) and until > 0:
         deadline = float(until)
     elif isinstance(duration, (int, float)) and duration > 0:
-        deadline = now + float(duration)
+        # An adaptive cadence: a cycle may propose its own next delay, clamped. Unclamped, a
+        # model asking for 2s spins the loop through its whole budget in an hour and one
+        # asking for a week silently stops being a watcher — both look like a working run.
+        deadline = now + float(_adaptive_duration(cfg, float(duration)))
     else:
         return _fail(
-            FailureClass.USER, "wait node has no duration_secs or until_ts", "set one of them"
+            FailureClass.USER,
+            "wait node has no duration_secs, until_ts or seal",
+            "set one of them",
         )
     if deadline <= now:
         return NodeResult(state=InstanceState.DONE, output={"waited": True})
     # WAITING is not terminal, so a downstream join behind this leg keeps waiting rather
     # than firing on a faster sibling — the wait-entry half of WF2-R18.
     return NodeResult(state=InstanceState.WAITING, wake_at=deadline)
+
+
+def _adaptive_duration(cfg: dict[str, Any], configured: float) -> int:
+    """The wait's duration after an optional model-proposed override, clamped.
+
+    `adaptive` names the binding that carries the proposal (usually
+    `{{last.output.next_cycle_delay_seconds}}`); `min_secs`/`max_secs` bound it. The
+    template's own `duration_secs` is the fallback, so a garbage proposal keeps the declared
+    cadence rather than falling to the floor — "the model returned nonsense" must not make the
+    loop faster.
+    """
+    proposed = cfg.get("adaptive")
+    if proposed is None:
+        return int(configured)
+    secs, reason = longrun.clamp_delay(
+        proposed,
+        default=int(configured),
+        minimum=_int_or(cfg.get("min_secs"), longrun.MIN_ADAPTIVE_DELAY_SECS),
+        maximum=_int_or(cfg.get("max_secs"), longrun.MAX_ADAPTIVE_DELAY_SECS),
+    )
+    if reason:
+        logger.info("adaptive wait delay adjusted: %s -> %ss", reason, secs)
+    return secs
+
+
+def _int_or(raw: Any, fallback: int) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return fallback
+    return int(raw)
+
+
+def _dispatch_seal(seal: dict[str, Any], ctx: BindingContext, *, now: float) -> NodeResult:
+    """Buffer-seal wait: ready when the buffer fills, else a bounded re-check.
+
+    The buffer contents come from a binding (`items`), so the seal is a pure function of what
+    the watcher's sibling has produced — no engine-side buffer to persist, and therefore
+    nothing to lose on a restart.
+    """
+    raw_items = seal.get("items")
+    items: list[Any] = []
+    if raw_items is not None:
+        try:
+            resolved = resolve(raw_items, ctx) if isinstance(raw_items, str) else raw_items
+        except Exception:
+            resolved = []
+        items = resolved if isinstance(resolved, list) else []
+
+    buffer = longrun.BufferState(
+        items=items,
+        seal_threshold=_int_or(seal.get("threshold"), 20),
+        seal_tokens=_int_or(seal.get("tokens"), 0),
+        flush_stale_after_secs=_int_or(seal.get("flush_stale_after_secs"), 3600),
+        last_flush_at=float(_int_or(seal.get("last_flush_at"), 0)),
+    )
+    sealed, reason = buffer.should_seal(now=now)
+    if sealed:
+        return NodeResult(
+            state=InstanceState.DONE,
+            output={"waited": False, "sealed": True, "reason": reason, "count": len(items)},
+        )
+    # Not yet. Re-check on a bounded cadence rather than parking until the stale deadline: the
+    # buffer fills from a SIBLING, so nothing about this node's own state would wake it.
+    check_every = _int_or(seal.get("check_every_secs"), 60)
+    return NodeResult(state=InstanceState.WAITING, wake_at=now + max(1, check_every))
 
 
 async def dispatch_gate(

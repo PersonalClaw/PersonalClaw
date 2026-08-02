@@ -65,6 +65,7 @@ while not terminal:
 | `loop_middleware.py` | the breaker's next tier: call fingerprinting, failure-class routing, the Continue→Nudge→Escalate→Halt ladder, the interrupt queue |
 | `judge_calibration.py` | the nodding-loop detector, divergence records, stuck detection, and the verdict ledger they read |
 | `loop_aliases.py` | read-time aliases for legacy loop-kind references, and cockpit stream-key equivalence |
+| `longrun.py` | long-run watcher mechanics: item identity, the persistent seen-set, bounded sibling views, buffer-seal, the adaptive-delay clamp, lineage caps |
 | `scope.py` | filesystem write-scope enforcement by post-hoc diff |
 | `watchdog.py` | the supervisor: adoption, reaping, per-run publishing |
 
