@@ -430,3 +430,137 @@ Frontmatter gains an optional declaration so resources are addressable without a
 - **Duplicating §2.4.** The single largest risk in this amendment. §2.4's ranked slot allocator with L0/L1/L2 degradation is the authority for *how much of an entity* reaches a prompt; E1.1 adds only a **new, deeper tier for skill resources**. A task that reimplements tiering in `skills/` is out of scope and should be refused (escalation E6).
 - **Resource sprawl.** A skill with many resources re-creates the tool-explosion problem one level down. Mitigated by the L0 catalog being one line per resource and by curator aging of unused resources — and worth watching in real use.
 - **Promotion noise.** Retroactive promotion could flood the proposal queue. §2.2's decision memory and §2.3's curator already bound this; the amendment deliberately reuses them rather than adding a second gate.
+
+---
+
+## Execution log
+
+- **2026-08-01 — DONE — Migration step 1 (Capture): hygiene + gate + staging.**
+  Branch `feature-wf2-flywheel-capture`, PR #163. New `learning/` package with the three
+  §2.1 unifications: `gate.py` (one eligibility decision per event, consumed by every
+  cadence), `hygiene.py` (untrusted-invisible + system-injection + env-failure +
+  grounding + session scoring + the shared `min_evidence` constant), `staging.py` (the
+  R19 append-only log with FLUSH_OK/FLUSH_PRODUCED/FLUSH_ERROR outcome records, batch
+  gate with input-hash idempotence, cost metering, provenance pointers, health/prune).
+  Config: `learning.min_evidence`, `learning.staging_enabled`, `learning.min_session_score`
+  wired through all four points and verified live. `learning.db` added to
+  snapshot/portability (copy-never-merge). `context_management.py` split; the plan-format
+  and plan-memory half extracted to `plan_memory.py`. 11060 tests (+77), lint clean,
+  green at `-n 4` and `-n auto`, seam validated against the real dev home.
+
+- **DEVIATION — `should_review` deleted, not deprecated.** The plan says "unify"; after the
+  rewire it had zero production callers, and clean-break doctrine says the replaced
+  mechanism goes in the same change. Coverage migrated to `test_learning_gate.py`.
+
+- **DEVIATION — permission and worthwhileness are two fields.** The plan describes ONE
+  eligibility result. Implementing it as one boolean would have forced the same
+  carve-out that made facet capture ungated (a cheap path cannot express "allowed but not
+  worth an LLM"). `GateDecision` carries both; `__bool__` is the strict answer.
+
+- **DISCOVERY — the fence filter's first implementation was wrong, and measurement caught
+  it.** `fence_untrusted` emits `<untrusted_content source=web>`; a bare-literal match
+  found nothing on exactly the spans carrying provenance, so a planted injection survived.
+  Now matched with a tag-aware regex derived from the constant. This is the plan's success
+  criterion 4 — it would have shipped false.
+
+- **DISCOVERY — ordering is a privacy property.** Permission must be settled before the
+  message is read at all; classifying a restricted session's text is already a read of
+  content its memory_mode excluded. Pinned by a test.
+
+- **2026-08-01 — DONE — Migration step 3 (Propose): the generalized queue + decision memory.**
+  Branch `feature-wf2-flywheel-propose`, PR #164. `learning/proposals.py` with the six
+  kinds, content fingerprints, the rejected-exemplar store with escalating cooldowns,
+  reinforce-on-duplicate, `specializes` for variants, supersession lineage, the
+  deterministic 4-verdict resolve cascade (contradiction BEFORE reinforce), change
+  manifests (lenient-but-recording), the evidence floor for inferred proposals only,
+  per-run quota from config, and SEL-audited accept/reject. 11112 tests (+52).
+
+- **DISCOVERY — three cascade bugs, all found by measuring rather than reasoning.**
+  (1) The subject guard shifted under negation, defeating contradiction detection.
+  (2) A genuine contradiction scores 0.80 by token overlap — below the NEW threshold —
+  so contradiction had to move off the similarity gate entirely. (3) The number-conflict
+  rule judged four unrelated lessons contradictory and collapsed the queue to one row.
+  Each of these would have shipped as silent data loss.
+
+- **DISCOVERY — two inbox/store leaks found on the real dev home,** neither visible from
+  tests: a superseded proposal kept a PENDING inbox row that could never be acted on,
+  and superseded records had no pruning path.
+
+- **DEVIATION — `skills/proposals.py` survives this session.** Its consumers include the
+  skills page's approval tab and its accept path writes the `auto/` namespace; the
+  replacement UI is step 3's Proposal Inbox. Retiring it here would mean rewriting a live
+  surface against a queue with no frontend. The retirement is owned by the Proposal-Inbox
+  session, and this is the only dual path this step leaves.
+
+- **NOT DONE (out of scope, needs later steps):** the embedding-similarity prior-rejection
+  check (needs the embedder-backed store from step 4's usage tier — the token-overlap
+  cascade is the zero-dependency floor and works without an embedder configured), the
+  Proposal Inbox FE, and the consolidation-lessons→proposal rerouting (needs the
+  `/api/lessons` consumer reroute, which the plan orders as step 2).
+
+- **2026-08-01 — DONE — Migration step 4a (Curate): usage store + decay kernel + hardened curator.**
+  Branch `feature-wf2-flywheel-curate`, PR #165. `learning/decay.py` (one kernel with
+  per-kind half-lives, importance as a second axis, both-signals pruning, chain sparing,
+  the active-days clock), `learning/usage.py` (one store in learning.db, per-entity event
+  vocabularies, lessons exempt, reinforcement damping, multi-gate promotion suggestions),
+  `learning/curator.py` (bounded batches oldest-audited-first, demote-never-delete with a
+  WAL undo journal + dated changelog, provenance scoping, over-deletion refusal, mode
+  scoping, decayed-but-stable → REVIEW proposal, the optimizer battery's saving estimates).
+  Wired into `history.py`'s consolidation maintenance cadence. 11210 tests (+98).
+
+- **DISCOVERY — the scheduling gap in §2.3 was real and worse than stated.**
+  `skills/curator.run_aging` had no scheduled caller anywhere: an entire grooming pass
+  existed and had never run. It is now on the verified maintenance tick.
+
+- **DISCOVERY — `DecayVerdict.__bool__` broke its own audit trail.** `if verdict` asked
+  "is this healthy?" where the code meant "did I get a verdict?", so every archival
+  journaled a null strength — losing the evidence for exactly the mutations most likely
+  to be undone. Found by measuring the journal, not by reading the code.
+
+- **DEVIATION — the kernel's base λ is pinned to the facet store's existing 30-day
+  half-life** rather than chosen freshly. This kernel replaces `preference_facets.decay`,
+  so any other constant would silently rewrite the meaning of every stored facet.
+
+- **DEVIATION — `run_aging` decides, the caller applies.** The plan describes a curator
+  that ages entities; implementing it as one that also WRITES them would have coupled it
+  to the skills loader again (the exact reason the old one could not generalize). It takes
+  value objects and returns a report.
+
+- **NOT DONE (needs step 4b, which owns rank):** the LLM umbrella-consolidation pass, the
+  remaining optimizer detectors as filed proposals, and the memory-heat migration onto the
+  kernel. `skills/usage.py` / `skills/curator.py` survive with live consumers;
+  `import_skill_sidecar` is the idempotent bridge and the sidecar is deliberately left on
+  disk until the new store is verified in real use.
+
+- **2026-08-01 — DONE — Migration step 4b (Inject): the ranked slot allocator.**
+  Branch `feature-wf2-flywheel-inject`, PR #166. `learning/surfacing.py` with per-entity
+  entry gates (calibration preserved), one salience pool, RRF fusion + pre-trim
+  diversification, priority slots with exactly one sacrificial slot, tiered rendering that
+  degrades before dropping, the L0 near-miss catalogue, the authority preamble, and
+  intent-adaptive weight profiles. 11255 tests (+45).
+
+- **PREMISE MISMATCH — `workflows/surfacing.py` does not exist.** Neither does any
+  `[SUGGESTED WORKFLOW]` render; the "SOP match_text 0.62" is `agents_routing.min_confidence`.
+  There was ONE surfacing engine plus an inline ambient render in `context.py`, not two
+  engines. Built the allocator as the owner of that render's policy instead of inventing the
+  second engine. `skills/surfacing.py` stays live and unduplicated.
+
+- **DISCOVERY — the crowd-out bug §2.4 predicts was real and measurable.**
+  `lessons_ctx[:_LESSONS_CAP]` cut the user's own corrections mid-sentence. Fixed by dropping
+  whole lessons with an explicit withheld count; verified 0 partial lessons at every cap.
+
+- **DISCOVERY — the diversification cap rationed lessons** (a 4th dropped with 3588 tokens
+  unused), and the authority preamble was added without checking that it fit. Both found by
+  driving the real dev home, not by tests.
+
+- **NOT DONE — the allocator does not yet own `build_session_context`'s eight-part assembly.**
+  Its policy is applied where corruption was measurable. Replacing the whole render is
+  behaviour-visible and needs §2.5's measurement floor to prove nothing stops surfacing;
+  doing it blind would swap a working render for an unproven one. L0/L1/L2 persistence per
+  entity is likewise deferred — it is a store change across four entity types.
+
+- **NOT DONE (deliberately, out of step-1 scope):** the extract/decide two-phase split and
+  the pre-compaction flush both need the proposal queue (step 3) to route into — building
+  them now would mean writing against a contract step 3 defines. `lessons.jsonl` deletion
+  is step 2 by the plan's own re-tiering. The staging tier is wired to the per-turn cadence;
+  session-end and run-end consume the same gate/hygiene/staging API when their steps land.

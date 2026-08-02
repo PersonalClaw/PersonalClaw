@@ -824,3 +824,36 @@ These loop-engine behaviors are baked into `gateway._fire`, the watchdog, and th
 9. Mid-flight editing works (user pauses a running research workflow, edits the synthesis prompt, resumes; edited template surfaces the re-validate warning).
 10. The five-moves audit + anti-pattern lint pass in CI for all 8 bundled templates (R6b).
 11. The template picker correctly suggests `code-project` for coding intents and `deep-research` for research intents; legacy loop-kind names resolve via aliases (R10a).
+
+---
+
+## Execution log
+
+- **2026-08-01 — DONE — Judge contract + runtime_hints + enforcement invariants (session 29 of the WF2 queue).**
+  Branch `feature-wf2-loops-judge`, PR #167. `workflows/judge_contract.py` (closed verdict enum
+  PASS/REJECT/REPLAN/ESCALATE/NEEDS_INPUT, rubric ratchet with strict-no-averaging,
+  engine-computed overall, forbidden-mode denylist, N-sample median aggregation),
+  `judge_pretier.py` (the free rule tier that runs before any judge model call — never issues a
+  PASS — plus the tristate `fallback_check`), `judge_actors.py` (the actor-transition invariant:
+  a worker may never reach `done`; judge isolation incl. cross-family refusal; provenance
+  blinding; narration-excluding evidence assembly). `runtime_hints` added to `WorkflowDef`
+  (opaque to the core, parsed leniently to the STRICT default by `hints_from_dict`). 11379 tests.
+
+- **DISCOVERY — the forbidden-mode denylist shipped inert in its first form.** Requiring every
+  long word of a mode phrase to be present missed the phrasing a judge actually produces
+  ("test deleted or skipped" lists alternatives). Two-of-N stemmed-signal matching + two-signal
+  default phrasings; verified 6/6 real admissions caught, 4/4 innocent clean.
+
+- **DEVIATION — `loop/judge.py` is not unified.** LOOPS-EVOLUTION converges loops onto v2 in its
+  own slices; unifying the existing loop judge pre-emptively would be wasted motion. This session
+  builds the template-world contract that must MEET OR EXCEED the loop judge's bar (which it does:
+  isolation, independent proof re-run, dual/median adjudication, verify-command tier).
+
+- **NOT DONE (queue split):** the engine loop-node middleware (breaker, fingerprinting, escalation
+  ladder, failure-class routing, fresh-session protocol, interrupt queue) is session 30; the 8
+  template specs are session 31. This session is the enforcement primitives they consume.
+
+- **Real-model validated** through the live dev gateway (Bedrock, claude-sonnet-5): a real verdict
+  came back correctly shaped and REJECTED thin evidence unprompted; the contract then caught both
+  a rubber-stamp (same zero scores flipped to PASS) and a deterministic contradiction (PASS vs
+  failed check → escalate).

@@ -24,7 +24,7 @@ def state(monkeypatch, tmp_path):
 
 @pytest.fixture
 def plan_dir(monkeypatch, tmp_path):
-    monkeypatch.setattr("personalclaw.context_management.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.plan_memory.config_dir", lambda: tmp_path)
     return tmp_path / "plan_memory"
 
 
@@ -141,7 +141,7 @@ class TestPlanMemoryRotation:
     """Scenarios for append_plan_event JSONL rotation."""
 
     def test_append_creates_file(self, plan_dir) -> None:
-        from personalclaw.context_management import append_plan_event, plan_memory_path
+        from personalclaw.plan_memory import append_plan_event, plan_memory_path
 
         append_plan_event("sess1", {"type": "plan_created", "task_description": "test"})
         path = plan_memory_path()
@@ -153,7 +153,7 @@ class TestPlanMemoryRotation:
         assert event["type"] == "plan_created"
 
     def test_no_rotation_under_limit(self, plan_dir) -> None:
-        from personalclaw.context_management import append_plan_event, plan_memory_path
+        from personalclaw.plan_memory import append_plan_event, plan_memory_path
 
         for i in range(10):
             append_plan_event("sess1", {"type": "test", "i": i})
@@ -161,7 +161,7 @@ class TestPlanMemoryRotation:
         assert len(lines) == 10
 
     def test_rotation_at_limit(self, plan_dir) -> None:
-        from personalclaw.context_management import (
+        from personalclaw.plan_memory import (
             _PLAN_MEMORY_MAX_LINES,
             append_plan_event,
             plan_memory_path,
@@ -189,7 +189,7 @@ class TestPlanMemoryRotation:
         assert first["i"] != 0
 
     def test_rotation_preserves_newest(self, plan_dir) -> None:
-        from personalclaw.context_management import (
+        from personalclaw.plan_memory import (
             _PLAN_MEMORY_MAX_LINES,
             append_plan_event,
             plan_memory_path,
@@ -207,7 +207,7 @@ class TestPlanMemoryRotation:
         assert len(lines) == _PLAN_MEMORY_MAX_LINES
 
     def test_load_plan_memory_works_after_rotation(self, plan_dir) -> None:
-        from personalclaw.context_management import (
+        from personalclaw.plan_memory import (
             append_plan_event,
             load_plan_memory,
         )
@@ -234,14 +234,14 @@ class TestPlanLessonsCache:
     """Scenarios for load_plan_lessons TTL cache."""
 
     def test_returns_empty_when_no_file(self, plan_dir) -> None:
-        import personalclaw.context_management as cm
+        import personalclaw.plan_memory as cm
 
         cm._plan_lessons_cache = (0.0, "")
         result = cm.load_plan_lessons()
         assert result == ""
 
     def test_reads_file_content(self, plan_dir) -> None:
-        import personalclaw.context_management as cm
+        import personalclaw.plan_memory as cm
 
         cm._plan_lessons_cache = (0.0, "")
         path = cm.plan_lessons_path()
@@ -253,7 +253,7 @@ class TestPlanLessonsCache:
         assert "lesson 2" in result
 
     def test_cache_hit_within_ttl(self, plan_dir) -> None:
-        import personalclaw.context_management as cm
+        import personalclaw.plan_memory as cm
 
         cm._plan_lessons_cache = (time.time(), "cached value")
         # Even if file has different content, cache should be returned
@@ -265,7 +265,7 @@ class TestPlanLessonsCache:
         assert result == "cached value"
 
     def test_cache_miss_after_ttl(self, plan_dir) -> None:
-        import personalclaw.context_management as cm
+        import personalclaw.plan_memory as cm
 
         # Set cache to expired (31s ago)
         cm._plan_lessons_cache = (time.time() - 31, "stale")
@@ -277,7 +277,7 @@ class TestPlanLessonsCache:
         assert result == "fresh content"
 
     def test_save_invalidates_cache(self, plan_dir) -> None:
-        import personalclaw.context_management as cm
+        import personalclaw.plan_memory as cm
 
         cm._plan_lessons_cache = (time.time(), "old cached")
         cm.save_plan_lessons("new lessons from consolidation cycle")
@@ -289,7 +289,7 @@ class TestPlanLessonsCache:
         assert result == "new lessons from consolidation cycle"
 
     def test_save_too_short_ignored(self, plan_dir) -> None:
-        import personalclaw.context_management as cm
+        import personalclaw.plan_memory as cm
 
         cm._plan_lessons_cache = (0.0, "")
         cm.save_plan_lessons("short")  # < 20 chars, should be ignored

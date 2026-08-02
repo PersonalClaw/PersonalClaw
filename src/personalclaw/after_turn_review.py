@@ -10,19 +10,28 @@ Two hard guardrails (the difference between learning and self-sabotage):
 - **Never learn environment-dependent failures** — "tool X is broken", "not
   allowed here", "command failed" harden into refusals the agent later cites
   against itself. A deny-filter blocks these from becoming durable memory.
-- **Skip sensitive / incognito / temporary sessions** (the caller gates this).
+- **Skip sensitive / incognito / temporary sessions.**
+
+**Eligibility is not decided here.** ``LearningGate``
+(:mod:`personalclaw.learning.gate`) computes it once per event and every cadence
+consumes that one decision — this module used to own a ``should_review`` that
+callers recomputed independently, which is how two capture paths in the same turn
+came to disagree. What stays here is what is genuinely this module's own: the
+correction heuristic, the environment-failure deny-filter, and the capture itself.
 
 Writes flow through ``write_lesson`` (→ the contradiction judge from #18), so a
 captured correction is deduped + contradiction-checked like any other lesson.
 
-The trigger + heuristic + guardrail are pure, testable functions; the actual
-capture (``run_after_turn_review``) is best-effort and never blocks the turn.
+The heuristic + guardrail are pure, testable functions; the actual capture
+(``run_after_turn_review``) is best-effort and never blocks the turn.
 """
 
 from __future__ import annotations
 
 import logging
 import re
+
+from personalclaw.security import fence_untrusted
 
 logger = logging.getLogger(__name__)
 
@@ -83,28 +92,6 @@ def is_environment_failure_claim(text: str) -> bool:
     lesson/skill, or the agent learns to refuse valid actions later.
     """
     return bool(text and _ENV_FAILURE_RE.search(text))
-
-
-def should_review(
-    *,
-    enabled: bool,
-    is_ephemeral: bool,
-    correction: bool,
-    tool_calls: int,
-    min_tool_calls: int,
-    correction_heuristic: bool,
-) -> bool:
-    """Decide whether a completed turn warrants a review — the cost gate.
-
-    Not every turn: only when learning is enabled, the session isn't ephemeral
-    (incognito/temporary), and EITHER a correction fired (if that heuristic is on)
-    OR the turn did substantial work (≥ ``min_tool_calls``).
-    """
-    if not enabled or is_ephemeral:
-        return False
-    if correction_heuristic and correction:
-        return True
-    return tool_calls >= max(1, min_tool_calls)
 
 
 def record_procedural_outcomes(service, outcomes, *, scope_ref: str | None = None) -> int:
@@ -262,7 +249,14 @@ def _build_ladder_prompt(
         "errors, or 'X is broken/not allowed' — those are not skills. Keep procedure_md "
         "concrete and generalizable.\n\n"
         f"Currently-loaded skills: {loaded}\n\n"
-        f"<untrusted_content>\nUSER: {user_message[:1500]}\n\nASSISTANT: {assistant_text[:2500]}\n</untrusted_content>"  # noqa: E501
+        # Fence via `security.fence_untrusted` rather than hand-built markers: the
+        # shared helper neutralises an embedded close marker, so turn content that
+        # itself contains `</untrusted_content>` cannot close the fence early and
+        # smuggle trailing instructions into a review that mints skills.
+        + fence_untrusted(
+            f"USER: {user_message[:1500]}\n\nASSISTANT: {assistant_text[:2500]}",
+            source="turn",
+        )
     )
 
 

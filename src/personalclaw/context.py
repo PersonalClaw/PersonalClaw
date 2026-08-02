@@ -167,6 +167,42 @@ _SEMANTIC_MEMORY_CAP = 12_000  # structured key-value facts (vector memory)
 _EPISODIC_MEMORY_CAP = 12_000  # relevant past conversation fragments (vector memory)
 _PER_MESSAGE_CAP = 8_000  # truncate individual messages on fallback path
 
+
+def _fit_lessons(text: str, cap: int = _LESSONS_CAP) -> str:
+    """Fit the lesson block to its cap by DROPPING WHOLE LESSONS, never by cutting text.
+
+    This block used to be sliced at ``[:cap]``, which cut the final lesson
+    mid-sentence. Lessons are the user's own corrections — the most authoritative
+    content in the prompt — and a half-rendered instruction is worse than an absent
+    one, because the reader cannot tell it is half. ("Never deploy without" reads as
+    an instruction, and it is not the one the user gave.)
+
+    So: keep whole lessons in order until the cap, then say plainly how many were
+    withheld. The allocator (`learning/surfacing.py`) owns the general form of this
+    policy; this is the same rule applied to the one block that was measurably
+    being corrupted.
+    """
+    if len(text) <= cap:
+        return text
+    lines = text.split("\n")
+    kept: list[str] = []
+    used = 0
+    dropped = 0
+    for line in lines:
+        cost = len(line) + 1
+        if used + cost > cap:
+            # Count only substantive lines as "withheld" — a dropped blank line is
+            # not a lesson the user is missing.
+            if line.strip():
+                dropped += 1
+            continue
+        used += cost
+        kept.append(line)
+    if dropped:
+        kept.append(f"\n…[{dropped} more lesson(s) withheld — ask to see them]")
+    return "\n".join(kept)
+
+
 # The window the baseline caps were calibrated for + the max multiple we scale to.
 _BASELINE_WINDOW = 200_000
 _MAX_BUDGET_MULTIPLE = 5.0
@@ -943,8 +979,7 @@ class ContextBuilder:
 
             lessons_ctx = service_for(memory).lessons_context()
             if lessons_ctx:
-                if len(lessons_ctx) > _LESSONS_CAP:
-                    lessons_ctx = lessons_ctx[:_LESSONS_CAP] + "\n…[lessons truncated]\n"
+                lessons_ctx = _fit_lessons(lessons_ctx)
                 parts.append(lessons_ctx)
 
         # Cross-tab context (dashboard only, skipped for temporary sessions)

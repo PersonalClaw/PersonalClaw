@@ -1082,7 +1082,7 @@ class HistoryConsolidator:
             and _now >= self._plan_next_check
         ):
             try:
-                from personalclaw.context_management import plan_memory_path
+                from personalclaw.plan_memory import plan_memory_path
 
                 path = plan_memory_path()
                 if path.exists():
@@ -1111,11 +1111,11 @@ class HistoryConsolidator:
                 self._plan_next_check = _time.monotonic() + 60
                 return
 
-            from personalclaw.context_management import (
+            from personalclaw.llm_helpers import stream_and_collect
+            from personalclaw.plan_memory import (
                 build_plan_consolidation_prompt,
                 save_plan_lessons,
             )
-            from personalclaw.llm_helpers import stream_and_collect
 
             prompt = build_plan_consolidation_prompt()
             if not prompt:
@@ -1401,12 +1401,66 @@ class HistoryConsolidator:
                         logger.info("Pruned %d volunteer event(s)", pruned_vol)
                 except Exception:
                     logger.debug("Volunteer-log prune failed for %s", key, exc_info=True)
+                # Learning curator (LEARNING-FLYWHEEL §2.3): age the learned library
+                # on this same verified cadence. Deliberately NOT a new scheduler —
+                # `skills/curator.run_aging` had no scheduled caller at all, which is
+                # how a whole grooming pass came to exist and never run. Bounded batch,
+                # reversible, refuses a mass cut; pattern analysis runs LAST so it sees
+                # an already-cleaned set.
+                try:
+                    curated = self._run_learning_curator()
+                    if curated:
+                        logger.info("Learning curator: %s", curated)
+                except Exception:
+                    logger.debug("Learning curator failed for %s", key, exc_info=True)
 
         except Exception:
             logger.exception("Consolidation failed for %s", key)
             raise
         finally:
             self._running.discard(key)
+
+    def _run_learning_curator(self) -> str:
+        """One bounded curator tick over the learned library. Returns a summary or "".
+
+        Builds candidates from the usage store rather than from the skills loader: the
+        curator judges anything with recorded usage, and coupling it to one entity
+        type is what made the previous version un-generalizable.
+
+        Aging DECIDES; the entity's owner applies. So this reports and files review
+        proposals, and does not itself rewrite skill frontmatter — that write belongs
+        to the skills loader, which is the only thing that knows the file format.
+        """
+        from personalclaw.config.loader import AppConfig
+        from personalclaw.learning import curator as curator_mod
+        from personalclaw.learning.usage import UsageStore
+
+        cfg = AppConfig.load().learning
+        if not getattr(cfg, "enabled", True) or not getattr(cfg, "curator_enabled", True):
+            return ""
+
+        store = UsageStore()
+        try:
+            candidates = [
+                curator_mod.Candidate(
+                    kind=rec.kind,
+                    entity=rec.entity,
+                    last_used_at=rec.last_used_at,
+                    created_at=rec.first_seen_at,
+                    stability=min(1.0, rec.used / 10.0),
+                    pinned=rec.pinned,
+                    source_type=rec.source_type,
+                )
+                for kind in ("skill", "template")
+                for rec in store.list_kind(kind)
+            ]
+            if not candidates:
+                return ""
+            report = curator_mod.run_aging(candidates, active_dates=store.active_days(), mode="")
+            curator_mod.file_review_proposals(report)
+            return report.summary() if (report.changed or report.review_proposals) else ""
+        finally:
+            store.close()
 
     def _maybe_promote_episodic(self, memory) -> None:
         """Run autonomous episodic→semantic promotion every Nth consolidation.

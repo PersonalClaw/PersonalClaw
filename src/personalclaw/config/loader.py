@@ -1186,6 +1186,64 @@ class LearningConfig:
             "never installed automatically. Off = memory-only learning.",
         ),
     )
+    min_evidence: int = field(
+        default=3,
+        metadata=_meta(
+            "Minimum Evidence",
+            "How many separate occurrences a pattern needs before it can be proposed "
+            "as durable learning. One is an anecdote and two a coincidence; this same "
+            "floor is shared by the promotion ladder, pattern synthesis, and inferred "
+            "proposals, so they cannot disagree about what counts as evidence.",
+        ),
+    )
+    staging_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Capture Staging Log",
+            "Record every capture pass in an append-only log with an explicit outcome "
+            "(produced / nothing-found / error). This is what makes a silently broken "
+            "capture path visible — without it, a pass that crashes looks exactly like "
+            "a quiet day. Off = capture still runs, but its failures are invisible.",
+        ),
+    )
+    min_session_score: float = field(
+        default=0.0,
+        metadata=_meta(
+            "Minimum Session Score",
+            "Sessions scoring below this (0.0-1.0, weighted toward decisions rather "
+            "than raw turn count) are skipped by the session-end consolidation pass. "
+            "0 = score every session; raise it to stop paying to learn from thin ones.",
+        ),
+    )
+    context_budget_tokens: int = field(
+        default=4000,
+        metadata=_meta(
+            "Learning Context Budget",
+            "Token budget for the ranked learning block (lessons, skills, memory, "
+            "retrieved context) injected each turn. Only retrieved context is ever "
+            "trimmed — lessons and instructions are never crowded out, and an item "
+            "that does not fit is dropped whole rather than cut mid-sentence.",
+        ),
+    )
+    curator_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Learning Curator",
+            "Age the learned library (skills, templates) on the consolidation cadence: "
+            "unused items go stale, then archived. Never deletes, always reversible, and "
+            "refuses any pass that would cut more than half the library. Off = the "
+            "library grows without grooming.",
+        ),
+    )
+    propose_quota_per_run: int = field(
+        default=5,
+        metadata=_meta(
+            "Proposals Per Run",
+            "How many proposals one learning pass may file. A pass that files twenty "
+            "is not being thorough, it is being unreadable — and a queue nobody "
+            "finishes reading is a queue that stops being read at all.",
+        ),
+    )
 
 
 @dataclass
@@ -2762,6 +2820,12 @@ class AppConfig:
                 correction_heuristic=bool(learning_data.get("correction_heuristic", True)),
                 surface_chip=bool(learning_data.get("surface_chip", True)),
                 skill_ladder=bool(learning_data.get("skill_ladder", True)),
+                min_evidence=int(learning_data.get("min_evidence", 3) or 3),
+                staging_enabled=bool(learning_data.get("staging_enabled", True)),
+                min_session_score=float(learning_data.get("min_session_score", 0.0) or 0.0),
+                context_budget_tokens=int(learning_data.get("context_budget_tokens", 4000) or 4000),
+                curator_enabled=bool(learning_data.get("curator_enabled", True)),
+                propose_quota_per_run=int(learning_data.get("propose_quota_per_run", 5) or 5),
             ),
             security=SecurityConfig(
                 denied_commands=[
