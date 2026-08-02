@@ -81,7 +81,7 @@ mandatory.
 |---|---|---|---|
 | 25 | Capture: three cadences, one gate, one hygiene policy, one staging log | G11 | ✅ DONE (#163) |
 | 26 | Propose: one queue, four kinds, decision memory, fingerprint anti-refile | G11 | ✅ DONE (#164) |
-| 27 | Curate: one usage store, one decay kernel, hardened curator | G12 | TODO |
+| 27 | Curate: one usage store, one decay kernel, hardened curator | G12 | ✅ DONE (#165) |
 | 28 | Inject: two surfacing engines → one ranked slot allocator | G12 | TODO |
 
 ## C. Loops Evolution (`-LOOPS-EVOLUTION.md`) — needs engine Slices 0-5
@@ -825,3 +825,68 @@ through all four wiring points. 11112 tests (+52), lint clean at 600 files.
   surface lands there); doing it here would mean rewriting the skills page against a
   queue whose UI does not exist yet. Recorded as a DEVIATION from clean-break, with the
   retirement owned by the next session.
+
+### Session 27 — Learning Flywheel step 4a: Curate (`feature-wf2-flywheel-curate`, PR #165)
+
+`learning/decay.py` (one kernel, per-kind profiles, active-days clock),
+`learning/usage.py` (one store in learning.db, per-entity semantics, multi-gate promotion),
+`learning/curator.py` (bounded/reversible/refusing aging + review proposals + optimizer
+battery). Wired into `history.py`'s verified consolidation cadence. `learning.curator_enabled`
+through all four points. 11210 tests (+98), lint clean at 603 files.
+
+**Deviations and findings:**
+
+(a) **`DecayVerdict.__bool__` sabotaged its own consumer.** `_mutation` wrote
+  `round(verdict.strength, 4) if verdict else None` — and `__bool__` is False for a
+  PRUNED entity, so every archival journaled `strength: None`, losing the evidence for
+  exactly the mutations most likely to need undoing. `is not None` is now explicit and
+  commented. A convenience `__bool__` on a value object is a trap when the object is
+  also checked for presence.
+
+(b) **The kernel is pinned to the facet store's existing half-life.** `BASE_LAMBDA =
+  ln2/30` so 30 active days still means 0.5 strength — verified equal to the old
+  `0.5**(age/30)` to 1e-6. Without that, replacing `preference_facets.decay` would
+  silently rewrite the meaning of every stored facet on upgrade.
+
+(c) **Over-deletion refusal is measured against ELIGIBLE entities, not the batch.**
+  Eight archivals from a batch of eight is normal for a large library; refusing that
+  would make the curator unable to work at all. Pinned/user rows are excluded from the
+  denominator — including them would let 10-of-30 read as a third and permit the cut.
+
+(d) **A `MIN_SET_FOR_REFUSAL` floor of 8 is required.** A fraction of a tiny set means
+  nothing: refusing "2 of 2" makes a small library un-groomable. I initially wrote a
+  test asserting refusal on a 5-eligible set — the test was wrong, not the code.
+
+(e) **Lessons are EXEMPT from the usage store, deliberately.** Their "surfaced" count
+  degenerates to session count — a number measuring how much the user talks. Recording
+  it would produce something that looks like evidence and means nothing. A caller that
+  tries gets a no-op, not an exception: a policy that crashes callers gets worked around.
+
+(f) **`success_rate` returns None, not 0.0, when nothing has run.** 0.0 means "ran and
+  always failed". Collapsing them makes an unused template look broken and archives it
+  for the wrong reason.
+
+(g) **The scheduling gap the plan flagged was real:** `skills/curator.run_aging` had NO
+  scheduled caller — a whole grooming pass existed and never ran. Now wired into
+  `history.py`'s maintenance cadence (the tick that already runs `expire_by_category`
+  / `promote_by_heat` / `synthesize_failures`). No new scheduler: a daemon for
+  janitorial work is a new thing to monitor and a new thing to fail silently.
+
+(h) **The curator DECIDES; the owner APPLIES.** `run_aging` takes plain `Candidate`
+  values and returns a report — it does not reach into a skills loader or a template
+  store. That split is what makes it testable without three subsystems, and what let
+  it generalize past skills at all.
+
+(i) **Reinforcement damping is shared with the kernel** (`reinforcement_weight`), so
+  the usage store and the decay math cannot disagree about what a burst is worth.
+  Measured: 11 raw events in one burst record as 6.
+
+(j) **NOT DONE (deliberately):** `skills/usage.py` and `skills/curator.py` still exist
+  with live consumers (the skills page, `loader.py`); `import_skill_sidecar` is the
+  idempotent bridge and the sidecar is left on disk rather than deleted — removing the
+  old source before the new one is verified in real use trades a recoverable state for
+  an unrecoverable one. The LLM umbrella-consolidation pass, `compress_summary`'s
+  siblings (downgrade_detail / merge_candidates / archive_unused as filed proposals),
+  and the memory-heat migration onto the kernel are step 4b/9 work — each needs the
+  surfacing merge that owns rank, and building them against the current two-engine
+  surfacing would mean writing to a contract step 4b redefines.

@@ -25,6 +25,10 @@ on its own.
 
 from __future__ import annotations
 
+from personalclaw.learning.curator import Candidate, CuratorReport, MutationLog, run_aging
+from personalclaw.learning.decay import DecayVerdict
+from personalclaw.learning.decay import evaluate as evaluate_decay
+from personalclaw.learning.decay import strength
 from personalclaw.learning.gate import (
     Cadence,
     GateDecision,
@@ -51,24 +55,35 @@ from personalclaw.learning.staging import (
     StagingStore,
     input_hash,
 )
+from personalclaw.learning.usage import UsageRecord, UsageStore, promotion_ready
 
 __all__ = [
     "Cadence",
+    "Candidate",
     "ChangeManifest",
+    "CuratorReport",
+    "DecayVerdict",
     "FlushOutcome",
     "GateDecision",
     "GateReason",
     "HygieneVerdict",
     "Kind",
     "LearningGate",
+    "MutationLog",
     "MIN_EVIDENCE_DEFAULT",
     "Proposal",
     "StagingStore",
     "Status",
     "Verdict",
+    "UsageRecord",
+    "UsageStore",
     "content_fingerprint",
+    "evaluate_decay",
     "input_hash",
     "is_system_injected",
+    "promotion_ready",
+    "run_aging",
     "scrub",
     "session_score",
+    "strength",
 ]

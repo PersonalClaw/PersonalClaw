@@ -1215,6 +1215,16 @@ class LearningConfig:
             "0 = score every session; raise it to stop paying to learn from thin ones.",
         ),
     )
+    curator_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Learning Curator",
+            "Age the learned library (skills, templates) on the consolidation cadence: "
+            "unused items go stale, then archived. Never deletes, always reversible, and "
+            "refuses any pass that would cut more than half the library. Off = the "
+            "library grows without grooming.",
+        ),
+    )
     propose_quota_per_run: int = field(
         default=5,
         metadata=_meta(
@@ -2803,6 +2813,7 @@ class AppConfig:
                 min_evidence=int(learning_data.get("min_evidence", 3) or 3),
                 staging_enabled=bool(learning_data.get("staging_enabled", True)),
                 min_session_score=float(learning_data.get("min_session_score", 0.0) or 0.0),
+                curator_enabled=bool(learning_data.get("curator_enabled", True)),
                 propose_quota_per_run=int(learning_data.get("propose_quota_per_run", 5) or 5),
             ),
             security=SecurityConfig(

@@ -498,6 +498,40 @@ Frontmatter gains an optional declaration so resources are addressable without a
   Proposal Inbox FE, and the consolidation-lessons→proposal rerouting (needs the
   `/api/lessons` consumer reroute, which the plan orders as step 2).
 
+- **2026-08-01 — DONE — Migration step 4a (Curate): usage store + decay kernel + hardened curator.**
+  Branch `feature-wf2-flywheel-curate`, PR #165. `learning/decay.py` (one kernel with
+  per-kind half-lives, importance as a second axis, both-signals pruning, chain sparing,
+  the active-days clock), `learning/usage.py` (one store in learning.db, per-entity event
+  vocabularies, lessons exempt, reinforcement damping, multi-gate promotion suggestions),
+  `learning/curator.py` (bounded batches oldest-audited-first, demote-never-delete with a
+  WAL undo journal + dated changelog, provenance scoping, over-deletion refusal, mode
+  scoping, decayed-but-stable → REVIEW proposal, the optimizer battery's saving estimates).
+  Wired into `history.py`'s consolidation maintenance cadence. 11210 tests (+98).
+
+- **DISCOVERY — the scheduling gap in §2.3 was real and worse than stated.**
+  `skills/curator.run_aging` had no scheduled caller anywhere: an entire grooming pass
+  existed and had never run. It is now on the verified maintenance tick.
+
+- **DISCOVERY — `DecayVerdict.__bool__` broke its own audit trail.** `if verdict` asked
+  "is this healthy?" where the code meant "did I get a verdict?", so every archival
+  journaled a null strength — losing the evidence for exactly the mutations most likely
+  to be undone. Found by measuring the journal, not by reading the code.
+
+- **DEVIATION — the kernel's base λ is pinned to the facet store's existing 30-day
+  half-life** rather than chosen freshly. This kernel replaces `preference_facets.decay`,
+  so any other constant would silently rewrite the meaning of every stored facet.
+
+- **DEVIATION — `run_aging` decides, the caller applies.** The plan describes a curator
+  that ages entities; implementing it as one that also WRITES them would have coupled it
+  to the skills loader again (the exact reason the old one could not generalize). It takes
+  value objects and returns a report.
+
+- **NOT DONE (needs step 4b, which owns rank):** the LLM umbrella-consolidation pass, the
+  remaining optimizer detectors as filed proposals, and the memory-heat migration onto the
+  kernel. `skills/usage.py` / `skills/curator.py` survive with live consumers;
+  `import_skill_sidecar` is the idempotent bridge and the sidecar is deliberately left on
+  disk until the new store is verified in real use.
+
 - **NOT DONE (deliberately, out of step-1 scope):** the extract/decide two-phase split and
   the pre-compaction flush both need the proposal queue (step 3) to route into — building
   them now would mean writing against a contract step 3 defines. `lessons.jsonl` deletion
