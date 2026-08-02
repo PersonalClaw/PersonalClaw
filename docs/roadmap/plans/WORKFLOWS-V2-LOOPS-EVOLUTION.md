@@ -930,3 +930,25 @@ These loop-engine behaviors are baked into `gateway._fire`, the watchdog, and th
   emit points sit in the controller tick and the human-override UI, which is session 33. The
   save-time `probe_judge` hook is deferred deliberately: a model call on the save path is a latency
   decision, not a detail.
+
+- **2026-08-01 — CODE DONE (push blocked) — FE + coexistence (session 33).**
+  Branch `feature-wf2-loops-fe`. `workflows/loop_aliases.py` (read-time legacy-kind aliases, one-way,
+  every alias asserted against a shipped template) + cockpit stream-key equivalence (the R10c silent
+  event-drop fix), mirrored in `web/src/pages/workflows/containerKey.ts` with a backend↔FE drift
+  test. R14 steering endpoints (`/steer`, `/steering`) queued on the run and consumed at the
+  iteration boundary. Alias manifest surfaced through `/api/workflows/manifest`. 11750 tests, full FE
+  gate green.
+
+- **DISCOVERY — a test of mine leaked a run into the REAL home.** The fixture patched the loader's
+  `config_dir` but `store.py` binds it at module level, so `store.save()` wrote to
+  `~/.personalclaw/workflows/runs.db`; the leak surfaced three files away as a memory-smoke failure
+  because a live run prepends `[ACTIVE WORKFLOWS]` to every built message. Root-caused, the stray row
+  removed, the fixture fixed to patch `store.config_dir` directly.
+
+- **DEVIATION — the run-path wiring is not done, and that is the honest back half of this session.**
+  The steering queue is stored and surfaced but the tick loop does not consume it; the template
+  picker's data (aliases + manifest) exists but the widget does not; `keysEquivalent` exists but the
+  cockpit still compares raw keys. All three sit above the same controller-tick seam that sessions 30
+  and 32 also stopped at, and wiring the three decision layers into the live run in one coherent
+  change is better than three half-integrations. The as-a-user validation of all 8 templates is
+  bounded by the same gap.

@@ -92,7 +92,7 @@ mandatory.
 | 30 | Engine loop-node middleware: breaker + fingerprinting + escalation ladder + failure-class routing; fresh-session protocol; interrupt queue | G13 | ✅ CODE DONE — PUSH BLOCKED |
 | 31 | Author the 8 template YAML specs + integration tests through the engine | G14 | ✅ CODE DONE — PUSH BLOCKED |
 | 32 | Calibration + acceptance instrumentation: rubric contract, verdict ledger, divergence events, template lint, nodding-loop detector | G14 | ✅ CODE DONE — PUSH BLOCKED |
-| 33 | FE + coexistence: template picker, cockpit live-follow, interrupt-queue UI, legacy alias layer, as-a-user validation of all 8 | G15 | TODO |
+| 33 | FE + coexistence: template picker, cockpit live-follow, interrupt-queue UI, legacy alias layer, as-a-user validation of all 8 | G15 | ✅ CODE DONE — PUSH BLOCKED |
 
 ## D. Knowledge Synthesis (`-KNOWLEDGE-SYNTHESIS.md`) — needs engine Slices 0-2
 
@@ -1205,3 +1205,65 @@ the five-moves audit in `template_lint.py`. 11697 tests (+68), lint clean at 609
   hook is likewise deferred: `assess_separation` is pure and tested, but the probe that FEEDS
   it needs a live model call on the save path, and putting a model call in a save is a latency
   decision worth making deliberately rather than in passing.
+
+### Session 33 — Loops Evolution: FE + coexistence (`feature-wf2-loops-fe`, PR NOT OPENED — push blocked)
+
+`workflows/loop_aliases.py` (read-time legacy-kind aliases + cockpit key equivalence), the same two
+in `web/src/pages/workflows/containerKey.ts` with a backend↔FE drift test, the R14 steering endpoints
+(`/steer`, `/steering`) + service functions + FE client methods, and the alias manifest surfaced
+through `/api/workflows/manifest`. 11750 tests (+53 py, +13 ts), lint clean at 610 files, full FE gate
+green.
+
+**Deviations and findings:**
+
+(a) **A test of mine LEAKED a run into the real `~/.personalclaw/workflows/runs.db`** — the exact
+  thing the doctrine forbids. My `run_store` fixture patched `personalclaw.config.loader.config_dir`,
+  but `store.py` does `from ... import config_dir` (a MODULE-LEVEL bind), so the patch never reached
+  it and `store.save()` wrote to the developer's actual home. The leak surfaced THREE test files away
+  as `test_custom_agent_gets_hook_transform` failing, because a live run makes `build_message`
+  prepend an `[ACTIVE WORKFLOWS]` block to every message. Root-caused (not masked), the stray
+  `r-steer` row deleted from the real db, and the fixture fixed to patch `store.config_dir` directly.
+  The `[[personalclaw-test-isolation-hazards]]` memory gets a new entry.
+
+(b) **The cockpit key-equivalence fix (R10c) is the whole point of coexistence, and it is a SILENT
+  regression class:** `loop:<id>` (loop cockpit) vs a run-scoped key compared with `==` drops every
+  event with no error — the stream connects, the cockpit renders, nothing updates. `base_container`
+  strips any of four prefixes (longest-first, so `workflow:run:` beats `workflow:`) and compares the
+  bare id. Implemented identically on both sides with a drift test I verified FAILS on divergence.
+
+(c) **The alias layer is deliberately ONE-WAY.** A loop kind resolves to a template; a template does
+  NOT resolve back. Reverse lookup would invite writing new references in the legacy vocabulary, and
+  an alias layer that accepts new writes is a second API rather than a bridge. A test asserts no
+  `template_to_*` / `*_to_kind` export exists.
+
+(d) **An unknown kind resolves to "" , never a default.** Guessing a template for an unrecognised
+  identifier would silently run the WRONG workflow, and "it ran something" is far harder to debug
+  than "it ran nothing and said why".
+
+(e) **`goal` + a verify command resolves to the VERIFIABLE variant.** A goal loop carrying a command
+  that proves it was the verifiable variant in all but name; honouring that beats dropping the user
+  into a template that ignores the command they already supplied.
+
+(f) **Every alias points at a SHIPPED template** — asserted per-alias against `template_names()`,
+  because an alias to a missing template is a dead reference that only fails when a user clicks it.
+  `code` maps to `code-implementation` (which ships) rather than the deferred `code-project`.
+
+(g) **Steering is QUEUED on the run, consumed at the iteration boundary** — same single-writer
+  discipline as pause/cancel. Injecting mid-iteration would race the worker's state, and the pending
+  queue is exposed via `/steering` because a queued instruction the user cannot see is
+  indistinguishable from one that was dropped.
+
+(h) **The routes-reference doc is GENERATED, not hand-edited.** My manual edit to `routes.md` went
+  stale against `manifest_reference`; regenerating produced better entries from the handler
+  docstrings. Regenerated and committed.
+
+(i) **NOT DONE (deliberately, needs the run-path wiring these sit above):** the steering queue is
+  stored and surfaced but the tick loop does not yet CONSUME it — that is the same controller-tick
+  seam sessions 30 and 32 also stopped short of, and wiring all three at once against a live run is a
+  single coherent change rather than three half-changes. Likewise the template-picker widget itself
+  (the alias table + manifest are the data it needs; the React component is not built) and the
+  cockpit's actual adoption of `keysEquivalent` (the function + its tests exist; swapping the
+  cockpit's `===` comparisons over to it is a behaviour-visible edit to a live surface). The
+  as-a-user validation of all 8 templates is bounded by the same run-path gap. These are honestly the
+  back half of "FE + coexistence" and belong with the engine-integration session that consumes the
+  three decision layers built in 30/32/33.
