@@ -954,3 +954,75 @@ written by the engine's own `Journal`.
   mutation events to carry run attribution, which S47's lineage started but only for artifacts. Making
   `GATE_REJECTED` a real event (so a rejection is a first-class journal fact rather than a derived one)
   is a journal-format change Self-Verification's replay harness gates.
+
+### 2026-08-02 — session 54 (project export/import) DONE — section F CLOSED
+
+`workflows/project_export.py` (new): the allowlisted portable set, per-entity sha256 in a versioned
+manifest, secrets as presence flags only, typed import refusals, and `imported-N` collision slots.
+65 tests.
+
+**This is net-new coverage, not an extension.** `snapshot.VALID_COMPONENTS` is
+`(memory, crons, config, skills, workspace, notifications, security)` — neither `projects/` nor
+`tasks/` nor `artifacts/` appears in it, so a project could not be moved off the machine at all. The
+plan's reality note was verified rather than trusted.
+
+- **Secrets never travel — not encrypted, not optional, absent.** The exclude-set is
+  `portability.EXPORT_EXCLUDE`, which is itself a projection of the state inventory's `secret=True`
+  entries; a local copy here would re-create exactly the two-list drift that let stores escape
+  coverage before. The strongest test is not "the file was skipped" but "the secret BYTES do not
+  appear anywhere in the manifest", which is what matters when a manifest is pasted into a bug report.
+  A presence flag takes the value's place, so an importer knows a credential is expected and can
+  prompt — strictly more useful than the credential travelling.
+
+- **DISCOVERY — the exclusion reason was matched as PROSE, and the prose lied.** The reason string for
+  a never-exported directory read "directory is never exported (size or secrets)", and the
+  presence-flag branch tested `"secret" in why` — so every file inside `worktrees/` was reported to
+  the user as a credential they must re-enter. Measured on a real export: `big.js` and `keys.json`
+  both appeared in the "credentials to re-enter" list. Exclusion reasons are now typed CODES with a
+  separate human-text table; a prose string is for reading, a code is for branching, and conflating
+  them makes the branch depend on wording.
+
+- **The import safety rules were COMPARED against `snapshot._data_filter`, not assumed to match.** They
+  agree on every traversal case (`../`, absolute, mid-path). The one divergence is deliberate and
+  stricter: a project-scope exclusion for `worktrees/` that the general filter has no reason to know.
+  Symlink and hardlink refusal stays in the filter, which is where the TOCTOU gap is — the plan-time
+  check is the readable half, not a replacement, and a test pins that the filter still rejects both so
+  the non-duplication stays honest.
+
+- **A checksum mismatch REFUSES the entity, and one bad entry costs that entry.** Importing a file
+  whose hash does not match is importing something the exporter did not send; whether that is
+  corruption or tampering does not change what the importer should do. A partial import is the normal
+  outcome for an archive that travelled, so the refusals are named individually rather than failing the
+  project. An entry with NO digest is also refused: unverifiable is not the same as fine, and accepting
+  it would make the manifest's integrity claim optional, which means it is not a claim.
+
+- **An unknown manifest schema is refused rather than guessed.** Guessing at a shape this build does
+  not know is how an import silently writes the wrong thing.
+
+- **A name collision gets an `imported-N` slot, never an overwrite.** The user's existing project is
+  the one thing an import must not damage, and a silent merge would be worse than either — a project
+  that is neither the original nor the imported one. Slots count from the existing ones, so importing
+  the same archive three times produces three projects rather than failing on the second, and a
+  re-imported slot name does not double-suffix into "P (imported-1) (imported-1)".
+
+- **The portable set is an ALLOWLIST.** A project dir accumulates whatever features write into it, so a
+  denylist would export a future feature's private state by default — which is precisely how a
+  credential escapes. Artifact BODIES do not travel (a 50-version image history would dwarf the
+  archive; the lineage names the run that can regenerate it), and a run's JOURNAL does not travel
+  (it carries every resolved prompt, the single most likely place a credential was echoed into an
+  output).
+
+- **Manifest serialization is canonical**, so two exports of an unchanged project produce identical
+  digests. A digest that changed without the content changing could not detect tampering.
+
+- **NOT DONE:** the archive I/O itself — `plan_export` decides what belongs and what it hashes to, and
+  the caller writes the ZIP, because putting archive extraction behind a pure planning API would hide
+  the one operation whose safety filter must run at extraction time. Optional client-side AES-GCM
+  encryption (PBKDF2-SHA-256) and extract-to-unique-tmp with janitor cleanup belong with that I/O. The
+  `projects` component registration in `snapshot.VALID_COMPONENTS` and `portability` is a one-line
+  addition per file that needs the archive path first, or it would advertise a component that cannot
+  be produced. The CLI/REST surface and the FE export button are surface work on this contract.
+
+---
+
+**Section F (Work Containers) is COMPLETE:** sessions 46-54, PRs #185-#193.
