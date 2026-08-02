@@ -651,3 +651,36 @@ Templates are the plan's proof-of-life — field-tested shapes with real daily c
   oversized sibling payloads (deterministic truncate ships as the always-works fallback), and the
   run-continuity INJECTION SITE (the functions ship and are tested; wiring them onto the trigger
   record is session 37's recurring-run work).
+
+- **2026-08-01 — CODE DONE (push blocked) — Consolidation + maintenance (session 37 of the WF2 queue).**
+  Branch `feature-wf2-knowledge-maintenance`. `knowledge/consolidation.py` (gate stack, deterministic
+  pre-dedup, injectable-metric clustering, lineage caps, health checks, differential refresh, phantom
+  hubs, lint cadence), the `knowledge-health` / `knowledge-consolidate` / `knowledge-gaps` providers,
+  the three bundled templates, four config knobs. 12059 tests.
+
+- **DEVIATION — the plan's 0.75 cluster threshold is an EMBEDDING number.** Measured: six human
+  paraphrases of one fact score 0.12-0.36 pairwise on token Jaccard, so applying 0.75 to the
+  embedder-free metric clustered nothing at all — a pass that ran, reported success, and consolidated
+  zero items every time. The metric is now injectable and the DEFAULT THRESHOLD FOLLOWS THE METRIC
+  (0.30 token / 0.75 cosine). Same defect class as session 35's cosine-cliff-vs-RRF bug.
+
+- **DEVIATION — the plan's `<100-char` stub rule over-fires on real content.** An 83-character
+  complete fact is not a stub, and six of those in a stub report trains the reader to ignore it. A
+  stub is now short AND unspecific (no number, path, identifier or version).
+
+- **DISCOVERY — five silent-failure bugs.** `items_fts` is keyed by ROWID not item id (every item
+  read as unindexed; the reindex path had the mirror bug, writing entries no search can match);
+  `content_hash()` is keyword-only and `items.item_type` is NOT NULL (the hand-rolled INSERT failed,
+  so the write now goes through `knowledge-persist` — one writer per table); the persist provider
+  silently DROPPED a `metadata=` argument, so the whole consolidation lineage never reached the row
+  (now an explicit `lineage` key, not an open passthrough that could clobber `claims`); an embedder
+  returning None must not be cached as an empty vector, because a 0.0 cosine silently means
+  "unrelated" and that item would never cluster again; and phantom-hub detection is a set difference,
+  not a search — the first draft passed `min_mentions` as a search query.
+
+- **NOT DONE:** `gap-healing`'s drafting stage was not observed to completion live (a real Bedrock
+  call still running after ~5 min, cancelled). Gap drafts are NOT routed to
+  `learning.proposals.enqueue`: its `Kind` enum is CLOSED to six kinds and none is a knowledge draft,
+  so filing there needs either a seventh kind or a mislabel — the extension belongs to the flywheel
+  plan that owns the enum. The template persists a TTL'd `probe` tagged `proposal` instead.
+  Contradiction-at-persist (§3.2) and typed-edge inference are session 38's.

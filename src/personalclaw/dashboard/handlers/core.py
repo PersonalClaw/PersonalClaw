@@ -562,6 +562,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "knowledge.require_citations": {"type": "bool"},
     "knowledge.report_budget_chars": {"type": "int", "min": 1000, "max": 500000},
     "knowledge.max_mentions_per_claim": {"type": "int", "min": 1, "max": 200},
+    # The long-run + maintenance cadences. Runtime-editable because the right value depends on
+    # what a store is being used for, and finding it means adjusting and watching — which a
+    # restart per attempt makes nobody do.
+    "knowledge.synthesis_window": {"type": "int", "min": 1, "max": 200},
+    "knowledge.lint_every_n_persists": {"type": "int", "min": 1, "max": 1000},
+    "knowledge.consolidate_min_cluster": {"type": "int", "min": 2, "max": 100},
+    "knowledge.consolidate_min_hours": {"type": "int", "min": 0, "max": 720},
     # REMOTE-USER-AUTH C4 — the owner-login knobs. Runtime-editable so turning login on
     # or off, or loosening a lockout you tripped, takes effect on the next request without
     # a restart. The PASSWORD is deliberately NOT here and never will be: a credential is

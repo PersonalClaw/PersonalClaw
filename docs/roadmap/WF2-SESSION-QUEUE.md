@@ -101,7 +101,7 @@ mandatory.
 | 34 | Store semantics: `kind`/`logical_key`/`last_verified`/`expires_at`, `item_relations`, hashing, `KnowledgeConfig` four-point wiring, `schema.md` | G16 | ✅ CODE DONE — PUSH BLOCKED |
 | 35 | The provider pair: `knowledge_persist` + `knowledge_retrieve`, allowlist, native `search()`, three-node pattern end-to-end | G16 | ✅ CODE DONE — PUSH BLOCKED |
 | 36 | Engine additions: `until_cancelled` loop mode + seen-set, `{{siblings.*}}`/`{{previous.output}}`, buffer-seal wait, adaptive delay clamp | G17 | ✅ CODE DONE — PUSH BLOCKED |
-| 37 | Consolidation + maintenance: reflect mechanics, `knowledge-health`/`lint`/`gap-healing` templates, proposal routing, differential refresh | G17 | TODO |
+| 37 | Consolidation + maintenance: reflect mechanics, `knowledge-health`/`lint`/`gap-healing` templates, proposal routing, differential refresh | G17 | ✅ CODE DONE — PUSH BLOCKED |
 | 38 | Contradiction + retrieval polish: persist-time conflict pass, typed-edge inference, contradiction UI, Session Brief, fencing filter | G18 | TODO |
 | 39 | Template slate + long-run validation (idempotent re-runs, bounded cycle cost, seen-set across restart) | G18 | TODO |
 
@@ -1467,3 +1467,80 @@ disagree with it.
   truncate ships as the fallback that must always work — the model path belongs with the
   synthesizer), and the run-continuity injection SITE (`roll_continuity`/`continuity_header` ship
   and are tested; wiring them onto the trigger record is recurring-run work in session 37).
+
+### Session 37 — Knowledge Synthesis: consolidation + maintenance (`feature-wf2-knowledge-maintenance`, PR NOT OPENED — push blocked)
+
+`knowledge/consolidation.py` (gate stack, deterministic pre-dedup, injectable-metric clustering,
+lineage caps, health checks, differential refresh, phantom hubs, lint cadence), three maintenance
+action providers (`knowledge-health` / `knowledge-consolidate` / `knowledge-gaps`), the three
+bundled templates, and four config knobs through all four wiring points. 12059 tests (+102), lint
+clean at 617 files.
+
+**Deviations and findings — every one measured, not read:**
+
+(a) **The plan's 0.75 cluster threshold is an EMBEDDING number, and the default metric is token
+  overlap.** Measured: six human paraphrases of one fact score 0.12-0.36 pairwise on token
+  Jaccard, so a 0.75 cut clustered NOTHING — a pass that ran, reported success, and consolidated
+  zero items every single time. This is the same defect class as session 35's cosine-cliff-vs-RRF
+  bug: a threshold is meaningless without its number space. Fixed by making the metric injectable
+  (cosine over the store's embeddings when one is configured) and making the DEFAULT THRESHOLD
+  FOLLOW THE METRIC — `TOKEN_CLUSTER_SIMILARITY = 0.30` (cross-topic pairs measure below 0.10)
+  versus the plan's 0.75 for cosine.
+
+(b) **The plan's `<100-char body` stub rule over-fires on exactly the content the store is for.**
+  "Cold start latency measured 4.2s on the M2 after a fresh boot" is 83 characters and a complete,
+  useful fact; six of those reported as six stubs trains the reader to ignore the report, which
+  costs more than the stubs do. A stub is now short AND unspecific: a body containing a number, a
+  path, an identifier or a version is making a claim regardless of length.
+
+(c) **`items_fts` is keyed by ROWID, not by the item's text id.** Comparing the two marked EVERY
+  item unindexed — a report claiming seven problems on a healthy seven-item store. The reindex
+  path had the mirror bug: inserting keyed on the text id writes an entry no search will ever
+  match, which is worse than the gap it repaired because the report then says it is fixed.
+
+(d) **`knowledge.content_hash()` is keyword-only, and `items.item_type` is NOT NULL.** My
+  hand-rolled INSERT hit both. Fixed by routing the consolidated write THROUGH
+  `knowledge-persist` instead — which also gets the FTS sync, the idempotency check and the
+  provenance ref right. Two writers to one table means every fix to one has to be remembered for
+  the other.
+
+(e) **The persist provider silently DROPPED a `metadata=` argument.** It forwards a named
+  allowlist, so the entire lineage the consolidation pass depends on never reached the row and
+  nothing errored. Added `lineage` as an explicit named key rather than opening the passthrough:
+  an open dict would let any caller clobber `claims` or `logical_key`, and a caller that silently
+  wiped the claim ledger would be indistinguishable from one that never wrote it.
+
+(f) **The first `gap-healing` draft passed `min_mentions` AS a `knowledge-retrieve` query** — it
+  reads plausibly in a spec and searches the store for the string "3". Phantom-hub detection is
+  not a search; it is a set difference between what items REFERENCE and what items EXIST, so it
+  became its own zero-token provider. It also carries EXCERPTS: a model given a bare name writes
+  what it already believes about that name, which is the invention the template exists to avoid.
+
+(g) **An empty buffer / empty store is HEALTHY, and a declined pass is a SUCCESS.** Reporting
+  problems on a fresh install would make the maintenance cadence start by crying wolf, and failing
+  the node when there is nothing to do would make a healthy frequent schedule look broken every
+  time it ran.
+
+(h) **An embedder returning None must not be cached as an empty vector.** A cosine against `[]`
+  is either a crash or a meaningless 0.0, and 0.0 silently means "unrelated" — so that item would
+  never cluster with anything, forever. Falls back to the token metric for that pair only.
+
+(i) **The health template's node label "Findings" collided with the library's canonical
+  Finding-record convention check** (a substring test over the whole spec). Renamed to "Health
+  report": this node reports store health, not review findings.
+
+**Validated live** through the dev gateway on a seeded 6-item store: all three templates appear in
+the Store; `knowledge-health` ran clean (`item_count: 6`, zero false stubs, zero false unindexed);
+`knowledge-gaps` found the `[[Provisioned Concurrency]]` phantom hub with 6 referrers and grounded
+excerpts; `knowledge-consolidate` clustered all six paraphrases with the doctrine in its prompt and
+correctly refused to write (dry run by default). The apply path, archival with back-references, and
+the second-pass gate were validated against a real store in-process.
+
+**NOT DONE:** `gap-healing`'s LLM drafting stage was NOT observed to completion live (the Bedrock
+subagent call was still running after ~5 minutes and was cancelled; the `stage` mechanics it uses
+are validated by earlier sessions). Also not done: routing gap drafts into the LEARNING-FLYWHEEL
+`proposals.enqueue` queue — that queue's `Kind` enum is CLOSED to six kinds and none of them is a
+knowledge draft, so filing there would mean either a seventh kind or mislabelling one; the template
+persists a TTL'd `probe` item tagged `proposal` instead, and the enum extension belongs with the
+flywheel plan that owns it. Contradiction detection at persist time (§3.2) and the typed-edge
+inference pass are session 38's.

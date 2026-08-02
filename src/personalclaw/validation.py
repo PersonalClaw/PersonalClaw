@@ -778,6 +778,9 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # then fails at run time.
         "knowledge-persist",
         "knowledge-retrieve",
+        "knowledge-health",
+        "knowledge-consolidate",
+        "knowledge-gaps",
     }
 )
 

@@ -1,0 +1,66 @@
+{
+  "name": "knowledge-health",
+  "description": "Deterministic, zero-LLM store check: stubs, orphans, broken citations, unindexed items, past-expiry probes. Cheap enough to run on every write.",
+  "source": "bundled",
+  "provenance": "user",
+  "version": 1,
+  "tags": [
+    "knowledge",
+    "maintenance"
+  ],
+  "inputs": {
+    "fix_index": {
+      "type": "boolean",
+      "required": false,
+      "default": false,
+      "help": "Re-sync the search index for items found missing from it. Off by default: this template's job is to report, and a check that also writes is no longer an independent check."
+    }
+  },
+  "metadata": {
+    "risk": "low",
+    "capabilities": [
+      "knowledge"
+    ],
+    "cost_tier": "free",
+    "why_free": "Zero model calls. Every finding here is a deterministic property of the store, so paying a model to notice a 40-character body would be paying for arithmetic.",
+    "run_before": [
+      "knowledge-lint"
+    ],
+    "run_before_reason": "Linting a stub spends a model call to discover it is a stub, which this pass already knew for free.",
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Check the knowledge store and re-sync anything missing from the search index."
+      },
+      {
+        "event": "mutation",
+        "description": "Skip the orphan check this run — I know about those and they're deliberate."
+      }
+    ]
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "root",
+    "children": [
+      {
+        "kind": "action",
+        "id": "scan",
+        "label": "Scan the store",
+        "config": {
+          "provider": "knowledge-health",
+          "with": {
+            "fix_index": "{{inputs.fix_index}}"
+          }
+        }
+      },
+      {
+        "kind": "transform",
+        "id": "verdict",
+        "label": "Health report",
+        "config": {
+          "expr": "{{nodes.scan.output.report}}"
+        }
+      }
+    ]
+  }
+}

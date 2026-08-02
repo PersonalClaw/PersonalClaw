@@ -1,0 +1,121 @@
+{
+  "name": "knowledge-lint",
+  "description": "Semantic pass over the store: cluster near-duplicates, consolidate each cluster preserving every detail, and archive the originals. Cadenced by write count, not the clock.",
+  "source": "bundled",
+  "provenance": "user",
+  "version": 1,
+  "tags": [
+    "knowledge",
+    "maintenance"
+  ],
+  "inputs": {
+    "apply": {
+      "type": "boolean",
+      "required": false,
+      "default": false,
+      "help": "Write the consolidated items and archive their inputs. Off by default: the plan is the artifact, and a pass that both decides and writes gives you nothing to review."
+    },
+    "min_cluster_size": {
+      "type": "number",
+      "required": false,
+      "default": 5,
+      "help": "Smallest group worth one model call. Below about five, a summary loses more than it saves."
+    }
+  },
+  "metadata": {
+    "risk": "medium",
+    "capabilities": [
+      "knowledge"
+    ],
+    "cost_tier": "metered",
+    "why_metered": "One model call per cluster, capped per pass, so marginal cost does not grow with the store.",
+    "run_after": [
+      "knowledge-health"
+    ],
+    "run_after_reason": "Linting a stub spends a model call to discover it is a stub. Health finds those for free.",
+    "cadence": "mutation-count (default every ~12 writes), not wall clock — a store nobody wrote to does not need linting.",
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Show me what a consolidation pass would merge, but don't write anything yet."
+      },
+      {
+        "event": "mutation",
+        "description": "Cluster 2 mixes two different topics — drop it and apply the rest."
+      }
+    ]
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "root",
+    "children": [
+      {
+        "kind": "action",
+        "id": "health",
+        "label": "Free checks first",
+        "config": {
+          "provider": "knowledge-health",
+          "with": {
+            "fix_index": false
+          }
+        }
+      },
+      {
+        "kind": "action",
+        "id": "plan",
+        "label": "Plan the pass (gated, dry run)",
+        "config": {
+          "provider": "knowledge-consolidate",
+          "with": {
+            "apply": false,
+            "min_cluster_size": "{{inputs.min_cluster_size}}"
+          }
+        }
+      },
+      {
+        "kind": "branch",
+        "id": "route",
+        "label": "Anything to consolidate?",
+        "config": {
+          "on": "{{nodes.plan.output.ran}}",
+          "enum": [
+            "true",
+            "false"
+          ]
+        },
+        "cases": {
+          "true": {
+            "kind": "foreach",
+            "id": "clusters",
+            "config": {
+              "items": "{{nodes.plan.output.prompts}}",
+              "on_item_error": "skip"
+            },
+            "body": {
+              "kind": "stage",
+              "id": "condense",
+              "label": "Consolidate one cluster",
+              "config": {
+                "model_tier": "fast",
+                "prompt": "{{item.prompt}}\n\nReturn ONE consolidated item. Preserve every distinct detail from the inputs; if two inputs disagree, record both with their sources rather than choosing. Do not add anything the inputs do not contain.",
+                "schema": {
+                  "title": "string",
+                  "summary": "string",
+                  "content": "string",
+                  "details_dropped": "boolean"
+                }
+              }
+            }
+          },
+          "false": {
+            "kind": "transform",
+            "id": "declined",
+            "config": {
+              "expr": "{{nodes.plan.output.reason}}"
+            }
+          }
+        }
+      }
+    ]
+  }
+}
