@@ -13,6 +13,8 @@ place each:
 - **What am I allowed to look at?** → :mod:`personalclaw.learning.hygiene`
 - **Where does the raw signal land?** → :mod:`personalclaw.learning.staging`
 - **How does a change get made?** → :mod:`personalclaw.learning.proposals`
+- **Is it still relevant?** → :mod:`personalclaw.learning.decay` + `.usage` + `.curator`
+- **What reaches the prompt?** → :mod:`personalclaw.learning.surfacing`
 
 A cadence composes them in that order: gate first (cheapest, and a denial means
 nothing else runs), then hygiene on the text, then staging for what survives, and
@@ -55,9 +57,19 @@ from personalclaw.learning.staging import (
     StagingStore,
     input_hash,
 )
+from personalclaw.learning.surfacing import (
+    Allocation,
+)
+from personalclaw.learning.surfacing import Candidate as SurfacingCandidate
+from personalclaw.learning.surfacing import (
+    Tier,
+    allocate,
+    classify_intent,
+)
 from personalclaw.learning.usage import UsageRecord, UsageStore, promotion_ready
 
 __all__ = [
+    "Allocation",
     "Cadence",
     "Candidate",
     "ChangeManifest",
@@ -74,9 +86,13 @@ __all__ = [
     "Proposal",
     "StagingStore",
     "Status",
+    "SurfacingCandidate",
+    "Tier",
     "Verdict",
     "UsageRecord",
     "UsageStore",
+    "allocate",
+    "classify_intent",
     "content_fingerprint",
     "evaluate_decay",
     "input_hash",

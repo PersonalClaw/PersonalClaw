@@ -82,7 +82,7 @@ mandatory.
 | 25 | Capture: three cadences, one gate, one hygiene policy, one staging log | G11 | ✅ DONE (#163) |
 | 26 | Propose: one queue, four kinds, decision memory, fingerprint anti-refile | G11 | ✅ DONE (#164) |
 | 27 | Curate: one usage store, one decay kernel, hardened curator | G12 | ✅ DONE (#165) |
-| 28 | Inject: two surfacing engines → one ranked slot allocator | G12 | TODO |
+| 28 | Inject: two surfacing engines → one ranked slot allocator | G12 | ✅ DONE (#166) |
 
 ## C. Loops Evolution (`-LOOPS-EVOLUTION.md`) — needs engine Slices 0-5
 
@@ -890,3 +890,69 @@ through all four points. 11210 tests (+98), lint clean at 603 files.
   and the memory-heat migration onto the kernel are step 4b/9 work — each needs the
   surfacing merge that owns rank, and building them against the current two-engine
   surfacing would mean writing to a contract step 4b redefines.
+
+### Session 28 — Learning Flywheel step 4b: Inject (`feature-wf2-flywheel-inject`, PR #166)
+
+`learning/surfacing.py`: the ranked slot allocator — per-entity entry gates, one salience
+pool, RRF fusion + diversification, slot priorities with ONE sacrificial slot, tiered
+rendering with degrade-before-drop, the near-miss catalogue, the authority preamble,
+intent-adaptive weights. Plus the live fix in `context.py`. `learning.context_budget_tokens`
+through all four points. 11255 tests (+45), lint clean at 604 files.
+
+**Deviations and findings:**
+
+(a) **PREMISE MISMATCH (E1-adjacent, resolved by building the real scope).** The plan says
+  "merge `skills/surfacing.py` + `workflows/surfacing.py`". **`workflows/surfacing.py` does
+  not exist** — there is no workflow-surfacing module and no `[SUGGESTED WORKFLOW]` string
+  anywhere in the tree. Likewise the "SOP `match_text` 0.62" is actually
+  `agents_routing.min_confidence`. So there are not two engines to merge: there is ONE
+  (`skills/surfacing.py`) plus an ambient render assembled inline in `context.py`. Built the
+  allocator as the new owner of that render rather than inventing the second engine to
+  merge. `skills/surfacing.py` is untouched and still live — it owns the embedding cache and
+  keyword fallback, which the allocator does not duplicate.
+
+(b) **THE REAL BUG THE PLAN PREDICTED, found and fixed:** `context.py` did
+  `lessons_ctx[:_LESSONS_CAP]`, character-truncating the lesson block mid-sentence.
+  Measured on a real 42489-char block against the 35000 cap: the old path cut a lesson at
+  "…never deploy without running the full test suit". Lessons are the user's own
+  corrections — the most authoritative content in the prompt — and "never deploy without"
+  reads as an instruction that is not the one the user gave. `_fit_lessons` now drops WHOLE
+  lessons and reports the count withheld. Verified: 494 kept, **0 partial**, at every cap
+  including an impossible one.
+
+(c) **Found by driving the real dev home: `MAX_PER_SOURCE` rationed LESSONS.** A 4th lesson
+  was silently dropped while **3588 of 4000 tokens sat unused**. Diversification exists to
+  stop a rich source crowding out a sparse one; it was never meant to quota the thing the
+  whole slot policy protects. `UNCAPPED_KINDS = {"lesson"}` — lessons are bounded by the
+  budget and their slot, not by a per-source count.
+
+(d) **The authority preamble is only rendered IF IT FITS.** Measured: at 73 tokens it blew a
+  50-token budget before a single item was considered — and a preamble with nothing under it
+  is pure overhead asserting authority over an empty block.
+
+(e) **Dropped items are catalogued from EVERY slot, not just the sacrificial one.** The
+  first cut only recorded near-misses when trimming retrieved context; a skipped lesson
+  vanished with no trace. A dropped item the model never hears about is a silent gap it
+  cannot ask about — equally true for both.
+
+(f) **Thresholds stay per-entity, with the calibration carried over.** 0.55 (short skill
+  descriptions) and 0.62 (longer routing match text) are read from the existing code, and a
+  test asserts the skill number equals `skills/surfacing.DEFAULT_SEMANTIC_THRESHOLD` — if it
+  drifts, every existing skill's surfacing changes meaning.
+
+(g) **char/4 is the LIVE token path** — tiktoken is not a dependency here (verified: import
+  fails). So the fallback is the one that has to be right, and it over-estimates slightly,
+  which is the safe direction for a budget.
+
+(h) **A test premise of mine was wrong, not the code:** I asserted a near-miss catalogue at a
+  200-token budget, but the diversification cap admitted only 3 context items so everything
+  fit. The test now uses a budget tight enough that even L0 does not fit for the tail.
+
+(i) **NOT DONE (deliberately):** the allocator is not yet wired as the sole owner of
+  `build_session_context`'s assembly. Its policy is applied where the corruption was
+  measurable (the lesson block), and the eight-part ambient render is a separate,
+  behaviour-visible migration that needs the §2.5 measurement floor to prove no regression
+  in what surfaces. Wiring it blind would swap a working render for an unproven one. Also
+  deferred: the L0/L1/L2 tiers are consumed by the allocator but not yet PERSISTED per
+  entity (that is a store change across four entity types), and `skills/surfacing.py`'s
+  embedding cache generalization waits on that.

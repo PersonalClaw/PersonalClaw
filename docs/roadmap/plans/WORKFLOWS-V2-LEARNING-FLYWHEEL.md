@@ -532,6 +532,33 @@ Frontmatter gains an optional declaration so resources are addressable without a
   `import_skill_sidecar` is the idempotent bridge and the sidecar is deliberately left on
   disk until the new store is verified in real use.
 
+- **2026-08-01 — DONE — Migration step 4b (Inject): the ranked slot allocator.**
+  Branch `feature-wf2-flywheel-inject`, PR #166. `learning/surfacing.py` with per-entity
+  entry gates (calibration preserved), one salience pool, RRF fusion + pre-trim
+  diversification, priority slots with exactly one sacrificial slot, tiered rendering that
+  degrades before dropping, the L0 near-miss catalogue, the authority preamble, and
+  intent-adaptive weight profiles. 11255 tests (+45).
+
+- **PREMISE MISMATCH — `workflows/surfacing.py` does not exist.** Neither does any
+  `[SUGGESTED WORKFLOW]` render; the "SOP match_text 0.62" is `agents_routing.min_confidence`.
+  There was ONE surfacing engine plus an inline ambient render in `context.py`, not two
+  engines. Built the allocator as the owner of that render's policy instead of inventing the
+  second engine. `skills/surfacing.py` stays live and unduplicated.
+
+- **DISCOVERY — the crowd-out bug §2.4 predicts was real and measurable.**
+  `lessons_ctx[:_LESSONS_CAP]` cut the user's own corrections mid-sentence. Fixed by dropping
+  whole lessons with an explicit withheld count; verified 0 partial lessons at every cap.
+
+- **DISCOVERY — the diversification cap rationed lessons** (a 4th dropped with 3588 tokens
+  unused), and the authority preamble was added without checking that it fit. Both found by
+  driving the real dev home, not by tests.
+
+- **NOT DONE — the allocator does not yet own `build_session_context`'s eight-part assembly.**
+  Its policy is applied where corruption was measurable. Replacing the whole render is
+  behaviour-visible and needs §2.5's measurement floor to prove nothing stops surfacing;
+  doing it blind would swap a working render for an unproven one. L0/L1/L2 persistence per
+  entity is likewise deferred — it is a store change across four entity types.
+
 - **NOT DONE (deliberately, out of step-1 scope):** the extract/decide two-phase split and
   the pre-compaction flush both need the proposal queue (step 3) to route into — building
   them now would mean writing against a contract step 3 defines. `lessons.jsonl` deletion

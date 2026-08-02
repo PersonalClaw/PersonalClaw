@@ -1215,6 +1215,16 @@ class LearningConfig:
             "0 = score every session; raise it to stop paying to learn from thin ones.",
         ),
     )
+    context_budget_tokens: int = field(
+        default=4000,
+        metadata=_meta(
+            "Learning Context Budget",
+            "Token budget for the ranked learning block (lessons, skills, memory, "
+            "retrieved context) injected each turn. Only retrieved context is ever "
+            "trimmed — lessons and instructions are never crowded out, and an item "
+            "that does not fit is dropped whole rather than cut mid-sentence.",
+        ),
+    )
     curator_enabled: bool = field(
         default=True,
         metadata=_meta(
@@ -2813,6 +2823,7 @@ class AppConfig:
                 min_evidence=int(learning_data.get("min_evidence", 3) or 3),
                 staging_enabled=bool(learning_data.get("staging_enabled", True)),
                 min_session_score=float(learning_data.get("min_session_score", 0.0) or 0.0),
+                context_budget_tokens=int(learning_data.get("context_budget_tokens", 4000) or 4000),
                 curator_enabled=bool(learning_data.get("curator_enabled", True)),
                 propose_quota_per_run=int(learning_data.get("propose_quota_per_run", 5) or 5),
             ),
