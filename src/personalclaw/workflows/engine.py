@@ -91,6 +91,11 @@ class NodeResult:
     resolved_prompt: str = ""
     #: Typed human-input ask, for gates that need an answer.
     ask: dict[str, Any] | None = None
+    #: The `publish:` outcome (S47): create / version / noop / error, with its reason. A DECLARED
+    #: field rather than an ad-hoc attribute — an attribute set on the instance would work at
+    #: runtime and never reach the journal, so the ledger would show a published artifact with no
+    #: record of the publish.
+    published: dict[str, Any] | None = None
 
     @property
     def ok(self) -> bool:
@@ -1063,6 +1068,135 @@ def apply_artifact_gate(node: Node, result: NodeResult, workspace: Any) -> NodeR
     )
 
 
+def apply_publish(node: Node, result: NodeResult, *, run_id: str = "") -> NodeResult:
+    """Publish a node's output as an Artifact when it declares `publish:` (WORK-CONTAINERS §2, S47).
+
+    At the dispatch seam beside the artifact gate, so a new node kind inherits publishing
+    rather than
+    silently dropping a declared output.
+
+    A MALFORMED declaration FAILS the node. The alternative — treating it as "no publish" —
+    would let
+    a node whose author declared a deliverable report success while producing nothing, which is the
+    completion-lie class the artifact gate exists to catch. A declaration is a promise about output.
+
+    A REGISTRY failure does not fail the node. The work happened; losing the copy is worth reporting
+    on the result, not worth discarding a completed stage over. The distinction is deliberate: a bad
+    declaration is the author's bug (fail loudly), a registry outage is the environment's (degrade
+    honestly).
+    """
+    from personalclaw.workflows.publish import (
+        PublishAction,
+        flatten_lineage,
+        parse_publish,
+        upsert_plan,
+    )
+
+    cfg = node.config or {}
+    if "publish" not in cfg:
+        return result
+    spec, error = parse_publish(cfg)
+    if error:
+        return NodeResult(
+            state=InstanceState.FAILED,
+            output=result.output,
+            failure=Failure(
+                failure_class=FailureClass.USER,
+                cause_plain=f"invalid publish declaration: {error}",
+                remediation=(
+                    "fix the node's `publish:` block; it declares an output nothing produced"
+                ),
+            ),
+        )
+    if spec is None or result.state not in (InstanceState.DONE, InstanceState.DEGRADED):
+        return result
+
+    content = result.output if isinstance(result.output, str) else ""
+    if not content and isinstance(result.output, dict):
+        content = str(result.output.get("text") or result.output.get("output") or "")
+    if not content.strip():
+        # Nothing to publish is NOT an error: a node whose output is structured data the caller
+        # binds elsewhere has still done its job. Recording it keeps the absence visible.
+        return _with_publish(result, {"action": "noop", "reason": "node output was not text"})
+
+    try:
+        from personalclaw.artifacts.registry import get_provider as _artifact_provider
+
+        provider = _artifact_provider()
+        if provider is None or provider.readonly:
+            # Guarded FIRST rather than mid-flow: the earlier shape reached the writer branches with
+            # `provider` still possibly None, which typechecking caught. A publish path that could
+            # dereference a missing provider would turn "no artifact store configured" into a
+            # traceback on a completed stage.
+            return _with_publish(
+                result, {"action": "noop", "reason": "no writable artifact provider"}
+            )
+        existing = provider.find_similar(spec.artifact)
+        previous = None
+        if existing is not None:
+            detail = provider.get(existing.slug)
+            previous = getattr(detail, "content", None) if detail else None
+        plan = upsert_plan(
+            spec, content, existing_content=previous, run_id=run_id, node_id=node.id or ""
+        )
+        # The lineage and change note ride on the artifact's own EVENT metadata. Measured: without
+        # this the plan computed a full run/node lineage and the artifact landed carrying none of it
+        # — provenance computed and discarded, so "which run produced this" had no answer on disk.
+        event_meta = {
+            "run_id": run_id,
+            "node_id": node.id or "",
+            "change_note": plan.change_note,
+            # Flattened to scalar keys: `clean_event_metadata` bounds event metadata to scalars, so
+            # the nested dict was being stringified into an unparseable Python repr.
+            **flatten_lineage(plan.lineage),
+        }
+        if plan.action is PublishAction.CREATE:
+            created = provider.create(
+                name=spec.artifact,
+                content=content,
+                kind=spec.kind,
+                source="subagent",
+                description=spec.description,
+                actor="workflow",
+                event_metadata=event_meta,
+            )
+            payload = {**plan.to_dict(), "slug": getattr(created, "slug", "")}
+        elif plan.action is PublishAction.VERSION and existing is not None:
+            updated = provider.update(
+                existing.slug,
+                content=content,
+                snapshot=True,
+                event_type="iterated",
+                actor="workflow",
+                event_metadata=event_meta,
+            )
+            payload = {
+                **plan.to_dict(),
+                "slug": getattr(updated, "slug", existing.slug if existing else ""),
+            }
+        else:
+            payload = {**plan.to_dict(), "slug": existing.slug if existing else ""}
+        return _with_publish(result, payload)
+    except Exception as exc:
+        logger.debug("publish failed for node %s", node.id, exc_info=True)
+        return _with_publish(result, {"action": "error", "reason": f"{type(exc).__name__}: {exc}"})
+
+
+def _with_publish(result: NodeResult, payload: dict[str, Any]) -> NodeResult:
+    """Attach the publish outcome to the node's output without disturbing it.
+
+    A string output stays reachable at its original binding path — wrapping it in a dict would break
+    every `{{nodes.x.output}}` downstream, so publishing a node's output would change what its
+    consumers read.
+    """
+    result.published = payload
+    if isinstance(result.output, dict):
+        # Mirrored into the output too, so a downstream `{{nodes.x.output.published.slug}}` binding
+        # can reach it — the typed field is for the ledger, the mirror is for the graph.
+        result.output = {**result.output, "published": payload}
+    return result
+
+
 # ── output contract (WF2-R8) ─────────────────────────────────────────────────
 
 
@@ -1279,7 +1413,12 @@ async def dispatch(
         on_progress=on_progress,
     )
     # One seam, so a new node kind cannot silently skip the artifact gate.
-    return apply_artifact_gate(node, result, cwd or None)
+    result = apply_artifact_gate(node, result, cwd or None)
+    # The SAME seam for `publish:` (S47), for the same reason: a new node kind inherits the
+    # publish path instead of quietly dropping a declared output. Ordered after the gate
+    # deliberately — publishing the output of a node that failed its own artifact gate would
+    # store a deliverable the run does not stand behind.
+    return apply_publish(node, result, run_id=run_id)
 
 
 async def _dispatch_inner(

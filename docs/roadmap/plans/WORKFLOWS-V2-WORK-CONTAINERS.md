@@ -474,3 +474,74 @@ injected block, the handoff snapshot. 83 tests across two files.
   controller's completion hook, and writing it from a projection would put an engine write in a read
   path). Sessions 47-54 own artifacts reuse, subagent batch hardening, run workspace/environment,
   session ownership, the needs-input inbox, worktrees, introspection and export/import.
+
+### 2026-08-02 — session 47 (artifacts reuse) DONE
+
+`workflows/publish.py` (new): the `publish:` declaration, material-change version gating, typed
+lineage, evidence bundles, the terminal handoff report, the append-only results ledger.
+`engine.apply_publish` wires it at the SAME dispatch seam `required_artifacts` uses. 57 tests.
+
+- **No second Artifact noun.** The existing `artifacts/` entity is used as-is; this session adds a
+  declaration and its rules. `publish:` translates into a registry upsert, and a refinement run
+  updates the same artifact BY NAME, which is where the registry's native versioning gives "stable
+  name across revisions" for free.
+
+- **A declaration is a promise about output, so a malformed `publish:` FAILS the node.** Degrading to
+  "no publish" would let a node whose author declared a deliverable report success while producing
+  nothing — the completion-lie class `required_artifacts` exists to catch. The deliberate asymmetry:
+  a REGISTRY failure does not fail the node. A bad declaration is the author's bug (fail loudly); an
+  artifact-store outage is the environment's (degrade honestly, keep the completed stage).
+
+- **Material-change gating protects a finite resource.** The registry keeps 50 snapshots; a
+  five-round refinement loop publishing each round would consume the window in five runs, so the
+  window that exists to hold real revision history would hold near-duplicates. Verified live: three
+  publishes of which one was identical produced exactly two versions. A NOOP is a first-class
+  outcome, not a failure — "nothing material changed" is the right answer for a converged loop, and
+  reporting it as an error would make convergence look broken. Publishing an EMPTY body over a real
+  one is refused outright: that is the one publish that destroys work while bumping the version.
+
+- **DISCOVERY — provenance was computed and discarded.** Driving the real registry showed the plan
+  computing a full run/node lineage while the artifact landed with `event.metadata == {}`, no
+  `run_id` anywhere on disk. `ArtifactEvent.metadata` and `clean_event_metadata` BOTH already
+  existed, but only `record_impression` could reach them — no create/update path exposed the
+  parameter. Added `event_metadata` to `create`, `update` and `create_binary` (a named parameter, not
+  an open passthrough), and wired `update()`'s event write, which was constructing its
+  `ArtifactEvent` without metadata at all.
+
+- **DISCOVERY — the nested lineage dict was stringified into an unparseable repr.**
+  `clean_event_metadata` bounds event metadata to string-keyed scalars ≤256 chars — a deliberate size
+  bound. Passing the lineage dict through produced `"{'informed_by': ['knowledge:item-7']}"`, a
+  Python repr no reader can parse. Widening the sanitizer would loosen a bound that exists on
+  purpose, so the lineage flattens to scalar `lineage_<edge>` keys instead; `flatten_lineage` and
+  `parse_lineage` ship together so the format is one decision in one place. Verified round-tripping
+  through the real registry.
+
+- **DISCOVERY — the publish outcome needed a DECLARED `NodeResult` field.** Setting it as an ad-hoc
+  instance attribute works at runtime and never reaches the journal, so the ledger would show a
+  published artifact with no record of the publish. A string output stays reachable at its original
+  binding path — wrapping it in a dict would break every `{{nodes.x.output}}` downstream, so
+  publishing a node's output would silently change what its consumers read.
+
+- **Typed lineage, not a flat link list.** SOURCE is provenance, INFORMED_BY is evidence, RELATED is
+  navigation; a reader following an untyped edge cannot tell which question they are answering, and
+  the provenance edge is the one an audit has to trust. An unknown edge type is refused rather than
+  stored.
+
+- **Evidence bundles and the handoff report are Artifact compositions.** Bundle files are sorted by
+  name so two runs producing the same evidence produce byte-identical manifests — an unstable order
+  would make every bundle look changed to the material-change gate, defeating it for the artifact
+  kind that is re-published most. Every handoff section is present even when empty: an absent
+  `side_effects` reads as "nothing was committed or sent", which is the claim a user most wants to be
+  true and least wants guessed. A skip with no reason is flagged, because the reader cannot tell a
+  deliberate omission from a silent failure without re-doing the work.
+
+- **The results ledger keeps reverted attempts and repeated attempt numbers.** An attempt log that
+  dropped failures would make a five-attempt convergence look like a first-try success, and the next
+  run would repeat the four failures. Two rows for attempt 3 means it was re-run; collapsing them
+  would hide the retry, which is the most useful thing the ledger records.
+
+- **NOT DONE:** media self-containment (copying referenced local files into the version dir with
+  content-hash names) needs the artifact version-dir write path, which is registry-internal; the
+  cockpit's structured version diffs and multi-view output tabs are FE work on the
+  `contentTypes.ts` registry; the per-run file drop and outbox need the multipart ingestion route and
+  its approval gate. Sessions 48-54 own the rest of section F.

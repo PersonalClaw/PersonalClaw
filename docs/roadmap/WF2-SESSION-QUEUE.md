@@ -121,7 +121,7 @@ mandatory.
 | # | Session | PR group | Status |
 |---|---|---|---|
 | 46 | Project umbrella extensions + run→project binding; hub Work tab state-grouped board (incl. queued/suspended/claimed, truthful across a kill) | G22 | ✅ DONE (#185) |
-| 47 | Artifacts reuse: `publish: {artifact}`, version-on-material-change + change_note, typed lineage deep links | G22 | TODO |
+| 47 | Artifacts reuse: `publish: {artifact}`, version-on-material-change + change_note, typed lineage deep links | G22 | ✅ DONE (#186) |
 | 48 | Subagent batch hardening: isolation, schema-validated typed output, secret-filtered env, leases (no double-execution) | G23 | TODO |
 | 49 | Run workspace + environment: provisioning block, folder contracts, per-project run-env secrets | G23 | TODO |
 | 50 | Session ownership + truthful run lifecycle; incognito enforcement (`session_restrictions` + `memory_mode`, durable across restart) | G24 | TODO |
