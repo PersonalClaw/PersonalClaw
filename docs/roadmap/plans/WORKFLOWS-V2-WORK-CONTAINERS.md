@@ -812,3 +812,77 @@ tests.
   the same engine-surface change carried forward from S43/S45; the cross-project inbox aggregation
   view, count pills, digest-batching and the Open Decisions lane are FE work; OS-level notification
   routing already exists behind `notification_allowed()` and is deliberately untouched.
+
+### 2026-08-02 — session 52 (code-kind worktrees) DONE
+
+`workflows/worktrees.py` (new): preserve-in, marker-guarded setup, resume safety,
+teardown-before-deletion, the per-run branch, the machinery-free review diff, and the two
+reintegration verbs — all on the proven `loop/worktree.py` machinery rather than a second git
+implementation. 58 tests, driven against a REAL git repo.
+
+- **Two properties were MEASURED on the real machinery before any code was written.**
+  `add_worktree` on an existing id returns the SAME path rather than failing — which is what makes
+  resume free rather than something to implement. And an untracked `.env` is genuinely ABSENT from a
+  fresh worktree, which is why `preserve_patterns` is adoption-critical: a worktree where every build
+  fails reads to a user as "isolation is broken".
+
+- **DISCOVERY — the review diff listed the engine's own machinery as user changes.** Driving a real
+  worktree showed the changed-files panel reporting the preserved `.env` AND `.pclaw-setup/` alongside
+  the one file the run actually edited. A review panel full of machinery is one the user skims, with
+  the file that mattered in the same list. The first fix excluded by filename and only half worked:
+  git reports an untracked directory as `.pclaw-setup/` WITH a trailing slash, so a prefix check
+  written against the bare name matched nothing — an exclusion that existed and did half its job.
+  Both sides of the comparison are now normalized, and preserved files are passed IN from the
+  preserve pass rather than re-derived from globs (which would disagree with reality the moment a
+  pattern matched something the copy skipped).
+
+- **The status parser was verified against real `git status --porcelain` output**, not handwritten
+  fixtures. The two-column form is easy to get wrong: a parser reading one column would report a
+  staged deletion as unstaged, making the cockpit's stage/discard buttons act on the wrong thing.
+  Real output also settled the rename shape (`R  old -> new` — the NEW path is what the user
+  reviews). An unknown code is KEPT rather than dropped, because a file the parser does not
+  understand is still a file the user changed.
+
+- **DISCOVERY (pre-existing, root-caused and fixed) — `test_provider_resolution_unify.py` leaked a
+  synthetic provider entry into the process-global registry.** The full gate went red on
+  `test_cli.py::TestDoctor::test_doctor_with_agent` with `SystemExit: 1`, deterministically, and green
+  in isolation. Three wrong hypotheses were tested and discarded before the real one (a `config_dir`
+  monkeypatch, a `PATH` mutation, and a process-wide `shutil.which` patch — all correctly scoped).
+  The actual cause: `SomeAcpAgent` is registered into `get_default_registry()` and never removed, so
+  `cli_doctor` reported `SomeAcpAgent (acp_agent): error` and exited 1 for ANY test sharing that
+  worker afterwards. Fixed with an autouse cleanup fixture at the file that owns the entry. This
+  session's tests only shifted the worker interleaving that exposed it.
+
+- **Preserve copies IN, never OUT.** A pattern that copied a worktree file back over the user's real
+  tree would make an isolated run able to modify the thing it was isolated from. Denylisted names are
+  refused whatever the glob matches (`.git` would corrupt the worktree's own repo state), and an
+  oversize match is skipped WITH a reason — a user whose build fails needs to know their file was
+  skipped for being 4MB.
+
+- **Setup markers are content-addressed and setup NEVER blocks the run.** Setup runs on every resume
+  by contract, so each step guards itself; a marker keyed by position would skip an EDITED step as
+  though it had run. Refusing to run the workflow because `npm install` failed would make declaring
+  setup a liability, and a user would stop declaring it.
+
+- **Teardown before deletion, commit before removal, and `keep_open` for when the workspace IS the
+  deliverable.** Teardown's job is to stop services and sync work out, and both need the directory to
+  still exist. An ephemeral workspace whose run record points at a deleted directory has lost the
+  work, so a per-run branch means the record references git. `keep_open` still runs teardown —
+  keeping the directory is not keeping the processes.
+
+- **The substrate is built HERE so S46's boot sweep has one source of truth.** The sweep's whole
+  decision turns on whether an isolated substrate is alive; two places computing that would eventually
+  disagree, and the disagreement shows up as a run aborted despite having recoverable work. Verified
+  end to end: a live worktree yields SUSPENDED + resumable, a missing one yields an honest abort.
+
+- **Reintegration is offered, never performed.** `Apply Locally` and `Checkout Branch` are both
+  surfaced with conflicts named on the offer — "apply this" that then fails with a conflict is worse
+  than "apply this (2 files conflict)". Checkout stays safe even with conflicts, because nothing
+  merges until the user decides to.
+
+- **NOT DONE:** the actual subprocess execution of setup/teardown commands — `pending_setup` and
+  `plan_teardown` decide, and the caller performs, because running shell commands from a planning
+  module would put an unbounded execution surface behind a pure API. PID-liveness lock files outside
+  the workspace and the ff-only refresh for named workspaces need the run-record schema. The cockpit
+  diff panel and the two verb buttons are FE work on this contract. Container mode (§4.4) remains
+  opt-in and deferred by the plan.
