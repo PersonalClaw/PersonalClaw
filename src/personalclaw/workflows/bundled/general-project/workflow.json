@@ -1,0 +1,135 @@
+{
+  "name": "general-project",
+  "version": 1,
+  "description": "Iterate on any task in judged steps until it is genuinely done.",
+  "source": "bundled",
+  "provenance": "bundled",
+  "tags": [
+    "loop",
+    "general"
+  ],
+  "inputs": {
+    "task": {
+      "type": "string",
+      "required": true,
+      "help": "What to work on."
+    },
+    "exit_condition": {
+      "type": "string",
+      "default": "The task is complete and the evidence shows it",
+      "help": "What 'done' means. The judge holds the work to this, so vagueness here becomes vagueness there."
+    },
+    "max_cycles": {
+      "type": "integer",
+      "default": 20,
+      "help": "Hard cap. The loop normally exits earlier on its own, when progress dries up."
+    }
+  },
+  "runtime_hints": {
+    "judge": {
+      "rubric": [
+        {
+          "criterion": "the step accomplished something real",
+          "target_score": 2
+        },
+        {
+          "criterion": "evidence is checkable",
+          "target_score": 2
+        }
+      ],
+      "ratchet": "strict",
+      "stop_condition": {
+        "consecutive_clean": 2
+      },
+      "marginal_threshold": 2.0,
+      "freedom_level": "medium",
+      "judge_isolation": "fresh",
+      "fallback_check": "artifact_exists",
+      "forbidden_success_modes": [
+        "work claimed without evidence",
+        "exit condition reinterpreted to fit"
+      ]
+    },
+    "execution": {
+      "depth": "balanced",
+      "escalation": {
+        "attempt_cap": 3,
+        "ladder": [
+          "classified_retry",
+          "fresh_session",
+          "surface"
+        ]
+      },
+      "breaker": {
+        "fingerprint_window": 3,
+        "no_progress_stop": 5
+      }
+    }
+  },
+  "metadata": {
+    "risk": "medium",
+    "capabilities": [
+      "read",
+      "write"
+    ],
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Clean up the inconsistent error messages across the CLI commands"
+      },
+      {
+        "event": "mutation",
+        "description": "Only touch the user-facing strings — leave the log lines alone"
+      }
+    ]
+  },
+  "root": {
+    "kind": "loop",
+    "id": "project",
+    "config": {
+      "mode": "until_dry",
+      "streak": 2,
+      "progress_field": "meaningful_progress",
+      "max_iterations": 20,
+      "timeout_stall_secs": 900
+    },
+    "body": {
+      "kind": "sequence",
+      "id": "step",
+      "children": [
+        {
+          "kind": "stage",
+          "id": "work",
+          "config": {
+            "prompt": "Do the next meaningful step on this task, then stop and report.\n\nTask:\n{{inputs.task}}\n\nDone when:\n{{inputs.exit_condition}}\n\nPrevious step:\n{{last.output.summary}}\n\nCite evidence a verifier can check without asking you: paths, commands, their actual output. An independent judge closes every step — it never sees this instruction or anything you say about your own work, only the task and the tool output.\n\nSet meaningful_progress to false when there is genuinely nothing left worth doing. That is how the loop ends, and claiming progress to look busy keeps it running on the user's money.\n\nReturn JSON: {\"summary\": string, \"meaningful_progress\": boolean, \"evidence\": string}",
+            "schema": {
+              "summary": "string",
+              "meaningful_progress": "boolean",
+              "evidence": "string"
+            },
+            "model_tier": "standard",
+            "tools_posture": "full"
+          }
+        },
+        {
+          "kind": "stage",
+          "id": "judge",
+          "config": {
+            "prompt": "You are verifying work you did not do. Assume it produced nothing until the artifacts prove otherwise.\n\nDo not talk yourself into approving. Your job is not to be agreeable to the worker — it is to be right on behalf of the user, who is not reading this and cannot check it themselves.\n\nTask the step was meant to serve:\n{{inputs.task}}\n\nDone when:\n{{inputs.exit_condition}}\n\nRubric — score each 0, 1 or 2, citing evidence for each:\n  - the step accomplished something real (target 2)\n  - evidence is checkable (target 2)\n\nThese passes are forbidden. Actively check they did NOT happen:\n  - work claimed without evidence\n  - exit condition reinterpreted to fit\n\nRe-run any command the evidence cites; read the artifacts yourself. A claim you did not verify is not evidence, however plausible it reads.\n\nIf you genuinely cannot tell — artifacts missing, command will not run — say so in cannot_judge rather than guessing. A refusal is useful; a coin-flip dressed as a verdict is not.\n\nExpect two or three revision cycles on real work. Reporting real issues is the normal outcome, and zero issues on a first pass is itself worth a second look.\n\nReturn JSON: {\"reasoning\": string, \"verdict\": \"PASS\"|\"REJECT\"|\"REPLAN\"|\"ESCALATE\"|\"NEEDS_INPUT\", \"scores\": {criterion: integer}, \"evidence_refs\": [string], \"proof\": string, \"cannot_judge\": string}",
+            "schema": {
+              "reasoning": "string",
+              "verdict": "string",
+              "scores": "object",
+              "evidence_refs": "array",
+              "proof": "string",
+              "cannot_judge": "string"
+            },
+            "model_tier": "standard",
+            "tools_posture": "verify",
+            "isolation": "fresh"
+          }
+        }
+      ]
+    }
+  }
+}

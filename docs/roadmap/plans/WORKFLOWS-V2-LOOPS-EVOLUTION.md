@@ -879,3 +879,30 @@ These loop-engine behaviors are baked into `gateway._fire`, the watchdog, and th
   That wiring (plus the R7 fresh-session lifecycle protocol and R13 reactive compaction, which needs
   the absent summarizer seam) is the live-engine integration those consume. Validated in isolation on
   a full simulated stall sequence.
+
+- **2026-08-01 — CODE DONE (push blocked) — The loop-kind templates (session 31 of the WF2 queue).**
+  Branch `feature-wf2-loops-templates`. Five new bundled templates with `runtime_hints` and the
+  judge contract wired in: `goal-pursuit-open-ended`, `goal-pursuit-verifiable`, `general-project`,
+  `design-project`, `diagnose-run`. 132 structural integration tests; the pre-existing bundled
+  convention suite extended 6 → 11 templates. Verified through the live API and in a built wheel.
+
+- **DEVIATION — five templates, not eight.** `deep-research` (the research-loop descendant) already
+  ships from Slice 9a. `goal-pursuit-monitor` is NOT BUILDABLE: its design rests on
+  `set_onetime_task` / `set_recurring_task`, which belong to AUTOMATION-SUBSTRATE and do not exist
+  anywhere in the tree — shipping it would mean a template whose central mechanism silently
+  no-ops. `code-project` is deferred as a product decision: it overlaps the shipped
+  `code-implementation`, and choosing between replacing that or adding a second beside it is not a
+  mechanical port.
+
+- **PREMISE MISMATCH — the plan's YAML uses three spec forms the engine does not have.**
+  `{{defaults.runtime_hints.*}}` is not a valid binding root (only inputs/nodes/item/iter/last);
+  a gate's kind is `config.kind`, not `gate_kind`; an `until` loop needs `config.condition`, not
+  `config.until`. Rubrics are inlined into judge prompts instead, with a test asserting every
+  declared criterion actually reaches a judge.
+
+- **DISCOVERY — my own `design-project` shipped without a judge,** exiting its refinement loop on a
+  self-reported `issues_resolved` — precisely the "no agent certifies its own work" rule this plan
+  names as the platform's oldest. Caught by the structural test suite written in the same session.
+
+- **DISCOVERY — `continue_on_error` is not an engine key.** I invented it; the bundled action-arg
+  guard caught it. The real form is `allow_failure` inside `with`.

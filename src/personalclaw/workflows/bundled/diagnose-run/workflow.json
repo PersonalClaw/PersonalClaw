@@ -1,0 +1,133 @@
+{
+  "name": "diagnose-run",
+  "version": 1,
+  "description": "Diagnose a failed run from its ledger: which layer broke, and where.",
+  "source": "bundled",
+  "provenance": "bundled",
+  "tags": [
+    "diagnose",
+    "post-mortem"
+  ],
+  "inputs": {
+    "run_id": {
+      "type": "string",
+      "required": true,
+      "help": "The failed run to diagnose."
+    },
+    "template_name": {
+      "type": "string",
+      "default": "",
+      "help": "Its template, if known — lets the diagnosis compare against the last run that worked."
+    }
+  },
+  "runtime_hints": {
+    "judge": {
+      "rubric": [
+        {
+          "criterion": "the layer is identified with evidence",
+          "target_score": 2
+        },
+        {
+          "criterion": "the failing node is localized",
+          "target_score": 2
+        }
+      ],
+      "ratchet": "strict",
+      "stop_condition": {
+        "consecutive_clean": 1
+      },
+      "marginal_threshold": 2.0,
+      "freedom_level": "low",
+      "judge_isolation": "fresh",
+      "fallback_check": "artifact_exists",
+      "forbidden_success_modes": [
+        "explanation offered without citing the trace",
+        "cause guessed from the summary"
+      ]
+    },
+    "execution": {
+      "depth": "balanced",
+      "escalation": {
+        "attempt_cap": 3,
+        "ladder": [
+          "classified_retry",
+          "fresh_session",
+          "surface"
+        ]
+      },
+      "breaker": {
+        "fingerprint_window": 3,
+        "no_progress_stop": 5
+      }
+    }
+  },
+  "metadata": {
+    "risk": "low",
+    "capabilities": [
+      "read"
+    ],
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Work out why last night's code-project run halted at the audit gate"
+      },
+      {
+        "event": "mutation",
+        "description": "Skip the comparison — just tell me which node failed and why"
+      }
+    ]
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "root",
+    "children": [
+      {
+        "kind": "stage",
+        "id": "trace",
+        "config": {
+          "prompt": "Walk the failed run's execution trace in order and localize the failure before explaining it.\n\nRun:\n{{inputs.run_id}}\n\nMethod, in this order — each step earns the next:\n  1. Start from the failure signature, not from a theory.\n  2. Walk the trace chronologically. The first thing that went wrong is usually not the thing that failed loudest.\n  3. Localize to a node and a field before explaining anything.\n  4. Only then form a hypothesis.\n\nEvidence before intuition. Never summarize without citing the node, field or artifact you read it from — an uncited diagnosis cannot be checked, and an unbcheckable diagnosis is a guess with better grammar.\n\nReturn JSON: {\"failure_signature\": string, \"failing_node\": string, \"chronology\": [string], \"evidence_chain\": [string]}",
+          "schema": {
+            "failure_signature": "string",
+            "failing_node": "string",
+            "chronology": "array",
+            "evidence_chain": "array"
+          },
+          "model_tier": "standard",
+          "tools_posture": "verify"
+        }
+      },
+      {
+        "kind": "stage",
+        "id": "classify",
+        "config": {
+          "prompt": "Classify this failure into exactly ONE layer, and say why the other three do not fit.\n\nThe four layers:\n  - routing — the wrong template or profile was selected for the job\n  - execution — tool errors, permission blocks, missing binaries\n  - verification — output exists but does not match the criteria\n  - governance — halted by a safety, budget or breaker check\n\nFailing node:\n{{nodes.trace.output.failing_node}}\n\nEvidence:\n{{nodes.trace.output.evidence_chain}}\n\nCompare, do not guess: if a previous run of {{inputs.template_name}} succeeded, diff against it. What changed between them is a far stronger signal than what looks suspicious in isolation.\n\nRuling out the other three is the work. A classification that would fit any failure explains none of them.\n\nReturn JSON: {\"layer\": \"routing\"|\"execution\"|\"verification\"|\"governance\", \"root_cause_hypothesis\": string, \"ruled_out\": {layer: string}, \"recommended_action\": string}",
+          "schema": {
+            "layer": "string",
+            "root_cause_hypothesis": "string",
+            "ruled_out": "object",
+            "recommended_action": "string"
+          },
+          "model_tier": "reasoning"
+        }
+      },
+      {
+        "kind": "stage",
+        "id": "judge",
+        "config": {
+          "prompt": "You are verifying work you did not do. Assume it produced nothing until the artifacts prove otherwise.\n\nDo not talk yourself into approving. Your job is not to be agreeable to the worker — it is to be right on behalf of the user, who is not reading this and cannot check it themselves.\n\nA diagnosis is being checked, not work.\n\nClaimed layer: {{nodes.classify.output.layer}}\nClaimed cause: {{nodes.classify.output.root_cause_hypothesis}}\nEvidence chain: {{nodes.trace.output.evidence_chain}}\n\nRubric — score each 0, 1 or 2, citing evidence for each:\n  - the layer is identified with evidence (target 2)\n  - the failing node is localized (target 2)\n\nThese passes are forbidden. Actively check they did NOT happen:\n  - explanation offered without citing the trace\n  - cause guessed from the summary\n\nA plausible story that the trace does not support is worse than no diagnosis: it sends the next person to fix the wrong thing.\n\nRe-run any command the evidence cites; read the artifacts yourself. A claim you did not verify is not evidence, however plausible it reads.\n\nIf you genuinely cannot tell — artifacts missing, command will not run — say so in cannot_judge rather than guessing. A refusal is useful; a coin-flip dressed as a verdict is not.\n\nExpect two or three revision cycles on real work. Reporting real issues is the normal outcome, and zero issues on a first pass is itself worth a second look.\n\nReturn JSON: {\"reasoning\": string, \"verdict\": \"PASS\"|\"REJECT\"|\"REPLAN\"|\"ESCALATE\"|\"NEEDS_INPUT\", \"scores\": {criterion: integer}, \"evidence_refs\": [string], \"proof\": string, \"cannot_judge\": string}",
+          "schema": {
+            "reasoning": "string",
+            "verdict": "string",
+            "scores": "object",
+            "evidence_refs": "array",
+            "proof": "string",
+            "cannot_judge": "string"
+          },
+          "model_tier": "reasoning",
+          "tools_posture": "verify",
+          "isolation": "fresh"
+        }
+      }
+    ]
+  }
+}

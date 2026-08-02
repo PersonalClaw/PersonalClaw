@@ -1,0 +1,194 @@
+{
+  "name": "design-project",
+  "version": 1,
+  "description": "Explore a design through divergent framings, then converge by minimal diff.",
+  "source": "bundled",
+  "provenance": "bundled",
+  "tags": [
+    "loop",
+    "design"
+  ],
+  "inputs": {
+    "brief": {
+      "type": "string",
+      "required": true,
+      "help": "What is being designed, and for whom."
+    },
+    "constraints": {
+      "type": "string",
+      "default": "",
+      "help": "Hard constraints. The judge checks these were honoured rather than quietly dropped."
+    },
+    "max_iterations": {
+      "type": "integer",
+      "default": 5,
+      "help": "Refinement cap. The loop exits earlier when no issues remain."
+    }
+  },
+  "runtime_hints": {
+    "judge": {
+      "rubric": [
+        {
+          "criterion": "the design addresses the brief",
+          "target_score": 2
+        },
+        {
+          "criterion": "trade-offs are stated, not hidden",
+          "target_score": 2
+        }
+      ],
+      "ratchet": "strict",
+      "stop_condition": {
+        "consecutive_clean": 2
+      },
+      "marginal_threshold": 2.0,
+      "freedom_level": "high",
+      "judge_isolation": "fresh",
+      "fallback_check": "artifact_exists",
+      "forbidden_success_modes": [
+        "constraints dropped silently",
+        "trade-offs asserted without reasoning"
+      ]
+    },
+    "execution": {
+      "depth": "balanced",
+      "escalation": {
+        "attempt_cap": 3,
+        "ladder": [
+          "classified_retry",
+          "fresh_session",
+          "surface"
+        ]
+      },
+      "breaker": {
+        "fingerprint_window": 3,
+        "no_progress_stop": 5
+      },
+      "diff_edit_baseline": true
+    }
+  },
+  "metadata": {
+    "risk": "low",
+    "capabilities": [
+      "read"
+    ],
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Design the onboarding flow for someone installing this for the first time"
+      },
+      {
+        "event": "mutation",
+        "description": "Drop option B's direction entirely and push option A further"
+      }
+    ]
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "root",
+    "children": [
+      {
+        "kind": "stage",
+        "id": "diverge",
+        "config": {
+          "prompt": "Generate four to six genuinely DIFFERENT framings of this brief, each from a distinct design perspective.\n\nBrief:\n{{inputs.brief}}\n\nConstraints:\n{{inputs.constraints}}\n\nDifferent framings, not four wordings of one idea. The point of diverging before committing is that the second option is only useful if it could not have been reached from the first — and a set that agrees with itself gives the evaluator nothing to choose between.\n\nReturn JSON: {\"framings\": [{\"lens\": string, \"sketch\": string}]}",
+          "schema": {
+            "framings": "array"
+          },
+          "model_tier": "standard"
+        }
+      },
+      {
+        "kind": "parallel",
+        "id": "explore",
+        "config": {
+          "join": "all"
+        },
+        "children": [
+          {
+            "kind": "stage",
+            "id": "option-a",
+            "config": {
+              "prompt": "Develop the BOLD option, staying inside this lens:\n{{nodes.diverge.output.framings}}\n\nUse the first framing. Commit to it — an option that hedges toward the safe answer is the safe answer with extra steps, and the comparison then has nothing to compare.\n\nBrief:\n{{inputs.brief}}\n\nReturn JSON: {\"design\": string, \"rationale\": string, \"trade_offs\": [string]}",
+              "schema": {
+                "design": "string",
+                "rationale": "string",
+                "trade_offs": "array"
+              },
+              "model_tier": "standard"
+            }
+          },
+          {
+            "kind": "stage",
+            "id": "option-b",
+            "config": {
+              "prompt": "Develop the PRAGMATIC option, staying inside a different lens from option A:\n{{nodes.diverge.output.framings}}\n\nUse the second framing. Pragmatic means cheap to build and easy to reverse, not timid — state what it gives up.\n\nBrief:\n{{inputs.brief}}\n\nReturn JSON: {\"design\": string, \"rationale\": string, \"trade_offs\": [string]}",
+              "schema": {
+                "design": "string",
+                "rationale": "string",
+                "trade_offs": "array"
+              },
+              "model_tier": "standard"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "stage",
+        "id": "evaluate",
+        "config": {
+          "prompt": "Choose between these two designs against the constraints, then say what still needs work.\n\nConstraints:\n{{inputs.constraints}}\n\nOption A:\n{{nodes.option-a.output.design}}\nIts trade-offs: {{nodes.option-a.output.trade_offs}}\n\nOption B:\n{{nodes.option-b.output.design}}\nIts trade-offs: {{nodes.option-b.output.trade_offs}}\n\nYou did not write either one, which is the point — pick on the merits and name what the winner costs. A choice presented as free is a choice whose price shows up later.\n\nremaining_issues drives the refinement loop: an empty list ends it. Say empty only when it is true.\n\nReturn JSON: {\"winner\": string, \"synthesis\": string, \"remaining_issues\": [string]}",
+          "schema": {
+            "winner": "string",
+            "synthesis": "string",
+            "remaining_issues": "array"
+          },
+          "model_tier": "reasoning",
+          "isolation": "fresh"
+        }
+      },
+      {
+        "kind": "loop",
+        "id": "refine",
+        "config": {
+          "mode": "until",
+          "condition": "{{last.output.issues_resolved}}",
+          "max_iterations": 5,
+          "timeout_stall_secs": 600
+        },
+        "body": {
+          "kind": "stage",
+          "id": "iterate",
+          "config": {
+            "prompt": "Refine the selected design with a MINIMAL DIFF against the last approved version.\n\nSelected design:\n{{nodes.evaluate.output.synthesis}}\n\nIssues to resolve:\n{{last.output.remaining_issues}}\n\nChange what the issues require and nothing else. Regenerating the whole design each round loses the parts that were already right, and the reviewer cannot tell what actually changed.\n\nSet issues_resolved true only when remaining_issues is genuinely empty.\n\nReturn JSON: {\"refined\": string, \"changed\": string, \"remaining_issues\": [string], \"issues_resolved\": boolean}",
+            "schema": {
+              "refined": "string",
+              "changed": "string",
+              "remaining_issues": "array",
+              "issues_resolved": "boolean"
+            },
+            "model_tier": "standard"
+          }
+        }
+      },
+      {
+        "kind": "stage",
+        "id": "judge",
+        "config": {
+          "prompt": "You are verifying a design you did not write. Assume it does not meet the brief until the design itself shows otherwise.\n\nDo not talk yourself into approving. Your job is not to be agreeable to the designer — it is to be right on behalf of the user, who is not reading this and cannot check it themselves.\n\nBrief:\n{{inputs.brief}}\n\nConstraints that must hold:\n{{inputs.constraints}}\n\nThe refined design:\n{{nodes.refine.output}}\n\nRubric — score each 0, 1 or 2, citing the part of the design that earns it:\n  - the design addresses the brief (target 2)\n  - trade-offs are stated, not hidden (target 2)\n\nThese passes are forbidden. Actively check they did NOT happen, and say so if one did:\n  - constraints dropped silently\n  - trade-offs asserted without reasoning\n\nA design cannot be verified by re-running a command, so read it against the constraints one by one. A constraint the design never mentions has been dropped, not satisfied — silence is not compliance.\n\nIf you genuinely cannot tell — the brief is too vague to judge against — say so in cannot_judge rather than guessing. A refusal is useful; a coin-flip dressed as a verdict is not.\n\nExpect two or three revision cycles on real work. Reporting real issues is the normal outcome, and zero issues on a first pass is itself worth a second look.\n\nReturn JSON: {\"reasoning\": string, \"verdict\": \"PASS\"|\"REJECT\"|\"REPLAN\"|\"ESCALATE\"|\"NEEDS_INPUT\", \"scores\": {criterion: integer}, \"evidence_refs\": [string], \"proof\": string, \"cannot_judge\": string}",
+          "schema": {
+            "reasoning": "string",
+            "verdict": "string",
+            "scores": "object",
+            "evidence_refs": "array",
+            "proof": "string",
+            "cannot_judge": "string"
+          },
+          "model_tier": "reasoning",
+          "tools_posture": "verify",
+          "isolation": "fresh"
+        }
+      }
+    ]
+  }
+}

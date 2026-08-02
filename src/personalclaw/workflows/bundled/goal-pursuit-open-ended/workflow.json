@@ -1,0 +1,182 @@
+{
+  "name": "goal-pursuit-open-ended",
+  "version": 1,
+  "description": "Pursue an open-ended goal in judged cycles until progress dries up.",
+  "source": "bundled",
+  "provenance": "bundled",
+  "tags": [
+    "loop",
+    "goal",
+    "open-ended"
+  ],
+  "inputs": {
+    "task": {
+      "type": "string",
+      "required": true,
+      "help": "What you want to achieve. State the outcome, not the steps."
+    },
+    "success_criteria": {
+      "type": "string",
+      "default": "",
+      "help": "How you will know it worked. Left blank, the judge infers it from the goal — which is weaker, so say it if you can."
+    },
+    "scope": {
+      "type": "string",
+      "default": ".",
+      "help": "The directory the work and the verification both read. The judge reads artifacts here rather than trusting the worker's summary."
+    }
+  },
+  "runtime_hints": {
+    "judge": {
+      "rubric": [
+        {
+          "criterion": "progress is real and evidenced",
+          "target_score": 2
+        },
+        {
+          "criterion": "claims cite artifacts, not prose",
+          "target_score": 2
+        }
+      ],
+      "ratchet": "strict",
+      "stop_condition": {
+        "consecutive_clean": 2
+      },
+      "marginal_threshold": 2.0,
+      "freedom_level": "high",
+      "judge_isolation": "fresh",
+      "fallback_check": "artifact_exists",
+      "forbidden_success_modes": [
+        "deliverable stubbed or placeholder",
+        "criteria reworded to fit output"
+      ]
+    },
+    "execution": {
+      "depth": "balanced",
+      "escalation": {
+        "attempt_cap": 3,
+        "ladder": [
+          "classified_retry",
+          "fresh_session",
+          "surface"
+        ]
+      },
+      "breaker": {
+        "fingerprint_window": 3,
+        "no_progress_stop": 5
+      }
+    }
+  },
+  "metadata": {
+    "risk": "medium",
+    "capabilities": [
+      "read",
+      "write"
+    ],
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Work out why our cold-start latency doubled last month and what to do about it"
+      },
+      {
+        "event": "mutation",
+        "description": "Stop widening the search — focus the remaining cycles on the cache layer only"
+      }
+    ]
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "root",
+    "children": [
+      {
+        "kind": "stage",
+        "id": "intake",
+        "config": {
+          "prompt": "Understand this goal and decompose it before doing any of it.\n\nRead enough of {{inputs.scope}} that your plan describes what is actually there. A plan built on what would be convenient costs more than no plan, because the first cycle spends itself discovering the plan was wrong.\n\nGoal:\n{{inputs.task}}\n\nSuccess criteria:\n{{inputs.success_criteria}}\n\nNote for later: an independent verifier will re-read these artifacts and re-run any command you cite. It will not see this message or anything you say about your own work — only the user's goal, the tool calls, and their output. Plan on being checked.\n\nReturn JSON: {\"sub_goals\": [string], \"execution_plan\": [{\"phase\": string, \"objective\": string}], \"first_step\": string}",
+          "schema": {
+            "sub_goals": "array",
+            "execution_plan": "array",
+            "first_step": "string"
+          },
+          "model_tier": "standard"
+        }
+      },
+      {
+        "kind": "loop",
+        "id": "work",
+        "config": {
+          "mode": "until_dry",
+          "streak": 2,
+          "progress_field": "new_findings_count",
+          "max_iterations": 12,
+          "timeout_stall_secs": 900
+        },
+        "body": {
+          "kind": "sequence",
+          "id": "cycle-body",
+          "children": [
+            {
+              "kind": "stage",
+              "id": "cycle",
+              "config": {
+                "prompt": "Do ONE meaningful step toward the goal, then stop and report.\n\nOne step, not the whole plan: the cycle is judged, and a step that bundles four changes gives the judge nothing it can accept or reject cleanly.\n\nGoal:\n{{inputs.task}}\n\nPlan:\n{{nodes.intake.output.execution_plan}}\n\nWhat previous cycles found:\n{{last.output.summary}}\n\nReport with evidence a verifier can check independently — file paths it can read, commands it can re-run with their actual output. \"I improved the handler\" is not evidence. \"handlers.py:88 now short-circuits on empty input; pytest tests/test_handlers.py passes 12/12\" is.\n\nSet new_findings_count to the number of genuinely NEW things this cycle established. Zero is a valid and useful answer — it is how the loop learns it is done. Inflating it to look productive keeps the loop running past the point of value, which costs the user real money.\n\nReturn JSON: {\"summary\": string, \"key_insight\": string, \"new_findings_count\": integer, \"evidence\": string}",
+                "schema": {
+                  "summary": "string",
+                  "key_insight": "string",
+                  "new_findings_count": "integer",
+                  "evidence": "string"
+                },
+                "model_tier": "standard",
+                "tools_posture": "full"
+              }
+            },
+            {
+              "kind": "stage",
+              "id": "judge",
+              "config": {
+                "prompt": "You are verifying one work cycle. Assume it produced nothing until the artifacts prove otherwise.\n\nDo not talk yourself into approving. Your job is not to be agreeable to the worker — it is to be right on behalf of the user, who is not reading this and cannot check it themselves.\n\nGoal the work was meant to serve:\n{{inputs.task}}\n\nSuccess criteria:\n{{inputs.success_criteria}}\n\nRubric — score each 0, 1 or 2 and cite the evidence for each score:\n  - progress is real and evidenced (target 2)\n  - claims cite artifacts, not prose (target 2)\n\nThese passes are forbidden. Actively check they did NOT happen, and say so if one did:\n  - deliverable stubbed or placeholder\n  - criteria reworded to fit output\n\nRead the actual artifacts under {{inputs.scope}}. Re-run any command the evidence cites. A claim you did not verify is not evidence, however plausible it reads.\n\nIf you genuinely cannot tell — the artifacts are missing, the command will not run — say so in cannot_judge rather than guessing. A refusal is useful; a coin-flip dressed as a verdict is not.\n\nExpect two or three revision cycles on real work. Reporting real issues is the normal outcome, and zero issues on a first pass is itself worth a second look.\n\nReturn JSON: {\"reasoning\": string, \"verdict\": \"PASS\"|\"REJECT\"|\"REPLAN\"|\"ESCALATE\"|\"NEEDS_INPUT\", \"scores\": {criterion: integer}, \"marginal_value\": number, \"evidence_refs\": [string], \"proof\": string, \"cannot_judge\": string}",
+                "schema": {
+                  "reasoning": "string",
+                  "verdict": "string",
+                  "scores": "object",
+                  "marginal_value": "number",
+                  "evidence_refs": "array",
+                  "proof": "string",
+                  "cannot_judge": "string"
+                },
+                "model_tier": "reasoning",
+                "tools_posture": "verify",
+                "isolation": "fresh"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "stage",
+        "id": "deliverable",
+        "config": {
+          "prompt": "Synthesize what the cycles established into one deliverable the user can act on.\n\nGoal:\n{{inputs.task}}\n\nEverything the cycles found:\n{{nodes.work.output}}\n\nSay plainly what you could NOT establish. A report that quietly omits its gaps reads as more complete than it is, and the reader has no way to know which parts to trust.\n\nReturn JSON: {\"report\": string, \"key_findings\": [string], \"recommendations\": [string], \"could_not_establish\": [string]}",
+          "schema": {
+            "report": "string",
+            "key_findings": "array",
+            "recommendations": "array",
+            "could_not_establish": "array"
+          },
+          "model_tier": "standard"
+        }
+      },
+      {
+        "kind": "gate",
+        "id": "accept",
+        "config": {
+          "judge_samples": 3,
+          "prompt": "Terminal acceptance: does this deliverable meet the goal?\n\nDo not talk yourself into approving. This is the LAST check before the run reports success to the user — if you wave it through, nothing downstream catches it.\n\nThis is the last check before the run reports success, and three independent samples of you are being asked — a single judgement on a terminal accept was measured to be indistinguishable from noise.\n\nGoal:\n{{inputs.task}}\n\nSuccess criteria:\n{{inputs.success_criteria}}\n\nDeliverable:\n{{nodes.deliverable.output.report}}\n\nWhat it admits it could not establish:\n{{nodes.deliverable.output.could_not_establish}}\n\nAn honest gap is not a failure — a gap the deliverable hides is. Judge the work against the goal as stated, not against a better goal you would have set.\n\nReturn JSON: {\"reasoning\": string, \"verdict\": \"PASS\"|\"REJECT\", \"scores\": {criterion: integer}, \"proof\": string, \"evidence_refs\": [string], \"cannot_judge\": string}",
+          "isolation": "fresh",
+          "tools_posture": "verify",
+          "kind": "judge"
+        }
+      }
+    ]
+  }
+}
