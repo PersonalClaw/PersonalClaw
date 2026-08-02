@@ -507,12 +507,41 @@ class DefMetadata:
     requirements: dict[str, list[str]] = field(default_factory=dict)  # binaries/credentials
     steering_examples: list[dict[str, str]] = field(default_factory=list)
 
+    # UNIVERSAL-PLANNING UP-R2: the matchable surface. TYPED FIELDS rather than an open metadata
+    # dict, because `from_dict` drops anything it does not name — measured, annotating all 18
+    # bundled templates with `keywords` left the matcher reading 0/18, so it ran entirely on
+    # description overlap while reporting matches at 0.02-0.22 confidence. A control that is
+    # present and inert.
+    #
+    #: T1's inverted-index terms. What a user would actually type.
+    keywords: list[str] = field(default_factory=list)
+    #: T2's strongest signal: what the template PRODUCES. An intent resembles its desired output
+    #: far more than it resembles prose about a workflow.
+    example_outputs: list[str] = field(default_factory=list)
+    #: T3's constraint — which intent shapes this template serves. Empty means shape-agnostic.
+    shapes: list[str] = field(default_factory=list)
+    #: Rendered when this template is a REJECTED near-match, so the miss explains itself.
+    when_not_to_use: str = ""
+    #: A cheaper route for a trivial intent (direct answer / one subagent) instead of a full run.
+    lighter_path: str = ""
+    #: Named starter parameterizations offered before any generation.
+    presets: list[str] = field(default_factory=list)
+    #: Free-text phrases for T4's embedding tie-break.
+    match_text: str = ""
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "risk": self.risk,
             "capabilities": list(self.capabilities),
             "requirements": {k: list(v) for k, v in self.requirements.items()},
             "steering_examples": [dict(e) for e in self.steering_examples],
+            "keywords": list(self.keywords),
+            "example_outputs": list(self.example_outputs),
+            "shapes": list(self.shapes),
+            "when_not_to_use": self.when_not_to_use,
+            "lighter_path": self.lighter_path,
+            "presets": list(self.presets),
+            "match_text": self.match_text,
         }
 
     @classmethod
@@ -522,6 +551,13 @@ class DefMetadata:
         return cls(
             risk=str(d.get("risk", "low") or "low"),
             capabilities=[str(c) for c in (d.get("capabilities") or [])],
+            keywords=[str(k) for k in (d.get("keywords") or [])],
+            example_outputs=[str(o) for o in (d.get("example_outputs") or [])],
+            shapes=[str(sh) for sh in (d.get("shapes") or [])],
+            when_not_to_use=str(d.get("when_not_to_use", "") or ""),
+            lighter_path=str(d.get("lighter_path", "") or ""),
+            presets=[str(pr) for pr in (d.get("presets") or [])],
+            match_text=str(d.get("match_text", "") or ""),
             requirements={
                 str(k): [str(x) for x in (v or [])]
                 for k, v in (reqs.items() if isinstance(reqs, dict) else [])

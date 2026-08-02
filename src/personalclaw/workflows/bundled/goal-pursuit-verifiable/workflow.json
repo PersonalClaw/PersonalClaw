@@ -84,6 +84,15 @@
         "event": "mutation",
         "description": "The verify command was wrong — change it to the integration suite instead"
       }
+    ],
+    "keywords": [
+      "until it passes",
+      "make the tests pass",
+      "verifiable goal",
+      "hit the target"
+    ],
+    "example_outputs": [
+      "a goal met against a check that proves it"
     ]
   },
   "root": {

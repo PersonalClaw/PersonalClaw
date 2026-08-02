@@ -81,6 +81,21 @@
         "event": "mutation",
         "description": "Drop option B's direction entirely and push option A further"
       }
+    ],
+    "keywords": [
+      "design",
+      "mock up",
+      "wireframe",
+      "visual",
+      "logo",
+      "layout"
+    ],
+    "example_outputs": [
+      "a design direction with concrete visual choices"
+    ],
+    "presets": [
+      "single-asset",
+      "full-system"
     ]
   },
   "root": {

@@ -4,20 +4,50 @@
   "source": "bundled",
   "provenance": "user",
   "version": 1,
-  "tags": ["knowledge"],
+  "tags": [
+    "knowledge"
+  ],
   "inputs": {
-    "topic": {"type": "string", "required": true, "help": "What to synthesize. Also the item's identity, so re-running updates rather than duplicating."},
-    "material": {"type": "string", "required": false, "default": "", "help": "New material to fold in. Left empty, this re-synthesizes from what is already stored."}
+    "topic": {
+      "type": "string",
+      "required": true,
+      "help": "What to synthesize. Also the item's identity, so re-running updates rather than duplicating."
+    },
+    "material": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "help": "New material to fold in. Left empty, this re-synthesizes from what is already stored."
+    }
   },
   "metadata": {
     "risk": "low",
-    "capabilities": ["knowledge"],
+    "capabilities": [
+      "knowledge"
+    ],
     "cost_tier": "metered",
     "why_one_call": "Both the retrieve and the persist are zero-token action providers, so the only model call is the synthesis itself. Doing either through a stage would triple the cost for no gain.",
     "steering_examples": [
-      {"event": "kickoff", "description": "Synthesize what we know about cold start latency, folding in today's measurements."},
-      {"event": "mutation", "description": "The retrieved context is stale — ignore items older than a month and re-synthesize."}
-    ]
+      {
+        "event": "kickoff",
+        "description": "Synthesize what we know about cold start latency, folding in today's measurements."
+      },
+      {
+        "event": "mutation",
+        "description": "The retrieved context is stale — ignore items older than a month and re-synthesize."
+      }
+    ],
+    "keywords": [
+      "synthesize",
+      "consolidate",
+      "write up what we know",
+      "summarize what we know",
+      "what do we know about"
+    ],
+    "example_outputs": [
+      "one consolidated article about a topic, stored and searchable"
+    ],
+    "when_not_to_use": "not for questions the store cannot answer yet — use deep-research"
   },
   "root": {
     "kind": "sequence",
@@ -29,7 +59,11 @@
         "label": "What do we already know?",
         "config": {
           "provider": "knowledge-retrieve",
-          "with": {"query": "{{inputs.topic}}", "top_k": 8, "detail": "compact"}
+          "with": {
+            "query": "{{inputs.topic}}",
+            "top_k": 8,
+            "detail": "compact"
+          }
         }
       },
       {
@@ -43,8 +77,16 @@
             "title": "string",
             "summary": "string",
             "content": "string",
-            "claims": [{"id": "string", "statement": "string", "confidence": "number"}],
-            "gaps": ["string"]
+            "claims": [
+              {
+                "id": "string",
+                "statement": "string",
+                "confidence": "number"
+              }
+            ],
+            "gaps": [
+              "string"
+            ]
           }
         }
       },
@@ -61,7 +103,9 @@
             "summary": "{{nodes.synthesize.output.summary}}",
             "claims": "{{nodes.synthesize.output.claims}}",
             "citations": "{{nodes.recall.output.items | map('item_id')}}",
-            "tags": ["synthesis"]
+            "tags": [
+              "synthesis"
+            ]
           }
         }
       }

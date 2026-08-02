@@ -4,7 +4,10 @@
   "source": "bundled",
   "provenance": "user",
   "version": 1,
-  "tags": ["research", "general"],
+  "tags": [
+    "research",
+    "general"
+  ],
   "inputs": {
     "question": {
       "type": "string",
@@ -20,7 +23,10 @@
   },
   "metadata": {
     "risk": "low",
-    "capabilities": ["research", "web"],
+    "capabilities": [
+      "research",
+      "web"
+    ],
     "steering_examples": [
       {
         "event": "kickoff",
@@ -30,7 +36,21 @@
         "event": "mutation",
         "description": "Skip the by-time angle — this isn't a regression, it's a design question. Add a by-entity sweep over the two competing libraries instead."
       }
-    ]
+    ],
+    "keywords": [
+      "research",
+      "find out",
+      "investigate",
+      "look into",
+      "what are the options"
+    ],
+    "example_outputs": [
+      "a research report with cited sources and a recommendation"
+    ],
+    "shapes": [
+      "compare"
+    ],
+    "when_not_to_use": "not for questions the store already answers — use knowledge-synthesis"
   },
   "root": {
     "kind": "sequence",
@@ -42,7 +62,10 @@
         "config": {
           "model_tier": "fast",
           "prompt": "Classify what this question needs.\n\ntier=lookup: one fact, one source. A sweep would be waste.\ntier=survey: needs several sources reconciled.\ntier=investigation: contested, or the answer depends on evidence that has to be assembled.\n\nReturn JSON: {\"tier\": \"lookup|survey|investigation\", \"why\": \"one line\"}.\n\nQuestion:\n{{inputs.question}}",
-          "schema": { "tier": "string", "why": "string" }
+          "schema": {
+            "tier": "string",
+            "why": "string"
+          }
         }
       },
       {
@@ -50,7 +73,11 @@
         "id": "entry",
         "config": {
           "on": "{{nodes.triage.output.tier}}",
-          "enum": ["lookup", "survey", "investigation"]
+          "enum": [
+            "lookup",
+            "survey",
+            "investigation"
+          ]
         },
         "cases": {
           "lookup": {
@@ -65,7 +92,10 @@
             "id": "survey_sweep",
             "config": {
               "question": "{{inputs.question}}",
-              "modes": ["by-content", "by-entity"]
+              "modes": [
+                "by-content",
+                "by-entity"
+              ]
             }
           },
           "investigation": {
@@ -85,7 +115,11 @@
                   "id": "round_sweep",
                   "config": {
                     "question": "{{inputs.question}}",
-                    "modes": ["by-content", "by-entity", "by-time"]
+                    "modes": [
+                      "by-content",
+                      "by-entity",
+                      "by-time"
+                    ]
                   }
                 },
                 {
@@ -94,7 +128,10 @@
                   "config": {
                     "model_tier": "standard",
                     "prompt": "What is still MISSING after this round — a source not read, a claim not verified, an angle not tried? Return an empty list when the round genuinely added nothing new; that is what stops the loop, and inventing a gap to look thorough makes it run forever.\n\nReturn JSON: {\"new_findings\": [\"…\"], \"remaining_gaps\": [\"…\"]}.\n\nQuestion:\n{{inputs.question}}\n\nThis round found:\n{{nodes.round_sweep_read.output}}",
-                    "schema": { "new_findings": "array", "remaining_gaps": "array" }
+                    "schema": {
+                      "new_findings": "array",
+                      "remaining_gaps": "array"
+                    }
                   }
                 }
               ]

@@ -43,6 +43,15 @@
         "event": "mutation",
         "description": "Cluster 2 mixes two different topics — drop it and apply the rest."
       }
+    ],
+    "keywords": [
+      "consolidate the store",
+      "merge duplicates",
+      "clean up knowledge",
+      "lint knowledge"
+    ],
+    "example_outputs": [
+      "near-duplicate knowledge items merged into one, originals archived"
     ]
   },
   "root": {

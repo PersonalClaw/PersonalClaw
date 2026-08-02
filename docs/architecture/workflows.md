@@ -66,6 +66,8 @@ while not terminal:
 | `judge_calibration.py` | the nodding-loop detector, divergence records, stuck detection, and the verdict ledger they read |
 | `loop_aliases.py` | read-time aliases for legacy loop-kind references, and cockpit stream-key equivalence |
 | `longrun.py` | long-run watcher mechanics: item identity, the persistent seen-set, bounded sibling views, buffer-seal, the adaptive-delay clamp, lineage caps |
+| `intent.py` | the no-LLM intent classifier: the (complexity, uncertainty, stakes, time_pressure) tuple, irreversibility, and rigor routing |
+| `matcher.py` | tiered template matching T1-T5: keyword index, metadata scoring, shape filter, embedding tie-break, LLM summarize-then-rematch |
 | `scope.py` | filesystem write-scope enforcement by post-hoc diff |
 | `watchdog.py` | the supervisor: adoption, reaping, per-run publishing |
 

@@ -4,19 +4,48 @@
   "source": "bundled",
   "provenance": "user",
   "version": 1,
-  "tags": ["knowledge", "research"],
+  "tags": [
+    "knowledge",
+    "research"
+  ],
   "inputs": {
-    "thesis": {"type": "string", "required": true, "help": "The claim, stated so it could be proven wrong. \"AI will change things\" cannot be tracked; \"cold starts will stay above 3s through Q4\" can."},
-    "evidence": {"type": "string", "required": false, "default": "", "help": "New evidence to weigh. Left empty, this re-reads the existing record and re-states where the thesis stands."}
+    "thesis": {
+      "type": "string",
+      "required": true,
+      "help": "The claim, stated so it could be proven wrong. \"AI will change things\" cannot be tracked; \"cold starts will stay above 3s through Q4\" can."
+    },
+    "evidence": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "help": "New evidence to weigh. Left empty, this re-reads the existing record and re-states where the thesis stands."
+    }
   },
   "metadata": {
     "risk": "low",
-    "capabilities": ["knowledge"],
+    "capabilities": [
+      "knowledge"
+    ],
     "cost_tier": "metered",
     "why_falsifiable": "A thesis with no invalidating conditions cannot be tracked — every piece of evidence confirms it, which is how a tracker becomes a scrapbook. The invalidators are asked for up front so the record can actually change your mind.",
     "steering_examples": [
-      {"event": "kickoff", "description": "Track the thesis that our cold starts stay above three seconds through Q4, and weigh today's benchmark against it."},
-      {"event": "mutation", "description": "That last piece of evidence is weaker than it reads — mark it neutral rather than strengthening."}
+      {
+        "event": "kickoff",
+        "description": "Track the thesis that our cold starts stay above three seconds through Q4, and weigh today's benchmark against it."
+      },
+      {
+        "event": "mutation",
+        "description": "That last piece of evidence is weaker than it reads — mark it neutral rather than strengthening."
+      }
+    ],
+    "keywords": [
+      "thesis",
+      "track this belief",
+      "is this still true",
+      "weigh the evidence"
+    ],
+    "example_outputs": [
+      "a falsifiable belief with its pillars, invalidators, and evidence"
     ]
   },
   "root": {
@@ -29,7 +58,11 @@
         "label": "The record so far",
         "config": {
           "provider": "knowledge-retrieve",
-          "with": {"query": "{{inputs.thesis}}", "top_k": 5, "detail": "full"}
+          "with": {
+            "query": "{{inputs.thesis}}",
+            "top_k": 5,
+            "detail": "full"
+          }
         }
       },
       {
@@ -41,9 +74,19 @@
           "prompt": "Thesis under test:\n{{inputs.thesis}}\n\nThe record so far (cite as [n]):\n{{nodes.prior.output.items | fenced_sources}}\n\nNew evidence:\n{{inputs.evidence | default('(none — restate where the thesis stands on the existing record)')}}\n\nName the pillars the thesis rests on, and the conditions that would INVALIDATE it — a thesis with no invalidators cannot be tracked, because everything confirms it. Then tag each piece of evidence strengthen, weaken, or neutralize, and say plainly whether the thesis is holding. If the evidence undercuts it, say that; a tracker that only ever strengthens its own thesis is a scrapbook.",
           "schema": {
             "standing": "string",
-            "pillars": ["string"],
-            "invalidators": ["string"],
-            "evidence": [{"summary": "string", "effect": "string", "why": "string"}],
+            "pillars": [
+              "string"
+            ],
+            "invalidators": [
+              "string"
+            ],
+            "evidence": [
+              {
+                "summary": "string",
+                "effect": "string",
+                "why": "string"
+              }
+            ],
             "confidence": "number"
           }
         }
@@ -61,7 +104,9 @@
             "summary": "Standing: {{nodes.weigh.output.standing | truncate(160)}}",
             "citations": "{{nodes.prior.output.items | map('item_id')}}",
             "read_when": "{{nodes.weigh.output.invalidators}}",
-            "tags": ["thesis"]
+            "tags": [
+              "thesis"
+            ]
           }
         }
       }

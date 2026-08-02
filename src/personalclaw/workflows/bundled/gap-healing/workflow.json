@@ -35,7 +35,16 @@
         "event": "mutation",
         "description": "Only draft the ones with at least five referencing items — the rest are too thin."
       }
-    ]
+    ],
+    "keywords": [
+      "missing entries",
+      "knowledge gaps",
+      "what haven't we written down"
+    ],
+    "example_outputs": [
+      "drafted entries for referenced-but-unwritten topics, for review"
+    ],
+    "when_not_to_use": "not for storing something you already know — use knowledge-synthesis"
   },
   "root": {
     "kind": "sequence",

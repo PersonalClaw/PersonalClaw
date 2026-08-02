@@ -82,6 +82,15 @@
         "event": "mutation",
         "description": "Stop widening the search — focus the remaining cycles on the cache layer only"
       }
+    ],
+    "keywords": [
+      "pursue",
+      "make progress on",
+      "keep working on",
+      "open-ended goal"
+    ],
+    "example_outputs": [
+      "progress toward a goal with no fixed finish line"
     ]
   },
   "root": {

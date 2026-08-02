@@ -109,7 +109,7 @@ mandatory.
 
 | # | Session | PR group | Status |
 |---|---|---|---|
-| 40 | Matching + classification: intent classifier, tiered `match_template()` T1-T5, metadata extensions, CI routing fixtures; delete dead chat plan-mode | G19 | TODO |
+| 40 | Matching + classification: intent classifier, tiered `match_template()` T1-T5, metadata extensions, CI routing fixtures; delete dead chat plan-mode | G19 | ✅ CODE DONE — PUSH BLOCKED |
 | 41 | Grounded generation: grounding bundle from live registries, pattern-shape registry, schema-constrained `oneOf`, repair-not-regenerate, brownfield pass | G19 | TODO |
 | 42 | Contracts + parameterization: done-means contracts + lint + preflight, `resolve_unfilled_inputs()`, triage-first, blocking/open decision typing | G20 | TODO |
 | 43 | Review + revision: streaming multi-view review, typed merge-by-id, TTL'd sketches, plan-as-artifact, `revise{step_ref, comment}` | G20 | TODO |
@@ -1700,3 +1700,102 @@ latency session 37 hit with `gap-healing`. A minimal `infer` probe confirmed the
 call path works), so this is latency rather than a defect — but I have not seen these specific
 templates' model nodes finish. Criterion #10 (heuristic-extraction fallback with no provider bound)
 is also unverified: it needs a provider-less environment, and this dev home has Bedrock bound.
+
+### Session 40 — Universal Planning: matching + classification (`feature-wf2-planning-match`, PR NOT OPENED — push blocked)
+
+`workflows/intent.py` (the no-LLM 4-dimension classifier + rigor routing), `workflows/matcher.py`
+(the T1-T5 tiered matcher), typed match metadata on `DefMetadata`, all 18 bundled templates
+annotated, `tests/fixtures/planner_routing.json` as the CI deployment gate, and both wired into
+`workflow_plan`. 12251 tests (+65), lint clean at 621 files.
+
+**The routing accuracy story is the important part of this session.** The plan sets a >=85% bar on a
+fixture suite, and a keyword classifier measured against the examples it was tuned on reports its own
+training set back. So the fixtures were written FIRST from how a user actually types — lowercase,
+abbreviated, missing the keywords the classifier hopes for — and then measured:
+
+**68% on first contact.** Six misses, one root cause: a request with NO signal at all collapsed to
+TRIVIAL. "Add a retry to the ingest queue" fires no keyword, and reading that silence as simplicity
+sent ordinary work down the cheapest path. Absence of evidence is not evidence of simplicity — an
+unremarkable request is ORDINARY WORK, which is what STANDARD means. Four more rounds of measure-fix
+reached 100% on the fixtures, 4/4 on shape detection, and 13/13 against the REAL bundled library.
+
+**Every fix was a measured defect, not a tuning pass:**
+
+(a) **TRIVIAL was unreachable.** It required `uncertainty == LOW`, but uncertainty defaults to MEDIUM
+  with no signal — and "rename the variable" HAS no uncertainty signal, which is exactly what makes
+  it trivial. Requiring an explicit "exactly" made the branch dead.
+(b) **Time pressure was checked AFTER stakes,** so "production is on fire, fix it now" routed DEEP —
+  a deep grill is the right answer to the wrong question when the user needs a plan in a minute.
+(c) **`quick` was a time-pressure word.** "Draft a quick note" is a SIZE, not a deadline, and it made
+  every casual request read as urgent — which then vetoed the deep path for real work.
+(d) **`delete`/`drop` were in BOTH the stakes and irreversible lists,** and HIGH wins a tie in
+  `_dimension` — so "delete the scratch file" read as high-stakes and routed DEEP, with the `scratch`
+  de-escalator unreachable for exactly the verbs that most need it. Irreversibility is now its own
+  signal: stakes decide whether to GATE, irreversibility decides whether to THINK first.
+(e) **A signal-less MEDIUM blocked the cheap paths** while ALSO being read as not-complex by
+  `_is_complex` — the same ambiguity in two directions. MEDIUM now means two distinguishable things:
+  "nothing fired" (ordinary work) versus "the length nudge moved it here" (scope).
+(f) **High stakes short-circuited to FAST,** so "write the changelog entry for this release" got LESS
+  planning than "add a retry". High stakes must never buy a request fewer steps than an unremarkable
+  one.
+(g) **Breadth was not a signal.** "Rename x to y" is trivial; "rename x to y everywhere it's used" is
+  mechanical but scoped — same verb, different scope, and the simplicity word won.
+(h) **A domain NOUN counted as a unit of scale.** "Refactor the ingestion pipeline" escalated to DEEP
+  because `refactor` + `pipeline` read as two signals. Only action-scale verbs and breadth count now.
+(i) **The uncertainty list had "why is"/"why does" but not the bare "why" or "look into",** so "look
+  into why the sync job is slow" — a request entirely ABOUT not knowing — read as certain.
+
+**Matcher findings:**
+
+(j) **`DefMetadata` is a CLOSED dataclass and `from_dict` drops unnamed keys.** Annotating all 18
+  bundled templates with `keywords[]` left the matcher reading 0/18 — it ran entirely on description
+  overlap while still reporting matches at 0.02-0.22 confidence. The matchable surface is now TYPED
+  FIELDS on `DefMetadata`, not smuggled through an untyped dict.
+(k) **`TemplateProfile.from_def` called `.get()` on that dataclass** and silently got nothing. It now
+  reads `to_dict()` when present.
+(l) **Confidence saturated at the 0.95 ceiling for every clean match.** The gap component divided by
+  the leader's OWN score, so an uncontested leader always scored a full 0.5, plus a free 0.2 floor.
+  A number that never varies carries no information, and a review that always reads 95% trains the
+  user to ignore it. Confidence is now earned from evidence and spreads 0.04-0.90.
+(m) **The T3 shape penalty (0.6x) could not unseat a strong keyword hit,** so a monitor-shaped intent
+  still matched a review template — the classifier said monitor and the router ignored it. Shape is
+  now a HARD exclusion when the library serves that shape, and a soft preference when it does not.
+(n) **Hard-excluding every candidate crashed** on `candidates[0]`. An all-excluded shape is a
+  legitimate no-match.
+(o) **Literal-phrase-only keyword matching was too brittle:** `"why did it fail"` missed "why did
+  that run fail" — the same question with one word changed. All CONTENT words must be present now,
+  in any order, which still refuses the "cold drink / race start" coincidence.
+(p) **The matcher and the plan-tool loader read DIFFERENT SOURCES.** The matcher reads bundled
+  templates from disk; `_plan_from_template` resolves through the service's registered providers.
+  Outside a booted gateway they disagreed, so the router proposed a real template name the loader
+  could not find and turned a working scaffold into `WF_PLAN_TEMPLATE_NOT_FOUND`. Guarded with
+  `_def_resolvable` — a router that breaks the fallback is worse than one that never matched.
+(q) **An INVALID `rigor` keeps the documented "standard" fallback** rather than deferring to the
+  classifier: the caller asked for something and would otherwise get something else with no
+  indication. Only an ABSENT rigor defers.
+
+**PREMISE MISMATCH (E1) — the session's "delete dead chat plan-mode" task is not actionable as
+written.** It says to delete "the whole plan-mode half incl. the dead chat_title wrappers" from
+`context_management.py`. That split ALREADY HAPPENED: the plan-mode half lives in `plan_memory.py`,
+whose own docstring says it becomes deletable once UNIVERSAL-PLANNING replaces the format and the
+Flywheel absorbs the journal. It is not dead — `history.py` (2 call sites) and
+`dashboard/chat_title.py` import it live, and `tests/test_plan_memory.py` covers it. Deleting it now
+would break three live surfaces to front-run a replacement that does not exist until session 41's
+grounded generation. Recorded as a DEVIATION and left for the session that actually replaces the
+format.
+
+**Validated end to end** through the real runtime (bundled provider registered): "audit the auth
+module for security problems" → `audit-sweep` at 0.79 via T3, "why did that run fail" →
+`diagnose-run` at 0.59 via T1, "write up what we know about cold start latency" →
+`knowledge-synthesis` at 0.80 — each returning the template's expanded tree and its steering
+examples. A monitor-shaped intent correctly reports "no template serves a monitor-shaped intent"
+because session 39 deferred `market-monitor` (it needs a `net.fetch` action provider that does not
+exist), and falls back to a scaffold rather than forcing a wrong shape.
+
+**NOT DONE:** T4's embedding tie-break and T5's summarize-then-rematch are BUILT and unit-tested
+(injection points, failure degradation, the re-entry contract that forbids a model-emitted template
+id) but neither is wired to a live embedder or model in `workflow_plan` — T4 needs the embedder
+registry threaded through the plan path, and T5 needs a `one_shot_completion` call, both of which
+belong with session 41's grounding work where the model plumbing already lands. Hybrid COMPOSITION
+returns the names to compose but does not yet build the subworkflow spec. `presets` and
+`lighter_path` are surfaced in the match result and not yet acted on by the planner.
