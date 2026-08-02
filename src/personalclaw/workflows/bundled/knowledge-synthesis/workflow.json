@@ -1,0 +1,70 @@
+{
+  "name": "knowledge-synthesis",
+  "description": "The three-node pattern: look up what's known, synthesize with it, write the result back as one canonical item. Spends exactly one model call.",
+  "source": "bundled",
+  "provenance": "user",
+  "version": 1,
+  "tags": ["knowledge"],
+  "inputs": {
+    "topic": {"type": "string", "required": true, "help": "What to synthesize. Also the item's identity, so re-running updates rather than duplicating."},
+    "material": {"type": "string", "required": false, "default": "", "help": "New material to fold in. Left empty, this re-synthesizes from what is already stored."}
+  },
+  "metadata": {
+    "risk": "low",
+    "capabilities": ["knowledge"],
+    "cost_tier": "metered",
+    "why_one_call": "Both the retrieve and the persist are zero-token action providers, so the only model call is the synthesis itself. Doing either through a stage would triple the cost for no gain.",
+    "steering_examples": [
+      {"event": "kickoff", "description": "Synthesize what we know about cold start latency, folding in today's measurements."},
+      {"event": "mutation", "description": "The retrieved context is stale — ignore items older than a month and re-synthesize."}
+    ]
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "root",
+    "children": [
+      {
+        "kind": "action",
+        "id": "recall",
+        "label": "What do we already know?",
+        "config": {
+          "provider": "knowledge-retrieve",
+          "with": {"query": "{{inputs.topic}}", "top_k": 8, "detail": "compact"}
+        }
+      },
+      {
+        "kind": "stage",
+        "id": "synthesize",
+        "label": "Consolidate into one article",
+        "config": {
+          "model_tier": "standard",
+          "prompt": "Write ONE consolidated article about: {{inputs.topic}}\n\nWhat is already stored (cite as [n]):\n{{nodes.recall.output.items | fenced_sources}}\n\nNew material to fold in:\n{{inputs.material | default('(none — re-synthesize from the stored items alone)')}}\n\nPreserve every distinct detail. Where the stored items and the new material disagree, record both with their sources rather than choosing. If the sources do not cover something, say so instead of filling the gap.",
+          "schema": {
+            "title": "string",
+            "summary": "string",
+            "content": "string",
+            "claims": [{"id": "string", "statement": "string", "confidence": "number"}],
+            "gaps": ["string"]
+          }
+        }
+      },
+      {
+        "kind": "action",
+        "id": "store",
+        "label": "Write it back",
+        "config": {
+          "provider": "knowledge-persist",
+          "with": {
+            "kind": "insight",
+            "title": "{{inputs.topic}}",
+            "content": "{{nodes.synthesize.output.content}}",
+            "summary": "{{nodes.synthesize.output.summary}}",
+            "claims": "{{nodes.synthesize.output.claims}}",
+            "citations": "{{nodes.recall.output.items | map('item_id')}}",
+            "tags": ["synthesis"]
+          }
+        }
+      }
+    ]
+  }
+}

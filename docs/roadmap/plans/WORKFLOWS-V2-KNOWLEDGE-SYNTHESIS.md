@@ -721,3 +721,39 @@ Templates are the plan's proof-of-life — field-tested shapes with real daily c
   needs a `stage` node, since an LLM call inside an action provider is what the action/stage split
   exists to prevent. Background typed-edge inference beyond `contradicts` is parse-ready but unwired.
   The `coverage_gap` → persist-proposal loop and the template slate are session 39's.
+
+- **2026-08-01/02 — CODE DONE (push blocked) — Template slate + long-run validation (session 39, the
+  plan's LAST session).** Branch `feature-wf2-knowledge-slate`. Four bundled templates
+  (`knowledge-synthesis`, `rich-ingest`, `thesis-tracker`, `publish-article`) plus
+  `tests/test_knowledge_longrun_validation.py` for the §8 criteria. 12186 tests. This closes the
+  plan's six sessions (34-39).
+
+- **DEVIATION — 4 of 12 slate items, and every omission is a missing PROVIDER.** `net.fetch` does not
+  exist as an ACTION provider (the egress chokepoint is a library function, not dispatchable), which
+  blocks `trending-repo-digest`, the dual-sink variant, `market-monitor` and `paper-ingest`; there is
+  no calendar source for `meeting-prep` (the plan itself says the event is a template input until one
+  exists, which makes it `knowledge-synthesis` with extra steps); and `quality-document`, the
+  raw→rolling→one-pager tiering and `living-document` are artifact-centric variants of the
+  compiled-truth pattern `thesis-tracker` already demonstrates. Building a template against a
+  provider that cannot be dispatched would ship a spec that validates and then fails at run time —
+  the exact failure `ALLOWED_HOOK_PROVIDERS` exists to prevent.
+
+- **The long-run assertions were mutation-tested.** Removing the sibling window makes the view grow
+  to 840 items over 168 cycles (the test caps at 20); removing the seen-set marking produces 95
+  duplicate re-processings over 20 cycles. Both fail when their mechanism is removed. Idempotency is
+  tested at FIFTY calls because a duplicate-on-Nth bug survives a two-call test.
+
+- **Structural boundaries asserted rather than trusted:** `rich-ingest`'s providers must be exactly
+  `{knowledge-persist, create-task}` (the KNOW-R18 memory boundary), every lens must carry
+  `allow_failure`, each lens must persist under its own kind, and every slate template must render
+  retrieved items through `| fenced_sources` rather than interpolating them raw.
+
+- **Validated live:** all four templates in the Store; the zero-token retrieve correctly reported a
+  coverage gap on an empty store; and `publish-article`'s tail driven against the REAL store — a
+  `reference` stored, the approval recorded as a separate `kind: decision` citing it, a hybrid
+  retrieve finding both, and `fenced_sources` rendering two numbered fenced blocks.
+
+- **NOT DONE:** the synthesis STAGE was not observed to completion live (a real Bedrock subagent call
+  still running after ~7 min, cancelled — the same latency session 37 hit). A minimal `infer` probe
+  confirmed the model path works, so this is latency, not a defect. Criterion #10 (heuristic
+  extraction with NO provider bound) is unverified: it needs a provider-less environment.

@@ -67,6 +67,13 @@ EXPECTED = {
     "knowledge-health",
     "knowledge-lint",
     "gap-healing",
+    # The Knowledge Synthesis slate (§7.1). Four of the twelve: the ones whose mechanisms
+    # actually ship. See the plan's execution log for which were deferred and why — every
+    # omission is a missing PROVIDER (net.fetch, a calendar source), not a missing template.
+    "knowledge-synthesis",
+    "rich-ingest",
+    "thesis-tracker",
+    "publish-article",
 }
 
 
