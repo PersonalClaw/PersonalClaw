@@ -4,7 +4,10 @@
   "source": "bundled",
   "provenance": "user",
   "version": 1,
-  "tags": ["plan", "general"],
+  "tags": [
+    "plan",
+    "general"
+  ],
   "inputs": {
     "goal": {
       "type": "string",
@@ -26,7 +29,10 @@
   },
   "metadata": {
     "risk": "low",
-    "capabilities": ["research", "read"],
+    "capabilities": [
+      "research",
+      "read"
+    ],
     "steering_examples": [
       {
         "event": "kickoff",
@@ -36,7 +42,18 @@
         "event": "mutation",
         "description": "The audit found we already have half of this in loop/watchdog.py — re-run design-approach with that as the starting point rather than a greenfield."
       }
-    ]
+    ],
+    "keywords": [
+      "plan",
+      "break this down",
+      "how should we approach",
+      "roadmap",
+      "milestones"
+    ],
+    "example_outputs": [
+      "a plan with ordered steps and their done-conditions"
+    ],
+    "when_not_to_use": "not for doing the work — use general-project or code-implementation"
   },
   "root": {
     "kind": "sequence",
@@ -89,7 +106,10 @@
         "config": {
           "model_tier": "reasoning",
           "prompt": "Break the approach into milestones that each end in something demonstrable.\n\nEach milestone needs a name, what is true when it is done, and what it depends on. A milestone whose completion cannot be checked is a wish.\n\nReturn JSON: {\"milestones\": [{\"name\": \"…\", \"done_when\": \"…\", \"depends_on\": [\"…\"], \"risk\": \"low|medium|high\"}], \"critical_path\": [\"…\"]}.\n\nApproach:\n{{nodes.design_approach.output}}",
-          "schema": { "milestones": "array", "critical_path": "array" }
+          "schema": {
+            "milestones": "array",
+            "critical_path": "array"
+          }
         }
       },
       {

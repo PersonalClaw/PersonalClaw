@@ -618,6 +618,49 @@ def pause_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
     return _ok(run_id=run_id, pause_requested=True)
 
 
+def steer_run(run_id: str, text: str) -> dict[str, Any]:
+    """Queue a mid-run steering instruction (LOOPS-EVOLUTION R14).
+
+    Recorded ON THE RUN and consumed at the next iteration boundary, exactly like a pause:
+    the tick loop is the single writer, and injecting mid-iteration would race the worker's
+    own state. Queued rather than applied, so the user can steer a run that is busy without
+    waiting for it — the alternative today is cancel-and-restart, which loses the cycle
+    context that made steering worth doing.
+    """
+    run = store.get(run_id)
+    if run is None:
+        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    if run.status in TERMINAL_RUN_STATUSES:
+        # A terminal run cannot act on an instruction, and silently accepting one would
+        # leave the user believing they had changed something.
+        return _err("WF_RUN_ALREADY_TERMINAL", f"run is already {run.status.value}")
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return _err("WF_STEER_EMPTY", "a steering instruction needs text")
+
+    pending = run.extra.get("steering_queue")
+    if not isinstance(pending, list):
+        pending = []
+    pending.append({"text": cleaned[:4000], "queued_at": _now()})
+    run.extra["steering_queue"] = pending
+    store.save(run)
+    return _ok(run_id=run_id, queued=len(pending))
+
+
+def pending_steering(run_id: str) -> dict[str, Any]:
+    """What is queued but not yet consumed — so the UI can show it as pending.
+
+    A queued instruction the user cannot see is indistinguishable from one that was
+    dropped, and they will queue it again.
+    """
+    run = store.get(run_id)
+    if run is None:
+        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    pending = run.extra.get("steering_queue")
+    items = pending if isinstance(pending, list) else []
+    return _ok(run_id=run_id, pending=items, count=len(items))
+
+
 def resume_run(
     run_id: str,
     *,
@@ -755,6 +798,7 @@ def manifest() -> dict[str, Any]:
     rejects. A CI drift test can compare this against the code because both come from the
     same enums.
     """
+    from personalclaw.workflows import loop_aliases
     from personalclaw.workflows.bindings import PIPES
     from personalclaw.workflows.models import (
         CONTAINER_KINDS,
@@ -791,6 +835,11 @@ def manifest() -> dict[str, Any]:
         # never use, so the library would be dead weight.
         macros=macros.macro_names(),
         shared_blocks=blocks.block_names(),
+        # The legacy loop-kind aliases (LOOPS-EVOLUTION R10a). In the manifest because the
+        # picker and any authoring model both need to know that `kind: goal` still resolves
+        # — and because listing them here is what makes the Phase-4 retirement measurable
+        # rather than a guess about who still refers to loops by kind.
+        loop_aliases=loop_aliases.alias_manifest(),
     )
 
 

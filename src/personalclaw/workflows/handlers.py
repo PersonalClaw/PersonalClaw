@@ -369,6 +369,38 @@ async def api_run_pause(request: web.Request) -> web.Response:
     return _reply(result)
 
 
+async def api_run_steer(request: web.Request) -> web.Response:
+    """POST a mid-run steering instruction (LOOPS-EVOLUTION R14).
+
+    Guarded and audited like any other run mutation: injecting an instruction into a
+    running autonomous job changes what it does, and a change to an unattended run that
+    leaves no audit trail is exactly the kind that is impossible to reconstruct later.
+    """
+    denied = _guard(request, "workflow_run_steer")
+    if denied is not None:
+        return denied
+    run_id = request.match_info.get("run_id", "")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    result = service.steer_run(run_id, str((body or {}).get("text", "")))
+    _audit(request, "workflow_run_steer", "success" if result.get("ok") else "failure", run_id)
+    return _reply(result)
+
+
+async def api_run_steering(request: web.Request) -> web.Response:
+    """GET what is queued but unconsumed — so the UI can show it as pending.
+
+    A queued instruction the user cannot see is indistinguishable from one that was
+    dropped, and they will queue it again.
+    """
+    denied = _guard(request, "workflow_run_status")
+    if denied is not None:
+        return denied
+    return _reply(service.pending_steering(request.match_info.get("run_id", "")))
+
+
 async def api_run_resume(request: web.Request) -> web.Response:
     """Answer a gate, or clear a pause.
 
@@ -562,6 +594,8 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_post("/api/workflows/runs/{run_id}/cancel", api_run_cancel)
     app.router.add_post("/api/workflows/runs/{run_id}/pause", api_run_pause)
     app.router.add_post("/api/workflows/runs/{run_id}/resume", api_run_resume)
+    app.router.add_post("/api/workflows/runs/{run_id}/steer", api_run_steer)
+    app.router.add_get("/api/workflows/runs/{run_id}/steering", api_run_steering)
     app.router.add_post("/api/workflows/runs/{run_id}/rewind", api_run_rewind)
     app.router.add_post("/api/workflows/runs/{run_id}/run-from", api_run_from)
     app.router.add_post("/api/workflows/runs/{run_id}/fork", api_run_fork)

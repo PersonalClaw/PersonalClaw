@@ -116,28 +116,66 @@ def is_empty_turn(
     return not benign
 
 
+def learning_decision_for_turn(session, user_message: str, tool_calls: int, cfg=None):
+    """The turn's single gate decision, for every capture path to share.
+
+    Exists as its own function so the two reviews in one turn consume ONE object.
+    Threaded as an argument rather than stashed on the session: ``_ChatSession``
+    defines ``__slots__``, so an attribute would raise at runtime — and passing it
+    explicitly makes the sharing visible at the call site instead of implicit in
+    object state.
+    """
+    from personalclaw import after_turn_review as atr
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.learning import Cadence, LearningGate
+
+    if cfg is None:
+        cfg = AppConfig.load().learning
+    gate = LearningGate.for_session(session, cfg)
+    # Permission is settled without reading the message at all. Classifying the
+    # text of a restricted session — even with a free regex — inspects content
+    # that the session's memory_mode promised was out of scope for learning.
+    provisional = gate.decide(Cadence.PER_TURN, tool_calls=tool_calls or 0)
+    if not provisional.permitted:
+        return provisional
+    return gate.decide(
+        Cadence.PER_TURN,
+        correction=atr.is_correction_signal(user_message),
+        tool_calls=tool_calls or 0,
+    )
+
+
 def _maybe_after_turn_review(
-    state, session, user_message: str, assistant_text: str, tool_calls: int, provider=None
+    state,
+    session,
+    user_message: str,
+    assistant_text: str,
+    tool_calls: int,
+    provider=None,
+    decision=None,
 ) -> None:
     """Run the after-turn self-improvement review when the turn warrants it.
 
-    Gated (config + non-ephemeral + correction-or-≥N-tools); the actual capture
-    is best-effort and synchronous-but-cheap (a heuristic + a guarded
-    write_lesson — no LLM call in this path). Surfaces a quiet 'Learned: …' chip.
+    Eligibility comes from ONE :class:`LearningGate` decision, computed by
+    :func:`learning_decision_for_turn` and consumed by both the cheap facet capture
+    and the expensive review — and by the skill-ladder review, which is handed the
+    same object. Two independent computations of one rule is how they drift.
+
+    The actual capture is best-effort and synchronous-but-cheap (a heuristic + a
+    guarded write_lesson — no LLM call in this path). Surfaces a 'Learned: …' chip.
     """
     from personalclaw import after_turn_review as atr
     from personalclaw.config.loader import AppConfig
 
     cfg = AppConfig.load().learning
-    # Restricted (incognito/temporary) sessions promise "no memory writes" —
-    # they must never feed durable learning. `_ephemeral` is the separate
-    # legacy flag; `is_restricted` is the memory_mode contract.
-    if (
-        not getattr(cfg, "enabled", True)
-        or bool(getattr(session, "_ephemeral", False))
-        or bool(getattr(session, "is_restricted", False))
-    ):
+    # The gate owns the whole permission question — config, ephemeral, AND the
+    # incognito/temporary registry. Restricted sessions promise "no memory
+    # writes", so a denial here suppresses every capture path below it.
+    if decision is None:
+        decision = learning_decision_for_turn(session, user_message, tool_calls, cfg)
+    if not decision.permitted:
         return
+    correction = atr.is_correction_signal(user_message)
     from personalclaw.memory_service import service_for
 
     memory = state.context_builder.get_memory_for(
@@ -156,16 +194,10 @@ def _maybe_after_turn_review(
             "activity_event",
             {"session": session.key, "kind": "learned", "text": f"Learned: {_flabel}"},
         )
-    # The expensive review (procedural drain + correction→lesson) stays gated.
-    correction = atr.is_correction_signal(user_message)
-    if not atr.should_review(
-        enabled=getattr(cfg, "enabled", True),
-        is_ephemeral=bool(getattr(session, "_ephemeral", False)),
-        correction=correction,
-        tool_calls=tool_calls or 0,
-        min_tool_calls=getattr(cfg, "min_tool_calls", 4),
-        correction_heuristic=getattr(cfg, "correction_heuristic", True),
-    ):
+    # The expensive review (procedural drain + correction→lesson) needs the strict
+    # answer — `worthwhile`, not just `permitted`. Same decision object as the
+    # cheap path above, so the two cannot disagree about this turn.
+    if not decision.worthwhile:
         return
     # Procedural memory (M5d): drain this turn's tool outcomes (native runtime
     # only — ACP providers don't accumulate them) into how-to-work priors. The
@@ -191,41 +223,71 @@ def _maybe_after_turn_review(
             "activity_event",
             {"session": session.key, "kind": "learned", "text": f"Learned: {_label}"},
         )
+    _stage_turn_capture(session, user_message, learned or facet_learned, cfg)
+
+
+def _stage_turn_capture(session, user_message: str, learned: str | None, cfg) -> None:
+    """Record this per-turn pass in the staging log — outcome included.
+
+    Runs whether or not anything was captured, which is the entire point: a pass
+    that found nothing and a pass that crashed used to look identical from
+    outside. The hygiene policy is applied here too, so a fenced payload that
+    reached the extractor still cannot reach the durable log.
+
+    Never raises into the turn. A staging failure must not cost the user their
+    reply — but it IS logged, because a silently broken observability floor is
+    worse than none.
+    """
+    if not getattr(cfg, "staging_enabled", True):
+        return
+    try:
+        from personalclaw.learning import Cadence, scrub
+        from personalclaw.learning.staging import get_store
+
+        store = get_store()
+        with store.flush(Cadence.PER_TURN.value) as result:
+            if learned:
+                verdict = scrub(learned)
+                if verdict.usable and store.stage(
+                    cadence=Cadence.PER_TURN.value,
+                    kind="lesson",
+                    content=verdict.text,
+                    session_key=str(getattr(session, "key", "") or ""),
+                    meta={"removed": verdict.removed},
+                ):
+                    result["staged"] = 1
+                elif verdict.removed:
+                    result["detail"] = "hygiene: " + ",".join(verdict.removed)
+    except Exception:
+        logger.debug("learning staging failed", exc_info=True)
 
 
 def _maybe_skill_ladder_review(
-    state, session, user_message: str, assistant_text: str, tool_calls: int
+    state, session, user_message: str, assistant_text: str, tool_calls: int, decision=None
 ) -> None:
     """Schedule the forked-LLM 4-tier skill-ladder review (learn-after-turn-review
     skill axis) as a background task — non-blocking, never delays the next turn.
 
-    Same gate as the memory review (enabled + non-ephemeral + correction-or-≥N-tools),
-    plus its own ``skill_ladder`` flag. Every skill it decides on is ENQUEUED as a
-    propose-only proposal (never a live write). Best-effort; a 'Proposed skill: …'
-    chip surfaces if something lands."""
+    Consumes the SAME gate ``decision`` the memory review used (passed in by the
+    caller; recomputed only if this runs standalone), plus its own ``skill_ladder``
+    cadence flag. Every skill it decides on is ENQUEUED as a propose-only proposal
+    (never a live write). Best-effort; a 'Proposed skill: …' chip surfaces if
+    something lands."""
     import asyncio
 
     from personalclaw import after_turn_review as atr
     from personalclaw.config.loader import AppConfig
 
     cfg = AppConfig.load().learning
-    if not getattr(cfg, "enabled", True) or not getattr(cfg, "skill_ladder", True):
-        return
-    # Same restricted-session guard as the memory review: incognito/temporary
-    # sessions must not seed skill proposals from their content.
-    if bool(getattr(session, "_ephemeral", False)) or bool(
-        getattr(session, "is_restricted", False)
-    ):
-        return
-    correction = atr.is_correction_signal(user_message)
-    if not atr.should_review(
-        enabled=getattr(cfg, "enabled", True),
-        is_ephemeral=bool(getattr(session, "_ephemeral", False)),
-        correction=correction,
-        tool_calls=tool_calls or 0,
-        min_tool_calls=getattr(cfg, "min_tool_calls", 4),
-        correction_heuristic=getattr(cfg, "correction_heuristic", True),
-    ):
+    if decision is None:
+        decision = learning_decision_for_turn(session, user_message, tool_calls, cfg)
+    # The ladder is an expensive LLM pass: it needs the strict answer AND its own
+    # cadence flag. `permitted` alone would run a forked model on every turn.
+    #
+    # Checked BEFORE anything reads `user_message`: a restricted session promised
+    # that its content feeds no learning, and inspecting the message to classify
+    # it is already a read of content that should have been out of scope.
+    if not decision.allowed or not getattr(cfg, "skill_ladder", True):
         return
     # Candidate skills to bias refinement toward (the always-on + indexed set).
     try:
@@ -2792,9 +2854,23 @@ async def _run_chat(
             # Continuous learning: after a learning-worthy turn, capture a durable
             # correction before the next turn (vs waiting for session-end
             # consolidation). Best-effort + gated; never blocks. Skips incognito.
+            # ONE gate decision for this turn, shared by both reviews below. If they
+            # each computed their own, the two copies of the rule could disagree —
+            # which is exactly the drift the LearningGate exists to prevent.
+            try:
+                _turn_learning = learning_decision_for_turn(session, message, _turn_tool_call_count)
+            except Exception:
+                logger.debug("learning gate evaluation failed", exc_info=True)
+                _turn_learning = None
             try:
                 _maybe_after_turn_review(
-                    state, session, message, assistant_text, _turn_tool_call_count, provider=client
+                    state,
+                    session,
+                    message,
+                    assistant_text,
+                    _turn_tool_call_count,
+                    provider=client,
+                    decision=_turn_learning,
                 )
             except Exception:
                 logger.debug("after-turn review failed", exc_info=True)
@@ -2802,7 +2878,12 @@ async def _run_chat(
             # skill (propose-only queue). Non-blocking; own config flag.
             try:
                 _maybe_skill_ladder_review(
-                    state, session, message, assistant_text, _turn_tool_call_count
+                    state,
+                    session,
+                    message,
+                    assistant_text,
+                    _turn_tool_call_count,
+                    decision=_turn_learning,
                 )
             except Exception:
                 logger.debug("skill-ladder review scheduling failed", exc_info=True)

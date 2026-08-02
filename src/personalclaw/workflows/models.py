@@ -94,6 +94,12 @@ class LoopMode(str, Enum):
     COUNTED = "counted"
     UNTIL = "until"
     UNTIL_DRY = "until_dry"  # clean-streak termination
+    #: Runs until something OUTSIDE it says stop — a sibling in a `join: any` parallel
+    #: completing, user cancellation, or the run's timeout. The cleanest expression of a
+    #: watcher/monitor, and the only mode with no self-terminating condition, which is why
+    #: it is the only one that requires an external reaper (`reap_watchers`) to be a
+    #: bounded run rather than an immortal one.
+    UNTIL_CANCELLED = "until_cancelled"
 
 
 class ItemErrorPolicy(str, Enum):
@@ -501,12 +507,41 @@ class DefMetadata:
     requirements: dict[str, list[str]] = field(default_factory=dict)  # binaries/credentials
     steering_examples: list[dict[str, str]] = field(default_factory=list)
 
+    # The matchable surface. TYPED FIELDS rather than an open metadata
+    # dict, because `from_dict` drops anything it does not name — measured, annotating all 18
+    # bundled templates with `keywords` left the matcher reading 0/18, so it ran entirely on
+    # description overlap while reporting matches at 0.02-0.22 confidence. A control that is
+    # present and inert.
+    #
+    #: T1's inverted-index terms. What a user would actually type.
+    keywords: list[str] = field(default_factory=list)
+    #: T2's strongest signal: what the template PRODUCES. An intent resembles its desired output
+    #: far more than it resembles prose about a workflow.
+    example_outputs: list[str] = field(default_factory=list)
+    #: T3's constraint — which intent shapes this template serves. Empty means shape-agnostic.
+    shapes: list[str] = field(default_factory=list)
+    #: Rendered when this template is a REJECTED near-match, so the miss explains itself.
+    when_not_to_use: str = ""
+    #: A cheaper route for a trivial intent (direct answer / one subagent) instead of a full run.
+    lighter_path: str = ""
+    #: Named starter parameterizations offered before any generation.
+    presets: list[str] = field(default_factory=list)
+    #: Free-text phrases for T4's embedding tie-break.
+    match_text: str = ""
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "risk": self.risk,
             "capabilities": list(self.capabilities),
             "requirements": {k: list(v) for k, v in self.requirements.items()},
             "steering_examples": [dict(e) for e in self.steering_examples],
+            "keywords": list(self.keywords),
+            "example_outputs": list(self.example_outputs),
+            "shapes": list(self.shapes),
+            "when_not_to_use": self.when_not_to_use,
+            "lighter_path": self.lighter_path,
+            "presets": list(self.presets),
+            "match_text": self.match_text,
         }
 
     @classmethod
@@ -516,6 +551,13 @@ class DefMetadata:
         return cls(
             risk=str(d.get("risk", "low") or "low"),
             capabilities=[str(c) for c in (d.get("capabilities") or [])],
+            keywords=[str(k) for k in (d.get("keywords") or [])],
+            example_outputs=[str(o) for o in (d.get("example_outputs") or [])],
+            shapes=[str(sh) for sh in (d.get("shapes") or [])],
+            when_not_to_use=str(d.get("when_not_to_use", "") or ""),
+            lighter_path=str(d.get("lighter_path", "") or ""),
+            presets=[str(pr) for pr in (d.get("presets") or [])],
+            match_text=str(d.get("match_text", "") or ""),
             requirements={
                 str(k): [str(x) for x in (v or [])]
                 for k, v in (reqs.items() if isinstance(reqs, dict) else [])
@@ -545,6 +587,14 @@ class WorkflowDef:
     metadata: DefMetadata = field(default_factory=DefMetadata)
     on_overlap: OverlapPolicy = OverlapPolicy.SKIP
     tags: list[str] = field(default_factory=list)
+    #: Opaque to the engine CORE: rendered into stage prompts via bindings
+    #: (`{{defaults.runtime_hints.judge.rubric}}`) and consumed by a small set of
+    #: engine-ENFORCED invariants (judge isolation, the actor transition rule, the
+    #: proof precondition). Deliberately a free dict rather than a typed dataclass —
+    #: templates author it as YAML, and a schema here would force every new hint
+    #: through a core change. `judge_contract.hints_from_dict` parses the half the
+    #: engine enforces, leniently, defaulting to the STRICT reading.
+    runtime_hints: dict[str, Any] = field(default_factory=dict)
     created_at: str = ""
     updated_at: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
@@ -563,6 +613,7 @@ class WorkflowDef:
             "metadata",
             "on_overlap",
             "tags",
+            "runtime_hints",
             "created_at",
             "updated_at",
         }
@@ -582,6 +633,7 @@ class WorkflowDef:
             "on_overlap": self.on_overlap.value,
             "root": self.root.to_dict(),
             "tags": list(self.tags),
+            "runtime_hints": dict(self.runtime_hints),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -612,6 +664,9 @@ class WorkflowDef:
             metadata=DefMetadata.from_dict(d.get("metadata") or {}),
             on_overlap=overlap,
             tags=[str(t) for t in (d.get("tags") or [])],
+            runtime_hints=(
+                dict(d["runtime_hints"]) if isinstance(d.get("runtime_hints"), dict) else {}
+            ),
             created_at=str(d.get("created_at", "") or ""),
             updated_at=str(d.get("updated_at", "") or ""),
             extra={k: v for k, v in d.items() if k not in cls._KNOWN},

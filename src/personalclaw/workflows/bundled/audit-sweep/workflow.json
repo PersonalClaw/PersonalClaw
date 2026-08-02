@@ -42,7 +42,22 @@
         "event": "mutation",
         "description": "Two of the confirmed findings are the same bug seen from different angles — merge them and re-run the fix leg once."
       }
-    ]
+    ],
+    "keywords": [
+      "audit",
+      "review",
+      "find issues",
+      "find problems",
+      "sweep",
+      "check for bugs"
+    ],
+    "example_outputs": [
+      "a ranked list of confirmed findings with fixes"
+    ],
+    "shapes": [
+      "review"
+    ],
+    "when_not_to_use": "not for writing new code — use code-implementation"
   },
   "root": {
     "kind": "loop",

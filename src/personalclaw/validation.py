@@ -772,6 +772,15 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # a subagent to paste text. Registered in the action-provider registry in the same
         # commit as this line.
         "artifact-update",
+        # The knowledge write/read pair. Registered in the
+        # action-provider registry in the same commit as these lines — the registry's own
+        # comment records why: a provider in one set but not the other validates, saves, and
+        # then fails at run time.
+        "knowledge-persist",
+        "knowledge-retrieve",
+        "knowledge-health",
+        "knowledge-consolidate",
+        "knowledge-gaps",
     }
 )
 

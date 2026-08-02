@@ -56,6 +56,7 @@ from personalclaw.workflows.models import (
     Node,
     NodeKind,
     lane_for,
+    walk,
 )
 
 #: Default per-lane admission caps. `compute` is effectively unmetered — a transform is
@@ -763,6 +764,32 @@ def _on_error(node: Node) -> str:
 # ── derived container state ──────────────────────────────────────────────────
 
 
+def derive_state(
+    node: Node,
+    path: str,
+    states: dict[str, InstanceState],
+    *,
+    declined_edges: set[str] | None = None,
+    outputs: dict[str, Any] | None = None,
+    inputs: dict[str, Any] | None = None,
+    iterations: dict[str, int] | None = None,
+) -> InstanceState:
+    """One subtree's effective state, through the same derivation the scheduler uses.
+
+    Public so the controller can ask "has this loop iteration's whole body finished?" without a
+    second, divergent notion of completeness — a container-bodied loop advances on that answer,
+    and two implementations of it would disagree exactly where it matters.
+    """
+    return _derive(
+        node,
+        path,
+        states,
+        set(declined_edges or ()),
+        dict(iterations or {}),
+        BindingContext(inputs=dict(inputs or {}), node_outputs=dict(outputs or {})),
+    )
+
+
 def _derive(
     node: Node,
     path: str,
@@ -906,10 +933,96 @@ def loop_should_continue(
             return False, "condition_unresolvable"
         return (not _truthy(value), "" if not _truthy(value) else "condition_met")
 
+    if mode == LoopMode.UNTIL_CANCELLED:
+        # No self-terminating condition by definition: a watcher stops when something
+        # outside it says so. `max_iterations` above still applies, and `reap_watchers`
+        # is what turns "the work this watcher accompanied is finished" into a stop.
+        return True, ""
+
     # until_dry
     streak = cfg.get("streak", 1)
     need = streak if isinstance(streak, int) and streak > 0 else 1
     return (dry_streak < need, "" if dry_streak < need else "dry_streak")
+
+
+def reap_watchers(
+    root: Node,
+    states: dict[str, InstanceState],
+    *,
+    iterations: dict[str, int] | None = None,
+) -> list[str]:
+    """Paths of `until_cancelled` loops whose reason to exist has finished.
+
+    The plan describes a watcher as cancelled by "a sibling completing in a `join: any`
+    parallel". Measured, that does not happen on its own: `container_outcome` checks for
+    non-terminal children BEFORE the ANY rule, so a parallel whose watcher is still running
+    reads RUNNING and the run never completes. That check is correct and deliberate
+    (a join must not fire early on a fan-out whose other legs are still working) — so the
+    reaping is a separate, narrower rule rather than a change to join semantics.
+
+    The rule: inside a `join: any` (or `quorum`, once met) parallel, an `until_cancelled`
+    loop is reaped once ENOUGH of its non-watcher siblings have succeeded. A watcher never
+    counts toward its own parallel's join, because a mode with no exit condition can never
+    be the leg that satisfies one.
+
+    Returns paths, not a mutation: the controller owns writes, and keeping this pure is what
+    makes "would this watcher be reaped?" answerable in a unit test.
+    """
+    iters = dict(iterations or {})
+    reap: list[str] = []
+    for path, node in walk(root):
+        if node.kind != NodeKind.PARALLEL:
+            continue
+        cfg = node.config or {}
+        try:
+            join = JoinMode(str(cfg.get("join", "all") or "all"))
+        except ValueError:
+            join = JoinMode.ALL
+        if join == JoinMode.ALL:
+            # Under `join: all` the watcher IS a leg the container waits for; reaping it
+            # would silently change the template's declared completion semantics.
+            continue
+
+        watchers: list[tuple[str, Node]] = []
+        worker_states: list[InstanceState] = []
+        for index, child in enumerate(node.children):
+            cpath = f"{path}.children[{index}]"
+            if _is_until_cancelled(child):
+                watchers.append((cpath, child))
+                continue
+            worker_states.append(_derive_child_state(child, cpath, states, iters))
+        if not watchers:
+            continue
+
+        successes = [st for st in worker_states if _is_success(st)]
+        if join == JoinMode.QUORUM:
+            quorum = cfg.get("quorum", 0)
+            need = max(1, quorum if isinstance(quorum, int) else 0)
+        else:
+            need = 1
+        if not worker_states or len(successes) < need:
+            continue
+        for wpath, _w in watchers:
+            if not _is_terminal(states.get(wpath, InstanceState.PENDING)):
+                reap.append(wpath)
+    return reap
+
+
+def _is_until_cancelled(node: Node) -> bool:
+    if node.kind != NodeKind.LOOP:
+        return False
+    return str((node.config or {}).get("mode", "") or "") == LoopMode.UNTIL_CANCELLED.value
+
+
+def _derive_child_state(
+    node: Node, path: str, states: dict[str, InstanceState], iterations: dict[str, int]
+) -> InstanceState:
+    """A parallel child's derived state, for the reap decision only.
+
+    Containers hold no state of their own, so a `join: any` parallel whose worker leg is a
+    `sequence` would read PENDING from the raw map and the watcher would never be reaped.
+    """
+    return _derive(node, path, states, set(), iterations, BindingContext())
 
 
 def _truthy(value: Any) -> bool:

@@ -2842,7 +2842,7 @@ class TestPlanValidationStuck:
 
     def test_strip_plan_markers_clears_has_plan(self):
         """After stripping, has_plan must be False so ensure_go_all_option doesn't run."""
-        from personalclaw.context_management import (
+        from personalclaw.plan_memory import (
             strip_plan_markers,
             validate_plan_format,
         )

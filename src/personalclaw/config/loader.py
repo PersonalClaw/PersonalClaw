@@ -1186,6 +1186,176 @@ class LearningConfig:
             "never installed automatically. Off = memory-only learning.",
         ),
     )
+    min_evidence: int = field(
+        default=3,
+        metadata=_meta(
+            "Minimum Evidence",
+            "How many separate occurrences a pattern needs before it can be proposed "
+            "as durable learning. One is an anecdote and two a coincidence; this same "
+            "floor is shared by the promotion ladder, pattern synthesis, and inferred "
+            "proposals, so they cannot disagree about what counts as evidence.",
+        ),
+    )
+    staging_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Capture Staging Log",
+            "Record every capture pass in an append-only log with an explicit outcome "
+            "(produced / nothing-found / error). This is what makes a silently broken "
+            "capture path visible — without it, a pass that crashes looks exactly like "
+            "a quiet day. Off = capture still runs, but its failures are invisible.",
+        ),
+    )
+    min_session_score: float = field(
+        default=0.0,
+        metadata=_meta(
+            "Minimum Session Score",
+            "Sessions scoring below this (0.0-1.0, weighted toward decisions rather "
+            "than raw turn count) are skipped by the session-end consolidation pass. "
+            "0 = score every session; raise it to stop paying to learn from thin ones.",
+        ),
+    )
+    context_budget_tokens: int = field(
+        default=4000,
+        metadata=_meta(
+            "Learning Context Budget",
+            "Token budget for the ranked learning block (lessons, skills, memory, "
+            "retrieved context) injected each turn. Only retrieved context is ever "
+            "trimmed — lessons and instructions are never crowded out, and an item "
+            "that does not fit is dropped whole rather than cut mid-sentence.",
+        ),
+    )
+    curator_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Learning Curator",
+            "Age the learned library (skills, templates) on the consolidation cadence: "
+            "unused items go stale, then archived. Never deletes, always reversible, and "
+            "refuses any pass that would cut more than half the library. Off = the "
+            "library grows without grooming.",
+        ),
+    )
+    propose_quota_per_run: int = field(
+        default=5,
+        metadata=_meta(
+            "Proposals Per Run",
+            "How many proposals one learning pass may file. A pass that files twenty "
+            "is not being thorough, it is being unreadable — and a queue nobody "
+            "finishes reading is a queue that stops being read at all.",
+        ),
+    )
+
+
+@dataclass
+class KnowledgeConfig:
+    """Knowledge-store semantics (WORKFLOWS-V2-KNOWLEDGE-SYNTHESIS §2.1).
+
+    The knobs here all govern how much a synthesis loop is allowed to write and how long
+    what it wrote stays trusted. They are config rather than constants because the right
+    answer depends on how the owner uses the store: a research-heavy user wants larger
+    reports, and someone tracking fast-moving facts wants shorter default expiry.
+    """
+
+    idempotent_persist: bool = field(
+        default=True,
+        metadata=_meta(
+            "Idempotent Knowledge Writes",
+            "Resolve a knowledge write by its logical identity (kind + title) and skip it "
+            "entirely when the content is unchanged. This is what stops a retried, resumed "
+            "or rewound synthesis node from writing a second near-identical article that "
+            "later reads as independent corroboration. Off = every persist inserts.",
+        ),
+    )
+    require_citations: bool = field(
+        default=True,
+        metadata=_meta(
+            "Require Citations On Synthesis",
+            "Refuse to store a synthesized item (insight, report, overview) with no "
+            "citations unless it is explicitly marked unsourced. An unsourced synthesis is "
+            "indistinguishable from a confident guess once it is being retrieved as fact.",
+        ),
+    )
+    report_budget_chars: int = field(
+        default=40_000,
+        metadata=_meta(
+            "Report Size Budget",
+            "Largest a single `report` knowledge item may be, in characters. Exceeding it "
+            "returns a condense-and-retry error rather than failing the run, so the "
+            "synthesizing stage can shorten and try again.",
+        ),
+    )
+    default_ttl: str = field(
+        default="",
+        metadata=_meta(
+            "Default Knowledge Expiry",
+            "Optional default expiry for newly persisted items (e.g. `30d`, `12h`). Blank "
+            "means knowledge does not expire unless a write asks for it. Expiry demotes an "
+            "item in retrieval rather than deleting it — a stale fact is still evidence of "
+            "what was believed.",
+        ),
+    )
+    max_mentions_per_claim: int = field(
+        default=20,
+        metadata=_meta(
+            "Max Sources Per Claim",
+            "How many independent sources a single claim will accumulate before it stops "
+            "recording new ones. Confidence saturates long before this; the cap exists so a "
+            "high-traffic claim cannot grow its evidence list without bound.",
+        ),
+    )
+    synthesis_window: int = field(
+        default=20,
+        metadata=_meta(
+            "Synthesis Window",
+            "How many recent findings a long-running watcher's synthesis stage sees per cycle. "
+            "Without a window, cycle 50 carries all 50 cycles of findings and every cycle costs "
+            "more than the last — a run that gets slower and more expensive until it hits a "
+            "context limit, with nothing indicating why.",
+        ),
+    )
+    lint_every_n_persists: int = field(
+        default=12,
+        metadata=_meta(
+            "Knowledge Lint Cadence",
+            "Writes between semantic lint passes. Counted in WRITES rather than hours: a store "
+            "nobody added to does not need linting, and a busy week needs it more than once.",
+        ),
+    )
+    consolidate_min_cluster: int = field(
+        default=5,
+        metadata=_meta(
+            "Smallest Consolidation Cluster",
+            "Fewest related items worth spending one model call to merge. Below about five, a "
+            "summary loses more detail than it saves space.",
+        ),
+    )
+    session_brief_max_tokens: int = field(
+        default=800,
+        metadata=_meta(
+            "Session Brief Budget",
+            "Token ceiling for the project digest injected at the start of every workflow run in "
+            "a project. Small by default because it is paid on EVERY run — a generous budget "
+            "becomes a permanent cost nobody attributes to the right feature. Items are dropped "
+            "whole when the budget binds, and the brief says how many it left out.",
+        ),
+    )
+    conflict_model_pass: bool = field(
+        default=True,
+        metadata=_meta(
+            "Semantic Conflict Check",
+            "After the free deterministic check, send claims it could not separate to one "
+            "fast-model call to look for contradictions. Off leaves only the provable conflicts "
+            "flagged — cheaper, and it still catches the numeric and polarity cases.",
+        ),
+    )
+    consolidate_min_hours: int = field(
+        default=6,
+        metadata=_meta(
+            "Hours Between Consolidation Passes",
+            "Floor between consolidation sweeps. The pass is expensive and its input barely "
+            "changes minute to minute, so a tighter cadence pays repeatedly for the same answer.",
+        ),
+    )
 
 
 @dataclass
@@ -2273,6 +2443,10 @@ class AppConfig:
         default_factory=LearningConfig,
         metadata=_meta("Learning", "Per-turn self-improvement review configuration."),
     )
+    knowledge: KnowledgeConfig = field(
+        default_factory=KnowledgeConfig,
+        metadata=_meta("Knowledge", "Knowledge-store write semantics and expiry."),
+    )
     workflows: WorkflowsConfig = field(
         default_factory=WorkflowsConfig,
         metadata=_meta("Workflows", "Workflow SOP surfacing configuration."),
@@ -2444,6 +2618,10 @@ class AppConfig:
         learning_data = data.get("learning", {})
         if not isinstance(learning_data, dict):
             learning_data = {}
+
+        knowledge_data = data.get("knowledge", {})
+        if not isinstance(knowledge_data, dict):
+            knowledge_data = {}
 
         security_data = data.get("security", {})
         if not isinstance(security_data, dict):
@@ -2762,6 +2940,27 @@ class AppConfig:
                 correction_heuristic=bool(learning_data.get("correction_heuristic", True)),
                 surface_chip=bool(learning_data.get("surface_chip", True)),
                 skill_ladder=bool(learning_data.get("skill_ladder", True)),
+                min_evidence=int(learning_data.get("min_evidence", 3) or 3),
+                staging_enabled=bool(learning_data.get("staging_enabled", True)),
+                min_session_score=float(learning_data.get("min_session_score", 0.0) or 0.0),
+                context_budget_tokens=int(learning_data.get("context_budget_tokens", 4000) or 4000),
+                curator_enabled=bool(learning_data.get("curator_enabled", True)),
+                propose_quota_per_run=int(learning_data.get("propose_quota_per_run", 5) or 5),
+            ),
+            knowledge=KnowledgeConfig(
+                idempotent_persist=bool(knowledge_data.get("idempotent_persist", True)),
+                require_citations=bool(knowledge_data.get("require_citations", True)),
+                report_budget_chars=int(knowledge_data.get("report_budget_chars", 40000) or 40000),
+                default_ttl=str(knowledge_data.get("default_ttl", "") or ""),
+                max_mentions_per_claim=int(knowledge_data.get("max_mentions_per_claim", 20) or 20),
+                synthesis_window=int(knowledge_data.get("synthesis_window", 20) or 20),
+                lint_every_n_persists=int(knowledge_data.get("lint_every_n_persists", 12) or 12),
+                consolidate_min_cluster=int(knowledge_data.get("consolidate_min_cluster", 5) or 5),
+                consolidate_min_hours=int(knowledge_data.get("consolidate_min_hours", 6) or 6),
+                session_brief_max_tokens=int(
+                    knowledge_data.get("session_brief_max_tokens", 800) or 800
+                ),
+                conflict_model_pass=bool(knowledge_data.get("conflict_model_pass", True)),
             ),
             security=SecurityConfig(
                 denied_commands=[
@@ -2994,6 +3193,7 @@ class AppConfig:
             "skills": asdict(self.skills),
             "workflows": asdict(self.workflows),
             "learning": asdict(self.learning),
+            "knowledge": asdict(self.knowledge),
             "security": asdict(self.security),
             "auth": asdict(self.auth),
             "guardrails": asdict(self.guardrails),

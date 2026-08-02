@@ -545,6 +545,32 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "workflows.model_tier_reasoning": {"type": "str", "max_len": 32},
     "workflows.model_tier_standard": {"type": "str", "max_len": 32},
     "workflows.model_tier_fast": {"type": "str", "max_len": 32},
+    # LEARNING-FLYWHEEL capture: the knobs worth changing without a restart. The
+    # evidence floor and the session-score threshold are how an owner tunes how
+    # eagerly the system learns, and staging can be turned off if the log is
+    # unwanted — so all three are live-editable.
+    "learning.min_evidence": {"type": "int", "min": 1, "max": 20},
+    "learning.staging_enabled": {"type": "bool"},
+    "learning.min_session_score": {"type": "float", "min": 0.0, "max": 1.0},
+    "learning.propose_quota_per_run": {"type": "int", "min": 1, "max": 25},
+    "learning.curator_enabled": {"type": "bool"},
+    "learning.context_budget_tokens": {"type": "int", "min": 500, "max": 100000},
+    # The write-semantics knobs worth changing without a restart.
+    # `require_citations` is here deliberately — an owner mid-research may need to store an
+    # unsourced note and should not have to restart the gateway to do it.
+    "knowledge.idempotent_persist": {"type": "bool"},
+    "knowledge.require_citations": {"type": "bool"},
+    "knowledge.report_budget_chars": {"type": "int", "min": 1000, "max": 500000},
+    "knowledge.max_mentions_per_claim": {"type": "int", "min": 1, "max": 200},
+    # The long-run + maintenance cadences. Runtime-editable because the right value depends on
+    # what a store is being used for, and finding it means adjusting and watching — which a
+    # restart per attempt makes nobody do.
+    "knowledge.synthesis_window": {"type": "int", "min": 1, "max": 200},
+    "knowledge.lint_every_n_persists": {"type": "int", "min": 1, "max": 1000},
+    "knowledge.consolidate_min_cluster": {"type": "int", "min": 2, "max": 100},
+    "knowledge.consolidate_min_hours": {"type": "int", "min": 0, "max": 720},
+    "knowledge.session_brief_max_tokens": {"type": "int", "min": 0, "max": 8000},
+    "knowledge.conflict_model_pass": {"type": "bool"},
     # The owner-login knobs. Runtime-editable so turning login on
     # or off, or loosening a lockout you tripped, takes effect on the next request without
     # a restart. The PASSWORD is deliberately NOT here and never will be: a credential is

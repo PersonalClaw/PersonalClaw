@@ -134,6 +134,7 @@ def create_export_zip() -> tuple[bytes, dict]:
 
     _wal_checkpoint(pc / "memory.db")
     _wal_checkpoint(pc / "memory_index.db")
+    _wal_checkpoint(pc / "learning.db")
 
     buf = io.BytesIO()
     contents_summary: dict = {}
@@ -155,7 +156,12 @@ def create_export_zip() -> tuple[bytes, dict]:
                 contents_summary[fname] = src.stat().st_size
 
         # SQLite databases via backup API
-        for db_name in ("memory.db", "memory_index.db"):
+        # learning.db carries the capture staging log + flush outcome records. It
+        # travels with the export so the flywheel's observability history survives a
+        # move — a restored home that reports "no capture activity" because the log
+        # was left behind is indistinguishable from a broken capture path, which is
+        # the exact ambiguity the outcome records exist to remove.
+        for db_name in ("memory.db", "memory_index.db", "learning.db"):
             src = pc / db_name
             if src.is_file() and not src.is_symlink():
                 db_buf = io.BytesIO()
@@ -285,6 +291,15 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                 else:
                     _merge_memory(snap / "memory.db", pc / "memory.db")
                     summary["items"].append("memory (merged)")
+
+            # Staging is append-only and prunable: copy it when absent, never merge.
+            # Merging two capture logs would double-count evidence occurrences, and
+            # the evidence floor (`learning.min_evidence`) is what decides whether a
+            # pattern is real — inflating it would manufacture proposals from a
+            # restore rather than from the user's actual behaviour.
+            if (snap / "learning.db").is_file() and not (pc / "learning.db").is_file():
+                shutil.copy2(str(snap / "learning.db"), str(pc / "learning.db"))
+                summary["items"].append("learning staging (copied)")
 
             if (snap / "crons.json").is_file():
                 if (pc / "crons.json").is_file():

@@ -46,12 +46,34 @@ def anyio_backend() -> str:
 #: The six the plan's §6 table names. Asserted as a SET so a template silently disappearing
 #: from the wheel is a failure rather than a smaller listing.
 EXPECTED = {
+    # The general-purpose library (WF2 Slice 9a).
     "audit-sweep",
     "code-implementation",
     "deep-research",
     "design-review",
     "produce-and-audit",
     "project-planning",
+    # The loop-kind families: descendants
+    # of the five loop kinds the plan replaces. `deep-research` above doubles as the
+    # research-loop descendant, which is why there are five here rather than six.
+    "goal-pursuit-open-ended",
+    "goal-pursuit-verifiable",
+    "general-project",
+    "design-project",
+    "diagnose-run",
+    # The knowledge maintenance trio, ordered cheapest first: health
+    # is zero-LLM and gates the other two, because linting a stub spends a model call to
+    # discover it is a stub.
+    "knowledge-health",
+    "knowledge-lint",
+    "gap-healing",
+    # The Knowledge Synthesis slate. Four of the twelve: the ones whose mechanisms
+    # actually ship. See the plan's execution log for which were deferred and why — every
+    # omission is a missing PROVIDER (net.fetch, a calendar source), not a missing template.
+    "knowledge-synthesis",
+    "rich-ingest",
+    "thesis-tracker",
+    "publish-article",
 }
 
 
@@ -89,7 +111,7 @@ def _pipeline(spec: dict) -> dict:
 
 
 class TestLibraryContents:
-    def test_all_six_templates_ship(self) -> None:
+    def test_every_declared_template_ships(self) -> None:
         assert set(template_names()) == EXPECTED
 
     def test_every_name_is_a_valid_def_name(self) -> None:

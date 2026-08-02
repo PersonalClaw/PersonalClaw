@@ -4,7 +4,10 @@
   "source": "bundled",
   "provenance": "user",
   "version": 1,
-  "tags": ["review", "design"],
+  "tags": [
+    "review",
+    "design"
+  ],
   "inputs": {
     "design": {
       "type": "string",
@@ -20,7 +23,9 @@
   },
   "metadata": {
     "risk": "low",
-    "capabilities": ["review"],
+    "capabilities": [
+      "review"
+    ],
     "steering_examples": [
       {
         "event": "kickoff",
@@ -30,6 +35,18 @@
         "event": "mutation",
         "description": "Add a cost lens to the panel; this design triples our egress and nobody scored that."
       }
+    ],
+    "keywords": [
+      "design review",
+      "critique the design",
+      "is this design good",
+      "ux review"
+    ],
+    "example_outputs": [
+      "a design critique with specific changes"
+    ],
+    "shapes": [
+      "review"
     ]
   },
   "root": {

@@ -342,6 +342,37 @@ export interface ChatSessionSummary {
   last_activity_at?: number
   never_archive?: boolean
 }
+/** One recorded disagreement between two stored claims.
+ *
+ *  `basis` matters to a reader: `deterministic` means two claims provably cannot both hold,
+ *  `model` means a fast model thought so. Rendering them identically would give an opinion the
+ *  weight of a proof. `prefer` is the source-precedence ladder's advice — "" when it cannot
+ *  decide, which is the honest answer for two same-tier sources. */
+export type KnowledgeConflict = {
+  item_id: string
+  item_title: string
+  left_claim: string
+  right_claim: string
+  left_item: string
+  right_item: string
+  kind: 'value' | 'polarity' | 'number'
+  basis: 'deterministic' | 'model'
+  prefer: 'left' | 'right' | ''
+  detail: string
+  confidence: number
+}
+
+/** One typed edge between knowledge ITEMS (`item_relations`), distinct from the
+ *  entity-level `KnowledgeRelation` above. `provenance` separates a deterministic
+ *  extraction (confidence 1.0) from a model's inference. */
+export type KnowledgeItemRelation = {
+  item_id: string
+  title: string
+  relation: 'supersedes' | 'contradicts' | 'derived_from' | 'depends_on' | 'part_of'
+  confidence: number
+  provenance: 'extracted' | 'inferred'
+}
+
 /** A knowledge shelf. `manual` holds an explicit membership list; `smart` stores a
  *  query re-run on read, so it stays current with no backfill. `item_count` is null
  *  for a smart shelf — counting it would mean a search per shelf on every rail render. */
@@ -2329,6 +2360,16 @@ export const api = {
   // `del` is void-typed repo-wide, so the caller re-reads the tree rather than this
   // one method inventing a generic DELETE.
   deleteKnowledgeTag: (id: number) => del(`/api/knowledge/tags/${id}`),
+  // ── Conflicts + typed relations ──
+  // Read-only on purpose. Contradictions are flagged at ingest and BOTH claims are kept;
+  // deciding which source to trust is the owner's judgement, so there is no resolve call
+  // that would let the system settle one on its own.
+  knowledgeConflicts: (limit = 100) =>
+    get<{ conflicts: KnowledgeConflict[]; count: number }>(
+      `/api/knowledge/conflicts?limit=${limit}`),
+  knowledgeItemRelations: (id: string) =>
+    get<{ outbound: KnowledgeItemRelation[]; inbound: KnowledgeItemRelation[] }>(
+      `/api/knowledge/items/${encodeURIComponent(id)}/relations`),
   knowledgeEmbeddingStatus: () => get<{ enabled: boolean; available?: boolean; model?: string; total_items?: number; embedded_items?: number; stale_items?: number }>('/api/knowledge/embedding/status'),
   generateKnowledgeEmbeddings: (rebuild = false) => post<{ ok?: boolean; embedded?: number }>('/api/knowledge/embedding/generate', { rebuild }),
   // Every uploaded file → ONE logical-document item run through its node-graph.
@@ -2630,6 +2671,18 @@ export const api = {
   // intents, and one button doing both would delete work a user only meant to stop.
   deleteWorkflowRun: (id: string) => del(`/api/workflows/runs/${encodeURIComponent(id)}`),
   pauseWorkflowRun: (id: string) => post<{ run_id: string; pause_requested: boolean }>(`/api/workflows/runs/${encodeURIComponent(id)}/pause`),
+  // Mid-run steering: queued, then consumed at the next iteration
+  // boundary. Queued rather than applied because injecting mid-iteration races the
+  // worker's own state — and because the alternative today is cancel-and-restart, which
+  // throws away the cycle context that made steering worth doing.
+  steerWorkflowRun: (id: string, body: { text: string }) =>
+    post<{ ok?: boolean; run_id?: string; queued?: number; error?: { code: string; message: string } }>(
+      `/api/workflows/runs/${encodeURIComponent(id)}/steer`, body),
+  // Shown as pending in the UI: a queued instruction the user cannot see is
+  // indistinguishable from one that was dropped, and they will queue it again.
+  workflowSteering: (id: string) =>
+    get<{ run_id: string; pending: Array<{ text: string; queued_at: string }>; count: number }>(
+      `/api/workflows/runs/${encodeURIComponent(id)}/steering`),
   resumeWorkflowRun: (id: string, body: { answer?: unknown; resume_token?: string; always_allow?: boolean }) =>
     post<{ ok?: boolean; approved?: boolean; node_id?: string; resumed?: boolean }>(`/api/workflows/runs/${encodeURIComponent(id)}/resume`, body),
   rewindWorkflowRun: (id: string, body: { node_id: string; redo_effects?: boolean; force?: boolean }) =>
