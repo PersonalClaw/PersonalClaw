@@ -394,3 +394,83 @@ Sessions C1-C2 are **prerequisites for any width increase** and are independentl
 - **The strongest evidence argues for restraint, which is an unsatisfying answer.** MASLab and Agentless both say a good single agent is hard to beat, and pruning beats adding. The honest implication: fan-out earns its place for **read breadth, wall-clock, and context capacity** — not as a general quality strategy. Any task that widens fan-out for "better answers" without a token-matched measurement is contradicting item 5.
 - **Our own future measurements will sit near the noise floor.** That is why (e) mandates reporting inconclusive results as inconclusive. A plan that only ever reports wins is not measuring.
 - **Deferring the roster question.** The goal-loop roster stays as-is deliberately; if a future session wants role-specialized loop workers, evidence items 1-3 say the burden of proof is on that change, and item 3 says the productive version is *different models*, not different personas.
+
+---
+
+## Execution log
+
+### 2026-08-02 — session 46 (project umbrella + truthful lifecycle + Work board) DONE
+
+`workflows/containers.py` (new): the Work board projection with state grouping and claim leases, the
+substrate-checked boot sweep, per-section `/work` isolation, the project context block and the
+wayfinder ledger contract. `project_context.py` (new): the living overview, the three ledgers, the
+injected block, the handoff snapshot. 83 tests across two files.
+
+- **No second umbrella noun.** Project already had the right shape, so this adds only what the run
+  engine needs from it. `WorkflowRun.project_id` was ALREADY a column and `resolve_project_id`
+  already auto-creates — the binding the plan asks for exists, so the session did not re-derive it.
+
+- **A second project-context composer was NOT created.** `chat_utils._project_context_preamble`
+  already assembles the project block for chat sessions; the overview and ledgers were appended to
+  IT. A parallel builder would drift, and an agent seeing a different project description in chat
+  than in a run gives answers nobody can reconcile.
+
+- **DISCOVERY — two board rules were inert from one wrong type read.** `WorkflowRun.origin` is a
+  `RunOrigin` object, not a string. Reading it with `str(...)` produced a dataclass repr, so every
+  origin comparison silently failed: no run was ever collapsed, and no origin was ever suppressed
+  from attention. Compounding it, the collapse/suppress sets named `housekeeping` and `heartbeat` —
+  neither of which exists in `OriginKind`. A rule keyed on a value that can never occur is a rule
+  that never fires, and nothing reports it. Both sets are now drawn from the enum, with a test that
+  every value in them is a real `OriginKind`.
+
+- **The boot sweep checks the SUBSTRATE before calling anything a zombie.** Marking every stale
+  `running` run aborted is the obvious implementation and it destroys recoverable work while
+  reporting success. An isolated substrate that survived the restart yields `suspended` + resumable;
+  an inline run can never be suspended, because its substrate IS the dead process and offering a
+  Resume that cannot work is worse than no affordance. A run already terminal is left untouched —
+  re-deciding it would let a boot sweep overwrite a real outcome with an inferred one.
+
+- **`queued` is derived from a record with no `started_at`.** That is what §5.2's record-before-slot
+  ordering buys: without the distinction, a run waiting for a concurrency slot is indistinguishable
+  from one doing work, and the board reports work in flight that has not begun.
+
+- **An expired claim is not rendered.** A badge naming a holder who no longer holds it tells the user
+  the work is taken when it is free. The same holder RENEWS rather than being refused (a worker that
+  lost its in-memory state would otherwise be locked out of its own work until the TTL expired), and
+  only the holder may release (otherwise a second worker could steal work mid-execution by releasing
+  first).
+
+- **Per-section isolation is the `/work` contract, and it is tested by failing a source.** Five
+  heterogeneous sources fail independently; a single try/catch around the aggregate would let a
+  stale legacy-loop reader take down the run list and the whole first paint. All-sources-failed
+  reports `ERROR`, not `PARTIAL` — "partial" on an empty board reads as "there is not much work",
+  which is a claim about the user's work rather than about the failure.
+
+- **Overview is current state; the ledgers are history.** Separate files, separate functions: the
+  overview is replaced atomically in place, the ledgers are append-only with no update or delete. One
+  file for all three ledgers would make every append a read-modify-write of all of them, and a torn
+  write would lose two ledgers to fix one. The boundary answer splits on newlines and semicolons but
+  not commas, matching S45's prohibitions rule.
+
+- **DISCOVERY — the enriched preamble recommended redundant reads.** Measured live: the overview and
+  all three ledgers appeared BOTH as inlined text and in the context-dir listing's "read any for
+  continuity", inviting four tool calls to re-read what the agent had just been given. First fix
+  excluded them by FILENAME, which broke a pre-existing test for the right reason: a hand-authored
+  `decisions.md` that is not in ledger format inlines nothing, so a name-based exclusion would hide
+  a file the agent has never seen. Hiding an unread file is the worse failure of the two — a
+  redundant pointer wastes a tool call, a hidden file loses the context entirely. The exclusion is
+  now content-based, and the listing header tracks whether anything was actually held back.
+
+- **A context READ never materializes a project.** `resolve_project_id` auto-creates; a read path
+  that also did would mean a typo'd id invents a project, and opening a project page could create
+  one.
+
+- **NOT DONE:** the hub Work tab FE itself (`GET /api/projects/{id}/work` route registration and the
+  React board) — the projection is the backend half, and the route belongs with the dashboard
+  handler slice; lease FILES on the `concurrency.single_flight` flock convention (the lease record
+  and its policy are here; the flock is a storage seam this session does not open); `workflow:` SEL
+  source registration and `session._app` keying (§5.1 — it touches `session_map.py`/`sync_bridge.py`,
+  which §5.1 itself scopes out); the overview's automatic revision on run completion (needs the
+  controller's completion hook, and writing it from a projection would put an engine write in a read
+  path). Sessions 47-54 own artifacts reuse, subagent batch hardening, run workspace/environment,
+  session ownership, the needs-input inbox, worktrees, introspection and export/import.
