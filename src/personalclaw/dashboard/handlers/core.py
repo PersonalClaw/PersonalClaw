@@ -552,6 +552,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "learning.min_evidence": {"type": "int", "min": 1, "max": 20},
     "learning.staging_enabled": {"type": "bool"},
     "learning.min_session_score": {"type": "float", "min": 0.0, "max": 1.0},
+    "learning.propose_quota_per_run": {"type": "int", "min": 1, "max": 25},
     # REMOTE-USER-AUTH C4 — the owner-login knobs. Runtime-editable so turning login on
     # or off, or loosening a lockout you tripped, takes effect on the next request without
     # a restart. The PASSWORD is deliberately NOT here and never will be: a credential is

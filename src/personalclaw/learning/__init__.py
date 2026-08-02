@@ -12,9 +12,15 @@ place each:
 - **May I capture at all?** → :mod:`personalclaw.learning.gate` (``LearningGate``)
 - **What am I allowed to look at?** → :mod:`personalclaw.learning.hygiene`
 - **Where does the raw signal land?** → :mod:`personalclaw.learning.staging`
+- **How does a change get made?** → :mod:`personalclaw.learning.proposals`
 
-A cadence composes all three: gate first (cheapest, and a denial means nothing
-else runs), then hygiene on the text, then staging for what survives.
+A cadence composes them in that order: gate first (cheapest, and a denial means
+nothing else runs), then hygiene on the text, then staging for what survives, and
+finally a proposal for anything that would durably change behaviour.
+
+That last module carries the flywheel's trust anchor: **autonomous synthesis
+proposes; the human installs.** The system may notice anything and change nothing
+on its own.
 """
 
 from __future__ import annotations
@@ -32,6 +38,14 @@ from personalclaw.learning.hygiene import (
     scrub,
     session_score,
 )
+from personalclaw.learning.proposals import (
+    ChangeManifest,
+    Kind,
+    Proposal,
+    Status,
+    Verdict,
+    content_fingerprint,
+)
 from personalclaw.learning.staging import (
     FlushOutcome,
     StagingStore,
@@ -40,13 +54,19 @@ from personalclaw.learning.staging import (
 
 __all__ = [
     "Cadence",
+    "ChangeManifest",
     "FlushOutcome",
     "GateDecision",
     "GateReason",
     "HygieneVerdict",
+    "Kind",
     "LearningGate",
     "MIN_EVIDENCE_DEFAULT",
+    "Proposal",
     "StagingStore",
+    "Status",
+    "Verdict",
+    "content_fingerprint",
     "input_hash",
     "is_system_injected",
     "scrub",

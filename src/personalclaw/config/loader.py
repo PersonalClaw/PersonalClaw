@@ -1215,6 +1215,15 @@ class LearningConfig:
             "0 = score every session; raise it to stop paying to learn from thin ones.",
         ),
     )
+    propose_quota_per_run: int = field(
+        default=5,
+        metadata=_meta(
+            "Proposals Per Run",
+            "How many proposals one learning pass may file. A pass that files twenty "
+            "is not being thorough, it is being unreadable — and a queue nobody "
+            "finishes reading is a queue that stops being read at all.",
+        ),
+    )
 
 
 @dataclass
@@ -2794,6 +2803,7 @@ class AppConfig:
                 min_evidence=int(learning_data.get("min_evidence", 3) or 3),
                 staging_enabled=bool(learning_data.get("staging_enabled", True)),
                 min_session_score=float(learning_data.get("min_session_score", 0.0) or 0.0),
+                propose_quota_per_run=int(learning_data.get("propose_quota_per_run", 5) or 5),
             ),
             security=SecurityConfig(
                 denied_commands=[

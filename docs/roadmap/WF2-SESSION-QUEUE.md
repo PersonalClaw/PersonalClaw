@@ -80,7 +80,7 @@ mandatory.
 | # | Session | PR group | Status |
 |---|---|---|---|
 | 25 | Capture: three cadences, one gate, one hygiene policy, one staging log | G11 | ✅ DONE (#163) |
-| 26 | Propose: one queue, four kinds, decision memory, fingerprint anti-refile | G11 | TODO |
+| 26 | Propose: one queue, four kinds, decision memory, fingerprint anti-refile | G11 | ✅ DONE (#164) |
 | 27 | Curate: one usage store, one decay kernel, hardened curator | G12 | TODO |
 | 28 | Inject: two surfacing engines → one ranked slot allocator | G12 | TODO |
 
@@ -761,3 +761,67 @@ wiring points. `context_management.py` split; `plan_memory.py` extracted. 11060 
 (i) **`MIN_EVIDENCE_DEFAULT` is asserted equal to the config default.** The plan's claim is
   "ONE shared number"; two consumers reading different sources is the failure that claim
   exists to prevent, so a test pins them together.
+
+### Session 26 — Learning Flywheel step 3: Propose (`feature-wf2-flywheel-propose`, PR #164)
+
+`learning/proposals.py`: the generalized queue (6 kinds), decision memory with
+fingerprint anti-refile + escalating cooldowns, the deterministic 4-verdict resolve
+cascade, change manifests, per-run quota, SEL-audited accepts. `learning.propose_quota_per_run`
+through all four wiring points. 11112 tests (+52), lint clean at 600 files.
+
+**Deviations and findings:**
+
+(a) **A literal NUL byte in the fingerprint separator made the module unimportable.**
+  `f"{kind}\x00{target}..."` written as a raw NUL — Python refuses source containing
+  null bytes, so `import` failed outright. Replaced with `\x1f` (unit separator).
+  Pinned by a test, because the failure mode is a crash at import rather than a wrong
+  answer.
+
+(b) **The subject guard defeated the very contradiction detection it was meant to
+  support.** `_subject_span` took the first two words, so "always use uv …" and
+  "always never use uv …" had DIFFERENT subjects and the pair resolved as NEW —
+  leaving two opposite instructions both pending. Fixed by stripping polarity/modal
+  stopwords before taking the span. Measured, not reasoned.
+
+(c) **Contradiction must be checked on SUBJECT match, not on similarity rank.**
+  "always use uv for installs …" vs "always avoid uv …" scores **0.80** by token
+  overlap — below `SIM_NEW` — so a similarity-gated check filed the opposite
+  instruction as a new proposal. Negation barely moves the tokens but completely
+  changes the meaning, which is what makes overlap the wrong gate.
+
+(d) **The number-conflict detector collapsed the entire queue.** Four distinct lessons
+  that merely contained different digits scored 0.6 similarity, were all judged
+  contradictory, and each superseded the last — **1 row survived out of 4**. Number
+  conflicts now require ≥0.75 similarity; polarity deliberately keeps no such guard.
+
+(e) **The cascade ignored `target`,** so the same advice about two different templates
+  reinforced into one row. A different target is a different change to make.
+
+(f) **Found by driving the REAL dev home: a superseded proposal left a PENDING inbox
+  row forever.** It can never be acted on — it no longer appears in the queue — so the
+  row claimed attention for a decision unreachable from any surface. Now resolved on
+  supersede.
+
+(g) **Also from the dev home: superseded records accumulated with no path that ever
+  removed them.** Added `prune_superseded` (keep 50): lineage is worth keeping, an
+  unbounded pile is not.
+
+(h) **Two negatives AGREE.** Contradiction is a polarity *difference*, not the presence
+  of a negation — "avoid X" and "never X" say the same thing. I got this wrong in a
+  test first; it is now pinned as its own property.
+
+(i) **A failed install records NO decision.** Recording before the installer runs would
+  mean a transient failure permanently suppresses its own retry.
+
+(j) **`accept()` takes an INJECTED installer** rather than dispatching per-kind. This
+  module owns the queue and the decision memory; making it also know how to write a
+  skill, a template and a tier migration is the coupling that made the single-kind
+  queue impossible to generalize.
+
+(k) **`skills/proposals.py` is NOT deleted yet** — deliberately, and this is the one
+  place this session leaves a dual path. It has live consumers (`dashboard/handlers/skills.py`,
+  `after_turn_review`, `history`, 3 test files) and its own accept path that writes into
+  the `auto/` skill namespace. Migrating those is step 3's Proposal-Inbox work (the FE
+  surface lands there); doing it here would mean rewriting the skills page against a
+  queue whose UI does not exist yet. Recorded as a DEVIATION from clean-break, with the
+  retirement owned by the next session.

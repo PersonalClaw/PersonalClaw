@@ -467,6 +467,37 @@ Frontmatter gains an optional declaration so resources are addressable without a
   message is read at all; classifying a restricted session's text is already a read of
   content its memory_mode excluded. Pinned by a test.
 
+- **2026-08-01 — DONE — Migration step 3 (Propose): the generalized queue + decision memory.**
+  Branch `feature-wf2-flywheel-propose`, PR #164. `learning/proposals.py` with the six
+  kinds, content fingerprints, the rejected-exemplar store with escalating cooldowns,
+  reinforce-on-duplicate, `specializes` for variants, supersession lineage, the
+  deterministic 4-verdict resolve cascade (contradiction BEFORE reinforce), change
+  manifests (lenient-but-recording), the evidence floor for inferred proposals only,
+  per-run quota from config, and SEL-audited accept/reject. 11112 tests (+52).
+
+- **DISCOVERY — three cascade bugs, all found by measuring rather than reasoning.**
+  (1) The subject guard shifted under negation, defeating contradiction detection.
+  (2) A genuine contradiction scores 0.80 by token overlap — below the NEW threshold —
+  so contradiction had to move off the similarity gate entirely. (3) The number-conflict
+  rule judged four unrelated lessons contradictory and collapsed the queue to one row.
+  Each of these would have shipped as silent data loss.
+
+- **DISCOVERY — two inbox/store leaks found on the real dev home,** neither visible from
+  tests: a superseded proposal kept a PENDING inbox row that could never be acted on,
+  and superseded records had no pruning path.
+
+- **DEVIATION — `skills/proposals.py` survives this session.** Its consumers include the
+  skills page's approval tab and its accept path writes the `auto/` namespace; the
+  replacement UI is step 3's Proposal Inbox. Retiring it here would mean rewriting a live
+  surface against a queue with no frontend. The retirement is owned by the Proposal-Inbox
+  session, and this is the only dual path this step leaves.
+
+- **NOT DONE (out of scope, needs later steps):** the embedding-similarity prior-rejection
+  check (needs the embedder-backed store from step 4's usage tier — the token-overlap
+  cascade is the zero-dependency floor and works without an embedder configured), the
+  Proposal Inbox FE, and the consolidation-lessons→proposal rerouting (needs the
+  `/api/lessons` consumer reroute, which the plan orders as step 2).
+
 - **NOT DONE (deliberately, out of step-1 scope):** the extract/decide two-phase split and
   the pre-compaction flush both need the proposal queue (step 3) to route into — building
   them now would mean writing against a contract step 3 defines. `lessons.jsonl` deletion
