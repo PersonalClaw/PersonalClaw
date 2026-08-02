@@ -40,6 +40,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw.knowledge import session_brief
 from personalclaw.workflows import attention
 from personalclaw.workflows import context as context_mod
 from personalclaw.workflows import gate_policy
@@ -210,6 +211,15 @@ class RunController:
         self._handoffs: dict[str, context_mod.Handoff] = {}
         self._carryover: dict[str, context_mod.Carryover] = {}
         self._decisions: dict[str, list[context_mod.Decision]] = {}
+        #: The project Session Brief (KNOWLEDGE-SYNTHESIS §5.3), built ONCE at run start and
+        #: exposed as `{{brief.text}}` / `{{brief.items}}`. Once because it is injected into every
+        #: node's context: rebuilding per node would query the store dozens of times per run for
+        #: an answer that cannot change mid-run.
+        #:
+        #: RUN context only. Knowledge is never ambiently injected into CHAT — it enters a chat
+        #: session through the composer @-picker or the agent's `knowledge_search` tool, both of
+        #: which are the user asking. Nothing here is reachable from a chat-context path.
+        self._brief: Any = None
         #: Long-run watcher state (KNOWLEDGE-SYNTHESIS §4.1), keyed by the loop's path. Journaled
         #: on every cycle and replayed on resume: held only in memory it would reset on every
         #: gateway restart, which is precisely when a months-long watcher is most likely to be
@@ -2100,6 +2110,43 @@ class RunController:
 
     # ── binding context ──
 
+    def _session_brief(self) -> Any:
+        """The project brief, built lazily and cached for the run.
+
+        Never raises and never blocks the run: a brief is an enhancement, so a store that cannot
+        answer means the run starts without the digest rather than not starting.
+        """
+        if self._brief is not None:
+            return self._brief
+        project = str(getattr(self.run, "project_id", "") or "")
+        if not project:
+            # No project means no scope. An unscoped brief would be "everything the user knows",
+            # injected into every run — expensive, and wrong about what the run is for.
+            self._brief = session_brief.SessionBrief()
+            return self._brief
+        try:
+            from personalclaw.config.loader import AppConfig
+            from personalclaw.knowledge.store import KnowledgeStore, knowledge_db_path
+
+            path = knowledge_db_path()
+            if not path.is_file():
+                self._brief = session_brief.SessionBrief(project=project)
+                return self._brief
+            budget = int(
+                getattr(
+                    AppConfig.load().knowledge,
+                    "session_brief_max_tokens",
+                    session_brief.DEFAULT_MAX_TOKENS,
+                )
+            )
+            self._brief = session_brief.build(
+                KnowledgeStore(db_path=str(path)), project_id=project, max_tokens=budget
+            )
+        except Exception:
+            logger.debug("run %s: session brief unavailable", self.run.id, exc_info=True)
+            self._brief = session_brief.SessionBrief(project=project)
+        return self._brief
+
     def _context_for(self, item: ReadyNode) -> BindingContext:
         watcher_path = self._enclosing_watcher(item.path)
         seen = self._seen.get(watcher_path) if watcher_path else None
@@ -2113,6 +2160,7 @@ class RunController:
             previous_output=self._previous_output(item.path),
             has_previous=self._previous_output(item.path) is not None,
             seen_filter=seen.unseen if seen else None,
+            brief=self._session_brief(),
             secret_resolver=_secret_resolver,
         )
 

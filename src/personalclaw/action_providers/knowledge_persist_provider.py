@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import uuid
 from typing import Any
@@ -148,13 +149,36 @@ class KnowledgePersistActionProvider(ActionProvider):
         metadata = dict(existing_meta)
         appended = 0
 
+        conflicts: list[dict] = []
         if claims_raw:
+            incoming_claims = [c for c in claims_raw if isinstance(c, dict)]
+            # Conflict check BEFORE the merge, against what is stored NEARBY (§3.2). At ingest,
+            # not at query: by the time a contradiction surfaces during retrieval, something has
+            # already cited one side of it, and unwinding that means finding everything
+            # downstream. This tier is deterministic and costs nothing per write.
+            conflicts = _detect_conflicts(
+                store,
+                incoming_claims,
+                item_id=decision.item_id,
+                source_ref=source_ref,
+                # The item id this write will land on. The claim's own `source_ref` is RUN
+                # provenance ("workflow:node:n1"), NOT a row id — measured, using it made
+                # `edges_from_conflicts` build an edge whose source was not an item, so the
+                # foreign key silently wrote nothing while the conflict record looked fine. The
+                # two surfaces then disagreed about whether the store knew about the conflict.
+                edge_source=decision.item_id or "",
+            )
             merged, appended = _merge_claims(
                 existing=metadata.get("claims") or [],
-                incoming=[c for c in claims_raw if isinstance(c, dict)],
+                incoming=incoming_claims,
                 source_ref=source_ref,
             )
             metadata["claims"] = merged
+            if conflicts:
+                # Recorded ON the item, and BOTH claims kept. Silently picking a winner is how a
+                # store becomes confidently wrong: the discarded claim was evidence, and its
+                # absence is unrecoverable.
+                metadata["conflicts"] = conflicts
 
         if decision.action == "reinforce":
             # Same content, `append_evidence`: record the corroboration and leave the body
@@ -169,6 +193,7 @@ class KnowledgePersistActionProvider(ActionProvider):
                         "logical_key": check.logical_key,
                         "created": False,
                         "mentions_appended": appended,
+                        "conflicts": conflicts,
                         "reason": decision.reason,
                     }
                 ),
@@ -216,6 +241,11 @@ class KnowledgePersistActionProvider(ActionProvider):
         except Exception as exc:
             return ActionResult(success=False, error=f"knowledge write failed: {exc}")
 
+        if conflicts:
+            # NOW the row exists, so the edges can satisfy the foreign key. Targets come from the
+            # conflict records rather than being recomputed — recomputing could find a different
+            # neighbour set and produce edges that do not match the recorded conflicts.
+            _write_conflict_edges(store, conflicts, source_item=item_id)
         _enqueue_enrichment(item_id)
         return ActionResult(
             success=True,
@@ -225,6 +255,7 @@ class KnowledgePersistActionProvider(ActionProvider):
                     "logical_key": check.logical_key,
                     "created": decision.action == "create",
                     "mentions_appended": appended,
+                    "conflicts": conflicts,
                     "reason": decision.reason,
                 }
             ),
@@ -241,12 +272,13 @@ def _open_store():
     Knowledge has no partitions by design: a fact learned in one workspace is still true in
     another, and partitioning would mean the same article re-derived per directory.
     """
-    from personalclaw.config.loader import config_dir
-    from personalclaw.knowledge.store import KnowledgeStore
+    from personalclaw.knowledge.store import KnowledgeStore, knowledge_db_path
 
-    path = config_dir() / "knowledge" / "knowledge.db"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return KnowledgeStore(db_path=str(path))
+    # Through `knowledge_db_path`, never a locally composed path. Measured live: composing it here
+    # produced `<home>/knowledge/knowledge.db` while the dashboard reads
+    # `<home>/workspace/knowledge/knowledge.db`, so workflow-persisted knowledge landed in a
+    # second database the UI could never see — with no error on either side.
+    return KnowledgeStore(db_path=str(knowledge_db_path()))
 
 
 def _lookup(store, logical_key: str) -> tuple[str, str, dict[str, Any]]:
@@ -477,6 +509,202 @@ def _write_metadata(store, item_id: str, metadata: dict[str, Any], *, source_ref
         store.db.commit()
     except Exception:
         logger.debug("knowledge metadata write failed", exc_info=True)
+
+
+def _detect_conflicts(
+    store, incoming: list[dict], *, item_id: str, source_ref: str, edge_source: str = ""
+) -> list[dict]:
+    """Deterministic conflicts between arriving claims and stored ones, plus their edges.
+
+    Neighbours come from the hybrid retriever rather than a recency window, because "the claims
+    most likely to disagree with this one" is a similarity question and recency is a proxy that
+    misses an old contradicted fact entirely — which is the case that matters most, since it has
+    had the longest time to be cited.
+
+    Best-effort by design: a conflict pass that failed a WRITE would mean losing the knowledge
+    rather than losing the annotation, and the annotation is the cheaper thing to lose.
+    """
+    try:
+        from personalclaw.knowledge import contradiction
+
+        claims = [
+            contradiction.Claim.from_dict({**c, "source_ref": c.get("source_ref") or source_ref})
+            for c in incoming
+        ]
+        existing = _neighbour_claims(store, claims, exclude=item_id)
+        if not existing:
+            return []
+        found = contradiction.find_conflicts(claims, existing)
+        if not found:
+            return []
+        # Edges are deferred when the row does not exist yet: a CREATE has no id until the insert,
+        # and an edge written against a missing row is refused by the foreign key. The caller
+        # writes them after the upsert.
+        if edge_source:
+            _write_edges(store, contradiction.edges_from_conflicts(found), source_item=edge_source)
+        return [c.to_dict() for c in found]
+    except Exception:
+        logger.warning("conflict detection failed — the write proceeds", exc_info=True)
+        return []
+
+
+def _neighbour_claims(store, incoming: list, *, exclude: str) -> list:
+    """Claims on items semantically near the incoming ones.
+
+    Capped, and the SAME item is excluded: an item's own stored claims are what the merge path
+    reconciles, and reporting them here would flag every update as a conflict with itself.
+    """
+    from personalclaw.knowledge import contradiction
+
+    queries = [c.statement for c in incoming if c.statement][:3]
+    if not queries:
+        return []
+
+    # Two sources, and BOTH are needed. FTS is precise but only sees title/content/tags — a
+    # claim lives in `file_metadata`, so an FTS search for claim words finds nothing unless the
+    # claim happens to echo the item's title. The claim-bearing scan is the reliable half.
+    candidate_ids: list[str] = []
+    seen_items: set[str] = set()
+    for query in queries:
+        for row in _search_rows(store, query):
+            item_id = str(row.get("id", "") or "")
+            if item_id and item_id != exclude and item_id not in seen_items:
+                seen_items.add(item_id)
+                candidate_ids.append(item_id)
+    for item_id in _claim_bearing_ids(store, exclude=exclude):
+        if item_id not in seen_items:
+            seen_items.add(item_id)
+            candidate_ids.append(item_id)
+
+    out: list = []
+    for item_id in candidate_ids:
+        for raw in _stored_claims(store, item_id):
+            claim = contradiction.Claim.from_dict({**raw, "source_ref": item_id})
+            if claim.statement:
+                out.append(claim)
+        if len(out) >= contradiction.MAX_CONFLICT_CANDIDATES:
+            return out[: contradiction.MAX_CONFLICT_CANDIDATES]
+    return out
+
+
+def _claim_bearing_ids(store, *, exclude: str, limit: int = 40) -> list[str]:
+    """Recently-updated items that carry claims at all.
+
+    A LIKE prefilter, newest first, bounded. This is the half of the candidate set that actually
+    works: conflicts are between CLAIMS, and claims are not in the search index, so an
+    FTS-only neighbour set silently returns nothing for any item whose title does not repeat its
+    own claim text. Recency is the right order here because a contradiction with something
+    written last week is more actionable than one with a two-year-old note, and the cap keeps
+    the marginal cost independent of store size.
+    """
+    try:
+        return [
+            str(r["id"])
+            for r in store.db.execute(
+                "SELECT id FROM items WHERE is_archived = 0 AND id != ? "
+                "AND file_metadata LIKE '%\"claims\"%' ORDER BY updated_at DESC LIMIT ?",
+                (exclude or "", max(1, limit)),
+            )
+        ]
+    except Exception:
+        logger.debug("claim-bearing scan failed", exc_info=True)
+        return []
+
+
+def _search_rows(store, query: str) -> list[dict]:
+    try:
+        return [
+            dict(r)
+            for r in store.db.execute(
+                "SELECT i.id FROM items_fts f JOIN items i ON i.rowid = f.rowid "
+                "WHERE items_fts MATCH ? AND i.is_archived = 0 LIMIT 10",
+                (_fts_safe(query),),
+            )
+        ]
+    except Exception:
+        logger.debug("neighbour search failed", exc_info=True)
+        return []
+
+
+def _fts_safe(query: str) -> str:
+    """An FTS5 MATCH expression from arbitrary claim text.
+
+    A claim is prose, and prose contains FTS5 operators — an unquoted `4.2s (measured)` is a
+    syntax error, and the broad except above would swallow it into "no neighbours", which reads
+    exactly like "no conflicts". So the terms are extracted and OR-ed explicitly.
+    """
+    terms = re.findall(r"[A-Za-z0-9]{3,}", query or "")
+    return " OR ".join(terms[:12]) if terms else '""'
+
+
+def _stored_claims(store, item_id: str) -> list[dict]:
+    try:
+        rows = list(store.db.execute("SELECT file_metadata FROM items WHERE id = ?", (item_id,)))
+    except Exception:
+        return []
+    if not rows:
+        return []
+    try:
+        meta = json.loads(rows[0]["file_metadata"] or "{}")
+    except (TypeError, ValueError):
+        return []
+    claims = meta.get("claims") if isinstance(meta, dict) else None
+    return [c for c in claims if isinstance(c, dict)] if isinstance(claims, list) else []
+
+
+def _write_conflict_edges(store, conflicts: list[dict], *, source_item: str) -> int:
+    """`contradicts` edges for already-recorded conflicts, once the source row exists."""
+    from personalclaw.knowledge import contradiction
+
+    edges = [
+        contradiction.Edge(
+            source=source_item,
+            target=str(c.get("right_item", "") or ""),
+            relation="contradicts",
+            confidence=float(c.get("confidence", 1.0) or 1.0),
+            provenance="extracted" if c.get("basis") == "deterministic" else "inferred",
+            justification=str(c.get("detail", "") or ""),
+        )
+        for c in conflicts
+    ]
+    return _write_edges(store, [e for e in edges if e.valid], source_item=source_item)
+
+
+def _write_edges(store, edges: list, *, source_item: str) -> int:
+    """Persist typed relations. Upsert on `(source, target, relation)` per the table's own key.
+
+    Best-effort with a returned count and a WARNING log, not a silent pass: an edge that failed
+    to write leaves the conflict recorded on the item but invisible to any graph query, and the
+    two surfaces then disagree about whether the store has a known contradiction.
+    """
+    written = 0
+    now = _now()
+    for edge in edges:
+        target = edge.target or ""
+        if not (source_item and target) or source_item == target:
+            continue
+        try:
+            store.db.execute(
+                "INSERT OR REPLACE INTO item_relations (source_item_id, target_item_id, "
+                "relation_type, confidence, provenance, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (source_item, target, edge.relation, edge.confidence, edge.provenance, now),
+            )
+            written += 1
+        except Exception:
+            logger.warning(
+                "could not write %s edge %s -> %s",
+                edge.relation,
+                source_item,
+                target,
+                exc_info=True,
+            )
+    if written:
+        try:
+            store.db.commit()
+        except Exception:
+            logger.warning("could not commit item_relations", exc_info=True)
+            return 0
+    return written
 
 
 def _merge_claims(

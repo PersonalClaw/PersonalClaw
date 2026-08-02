@@ -569,6 +569,8 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "knowledge.lint_every_n_persists": {"type": "int", "min": 1, "max": 1000},
     "knowledge.consolidate_min_cluster": {"type": "int", "min": 2, "max": 100},
     "knowledge.consolidate_min_hours": {"type": "int", "min": 0, "max": 720},
+    "knowledge.session_brief_max_tokens": {"type": "int", "min": 0, "max": 8000},
+    "knowledge.conflict_model_pass": {"type": "bool"},
     # REMOTE-USER-AUTH C4 — the owner-login knobs. Runtime-editable so turning login on
     # or off, or loosening a lockout you tripped, takes effect on the next request without
     # a restart. The PASSWORD is deliberately NOT here and never will be: a credential is

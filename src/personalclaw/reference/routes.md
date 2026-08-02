@@ -227,6 +227,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/knowledge/collections/{id}/items` — resolve the shelf.
 - `POST /api/knowledge/collections/{id}/items` — shelve one or many items.
 - `DELETE /api/knowledge/collections/{id}/items/{item_id}` — unshelve one item.
+- `GET /api/knowledge/conflicts` — every recorded disagreement in the store.
 - `POST /api/knowledge/embedding/generate` — - embed all unembedded items (or re-embed all).
 - `GET /api/knowledge/embedding/status` — - embedding config and progress.
 - `GET /api/knowledge/entities` — _(no summary)_
@@ -258,6 +259,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/knowledge/items/{id}/merge` — fold another item into this one.
 - `POST /api/knowledge/items/{id}/read-state` — unread | reading | read.
 - `GET /api/knowledge/items/{id}/related` — - items sharing entities with given item.
+- `GET /api/knowledge/items/{id}/relations` — the typed edges into and out of one item.
 - `GET /api/knowledge/items/{id}/thumbnail` — - serve a generated thumbnail (image/webp).
 - `GET /api/knowledge/providers` — _(no summary)_
 - `POST /api/knowledge/regenerate-intelligence` — - re-run the full ingestion

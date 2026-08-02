@@ -1903,6 +1903,100 @@ async def list_tag_taxonomy(request: web.Request) -> web.Response:
     return web.json_response({"tags": _store(request).list_tags()})
 
 
+async def list_conflicts(request: web.Request) -> web.Response:
+    """GET /api/knowledge/conflicts — every recorded disagreement in the store.
+
+    A read surface, not a resolution one. Conflicts are flagged at INGEST (§3.2) and both claims
+    are always kept; this route exists so the flag is visible to a human rather than sitting in
+    `file_metadata` where only the next synthesis would see it. Deciding a conflict is a judgement
+    about which source to trust, which is the owner's call — so there is deliberately no
+    "resolve" endpoint that would let the system pick a winner on its own.
+
+    `basis` rides along on every row because a deterministic finding and a model's opinion warrant
+    different confidence, and a reader cannot tell them apart from the claim text alone.
+    """
+    store = _store(request)
+    limit = _int_param(request, "limit", 100, low=1, high=500)
+    rows: list[dict] = []
+    try:
+        # A LIKE prefilter before parsing: `file_metadata` is a JSON blob on every row, and
+        # json-loading the whole store to find the few items with conflicts would make this route
+        # scale with library size rather than with the number of conflicts.
+        candidates = store.db.execute(
+            "SELECT id, title, kind, file_metadata FROM items "
+            "WHERE is_archived = 0 AND file_metadata LIKE '%\"conflicts\"%' "
+            "ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
+        )
+        for row in candidates:
+            try:
+                meta = json.loads(row["file_metadata"] or "{}")
+            except (TypeError, ValueError):
+                continue
+            entries = meta.get("conflicts") if isinstance(meta, dict) else None
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if isinstance(entry, dict):
+                    rows.append({"item_id": row["id"], "item_title": row["title"], **entry})
+    except Exception:
+        logger.warning("could not read knowledge conflicts", exc_info=True)
+        return web.json_response({"conflicts": [], "count": 0, "error": "unreadable"})
+    return web.json_response({"conflicts": rows[:limit], "count": len(rows)})
+
+
+async def list_item_relations(request: web.Request) -> web.Response:
+    """GET /api/knowledge/items/{id}/relations — the typed edges into and out of one item.
+
+    Both directions, labelled. A one-directional view would hide the more useful half: what
+    SUPERSEDES this item is usually what a reader actually wants, and that is an inbound edge.
+    """
+    item_id = str(request.match_info.get("id", "") or "")
+    if not item_id:
+        return web.json_response({"error": "item id required"}, status=400)
+    store = _store(request)
+    out: dict[str, list[dict]] = {"outbound": [], "inbound": []}
+    try:
+        for direction, sql in (
+            (
+                "outbound",
+                "SELECT r.target_item_id AS other, r.relation_type, r.confidence, r.provenance, "
+                "i.title FROM item_relations r LEFT JOIN items i ON i.id = r.target_item_id "
+                "WHERE r.source_item_id = ?",
+            ),
+            (
+                "inbound",
+                "SELECT r.source_item_id AS other, r.relation_type, r.confidence, r.provenance, "
+                "i.title FROM item_relations r LEFT JOIN items i ON i.id = r.source_item_id "
+                "WHERE r.target_item_id = ?",
+            ),
+        ):
+            out[direction] = [
+                {
+                    "item_id": r["other"],
+                    "title": r["title"] or "",
+                    "relation": r["relation_type"],
+                    "confidence": r["confidence"],
+                    "provenance": r["provenance"],
+                }
+                for r in store.db.execute(sql, (item_id,))
+            ]
+    except Exception:
+        # An older store has no `item_relations` table. Empty lists rather than a 500: a reader
+        # asking for relations on a store that has none should see none, not an error page.
+        logger.debug("item_relations unavailable", exc_info=True)
+    return web.json_response(out)
+
+
+def _int_param(request: web.Request, name: str, default: int, *, low: int, high: int) -> int:
+    raw = request.query.get(name)
+    try:
+        value = int(str(raw))
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, value))
+
+
 async def rename_tag(request: web.Request) -> web.Response:
     """PATCH /api/knowledge/tags/{id} — rename, or re-parent via `parent_id`."""
     tid = _tag_id(request)
@@ -2109,6 +2203,11 @@ def setup_knowledge_routes(app: web.Application) -> None:
     # `GET /tags` list[str] contract is consumed by the ChipInput autocomplete and by
     # the agent tools — it stays exactly as it is.
     app.router.add_get("/api/knowledge/tag-tree", list_tag_taxonomy)
+    # KNOWLEDGE-SYNTHESIS §3.2: contradictions are flagged at ingest and both claims kept, so the
+    # flag needs a place a human can see it. Read-only by design — deciding which source to trust
+    # is the owner's judgement, not something an endpoint should let the system settle.
+    app.router.add_get("/api/knowledge/conflicts", list_conflicts)
+    app.router.add_get("/api/knowledge/items/{id}/relations", list_item_relations)
     app.router.add_patch("/api/knowledge/tags/{id}", rename_tag)
     app.router.add_post("/api/knowledge/tags/{id}/merge", merge_tag)
     app.router.add_delete("/api/knowledge/tags/{id}", delete_tag)

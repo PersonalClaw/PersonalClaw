@@ -603,9 +603,10 @@ def _int(raw: Any, fallback: int) -> int:
 
 
 def _open_store() -> Any:
-    from personalclaw.config.loader import config_dir
-    from personalclaw.knowledge.store import KnowledgeStore
+    from personalclaw.knowledge.store import KnowledgeStore, knowledge_db_path
 
-    path = config_dir() / "knowledge" / "knowledge.db"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return KnowledgeStore(db_path=str(path))
+    # Through `knowledge_db_path`, never a locally composed path. Measured live: composing it here
+    # produced `<home>/knowledge/knowledge.db` while the dashboard reads
+    # `<home>/workspace/knowledge/knowledge.db`, so workflow-persisted knowledge landed in a
+    # second database the UI could never see — with no error on either side.
+    return KnowledgeStore(db_path=str(knowledge_db_path()))

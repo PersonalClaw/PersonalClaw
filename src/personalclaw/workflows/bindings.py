@@ -79,6 +79,9 @@ class BindingContext:
     #: The engine-maintained seen-set, for the `unseen` pipe. A callable rather than the set
     #: itself so bindings hold no engine state.
     seen_filter: Any = None
+    #: The project Session Brief (KNOWLEDGE-SYNTHESIS §5.3), exposed as `{{brief.text}}` and
+    #: `{{brief.items}}`. RUN context only — see the controller's note on the chat invariant.
+    brief: Any = None
     #: Resolver for `{{secret:KEY}}`. Injected so nothing here reads the credential
     #: store directly — that also keeps secrets out of unit tests by default.
     secret_resolver: Any = None
@@ -106,6 +109,15 @@ class BindingContext:
             }
         if self.has_previous:
             root["previous"] = {"output": self.previous_output}
+        if self.brief is not None:
+            # `text` is pre-fenced and citation-instructed, so a template writes
+            # `{{brief.text}}` and cannot accidentally interpolate raw knowledge into a prompt.
+            root["brief"] = {
+                "text": self.brief.render() if hasattr(self.brief, "render") else "",
+                "items": [i.item_id for i in getattr(self.brief, "items", [])],
+                "count": len(getattr(self.brief, "items", [])),
+                "dropped": int(getattr(self.brief, "dropped", 0)),
+            }
         return root
 
 
@@ -283,6 +295,48 @@ def _pipe_hygiene(value: Any) -> Any:
     return longrun.web_hygiene(value)
 
 
+def _pipe_fenced_sources(value: Any) -> str:
+    """`fenced_sources` — retrieved knowledge, fenced and numbered, with a citation instruction.
+
+    Knowledge items partly derive from web and inbox content, so interpolating them raw into a
+    stage prompt bypasses the platform's fencing doctrine: an ingested page that says "ignore
+    previous instructions" becomes an instruction the moment a template writes
+    `{{nodes.known.output.items}}` into a prompt. Knowledge already fences at INGEST
+    (`knowledge/insights.py`) and redacts on the way out of `search-for-context`; this extends
+    the same doctrine to workflow interpolation.
+
+    Numbered, and with the "say so if the sources do not answer" instruction attached, because a
+    fence alone tells the model the span is data but not what to do with it — and a model handed
+    unattributed context answers from memory when the context comes up short.
+    """
+    from personalclaw.security import fence_untrusted
+
+    items = value if isinstance(value, list) else ([] if value is None else [value])
+    if not items:
+        # An explicit "nothing was retrieved" rather than an empty fence. A blank fence reads as
+        # "the sources were consulted and were silent", which is a different and wrong claim from
+        # "there were no sources" — and the second is the one a coverage gap should convey.
+        return "No stored knowledge matched. Answer from first principles and say so."
+
+    blocks: list[str] = []
+    for index, item in enumerate(items, start=1):
+        if isinstance(item, dict):
+            title = str(item.get("title", "") or "").strip()
+            body = str(item.get("content") or item.get("summary") or "").strip()
+            head = f"[{index}] {title}" if title else f"[{index}]"
+            text = f"{head}\n{body}" if body else head
+        else:
+            text = f"[{index}] {item}"
+        blocks.append(fence_untrusted(text, source="knowledge"))
+    return "\n".join(
+        [
+            "Numbered sources follow. Cite them as [n] when you use them, and if they do not "
+            "answer the question, say so rather than filling the gap.",
+            *blocks,
+        ]
+    )
+
+
 def _pipe_clamp(value: Any, low: Any = 0, high: Any = 1) -> Any:
     """`clamp(30, 86400)` — bound a number a model proposed."""
     try:
@@ -323,12 +377,13 @@ PIPES: dict[str, Any] = {
     "full": _pipe_full,
     "hygiene": _pipe_hygiene,
     "clamp": _pipe_clamp,
+    "fenced_sources": _pipe_fenced_sources,
 }
 
 #: Pipes that suppress the default sibling view. `window` and `significant` count: a template
 #: that stated its own bound has said what it wants, and silently applying the default on top
 #: would make an explicit `window(50)` mean 20.
-_EXPLICIT_VIEW_PIPES = frozenset({"full", "window", "significant", "unseen"})
+_EXPLICIT_VIEW_PIPES = frozenset({"full", "window", "significant", "unseen", "fenced_sources"})
 
 
 def _parse_pipe_args(raw: str) -> list[Any]:
