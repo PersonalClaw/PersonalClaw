@@ -663,3 +663,58 @@ Where each new piece plugs into the pluggable-provider architecture (nothing her
   but not wired to a live embedder or model in `workflow_plan` — both need plumbing that lands with
   session 41's grounding work. Hybrid composition returns the names to compose without building the
   subworkflow spec; `presets`/`lighter_path` are surfaced but not yet acted on.
+
+- **2026-08-02 — DONE (#179) — Grounded generation (session 41 of the WF2 queue).**
+  Branch `feature-wf2-planning-grounding`. `workflows/grounding.py` (the bundle, three signature
+  discovery tiers, orient-then-drill), `workflows/patterns.py` (seven proven shapes with slots,
+  `when_not`, and a deterministic pick), `workflows/generation.py` (generated prompt, mechanical
+  self-check, repair-not-regenerate, the decline path, `oneOf` emission schema), all wired into
+  `workflow_plan`. 12320 tests (+69), lint clean at 624 files.
+
+- **DISCOVERY — provider argument shapes are only partly discoverable, and the first two tiers
+  covered 7 of 16.** `MCP_CORE_SCHEMAS` has typed fields for the tool-backed providers and some
+  providers document `action_config` in a docstring, but NINE had neither — including `bash`,
+  `create-task` and `run-workflow`, the ones a generated plan reaches for most. A bundle naming a
+  provider it cannot describe calling is the ungrounded failure with extra steps. Added a third
+  tier that scrapes what the provider's own code reads, taking coverage to 15/16; the one remainder
+  (`notification-digest`) genuinely reads no config. The scraper's first pattern also missed the
+  `(action_config or {}).get(...)` idiom and reported `run-workflow` as taking NO arguments — a
+  pattern miss that produces a confident "takes no arguments" is worse than one producing silence,
+  so requiredness is never inferred from a scan and the source tier is labelled.
+
+- **DISCOVERY — three of my own "proven" shapes had no stopping condition.** The A/B harness caught
+  it: `convergent-research`, `fan-out-synthesis` and `creative-exploration` ended on a synthesis or
+  selection stage, which passes the engine's structural validator and fails the plan's minimal
+  goal/verification/stopping triple. Grounded first-try-valid measured **3/5** against the plan's
+  ≥4 bar until each gained a gate. A skeleton that teaches the planner to omit the thing the hard
+  requirements demand is not a proven shape.
+
+- **DEVIATION — `capabilities_for` does not exist.** The real accessor is
+  `get_default_registry().capability_of(type)`, and an unbootstrapped process legitimately cannot
+  answer — which must read as UNKNOWN. The wrong call silently produced `structured_output: False`,
+  which would have sent every plan down the prose-with-repair path even on a model that handles
+  schemas.
+
+- **DEVIATION — MCP tools are surfaced as SERVERS, not tool names.** `mcp_client.list_tools` is
+  async and requires live connections; enumerating tools on the planning hot path would block on a
+  user's remote endpoint. The bundle names the configured servers and tells the planner to discover
+  tool names rather than guess them. A missing `mcp.json` is "none configured" — distinct from
+  "unreadable", which is stated.
+
+- **A/B harness (UP-R13.2)** ships as the acceptance test, scored on first-try-valid: ungrounded
+  specs must score 0/5 and grounded ≥4/5, with validation failures and silent misses asserted as
+  SEPARATE modes. It runs without a model — it measures the mechanism this session builds; a
+  model-scored end-to-end A/B belongs with the eval substrate that owns scoring.
+
+- **Validated in the real runtime:** a monitor intent no template serves falls to grounded
+  generation with the `iterative-refinement` shape and a 4753-char grounded prompt, and that
+  skeleton — slot-filled — passes BOTH the self-check and the engine validator clean.
+
+- **NOT DONE:** the brownfield context pass (UP-R17) is a `codebase_context` parameter the prompt
+  accepts and nothing yet populates — building the depth-filtered tree + README head + `(project_id,
+  tree-hash)` cache is its own scope and reads the filesystem, which the rest of this session does
+  not. The entity/topic grounding preamble (UP-R14) likewise: `brief` threads through from session
+  38's Session Brief, but entity resolution needs a lookup provider that does not exist. Repair
+  execution is built (`repair_prompt`, `MAX_REPAIR_ATTEMPTS`) but not driven — the loop that calls a
+  model, self-checks, and re-prompts needs the model plumbing that lands with session 43's review
+  cycle.
