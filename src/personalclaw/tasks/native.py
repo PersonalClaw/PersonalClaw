@@ -1,6 +1,5 @@
-"""Native filesystem-backed task provider.
-
-Stores tasks as individual JSON files under PERSONALCLAW_HOME/tasks/.
+"""Native filesystem-backed task provider. Stores tasks as individual JSON files under
+PERSONALCLAW_HOME/tasks/.
 """
 
 import asyncio
@@ -18,8 +17,22 @@ from personalclaw.tasks.models import (
     TaskDependency,
     TaskPriority,
     TaskStatus,
+    WorkflowTaskBinding,
 )
 from personalclaw.tasks.provider import TaskProvider
+
+
+def _coerce_binding(raw: Any) -> "WorkflowTaskBinding | None":
+    """Accept a typed binding OR its dict form; anything else is no binding. Both shapes arrive
+    in practice — the engine passes the dataclass, and a REST/tool caller passes JSON.
+    Refusing either would push the coercion out to every call site, and the site that forgot
+    would create a task the engine does not own while the board shows it as managed.
+    """
+    if isinstance(raw, WorkflowTaskBinding):
+        return raw
+    if isinstance(raw, dict) and raw:
+        return WorkflowTaskBinding.from_dict(raw)
+    return None
 
 
 def create_provider(config: dict[str, Any] | None = None) -> "NativeTaskProvider":
@@ -35,8 +48,9 @@ def _now_iso() -> str:
 
 
 def _current_username() -> str:
-    """The owner's attribution handle, or ``""``. Never raises — attribution
-    decorates a write, so it must never be the reason one fails."""
+    """The owner's attribution handle, or ``""``. Never raises — attribution decorates a write,
+    so it must never be the reason one fails.
+    """
     try:
         from personalclaw.identity import current_username
 
@@ -108,9 +122,10 @@ class NativeTaskProvider(TaskProvider):
         return {t.id: t for t in self._all_tasks()}
 
     def _derive_project_label(self, task_list_id: str, cache: dict | None = None) -> str:
-        """A task's ``project`` label = its task list's project name. A task with no
-        task list has no project label (empty string) — never a stale id. ``cache``
-        (task_list_id → label) avoids re-reading project files per task in a list."""
+        """A task's ``project`` label = its task list's project name. A task with no task list
+        has no project label (empty string) — never a stale id. ``cache`` (task_list_id →
+        label) avoids re-reading project files per task in a list.
+        """
         if not task_list_id:
             return ""
         if cache is not None and task_list_id in cache:
@@ -133,8 +148,9 @@ class NativeTaskProvider(TaskProvider):
 
     @staticmethod
     def _coerce_dependencies(value: Any) -> list[TaskDependency]:
-        """Accept either a list of edge dicts or a flat list of prerequisite ids
-        (treated as BLOCKS edges) from older / simpler callers."""
+        """Accept either a list of edge dicts or a flat list of prerequisite ids (treated as
+        BLOCKS edges) from older / simpler callers.
+        """
         # A bare scalar (a single id dict/string, e.g. an LLM passing depends_on:
         # "task-123" instead of ["task-123"]) must be wrapped — iterating it would
         # treat a string's CHARACTERS as separate prerequisite ids, fabricating
@@ -210,6 +226,17 @@ class NativeTaskProvider(TaskProvider):
                 research_notes=fields.get("research_notes", []),
                 execution_notes=fields.get("execution_notes", []),
                 agent_instructions_template=fields.get("agent_instructions_template", ""),
+                # Workflow projection (TASKS-SOPS §1, S55). Enumerated HERE as well as on the
+                # model:
+                # this provider builds its Task field-by-field, so a new model field is dropped on
+                # create unless it is named — measured, the binding round-tripped through
+                # `to_dict`/`from_dict` and still arrived empty from `create_task`.
+                workflow_binding=_coerce_binding(fields.get("workflow_binding")),
+                blocked_kind=str(fields.get("blocked_kind", "") or ""),
+                preview=str(fields.get("preview", "") or ""),
+                done_criterion=str(fields.get("done_criterion", "") or ""),
+                evidence=fields.get("evidence", []),
+                attempts=fields.get("attempts", []),
                 created_at=now,
                 updated_at=now,
             )
@@ -231,9 +258,10 @@ class NativeTaskProvider(TaskProvider):
         return await asyncio.to_thread(_create)
 
     async def update_task(self, task_id: str, **fields: Any) -> Task | None:
-        """Apply ``fields``, reject cycles, reconcile dependency-driven status, and
-        return the edited task. The full set of tasks whose status changed via
-        cascade is exposed on ``task._reconciled`` for the handler to return."""
+        """Apply ``fields``, reject cycles, reconcile dependency-driven status, and return the
+        edited task. The full set of tasks whose status changed via cascade is exposed on
+        ``task._reconciled`` for the handler to return.
+        """
 
         def _update() -> Task | None:
             tasks = self._task_map()

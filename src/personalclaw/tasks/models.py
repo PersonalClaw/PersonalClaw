@@ -1,14 +1,11 @@
-"""Canonical task entity — the unified model across all task providers.
-
-A task carries a typed DAG of dependencies (``dependencies``: prerequisite edges
-with a :class:`DependencyType`), an exit-criteria checklist, an action plan,
-phased notes, and an agent-instructions template. Status propagates along the DAG
-via the reconciliation service (see ``reconcile.py``): finishing every prerequisite
-auto-unblocks a dependent; a manual block is never auto-cleared.
-
-Hierarchy: a task belongs to a TaskList, which belongs to a Project
-(Project → TaskList → Task). ``task_list_id`` is the structural link; ``project``
-is a denormalized project-id label kept for fast grouping/filtering.
+"""Canonical task entity — the unified model across all task providers. A task carries a typed
+DAG of dependencies (``dependencies``: prerequisite edges with a :class:`DependencyType`), an
+exit-criteria checklist, an action plan, phased notes, and an agent-instructions template.
+Status propagates along the DAG via the reconciliation service (see ``reconcile.py``):
+finishing every prerequisite auto-unblocks a dependent; a manual block is never auto-cleared.
+Hierarchy: a task belongs to a TaskList, which belongs to a Project (Project → TaskList →
+Task). ``task_list_id`` is the structural link; ``project`` is a denormalized project-id label
+kept for fast grouping/filtering.
 """
 
 import enum
@@ -22,6 +19,12 @@ class TaskStatus(enum.Enum):
     DONE = "done"
     CANCELLED = "cancelled"
     BLOCKED = "blocked"
+    #: A branch the run declined, or work a rewind made unnecessary (TASKS-SOPS §1, R12).
+    #: ONE new member, not a status explosion: the WHY of a block lives in
+    #: `Task.blocked_kind`, and per-surface display labels are configuration. Measured
+    #: before adding it: `from_dict` coerced an unknown status to OPEN, so a skipped task
+    #: read back as work still to do — silently, on the board the user plans from.
+    SKIPPED = "skipped"
 
 
 # A task in a terminal state satisfies any dependency that points at it.
@@ -80,11 +83,10 @@ class ExitCriteriaStatus(str, enum.Enum):
 
 
 def normalize_exit_criterion(item: Any) -> dict:
-    """Canonical exit criterion: ``{description, status, comment}``.
-
-    Accepts a plain string, the legacy ``{description, met: bool}`` shape, or the
-    canonical shape. ``met`` is emitted (derived from ``status``) so older readers
-    keep working."""
+    """Canonical exit criterion: ``{description, status, comment}``. Accepts a plain string, the
+    legacy ``{description, met: bool}`` shape, or the canonical shape. ``met`` is emitted
+    (derived from ``status``) so older readers keep working.
+    """
     if isinstance(item, str):
         desc, status, comment = item, ExitCriteriaStatus.INCOMPLETE.value, ""
     elif isinstance(item, dict):
@@ -114,11 +116,10 @@ def normalize_exit_criterion(item: Any) -> dict:
 
 
 def normalize_action_plan_item(item: Any, index: int) -> dict:
-    """Canonical action-plan item: ``{sequence, content, completed}``.
-
-    Accepts a plain string, the legacy ``{description, completed}`` shape, or the
-    canonical ``{sequence, content}`` shape. ``description`` is emitted as an alias
-    of ``content`` for older readers."""
+    """Canonical action-plan item: ``{sequence, content, completed}``. Accepts a plain string,
+    the legacy ``{description, completed}`` shape, or the canonical ``{sequence, content}``
+    shape. ``description`` is emitted as an alias of ``content`` for older readers.
+    """
     if isinstance(item, str):
         content, completed = item, False
     elif isinstance(item, dict):
@@ -135,13 +136,13 @@ def normalize_action_plan_item(item: Any, index: int) -> dict:
 
 
 def _as_item_list(value: Any) -> list:
-    """Coerce exit_criteria / action_plan input to a LIST before per-item normalize.
-
-    A bare scalar (a single criterion/step passed as a string or dict — a plausible
-    caller/LLM mistake, e.g. exit_criteria="tests pass" instead of ["tests pass"])
-    must be wrapped: iterating a bare string would treat its CHARACTERS as separate
-    items, fabricating ~N single-char criteria that can never be 'met' → the task is
-    permanently un-completable. None/non-iterable → empty."""
+    """Coerce exit_criteria / action_plan input to a LIST before per-item normalize. A bare
+    scalar (a single criterion/step passed as a string or dict — a plausible caller/LLM
+    mistake, e.g. exit_criteria="tests pass" instead of ["tests pass"]) must be wrapped:
+    iterating a bare string would treat its CHARACTERS as separate items, fabricating ~N
+    single-char criteria that can never be 'met' → the task is permanently un-completable.
+    None/non-iterable → empty.
+    """
     if value is None:
         return []
     if isinstance(value, (str, dict)):
@@ -155,8 +156,9 @@ def _as_item_list(value: Any) -> list:
 
 
 def normalize_note(item: Any) -> dict:
-    """Canonical note: ``{content, timestamp}`` (carries any legacy ``phase``/
-    ``created_at`` through for back-compat readers)."""
+    """Canonical note: ``{content, timestamp}`` (carries any legacy ``phase``/ ``created_at``
+    through for back-compat readers).
+    """
     if isinstance(item, str):
         return {"content": item, "timestamp": ""}
     if isinstance(item, dict):
@@ -168,6 +170,51 @@ def normalize_note(item: Any) -> dict:
             out["phase"] = item["phase"]
         return out
     return {"content": "", "timestamp": ""}
+
+
+@dataclass
+class WorkflowTaskBinding:
+    """What ties a Task to the run that owns it (TASKS-SOPS §1). `managed` is the load-bearing
+    flag, and it has three real configurations rather than two: * `managed=True` — the engine
+    drives the status. A user write is rejected at the façade. * `managed=False` WITH a
+    binding — a task the workflow PRODUCED as output. Provenance is recorded so the board can
+    show where it came from, but nobody tracks its completion. * no binding at all — a
+    standalone task the user owns entirely. Collapsing the middle case into "unmanaged" would
+    lose the provenance; collapsing it into "managed" would make the engine responsible for
+    work it only suggested.
+    """
+
+    run_id: str
+    node_id: str
+    node_path: str = ""
+    managed: bool = True
+    #: Dedup key. Per-file JSON storage means idempotency is dedup-by-lookup, not a
+    #: transaction — so a resume or rewind that re-materializes has to recognize its own
+    #: earlier work by content, not by hoping the write is atomic.
+    fingerprint: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "node_id": self.node_id,
+            "node_path": self.node_path,
+            "managed": self.managed,
+            "fingerprint": self.fingerprint,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "WorkflowTaskBinding":
+        d = d or {}
+        return cls(
+            run_id=str(d.get("run_id", "") or ""),
+            node_id=str(d.get("node_id", "") or ""),
+            node_path=str(d.get("node_path", "") or ""),
+            # Defaults to True to match the dataclass, but an EXPLICIT false is honored. A
+            # produced task whose flag was dropped on read would become engine-managed and
+            # have its status overwritten by a run that never tracked it.
+            managed=bool(d.get("managed", True)),
+            fingerprint=str(d.get("fingerprint", "") or ""),
+        )
 
 
 @dataclass
@@ -199,6 +246,22 @@ class Task:
     agent_instructions_template: str = ""
     # Dependency-driven status bookkeeping
     blocked_reason_kind: str = ""  # "" | "auto" | "manual"
+    # ── workflow projection (TASKS-SOPS §1, S55) ──
+    #: The run/node this task projects, when any. `None` = standalone.
+    workflow_binding: "WorkflowTaskBinding | None" = None
+    #: WHY a blocked task is blocked, as a field rather than a status explosion. An unknown
+    #: kind degrades to a plain `blocked` badge on every surface (R12).
+    blocked_kind: str = ""  # "" | needs_input | capability | transient | dependency
+    #: A short human line about current state — what the node is doing right now.
+    preview: str = ""
+    #: The criterion the ENGINE runs to decide done. Copied from the node's verify clause at
+    #: materialization, so a later spec edit cannot retroactively change what a finished task
+    #: was judged against.
+    done_criterion: str = ""
+    #: What established completion. A done task with no evidence is a claim.
+    evidence: list[dict] = field(default_factory=list)
+    #: Per-attempt records for a retried node.
+    attempts: list[dict] = field(default_factory=list)
     created_at: str = ""
     updated_at: str = ""
     url: str = ""
@@ -217,6 +280,11 @@ class Task:
         d["status"] = self.status.value
         d["priority"] = self.priority.value
         d["dependencies"] = [dep.to_dict() for dep in self.dependencies]
+        # The binding's OWN serializer, not `asdict`'s nested walk: one place decides its wire
+        # shape, so adding a field there cannot silently skip this path.
+        d["workflow_binding"] = (
+            self.workflow_binding.to_dict() if self.workflow_binding is not None else None
+        )
         d["exit_criteria"] = [normalize_exit_criterion(e) for e in self.exit_criteria]
         d["action_plan"] = [
             normalize_action_plan_item(a, i) for i, a in enumerate(self.action_plan)
@@ -229,14 +297,12 @@ class Task:
         return d
 
     def belongs_to(self, username: str) -> bool:
-        """Whether this task is ``username``'s work (TEAM-SHARED-ENTITIES §2.1).
-
-        Assignee decides when there is one; an UNASSIGNED task falls back to its
-        author, because "I wrote it and nobody picked it up" is still my work.
-
-        With no username configured every task belongs to the owner — a single-user
-        install must behave exactly as it does today, and that is also the honest
-        answer: with no identity there is nobody else for a task to belong to.
+        """Whether this task is ``username``'s work (TEAM-SHARED-ENTITIES §2.1). Assignee decides
+        when there is one; an UNASSIGNED task falls back to its author, because "I wrote it
+        and nobody picked it up" is still my work. With no username configured every task
+        belongs to the owner — a single-user install must behave exactly as it does today, and
+        that is also the honest answer: with no identity there is nobody else for a task to
+        belong to.
         """
         owner = (username or "").strip().lower()
         if not owner:
@@ -250,8 +316,9 @@ class Task:
         return not author or author == owner
 
     def can_mark_complete(self) -> bool:
-        """A task may be completed only when every exit criterion is complete
-        (a task with no exit criteria is freely completable)."""
+        """A task may be completed only when every exit criterion is complete (a task with no
+        exit criteria is freely completable).
+        """
         return all(
             normalize_exit_criterion(e)["status"] == ExitCriteriaStatus.COMPLETE.value
             for e in self.exit_criteria
@@ -299,6 +366,19 @@ class Task:
             labels=d.get("labels", []),
             due=d.get("due", ""),
             order=float(d.get("order", 0.0) or 0.0),
+            # Measured: `asdict` put the binding in `to_dict` while `from_dict` dropped it, so a
+            # materialized task read back as STANDALONE — losing engine ownership after one
+            # reload, which is exactly the state where a user's manual write would be accepted.
+            workflow_binding=(
+                WorkflowTaskBinding.from_dict(d["workflow_binding"])
+                if isinstance(d.get("workflow_binding"), dict)
+                else None
+            ),
+            blocked_kind=str(d.get("blocked_kind", "") or ""),
+            preview=str(d.get("preview", "") or ""),
+            done_criterion=str(d.get("done_criterion", "") or ""),
+            evidence=_as_item_list(d.get("evidence", [])),
+            attempts=_as_item_list(d.get("attempts", [])),
             exit_criteria=[normalize_exit_criterion(e) for e in (d.get("exit_criteria") or [])],
             action_plan=[
                 normalize_action_plan_item(a, i) for i, a in enumerate(d.get("action_plan") or [])
@@ -343,17 +423,13 @@ DEFAULT_PROJECTS = ("Personal", "Repeatable")
 
 @dataclass
 class Project:
-    """A first-class work unit at the top of the hierarchy.
-
-    A project ties together everything a user does on one logical effort — Goal
-    Loops, Code projects, manually-created Tasks (and optionally Artifacts) — and
-    owns a **context directory** (``projects/<id>/``) where that context
-    consolidates for continuation across features and sessions. It MAY bind an
-    existing ``workspace_dir`` (a codebase on disk); when bound, the project's
-    per-workspace git worktrees live under its context dir so several projects can
-    operate on one workspace without colliding. With no workspace bound, the
-    context dir itself is the working area.
-
+    """A first-class work unit at the top of the hierarchy. A project ties together everything a
+    user does on one logical effort — Goal Loops, Code projects, manually-created Tasks (and
+    optionally Artifacts) — and owns a **context directory** (``projects/<id>/``) where that
+    context consolidates for continuation across features and sessions. It MAY bind an
+    existing ``workspace_dir`` (a codebase on disk); when bound, the project's per-workspace
+    git worktrees live under its context dir so several projects can operate on one workspace
+    without colliding. With no workspace bound, the context dir itself is the working area.
     Names are unique and LLM-generated/maintained until the user renames manually
     (``name_locked``). ``Personal``/``Repeatable`` are protected defaults.
     """
@@ -400,9 +476,9 @@ class Project:
 
 @dataclass
 class TaskList:
-    """A mid-level container belonging to a :class:`Project`. Tasks belong to a
-    task list (``Task.task_list_id``); the list belongs to a project
-    (``project_id``)."""
+    """A mid-level container belonging to a :class:`Project`. Tasks belong to a task list
+    (``Task.task_list_id``); the list belongs to a project (``project_id``).
+    """
 
     id: str
     name: str
