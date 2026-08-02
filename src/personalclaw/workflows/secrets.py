@@ -48,6 +48,18 @@ SECRET_KEY_HINTS = (
     "privatekey",
     "auth",
     "bearer",
+    # Provider-specific credential shapes that none of the generic hints above match. Measured
+    # while wiring the workspace env filter (S49): `GITHUB_PAT` read as NON-secret, so a run
+    # declaring inherit-from-host would have passed a GitHub personal access token straight into a
+    # leaf subagent's environment. A hint list is only as good as its worst-covered credential, and
+    # the ones with bespoke names are exactly the ones a generic list misses.
+    "_pat",
+    "pat_",
+    "session_key",
+    "access_key",
+    "refresh",
+    "signing",
+    "webhook",
 )
 
 #: Keys that LOOK secret-bearing but hold a reference, not a value. Stripping these would
