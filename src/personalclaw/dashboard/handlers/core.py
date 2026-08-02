@@ -555,6 +555,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "learning.propose_quota_per_run": {"type": "int", "min": 1, "max": 25},
     "learning.curator_enabled": {"type": "bool"},
     "learning.context_budget_tokens": {"type": "int", "min": 500, "max": 100000},
+    # KNOWLEDGE-SYNTHESIS: the write-semantics knobs worth changing without a restart.
+    # `require_citations` is here deliberately — an owner mid-research may need to store an
+    # unsourced note and should not have to restart the gateway to do it.
+    "knowledge.idempotent_persist": {"type": "bool"},
+    "knowledge.require_citations": {"type": "bool"},
+    "knowledge.report_budget_chars": {"type": "int", "min": 1000, "max": 500000},
+    "knowledge.max_mentions_per_claim": {"type": "int", "min": 1, "max": 200},
     # REMOTE-USER-AUTH C4 — the owner-login knobs. Runtime-editable so turning login on
     # or off, or loosening a lockout you tripped, takes effect on the next request without
     # a restart. The PASSWORD is deliberately NOT here and never will be: a credential is
