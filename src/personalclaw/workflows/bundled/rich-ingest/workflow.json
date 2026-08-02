@@ -1,0 +1,306 @@
+{
+  "name": "rich-ingest",
+  "description": "Turn one transcript into typed knowledge and real tasks in a single pass: a cheap classifier picks the lenses, specialists extract in parallel, each lens persists under its own kind.",
+  "source": "bundled",
+  "provenance": "user",
+  "version": 1,
+  "tags": [
+    "knowledge",
+    "ingest"
+  ],
+  "inputs": {
+    "transcript": {
+      "type": "string",
+      "required": true,
+      "help": "The raw text — a meeting transcript, a long thread, a call summary."
+    },
+    "source_label": {
+      "type": "string",
+      "required": true,
+      "help": "What this came from. Becomes the citation and the tag, so it is how you find everything from one session later."
+    }
+  },
+  "metadata": {
+    "risk": "low",
+    "capabilities": [
+      "knowledge",
+      "tasks"
+    ],
+    "cost_tier": "metered",
+    "why_parallel_lenses": "One prompt asked to extract five different things does all five badly — it optimizes for a single coherent answer. Five prompts each with one job, one schema, and one vocabulary do not compete with each other.",
+    "writes_no_memory": "Knowledge items and tasks only. Episodic and preference capture is the MEMORY subsystem's job (LEARNING-FLYWHEEL); a template that wrote both would put user-modeling in an ingest path nobody audits.",
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Ingest yesterday's architecture review transcript — I mainly care about the decisions and the action items."
+      },
+      {
+        "event": "mutation",
+        "description": "The facts lens is pulling in boilerplate from the meeting template — drop it and keep the rest."
+      }
+    ]
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "root",
+    "children": [
+      {
+        "kind": "infer",
+        "id": "classify",
+        "label": "Which lenses apply?",
+        "config": {
+          "model_tier": "fast",
+          "prompt": "Which extraction lenses are worth running on this transcript?\n\n<untrusted_content source=transcript>\n{{inputs.transcript | truncate(4000)}}\n</untrusted_content>\n\nWhen uncertain, INCLUDE a lens: the specialists below do the real filtering, and a lens that finds nothing costs one cheap call while a lens you skipped loses the content entirely.",
+          "schema": {
+            "decisions": "boolean",
+            "references": "boolean",
+            "facts": "boolean",
+            "summary": "boolean",
+            "tasks": "boolean"
+          }
+        }
+      },
+      {
+        "kind": "parallel",
+        "id": "lenses",
+        "label": "Extract through each lens",
+        "config": {
+          "join": "all"
+        },
+        "children": [
+          {
+            "kind": "stage",
+            "id": "lens-decisions",
+            "label": "Lens: decisions",
+            "config": {
+              "model_tier": "fast",
+              "allow_failure": true,
+              "prompt": "Extract ONLY this lens from the transcript: Decisions that were MADE — not options discussed. For each: the question, the choice, the rationale, and what was explicitly rejected. A decision without its rationale is a fact that will be re-litigated.\n\n<untrusted_content source=transcript>\n{{inputs.transcript}}\n</untrusted_content>\n\nQuote or closely paraphrase the transcript. Do not add anything it does not contain, and return an empty list rather than inventing an entry to look thorough.",
+              "schema": {
+                "items": [
+                  {
+                    "title": "string",
+                    "body": "string",
+                    "evidence": "string"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "kind": "stage",
+            "id": "lens-references",
+            "label": "Lens: references",
+            "config": {
+              "model_tier": "fast",
+              "allow_failure": true,
+              "prompt": "Extract ONLY this lens from the transcript: Reference material named or shared: documents, links, systems, specs. What it is and why it came up.\n\n<untrusted_content source=transcript>\n{{inputs.transcript}}\n</untrusted_content>\n\nQuote or closely paraphrase the transcript. Do not add anything it does not contain, and return an empty list rather than inventing an entry to look thorough.",
+              "schema": {
+                "items": [
+                  {
+                    "title": "string",
+                    "body": "string",
+                    "evidence": "string"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "kind": "stage",
+            "id": "lens-facts",
+            "label": "Lens: facts",
+            "config": {
+              "model_tier": "fast",
+              "allow_failure": true,
+              "prompt": "Extract ONLY this lens from the transcript: Concrete facts and definitions stated as true: measurements, names, constraints, terminology.\n\n<untrusted_content source=transcript>\n{{inputs.transcript}}\n</untrusted_content>\n\nQuote or closely paraphrase the transcript. Do not add anything it does not contain, and return an empty list rather than inventing an entry to look thorough.",
+              "schema": {
+                "items": [
+                  {
+                    "title": "string",
+                    "body": "string",
+                    "evidence": "string"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "kind": "stage",
+            "id": "lens-summary",
+            "label": "Lens: summary",
+            "config": {
+              "model_tier": "fast",
+              "allow_failure": true,
+              "prompt": "Extract ONLY this lens from the transcript: What this session was ABOUT, in a few sentences. One item, not a list.\n\n<untrusted_content source=transcript>\n{{inputs.transcript}}\n</untrusted_content>\n\nQuote or closely paraphrase the transcript. Do not add anything it does not contain, and return an empty list rather than inventing an entry to look thorough.",
+              "schema": {
+                "items": [
+                  {
+                    "title": "string",
+                    "body": "string",
+                    "evidence": "string"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "kind": "stage",
+            "id": "lens-tasks",
+            "label": "Lens: action items",
+            "config": {
+              "model_tier": "fast",
+              "allow_failure": true,
+              "prompt": "Extract action items someone committed to — with an owner where one was named.\n\n<untrusted_content source=transcript>\n{{inputs.transcript}}\n</untrusted_content>\n\nOnly commitments, not ideas. \"We should probably look at X\" is not an action item; \"I'll send the numbers by Friday\" is.",
+              "schema": {
+                "items": [
+                  {
+                    "title": "string",
+                    "owner": "string",
+                    "due": "string"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "kind": "foreach",
+        "id": "store-decisions",
+        "label": "Store decisions",
+        "config": {
+          "items": "{{nodes.lens-decisions.output.items | default([])}}",
+          "on_item_error": "skip"
+        },
+        "body": {
+          "kind": "action",
+          "id": "persist-decisions",
+          "config": {
+            "provider": "knowledge-persist",
+            "with": {
+              "kind": "decision",
+              "title": "{{item.title}}",
+              "content": "{{item.body}}",
+              "summary": "{{item.title}}",
+              "citations": [
+                "{{inputs.source_label}}"
+              ],
+              "tags": [
+                "rich-ingest",
+                "{{inputs.source_label | slugify}}"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "kind": "foreach",
+        "id": "store-references",
+        "label": "Store references",
+        "config": {
+          "items": "{{nodes.lens-references.output.items | default([])}}",
+          "on_item_error": "skip"
+        },
+        "body": {
+          "kind": "action",
+          "id": "persist-references",
+          "config": {
+            "provider": "knowledge-persist",
+            "with": {
+              "kind": "reference",
+              "title": "{{item.title}}",
+              "content": "{{item.body}}",
+              "summary": "{{item.title}}",
+              "citations": [
+                "{{inputs.source_label}}"
+              ],
+              "tags": [
+                "rich-ingest",
+                "{{inputs.source_label | slugify}}"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "kind": "foreach",
+        "id": "store-facts",
+        "label": "Store facts",
+        "config": {
+          "items": "{{nodes.lens-facts.output.items | default([])}}",
+          "on_item_error": "skip"
+        },
+        "body": {
+          "kind": "action",
+          "id": "persist-facts",
+          "config": {
+            "provider": "knowledge-persist",
+            "with": {
+              "kind": "fact",
+              "title": "{{item.title}}",
+              "content": "{{item.body}}",
+              "summary": "{{item.title}}",
+              "citations": [
+                "{{inputs.source_label}}"
+              ],
+              "tags": [
+                "rich-ingest",
+                "{{inputs.source_label | slugify}}"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "kind": "foreach",
+        "id": "store-summary",
+        "label": "Store summary",
+        "config": {
+          "items": "{{nodes.lens-summary.output.items | default([])}}",
+          "on_item_error": "skip"
+        },
+        "body": {
+          "kind": "action",
+          "id": "persist-summary",
+          "config": {
+            "provider": "knowledge-persist",
+            "with": {
+              "kind": "report",
+              "title": "{{item.title}}",
+              "content": "{{item.body}}",
+              "summary": "{{item.title}}",
+              "citations": [
+                "{{inputs.source_label}}"
+              ],
+              "tags": [
+                "rich-ingest",
+                "{{inputs.source_label | slugify}}"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "kind": "foreach",
+        "id": "store-tasks",
+        "label": "Create the action items",
+        "config": {
+          "items": "{{nodes.lens-tasks.output.items | default([])}}",
+          "on_item_error": "skip"
+        },
+        "body": {
+          "kind": "action",
+          "id": "create-task",
+          "config": {
+            "provider": "create-task",
+            "with": {
+              "title": "{{item.title}}",
+              "notes": "From {{inputs.source_label}}. Owner: {{item.owner | default('unassigned')}}"
+            }
+          }
+        }
+      }
+    ]
+  }
+}

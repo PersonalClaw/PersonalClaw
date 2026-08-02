@@ -1626,3 +1626,77 @@ rather than an action provider, since an LLM call inside an action is exactly wh
 split exists to prevent; the deterministic tier ships wired. Background typed-edge INFERENCE beyond
 `contradicts` is likewise parse-ready but unwired. The `coverage_gap` → persist-proposal loop is
 still session 39's, along with the template slate.
+
+### Session 39 — Knowledge Synthesis: template slate + long-run validation (`feature-wf2-knowledge-slate`, PR NOT OPENED — push blocked)
+
+Four bundled templates (`knowledge-synthesis`, `rich-ingest`, `thesis-tracker`, `publish-article`)
+and `tests/test_knowledge_longrun_validation.py` covering the plan's §8 success criteria. 12186
+tests (+63), lint clean at 619 files. This closes the Knowledge Synthesis plan (sessions 34-39).
+
+**DEVIATION — 4 of the 12 slate items built, and every omission is a missing PROVIDER, not a
+missing template.** The plan's §7.1 slate assumes capabilities that do not exist yet:
+
+- `trending-repo-digest` and the dual-sink watcher variant need **`net.fetch` as an ACTION
+  provider**. There is none — `ALLOWED_HOOK_PROVIDERS` has no fetch entry, and the egress
+  chokepoint is a library function, not a dispatchable action. Building the template anyway would
+  ship a spec that validates and then fails at run time, which is the exact failure mode
+  `ALLOWED_HOOK_PROVIDERS` exists to prevent.
+- `meeting-prep` needs a calendar source. The plan itself notes the event is "a template input
+  until one does", which makes the template a `knowledge_retrieve` with extra steps — the
+  `knowledge-synthesis` template already covers that shape.
+- `market-monitor` is the `until_cancelled` flagship, and its `wait` + seen-set + sibling-window
+  mechanics are exactly what session 36 validated live (2→4→8 sibling growth, `watcher_reaped`,
+  journaled seen-set). Shipping a second copy of a validated shape that also needs `net.fetch`
+  adds a maintenance surface without adding a mechanism.
+- `quality-document`, the raw→rolling→one-pager tiering, and `living-document` are artifact-centric
+  variants of the compiled-truth pattern `thesis-tracker` demonstrates; `paper-ingest` is
+  `rich-ingest` with a fetch step (same missing provider).
+
+The four that DID land are the ones whose mechanisms ship end to end: the three-node one-model-call
+pattern, classifier-then-dispatch multi-lens ingest, compiled-truth tracking, and the full
+draft→dual-review→gate→persist artifact lifecycle with a decision record.
+
+**Findings:**
+
+(a) **`rich-ingest` persists each lens under its OWN kind.** A single merged persist would collapse
+  four typed vocabularies into one item and lose exactly the typing the separate lenses exist to
+  produce. Asserted structurally (`{decision, reference, fact, report}`).
+
+(b) **Every lens carries `allow_failure`.** One lens tripping must not sink the pass — four of five
+  vocabularies extracted is a good outcome, and losing all of them because the facts prompt failed
+  is not.
+
+(c) **The KNOW-R18 memory boundary is asserted, not trusted.** A test reads the template's action
+  providers and requires exactly `{knowledge-persist, create-task}` — episodic and preference
+  capture is the MEMORY subsystem's job, and a template that wrote both would put user-modeling in
+  an ingest path nobody audits.
+
+(d) **A test asserts every slate template FENCES what it retrieves.** It checks the raw
+  `{{nodes.<id>.output.items}}` form is absent AND that `| fenced_sources` is present for each
+  retrieve node — a template that interpolated raw knowledge into a prompt would bypass the
+  platform's fencing doctrine, and reviewing that by eye does not scale to twelve templates.
+
+(e) **The long-run assertions were mutation-tested.** Measured that removing the window makes the
+  sibling view grow to 840 items over 168 cycles (the test caps at 20), and that removing the
+  seen-set marking produces 95 duplicate re-processings over 20 cycles. Both assertions fail when
+  their mechanism is removed, which is the only thing that makes them worth having.
+
+(f) **Idempotency is tested at FIFTY calls, not two.** A duplicate-on-Nth bug (a counter in the
+  key, a timestamp in the hash) survives a two-call test. Mention counts are held stable across 20
+  retries for the same reason: a claim that looks corroborated by fifty sources when one source
+  retried fifty times is the most dangerous possible artifact, because confidence is computed
+  from it.
+
+**Validated live:** all four templates appear in the Store; `knowledge-synthesis`'s zero-token
+retrieve correctly reported a coverage gap on an empty store; and the `publish-article` tail was
+driven against the REAL dev store — a `reference` item stored, the approval recorded as a separate
+`kind: decision` citing it, a hybrid retrieve finding both, and `fenced_sources` rendering them as
+two numbered fenced blocks.
+
+**NOT DONE:** `knowledge-synthesis`'s SYNTHESIS STAGE was not observed to completion live — the
+Bedrock subagent call was still running after ~7 minutes and was cancelled, the same environmental
+latency session 37 hit with `gap-healing`. A minimal `infer` probe confirmed the model IS reachable
+(it failed on an output-contract error from my own deliberately loose probe prompt, which proves the
+call path works), so this is latency rather than a defect — but I have not seen these specific
+templates' model nodes finish. Criterion #10 (heuristic-extraction fallback with no provider bound)
+is also unverified: it needs a provider-less environment, and this dev home has Bedrock bound.
