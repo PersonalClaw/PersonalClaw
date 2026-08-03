@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ChevronDown, ChevronRight, GitBranch, Pause, RotateCcw, SkipForward, X } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
+import { Segmented } from '../../ui/Segmented'
 import { Loading } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
 import { api, type WorkflowContinuation, type WorkflowRunDetailData } from '../../lib/api'
@@ -9,6 +10,9 @@ import { confirm } from '../../ui/dialog'
 import { fmtElapsed, isTerminal, itemProgress, nodeLabel, nodeLook, runLook } from './workflowMeta'
 import { buildTree, initialCollapsed, summarize, summaryLabel, visibleRows } from './nodeTree'
 import { useWorkflowStream } from './useWorkflowStream'
+import { DagView } from '../tasks/DagView'
+import { layoutRunDag } from './runDag'
+import { tokenForNode } from './surfacingMeta'
 import { WorkflowAsk } from './WorkflowAsk'
 
 /** One workflow run, live (WORKFLOWS-V2 Slice 7b).
@@ -121,6 +125,51 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
   // of them are one untaken subgraph — the three that matter are buried in the ones that did not
   // run.
   const rows = useMemo(() => buildTree(nodes), [nodes])
+
+  // List | Graph. The LIST is the default: it carries failure text, remediation and per-item labels
+  // that a 168px node box cannot, and it is what a user reads when something broke. The graph
+  // answers a different question — where in the shape am I — so it is a mode, not a replacement.
+  //
+  // Local state, not URL-backed: this component takes `runId`/`onBack` and no route props, and
+  // threading them through only to make a view toggle shareable would change the caller's contract
+  // for a preference nobody links to.
+  const [view, setView] = useState<'list' | 'graph'>('list')
+
+  // The graph's Approve/Deny reads the continuations this view ALREADY fetches on every refetch —
+  // no second request. A `waiting` node is only ANSWERABLE when a live resume token exists for it:
+  // a `wait` node is parked on the clock, and offering approval on one would ask the user to answer
+  // something nobody asked them.
+  const dag = useMemo(
+    () => layoutRunDag(nodes, {
+      continuations: conts,
+      label: (n) => (n.item_label ? `${n.node_id} · ${n.item_label}` : n.node_id),
+    }),
+    [nodes, conts],
+  )
+
+  const resolveGate = useCallback(
+    async (instancePath: string, approved: boolean) => {
+      // `tokenForNode` matches on `node_id`, so the continuation's INSTANCE PATH is passed as that
+      // key: a DAG node is identified by its instance path (two iterations of one node share a
+      // node_id and would collide), and the layout uses the same id.
+      const token = tokenForNode(
+        conts.map((c) => ({ node_id: c.instance_path, resume_token: c.resume_token, expired: c.expired })),
+        instancePath,
+      )
+      // No token means nothing to answer. Guarded rather than sent: the backend reads an ABSENT
+      // token as "the newest pending gate", which is right for a chat user saying "approve it" and
+      // wrong for a click on a specific node.
+      if (!token) { notify('That gate has no pending question.'); return }
+      await act(approved ? 'Approve' : 'Deny', async () => {
+        const res = await api.confirmWorkflowRun(runId, {
+          verb: approved ? 'approve' : 'reject',
+          resume_token: token,
+        })
+        notify(res.ok === false ? (res.message ?? 'Could not resolve the gate.') : `Gate ${res.verb}d.`)
+      })
+    },
+    [act, conts, runId],
+  )
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   // Seeded ONCE per run, not on every poll: re-deriving would slam a subtree shut the moment it
   // finished, right as the user was reading it. `touched` is what makes the seeding one-shot while
@@ -189,7 +238,40 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
               {run.elapsed_secs ? <span className="tabular-nums">{fmtElapsed(run.elapsed_secs)}</span> : null}
             </div>
 
-            <div className="flex flex-col gap-2xs">
+            {/* The mode toggle sits ABOVE the nodes and is hidden when there is nothing to show —
+                a List/Graph switch over an empty run offers two ways to look at nothing. */}
+            {nodes.length > 0 && (
+              <div className="flex items-center gap-xs">
+                <Segmented
+                  ariaLabel="Run view"
+                  value={view}
+                  onChange={(v) => setView(v as 'list' | 'graph')}
+                  options={[
+                    { key: 'list', label: 'List' },
+                    { key: 'graph', label: 'Graph' },
+                  ]}
+                />
+              </div>
+            )}
+
+            {view === 'graph' && dag.nodes.length > 0 ? (
+              <div className="overflow-auto rounded-lg bg-surface-high p-s">
+                <DagView
+                  nodes={dag.nodes}
+                  edges={dag.edges}
+                  width={dag.width}
+                  height={dag.height}
+                  onNodeClick={(id) => toggle(id)}
+                  // The declared-but-unwired seam, finally bound (TASKS-SOPS §7 R6). Passed only
+                  // when the run can still be answered: a terminal run's gate cannot be resolved,
+                  // and an Approve button that always fails teaches the user the UI lies.
+                  onApprove={isTerminal(run.status) ? undefined : (id) => resolveGate(id, true)}
+                  onDeny={isTerminal(run.status) ? undefined : (id) => resolveGate(id, false)}
+                />
+              </div>
+            ) : null}
+
+            <div className={`flex flex-col gap-2xs${view === 'graph' ? ' hidden' : ''}`}>
               {shownRows.map(({ node: n, depth, descendants, collapsible }) => {
                 const nl = nodeLook(n.state)
                 const NIcon = nl.icon

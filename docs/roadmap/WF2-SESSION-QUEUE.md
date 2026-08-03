@@ -149,7 +149,8 @@ mandatory.
 | 61g | The Task WRITE through the provider (engine actor, drained at completion, shielded bound) + 3 measured defects + the def-registry leak fix | G30 | ✅ DONE (#207) |
 | 61h | The VERIFICATION call site (criterion execution, tristate preserved, drained) | G30 | ✅ DONE (#210) |
 | 61i | The confirmation-gate emission (pending on the continuation's idempotency, resolved after the claim) + the `master_fd=99` fixture bug behind the terminal flake | G30 | ✅ DONE (#211) |
-| 61j | Still open: DagView-in-run-detail composition, checklist edit UX, config four-point wiring | G30 | TODO |
+| 61j | DagView composition: `runDag` layout + List/Graph toggle + the gate verbs wired to `/confirm`; fixed container-less depth and the clipped overlay | G30 | ✅ DONE (#214) |
+| 61k | Still open: checklist drag-reorder edit UX, config four-point wiring | G30 | TODO |
 
 ## H. Automation Substrate (`-AUTOMATION-SUBSTRATE.md`) — final step needs Loops Phase 4
 

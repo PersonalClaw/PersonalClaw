@@ -1426,3 +1426,52 @@ the earlier owner note in #210 is superseded by this finding, and it was NOT env
 
 - **NOT DONE:** DagView-in-run-detail composition (`WorkflowRunDetail` still renders no DAG — a view
   composition change), checklist drag-reorder edit UX, config four-point wiring.
+
+### S61j — The DagView composition, and two defects only a live run exposed (22 FE tests) — DONE
+
+`DagView`'s `onApprove`/`onDeny` had been a declared-but-unwired extension point since it was written,
+and `WorkflowRunDetail` rendered no graph at all. Both are now real: a `List | Graph` toggle, a pure
+`runDag.ts` layout module, and the gate verbs bound to `POST /runs/{id}/confirm` (S61d).
+
+**Two defects that unit tests could not have found — both needed a real projected run.**
+
+1. **The projection contains NO container rows.** A live gated run projected `root.children[0]`,
+   `root.children[1].children[0..1]` and `root.children[2]` — no `root`, no `root.children[1]`. The
+   first layout derived column depth by counting PLACED ancestors, so every node had none, landed in
+   column 0, and the graph drew one column and zero edges. Depth now comes from the path's own
+   nesting (counting `[`, which appears once per container level in every shape the engine emits),
+   normalized so the shallowest row starts at the left edge. Edges fall back to the nearest path
+   PREFIX among placed nodes, so a nested leaf still links to the step containing it.
+2. **The gate overlay was clipped.** `DagView` draws Approve/Deny in a `foreignObject` at `y + h`, so
+   a height computed from the node boxes alone rendered the buttons INTO the SVG and below its edge —
+   invisible, which looks exactly like the seam still being unwired. The layout now reserves
+   `GATE_OVERLAY_H` when any node is awaiting.
+
+A third finding, from `buildTree`: its `TreeRow.depth` counts `.children[...]` SEGMENTS and reports 0
+for both `root` and `root.children[0]` — correct for the list's indentation model (a top-level step is
+not indented under the root container) and wrong for columns, where it would draw a parent on top of
+its own child. The module comment records all three so a later "simplification" cannot reintroduce any
+of them.
+
+Decisions:
+
+- **The LIST stays the default.** It carries failure text, remediation and per-item labels a 168px
+  node box cannot, and it is what a user reads when something broke. The graph answers a different
+  question — where in the shape am I — so it is a mode, not a replacement.
+- **The state map is lossy BY DESIGN.** `degraded` and `no_change` are in the engine's
+  `SUCCESS_STATES`, so painting them as errors would tell the user work failed when it did not;
+  `scope_violation`/`escalated` are errors; anything unrecognized is `todo`, the state that claims
+  least, so an older frontend cannot paint a new engine state as a failure.
+- **Answerability asks the CONTINUATION list, not the state.** `waiting` also covers a `wait` node
+  parked on the clock, and offering Approve on one would ask the user to answer something nobody
+  asked them. An expired continuation is not answerable either — the token is gone, and a button that
+  always fails teaches the user the UI lies.
+- **The verbs are withheld on a terminal run** for the same reason.
+- **The graph reuses the continuations this view already fetches** — no second request.
+
+**Validated as a user** (live gateway, isolated dev home): authored a def with a nested `parallel` and
+a gated step, ran it, and drove the browser. The graph renders two columns with the parallel's children
+to the right, the awaiting gate carries the warn ring, and **clicking Approve on the node resolved the
+gate and the run resumed** (`needs_input` → `running`). Zero console errors.
+
+- **NOT DONE:** checklist drag-reorder edit UX, config four-point wiring.
