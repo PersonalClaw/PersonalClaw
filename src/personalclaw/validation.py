@@ -971,6 +971,67 @@ MCP_SCHEDULE_SCHEMAS: dict[str, ToolSchema] = {
 
 MCP_HUB_SCHEMAS: dict[str, ToolSchema] = {}
 
+# Keyed by the live `automation_*` tool names (§4 / S92). `patch` and `spec` are free-form objects
+# validated for TYPE only here — `triggers/tools.py` owns the allowlist of which patch keys may
+# actually apply (a schema-level allowlist would duplicate that logic and drift from it). `when` is
+# NL and gets the medium-string cap rather than a pattern, since its whole job is to accept the
+# sentence a user would type.
+MCP_AUTOMATION_SCHEMAS: dict[str, ToolSchema] = {
+    "automation_create": ToolSchema(
+        tool_name="automation_create",
+        fields=[
+            FieldSpec("name", str, required=True, max_len=MAX_SHORT_STRING),
+            FieldSpec("when", str, max_len=MAX_MEDIUM_STRING),
+            FieldSpec("message", str, max_len=MAX_MEDIUM_STRING),
+            FieldSpec("kind", str, max_len=32, pattern=re.compile(r"^[a-z_]*$")),
+            FieldSpec("spec", dict),
+        ],
+    ),
+    "automation_list": ToolSchema(
+        tool_name="automation_list",
+        fields=[
+            FieldSpec("kind", str, max_len=32, pattern=re.compile(r"^[a-z_]*$")),
+            FieldSpec("state", str, max_len=10, allowed=frozenset({"", "active", "paused"})),
+        ],
+    ),
+    "automation_update": ToolSchema(
+        tool_name="automation_update",
+        fields=[
+            FieldSpec("id", str, required=True, max_len=96),
+            FieldSpec("patch", dict, required=True),
+        ],
+    ),
+    "automation_pause": ToolSchema(
+        tool_name="automation_pause",
+        fields=[FieldSpec("id", str, required=True, max_len=96)],
+    ),
+    "automation_resume": ToolSchema(
+        tool_name="automation_resume",
+        fields=[FieldSpec("id", str, required=True, max_len=96)],
+    ),
+    "automation_run": ToolSchema(
+        tool_name="automation_run",
+        fields=[
+            FieldSpec("id", str, required=True, max_len=96),
+            FieldSpec("dry_run", bool),
+        ],
+    ),
+    "automation_history": ToolSchema(
+        tool_name="automation_history",
+        fields=[
+            FieldSpec("id", str, required=True, max_len=96),
+            FieldSpec("n", int, min_val=1, max_val=500),
+        ],
+    ),
+    "automation_delete": ToolSchema(
+        tool_name="automation_delete",
+        fields=[
+            FieldSpec("id", str, required=True, max_len=96),
+            FieldSpec("confirm", bool),
+        ],
+    ),
+}
+
 
 # ── Response Schemas ──
 

@@ -1690,3 +1690,66 @@ lands before the cutover rather than after.
 - **NOT DONE (by scope, unchanged):** the two behaviour-visible CUTOVERS — (a) wiring the chain into
   gateway boot beside the live `ScheduleService`, now gateable on `verify-migration` exiting 0, and
   (b) re-pointing `/api/triggers`' three backends at the store.
+
+### S92 — The `automation_*` chat-tool namespace; criterion 2 closed (§4 — PRs stacked on S91)
+
+**DONE. Closes success criterion 2** — *"When a file in ~/notes changes, summarize it into my
+knowledge base" is creatable in chat in ONE message* — and **unblocks S83**, which was `🟡 PARTIAL`
+for exactly one recorded reason: "Criterion 2 needs `automation_create` (§4), which needs somewhere
+to PUT a `file` trigger. Measured: there is no unified trigger store." S87 shipped that store.
+Re-measured before writing a line: a `file` trigger round-trips through `TriggerStore` with zero
+errors and `SPEC_KEYS` accepts all nine kinds. Blocker gone, so the tool landed.
+
+- **🔴 DISCOVERY — the per-minute-poll trap, found by probing before writing.** The only NL
+  schedule path is `nl_to_cron`, cron-shaped by construction. Fed criterion 2's own sentence it
+  returns `("", "Could not parse a 5-field cron expression…")` — the GOOD case. The bad case is a
+  model asked for a cron expression while handed a file-watch request answering `* * * * *`, which
+  **validates** (pinned by `test_a_star_cron_really_would_have_validated`), schedules, and silently
+  turns "when a file changes" into a per-minute LLM turn. So `triggers/nl_kind.route()` decides the
+  KIND first and a non-cadence request never reaches the cadence converter
+  (`test_a_file_request_NEVER_calls_the_cadence_converter`). An unroutable request refuses rather
+  than defaulting to `clock` — a default of "probably a schedule" is the trap itself.
+- **🔴 DISCOVERY — a URL mis-routed to `file`.** The path regex matches `//example.com/page` inside
+  a URL, so `"when https://example.com/page changes"` routed to `file` with the impossible glob
+  `//example.com/page/**` — a filesystem watch on a path that cannot exist, which never fires and
+  never explains why. Fixed by checking a URL (its own pattern) before paths; routes to `web_watch`.
+- **🔴 DISCOVERY — a change verb reached the dedup hint but not the routing check.** `"the content
+  of ~/notes/todo.md is edited"` failed to route at all — `edited` was in the dedup-hint vocabulary
+  but not the routing one. Unified into one `_CHANGE_CUES` list so the two cannot drift again.
+- **🔴 DISCOVERY — `history` exposes NO reader.** My first `automation_history` draft imported a
+  `recent_fires` that does not exist; `history.unified_feed` is a pure projection over source rows
+  the CALLER supplies. And `schedule_run_to_record` synthesizes `schedule:<job_id>`, so a store id
+  `file:notes` arrives as `schedule:file:notes` — an equality filter returned an empty feed for a
+  trigger that had run (the worst answer for a self-debug tool). Fixed with a suffix-aware match
+  (`_same_trigger`). Both found by my own tests, not by reading.
+- **🔴 `automation_run` gate bypasses are DATA, asserted against `firepath.GATE_ORDER`.** §4: a
+  manual fire "bypasses min-interval + max_runs_per_hour, never rate floors". `MANUAL_BYPASSES` =
+  `{quiet, duty}`; `screen` (the injection boundary, criterion 6), `capability` (the frozen action
+  set), `budget`, and `claim` are NEVER bypassable. A "the user asked for it" bypass on `screen`
+  or `capability` would make the trust boundary optional — the escalation route criterion 6 is
+  written against. A `dry_run` calls no runner at all, which is what makes observe-mode safe.
+- **Decision 5d honored:** agent-created triggers are tagged `created_by: agent`, announced in the
+  tool result ("I created this for you… visible on the Automations page N/20"), and capped at 20
+  ACTIVE (a paused one does not count, or the cap would be unrecoverable without deleting history).
+- **`automation_update` patches through an allowlist.** A rejected key is REPORTED, not dropped —
+  and the allowlist excludes every field §3.7's autopause thresholds on (`run_count`,
+  `health_status`, `last_run_id`, …), so an automation cannot rewrite its own health record.
+- **`automation_delete` enforces `confirm: true`** and offers pausing as the reversible option.
+  Creating a duplicate name does NOT overwrite (`store.upsert` is an upsert) — it takes `-2`.
+- **Wired, not just written.** `mcp_automation.py` exposes `_list_tools`/`_call_tool`; registered in
+  `mcp_core._AGGREGATED_CATEGORY_MODULES` (the ACP-server surface) and as the native app bundle
+  `apps/native/personalclaw-automation-tools/` (the in-process chat surface). Both asserted in
+  `test_mcp_automation.py` — a module that listed tools but was never registered would be the
+  present-and-inert defect this program keeps finding. `apps/native/*/app.json` is already in the
+  wheel's package-data, so it ships; the catalog discovers it by dir-scan, not a hardcoded list.
+- **Immediate `automation_run` routes through HTTP `/run`** (the shipped `schedule_trigger`
+  pattern), because an MCP process cannot own the LLM turn — S90's executor does. Injected, not
+  re-derived.
+
+82 tests (43 nl_kind + 39 tools) + 15 MCP-wiring = 97 new. Gate: `make lint` clean.
+
+- **NOT DONE (by scope, unchanged):** the two behaviour-visible CUTOVERS — (a) wiring the tick chain
+  into gateway boot beside `ScheduleService` (gateable on `verify-migration` exiting 0, per S91),
+  and (b) re-pointing `/api/triggers`' three backends at the store. S92 adds a THIRD follow-on now
+  visible: the `schedule_*` MCP tools remain live alongside `automation_*` — §4 keeps them as
+  aliases "for one release, then removed", so their retirement is a later session, not this one.

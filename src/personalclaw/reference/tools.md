@@ -305,6 +305,202 @@ Generate a video from a text prompt, using the model bound to the 'video_gen' us
 }
 ```
 
+## personalclaw-automation
+
+### `automation_create`
+
+Create an automation from ONE natural-language message. Use for 'when a file in ~/notes changes', 'every weekday at 9', 'when my nightly run finishes'. The `when` phrase is routed to the right trigger kind (file/clock/web_watch/…) — a cadence becomes a cron schedule, an event becomes an event trigger. Give `when` + `name` + `message` (what the automation should do). Announced to you on creation and capped at 20 agent-created automations.
+
+**Response type:** `automation.create.result`
+
+**Safety:** requires approval, risk: caution
+
+**Parameters:**
+- `kind` (string, optional) — Optional explicit kind, bypassing NL routing (file/clock/event/web_watch/idle/webhook/run_completed).
+- `message` (string, optional) — What the automation should do when it fires.
+- `name` (string, required) — A short name for the automation.
+- `spec` (object, optional) — Optional explicit trigger spec when `kind` is given.
+- `when` (string, optional) — Plain English for WHEN it runs: a cadence ('every weekday at 9') or an event ('when a file in ~/notes changes').
+
+**Example — Create a file-watch automation in one message:**
+
+```json
+{
+  "message": "Summarize the changed file into my knowledge base",
+  "name": "Summarize notes",
+  "when": "when a file in ~/notes changes"
+}
+```
+
+**Example — Create a scheduled automation:**
+
+```json
+{
+  "message": "digest",
+  "name": "Daily digest",
+  "when": "every weekday at 9"
+}
+```
+
+### `automation_delete`
+
+Delete an automation permanently. Requires confirm: true — pause it instead if you might want it back.
+
+**Response type:** `automation.delete.result`
+
+**Safety:** requires approval, risk: destructive
+
+**Parameters:**
+- `confirm` (boolean, required)
+- `id` (string, required) — The automation id (e.g. 'file:my-notes').
+
+**Example — Delete an automation permanently:**
+
+```json
+{
+  "confirm": true,
+  "id": "file:summarize-notes"
+}
+```
+
+### `automation_history`
+
+Recent run/fire rows for an automation, with typed outcomes — to self-debug why an automation did or did not do something.
+
+**Response type:** `automation.history.result`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `id` (string, required) — The automation id (e.g. 'file:my-notes').
+- `n` (integer, optional) — How many rows (default 10).
+
+**Example — Recent runs of an automation:**
+
+```json
+{
+  "id": "file:summarize-notes",
+  "n": 10
+}
+```
+
+### `automation_list`
+
+List automations with health rollups. Optional `kind` and `state` ('active'/'paused') filters. Broken rows are shown, not hidden.
+
+**Response type:** `automation.list.result`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `kind` (string, optional)
+- `state` (string, optional)
+
+**Example — List all automations with health:**
+
+```json
+{}
+```
+
+**Example — List only active file automations:**
+
+```json
+{
+  "kind": "file",
+  "state": "active"
+}
+```
+
+### `automation_pause`
+
+Pause an automation — it stops firing on its own but is not deleted.
+
+**Response type:** `automation.pause.result`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `id` (string, required) — The automation id (e.g. 'file:my-notes').
+
+**Example — Pause an automation:**
+
+```json
+{
+  "id": "file:summarize-notes"
+}
+```
+
+### `automation_resume`
+
+Resume a paused automation. Refuses (with the reason) if the row has a parse error that must be fixed first.
+
+**Response type:** `automation.resume.result`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `id` (string, required) — The automation id (e.g. 'file:my-notes').
+
+**Example — Resume a paused automation:**
+
+```json
+{
+  "id": "file:summarize-notes"
+}
+```
+
+### `automation_run`
+
+Fire an automation now. `dry_run: true` walks the gates and reports what WOULD run without executing. A manual run bypasses quiet-hours and duty limits but never the injection screen, capability allowlist, or budget.
+
+**Response type:** `automation.run.result`
+
+**Safety:** requires approval, risk: caution
+
+**Parameters:**
+- `dry_run` (boolean, optional) — Observe without executing.
+- `id` (string, required) — The automation id (e.g. 'file:my-notes').
+
+**Example — Fire an automation now:**
+
+```json
+{
+  "id": "file:summarize-notes"
+}
+```
+
+**Example — Preview what would run without executing:**
+
+```json
+{
+  "dry_run": true,
+  "id": "file:summarize-notes"
+}
+```
+
+### `automation_update`
+
+Patch an automation. Only settable fields apply (name, spec, gates, workflow, enabled, delivery, …); health/run fields are rejected and reported.
+
+**Response type:** `automation.update.result`
+
+**Safety:** requires approval, risk: caution
+
+**Parameters:**
+- `id` (string, required) — The automation id (e.g. 'file:my-notes').
+- `patch` (object, required) — Fields to change.
+
+**Example — Rename an automation:**
+
+```json
+{
+  "id": "file:summarize-notes",
+  "patch": {
+    "name": "Notes summarizer"
+  }
+}
+```
+
 ## personalclaw-core
 
 ### `get_context`

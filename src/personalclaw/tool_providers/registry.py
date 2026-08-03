@@ -54,6 +54,19 @@ def create_schedule_provider(config: dict[str, Any] | None = None) -> ToolProvid
     )
 
 
+def create_automation_provider(config: dict[str, Any] | None = None) -> ToolProvider:
+    """Extension factory for the ``personalclaw-automation`` tool surface — in-process over
+    ``mcp_automation`` (§4's `automation_*` namespace: create/list/update/pause/resume/run/
+    history/delete over the unified trigger store)."""
+    from personalclaw.agents.native.tools import InProcessMcpToolProvider
+
+    return InProcessMcpToolProvider(
+        module="personalclaw.mcp_automation",
+        provider_name="personalclaw-automation",
+        display="PersonalClaw Automations",
+    )
+
+
 def create_artifacts_provider(config: dict[str, Any] | None = None) -> ToolProvider:
     """Extension factory for the ``personalclaw-artifacts`` tool surface — in-process
     over ``mcp_artifacts`` (the Artifacts entity tool group)."""
