@@ -410,6 +410,28 @@ Examples:
     cron_trigger = cron_sub.add_parser("trigger", help="Fire a cron job immediately")
     cron_trigger.add_argument("job_id", help="Job ID to trigger now")
 
+    # automation (AUTOMATION-SUBSTRATE §7 step 2). `cron` stays as-is for one release — §7 makes the
+    # legacy file read-only rather than gone, and `verify-migration` is the command that check
+    # depends on.
+    automation_parser = sub.add_parser(
+        "automation",
+        help="Manage the unified trigger substrate",
+        epilog="""
+Examples:
+  personalclaw automation verify-migration      # diff crons.json against triggers.json
+  personalclaw automation verify-migration --json
+""",
+        formatter_class=_fmt,
+    )
+    automation_sub = automation_parser.add_subparsers(dest="automation_action")
+    automation_verify = automation_sub.add_parser(
+        "verify-migration",
+        help="Diff crons.json against triggers.json row for row (read-only)",
+    )
+    automation_verify.add_argument(
+        "--json", action="store_true", dest="as_json", help="Emit the report as JSON"
+    )
+
     # spawn
     spawn_parser = sub.add_parser(
         "spawn",
@@ -875,6 +897,8 @@ Examples:
             _doctor()
     elif args.command == "cron":
         _cron(args)
+    elif args.command == "automation":
+        _automation(args)
     elif args.command == "spawn":
         _spawn(args)
     elif args.command == "learn":
@@ -954,6 +978,7 @@ Examples:
 from personalclaw.auth.cli import auth_cmd as _auth_cmd  # noqa: E402
 from personalclaw.cli_chat import _chat  # noqa: E402
 from personalclaw.cli_commands import (  # noqa: E402
+    _automation,
     _cron,
     _handle_agent,
     _learn,

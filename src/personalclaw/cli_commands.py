@@ -176,6 +176,30 @@ def _handle_agent(args: argparse.Namespace) -> None:
         print("Usage: personalclaw agent {list|create|update|delete}")
 
 
+def _automation(args: argparse.Namespace) -> None:
+    """Dispatch `automation` subcommands (AUTOMATION-SUBSTRATE §7 step 2).
+
+    `verify-migration` exits NON-ZERO when the migration needs attention, so it composes into
+    a script
+    or a pre-cutover check. A read-only diff that always exited 0 could not gate anything, and
+    gating
+    the cutover is the reason §8 lists this command as the migration-trust mitigation.
+    """
+    action = getattr(args, "automation_action", None)
+    if action == "verify-migration":
+        from personalclaw.triggers.verify import render, verify_home
+
+        report = verify_home()
+        if getattr(args, "as_json", False):
+            print(json.dumps(report.to_dict(), indent=2))
+        else:
+            print(render(report))
+        if not report.ok:
+            sys.exit(1)
+        return
+    print("Usage: personalclaw automation verify-migration [--json]")
+
+
 def _cron(args: argparse.Namespace) -> None:
     """Dispatch cron subcommands: list, add, remove, pause, resume."""
 
