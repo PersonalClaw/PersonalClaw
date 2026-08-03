@@ -596,6 +596,21 @@ async def compress_thread_history(
         final = "\n\n".join(parts)
         final, _ = redact_exfiltration_urls(final)
         final, _ = redact_credentials(final)
+        # `ContextCompact` (AUTO crit 5): declared, selectable in the hook UI, and fired by nothing
+        # until now. Emitted HERE, not at the early return above: that path returns the transcript
+        # untouched because it already fits the cap, so announcing a compaction there would report
+        # work that did not happen. Both sizes ride the payload — the useful signal is the ratio,
+        # and a compaction that barely shrank anything is the interesting case.
+        from personalclaw.triggers.lifecycle_fire import context_compact_payload
+        from personalclaw.triggers.lifecycle_fire import fire as _fire_lifecycle
+
+        await _fire_lifecycle(
+            context_compact_payload(
+                session_key=session_key,
+                before_chars=len(transcript),
+                after_chars=len(final),
+            )
+        )
         return final.translate(_MULTIBYTE_TABLE)
     except Exception:
         logger.warning("Thread history compression failed", exc_info=True)

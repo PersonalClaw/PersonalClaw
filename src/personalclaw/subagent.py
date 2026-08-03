@@ -1166,6 +1166,27 @@ class SubagentManager:
             if self._on_done:
                 self._tasks[agent_id] = asyncio.ensure_future(self._safe_announce(info))
 
+        # `SubagentSpawn` (AUTO crit 5): declared, selectable in the hook UI, and fired by nothing
+        # until now. Gated on `not info.done` so a REJECTED spawn does not announce one: every
+        # rejection path above sets `done=True` with an `error`, so a hook watching this event sees
+        # only subagents that actually started.
+        #
+        # `depth` is NOT passed: `SubagentInfo` carries no depth field (checked), and the recursion
+        # bound lives on the `invoke-agent` action's `__hook_depth`, which `fire_for_ids` injects.
+        # Inventing a zero here would report every subagent as top-level.
+        if not info.done:
+            from personalclaw.triggers.lifecycle_fire import fire_sync, subagent_spawn_payload
+
+            fire_sync(
+                subagent_spawn_payload(
+                    subagent_id=agent_id,
+                    parent_session_key=info.parent_session_key,
+                    agent_role=agent or "",
+                ),
+                subagent_id=agent_id,
+                parent_session_key=info.parent_session_key,
+                agent_role=agent or "",
+            )
         return info
 
     async def _safe_announce(self, info: SubagentInfo) -> None:

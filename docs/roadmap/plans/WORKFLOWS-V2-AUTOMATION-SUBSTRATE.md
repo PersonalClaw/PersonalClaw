@@ -1114,3 +1114,64 @@ button tag in a COMMENT also counts.
   the shipped one-fire-at-a-time evaluator; a wrong band is worse than a missing one), and the duty gate
   is still deliberately unevaluated — it is async and provider-backed, and a calendar's answer for next
   Thursday is not knowable now. Both are stated in the empty state so the omission is legible.
+
+### S82 — The seven dormant lifecycle events, actually firing (44 tests) — DONE
+
+**This closes criterion 5's second clause**: "the event kind has full API parity … **and the 8 dormant
+lifecycle events actually fire**". S67 closed the first clause and left this one measured but open.
+
+**🔴 SEVEN EVENTS WERE CONFIGURABLE AND DEAD.** `configurable_but_dead()` returned
+`ApprovalRequest`, `ContextCompact`, `MemoryWrite`, `PostResponse`, `PreResponse`, `SessionEnd`,
+`SubagentSpawn`, and a grep for each name outside its own declaration found exactly ONE hit: the
+`validation.py` allowlist. Selectable in the hook UI, validating, saving, and fired by nothing — a user
+could configure one and wait forever. (The plan says 8; `TaskComplete` was the eighth and S60/S61e
+wired it, which S67 had already recorded.)
+
+`triggers/lifecycle_fire.py` owns the contract; each event fires from the moment its catalog row
+describes:
+
+| Event | Fire site | Gate |
+|---|---|---|
+| `MemoryWrite` | `MemoryService.write_lesson` | only a SUCCESSFUL, non-blocked write |
+| `SubagentSpawn` | `SubagentManager.spawn` | only `not info.done` — a rejected spawn announces nothing |
+| `ApprovalRequest` | `DashboardState.request_approval` | alongside the WS broadcast, observational only |
+| `ContextCompact` | `compress_thread_history` | only the REAL compaction, not the under-cap passthrough |
+| `PreResponse` | `chat_runner` | before `client.stream(...)` is created |
+| `PostResponse` | `chat_runner` | beside `Stop`, carrying SHAPE where `Stop` carries text |
+| `SessionEnd` | `remove` / `destroy` / `close_all` | with `reason` distinguishing the three endings |
+
+**Decisions worth keeping:**
+
+- **The payload shape is `pool.lifecycle_payload`'s, not a new one.** `event` + a `context` string,
+  because the hook UI renders a FIXED `vars` tuple per event and a variable the UI does not list is one
+  no user can discover. A test asserts every builder's event name is one the catalog declares.
+- **Every payload withholds content.** `PostResponse` carries `reply_chars`, never the reply;
+  `MemoryWrite` carries the category, never the lesson body; `ApprovalRequest` carries the tool name,
+  never its input. Hook context reaches a shell script's environment — unbounded text is `E2BIG` on
+  exec (which reads as "the hook mysteriously stopped"), and an approval prompt is precisely where a
+  hook must not receive attacker-influenced arguments. `FIELD_CAP` bounds every field.
+- **`ApprovalRequest` cannot answer the gate.** Its result is not awaited into the decision and cannot
+  resolve the future; a hook that could would be an unreviewed remote-approval channel.
+- **`PostResponse` is not a duplicate of `Stop`.** Both fire at turn end: `Stop` carries the reply text
+  for a content hook, `PostResponse` the turn's shape for a metering hook. That is the catalog's own
+  distinction, and collapsing them would silently retire an event the UI still offers.
+- **`SessionEnd` fires on all three endings** with `reason=removed|destroyed|shutdown`, because a
+  cleanup hook that cannot tell a tab close from a permanent delete either over-runs or misses its
+  case. On the shutdown path it fires AFTER the bounded provider gather — a missed hook is recoverable,
+  an orphaned agent process is what that 5s timeout exists to prevent.
+- **`fire_sync` bridges two SYNC call sites.** Measured: `asyncio.run()` from inside a running loop
+  raises, and both sites are reachable from the dashboard loop, so it schedules a task when a loop is
+  running and SKIPS when none is — the honest answer for a CLI write, where blocking a sync write to
+  start a loop would make every `write_lesson` pay for a feature most users never configure.
+
+**Two of my own errors, both caught by measuring rather than reading.** (a) I passed `depth=` into the
+`SubagentSpawn` payload; `SubagentInfo` carries no `depth` field, so every fire would have reported
+depth 0 — the recursion bound lives on the action's `__hook_depth`, so the field was dropped instead of
+faked. (b) `_fire_session_end` first read `session.messages`, which `_Session` does not have (that is
+the dashboard's session object) — every fire would have reported `turns=0`, a plausible number that is
+always wrong. `prompt_count` is the field that exists, and a test pins `turns=12`.
+
+**`DORMANT_EVENTS` is now EMPTY, and the machinery is kept.** S67's own test said "if a later session
+wires another event, this fails and the deviation gets recorded again instead of the number quietly
+drifting" — so the assertion inverted rather than the number being edited. `verify_dormancy()` still
+re-derives the live set, so a future event declared ahead of its subsystem is still caught.

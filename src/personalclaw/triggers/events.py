@@ -87,31 +87,27 @@ class EventStatus(str, Enum):
 #: list is a caught test failure rather than a lie in the UI.
 #:
 #: `TaskComplete` is deliberately ABSENT: it was dormant when AUTOMATION-SUBSTRATE was written (the
-#: plan says 8) and this program wired it in S60 via `tasks/native.py`. Seven remain.
-DORMANT_EVENTS: frozenset[str] = frozenset(
-    {
-        "ApprovalRequest",
-        "ContextCompact",
-        "MemoryWrite",
-        "PostResponse",
-        "PreResponse",
-        "SessionEnd",
-        "SubagentSpawn",
-    }
-)
+#: plan says 8) and this program wired it in S60 via `tasks/native.py`.
+#:
+#: **EMPTY as of S82** — criterion 5's second clause ("the 8 dormant lifecycle events actually
+#: fire") is closed. The remaining seven were wired to real fire sites through
+#: `triggers/lifecycle_fire.py`: `MemoryWrite` on a successful `write_lesson`, `SubagentSpawn` on a
+#: non-rejected `spawn`, `ApprovalRequest` alongside the approval broadcast, `ContextCompact` on the
+#: real compaction (not the under-cap passthrough), `PreResponse`/`PostResponse` around the stream,
+#: and `SessionEnd` on all three endings (`removed`/`destroyed`/`shutdown`).
+#:
+#: The set is KEPT rather than deleted, with its `verify_dormancy()` guard: a future event added to
+#: `hooks.HOOK_EVENTS` ahead of its subsystem belongs here, and a declaration with no fire site is
+#: exactly what this constant exists to make visible.
+DORMANT_EVENTS: frozenset[str] = frozenset()
 
 #: Why each dormant event does not fire, and what would wire it. Per-event rather than one generic
 #: sentence: "no code fires this" tells a user nothing actionable, while naming the subsystem that
 #: would own the fire site makes the gap legible and the fix findable.
-DORMANCY_NOTES: dict[str, str] = {
-    "ApprovalRequest": "the approval path resolves without emitting a lifecycle event",
-    "ContextCompact": "context compaction does not announce itself on the hook bus",
-    "MemoryWrite": "memory writes notify the event-trigger engine, not the hook store",
-    "PostResponse": "the response path fires Stop, not the finer Pre/PostResponse pair",
-    "PreResponse": "the response path fires Stop, not the finer Pre/PostResponse pair",
-    "SessionEnd": "session teardown has no fire site; SessionStart does",
-    "SubagentSpawn": "the subagent manager has its own on_event bus, separate from the hook store",
-}
+#:
+#: Empty alongside `DORMANT_EVENTS` (S82). `test_every_dormant_event_has_a_note` keeps the two in
+#: step, so a newly declared dormant event cannot ship without saying why it is dormant.
+DORMANCY_NOTES: dict[str, str] = {}
 
 _DORMANT_SUFFIX = (
     "configurable, but nothing fires it yet — a hook on this event saves and never runs"
