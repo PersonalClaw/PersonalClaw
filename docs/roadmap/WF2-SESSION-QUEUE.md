@@ -172,7 +172,7 @@ mandatory.
 |---|---|---|---|
 | 71 | Measure: per-arm precision (found: `fuse` attributed by dict-insertion order) + data-driven threshold proposals + Beta-Binomial trust; reconciled a forked ARM_CONFIDENCE table | G36 | ✅ DONE (#227) |
 | 72 | Self-model: capped (full tier DISPLACES, never appends) + propose-never-install + compact snapshot; found `user.selfmodel.*` leaking into user-FACT blocks | G36 | ✅ DONE (#228) |
-| 73 | Run outcomes → template refinement (the flagship): typed ledger evidence, median-of-3 critic, held-out replay gate | G37 | TODO |
+| 73 | Refiner acceptance discipline: mechanism clustering (freq × unresolvedness) + power floor + median-of-3 critic + GateOK + frozen region, all as pure decisions | G37 | ✅ DONE (#229) |
 | 74 | Repeated ad-hoc work → suggested templates; failed stages → lessons + procedural priors | G37 | TODO |
 | 75 | Proposal Inbox: six kinds, provenance, evidence manifests, risk tiers; model cannot accept its own proposals | G38 | TODO |
 | 76 | Staging tier observability: FLUSH_OK/ERROR/proposal-id outcome records, week-at-a-glance panel | G38 | TODO |
