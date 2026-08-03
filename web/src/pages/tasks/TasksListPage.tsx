@@ -17,7 +17,7 @@ import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring, expr } from '../../design/motion'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { api, type TaskItem, type ProjectItem, type TaskListItem, type Loop } from '../../lib/api'
-import { statusMeta, priorityMeta, dueMeta, TERMINAL, ListChecksLike, exitDoneCount } from './taskMeta'
+import { statusMeta, priorityMeta, dueMeta, parseDueDate, TERMINAL, ListChecksLike, exitDoneCount } from './taskMeta'
 import { TaskDetail } from './TaskDetail'
 import { TaskGraph } from './TaskGraph'
 import { TaskBoard } from './TaskBoard'
@@ -60,7 +60,7 @@ const isMine = (t: TaskItem, owner: string) => {
   return !author || author === owner.toLowerCase()
 }
 const PRIORITY_RANK: Record<string, number> = { critical: 5, high: 4, medium: 3, low: 2, trivial: 1 }
-const _dueTs = (t: TaskItem) => { const v = t.due ? Date.parse(t.due) : NaN; return Number.isNaN(v) ? Infinity : v }  // no due → last
+const _dueTs = (t: TaskItem) => { const v = t.due ? parseDueDate(t.due) : NaN; return Number.isNaN(v) ? Infinity : v }  // no due → last
 const _updTs = (t: TaskItem) => Date.parse(t.updated_at || t.created_at || '') || 0
 
 export function TasksListPage({ onCreate, view: viewProp, filter, openId, setView, setFilter, setOpenId,
