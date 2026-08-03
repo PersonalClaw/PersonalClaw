@@ -1297,3 +1297,48 @@ normal path anyway.
   through the task provider is the next step, and needs the actor-matrix guard from S56 so an
   engine-owned write is distinguishable from a user edit), the `verified_done`/`confirmation` call
   sites, DagView-in-run-detail composition, checklist edit UX, and config four-point wiring.
+
+### S61g — The Task WRITE, and three defects found by measuring (18 tests) — DONE
+
+S61f wired the call site but wrote nothing. This session makes the Task real — **the first point in
+the program where running a workflow puts a row on the user's board.** The write is the ENGINE actor
+in §1's three-actor matrix, and the asymmetry is the design: the engine sets a managed task's status
+directly, and `materialize.reject_write` refuses that same write from anyone else while naming the
+alternative (`workflow_skip`/`workflow_rewind`). Verified both directions on a real run — the engine's
+write lands with `managed=True`, a user's `status` write is refused, and a `notes` write still goes
+through (refusing everything would make a projected task read-only, and a user who cannot leave a
+note on their own board row would rightly call that broken).
+
+**Three defects, each found by measuring rather than reading.**
+
+1. **`run_to_completion` dropped the board row entirely.** The write is scheduled on the loop from the
+   SYNC settle path, and completion returned with it still pending — so a caller that awaited the run
+   and closed its loop got `status=complete`, no `task_materialized` in the ledger, and no task. The
+   user-visible half of running a workflow, lost silently. Fixed by draining in the completion path;
+   the regression test deliberately does NOT drain manually, because if a caller has to know to
+   drain, every caller that does not is broken.
+
+2. **`asyncio.wait_for(gather(...))` CANCELS what it waits for.** The bounded drain's obvious spelling
+   silently killed the very writes it was waiting on — and a cancelled write may already have created
+   the task, which loses the id without undoing the row. Found because the test asserted the write
+   was still running afterwards and it was not. Fixed with `asyncio.shield`.
+
+3. **A slow test made an unrelated test flaky.** The hung-store drain test routed through
+   `run_to_completion` and so paid the default 10s bound — the slowest test in the suite by two orders
+   of magnitude. On a shared xdist worker it pushed `test_terminal_handler`'s real-PTY test past ITS
+   120s timeout. Rewritten to exercise `drain_projection_writes` directly: 10.03s → 0.05s.
+
+**Plus a pre-existing suite-wide leak, root-caused and fixed.** `test_workflows_grill_protocol.py`
+calls `register_bundled_provider()` (18 bundled templates) into the process-global `workflows.defs`
+registry and never removes it, so `test_workflows_api`'s `test_listing_is_empty_with_no_providers` saw
+18 instead of 0 and `test_save_then_list_then_get` saw 19 instead of 1. Reproduced identically on a
+clean tree — this session's +18 tests only changed which worker the two files shared. Fixed with a
+snapshot-and-restore autouse fixture in `conftest.py`, beside the two other process-global guards this
+program has now needed (provider registry, def registry). That is three of the same shape; the pattern
+is that every module-level registry in this codebase needs one.
+
+- **NOT DONE:** the `verified_done` and `confirmation` call sites (the modules own their decisions and
+  are still uncalled from a run), DagView-in-run-detail composition, checklist edit UX, config
+  four-point wiring. Also worth an owner note: `test_terminal_handler`'s real-PTY test intermittently
+  errors in teardown (`OSError: Bad file descriptor`, ~1 run in 3) — pre-existing fragility this
+  session's timing changes made visible, not caused.

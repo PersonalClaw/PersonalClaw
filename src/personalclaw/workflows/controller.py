@@ -204,6 +204,9 @@ class RunController:
         #: `plan_materialization` compares against — a per-node read of the per-entity JSON
         #: store would be one file scan per settled node.
         self._projected: list[Any] = []
+        #: In-flight projection writes, so teardown does not orphan them and a test can await
+        #: settlement instead of sleeping.
+        self._projection_writes: set[Any] = set()
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
         self._inflight: dict[str, _InFlight] = {}
@@ -301,14 +304,46 @@ class RunController:
         self._task = asyncio.create_task(self._tick_loop())
 
     async def run_to_completion(self, *, timeout: float = 0.0) -> RunStatus:
-        """Blocking mode: drive to terminal and return the status."""
+        """Blocking mode: drive to terminal, drain the projection writes, return the status.
+
+        The drain is load-bearing, not tidiness. Measured (S61g): a projected Task write is
+        scheduled
+        on the loop from the SYNC settle path, and returning at terminal left it pending — so a
+        caller that awaited this and then closed its loop lost the board row entirely, with the run
+        reporting
+        `complete` and the ledger showing no `task_materialized`. The row is the user-
+        visible half of
+        running a workflow; dropping it silently is the worst available outcome.
+        """
         await self.start()
         if timeout > 0:
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self._terminal.wait(), timeout=timeout)
         else:
             await self._terminal.wait()
+        await self.drain_projection_writes()
         return self.run.status
+
+    async def drain_projection_writes(self, *, timeout: float = 10.0) -> None:
+        """Await the in-flight projected-Task writes.
+
+        Bounded: a hung task store must not hold a finished run open forever.
+
+        The pending writes are NOT cancelled on timeout. Measured (S61g): `asyncio.wait_for` cancels
+        the awaitable it wraps, so the obvious `wait_for(gather(...))` spelling silently kills the
+        very writes it was waiting for — and a cancelled write may ALREADY have created the task,
+        which loses the id without undoing the row. Waiting on SHIELDED handles leaves the
+        real tasks
+        running, so the next projection rebuild (§1's normal path) still recovers them.
+        """
+        pending = [h for h in list(self._projection_writes) if not h.done()]
+        if not pending:
+            return
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                asyncio.gather(*(asyncio.shield(h) for h in pending), return_exceptions=True),
+                timeout=timeout,
+            )
 
     async def wait_for_terminal(
         self,
@@ -2467,6 +2502,85 @@ class RunController:
         """
         return [type("_T", (), {"workflow_binding": b})() for b in self._projected]
 
+    def _schedule_task_write(self, spec: Any, path: str, node_id: str) -> None:
+        """Schedule the projected Task write on the running loop, then emit the event.
+
+        The settle path (`_apply`) is SYNC but runs inside the async tick, and the task provider's
+        `create_task` is async — so this follows the controller's established idiom for that shape
+        (`asyncio.create_task`, as the tick loop and node dispatch already do) rather than blocking
+        the tick on a filesystem write.
+
+        The EVENT fires from the write's completion, not before it, so `task_id` is the real id. An
+        event with an empty id would tell a board to render a row it cannot open.
+
+        No running loop (a synchronous unit test, a replay) still projects: the write runs
+        inline via
+        `asyncio.run`, because a projection that only worked inside a live gateway would be
+        untestable exactly where it matters.
+        """
+
+        async def _write_and_emit() -> None:
+            task_id = await self._write_projected_task(spec)
+            self.publish_task_materialized(
+                path,
+                node_id,
+                task_id=task_id,
+                fingerprint=spec.binding.fingerprint,
+                refreshed=False,
+            )
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(_write_and_emit())
+            return
+        handle = loop.create_task(_write_and_emit())
+        # Tracked so a controller teardown does not leave the write as an orphaned task warning, and
+        # so a test can await settlement rather than sleeping.
+        self._projection_writes.add(handle)
+        handle.add_done_callback(self._projection_writes.discard)
+
+    async def _write_projected_task(self, spec: Any) -> str:
+        """Write one projected Task through the task provider. Returns its id, or "" on failure.
+
+        The engine is the ENGINE actor in §1's three-actor matrix, so the write carries
+        `managed=True` on the binding and sets the engine-owned fields directly — which is exactly
+        what `materialize.reject_write` refuses when anyone ELSE attempts it. The asymmetry is the
+        point: one writer for a managed task's status, and a refusal (naming the alternative) for
+        every other path.
+
+        Failures return "" rather than raising: the event still fires with an empty task id, which
+        is honest (the projection was attempted and did not land) and leaves the next rebuild to
+        recover. Raising would fail a node whose work already succeeded.
+        """
+        try:
+            from personalclaw.tasks.registry import create_task
+
+            fields: dict[str, Any] = {
+                "title": spec.title or "Untitled step",
+                "description": spec.body or "",
+                "workflow_binding": {
+                    "run_id": spec.binding.run_id,
+                    "node_id": spec.binding.node_id,
+                    "node_path": spec.binding.node_path,
+                    "managed": True,
+                    "fingerprint": spec.binding.fingerprint,
+                },
+            }
+            if spec.status:
+                fields["status"] = spec.status
+            if spec.done_criterion:
+                fields["done_criterion"] = spec.done_criterion
+            if spec.blocked_kind:
+                fields["blocked_kind"] = spec.blocked_kind
+            if spec.preview:
+                fields["preview"] = spec.preview
+            task = await create_task("native", **fields)
+            return str(getattr(task, "id", "") or "")
+        except Exception:  # noqa: BLE001 - a board row must never fail a successful node
+            logger.debug("workflow %s: projected task write failed", self.run.id, exc_info=True)
+            return ""
+
     def _project_task(self, item: Any, inst: Any, result: Any) -> None:
         """Project a settled leaf node into a Task, and emit the event.
 
@@ -2499,14 +2613,11 @@ class RunController:
                 self.run.id, [node_dict], existing_tasks=self._projected_tasks()
             )
             for spec in plan.create:
-                self.publish_task_materialized(
-                    item.path,
-                    item.node.id,
-                    task_id="",  # assigned by the task provider when the write lands
-                    fingerprint=spec.binding.fingerprint,
-                    refreshed=False,
-                )
+                # Recorded BEFORE the write is scheduled: the dedup set must reflect the intent
+                # immediately, or a second settle in the same tick would plan the same task again
+                # while the first write is still in flight.
                 self._projected.append(spec.binding)
+                self._schedule_task_write(spec, item.path, item.node.id)
             if plan.existing:
                 # A rewind's dedup-merge. Emitted as a REFRESH rather than skipped silently:
                 # "did my rewind re-create the board" is a question only the event answers.

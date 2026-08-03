@@ -228,5 +228,28 @@ def _restore_provider_registry() -> object:
             entries.pop(name, None)
 
 
+@pytest.fixture(autouse=True)
+def _restore_workflow_def_registry() -> object:
+    """Undo any workflow DEF provider a test registers into the process-global registry.
+
+    `workflows.defs` holds a module-level provider dict, so a test that registers one leaks it into
+    whatever test shares the worker next. Measured: `test_workflows_grill_protocol.py` calls
+    `register_bundled_provider()` (18 bundled templates) and never removes it, which makes
+    `test_workflows_api.py`'s `test_listing_is_empty_with_no_providers` see 18 instead of 0 and
+    `test_save_then_list_then_get` see 19 instead of 1 — deterministically for a given xdist
+    distribution, and invisible when either file runs alone. Reproduced on a clean tree, so it is
+    pre-existing; ANY change to the suite's test count can surface or hide it.
+
+    Snapshot-and-restore rather than a name list, for the reason the provider-registry guard above
+    records: a list stops covering the next name someone adds.
+    """
+    from personalclaw.workflows import defs as _defs
+
+    before = set(_defs.list_providers())
+    yield
+    for name in set(_defs.list_providers()) - before:
+        _defs.unregister_provider(name)
+
+
 # (The slack-suite autouse fixtures — enterprise bypass, emoji reset, allowlist
 # reset — moved to apps/slack-channel/tests/conftest.py with the slack tests.)

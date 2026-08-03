@@ -55,7 +55,13 @@ def _isolated(tmp_path, monkeypatch):
 
 
 def _run(spec: dict, run_id: str = "r-1") -> tuple[object, list]:
-    """Execute a spec to completion, returning `(run, published_events)`."""
+    """Execute a spec to completion and AWAIT the projection writes, returning `(run, published)`.
+
+    Awaiting the writes is required, not tidiness: S61g moved the event emission to the write's
+    completion so `task_id` is the real id, which means the write is scheduled on the loop and a
+    test that returned at `run_to_completion` would race it. The controller tracks the handles for
+    exactly this — a sleep-based version of this helper would be a flake generator.
+    """
     from personalclaw.workflows import store as wstore
     from personalclaw.workflows.controller import EngineServices, RunController
     from personalclaw.workflows.models import WorkflowRun
@@ -66,7 +72,13 @@ def _run(spec: dict, run_id: str = "r-1") -> tuple[object, list]:
     controller = RunController(
         run, spec, services=EngineServices(publish=lambda e, b: published.append((e, b)))
     )
-    asyncio.run(controller.run_to_completion())
+
+    async def _go() -> None:
+        await controller.run_to_completion()
+        if controller._projection_writes:
+            await asyncio.gather(*list(controller._projection_writes))
+
+    asyncio.run(_go())
     return run, published
 
 
@@ -161,11 +173,17 @@ def test_projecting_the_SAME_node_twice_in_one_run_is_a_REFRESH():
     controller = RunController(run, spec, services=EngineServices())
     asyncio.run(controller.run_to_completion())
 
-    # Re-project the same settled node through the same controller.
-    item = next(i for i in controller.instances)
-    controller._project_task(
-        type("_I", (), {"node": controller.root.children[0], "path": item})(), None, None
-    )
+    # Re-project the same settled node through the same controller. Inside a loop, because the
+    # write (and therefore the event) is now scheduled rather than inline.
+    async def _reproject() -> None:
+        item = next(i for i in controller.instances)
+        controller._project_task(
+            type("_I", (), {"node": controller.root.children[0], "path": item})(), None, None
+        )
+        if controller._projection_writes:
+            await asyncio.gather(*list(controller._projection_writes))
+
+    asyncio.run(_reproject())
     flags = [r["refreshed"] for r in _materialized()]
     assert flags[0] is False
     assert True in flags, "a re-projection must be recorded as a refresh, not a second create"
@@ -232,13 +250,26 @@ def test_the_hook_passes_the_keys_materialize_actually_READS():
 
 def test_the_hook_reads_TaskSpec_attributes_not_dict_keys():
     """Measured: `plan.create` holds `TaskSpec` objects. `entry.get(...)` would raise inside the
-    hook's own `except`, so the projection would fail invisibly on every node."""
+    hook's own `except`, so the projection would fail invisibly on every node.
+
+    Read across the projection path rather than one method: S61g split the emission into
+    `_schedule_task_write`, and pinning a single function name would make this test a rename
+    detector instead of a contract check.
+    """
     import inspect
 
     from personalclaw.workflows.controller import RunController
 
-    source = inspect.getsource(RunController._project_task)
+    source = "".join(
+        inspect.getsource(fn)
+        for fn in (
+            RunController._project_task,
+            RunController._schedule_task_write,
+            RunController._write_projected_task,
+        )
+    )
     assert "spec.binding.fingerprint" in source
+    assert "spec.binding.run_id" in source
 
 
 def test_the_projection_hook_runs_on_the_SUCCESS_branch_only():
