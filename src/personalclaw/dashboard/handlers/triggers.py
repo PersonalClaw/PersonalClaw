@@ -37,6 +37,17 @@ logger = logging.getLogger(__name__)
 _SCHEDULE = "schedule"
 _LIFECYCLE = "lifecycle"
 _EVENT = "event"  # data-event triggers (#38): memory/content patterns
+_STORE = "store"  # unified TriggerStore kinds with no legacy backend (file/web_watch/idle/…)
+
+#: The `TriggerStore` kinds the three legacy backends do NOT already surface. `clock` is the
+#: schedule backend's, `event` is the event-trigger store's, `manual` has no autonomous surface;
+#: everything else (file/web_watch/idle/run_completed/view/webhook) can ONLY be created through the
+#: `automation_*` chat tools (S92) and, until now, was invisible on the Automations page — created,
+#: fired (S93 for `file`), and unlistable. This is the additive read-plus-safe-mutation slice, not
+#: the §6 class-B re-point of the schedule/event backends onto the store.
+_STORE_ONLY_KINDS: frozenset[str] = frozenset(
+    {"file", "web_watch", "idle", "run_completed", "view", "webhook"}
+)
 
 
 def _event_store():
@@ -72,11 +83,45 @@ def _redact(s: str) -> str:
 
 
 def _split_id(trigger_id: str) -> tuple[str, str]:
-    """``schedule:abc`` → (``schedule``, ``abc``); bare id defaults to schedule."""
+    """``schedule:abc`` → (``schedule``, ``abc``); bare id defaults to schedule.
+
+    A `store` id keeps its own `<kind>:<slug>` form (e.g. `file:my-notes`) as the RAW id, because
+    that IS the id in `TriggerStore` — splitting it would break the lookup. So `store:` is stripped
+    once and the remainder handed to the store verbatim.
+    """
     kind, _, raw = trigger_id.partition(":")
+    if raw and kind == _STORE:
+        return _STORE, raw
     if raw and kind in (_SCHEDULE, _LIFECYCLE, _EVENT):
         return kind, raw
     return _SCHEDULE, trigger_id
+
+
+def _trigger_store():
+    from personalclaw.config.loader import config_dir
+    from personalclaw.triggers.store import TriggerStore
+
+    return TriggerStore(base_dir=config_dir())
+
+
+def _serialize_store(trigger: Any, *, broken: list[str] | None = None) -> dict[str, Any]:
+    """A `TriggerStore` trigger in the shared list shape. Id is `store:<kind>:<slug>` so the
+    mutation routes back to the store; `raw_id` is the store's own id."""
+    return {
+        "kind": _STORE,
+        "store_kind": trigger.kind,
+        "id": f"{_STORE}:{trigger.id}",
+        "raw_id": trigger.id,
+        "name": trigger.name,
+        "enabled": trigger.enabled,
+        "created_by": trigger.created_by,
+        "spec": dict(trigger.spec or {}),
+        "action": dict(trigger.workflow or {}),
+        "health": trigger.health_status,
+        "run_count": trigger.run_count,
+        "last_error": _redact(trigger.last_error_summary or ""),
+        "broken": list(broken or []),
+    }
 
 
 # ── serializers ──
@@ -240,6 +285,16 @@ async def api_triggers(request: web.Request) -> web.Response:
     if want in ("", _EVENT):
         for t in _event_store().load():
             triggers.append(_serialize_event(t))
+    if want in ("", _STORE):
+        # Store-only kinds (file/web_watch/idle/…) have no legacy backend. Without this they are
+        # created and fired but never listed — the present-and-inert gap S92/S93 opened. Broken
+        # rows (S87 lenient parse) are shown, not hidden: a broken automation invisible on its own
+        # page is undebuggable.
+        for row in _trigger_store().load():
+            if row.trigger.kind in _STORE_ONLY_KINDS:
+                triggers.append(
+                    _serialize_store(row.trigger, broken=[i.message for i in row.errors])
+                )
 
     from personalclaw.schedule import get_local_tz
 
@@ -406,6 +461,19 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
     kind, raw = _split_id(request.match_info["id"])
 
     if request.method == "DELETE":
+        if kind == _STORE:
+            store = _trigger_store()
+            if store.get(raw) is None:
+                return web.json_response({"error": "not found"}, status=404)
+            store.delete(raw)
+            _sel().log_api_access(
+                caller=request.get("user", "dashboard"),
+                operation="trigger.delete",
+                outcome="success",
+                source="dashboard",
+                resources=f"trigger:store:{raw}",
+            )
+            return web.json_response({"ok": True})
         if kind == _EVENT:
             if not _event_store().delete(raw):
                 return web.json_response({"error": "not found"}, status=404)
@@ -589,6 +657,25 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
     """POST /api/triggers/{id}/toggle — enable/disable."""
     state: DashboardState = request.app["state"]
     kind, raw = _split_id(request.match_info["id"])
+    if kind == _STORE:
+        # Route through S92's tool functions, which already refuse to enable a broken row (S87) and
+        # report WHY — reusing them keeps the API and the chat tool answering identically.
+        from personalclaw.triggers import tools as T
+
+        store = _trigger_store()
+        row = store.get(raw)
+        if row is None:
+            return web.json_response({"error": "not found"}, status=404)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        want = body.get("enabled") if isinstance(body, dict) else None
+        paused = row.trigger.enabled if want is None else (not bool(want))
+        result = T.set_paused(store, trigger_id=raw, paused=paused)
+        if not result.ok:
+            return web.json_response({"error": result.text}, status=400)
+        return web.json_response({"ok": True, "trigger": _serialize_store(store.get(raw).trigger)})
     if kind == _LIFECYCLE:
         hook = _hook_store(state).toggle(raw)
         if not hook:
@@ -646,6 +733,8 @@ async def api_trigger_run(request: web.Request) -> web.Response:
     """
     state: DashboardState = request.app["state"]
     kind, raw = _split_id(request.match_info["id"])
+    if kind == _STORE:
+        return await _run_store(raw, request)
     if kind == _LIFECYCLE:
         return web.json_response(
             {"error": "lifecycle triggers fire on events; use /test"}, status=400
@@ -680,6 +769,74 @@ async def api_trigger_run(request: web.Request) -> web.Response:
     task.add_done_callback(state._background_tasks.discard)
     state.push_refresh("crons")
     return web.json_response({"ok": True, "name": job.name, "dry_run": dry_run})
+
+
+async def _run_store(raw: str, request: web.Request) -> web.Response:
+    """Fire one store-backed trigger (file/web_watch/idle/…) by hand.
+
+    A `dry_run` reports S92's gate plan (which gates a manual fire enforces vs bypasses) without
+    executing — that reuses `tools.run`, so the API and the chat tool answer identically. A real
+    run dispatches the trigger's declared action through the SAME action-provider registry the
+    live file-watch path (`_fire_file_trigger`) uses, so a Run button and an autonomous fire
+    execute the same action the same way.
+
+    Manual runs bypass quiet-hours + duty limits but never the injection screen, capability
+    allowlist, or budget — the boundary `tools.MANUAL_NEVER_BYPASSES` pins.
+    """
+    from personalclaw.triggers import tools as T
+
+    store = _trigger_store()
+    row = store.get(raw)
+    if row is None:
+        return web.json_response({"error": "not found"}, status=404)
+
+    dry_run = request.query.get("dry_run", "") in ("1", "true", "yes")
+    if not dry_run:
+        try:
+            body = await request.json()
+            dry_run = bool(body.get("dry_run", False)) if isinstance(body, dict) else False
+        except Exception:
+            dry_run = False
+
+    if dry_run:
+        # Reuse tools.run for the gate plan — the API and the chat tool report identically.
+        result = T.run(store, trigger_id=raw, dry_run=True)
+        return web.json_response({"ok": result.ok, "result": result.data, "text": result.text})
+
+    # A real run: mirror tools.run's guards (broken row refused; a PAUSED trigger still runnable by
+    # hand — pausing means "stop firing on your own", and refusing a hand-driven run would remove
+    # the main way a user tests one before re-enabling), then dispatch async-native. tools.run's
+    # own runner seam is sync, so a coroutine runner would be stringified rather than awaited.
+    if row.errors:
+        return web.json_response(
+            {"error": f"{raw} has a parse error and cannot run ({row.errors[0].message})"},
+            status=400,
+        )
+    note = await _dispatch_store_action(row.trigger, {"trigger_id": raw, "manual": True})
+    paused_note = "" if row.trigger.enabled else " (paused — this run does not re-enable it)"
+    return web.json_response({"ok": True, "name": row.trigger.name, "result": note + paused_note})
+
+
+async def _dispatch_store_action(trigger: Any, payload: dict[str, Any]) -> str:
+    """Run a store trigger's declared action through the action-provider registry.
+
+    The same path `gateway._fire_file_trigger` uses — a manual Run and an autonomous fire share one
+    dispatch so their behaviour cannot drift. Returns a short status string for the run result.
+    """
+    from personalclaw.action_providers import ActionContext, get_action_provider
+    from personalclaw.action_providers.registry import _ensure_default_providers_registered
+
+    workflow = trigger.workflow or {}
+    provider_name = str(workflow.get("provider") or "")
+    if not provider_name:
+        return "no action provider configured"
+    _ensure_default_providers_registered()
+    provider = get_action_provider(provider_name)
+    if provider is None:
+        return f"unknown action provider {provider_name!r}"
+    ctx = ActionContext(event="manual.run", context="", payload=payload)
+    await provider.execute(workflow.get("config") or {}, ctx)
+    return "ran"
 
 
 async def _run_event(raw: str, request: web.Request) -> web.Response:

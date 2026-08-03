@@ -1804,3 +1804,41 @@ file in ~/notes changes…" automation was present-and-inert: creatable, never f
   crons until the old one is removed), gateable on `verify-migration` per S91. And re-pointing
   `/api/triggers`' three backends at the store (§6). S92's `schedule_*`-alias retirement also
   remains a later session.
+
+### S94 — `/api/triggers` surfaces store-only kinds (§6 additive slice — stacked on S93)
+
+**DONE. Closes the present-and-inert gap S92/S93 opened.** S92 made file/web_watch/idle/…
+automations creatable in chat; S93 made `file` ones fire. But `GET /api/triggers` read only the
+three LEGACY backends (schedule crons, lifecycle hooks, event triggers), so a chat-created file
+automation was **created, fired, and invisible on its own management page** — the user could not
+see, pause, run, or delete it in the UI. Measured: six store-only kinds
+(`file/web_watch/idle/run_completed/view/webhook`) had no API surface at all.
+
+- **The additive boundary — NOT the §6 class-B re-point.** §6's full scope ("re-point the three
+  backends at one store; the id namespace is the migration map") is the deferred class-B
+  switch-over. This slice ADDS a `store` namespace beside the legacy three: it lists the store-only
+  kinds and routes toggle/run/delete through S92's `tools.py`. Read + safe mutation, legacy paths
+  untouched, no migration, no double-write. `_STORE_ONLY_KINDS` deliberately EXCLUDES `clock` and
+  `event` (owned by the schedule and event backends) — including them would double-list every cron
+  and event trigger once the store is populated (`test_a_clock_trigger_in_the_store_is_NOT_double_
+  listed`).
+- **`_split_id` handles the store id shape.** A store id is itself `<kind>:<slug>` (`file:my-notes`),
+  so the namespaced form is `store:file:my-notes`. `_split_id` strips `store:` ONCE and hands the
+  remainder to the store verbatim — splitting on the first colon would lose the slug and break every
+  lookup (`test_split_id_round_trips_a_store_id`).
+- **Reuses S92's tool functions, so the API and the chat tool answer identically.** Toggle routes
+  through `tools.set_paused` (which refuses to enable a broken row, S87 — surfaced as 400, not a
+  silent disable); a dry-run route reuses `tools.run` for the gate plan (manual bypasses
+  quiet+duty, never screen/capability/budget); a real run dispatches through the SAME
+  action-provider registry `gateway._fire_file_trigger` uses, so a Run button and an autonomous
+  fire cannot drift. A PAUSED trigger still runs by hand (the result notes it does not re-enable) —
+  pausing means "stop firing on its own", and refusing a hand-driven run removes the main way to
+  test before re-enabling.
+- **Broken rows are LISTED, not hidden** (S87 lenient parse) — a broken automation invisible on its
+  own page is undebuggable.
+
+16 tests (new `test_triggers_facade_store.py`); the 32 existing facade tests still pass unchanged.
+Gate: `make lint` clean.
+
+- **STILL deferred (class-B):** the §6 re-point of the schedule/event backends onto the store (the
+  clock switch-over), and the `schedule_*` MCP-alias retirement (§4).
