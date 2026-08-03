@@ -1338,3 +1338,57 @@ turned it into a hard `SyntaxError` under `-W error`. Now stated as prose, with
 string and reported no redaction. The redactors are correct — that string matches no real credential
 pattern. Verified against `sk-ant-api03-…`, which redacts. Worth recording because "the security control
 did nothing" is exactly the conclusion a bad fixture invites.
+
+### S86 — The fire path: §3's gate order, finally composed (32 tests) — DONE
+
+**🔴 FIFTEEN MODULES, AND NOTHING COMPOSED THEM.** Grepped for live callers of `claim_fire`,
+`boot_recovery`, `spool_fire`, `drain_spool`, `freeze_capabilities`, `evaluate_quiet`, `evaluate_duty`,
+`needs_attention`, `resolve_missed`, `changed_files` and `build_delivery` outside their own modules. The
+answer for every one was **NONE**. `src/personalclaw/triggers/` has no `service.py`. Sessions S62-S85 each
+built a control and each recorded "NOT DONE (by scope): the service" — **eight such notes** in this plan's
+own execution log — and no queue row ever owned it.
+
+The controls are individually correct and collectively unreachable. That is this program's recurring
+"present and inert" defect at the scale of an entire subsystem: every AUTO criterion probes as "machinery
+present", and not one of those gates runs on a real fire.
+
+`triggers/firepath.py` is §3's ORDER as a composed, tested function. It calls the shipped decision
+functions rather than reimplementing them (a test asserts the call sites against the source, because a
+behavioural test would pass for a copied implementation too).
+
+**Why the order is load-bearing, tested at the three places it bites:**
+
+1. **Screen BEFORE gates.** With both an injection payload and an all-day quiet window, the screen must
+   win. Otherwise the quiet window "protects" the machine and the same payload lands at 08:00.
+2. **Budget BEFORE the claim, FAIL-CLOSED.** Claiming first leaves a budget-exhausted trigger holding a
+   lock it will never use, and single-flight then blocks the next legitimate fire. Verified: a refused
+   budget returns `claim=None` and `"claim" not in passed`. An UNREADABLE budget refuses too — §3.6 is
+   explicit, and treating a store error as "unlimited" is how a runaway trigger gets its allowance.
+3. **Capability filter LAST, before any def resolves.** Resolving first means the run exists — possibly
+   with its first ledger row written — before anyone checks whether the action was permitted.
+
+**🔴 A DEFECT FOUND BY DRIVING, NOT READING: `evaluate_duty` IS ASYNC.** §1.4 makes the duty gate
+provider-backed and time-boxed (a third-party calendar app answers it). My first fire path was sync, so it
+received a coroutine object whose `.allowed` was truthy — **every duty gate would have passed, including
+one that meant to refuse.** The walk is now `async`; the other six gates are pure and stay sync.
+`test_evaluate_is_async_because_the_duty_gate_is` is the regression.
+
+Other decisions:
+
+- **First refusal, not collect-all.** The outcome vocabulary has one slot per fire, and a row naming three
+  simultaneous reasons leaves the user guessing which to fix. `passed` preserves how far the fire got,
+  which is the genuinely useful part — "suppressed at `budget`" and "suppressed at `screen`" are different
+  incidents.
+- **A yielded fire RETURNS its claim.** A deferred fire that kept the lock would block the retry it is
+  waiting for. Reported `deferred`, not `skipped_*`: it is coming back.
+- **`ledger_row` is written for EVERY outcome**, allowed included (§7 crit 8: "zero silent drops"). A
+  helper that existed only for refusals would make "we forgot to log the successes" the next defect.
+- **`gate_order_is_intact()`** makes a missing outcome mapping a checkable fact: a gate added to the walk
+  without one raises `KeyError` mid-fire, at which point the fire is LOST rather than refused.
+
+- **NOT DONE (by scope, and this is the honest boundary):** the loop, the store, and the executor. Those
+  need `triggers.json` — S83's recorded blocker — plus the WakeupDispatcher, and building them against a
+  store that does not exist is what EXECUTION-PROTOCOL forbids. What this session removes from a future
+  service session is the hardest part to get right blind: it will call a tested ordering instead of
+  re-deriving a 13-step sequence from prose and putting the fail-closed budget check on the wrong side of
+  the claim lock.
