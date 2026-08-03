@@ -199,6 +199,11 @@ class RunController:
         self.root: Node = Node.from_dict(spec.get("root") or {"kind": "sequence"})
         self.instances: dict[str, NodeInstance] = store.read_state(run.id)
         self.journal = Journal(run.id)
+        #: Bindings this run has already projected into Tasks (TASKS-SOPS §1, S61f). The
+        #: controller is the single writer for its own run, so this is the dedup set
+        #: `plan_materialization` compares against — a per-node read of the per-entity JSON
+        #: store would be one file scan per settled node.
+        self._projected: list[Any] = []
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
         self._inflight: dict[str, _InFlight] = {}
@@ -1717,6 +1722,7 @@ class RunController:
                 resolved_prompt_ref=self._store_prompt(item.path, result.resolved_prompt),
                 output_ref=ref,
             )
+            self._project_task(item, inst, result)
         else:
             if result.output is not None:
                 # A FAILED node's output is normally nothing worth keeping — but some failures
@@ -2447,6 +2453,74 @@ class RunController:
         if label:
             out["item_label"] = label
         return out
+
+    # ── TASKS-SOPS task projection (S61f) ──
+
+    def _projected_tasks(self) -> list[Any]:
+        """What this run has already projected, for `plan_materialization`'s dedup.
+
+        Held in memory on the controller rather than read from the task store per node: the store is
+        per-entity JSON, so a read per settled node is one file scan per node, and the controller is
+        the single writer for its own run. A restart re-reads from the store via the projection
+        rebuild (§1 makes full recompute the normal path), so nothing is lost by not persisting the
+        cache itself.
+        """
+        return [type("_T", (), {"workflow_binding": b})() for b in self._projected]
+
+    def _project_task(self, item: Any, inst: Any, result: Any) -> None:
+        """Project a settled leaf node into a Task, and emit the event.
+
+        THE call site the projection modules were built for. `materialize` owns every decision here
+        — which nodes earn a task, the dedup keys, the fan-out cap — so this method is the plumbing
+        and nothing else: it assembles the node dict, asks, and writes.
+
+        Swallows everything. A projection failure must not fail the RUN: the node has already
+        succeeded and its output is already journaled, so turning a board-row problem into a run
+        failure would lose real work over a presentation concern. The projection is idempotent by
+        construction (fingerprint dedup), so the next tick or a rebuild recovers it.
+        """
+        try:
+            from personalclaw.workflows import materialize as _materialize
+
+            # The keys `should_materialize`/`plan_materialization` actually read are `id`, `kind`,
+            # `path` and `config` — measured against their source. A `node_id` key (the name the
+            # BINDING uses) is silently ignored by both, which would make every node fail the
+            # has-an-id refusal and project nothing at all.
+            node_dict = {
+                "id": item.node.id,
+                "path": item.path,
+                "kind": item.node.kind.value,
+                "config": dict(item.node.config or {}),
+            }
+            wanted, _why = _materialize.should_materialize(node_dict)
+            if not wanted:
+                return
+            plan = _materialize.plan_materialization(
+                self.run.id, [node_dict], existing_tasks=self._projected_tasks()
+            )
+            for spec in plan.create:
+                self.publish_task_materialized(
+                    item.path,
+                    item.node.id,
+                    task_id="",  # assigned by the task provider when the write lands
+                    fingerprint=spec.binding.fingerprint,
+                    refreshed=False,
+                )
+                self._projected.append(spec.binding)
+            if plan.existing:
+                # A rewind's dedup-merge. Emitted as a REFRESH rather than skipped silently:
+                # "did my rewind re-create the board" is a question only the event answers.
+                self.publish_task_materialized(
+                    item.path,
+                    item.node.id,
+                    task_id="",
+                    fingerprint=_materialize.fingerprint(
+                        source_ref="", title=item.node.id, body=""
+                    ),
+                    refreshed=True,
+                )
+        except Exception:  # noqa: BLE001 - a board row must never fail a successful node
+            logger.debug("workflow %s: task projection failed", self.run.id, exc_info=True)
 
     # ── TASKS-SOPS projection events (S61e) ──
     #
