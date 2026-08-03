@@ -1126,3 +1126,75 @@ producing unparseable Python — caught by `black`, not by me, and repaired by s
 - **NOT DONE (by scope):** the refiner AGENT's own prompt assembly, which is where `fenced_evidence`
   gets consumed. §3.1 puts that agent on the `run-workflow` provider as a trigger-fired template rather
   than Python, so this session builds the contract it will call — the same split S73 recorded.
+
+### S80 — Criterion 5's one budget: the ambient render finally goes through the allocator (57 tests) — DONE
+
+**This closes success criterion 5**: "the lesson block, skill INDEX, template suggestion, voice/facet
+blocks, and self-model snapshot fit ONE per-turn slot-allocated token budget; lessons are never crowded
+out (sacrificial-slot truncation only); the authority preamble renders."
+
+S71 built the allocator and deliberately stopped short of owning the render, recording why: "replacing
+the whole render is behaviour-visible and needs §2.5's measurement floor to prove nothing stops
+surfacing." That floor landed in S71's own `measure.py`, so the deferral's condition was met.
+
+**🔴 THREE INERT CONTROLS, NOT ONE.** (1) `allocate()` and `AUTHORITY_PREAMBLE` had ZERO callers outside
+their own module and tests — the ranking algorithm existed and nothing ranked. (2)
+`learning.context_budget_tokens` is a fully round-tripped config knob (dataclass + `_meta` + `load()` +
+`to_dict()` + `_EDITABLE_CONFIG`) that NOTHING read; its help text promises "only retrieved context is
+ever trimmed", a promise no code kept. (3) The blocks were bounded by per-block CHARACTER caps summing
+to ~36,750 tokens against the declared 4,000 — 9x. Driven with 120 realistic lessons the render passed
+the budget by 1,576 tokens; at 400+ it reached 10,101 (2.5x). The allocator on the same input holds
+3,999 and keeps the query-relevant lesson.
+
+**Two measurements decided the design.**
+
+- **The budget scales with the model window**, on the same `window/200k` clamped to [1,5] that
+  `context._memory_caps` uses. A FLAT budget beside window-scaled memory sections would make the ambient
+  blocks the only part of the prompt that never benefits from a larger window — silently inverting the
+  plan's own adaptive-recall design. A test asserts the two constants are the SAME, not merely equal.
+- **The skill INDEX is a catalogue, not a candidate set.** Fed one candidate per entry, `MAX_PER_SOURCE
+  = 3` kept 3 of 12 skills while 3,539 tokens sat unused. Diversification stops a rich source crowding a
+  sparse one; applied to a catalogue it just deletes the catalogue. So the index is ONE candidate with
+  §2.4's three-step degradation (full → 80-char hints → names only), every skill named at every tier.
+
+**🔴 THE SKILLS BLOCK HOLDS TWO POPULATIONS, AND MY FIRST VERSION DROPPED ONE.** Caught by the EXISTING
+suite (`test_context.py::test_skills_injected`), not by any of the 52 tests written here — every fixture
+I wrote happened to contain an index. `skills/loader.get_context` emits always-loaded skills as
+`### Skill: <name>` with their full body AND on-demand skills as the `- **name**:` index; an index-only
+parser silently dropped every always-loaded skill, which are precisely the ones the user marked
+never-optional. `always_body` and `index_candidate` are now a pair, each carrying its own `[Skills:]`
+frame (either can be dropped independently, so one shared wrapper would sometimes frame nothing), with
+bodies ranked above the index because a pointer list should yield before content does.
+
+**Three more defects found by driving, each the same mistake — spending the budget on FRAMING before
+CONTENT.**
+
+1. `frame` restored the lesson header AFTER the allocator had spent the budget: at 600 tokens `used`
+   reported 596 while the framed text was 622. A budget a later step can add to is not a budget.
+2. Reserving the header then crowded out the last lesson — the header costs 29 tokens and one lesson 31,
+   so at a 60-token budget the reservation left nothing. Now the reservation is RELEASED when no lesson
+   survived.
+3. The 73-token preamble did the same thing: at a 120-token budget it fit, left 23, and ZERO lessons
+   survived, while at 60 tokens (preamble skipped as oversized) one did. The authority statement was
+   outranking the corrections it exists to speak for. Now the render retries without it.
+
+Then the affordability check itself had to be measured: comparing `used_tokens` double-counted the
+reserved header and dropped a header that plainly fit (574 + 29 + 2 > 600 on paper, well under in
+fact). It compares the rendered TEXT.
+
+**Clean break:** `_fit_lessons` and `_LESSONS_CAP` are deleted — a second policy for a block the budget
+now governs. Their five tests are MIGRATED rather than dropped: the properties (no partial lesson, the
+dropped ones are counted, an under-budget block keeps everything) are exactly what the budget must
+still guarantee, re-expressed against the near-miss catalogue.
+
+**Two of my own test errors, corrected by driving:** an assertion that the L0 catalogue always renders
+was wrong (it costs tokens from the same budget, and for lessons `l0 == l1`, so a greedy fill leaves no
+room — the right trade), and an assertion about index DEGRADATION at 500 tokens asserted nothing,
+because the full index fits there.
+
+- **NOT DONE (by scope):** `template` and `self_model` have no live producer — nothing on the chat path
+  matches a query to a workflow def, and nothing persists `user.selfmodel.*` (S72 built the decisions,
+  not the store). Both are mapped in `SLOT_KINDS` with tested seams so a future producer joins the
+  budget instead of appending a sixth independent block. The memory context keeps `_memory_caps`: a
+  different, already-window-scaled mechanism, and swapping a working recall render for an unproven one
+  is what S71 refused to do blind.

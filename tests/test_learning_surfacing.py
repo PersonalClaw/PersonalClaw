@@ -366,7 +366,14 @@ def test_exactly_one_slot_is_sacrificial():
     assert sacrificial == ["retrieved_context"]
 
 
-# ── the live lesson block: the policy applied where it was measurably breaking ──
+# ── the live lesson block: the policy, now enforced by the ONE budget (S80) ──
+#
+# These five tests originally covered `context._fit_lessons`, the char cap S71 added to stop the
+# lesson block being sliced mid-sentence. S80 replaced that cap with the real budget
+# (`learning.ambient`), so the cap is gone — but the PROPERTIES it protected are exactly what the
+# budget must still guarantee, so they are migrated rather than deleted. The two that asserted the
+# cap's own withheld-count WORDING are re-expressed against the allocator's near-miss catalogue,
+# which is the same idea in the mechanism that survived.
 
 
 def _lesson_block(count: int = 20) -> str:
@@ -376,49 +383,53 @@ def _lesson_block(count: int = 20) -> str:
 
 
 def test_the_lesson_block_drops_whole_lessons_not_characters():
-    """The bug this fixes: `lessons_ctx[:cap]` cut the final lesson mid-sentence.
+    """The bug this fixed: `lessons_ctx[:cap]` cut the final lesson mid-sentence.
 
     "Never deploy without" reads as an instruction, and it is not the one the user
     gave. A half-rendered correction is worse than an absent one because the reader
     cannot tell it is half.
     """
-    from personalclaw.context import _fit_lessons
+    from personalclaw.learning import ambient
 
     block = _lesson_block()
-    fitted = _fit_lessons(block, cap=300)
-    kept = [line for line in fitted.split("\n") if line.startswith("- Lesson")]
+    alloc = ambient.render(lessons=block, budget_tokens=80)
+    kept = [line for line in alloc.text.split("\n") if line.startswith("- Lesson")]
     assert kept  # something survived
     assert all(line.endswith("full test suite") for line in kept)  # none are partial
 
 
-def test_the_lesson_block_says_how_many_were_withheld():
-    """Silent omission of the user's own corrections is the worst version of this."""
-    from personalclaw.context import _fit_lessons
+def test_the_dropped_lessons_are_still_counted():
+    """Silent omission of the user's own corrections is the worst version of this.
 
-    fitted = _fit_lessons(_lesson_block(20), cap=300)
-    assert "withheld" in fitted
-    assert "ask to see them" in fitted
+    The char cap said so in prose ("…[N more lesson(s) withheld]"); the budget says so in the
+    allocation's near-miss list, which `ambient.report` surfaces. Same guarantee, one mechanism.
+    """
+    from personalclaw.learning import ambient
 
-
-def test_the_withheld_count_is_accurate():
-    from personalclaw.context import _fit_lessons
-
-    fitted = _fit_lessons(_lesson_block(20), cap=300)
-    kept = len([line for line in fitted.split("\n") if line.startswith("- Lesson")])
-    reported = int(fitted.split("…[")[1].split(" ")[0])
-    assert kept + reported == 20
+    alloc = ambient.render(lessons=_lesson_block(20), budget_tokens=80)
+    assert alloc.near_misses
 
 
-def test_a_block_under_the_cap_is_returned_unchanged():
-    from personalclaw.context import _fit_lessons
+def test_the_dropped_count_is_accurate():
+    from personalclaw.learning import ambient
 
-    block = _lesson_block(3)
-    assert _fit_lessons(block, cap=100_000) == block
+    alloc = ambient.render(lessons=_lesson_block(20), budget_tokens=80)
+    kept = len([k for kind, k, _t in alloc.included if kind == "lesson"])
+    assert kept + len(alloc.near_misses) == 20
 
 
-def test_even_an_impossible_cap_emits_no_partial_lesson():
-    from personalclaw.context import _fit_lessons
+def test_a_block_under_the_budget_keeps_every_lesson():
+    from personalclaw.learning import ambient
 
-    fitted = _fit_lessons(_lesson_block(20), cap=40)
-    assert not [line for line in fitted.split("\n") if line.startswith("- Lesson")]
-    assert "20 more lesson(s) withheld" in fitted
+    alloc = ambient.render(lessons=_lesson_block(3), budget_tokens=100_000)
+    for i in range(3):
+        assert f"- Lesson {i}:" in alloc.text
+    assert not alloc.near_misses
+
+
+def test_even_an_impossible_budget_emits_no_partial_lesson():
+    from personalclaw.learning import ambient
+
+    alloc = ambient.render(lessons=_lesson_block(20), budget_tokens=6)
+    assert not [line for line in alloc.text.split("\n") if line.startswith("- Lesson")]
+    assert alloc.text == "" or "Lesson" not in alloc.text

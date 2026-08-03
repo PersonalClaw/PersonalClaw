@@ -162,45 +162,60 @@ _CROSS_TAB_BUDGET_CHARS = 6_000  # sibling dashboard sessions
 _MEMORY_PREFS_CAP = 4_000  # user preferences
 _MEMORY_PROJECTS_CAP = 6_000  # active projects
 _MEMORY_HISTORY_CAP = 25_000  # daily history (multi-tier decay)
-_LESSONS_CAP = 35_000  # learned corrections (high priority)
 _SEMANTIC_MEMORY_CAP = 12_000  # structured key-value facts (vector memory)
 _EPISODIC_MEMORY_CAP = 12_000  # relevant past conversation fragments (vector memory)
 _PER_MESSAGE_CAP = 8_000  # truncate individual messages on fallback path
 
 
-def _fit_lessons(text: str, cap: int = _LESSONS_CAP) -> str:
-    """Fit the lesson block to its cap by DROPPING WHOLE LESSONS, never by cutting text.
+def _render_ambient(
+    *,
+    lessons: str = "",
+    skill_index: str = "",
+    voice: str = "",
+    persona: str = "",
+    query: str = "",
+) -> str:
+    """Render the named ambient blocks under ONE token budget (§2.4 / §7 crit 5).
 
-    This block used to be sliced at ``[:cap]``, which cut the final lesson
-    mid-sentence. Lessons are the user's own corrections — the most authoritative
-    content in the prompt — and a half-rendered instruction is worse than an absent
-    one, because the reader cannot tell it is half. ("Never deploy without" reads as
-    an instruction, and it is not the one the user gave.)
+    Replaces the per-block character caps that governed these four independently.
+    Those caps summed to ~36,750 tokens against the 4,000 that
+    ``learning.context_budget_tokens`` declares, and nothing checked the total — so
+    the config knob's promise ("only retrieved context is ever trimmed") was kept by
+    no code at all.
 
-    So: keep whole lessons in order until the cap, then say plainly how many were
-    withheld. The allocator (`learning/surfacing.py`) owns the general form of this
-    policy; this is the same rule applied to the one block that was measurably
-    being corrupted.
+    The budget scales with the model window on the SAME multiple as
+    :func:`_memory_caps`, so the two halves of the prompt grow together; a flat
+    budget beside window-scaled memory sections would make the ambient blocks the
+    only thing that never benefits from a larger window.
+
+    Never raises into a turn. A budgeting failure that cost the user their context
+    would be strictly worse than an over-long prompt, so the fallback is the raw
+    lesson block — the most authoritative content, ungoverned rather than absent.
     """
-    if len(text) <= cap:
+    if not any((lessons, skill_index, voice, persona)):
+        return ""
+    try:
+        from personalclaw.config.loader import AppConfig
+        from personalclaw.learning import ambient
+        from personalclaw.model_windows import active_chat_model_window
+
+        budget = int(getattr(AppConfig.load().learning, "context_budget_tokens", 4000) or 4000)
+        alloc = ambient.render(
+            lessons=lessons,
+            skill_index=skill_index,
+            voice=voice,
+            persona=persona,
+            query=query,
+            budget_tokens=budget,
+            window=active_chat_model_window(),
+        )
+        text = ambient.frame(alloc, lessons_block=lessons)
+        if text:
+            logger.debug("ambient allocation: %s", ambient.report(alloc))
         return text
-    lines = text.split("\n")
-    kept: list[str] = []
-    used = 0
-    dropped = 0
-    for line in lines:
-        cost = len(line) + 1
-        if used + cost > cap:
-            # Count only substantive lines as "withheld" — a dropped blank line is
-            # not a lesson the user is missing.
-            if line.strip():
-                dropped += 1
-            continue
-        used += cost
-        kept.append(line)
-    if dropped:
-        kept.append(f"\n…[{dropped} more lesson(s) withheld — ask to see them]")
-    return "\n".join(kept)
+    except Exception:
+        logger.debug("ambient allocation failed; falling back to lessons", exc_info=True)
+        return lessons or ""
 
 
 # The window the baseline caps were calibrated for + the max multiple we scale to.
@@ -906,6 +921,13 @@ class ContextBuilder:
         # Memory: an agent's named memory_store provider if set, else the
         # filesystem-fallback store scoped by the working directory.
         memory = self.get_memory_for(cwd, memory_store)
+        # The four blocks that share ONE budget (§2.4 / §7 crit 5). Collected rather
+        # than appended, then rendered together by `learning.ambient` below — four
+        # independent appends is what let them accrete prompt weight past the budget
+        # `learning.context_budget_tokens` declares.
+        _persona = ""
+        _voice = ""
+        _skill_index = ""
         if not blocks_reads:
             from personalclaw.memory_service import service_for
 
@@ -934,9 +956,7 @@ class ContextBuilder:
             # SAME normalization so write/read agree on the scope key.
             from personalclaw.agents.defaults import normalize_agent_name
 
-            persona = _svc.persona_block(agent=normalize_agent_name(agent))
-            if persona:
-                parts.append(persona)
+            _persona = _svc.persona_block(agent=normalize_agent_name(agent))
 
             # User preference profile (C15): the always-on ambient half of the
             # preference split — Active, decaying, typed facets (style/identity/
@@ -947,9 +967,7 @@ class ContextBuilder:
 
                 _vs = getattr(_svc, "_vs", None)
                 if _vs is not None:
-                    profile = render_profile_block(_vs)
-                    if profile:
-                        parts.append(profile)
+                    _voice = render_profile_block(_vs) or ""
             except Exception:
                 logger.debug("preference profile block render failed", exc_info=True)
 
@@ -957,9 +975,7 @@ class ContextBuilder:
         # so its agent-local skill tier (skill-agent-local-tier) overrides global
         # for this turn when present.
         if not is_custom:
-            skills_ctx = self.skills.get_context(agent=agent)
-            if skills_ctx:
-                parts.append(skills_ctx)
+            _skill_index = self.skills.get_context(agent=agent) or ""
         # Ephemeral session skills (skill-ephemeral-promotion): drafts the user
         # taught THIS session are live immediately, for every agent, until the
         # user promotes or forgets them at session end.
@@ -983,10 +999,23 @@ class ContextBuilder:
         if not blocks_reads:
             from personalclaw.memory_service import service_for
 
-            lessons_ctx = service_for(memory).lessons_context()
-            if lessons_ctx:
-                lessons_ctx = _fit_lessons(lessons_ctx)
-                parts.append(lessons_ctx)
+            lessons_ctx = service_for(memory).lessons_context() or ""
+
+        # ONE budget for the named ambient blocks (§2.4 / §7 crit 5). Replaces four
+        # independent per-block character caps that summed to ~9× the budget the
+        # config declares: driven with 120 realistic lessons the old render passed
+        # 4,000 tokens by 1,576, and at 400+ lessons reached 10,101. Lessons are
+        # never crowded out (their slot is non-sacrificial and they rank
+        # individually), an oversized item is dropped whole rather than cut, and the
+        # authority preamble renders.
+        _ambient = _render_ambient(
+            lessons=lessons_ctx,
+            skill_index=_skill_index,
+            voice=_voice,
+            persona=_persona,
+        )
+        if _ambient:
+            parts.append(_ambient)
 
         # Cross-tab context (dashboard only, skipped for temporary sessions)
         if (
