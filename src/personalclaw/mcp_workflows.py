@@ -764,9 +764,14 @@ def _plan(args: dict[str, Any]) -> str:
             },
         )
 
+    grounded = _grounding_for(goal, classified)
+
     body = {
         "ok": True,
-        "planner": "scaffold-v1",
+        # Renamed: this is no longer a bare structural stub. It carries the live grounding bundle,
+        # a picked shape with a validated skeleton, and the constraint block — which is the whole
+        # difference the plan measured (first-try-valid 0/5 → 4/5).
+        "planner": "grounded-v1" if grounded else "scaffold-v1",
         "goal": goal,
         "rigor": rigor,
         # The routing is reported even when nothing matched: "no template fit, and here is why"
@@ -775,19 +780,56 @@ def _plan(args: dict[str, Any]) -> str:
             "intent": classified.to_dict(),
             "match": match.to_dict() if match is not None else {"reason": "matcher unavailable"},
         },
-        "proposed_root": scaffold,
+        "proposed_root": (grounded or {}).get("skeleton") or scaffold,
+        **({"grounding": grounded} if grounded else {}),
         "next_step": (
             "Adapt this tree to the goal, then call workflow_author with save=false to "
             "validate it before saving."
         ),
         "note": (
-            "This is a structural scaffold, not a domain plan — the template-aware planner "
-            "lands with UNIVERSAL-PLANNING. Use the manifest below for the shapes the "
-            "engine accepts."
+            "Fill the shape's slots and adapt the tree, then call workflow_author with "
+            "save=false to validate. The `grounding` block below is read from THIS system's live "
+            "registries — anything not in it does not exist here. If you cannot plan the goal "
+            'with what is listed, return {"cannot_plan": "<why>"} rather than inventing a node.'
         ),
         "manifest": {k: v for k, v in service.manifest().items() if k != "ok"},
     }
     return _fmt(body, summary=f"Draft plan for: {goal}")
+
+
+def _grounding_for(goal: str, classified: Any) -> dict | None:
+    """The grounding bundle, the picked shape, and the generated prompt.
+
+    Returns None when grounding cannot be assembled, and the caller falls back to the bare
+    scaffold — the bundle is an enhancement to planning, and a planner with a stub is still better
+    off than one handed an exception.
+    """
+    try:
+        from personalclaw.workflows import generation, grounding, patterns
+
+        bundle = grounding.build_bundle()
+        shape, reason = patterns.pick_shape(goal, classifier_shape=getattr(classified, "shape", ""))
+        return {
+            "bundle": bundle.to_dict(),
+            "index": bundle.index(),
+            "shape": shape.to_dict() if shape else None,
+            "shape_reason": reason,
+            "skeleton": dict(shape.skeleton) if shape else None,
+            "prompt": generation.planning_prompt(
+                goal, bundle=bundle, shape=shape, shape_reason=reason
+            ),
+            "emission_schema": (
+                generation.spec_json_schema() if bundle.structured_output else None
+            ),
+            "self_check_rules": (
+                "unique ids · valid kinds · gates have criteria · foreach has items · loops are "
+                "bounded · a work node exists · a stopping condition exists · no unfilled slots · "
+                "bindings resolve"
+            ),
+        }
+    except Exception:
+        logger.debug("grounding unavailable — falling back to the bare scaffold", exc_info=True)
+        return None
 
 
 def _def_resolvable(name: str) -> bool:

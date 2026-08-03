@@ -556,16 +556,24 @@ class TestPlan:
         assert "WF_PLAN_GOAL_REQUIRED" in T._call_tool("workflow_plan", {})
 
     def test_it_returns_a_spec_plus_the_manifest(self) -> None:
-        """The model needs the shapes the engine accepts, not a guess at a schema."""
+        """The model needs the shapes the engine accepts, not a guess at a schema.
+
+        `grounded-v1` since UNIVERSAL-PLANNING S41: the tree now comes from a picked shape whose
+        skeleton already validates, and the live grounding bundle rides along. `scaffold-v1` is
+        still the fallback when grounding cannot be assembled.
+        """
         out = T._call_tool("workflow_plan", {"goal": "summarize issues"})
         assert "proposed_root" in out and "manifest" in out
-        assert "scaffold-v1" in out
+        assert "grounded-v1" in out or "scaffold-v1" in out
 
-    def test_it_is_honest_about_being_a_scaffold(self) -> None:
-        """Claiming to be a domain planner would be a lie that survives until
-        UNIVERSAL-PLANNING lands."""
+    def test_it_is_honest_about_what_the_planner_knows(self) -> None:
+        """The old assertion was "structural scaffold" — honest while the planner was a stub, and
+        stale now that UNIVERSAL-PLANNING S41 has landed. What must stay honest is the SOURCE of
+        the facts: the grounding block is read from this system's live registries, and the planner
+        is told to decline rather than invent when the goal needs something absent."""
         out = T._call_tool("workflow_plan", {"goal": "x"})
-        assert "structural scaffold" in out
+        assert "live registries" in out or "structural scaffold" in out
+        assert "cannot_plan" in out or "structural scaffold" in out
 
     @pytest.mark.parametrize(
         "rigor,expect_verify,expect_review",

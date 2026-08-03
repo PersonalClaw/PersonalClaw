@@ -68,6 +68,9 @@ while not terminal:
 | `longrun.py` | long-run watcher mechanics: item identity, the persistent seen-set, bounded sibling views, buffer-seal, the adaptive-delay clamp, lineage caps |
 | `intent.py` | the no-LLM intent classifier: the (complexity, uncertainty, stakes, time_pressure) tuple, irreversibility, and rigor routing |
 | `matcher.py` | tiered template matching T1-T5: keyword index, metadata scoring, shape filter, embedding tie-break, LLM summarize-then-rematch |
+| `grounding.py` | the grounding bundle: node taxonomy, provider signatures (three discovery tiers), MCP servers, binding roots, model capability |
+| `patterns.py` | the seven proven graph shapes, their slots, when each is WRONG, and the deterministic shape pick |
+| `generation.py` | the generated planning prompt, the mechanical self-check, repair-not-regenerate, and the decline path |
 | `scope.py` | filesystem write-scope enforcement by post-hoc diff |
 | `watchdog.py` | the supervisor: adoption, reaping, per-run publishing |
 
