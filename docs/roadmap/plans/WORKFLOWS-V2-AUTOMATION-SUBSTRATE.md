@@ -741,3 +741,88 @@ Conversion decisions, each with the user-visible failure it avoids:
   `triggers.json` and its lock), the `hooks.json` / `event_triggers.json` conversions (the
   `EventTrigger` half of the map is written and tested, but its converter is the event-kind session),
   and the API re-pointing (session 67).
+
+### S67 — Event-kind API parity + the dormant lifecycle events (61 tests) — DONE
+
+Two ways a user configures something the code never delivers. Both are made QUERYABLE rather than
+papered over, because the missing fire sites belong to the subsystems that would own them, not here.
+
+**DEVIATION — the plan says 8 dormant events; measurement says 7.** `TaskComplete` was one of the 8
+when this plan was written, and S60 wired it (`tasks/native._fire_task_complete`, via
+`pool.lifecycle_payload`). The remaining seven are `ApprovalRequest`, `ContextCompact`, `MemoryWrite`,
+`PostResponse`, `PreResponse`, `SessionEnd`, `SubagentSpawn`. Pinned as a count AND a name in
+`test_seven_events_are_dormant_not_the_plan_s_eight`, so the next session to wire one gets a failure
+that forces the same explicit re-count instead of the number quietly drifting.
+
+**DISCOVERY — measuring dormancy by scanning is wrong in three ways, and I shipped the wrong version
+first.** Counting `HOOK_EVENT_*` text hits calls `Stop` live off `autonudge.py`'s **docstring**, calls
+seven events live off `chat_runner.py`'s **import block**, and — worst — calls `TaskComplete` DORMANT,
+because the real fire passes `payload["event"]` and contains no constant reference at all. The last
+one fails in the direction that actively misleads: telling a user their working hook is dead. So
+`DORMANT_EVENTS` is a reviewed constant with `verify_dormancy()` reconciling it against
+`hooks.HOOK_EVENTS`, which is what makes a hand-maintained list safe.
+
+**DISCOVERY — the event-kind parity gap is worse than "uneven", and it was measured by driving the
+handlers, not by reading them.** `event` was handled in `list`/`create`/`DELETE` only;
+`toggle`/`run`/`PUT` fell through to the SCHEDULE branch, which looked the id up among cron jobs,
+missed, and answered **404 `{"error": "not found"}`** — the API telling a user that a trigger sitting
+in their store does not exist, while it kept firing. Probed as shipped:
+
+| op | before | after |
+|---|---|---|
+| `toggle` | 404 not found | 200, persists |
+| `run` | 404 not found | 200, fires |
+| `test` | 400 "use /run" | 200, fires |
+| `PUT` | 400 / 404, **wrote nothing** for every field | 200, persists |
+| `history` | bare `{runs: [], total: 0}` | `supported: false` + reason + fire count |
+
+`/test` said "use /run" and `/run` said 404 — a **circular dead end** with no way to fire an event
+trigger by hand at all. And every PUT field (`enabled`, `pattern`, `max_fires`, `action`) silently
+failed, so toggling a trigger off reported that it did not exist.
+
+Decisions, each with the failure it prevents:
+
+- **`execute_event_action` is extracted so `/test` and the live fire share ONE path.** A test button
+  with its own dispatch would eventually pass while the real fire failed — worse than no test button,
+  because it certifies a broken trigger.
+- **Both guardrail gates hold for a test fire.** A `/test` that skipped the denylist would run exactly
+  the action an operator blocked, from a UI button, and report success; one that skipped incident mode
+  would run unattended work during the incident the kill switch was thrown for. Adversarially probed:
+  the provider is never invoked in either case. `test` only tags the payload.
+- **A typed `FireOutcome` replaces `None`.** Before, incident mode, an unregistered provider and a
+  denylist block were indistinguishable from success, so a test surface could only ever report "ok".
+- **`ran` and `success` stay separate.** `ran` is "reached its provider"; `success` is the provider's
+  verdict. Live validation surfaced a real misconfigured `notify` action (missing `title_template`) as
+  `ran: true / success: false` — collapsing them would report that as "never fired" and point the user
+  at the wrong thing.
+- **A refused fire answers 200, not 4xx.** A guardrail decision is not a malformed request.
+- **A manual fire does NOT spend `max_fires`, and skips debounce.** The budget bounds UNATTENDED
+  firing; spending it from a Run button would let a user exhaust and self-retire their own trigger by
+  testing it. Same asymmetry as S65's `within_rate_window(manual=True)`. Verified live: two fires,
+  `fire_count` still 0.
+- **Re-enabling an exhausted trigger resets `fire_count`.** Otherwise `record_fire` disables it again
+  on the next fire — the off switch working and the ON switch not.
+- **`history` says `supported: false` and returns the fire counter.** A bare empty list renders as
+  "this ran and kept no records", so an unrecorded trigger reads as an idle one.
+- **A rejected PUT writes NOTHING.** An unknown `pattern` matches nothing, so accepting a typo would
+  silently retire a working trigger.
+- **Refusals are 400-with-a-reason, never 404.** 404 for a row the user is looking at reads as data
+  loss. `PARITY_EXEMPTIONS` declares the two genuine cases (lifecycle has no standalone `/run`;
+  schedule's action IS its run) so every other kind's gap stays a real finding.
+- **Dormancy rides `/api/triggers/variables`** — the one server-sourced catalog both UIs read — and is
+  warned at the point of CHOICE (event picker + option labels), with a chip and a "zero runs is
+  expected" note on an already-saved trigger. A hard-coded FE list would eventually badge a working
+  hook as dead, so every helper returns "fires" for anything it was not explicitly told is dormant
+  (including a still-loading catalog).
+- **The `event` kind had NO frontend client methods at all**, so the fixed operations were unreachable
+  from the UI; added with the `ran`/`success` distinction in the type.
+
+Validated live against an isolated dev home (`PERSONALCLAW_HOME=./.dev-home`, auth `none`): the
+catalog serves 7 dormant events with reasons, and create → toggle ×2 → PUT(5 fields) → run → test →
+history → delete all behave as the table above says.
+
+- **NOT DONE (by scope):** the seven dormant fire sites themselves. Each is a per-subsystem edit
+  (session teardown, compaction, the approval path, the subagent `on_event` bus) that belongs with its
+  owner, not in an API-parity session; wiring them from here would mean seven speculative touches
+  across unrelated modules. `DORMANCY_NOTES` names the owning subsystem for each so the work is
+  findable, and `verify_dormancy()` fails if one is wired without updating the list.

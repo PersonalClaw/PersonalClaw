@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { ArrowLeft, Check, Zap, Settings2 } from 'lucide-react'
+import { ArrowLeft, Check, Zap, Settings2, AlertTriangle } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
 import { Button } from '../../ui/Button'
@@ -14,6 +14,7 @@ import { ActionConfig, seedActionConfig } from './ActionConfig'
 import { schemaProps } from '../tools/schema'
 import {
   TRIGGER_KINDS, type TriggerKind, useTriggerVariables, lifecycleEventMeta, eventTakesToolMatcher,
+  eventDormancyReason, eventIsDormant,
 } from './triggerMeta'
 
 /** Create flow for a Trigger, with a CLEAN split between the Trigger mechanism
@@ -45,7 +46,14 @@ export function TriggerCreatePage({ onBack, onCreated }: { onBack: () => void; o
   const catalog = useTriggerVariables()
 
   const em = lifecycleEventMeta(catalog, event)
-  const eventOptions = useMemo(() => (catalog?.lifecycle ?? []).map((e) => ({ value: e.event, label: e.label, description: e.desc })), [catalog])
+  const dormancyReason = eventIsDormant(catalog, event) ? (eventDormancyReason(catalog, event) || 'no code fires it yet') : ''
+  // The option list marks dormant events inline too, so the warning is not the FIRST time a user
+  // learns which events are dead — they can see it while choosing rather than after committing.
+  const eventOptions = useMemo(() => (catalog?.lifecycle ?? []).map((e) => ({
+    value: e.event,
+    label: e.dormant ? `${e.label} · never fires` : e.label,
+    description: e.desc,
+  })), [catalog])
   // The variables available to the ACTION depend on the configured TRIGGER.
   const actionVars = kind === 'schedule' ? (catalog?.schedule ?? []) : em.vars
 
@@ -113,6 +121,19 @@ export function TriggerCreatePage({ onBack, onCreated }: { onBack: () => void; o
             <>
               <Field label="Fires on" hint={em.desc}>
                 <Combobox options={eventOptions} value={event} onChange={(v) => { setEvent(v); setMatcher('') }} placeholder="Pick a lifecycle event…" emptyText="No events" />
+                {/* S67: 7 of the 15 declared events have no fire site. The API accepts the hook and
+                    the list shows it enabled, so without this the only feedback is a trigger that
+                    never runs. Warned at the point of CHOICE, where picking a live event is still
+                    one click away — a badge on the saved row would come after the mistake. Warn
+                    tone, not danger: the selection is valid, it just will not fire yet. */}
+                {dormancyReason && (
+                  <div role="note" className="mt-2 flex items-start gap-2 rounded-lg px-3 py-2 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)', color: 'var(--color-warn)' }}>
+                    <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                    <span className="min-w-0 flex-1">
+                      Nothing fires <span style={fvs(600)}>{em.label}</span> yet — {dormancyReason}. This trigger will save and stay idle.
+                    </span>
+                  </div>
+                )}
               </Field>
               <Field label={eventTakesToolMatcher(event) ? 'Tool matcher' : 'Context matcher'} hint={eventTakesToolMatcher(event) ? 'Glob on tool name (e.g. write_file, mcp__*). Empty = all tools.' : 'Glob on the event context. Empty = always.'}>
                 <TextInput value={matcher} onChange={setMatcher} placeholder={eventTakesToolMatcher(event) ? 'write_file' : '*'} />

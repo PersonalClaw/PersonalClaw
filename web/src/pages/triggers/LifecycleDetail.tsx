@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Pencil, Trash2, Check, X, FlaskConical, Loader2 } from 'lucide-react'
+import { Pencil, Trash2, Check, X, FlaskConical, Loader2, AlertTriangle } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { FormFooter } from '../../ui/FormFooter'
 import { confirmDelete } from '../../ui/dialog'
@@ -8,7 +8,7 @@ import { Field, TextInput } from '../../ui/forms'
 import { Combobox } from '../../ui/Combobox'
 import { Toggle } from '../../ui/Toggle'
 import { ActionConfig, seedActionConfig } from './ActionConfig'
-import { useTriggerVariables, lifecycleEventMeta, eventTakesToolMatcher, relPast } from './triggerMeta'
+import { useTriggerVariables, lifecycleEventMeta, eventTakesToolMatcher, relPast, eventIsDormant, eventDormancyReason } from './triggerMeta'
 
 /** Lifecycle-trigger inspector for the SidePanel: view ↔ in-panel edit, plus a
  *  Test button that fires the action with a sample context. Backed by the hooks
@@ -41,7 +41,10 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
 
   const catalog = useTriggerVariables()
   const em = lifecycleEventMeta(catalog, event)
-  const eventOptions = (catalog?.lifecycle ?? []).map((e) => ({ value: e.event, label: e.label, description: e.desc }))
+  // Read against the SAVED event, not the edit draft: the chips and stats below describe the trigger
+  // as it exists, and following the draft would badge a row the user has not committed.
+  const dormancyReason = eventIsDormant(catalog, hook.event) ? (eventDormancyReason(catalog, hook.event) || 'no code fires it yet') : ''
+  const eventOptions = (catalog?.lifecycle ?? []).map((e) => ({ value: e.event, label: e.dormant ? `${e.label} · never fires` : e.label, description: e.desc }))
 
   async function save() {
     if (!name.trim()) { setErr('Name is required'); return }
@@ -101,6 +104,14 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
 
       <div className="flex flex-wrap items-center gap-s">
         <span className="inline-flex items-center rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }}>{em.label}</span>
+        {/* S67: an existing trigger on a dormant event looks identical to a working one — same
+            Enabled toggle, same "Ran 0×" stat, which reads as "hasn't happened yet" rather than
+            "cannot happen". This chip is the difference. */}
+        {dormancyReason && (
+          <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-warn) 14%, transparent)', color: 'var(--color-warn)' }} title={`Nothing fires this event yet — ${dormancyReason}`}>
+            <AlertTriangle size={13} /> Never fires
+          </span>
+        )}
         <span className="rounded-pill bg-surface-high px-m h-7 inline-flex items-center text-on-surface-var text-[0.8125rem]">{hook.provider}</span>
         {hook.matcher && <span className="rounded-pill bg-surface-high px-m h-7 inline-flex items-center font-mono text-on-surface-var text-[0.75rem]">{hook.matcher}</span>}
       </div>
@@ -113,6 +124,12 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
 
       <Section label="Stats">
         <span className="text-on-surface-var text-[0.8125rem]">Ran {hook.run_count}× · last {relPast(hook.last_run)}{hook.last_status ? ` · ${hook.last_status}` : ''} · timeout {hook.timeout}s</span>
+        {/* "Ran 0×" on a dormant event reads as "hasn't happened yet", so a user waits for something
+            that cannot arrive. Only shown while the count is genuinely zero — once an event is wired
+            and has fired, the stat speaks for itself. */}
+        {dormancyReason && hook.run_count === 0 && (
+          <p className="text-on-surface-low text-[0.8125rem] mt-1">Zero runs is expected here: {dormancyReason}.</p>
+        )}
       </Section>
 
       <Section label="Used by">

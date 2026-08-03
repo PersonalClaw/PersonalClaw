@@ -41,6 +41,22 @@ export function lifecycleEventMeta(cat: TriggerVariables | null, event?: string)
   const list = cat?.lifecycle ?? []
   return list.find((e) => e.event === event) ?? list[0] ?? { event: event ?? '', label: event ?? '', desc: '', vars: [], blocking: false }
 }
+/** Whether picking this event yields a trigger that will never fire (S67).
+ *
+ *  7 of the 15 declared events have no fire site: the API accepts the hook, the list shows it
+ *  enabled, and nothing ever runs it. Read from the server catalog rather than a local list so
+ *  wiring an event on the backend retires the warning automatically — a stale hard-coded list would
+ *  eventually tell a user their WORKING hook is dead, which is worse than not warning at all. */
+export function eventIsDormant(cat: TriggerVariables | null, event?: string): boolean {
+  if (!event) return false
+  return Boolean(cat?.lifecycle?.find((e) => e.event === event)?.dormant)
+}
+/** The reason an event is dormant, for the warning copy. Empty when it fires. */
+export function eventDormancyReason(cat: TriggerVariables | null, event?: string): string {
+  if (!event) return ''
+  const found = cat?.lifecycle?.find((e) => e.event === event)
+  return found?.dormant ? (found.dormant_reason ?? '') : ''
+}
 /** Tool events take a tool-name matcher; others take a context glob. */
 export function eventTakesToolMatcher(event?: string): boolean {
   return event === 'PreToolUse' || event === 'PostToolUse'

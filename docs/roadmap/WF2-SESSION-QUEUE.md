@@ -161,7 +161,7 @@ mandatory.
 | 64 | Dispatch (inbox + wakeup, resume-never-droppable) + the delivery contract + the SPOOL that fixes the reproduced sync-context silent drop | G32 | ✅ DONE (#218) |
 | 65 | Missed fires: bounded honest enumeration (budget bounds ROWS, not counts — measured), review decisions that always write a row, catch_up once + staggered | G32 | ✅ DONE (#219) |
 | 66 | Cron migration: lossless against a store the REAL service wrote (0 unaccounted fields); `every`≠`at` (a one-shot would kill every interval job); dry-run report | G33 | ✅ DONE (#220) |
-| 67 | Event-kind API parity (toggle/update/run/test/history) + the 8 dormant lifecycle events | G33 | TODO |
+| 67 | Event-kind API parity (toggle/update/run/test/history: all 404'd or silently no-op'd) + dormancy surfaced for the **7** (not 8 — S60 wired TaskComplete) | G33 | ✅ DONE (#221) |
 | 68 | Autopause after 5 true failures (typed exits park instead) + Runs-inbox surfacing | G34 | TODO |
 | 69 | Injection fencing + frozen capability set (adversarially verified); budget/triage typed ledger rows, zero silent drops | G34 | TODO |
 | 70 | Calendar-aware scheduling: quiet-hours semantics, duty-gate hook, week-grid view; `automation doctor` | G35 | TODO |

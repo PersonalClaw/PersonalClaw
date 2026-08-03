@@ -196,6 +196,7 @@ async def api_trigger_variables(request: web.Request) -> web.Response:
     """
     from personalclaw.hooks import LIFECYCLE_EVENT_CATALOG
     from personalclaw.schedule import SCHEDULE_VARS
+    from personalclaw.triggers.events import DORMANCY_NOTES, DORMANT_EVENTS
 
     lifecycle = [
         {
@@ -204,6 +205,12 @@ async def api_trigger_variables(request: web.Request) -> web.Response:
             "desc": e["desc"],
             "vars": list(e["vars"]),
             "blocking": bool(e.get("blocking")),
+            # S67: 7 of the 15 declared events have no fire site — they are configurable and never
+            # run. The catalog is the only server-sourced list both UIs read, so the badge has to
+            # ride here or a user cannot tell a working event from a dead one until they wait for a
+            # hook that never fires.
+            "dormant": e["event"] in DORMANT_EVENTS,
+            "dormant_reason": DORMANCY_NOTES.get(e["event"], ""),
         }
         for e in LIFECYCLE_EVENT_CATALOG
     ]
@@ -448,9 +455,65 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
 
+    if kind == _EVENT:
+        return _update_event(raw, body)
     if kind == _LIFECYCLE:
         return await _update_lifecycle(state, raw, body)
     return await _update_schedule(state, raw, body)
+
+
+def _update_event(raw: str, body: dict) -> web.Response:
+    """PUT an ``event`` trigger (S67 parity).
+
+    Measured before writing: every field a caller could send returned 400 "no fields to update" or
+    404 "not found" and wrote NOTHING — `enabled`, `pattern`, `max_fires` and `action` all silently
+    failed because the PUT fell through to `_update_schedule`, which looked for a cron job with this
+    id and did not find one. A user toggling an event trigger off was told it does not exist while
+    it kept firing.
+
+    `pattern` is validated against `EVENT_PATTERNS` rather than accepted: an unrecognized pattern
+    matches nothing, so a typo would silently retire a working trigger — the exact failure the
+    create path already guards.
+    """
+    from personalclaw.event_triggers import EVENT_PATTERNS
+
+    store = _event_store()
+    trigger = next((t for t in store.load() if t.id == raw), None)
+    if trigger is None:
+        return web.json_response({"error": "not found"}, status=404)
+
+    if "pattern" in body:
+        pattern = str(body.get("pattern") or "").strip()
+        if pattern not in EVENT_PATTERNS:
+            return web.json_response(
+                {"error": f"pattern must be one of {list(EVENT_PATTERNS)}"}, status=400
+            )
+        trigger.pattern = pattern
+    if "enabled" in body:
+        trigger.enabled = bool(body["enabled"])
+    if "key_glob" in body:
+        trigger.key_glob = str(body.get("key_glob") or "")
+    if "content_re" in body:
+        trigger.content_re = str(body.get("content_re") or "")
+    if "max_fires" in body:
+        try:
+            trigger.max_fires = max(0, int(body.get("max_fires") or 0))
+        except (TypeError, ValueError):
+            return web.json_response({"error": "max_fires must be an integer"}, status=400)
+    if "debounce_secs" in body:
+        try:
+            trigger.debounce_secs = max(0.0, float(body.get("debounce_secs") or 0.0))
+        except (TypeError, ValueError):
+            return web.json_response({"error": "debounce_secs must be a number"}, status=400)
+    if isinstance(body.get("action"), dict):
+        action = body["action"]
+        if action.get("provider"):
+            trigger.action_provider = str(action["provider"])
+        if "config" in action:
+            trigger.action_config = dict(action["config"] or {})
+
+    store.upsert(trigger)
+    return web.json_response({"ok": True, "trigger": _serialize_event(trigger)})
 
 
 async def _update_lifecycle(state: DashboardState, raw: str, body: dict) -> web.Response:
@@ -533,6 +596,27 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
         return web.json_response(
             {"ok": True, "trigger": _serialize_lifecycle(hook, _used_by_index().get(raw, []))}
         )
+    if kind == _EVENT:
+        # Measured (S67): this fell through to the schedule branch, which looked for a cron job
+        # with this id, missed, and answered 404 "not found" — the off switch reporting that the
+        # trigger the user is looking at does not exist, while it kept firing.
+        store = _event_store()
+        trigger = next((t for t in store.load() if t.id == raw), None)
+        if trigger is None:
+            return web.json_response({"error": "not found"}, status=404)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        want = body.get("enabled") if isinstance(body, dict) else None
+        trigger.enabled = (not trigger.enabled) if want is None else bool(want)
+        # An exhausted trigger (`fire_count >= max_fires`) self-retired. Re-enabling it without
+        # clearing the count would flip `enabled` to True and change nothing — `record_fire`
+        # disables it again on the next fire. So a deliberate re-enable resets the budget.
+        if trigger.enabled and trigger.max_fires and trigger.fire_count >= trigger.max_fires:
+            trigger.fire_count = 0
+        store.upsert(trigger)
+        return web.json_response({"ok": True, "trigger": _serialize_event(trigger)})
     # schedule
     try:
         body = await request.json()
@@ -566,6 +650,11 @@ async def api_trigger_run(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "lifecycle triggers fire on events; use /test"}, status=400
         )
+    if kind == _EVENT:
+        # Measured (S67): this fell through to the schedule branch and answered 404 "not found",
+        # while /test answered 400 "use /run" — a circular dead end with no way to fire an event
+        # trigger by hand at all.
+        return await _run_event(raw, request)
     job = next((j for j in state.crons.list_jobs(include_disabled=True) if j.id == raw), None)
     if not job:
         return web.json_response({"error": "not found"}, status=404)
@@ -593,16 +682,63 @@ async def api_trigger_run(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "name": job.name, "dry_run": dry_run})
 
 
+async def _run_event(raw: str, request: web.Request) -> web.Response:
+    """Fire one event trigger by hand, through the SAME executor the live path uses.
+
+    A manual fire does NOT call `record_fire`. The fire budget (`max_fires`) exists to bound
+    UNATTENDED firing — spending it from a Run button would let a user exhaust and self-retire their
+    own trigger by testing it, which is the same asymmetry S65 established for the hourly cap
+    (`within_rate_window(manual=True)`). Debounce is skipped for the same reason: it protects
+    against event storms, and a person clicking Run is not a storm.
+    """
+    from personalclaw.event_triggers import execute_event_action
+    from personalclaw.validation import sanitize_string
+
+    store = _event_store()
+    trigger = next((t for t in store.load() if t.id == raw), None)
+    if trigger is None:
+        return web.json_response({"error": "not found"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    key = sanitize_string(str(body.get("key", "") or "manual"))[:500]
+    value = sanitize_string(str(body.get("value", "") or "manual fire"))[:10000]
+
+    outcome = await execute_event_action(
+        trigger,
+        event_type=str(body.get("event_type", "") or "MemoryUpdate"),
+        key=key,
+        value=value,
+        test=bool(body.get("test")),
+    )
+    payload = outcome.to_dict()
+    for field_name in ("stdout", "stderr", "error"):
+        if payload.get(field_name):
+            payload[field_name] = _redact(str(payload[field_name]))
+    if payload.get("reason"):
+        payload["reason"] = _redact(str(payload["reason"]))
+    # 200 even for a refusal: the request was understood and answered honestly. A refused fire is
+    # not a client error, and returning 4xx would make a denylist block look like a bad request.
+    return web.json_response({"ok": outcome.ran, "result": payload})
+
+
 async def api_trigger_test(request: web.Request) -> web.Response:
-    """POST /api/triggers/{id}/test — execute a lifecycle trigger's action once."""
+    """POST /api/triggers/{id}/test — execute a lifecycle or event trigger's action once."""
     from personalclaw.hooks import run_script_hook
     from personalclaw.validation import sanitize_string
 
     state: DashboardState = request.app["state"]
     kind, raw = _split_id(request.match_info["id"])
+    if kind == _EVENT:
+        # An event trigger's test IS its manual fire (same executor, tagged `test`), so /test and
+        # /run agree rather than one of them refusing and pointing at the other.
+        return await _run_event(raw, request)
     if kind != _LIFECYCLE:
         return web.json_response(
-            {"error": "only lifecycle triggers support /test; use /run"}, status=400
+            {"error": "schedule triggers run their action; use /run?dry_run=1 to preview"},
+            status=400,
         )
     hook = _hook_store(state).get(raw)
     if not hook:
@@ -686,11 +822,36 @@ def _redact_run(run: dict[str, Any], *, job_name: str | None = None) -> dict[str
 
 
 async def api_trigger_history(request: web.Request) -> web.Response:
-    """GET /api/triggers/{id}/history — per-trigger run records (schedule only)."""
+    """GET /api/triggers/{id}/history — run records; other kinds answer `supported: false`."""
     state: DashboardState = request.app["state"]
     kind, raw = _split_id(request.match_info["id"])
+    if kind == _EVENT:
+        # An event trigger keeps a fire COUNTER, not run records — there is no per-run store behind
+        # it. Returning the counter with `supported: false` is the honest answer: a bare
+        # `{"runs": []}` (what every non-schedule kind used to get) renders as "this ran and kept no
+        # records", so a user reads an unrecorded trigger as an idle one.
+        trigger = next((t for t in _event_store().load() if t.id == raw), None)
+        if trigger is None:
+            return web.json_response({"error": "not found"}, status=404)
+        return web.json_response(
+            {
+                "runs": [],
+                "total": 0,
+                "supported": False,
+                "reason": "event triggers record a fire count, not per-run records",
+                "fire_count": trigger.fire_count,
+                "last_fired_at": trigger.last_fired_at,
+            }
+        )
     if kind != _SCHEDULE:
-        return web.json_response({"runs": [], "total": 0})
+        return web.json_response(
+            {
+                "runs": [],
+                "total": 0,
+                "supported": False,
+                "reason": "lifecycle triggers run inline with the agent loop and keep no run store",
+            }
+        )
     try:
         limit = max(1, min(int(request.query.get("limit", "10")), 100))
         offset = max(0, int(request.query.get("offset", "0")))
