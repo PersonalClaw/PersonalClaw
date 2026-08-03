@@ -2281,3 +2281,42 @@ defect that the re-point exposes rather than merely relocating.
   `ScheduleRunStore`, which survives), the session-reaper trio, `status`/`set_refresh_callback`, and
   the two non-facade callers (`suggestions.py`, `messaging.py`). Then the class itself, then the
   `schedule_*` MCP aliases.
+
+### S105 — Run-record re-point (§6 — stacked on S104)
+
+**DONE.** The facade now holds `ScheduleRunStore` directly. Every `state.crons.*` run-record call is
+gone (5 sites → 0), and **two handlers no longer touch `state` at all** — flake8's `F841` on the now-
+unused local is the clearest possible evidence the surface is decoupled.
+
+- **The coupling was pure indirection, measured not assumed.** All four run methods on
+  `ScheduleService` are ONE-LINE passthroughs (`list_runs` → `list_for_job`, `list_all_runs` →
+  `list_all`, `get_run`, `delete_runs` → `delete_for_job`), and `ScheduleRunStore(base_dir)`
+  constructs and answers standalone. So this removes a dependency without changing a single stored
+  byte — proven by DELETING the service's run methods from the test double and watching every read
+  still work.
+- **`last_run_status` came along.** It was itself a two-line read of the same store's sync path, so
+  going through the service meant a dashboard whose legacy service was a test double or absent showed
+  **no badge at all**. T7's honest `launched`-vs-`ok` distinction is preserved (asserted).
+- **🔴 A REAL SHADOWING BUG, found by driving.** This module already had
+  `async def _run_store(raw, request)` (S94's manual-fire path). Defining a second `_run_store()`
+  silently REDEFINED it, and the history endpoint raised "missing 2 required positional arguments" —
+  Python reports a same-name redefinition only at the call site, which in a 1400-line handler module
+  is a genuine hazard. Renamed to `_runs_store`, with a test pinning that S94's handler still takes
+  its two parameters.
+- **🔴 The test fixture had to redirect the handler's OWN `config_dir`.** It patched
+  `loader.config_dir` + `T._trigger_store`, but the run store resolves through the module-level
+  `config_dir` (the single redirect point S101 established) — so every run-record read returned 0
+  rows until the fixture covered it. Third time this seam has mattered; it is now the rule.
+- **DEVIATION — five of my own earlier tests mocked the SERVICE method.** S101's delete test asserted
+  `crons.delete_runs.assert_awaited_once()` and S104's last-result tests mocked
+  `crons.list_runs`. After the re-point those mocks would pass forever *without the read or delete
+  happening*. All five now write real rows and assert the real store, which is strictly stronger.
+
+11 tests (70 in the store-facade file). Gate: `make lint` clean.
+
+- **REMAINING on the `ScheduleService` retirement:** the session-reaper trio
+  (`start_reaper`/`register_active_session_key`/`clear_active_session_key`), `status`/
+  `set_refresh_callback`, the residual CRUD fallbacks (7 `list_jobs` + `ack_job`/`enable_job`/
+  `remove_job`/`update_job`/`run_job`/`is_running`/`running_since`, all legacy-fallback branches), and
+  the two non-facade callers (`suggestions.py`, `messaging.py`). Then the class, then the `schedule_*`
+  MCP aliases.

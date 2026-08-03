@@ -166,7 +166,7 @@ async def _last_result_for(state: DashboardState, raw: str) -> str:
     store-backed trigger and a legacy job identically.
     """
     try:
-        runs, _total = await state.crons.list_runs(raw, offset=0, limit=1)
+        runs, _total = await _runs_store().list_for_job(raw, 0, 1)
     except Exception:
         logger.debug("could not read the last run for %s", raw, exc_info=True)
         return ""
@@ -174,6 +174,47 @@ async def _last_result_for(state: DashboardState, raw: str) -> str:
         return ""
     newest = runs[0] if isinstance(runs[0], dict) else {}
     return str(newest.get("summary") or newest.get("error") or "")
+
+
+def _runs_store() -> Any:
+    """The run-record store, held DIRECTLY rather than through `ScheduleService` (S105).
+
+    🔴 Named `_runs_store`, not `_run_store`: this module ALREADY has an
+    `async def _run_store(raw, request)` handler (S94's manual-fire path), and defining a second
+    function with that name silently SHADOWED it — driven, the history endpoint raised
+    "_run_store() missing 2 required positional arguments". A same-name redefinition is a real
+    hazard in a 1400-line handler module, and Python reports it only at the call site.
+
+    🔴 Measured: all four run-record methods on `ScheduleService` are one-line passthroughs to
+    `ScheduleRunStore` (`list_runs` → `list_for_job`, `list_all_runs` → `list_all`, `get_run`,
+    `delete_runs` → `delete_for_job`), and the store constructs and answers standalone from a bare
+    `base_dir`. So the facade's dependency on the legacy service for run HISTORY was pure
+    indirection, and this removes it without changing a single stored byte.
+
+    Keyed by a plain id string, which is why this store survives the whole cutover unchanged: a
+    store-created trigger's runs and a legacy job's runs live in the same place, addressed the same
+    way. Rooted through this module's `config_dir` so the test fixture redirects it with everything
+    else.
+    """
+    from personalclaw.schedule_history import ScheduleRunStore
+
+    return ScheduleRunStore(config_dir())
+
+
+def _last_run_status_for(trigger_id: str) -> str:
+    """The newest run's PERSISTENT status, or "" — sync, for the list serializer.
+
+    Same contract `ScheduleService.last_run_status` documented and for the same reason (T7): the
+    honest status survives restarts and distinguishes `launched` from `ok`, where a trigger's own
+    field would report a fire-and-forget run as a success. Reads the store's own sync path, so the
+    list serializer stays cheap.
+    """
+    try:
+        rows, _total = _runs_store()._list_for_job_sync(trigger_id, 0, 1)
+    except Exception:
+        logger.debug("last-run status unavailable for %s", trigger_id, exc_info=True)
+        return ""
+    return str(rows[0].get("status", "")) if rows else ""
 
 
 def _week_triggers(state: DashboardState) -> list[Any]:
@@ -341,14 +382,13 @@ def _serialize_store(trigger: Any, *, broken: list[str] | None = None) -> dict[s
 def _last_run_status(state: DashboardState, job_id: str) -> str | None:
     """The newest run record's status for the honest UI badge (T7), or None.
 
-    Wraps ScheduleService.last_run_status defensively (returns None on any
-    failure / test double) so the serializer stays robust + JSON-safe."""
-    try:
-        fn = getattr(state.crons, "last_run_status", None)
-        status = fn(job_id) if callable(fn) else ""
-        return status if isinstance(status, str) and status else None
-    except Exception:
-        return None
+    Reads the RUN STORE directly (S105). `ScheduleService.last_run_status` was itself a two-line
+    read of the same store's sync path, so going through the service was pure indirection — and it
+    meant a dashboard whose legacy service was a test double or absent showed no badge at all.
+    Still defensive (None on any failure) so the serializer stays robust + JSON-safe.
+    """
+    status = _last_run_status_for(job_id)
+    return status or None
 
 
 def _schedule_rows(state: DashboardState) -> list[dict[str, Any]]:
@@ -800,7 +840,7 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
             # Legacy fallback for a home whose migration has not run yet.
             return web.json_response({"error": "not found"}, status=404)
         try:
-            await state.crons.delete_runs(raw)
+            await _runs_store().delete_for_job(raw)
         except Exception:
             logger.debug("Failed to delete run history for %s", raw, exc_info=True)
         state.push_refresh("crons")
@@ -1382,8 +1422,11 @@ def _redact_run(run: dict[str, Any], *, job_name: str | None = None) -> dict[str
 
 
 async def api_trigger_history(request: web.Request) -> web.Response:
-    """GET /api/triggers/{id}/history — run records; other kinds answer `supported: false`."""
-    state: DashboardState = request.app["state"]
+    """GET /api/triggers/{id}/history — run records; other kinds answer `supported: false`.
+
+    No longer touches `state` (S105): the run records come straight from `ScheduleRunStore`, so this
+    handler is fully decoupled from `ScheduleService`.
+    """
     kind, raw = _split_id(request.match_info["id"])
     if kind == _EVENT:
         # An event trigger keeps a fire COUNTER, not run records — there is no per-run store behind
@@ -1418,21 +1461,25 @@ async def api_trigger_history(request: web.Request) -> web.Response:
     except ValueError:
         return web.json_response({"error": "invalid limit/offset"}, status=400)
     try:
-        runs, total = await state.crons.list_runs(raw, offset=offset, limit=limit)
+        runs, total = await _runs_store().list_for_job(raw, offset, limit)
     except ValueError:
         return web.json_response({"error": "invalid trigger id"}, status=400)
     return web.json_response({"runs": [_redact_run(r) for r in runs], "total": total})
 
 
 async def api_trigger_history_detail(request: web.Request) -> web.Response:
-    """GET /api/triggers/{id}/history/{run_id} — one full run record."""
-    state: DashboardState = request.app["state"]
+    """GET /api/triggers/{id}/history/{run_id} — one full run record.
+
+    Reads the run store directly (S105), so this handler no longer touches `state` at all — the
+    clearest possible evidence that the run-record surface is fully decoupled from
+    `ScheduleService`.
+    """
     kind, raw = _split_id(request.match_info["id"])
     if kind != _SCHEDULE:
         return web.json_response({"error": "not found"}, status=404)
     run_id = request.match_info["run_id"]
     try:
-        run = await state.crons.get_run(raw, run_id)
+        run = await _runs_store().get_run(raw, run_id)
     except ValueError:
         return web.json_response({"error": "invalid trigger id"}, status=400)
     if run is None:
@@ -1587,7 +1634,7 @@ async def api_trigger_history_all(request: web.Request) -> web.Response:
     kind_filter = ""
     if raw_filter:
         kind_filter, raw_filter = _split_id(raw_filter)
-    runs, total = await state.crons.list_all_runs(offset=offset, limit=limit, job_id=raw_filter)
+    runs, total = await _runs_store().list_all(offset, limit, raw_filter)
     # 🔴 §6's history re-point (S104): trigger NAMES come from the store. A run row carries only a
     # `job_id`, so the name is a join — and joining against the legacy service would label a run of
     # a store-created trigger with a blank, which reads in the UI as a run of a deleted automation.
