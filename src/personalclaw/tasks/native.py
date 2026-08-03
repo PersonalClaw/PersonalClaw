@@ -4,6 +4,7 @@ PERSONALCLAW_HOME/tasks/.
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from pathlib import Path
@@ -20,6 +21,9 @@ from personalclaw.tasks.models import (
     WorkflowTaskBinding,
 )
 from personalclaw.tasks.provider import TaskProvider
+from personalclaw.workflows import pool
+
+logger = logging.getLogger(__name__)
 
 
 def _coerce_binding(raw: Any) -> "WorkflowTaskBinding | None":
@@ -57,6 +61,33 @@ def _current_username() -> str:
         return current_username()
     except Exception:
         return ""
+
+
+async def _fire_task_complete(task: Task) -> None:
+    """Fire the `TaskComplete` lifecycle hook for a task that just finished.
+
+    Swallows everything. A hook is an OBSERVER of a task edit, not a participant: a user's broken
+    script must not turn a successful `PUT /api/tasks/{id}` into a 500, and the task is already
+    written by the time this runs. The event/context shape comes from `pool.lifecycle_payload`, so
+    the payload and the edge rule live together rather than being restated here.
+    """
+    try:
+        from personalclaw.hooks import get_global_hook_store
+
+        store = get_global_hook_store()
+        if store is None:
+            return
+        binding = getattr(task, "workflow_binding", None)
+        payload = pool.lifecycle_payload(
+            task_id=task.id,
+            title=task.title,
+            status=task.status.value,
+            run_id=getattr(binding, "run_id", "") or "",
+            node_id=getattr(binding, "node_id", "") or "",
+        )
+        await store.fire(payload["event"], context=payload["context"])
+    except Exception:  # noqa: BLE001 - an observer never fails the write it observed
+        logger.debug("TaskComplete hook fire failed", exc_info=True)
 
 
 class NativeTaskProvider(TaskProvider):
@@ -268,6 +299,9 @@ class NativeTaskProvider(TaskProvider):
             task = tasks.get(task_id)
             if not task:
                 return None
+            # The pre-edit status, for the edge-triggered completion event below. Captured BEFORE
+            # the field loop because the loop mutates `task` in place.
+            previous_status = task.status.value
             status_or_deps_changed = False
             for key, val in fields.items():
                 if key == "status":
@@ -322,9 +356,22 @@ class NativeTaskProvider(TaskProvider):
                         self._write_task(c)
                         changed.append(c)
             task._reconciled = changed  # type: ignore[attr-defined]
+            task._completed_edge = pool.should_fire_completion(  # type: ignore[attr-defined]
+                previous_status, task.status.value
+            )
             return task
 
-        return await asyncio.to_thread(_update)
+        edited = await asyncio.to_thread(_update)
+        # TASKS-SOPS §5 R10: fire the task-completion lifecycle hook. Measured in S60 —
+        # `TaskComplete` is declared in `hooks.HOOK_EVENTS`, allowlisted in
+        # `validation.ALLOWED_HOOK_EVENTS` and rendered by the hook UI, and NO call site in the
+        # repo ever fired it, so a user could configure "when a task finishes" and get nothing.
+        # EDGE-triggered (`should_fire_completion`): an idempotent projection recompute is the
+        # normal path for workflow-bound tasks, and a level-triggered fire would emit one hook per
+        # rebuild.
+        if edited is not None and getattr(edited, "_completed_edge", False):
+            await _fire_task_complete(edited)
+        return edited
 
     async def delete_task(self, task_id: str) -> bool:
         def _delete() -> bool:

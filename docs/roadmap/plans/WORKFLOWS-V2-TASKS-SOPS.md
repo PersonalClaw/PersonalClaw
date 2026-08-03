@@ -1024,3 +1024,54 @@ Findings:
   registrations, and the end-to-end as-a-user sweep. Also still unwired: the lease write path, the
   `TaskComplete` emission call site, and the confirmation resolve endpoints — all single call sites
   into existing files, now unblocked because the def can finally declare what they read.
+
+### S61b — The wiring that makes surfacing reachable (23 tests) — DONE (PARTIAL: backend only)
+
+S55-S61 built decision modules and gave the def somewhere to declare its surfacing. **Nothing called
+any of it.** Three gaps measured, each of which left a shipped mechanism unreachable:
+
+- **`author_def` had NO `metadata` parameter.** Every `DefMetadata` field — including the
+  `surface_mode`, `cadence_days` and `packs` the channels read — could be loaded from disk and never
+  SET through the API. A field with a read path and no write path is a field only a hand-edited file
+  can use, which is exactly what the config round-trip contract exists to prevent. Added, and the
+  write goes through `DefMetadata.from_dict(...).to_dict()` so the tolerant per-field coercion
+  applies to the WRITE as well: coercing on read alone would store `surface_mode: vibes` while every
+  surface displayed `off`, and nobody could explain the gap.
+
+- **`list_defs` drops `metadata` entirely.** Its projection is name/description/source/version/
+  tags/provider, so a templates list built on it cannot render a freshness gradient, a surfacing
+  toggle or a pack chip no matter what a def declares. Added `list_defs_surfacing` +
+  `GET /api/workflows/surfacing` as a SECOND route rather than widening the first: the thin list is
+  on the planner picker's hot path, and making every caller pay a per-def run-history lookup to
+  render a name is a cost nobody asked for. Cadence facts are batched, not per-def.
+
+- **`TaskComplete` was never fired.** Now emitted from `NativeTaskProvider.update_task`,
+  edge-triggered via `pool.should_fire_completion`, with the payload built by
+  `pool.lifecycle_payload` so the shape and the rule live together. Verified by measurement: fires
+  once on a real completion, does NOT re-fire on an idempotent re-save, and fires again after a
+  genuine reopen. The fire is an OBSERVER — it swallows everything, because a user's broken hook
+  script must not turn a successful `PUT /api/tasks/{id}` into a 500 when the task is already
+  written.
+
+Landmines re-confirmed while probing (all already in the engine-landmines memory, all cost a cycle
+each anyway): action args go under `config.with` (not `args`); `registry.update_task`'s second
+positional is `provider_name` as a KEYWORD (a positional `"native"` silently became the task id and
+returned None); a `sequence` with no children fails validation, so probe specs need a real child.
+
+- **Route ordering:** `/api/workflows/surfacing` is registered BEFORE `/api/workflows/{name}`, with a
+  test asserting the index order. aiohttp matches in registration order, so the reverse would make a
+  GET for it look for a definition named "surfacing" — the same hazard the function's own docstring
+  records for `/runs`.
+
+- **A test-isolation lesson, measured twice now.** Three of this session's tests asserted on
+  `defs[0]` or on an empty list and passed in isolation while failing in the xdist mix: the def
+  registry is process-global and a full run has bundled providers registered. They now scope rows to
+  their own provider. Same class as the provider-registry leak S59 fixed — a global registry means a
+  test's view is never just its own writes.
+
+- **NOT DONE (the FE half):** composer chips, validated deep-links, checklist edit UX, the
+  templates-list rendering of freshness/scope/packs, config four-point wiring, the FE stream-union
+  registrations, and the end-to-end as-a-user sweep. The backend they consume is now real and
+  driveable (`GET /api/workflows/surfacing` returns rows + doctor findings; metadata is writable
+  through `POST /api/workflows`), so the FE session is unblocked. The lease write path and the
+  confirmation resolve endpoints remain unwired.
