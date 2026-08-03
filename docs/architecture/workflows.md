@@ -87,6 +87,7 @@ while not terminal:
 | `worktrees.py` | code-kind run worktrees on the proven `loop/worktree.py` machinery: preserve-in, marker-guarded setup, resume safety, teardown-before-deletion, the per-run branch, the machinery-free review diff, and the two reintegration verbs |
 | `introspection.py` | the nine-question checklist, RunStats as a pure journal projection, verification debt, said-no gate statistics with a sample-gated fake-check badge, per-template p50/p95 cards, and the Proof section |
 | `project_export.py` | project export/import: the allowlisted portable set, per-entity sha256 in a versioned manifest, secrets as presence flags only, import refusals (unsafe member, digest/size mismatch, unknown schema) and `imported-N` collision slots |
+| `materialize.py` | tasks as a projection of run state: the exhaustive state→status table, `blocked_kind` derivation, fingerprint dedup, fan-out caps with a parent counter, the managed/produced/standalone split and the engine-owned-field write rejection |
 | `scope.py` | filesystem write-scope enforcement by post-hoc diff |
 | `watchdog.py` | the supervisor: adoption, reaping, per-run publishing |
 

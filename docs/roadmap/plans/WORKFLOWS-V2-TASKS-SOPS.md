@@ -574,3 +574,76 @@ Where each new piece plugs into the pluggable-provider architecture (nothing byp
 9. A workspace def shadows the global def of the same name visibly (`shadowed` state shown, adopt affordance works); a per-stage overlay swaps one stage while inheriting the rest.
 10. Standalone manual tasks (not workflow-bound) remain fully user-driven, unaffected — except they gain evented unblock, frontier/next, and optional leases.
 11. All new config fields round-trip through the four wiring points (schema metadata test green); all new engine events reach the FE (stream-union check); SOP-learning artifacts flow only through the proposals queue (propose-don't-write) and never touch knowledge.db.
+
+---
+
+## Execution log
+
+### 2026-08-02 — session 55 (projection core) DONE — PR #195
+
+`tasks/models.py` gains `WorkflowTaskBinding`, `TaskStatus.SKIPPED` and six projection fields;
+`tasks/native.py` names them on create; `workflows/materialize.py` (new) owns the state→status table,
+fingerprint dedup, fan-out caps and the write-rejection rule. 92 tests.
+
+- **DISCOVERY — the projection table was missing FIVE of the engine's fourteen `InstanceState`
+  members**, and every one fell through to `OPEN`. So a tripped circuit breaker (`escalated`), a
+  scope violation, a protocol-violation block, a discarded instance and a `no_change` inherit all read
+  on the board as ordinary work still to do. Found by enumerating `InstanceState` and diffing against
+  the table rather than by reading my own code. The gaps were filled from the engine's OWN
+  classification — `SUCCESS_STATES` contains `no_change` (so it projects DONE), `TERMINAL_STATES`
+  contains the other four — and two tests now assert exhaustiveness plus agreement with those sets, so
+  a fifteenth state cannot land on a silent default.
+
+- **DISCOVERY — a new model field is DROPPED unless the native provider names it.**
+  `NativeTaskProvider.create_task` builds its `Task` field-by-field, so the binding round-tripped
+  correctly through `to_dict`/`from_dict` and still arrived EMPTY from `create_task`. Measured against
+  a real task store on disk. `update_task` was fine (generic setattr path) — the asymmetry is exactly
+  the kind that makes a field look wired.
+
+- **DISCOVERY — `Task.from_dict` dropped `workflow_binding` while `asdict` serialized it.** A
+  materialized task therefore read back as STANDALONE after one reload — which is precisely the state
+  in which a user's manual status write would be ACCEPTED, silently un-managing engine-owned work. Both
+  directions now use the binding's own serializer, and a round-trip equality test covers every new
+  field.
+
+- **DISCOVERY — `skipped` silently coerced to `OPEN`.** Measured before adding the enum member: a task
+  written with `status: "skipped"` read back as work still to do, on the board the user plans from.
+  Tolerance is still right for a genuinely unknown value (OPEN keeps the work visible), and a test pins
+  both behaviours so the tolerance cannot quietly re-absorb a real status.
+
+- **`TaskStatus` gained exactly ONE member.** The WHY of a block lives in `blocked_kind`, because a
+  status per reason is a state fork every surface re-implements — and the surface that forgets is the
+  one showing a stale column. An unrecognized kind degrades to a plain `blocked` badge, which is why
+  passing an unknown failure class through as "" is safe and normalizing it into a wrong kind is not.
+
+- **Three binding configurations, not two.** `managed=True` (engine drives status), `managed=False`
+  WITH a binding (a task the workflow PRODUCED — provenance recorded, completion untracked), and no
+  binding (standalone). Collapsing the middle into unmanaged loses the provenance; collapsing it into
+  managed makes the engine responsible for work it only suggested. `from_dict` honors an explicit
+  `managed: false` rather than defaulting it to True.
+
+- **Dedup runs on TWO keys.** `(run_id, node_id)` catches the same node re-materializing; the
+  FINGERPRINT catches the same work under a different node id, which is what a rewind-then-replan
+  produces. Checking only the first duplicates the work on the board; only the second collides two
+  genuinely different nodes whose titles match. A `source_ref` beats title+body because it survives a
+  re-worded label.
+
+- **The write façade REFUSES, it does not merge**, and the refusal names the alternative
+  (`workflow_skip`/`workflow_rewind`). Two writers on one status field produce a board that disagrees
+  with the run it shows, and the user believes the board. Protection covers every engine-owned field,
+  not just status — a user edit to `evidence` would be a human asserting the machine's finding. But a
+  managed task stays writable for `assignee`/`labels`/notes: the engine owns the projection, not the
+  whole task.
+
+- **A capped fan-out SAYS how much it is not showing.** Twenty is a readable column; two hundred is a
+  column nobody opens. A cap of zero still materializes one, because an empty board for a running
+  fan-out is a board that lies by omission. The parent counter names blocked separately from
+  incomplete, since "18 of 200" and "18 of 200, 3 blocked" call for different actions.
+
+- **NOT DONE:** the engine call site — `plan_materialization` decides what should exist and the caller
+  performs the `registry.create_task`, because wiring it into the controller's ready-transition needs
+  the run→TaskList provisioning (also this session's scope on paper) and that in turn needs the
+  `tasks_link.py` shared-handle pattern; doing half of it would leave a materializer nothing calls.
+  The `push_refresh()`/WS refresh hint and the `TaskCreated`/`TaskCompleted` hook events are surface
+  wiring on the same seam. FE `taskMeta` STATUSES mapping for the new `SKIPPED` column and the
+  `blocked_kind` badge are FE work. The granularity lint (R2) belongs with SOP migration in session 58.
