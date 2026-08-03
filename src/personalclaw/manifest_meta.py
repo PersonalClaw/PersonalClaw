@@ -832,4 +832,89 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    # ── personalclaw-automation (== mcp_automation._list_tools) ───────────────
+    "automation_create": {
+        "response_type": "automation.create.result",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Create a file-watch automation in one message",
+                "args": {
+                    "name": "Summarize notes",
+                    "when": "when a file in ~/notes changes",
+                    "message": "Summarize the changed file into my knowledge base",
+                },
+            },
+            {
+                "summary": "Create a scheduled automation",
+                "args": {"name": "Daily digest", "when": "every weekday at 9", "message": "digest"},
+            },
+        ],
+    },
+    "automation_list": {
+        "response_type": "automation.list.result",
+        "error_codes": [],
+        "examples": [
+            {"summary": "List all automations with health", "args": {}},
+            {
+                "summary": "List only active file automations",
+                "args": {"kind": "file", "state": "active"},
+            },
+        ],
+    },
+    "automation_update": {
+        "response_type": "automation.update.result",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Rename an automation",
+                "args": {"id": "file:summarize-notes", "patch": {"name": "Notes summarizer"}},
+            },
+        ],
+    },
+    "automation_pause": {
+        "response_type": "automation.pause.result",
+        "error_codes": [],
+        "examples": [
+            {"summary": "Pause an automation", "args": {"id": "file:summarize-notes"}},
+        ],
+    },
+    "automation_resume": {
+        "response_type": "automation.resume.result",
+        "error_codes": [],
+        "examples": [
+            {"summary": "Resume a paused automation", "args": {"id": "file:summarize-notes"}},
+        ],
+    },
+    "automation_run": {
+        "response_type": "automation.run.result",
+        "error_codes": [],
+        "examples": [
+            {"summary": "Fire an automation now", "args": {"id": "file:summarize-notes"}},
+            {
+                "summary": "Preview what would run without executing",
+                "args": {"id": "file:summarize-notes", "dry_run": True},
+            },
+        ],
+    },
+    "automation_history": {
+        "response_type": "automation.history.result",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Recent runs of an automation",
+                "args": {"id": "file:summarize-notes", "n": 10},
+            },
+        ],
+    },
+    "automation_delete": {
+        "response_type": "automation.delete.result",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Delete an automation permanently",
+                "args": {"id": "file:summarize-notes", "confirm": True},
+            },
+        ],
+    },
 }

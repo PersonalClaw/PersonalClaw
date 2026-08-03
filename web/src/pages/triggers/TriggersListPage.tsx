@@ -1,25 +1,29 @@
 import { useEffect, useMemo } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Plus, Zap, Clock, CheckCircle2, XCircle, Circle, Rocket, Pencil } from 'lucide-react'
+import { Plus, Zap, Clock, CheckCircle2, XCircle, Circle, Rocket, Pencil, CalendarDays } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { EmptyState, ListRow, ListSkeleton } from '../../ui/ListScaffold'
 import { SidePanel } from '../../ui/SidePanel'
 import { ListControls } from '../../ui/ListControls'
+import { Segmented } from '../../ui/Segmented'
+import { WeekGridView } from './WeekGridView'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { useQueryParam, useEditFlag, type RouteProps } from '../../app/useQueryState'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
-import { api, type ScheduleJob, type HookItem, type ActionProvider } from '../../lib/api'
+import { api, type ScheduleJob, type HookItem, type ActionProvider, type Trigger as WireTrigger } from '../../lib/api'
 import { ScheduleDetail } from '../schedule/ScheduleDetail'
 import { LifecycleDetail } from './LifecycleDetail'
-import { scheduleToTrigger, hookToTrigger, relPast, type Trigger, type TriggerKind } from './triggerMeta'
+import { StoreTriggerDetail } from './StoreTriggerDetail'
+import { scheduleToTrigger, hookToTrigger, storeToTrigger, relPast, type Trigger, type TriggerKind } from './triggerMeta'
 
 const FILTERS: Array<{ key: string; label: string }> = [
   { key: 'all', label: 'All' },
   { key: 'schedule', label: 'Schedules' },
   { key: 'lifecycle', label: 'Lifecycle' },
+  { key: 'store', label: 'Automations' },
 ]
 
 function statusDot(s?: string | null) {
@@ -41,36 +45,43 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
   const [openIdRaw, setOpenId] = useQueryParam(query, setQuery, 'open', '')
   const openId = openIdRaw || null
   const [editing, setEditing] = useEditFlag(query, setQuery)
+  // List | Week (AUTO-A3). URL-addressable, unlike the run-detail toggle: a week grid is something
+  // you send someone ("look at Thursday"), and the section is already query-state driven.
+  const [view, setView] = useQueryParam(query, setQuery, 'view', 'list', { replace: true })
 
   // Schedules carry live next-run/running state → persist:false (instant in-app
   // revisit, but never stale across a hard reload). Hooks + action providers are
   // lifecycle config that rarely changes → persist:true so they survive a reload.
   const { data: schedules, refresh: refreshSchedules } = useCachedData('triggers:schedules', () => api.schedules().then((d) => d.jobs).catch(() => [] as ScheduleJob[]), { persist: false })
   const { data: hooks, refresh: refreshHooks } = useCachedData('triggers:hooks', () => api.hooks().catch(() => [] as HookItem[]), { persist: true })
+  // Store triggers (file/web_watch/idle/…) carry live enabled/health state → persist:false, like
+  // schedules: instant in-app revisit but never stale across a hard reload.
+  const { data: stores, refresh: refreshStores } = useCachedData('triggers:store', () => api.storeTriggers().catch(() => [] as WireTrigger[]), { persist: false })
   const { data: providers = [] } = useCachedData('triggers:action-providers', () => api.actionProviders().catch(() => [] as ActionProvider[]), { persist: true })
 
   const loadSchedules = () => { invalidateCache('triggers:schedules'); refreshSchedules() }
   const loadHooks = () => { invalidateCache('triggers:hooks'); refreshHooks() }
+  const loadStores = () => { invalidateCache('triggers:store'); refreshStores() }
   useEffect(() => {
     const t = window.setInterval(refreshSchedules, 10000)  // keep schedule next-run/running fresh
     return () => clearInterval(t)
   }, [refreshSchedules])
 
   const triggers = useMemo<Trigger[] | null>(() => {
-    if (schedules === undefined || hooks === undefined) return null
-    const all = [...schedules.map(scheduleToTrigger), ...hooks.map(hookToTrigger)]
+    if (schedules === undefined || hooks === undefined || stores === undefined) return null
+    const all = [...schedules.map(scheduleToTrigger), ...hooks.map(hookToTrigger), ...stores.map(storeToTrigger)]
     const n = q.trim().toLowerCase()
     return all
       .filter((t) => filter === 'all' || t.kind === filter)
       .filter((t) => !n || `${t.name} ${t.whenLabel} ${t.actionLabel}`.toLowerCase().includes(n))
-  }, [schedules, hooks, filter, q])
+  }, [schedules, hooks, stores, filter, q])
 
   const open = useMemo(() => triggers?.find((t) => t.id === openId) ?? null, [triggers, openId])
 
   const counts = useMemo(() => {
-    const s = schedules?.length ?? 0, h = hooks?.length ?? 0
-    return { all: s + h, schedule: s, lifecycle: h }
-  }, [schedules, hooks])
+    const s = schedules?.length ?? 0, h = hooks?.length ?? 0, st = stores?.length ?? 0
+    return { all: s + h + st, schedule: s, lifecycle: h, store: st }
+  }, [schedules, hooks, stores])
 
   return (
     <WorkbenchLayout
@@ -82,14 +93,26 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
         />
       }
       controls={(triggers === null || counts.all > 0)
-        ? <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search triggers', label: 'Search triggers' }}>
-            <FilterMenu sections={[{
+        ? <ListControls
+            // Search and the type filter belong to the LIST. The week grid plots every enabled clock
+            // trigger by construction, so a search box over it would be a control that changes
+            // nothing — worse than an absent one.
+            search={view === 'list' ? { value: q, onChange: setQ, placeholder: 'Search triggers', label: 'Search triggers' } : undefined}
+          >
+            <Segmented
+              ariaLabel="Triggers view"
+              size="sm"
+              value={view}
+              onChange={setView}
+              options={[{ key: 'list', label: 'List', icon: Zap }, { key: 'week', label: 'Week', icon: CalendarDays }]}
+            />
+            {view === 'list' && <FilterMenu sections={[{
               title: 'Type',
               value: filter,
               defaultKey: 'all',
               onChange: setFilter,
               options: FILTERS.map((f) => ({ key: f.key, label: f.label, count: counts[f.key as TriggerKind] })),
-            } satisfies FilterSectionDef]} />
+            } satisfies FilterSectionDef]} />}
           </ListControls>
         : undefined}
       panel={
@@ -97,6 +120,8 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
           <SidePanel key={open.id} fillHeight storeKey="trigger-panel-w" icon={<open.whenIcon size={18} style={{ color: open.whenTone }} />} title={open.name} onClose={() => setQuery({ open: null, edit: null })}>
             {open.kind === 'schedule' && open.schedule
               ? <ScheduleDetail job={open.schedule} editing={editing} onEditingChange={setEditing} onSaved={loadSchedules} onChanged={loadSchedules} onDeleted={() => { setOpenId(""); loadSchedules() }} />
+              : open.kind === 'store' && open.store
+              ? <StoreTriggerDetail trigger={open.store} onChanged={loadStores} onDeleted={() => { setOpenId(""); loadStores() }} />
               : open.hook
               ? <LifecycleDetail hook={open.hook} providers={providers} editing={editing} onEditingChange={setEditing} onSaved={loadHooks} onDeleted={() => { setOpenId(""); loadHooks() }} />
               : null}
@@ -104,6 +129,11 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
         )
       }
     >
+      {view === 'week' ? (
+        // Click-through routes into the SAME side panel the list opens (`?open=<id>`), so a cell and
+        // a row lead to one inspector rather than two surfaces that drift apart.
+        <WeekGridView onOpenTrigger={(id) => setQuery({ open: id, edit: null, view: 'list' })} />
+      ) : (
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
         {triggers === null ? <ListSkeleton rows={6} /> : triggers.length === 0 ? (
               <EmptyState icon={Zap} title={q || filter !== 'all' ? 'No matching triggers' : 'No triggers'} hint={q || filter !== 'all' ? 'Try a different filter.' : 'A trigger runs an action when something happens — a schedule tick or an agent-loop lifecycle event. Create one to automate work.'} action={!q && filter === 'all' ? { label: 'New trigger', onClick: onCreate, icon: Plus } : undefined} />
@@ -129,6 +159,8 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
                           {!t.enabled && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· disabled</span>}
                           {t.kind === 'schedule' && t.schedule?.is_running && <span className="shrink-0 inline-flex items-center gap-1 text-primary text-[0.75rem]"><span className="relative flex size-1.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-pill bg-primary opacity-60" /><span className="relative inline-flex size-1.5 rounded-pill bg-primary" /></span>running</span>}
                           {t.kind === 'lifecycle' && t.usedBy.length === 0 && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· dormant</span>}
+                          {t.kind === 'store' && t.broken && t.broken.length > 0 && <span className="shrink-0 text-danger text-[0.75rem]">· needs attention</span>}
+                          {t.kind === 'store' && t.storeKind && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· {t.storeKind}</span>}
                         </div>
                         <div className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
                           <span className="inline-flex items-center gap-1" style={{ color: t.whenTone }}><t.whenIcon size={11} /> {t.whenLabel}</span>
@@ -148,6 +180,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
               </div>
             )}
       </div>
+      )}
     </WorkbenchLayout>
   )
 }

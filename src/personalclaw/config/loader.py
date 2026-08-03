@@ -96,6 +96,18 @@ def workspace_root() -> Path:
     return root
 
 
+def _surface_mode_default(value: object) -> str:
+    """Coerce the new-def surfacing default, refusing anything but the three declared modes.
+
+    An unknown value reads as `off`, matching `DefMetadata.from_dict`'s per-field rule: a typo must
+    not silently START surfacing every newly authored def, which is the direction that spends tokens
+    and injects text nobody asked for. One tolerance rule, applied in both places — a second, looser
+    one here would let a config typo do what the def-level parser refuses.
+    """
+    word = str(value or "").strip().lower()
+    return word if word in {"off", "passive", "suggest"} else "off"
+
+
 def _safe_int(value: object, default: int) -> int:
     """Convert *value* to int, returning *default* on failure."""
     try:
@@ -1206,6 +1218,17 @@ class LearningConfig:
             "a quiet day. Off = capture still runs, but its failures are invisible.",
         ),
     )
+    self_model_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Learn From What Works",
+            "Notice working patterns and OFFER them as behavioral principles. Every other "
+            "learning path only sees corrections and failures, so this is the one that can "
+            "learn from what quietly succeeds. It never installs anything: a pattern that "
+            "recurs and keeps working becomes a proposal you review, capped at a handful of "
+            "principles so it cannot grow without displacing one you already accepted.",
+        ),
+    )
     min_session_score: float = field(
         default=0.0,
         metadata=_meta(
@@ -1796,6 +1819,71 @@ class WorkflowsConfig:
     model_tier_fast: str = field(
         default="background",
         metadata=_meta("Model Tier — Fast", "Use case for the `fast` tier."),
+    )
+    # The four fields the plan names, each wired through all four points.
+    #
+    # `match_threshold` is deliberately NOT re-added. The plan's recon says it exists at
+    # `workflows.match_threshold`; measured — it does not, and this class's own docstring records
+    # why: it was DELETED with the old SOP feature under the namespace-reuse clean break. The new
+    # semantic channel is session-59 scope and its threshold is not user-tunable yet; adding a knob
+    # nothing reads would be exactly the present-and-inert control this program keeps finding.
+    surface_mode_default: str = field(
+        default="off",
+        metadata=_meta(
+            "New Workflow Surfacing",
+            "What a NEWLY authored workflow does before you opt it in: `off` never surfaces "
+            "itself (explicit /workflow always works), `passive` injects its guidance, `suggest` "
+            "may propose running itself. Defaults to off — auto-trigger-by-default is the mistake "
+            "that made pasted content fire workflows.",
+            choices=["off", "passive", "suggest"],
+        ),
+    )
+    max_materialized_per_foreach: int = field(
+        default=20,
+        metadata=_meta(
+            "Task Fan-Out Cap",
+            "The most Tasks one foreach node may put on your board. A 200-item fan-out would "
+            "otherwise bury every other task; the run still executes all items — only the board "
+            "rows are capped, and the run reports what it withheld.",
+        ),
+    )
+    confirmation_ttl_secs: int = field(
+        default=7 * 24 * 3600,
+        metadata=_meta(
+            "Approval Lifetime",
+            "How long a pending approval stays live. A week, because the realistic case is being "
+            "away — a gate expiring overnight turns travel into lost work. 0 means never expires. "
+            "A destructive confirmation auto-REJECTS on expiry; an ordinary one keeps waiting.",
+        ),
+    )
+    lease_ttl_secs: int = field(
+        default=900,
+        metadata=_meta(
+            "Task Claim Lifetime",
+            "How long a session's exclusive claim on a task lasts before another may take it. "
+            "Deliberately short: a worker that needs longer renews, which proves it is alive, "
+            "whereas a long lease only delays discovering that it is not. Capped at one hour.",
+        ),
+    )
+    default_quiet_windows: str = field(
+        default="",
+        metadata=_meta(
+            "Default Quiet Hours",
+            "A quiet window applied to new automations that do not set their own, as "
+            "`HH:MM-HH:MM` (e.g. `22:00-08:00`). Empty means no default — an automation you "
+            "created deliberately should run when you told it to, so this only fills a gap you "
+            "left. A window may wrap midnight. Per-trigger settings always win.",
+        ),
+    )
+    duty_gate_default: str = field(
+        default="",
+        metadata=_meta(
+            "Default Duty Gate",
+            "The is-the-user-on-duty check applied to new automations that name none. Empty "
+            "means no gate. `manual` is the built-in on/off toggle; apps can supply others (a "
+            "calendar, for instance). The gate always fails OPEN — if it cannot answer, the "
+            "automation still fires, so a broken calendar app can never silence everything.",
+        ),
     )
 
     def lane_caps(self) -> dict[str, int]:
@@ -2933,6 +3021,20 @@ class AppConfig:
                 model_tier_fast=str(
                     workflows_data.get("model_tier_fast", "background") or "background"
                 ),
+                surface_mode_default=_surface_mode_default(
+                    workflows_data.get("surface_mode_default")
+                ),
+                max_materialized_per_foreach=_safe_int(
+                    workflows_data.get("max_materialized_per_foreach", 20), 20
+                ),
+                confirmation_ttl_secs=_safe_int(
+                    workflows_data.get("confirmation_ttl_secs", 7 * 24 * 3600), 7 * 24 * 3600
+                ),
+                lease_ttl_secs=_safe_int(workflows_data.get("lease_ttl_secs", 900), 900),
+                default_quiet_windows=str(
+                    workflows_data.get("default_quiet_windows", "") or ""
+                ).strip(),
+                duty_gate_default=str(workflows_data.get("duty_gate_default", "") or "").strip(),
             ),
             learning=LearningConfig(
                 enabled=bool(learning_data.get("enabled", True)),
@@ -2942,6 +3044,7 @@ class AppConfig:
                 skill_ladder=bool(learning_data.get("skill_ladder", True)),
                 min_evidence=int(learning_data.get("min_evidence", 3) or 3),
                 staging_enabled=bool(learning_data.get("staging_enabled", True)),
+                self_model_enabled=bool(learning_data.get("self_model_enabled", True)),
                 min_session_score=float(learning_data.get("min_session_score", 0.0) or 0.0),
                 context_budget_tokens=int(learning_data.get("context_budget_tokens", 4000) or 4000),
                 curator_enabled=bool(learning_data.get("curator_enabled", True)),

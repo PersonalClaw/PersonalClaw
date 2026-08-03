@@ -757,6 +757,7 @@ class TestInitCron:
         with patch("personalclaw.gateway.ScheduleService") as mock_cs:
             mock_cs_inst = MagicMock()
             mock_cs_inst.start = AsyncMock()
+            mock_cs_inst.load_without_timer = AsyncMock()
             mock_cs_inst.start_reaper = MagicMock()
             mock_cs.return_value = mock_cs_inst
             await orch._init_cron()
@@ -764,7 +765,20 @@ class TestInitCron:
         mock_cs_inst.start.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_init_cron_starts_when_enabled(self):
+    async def test_init_cron_loads_without_arming_the_legacy_timer(self):
+        """🔴 SUPERSEDED CONTRACT (S100 clock cutover). This asserted `start()`, which ARMS the
+        legacy firing timer. The unified tick loop is now the sole clock engine — measured: after
+        the boot migration both engines hold the same crons, so arming both would double-fire
+        `j-at` and `j-cron` on the owner's real store. Boot calls `load_without_timer()` instead,
+        which still loads the jobs and rotates run history (the CRUD surface + run store the API
+        reads) while leaving `_running` False.
+
+        🔴 S106 CORRECTS THIS DOCSTRING'S LAST CLAIM. It used to end "the reaper still starts: it
+        reaps stuck sessions, not fires" — and asserted `start_reaper.assert_called_once()`. Driven,
+        that reaper could reap NOTHING: its sweep read `_job_start_times`, whose only writer is the
+        retired timer's `_run_job_isolated`. It has been inert since the cutover. Boot now arms
+        `_trigger_reaper_loop` instead (S97 claims, cross-process), and `ScheduleService` has no
+        reaper to arm — asserted here so a re-added call to a dead reaper reddens this test."""
         orch = _make_orchestrator(no_crons=False)
         orch.sessions = _mock_sessions()
         orch.ctx_builder = MagicMock()
@@ -773,11 +787,16 @@ class TestInitCron:
         with patch("personalclaw.gateway.ScheduleService") as mock_cs:
             mock_cs_inst = MagicMock()
             mock_cs_inst.start = AsyncMock()
-            mock_cs_inst.start_reaper = MagicMock()
+            mock_cs_inst.load_without_timer = AsyncMock()
             mock_cs.return_value = mock_cs_inst
             await orch._init_cron()
-        mock_cs_inst.start.assert_awaited_once()
-        mock_cs_inst.start_reaper.assert_called_once()
+        mock_cs_inst.load_without_timer.assert_awaited_once()
+        mock_cs_inst.start.assert_not_awaited()
+        # A MagicMock answers ANY attribute, so asserting "not called" on the mock would pass
+        # vacuously. Assert against the real class instead: the method is gone.
+        from personalclaw.schedule import ScheduleService
+
+        assert not hasattr(ScheduleService, "start_reaper")
 
     @pytest.mark.xfail(reason="pre-existing cron-callback red — #7", strict=False)
     @pytest.mark.asyncio
@@ -796,6 +815,7 @@ class TestInitCron:
         with patch("personalclaw.gateway.ScheduleService") as mock_cs:
             mock_cs_inst = MagicMock()
             mock_cs_inst.start = AsyncMock()
+            mock_cs_inst.load_without_timer = AsyncMock()
             mock_cs_inst.start_reaper = MagicMock()
             mock_cs_inst.register_active_session_key = MagicMock()
             mock_cs_inst.clear_active_session_key = MagicMock()
@@ -859,6 +879,7 @@ class TestInitCron:
         with patch("personalclaw.gateway.ScheduleService") as mock_cs:
             mock_cs_inst = MagicMock()
             mock_cs_inst.start = AsyncMock()
+            mock_cs_inst.load_without_timer = AsyncMock()
             mock_cs_inst.start_reaper = MagicMock()
             mock_cs_inst.register_active_session_key = MagicMock()
             mock_cs_inst.clear_active_session_key = MagicMock()
@@ -925,6 +946,7 @@ class TestInitCron:
         with patch("personalclaw.gateway.ScheduleService") as mock_cs:
             mock_cs_inst = MagicMock()
             mock_cs_inst.start = AsyncMock()
+            mock_cs_inst.load_without_timer = AsyncMock()
             mock_cs_inst.start_reaper = MagicMock()
             mock_cs_inst.register_active_session_key = MagicMock()
             mock_cs_inst.clear_active_session_key = MagicMock()
@@ -1183,6 +1205,7 @@ class TestCronFailurePaths:
         with patch("personalclaw.gateway.ScheduleService") as mock_cs:
             mock_cs_inst = MagicMock()
             mock_cs_inst.start = AsyncMock()
+            mock_cs_inst.load_without_timer = AsyncMock()
             mock_cs_inst.start_reaper = MagicMock()
             mock_cs_inst.register_active_session_key = MagicMock()
             mock_cs_inst.clear_active_session_key = MagicMock()
@@ -1249,6 +1272,7 @@ class TestCronFailurePaths:
         with patch("personalclaw.gateway.ScheduleService") as mock_cs:
             mock_cs_inst = MagicMock()
             mock_cs_inst.start = AsyncMock()
+            mock_cs_inst.load_without_timer = AsyncMock()
             mock_cs_inst.start_reaper = MagicMock()
             mock_cs_inst.register_active_session_key = MagicMock()
             mock_cs_inst.clear_active_session_key = MagicMock()
@@ -1317,6 +1341,7 @@ class TestCronFailurePaths:
         with patch("personalclaw.gateway.ScheduleService") as mock_cs:
             mock_cs_inst = MagicMock()
             mock_cs_inst.start = AsyncMock()
+            mock_cs_inst.load_without_timer = AsyncMock()
             mock_cs_inst.start_reaper = MagicMock()
             mock_cs_inst.register_active_session_key = MagicMock()
             mock_cs_inst.clear_active_session_key = MagicMock()
@@ -1635,6 +1660,7 @@ class TestCronSuccessReminder:
         with patch("personalclaw.gateway.ScheduleService") as mock_cs:
             mock_cs_inst = MagicMock()
             mock_cs_inst.start = AsyncMock()
+            mock_cs_inst.load_without_timer = AsyncMock()
             mock_cs_inst.start_reaper = MagicMock()
             mock_cs_inst.register_active_session_key = MagicMock()
             mock_cs_inst.clear_active_session_key = MagicMock()
@@ -2427,6 +2453,7 @@ class TestCronAcpRetry:
         with patch("personalclaw.gateway.ScheduleService") as mock_cs:
             mock_cs_inst = MagicMock()
             mock_cs_inst.start = AsyncMock()
+            mock_cs_inst.load_without_timer = AsyncMock()
             mock_cs_inst.start_reaper = MagicMock()
             mock_cs_inst.register_active_session_key = MagicMock()
             mock_cs_inst.clear_active_session_key = MagicMock()
@@ -2760,6 +2787,7 @@ class TestCronAckedItems:
         with patch("personalclaw.gateway.ScheduleService") as mock_cs:
             mock_cs_inst = MagicMock()
             mock_cs_inst.start = AsyncMock()
+            mock_cs_inst.load_without_timer = AsyncMock()
             mock_cs_inst.start_reaper = MagicMock()
             mock_cs_inst.register_active_session_key = MagicMock()
             mock_cs_inst.clear_active_session_key = MagicMock()
@@ -3063,6 +3091,7 @@ class TestCronSlackDeliveryFailure:
         with patch("personalclaw.gateway.ScheduleService") as mock_cs:
             mock_cs_inst = MagicMock()
             mock_cs_inst.start = AsyncMock()
+            mock_cs_inst.load_without_timer = AsyncMock()
             mock_cs_inst.start_reaper = MagicMock()
             mock_cs_inst.register_active_session_key = MagicMock()
             mock_cs_inst.clear_active_session_key = MagicMock()

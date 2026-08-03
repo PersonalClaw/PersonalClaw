@@ -245,9 +245,18 @@ def build_request(
     risk_category: str = "",
     resume_token: str = "",
     now: float = 0.0,
-    ttl_seconds: int = DEFAULT_TTL_SECS,
+    ttl_seconds: int | None = None,
 ) -> ConfirmationRequest:
-    """Build a request with its preview already redacted."""
+    """Build a request with its preview already redacted.
+
+    `ttl_seconds` defaults to the CONFIG value, not the module constant:
+    `workflows.confirmation_ttl_secs` is live-editable, and reading the constant would make an
+    owner's change to the approval lifetime storable and ignored (S61k).
+    """
+    if ttl_seconds is None:
+        from personalclaw.workflows.settings import confirmation_ttl_secs
+
+        ttl_seconds = confirmation_ttl_secs()
     return ConfirmationRequest(
         id=request_id(run_id, gate_id, epoch),
         run_id=run_id,

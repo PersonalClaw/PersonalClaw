@@ -185,3 +185,471 @@ def test_variables_catalog(state):
     pre = next(e for e in body["lifecycle"] if e["event"] == "PreToolUse")
     assert pre["blocking"] is True
     assert "$tool_name" in pre["vars"]
+
+
+# ── Event-kind parity ──
+#
+# Every assertion here was a measured 404/400/silent-no-op before the fix. The shipped facade
+# handled the `event` kind in list/create/DELETE only; toggle/run/PUT fell to the SCHEDULE branch,
+# which looked the id up among cron jobs, missed, and answered 404 "not found" — the API telling a
+# user that a trigger sitting in their store does not exist. `/test` answered 400 "use /run" and
+# `/run` answered 404, so there was no way to fire an event trigger by hand at all.
+
+
+@pytest.fixture
+def event_store(tmp_path, monkeypatch):
+    """A real EventTriggerStore under tmp_path, wired into the handler's accessor.
+
+    Patches `T._event_store` rather than `config_dir`: the handler resolves the store per call, so
+    patching the accessor is what actually redirects it, and nothing can reach the real home.
+    """
+    from personalclaw.event_triggers import EventTriggerStore
+
+    store = EventTriggerStore(tmp_path / "event_triggers.json")
+    monkeypatch.setattr(T, "_event_store", lambda: store)
+    return store
+
+
+def _ev(store, **kw):
+    from personalclaw.event_triggers import MEMORY_UPDATE, EventTrigger
+
+    kw.setdefault("id", "ev1")
+    kw.setdefault("pattern", MEMORY_UPDATE)
+    t = EventTrigger(**kw)
+    store.upsert(t)
+    return t
+
+
+def test_event_toggle_no_longer_404s(state, event_store):
+    """404 "not found" from the schedule fallthrough, while the trigger kept firing."""
+    _ev(event_store, enabled=True)
+    state.crons.list_jobs.return_value = []  # no cron job shares this id
+    req = _req(
+        "POST", "/api/triggers/event:ev1/toggle", state, body={}, match_info={"id": "event:ev1"}
+    )
+    resp = _run(T.api_trigger_toggle(req))
+    assert resp.status == 200
+    assert _body(resp)["trigger"]["enabled"] is False
+    assert event_store.load()[0].enabled is False, "the toggle must actually persist"
+
+
+def test_event_toggle_honours_an_explicit_enabled(state, event_store):
+    _ev(event_store, enabled=True)
+    req = _req(
+        "POST",
+        "/api/triggers/event:ev1/toggle",
+        state,
+        body={"enabled": True},
+        match_info={"id": "event:ev1"},
+    )
+    assert _run(T.api_trigger_toggle(req)).status == 200
+    assert event_store.load()[0].enabled is True  # idempotent, not flipped
+
+
+def test_re_enabling_an_exhausted_trigger_resets_its_budget(state, event_store):
+    """A self-retired trigger must actually come back.
+
+    `record_fire` disables at `max_fires`. Flipping `enabled` back without clearing `fire_count`
+    would re-arm a trigger that `record_fire` disables again on its very next fire — the off switch
+    working and the ON switch not.
+    """
+    _ev(event_store, enabled=False, max_fires=2, fire_count=2)
+    req = _req(
+        "POST",
+        "/api/triggers/event:ev1/toggle",
+        state,
+        body={"enabled": True},
+        match_info={"id": "event:ev1"},
+    )
+    assert _run(T.api_trigger_toggle(req)).status == 200
+    t = event_store.load()[0]
+    assert t.enabled is True and t.fire_count == 0
+
+
+def test_event_toggle_404s_only_for_a_genuinely_absent_trigger(state, event_store):
+    req = _req(
+        "POST", "/api/triggers/event:nope/toggle", state, body={}, match_info={"id": "event:nope"}
+    )
+    assert _run(T.api_trigger_toggle(req)).status == 404
+
+
+def test_event_put_persists_every_field(state, event_store):
+    """EVERY field returned 400 "no fields to update" or 404 and wrote nothing."""
+    _ev(event_store, enabled=True, max_fires=3, debounce_secs=5.0)
+    body = {
+        "enabled": False,
+        "pattern": "ContentMatch",
+        "content_re": r"\bdeadline\b",
+        "key_glob": "project.*",
+        "max_fires": 10,
+        "debounce_secs": 1.5,
+        "action": {"provider": "webhook", "config": {"url": "https://example.test/x"}},
+    }
+    req = _req("PUT", "/api/triggers/event:ev1", state, body=body, match_info={"id": "event:ev1"})
+    resp = _run(T.api_trigger_detail(req))
+    assert resp.status == 200
+    t = event_store.load()[0]
+    assert t.enabled is False
+    assert t.pattern == "ContentMatch"
+    assert t.content_re == r"\bdeadline\b"
+    assert t.key_glob == "project.*"
+    assert t.max_fires == 10
+    assert t.debounce_secs == 1.5
+    assert t.action_provider == "webhook"
+    assert t.action_config == {"url": "https://example.test/x"}
+
+
+def test_event_put_rejects_an_unknown_pattern(state, event_store):
+    """A typo'd pattern matches nothing, so accepting it would silently retire a working trigger."""
+    _ev(event_store, pattern="MemoryUpdate")
+    req = _req(
+        "PUT",
+        "/api/triggers/event:ev1",
+        state,
+        body={"pattern": "NotAPattern"},
+        match_info={"id": "event:ev1"},
+    )
+    resp = _run(T.api_trigger_detail(req))
+    assert resp.status == 400
+    assert (
+        event_store.load()[0].pattern == "MemoryUpdate"
+    ), "a rejected PUT must not partially write"
+
+
+def test_event_put_rejects_a_non_numeric_budget(state, event_store):
+    _ev(event_store, max_fires=3)
+    req = _req(
+        "PUT",
+        "/api/triggers/event:ev1",
+        state,
+        body={"max_fires": "lots"},
+        match_info={"id": "event:ev1"},
+    )
+    assert _run(T.api_trigger_detail(req)).status == 400
+    assert event_store.load()[0].max_fires == 3
+
+
+def test_event_put_is_a_partial_patch(state, event_store):
+    """An absent key leaves its field alone — a PUT of one field must not blank the others."""
+    _ev(event_store, key_glob="keep.me", max_fires=7, action_provider="notify")
+    req = _req(
+        "PUT",
+        "/api/triggers/event:ev1",
+        state,
+        body={"enabled": False},
+        match_info={"id": "event:ev1"},
+    )
+    assert _run(T.api_trigger_detail(req)).status == 200
+    t = event_store.load()[0]
+    assert t.key_glob == "keep.me" and t.max_fires == 7 and t.action_provider == "notify"
+
+
+def test_event_run_fires_through_the_shared_executor(state, event_store, monkeypatch):
+    """/run reaches the real dispatch path, not a reimplementation.
+
+    Asserted through `execute_event_action` so a future divergence between the manual and live paths
+    fails here — a test button with its own dispatch would eventually certify a broken trigger.
+    """
+    from personalclaw.action_providers import ActionResult
+
+    calls = []
+
+    class _Stub:
+        async def execute(self, cfg, ctx, timeout=30):
+            calls.append(ctx.payload)
+            return ActionResult(success=True, stdout="fired")
+
+    monkeypatch.setattr("personalclaw.action_providers.get_action_provider", lambda _n: _Stub())
+    _ev(event_store, action_provider="notify", action_config={"title": "hi"})
+    req = _req(
+        "POST",
+        "/api/triggers/event:ev1/run",
+        state,
+        body={"key": "k1", "value": "v1"},
+        match_info={"id": "event:ev1"},
+    )
+    resp = _run(T.api_trigger_run(req))
+    assert resp.status == 200
+    body = _body(resp)
+    assert body["ok"] is True and body["result"]["ran"] is True
+    assert calls and calls[0]["key"] == "k1"
+
+
+def test_a_manual_fire_does_not_spend_the_budget(state, event_store, monkeypatch):
+    """`max_fires` bounds UNATTENDED firing.
+
+    Spending it from a Run button would let a user exhaust and self-retire their own trigger by
+    testing it — the same asymmetry S65 set for the hourly cap (`within_rate_window(manual=True)`).
+    """
+    from personalclaw.action_providers import ActionResult
+
+    class _Stub:
+        async def execute(self, cfg, ctx, timeout=30):
+            return ActionResult(success=True)
+
+    monkeypatch.setattr("personalclaw.action_providers.get_action_provider", lambda _n: _Stub())
+    _ev(event_store, max_fires=1, fire_count=0)
+    req = _req(
+        "POST", "/api/triggers/event:ev1/run", state, body={}, match_info={"id": "event:ev1"}
+    )
+    assert _run(T.api_trigger_run(req)).status == 200
+    t = event_store.load()[0]
+    assert t.fire_count == 0 and t.enabled is True, "a manual fire must not retire the trigger"
+
+
+def test_event_test_and_run_agree(state, event_store, monkeypatch):
+    """/test said "use /run" and /run said 404 — a circular dead end."""
+    from personalclaw.action_providers import ActionResult
+
+    seen = []
+
+    class _Stub:
+        async def execute(self, cfg, ctx, timeout=30):
+            seen.append(ctx.payload.get("test"))
+            return ActionResult(success=True)
+
+    monkeypatch.setattr("personalclaw.action_providers.get_action_provider", lambda _n: _Stub())
+    _ev(event_store)
+    for handler in (T.api_trigger_test, T.api_trigger_run):
+        req = _req(
+            "POST", "/api/triggers/event:ev1/x", state, body={}, match_info={"id": "event:ev1"}
+        )
+        resp = _run(handler(req))
+        assert resp.status == 200, f"{handler.__name__} refused an event trigger"
+        assert _body(resp)["result"]["ran"] is True
+
+
+def test_a_refused_fire_answers_200_with_a_reason(state, event_store, monkeypatch):
+    """A guardrail block is not a client error.
+
+    4xx would render a denylist decision as a malformed request; the honest shape is a successful
+    response carrying `ran: false` and the reason.
+    """
+    monkeypatch.setattr("personalclaw.action_providers.get_action_provider", lambda _n: None)
+    _ev(event_store, action_provider="ghost")
+    req = _req(
+        "POST", "/api/triggers/event:ev1/run", state, body={}, match_info={"id": "event:ev1"}
+    )
+    resp = _run(T.api_trigger_run(req))
+    assert resp.status == 200
+    body = _body(resp)
+    assert body["ok"] is False and body["result"]["ran"] is False
+    assert "not registered" in body["result"]["reason"]
+
+
+def test_event_history_is_honest_about_having_none(state, event_store):
+    """A bare `{"runs": [], "total": 0}`, which renders as "ran, kept no records".
+
+    An event trigger keeps a counter, not run records. Saying so — and returning the counter — is
+    different from implying an empty history.
+    """
+    _ev(event_store, fire_count=4, last_fired_at=123.0)
+    req = _req("GET", "/api/triggers/event:ev1/history", state, match_info={"id": "event:ev1"})
+    resp = _run(T.api_trigger_history(req))
+    assert resp.status == 200
+    body = _body(resp)
+    assert body["supported"] is False and body["reason"]
+    assert body["fire_count"] == 4 and body["last_fired_at"] == 123.0
+
+
+def test_lifecycle_history_says_why_it_is_empty(state):
+    req = _req("GET", "/api/triggers/lifecycle:x/history", state, match_info={"id": "lifecycle:x"})
+    body = _body(_run(T.api_trigger_history(req)))
+    assert body["supported"] is False and "no run store" in body["reason"]
+
+
+def test_schedule_test_points_at_run_s_dry_run(state):
+    """The refusal now names the actual alternative (`/run?dry_run=1`) rather than a bare "/run"."""
+    req = _req(
+        "POST",
+        "/api/triggers/schedule:job1/test",
+        state,
+        body={},
+        match_info={"id": "schedule:job1"},
+    )
+    resp = _run(T.api_trigger_test(req))
+    assert resp.status == 400
+    assert "dry_run" in _body(resp)["error"]
+
+
+def test_the_facade_has_no_remaining_parity_gaps(state, event_store):
+    """The whole point, asserted as one statement.
+
+    Support is derived by DRIVING each handler and seeing whether it refuses on kind grounds, not by
+    reading the source — a branch that exists but returns 404 is not support, and that distinction
+    is the entire finding of this session.
+    """
+    from personalclaw.triggers.events import parity_report
+
+    _ev(event_store)
+    state.crons.list_jobs.return_value = [state._job]
+
+    # `crons` is a MagicMock, so `await crons.list_runs(...)` raises TypeError and the probe's
+    # exception guard below would score schedule/history as UNSUPPORTED — a harness artifact
+    # reported as a product gap. Give the two awaited calls real coroutines so the probe measures
+    # the handler instead of the mock.
+    async def _list_runs(*a, **k):
+        return [], 0
+
+    async def _run_job(*a, **k):
+        return None
+
+    state.crons.list_runs = _list_runs
+    state.crons.run_job = _run_job
+    state._background_tasks = set()
+
+    probes = {
+        "toggle": (T.api_trigger_toggle, "POST"),
+        "run": (T.api_trigger_run, "POST"),
+        "test": (T.api_trigger_test, "POST"),
+        "history": (T.api_trigger_history, "GET"),
+    }
+    ids = {"event": "event:ev1", "lifecycle": "lifecycle:x", "schedule": "schedule:job1"}
+    # list/create/delete/update are exercised by the tests above; `get` has no route for ANY kind,
+    # so it is not a per-kind gap and is excluded rather than reported three times.
+    support = {k: {"list", "create", "delete", "update", "get"} for k in ids}
+    for kind, tid in ids.items():
+        for op, (handler, method) in probes.items():
+            req = _req(method, f"/api/triggers/{tid}/{op}", state, body={}, match_info={"id": tid})
+            # Deliberately NOT wrapped in try/except: a raising handler is a real failure, and
+            # swallowing it here scored a MagicMock artifact as a product gap on the first run.
+            resp = _run(handler(req))
+            # 400 = an honest kind-level refusal (an exemption); 404 = the shipped bug.
+            if resp.status != 400:
+                support[kind].add(op)
+    assert parity_report(support) == {}
+
+
+# ── The week grid + automation doctor (AUTO-A1, §7 criterion 12) ──
+
+
+def _every_job(job_id, name, *, interval=3600, gates=None, workflow=None, glob="", enabled=True):
+    from datetime import datetime
+
+    from personalclaw.schedule import ScheduleDefinition, ScheduleJob, make_agent_action
+
+    job = ScheduleJob(
+        id=job_id,
+        name=name,
+        action=make_agent_action(message="x"),
+        schedule=ScheduleDefinition(kind="every", every_secs=interval),
+        created_ts=datetime(2024, 1, 1).timestamp(),
+        enabled=enabled,
+    )
+    job.gates = gates or {}
+    job.workflow = workflow or {}
+    job.watch_glob = glob
+    return job
+
+
+def test_week_grid_annotates_suppressed_slots(state):
+    """A grid that HID suppressed fires would show a schedule the user does not have."""
+    state.crons.list_jobs.return_value = [
+        _every_job("j1", "Hourly", gates={"quiet_hours": {"start": "22:00", "end": "08:00"}})
+    ]
+    req = _req("GET", "/api/triggers/week", state, query="start=2024-01-01&days=1")
+    resp = _run(T.api_triggers_week(req))
+    assert resp.status == 200
+    body = _body(resp)
+    assert len(body["occurrences"]) == 24
+    suppressed = [o for o in body["occurrences"] if o["suppressed_by"] == "quiet"]
+    assert len(suppressed) == 10 and all(o["reason"] for o in suppressed)
+    assert body["truncated"] == []
+
+
+def test_week_grid_omits_disabled_but_now_PLOTS_a_cron(state):
+    """🔴 SUPERSEDED CONTRACT. This asserted the cron kind was OMITTED — deliberate at the
+    time, because nothing could iterate a cron's fires, and the handler said so ("a wrong band is
+    worse than a missing one"). But omitting them made the week view a forecast of only HALF a
+    user's automations, silently. The `arm.next_fire` can step a cron, so it now plots on the same
+    annotated grid as an interval.
+
+    A DISABLED trigger is still omitted, and that half is unchanged: it has no fires, and drawing
+    them would make the grid a wish list rather than a forecast."""
+    from personalclaw.schedule import ScheduleDefinition, ScheduleJob, make_agent_action
+
+    cron = ScheduleJob(
+        id="j2",
+        name="Cron",
+        action=make_agent_action(message="y"),
+        schedule=ScheduleDefinition(kind="cron", cron_expr="0 9 * * *"),
+    )
+    state.crons.list_jobs.return_value = [
+        _every_job("j1", "Hourly"),
+        _every_job("j3", "Off", enabled=False),
+        cron,
+    ]
+    body = _body(
+        _run(T.api_triggers_week(_req("GET", "/api/triggers/week", state, query="days=1")))
+    )
+    names = {o["trigger_name"] for o in body["occurrences"]}
+    assert names == {"Hourly", "Cron"}
+    assert "Off" not in names
+
+
+def test_week_grid_reports_which_triggers_were_capped(state):
+    """Named, not a bare bool: "some trigger was capped" is not actionable, and a silently partial
+    week reads as an accurate forecast."""
+    state.crons.list_jobs.return_value = [_every_job("j1", "Minutely", interval=60)]
+    body = _body(
+        _run(T.api_triggers_week(_req("GET", "/api/triggers/week", state, query="days=7")))
+    )
+    assert body["truncated"] == ["schedule:j1"]
+
+
+def test_week_grid_rejects_a_bad_start(state):
+    state.crons.list_jobs.return_value = []
+    resp = _run(T.api_triggers_week(_req("GET", "/api/triggers/week", state, query="start=nope")))
+    assert resp.status == 400
+
+
+def test_week_grid_bounds_the_window(state):
+    """31 days max: an unbounded `days` is a cheap way to make the endpoint slow."""
+    state.crons.list_jobs.return_value = [_every_job("j1", "Hourly")]
+    body = _body(
+        _run(T.api_triggers_week(_req("GET", "/api/triggers/week", state, query="days=9999")))
+    )
+    from datetime import datetime
+
+    span = datetime.fromisoformat(body["end"]) - datetime.fromisoformat(body["start"])
+    assert span.days == 31
+
+
+def test_doctor_reports_across_both_trigger_kinds(state, event_store):
+    """The doctor walks schedule AND event triggers — a problem in either is equally silent."""
+    _ev(event_store, key_glob="*")
+    state.crons.list_jobs.return_value = [
+        _every_job("j1", "Orphan", workflow={"def": "gone"}),
+        _every_job("j2", "Ungated", gates={"duty_gate": {"provider": "acme-calendar"}}),
+    ]
+    resp = _run(T.api_triggers_doctor(_req("GET", "/api/triggers/doctor", state)))
+    assert resp.status == 200
+    body = _body(resp)
+    codes = {f["code"] for f in body["findings"]}
+    assert "unknown_duty_gate" in codes
+    assert "broad_watch_glob" in codes  # from the event trigger's `*` key glob
+    assert body["healthy"] is False
+    assert all(f["fix"] for f in body["findings"])
+
+
+def test_doctor_reports_healthy_when_nothing_is_wrong(state, event_store):
+    state.crons.list_jobs.return_value = [
+        _every_job("j1", "Fine", gates={"quiet_hours": {"start": "22:00", "end": "08:00"}})
+    ]
+    body = _body(_run(T.api_triggers_doctor(_req("GET", "/api/triggers/doctor", state))))
+    assert body["healthy"] is True and body["count"] == 0
+
+
+def test_week_and_doctor_routes_register_before_the_id_route():
+    """`/week` and `/doctor` must not be captured as trigger ids.
+
+    The ordering landmine S67 already paid for with `/surfacing`: aiohttp matches in registration
+    order, so a literal path registered after `/{id}` is unreachable.
+    """
+    import inspect
+
+    src = inspect.getsource(T.register_trigger_routes)
+    week = src.index('"/api/triggers/week"')
+    doctor = src.index('"/api/triggers/doctor"')
+    by_id = src.index('"/api/triggers/{id}"')
+    assert week < by_id and doctor < by_id

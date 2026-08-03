@@ -311,6 +311,9 @@ class GatewayOrchestrator:
         self.conv_log: ConversationLog | None = None
         self.consolidator: HistoryConsolidator | None = None
         self.cron_svc: ScheduleService | None = None
+        self._file_watch_task: "asyncio.Task[None] | None" = None  # S93 file-watch poll loop
+        self._clock_task: "asyncio.Task[None] | None" = None  # S100 unified clock loop
+        self._reaper_task: "asyncio.Task[None] | None" = None  # S106 trigger reaper
         self._running_script_ids: set[str] = set()  # zero-token jobs in flight
         self.heartbeat_svc: HeartbeatService | None = None
         self.loop_watchdog: "LoopWatchdog | None" = None
@@ -755,7 +758,9 @@ class GatewayOrchestrator:
         if provider is None:
             job.last_status = "error"
             job.last_error = f"unknown action provider {job.provider!r}"
-            self._maybe_autopause(job)
+            # A config error, not a failure: no such provider will ever exist on
+            # retry, so waiting for 5 identical fires is 4 pointless runs.
+            self._maybe_autopause(job, exit_type="config_error")
             return None
 
         config = job.action.get("config") or {}
@@ -830,7 +835,10 @@ class GatewayOrchestrator:
             job.last_status = "error"
             job.last_error = f"blocked by guardrails denylist: {_deny.reason}"
             job.last_outcome = "skip"
-            self._maybe_autopause(job)
+            # A POLICY decision, not a failure — and NO autopause. Measured
+            # before: five consecutive blocks set ``enabled = False``, so a
+            # denylist the operator configured on purpose silently disabled the
+            # user's trigger for behaving exactly as designed.
             return None
 
         self._running_script_ids.add(job.id)
@@ -856,7 +864,12 @@ class GatewayOrchestrator:
 
             job.last_status = "error"
             job.last_error = provider_failure(job.provider, exc).render()
-            self._maybe_autopause(job)
+            # Classified from the exception: an auth/transport outage does not
+            # spend the failure budget, so a trigger is not still disabled after
+            # the user renews the credential.
+            from personalclaw.triggers.autopause import classify_exception
+
+            self._maybe_autopause(job, exit_type=classify_exception(exc))
             logger.exception("Action cron job '%s' (%s) failed", job.name, job.provider)
             return None
         finally:
@@ -886,15 +899,59 @@ class GatewayOrchestrator:
         self._maybe_autopause(job)
         return None
 
-    def _maybe_autopause(self, job: "ScheduleJob") -> None:
-        """Disable a zero-token job after 5 consecutive failures."""
-        job.consecutive_failures = (job.consecutive_failures or 0) + 1
-        if job.consecutive_failures >= 5:
+    def _maybe_autopause(self, job: "ScheduleJob", *, exit_type: str = "") -> None:
+        """Apply the typed autopause decision for a failed fire (S68).
+
+        Generalized from "increment a counter at every call site" to the §3.7
+        taxonomy. What changed, measured by driving the old version directly:
+
+        * A **denylist block no longer counts at all.** Five consecutive blocks
+          used to set ``enabled = False``, so a policy the operator configured on
+          purpose disabled the user's trigger for working as designed. That call
+          site no longer calls this method.
+        * An **auth/transport outage does not spend the budget.** Burning
+          failures on an expired token leaves the automation disabled even after
+          the user fixes it.
+        * A **config error pauses on the first fire** — no such provider will
+          exist on retry, so four more fires are pointless.
+        * **Five true failures still pause**, exactly as before (the budget is
+          the same 5), so a job tuned against the old tolerance sees no change.
+
+        ``exit_type`` defaults to ``failed``, preserving the plain-failure path.
+        """
+        from personalclaw.triggers.autopause import ExitType as _Exit
+        from personalclaw.triggers.autopause import evaluate as _evaluate
+        from personalclaw.triggers.models import TriggerState as _State
+
+        decision = _evaluate(
+            exit_type=exit_type or _Exit.FAILED.value,
+            consecutive_failures=job.consecutive_failures or 0,
+            now=time.time(),
+        )
+        job.consecutive_failures = decision.consecutive_failures
+        if decision.state == _State.PARKED.value:
+            # A park must NOT touch ``enabled`` here. ``ScheduleJob`` has no
+            # ``retry_after`` field and the legacy scheduler has no clock-driven
+            # unpark sweep, so disabling would strand the trigger PERMANENTLY —
+            # strictly worse than the over-counting this fixes. On this path a
+            # park is advisory: the fire is not counted (the part that matters)
+            # and the job stays armed to retry on its own schedule. The real
+            # parked state lands when the trigger store owns the row.
+            logger.info(
+                "Cron job '%s' hit a transient outage (%s) — not counted",
+                job.name,
+                decision.reason,
+            )
+            return
+        if not decision.fires_automatically:
+            # ``enabled`` is what the legacy scheduler reads, so the decision has
+            # to land there for the pause to take effect at all.
             job.enabled = False
             logger.warning(
-                "Cron job '%s' auto-paused after %d consecutive failures",
+                "Cron job '%s' stopped itself (%s): %s",
                 job.name,
-                job.consecutive_failures,
+                decision.state,
+                decision.reason,
             )
 
     def _day_budget_exceeded(self, *, context: str) -> bool:
@@ -941,6 +998,172 @@ class GatewayOrchestrator:
         except Exception:
             logger.debug("day-budget check failed (fail-open)", exc_info=True)
             return False
+
+    async def _clock_loop(self) -> None:
+        """Drive the unified clock: tick → dispatch → execute (§3 — S100).
+
+        The sole engine that fires clock triggers now. `triggers/loop.run_forever` owns the cadence
+        and the resilience (one bad tick never kills the loop); this method only supplies the two
+        things the gateway knows: the store's home and the runner.
+
+        The runner is the SAME action-provider dispatch a file-watch fire uses, so a clock
+        fire and a
+        file fire execute the same action the same way — one dispatch path rather than two
+        that drift.
+        """
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers import loop as clock_loop
+        from personalclaw.triggers.store import TriggerStore
+
+        store = TriggerStore(base_dir=config_dir())
+
+        async def _runner(payload: dict[str, Any]) -> Any:
+            trigger_id = str(payload.get("trigger_id") or "")
+            row = store.get(trigger_id)
+            if row is None:
+                return {"status": "error"}
+            await self._fire_store_trigger(row.trigger, payload)
+            return {"status": "launched"}
+
+        await clock_loop.run_forever(
+            store,
+            runner=_runner,
+            sessions=self.sessions,
+            base_dir=store.base_dir,
+        )
+
+    def _push_trigger_refresh(self) -> None:
+        """Hint open dashboard views to refresh after a store-backed fire (S107).
+
+        Both kinds, matching what the legacy `_record_run` pushed plus the list the fire may have
+        changed: `cron_history` for the run feed, `crons` for the trigger list's status dots and
+        next-fire times. Best-effort — a broadcast failure must never affect the fire's outcome, and
+        a dashboard-less gateway (`--no-dashboard`) simply has nothing to notify.
+        """
+        # `getattr`, not attribute access: this runs in the fire path's `finally`, and an
+        # orchestrator that has not reached `_init_dashboard` yet (or a partially-built one) has
+        # no `dashboard_state` attribute at all. An AttributeError from a `finally` would REPLACE
+        # the fire's own outcome — a refresh hint must never be able to do that.
+        state = getattr(self, "dashboard_state", None)
+        if state is None:
+            return
+        try:
+            state.push_refresh("crons", "cron_history")
+        except Exception:  # noqa: BLE001 - a refresh hint is never worth failing a fire over
+            logger.debug("could not push a trigger refresh", exc_info=True)
+
+    async def _trigger_reaper_loop(self) -> None:
+        """Bound every store-backed run: sweep for blown deadlines and free the claim (§3.1 — S106).
+
+        Replaces `ScheduleService.start_reaper`, whose sweep read a dict that only the retired
+        legacy timer ever wrote — inert since the S100 cutover, and silently so. Like `_clock_loop`,
+        this method supplies only the two things the gateway knows (the store and its home) and
+        leaves the cadence and resilience to the module.
+        """
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers import reaper
+        from personalclaw.triggers.store import TriggerStore
+
+        store = TriggerStore(base_dir=config_dir())
+        await reaper.run_forever(store=store, base_dir=store.base_dir)
+
+    async def _fire_store_trigger(
+        self, trigger: Any, payload: dict[str, Any], *, event: str = "trigger.fired"
+    ) -> None:
+        """Run one store-backed trigger's declared action through the action-provider registry.
+
+        Shared by the clock loop and the file-watch loop, so every store-backed fire goes
+        through one
+        dispatch. A failed action is logged rather than raised: the outcome belongs to the
+        executor's
+        typed classification, and a raise here would strand the rest of the drain.
+        """
+        from personalclaw.action_providers import ActionContext, get_action_provider
+        from personalclaw.action_providers.registry import _ensure_default_providers_registered
+
+        workflow = trigger.workflow or {}
+        inline = workflow.get("inline") if isinstance(workflow.get("inline"), dict) else None
+        provider_name = str((inline or workflow).get("provider") or "")
+        config = (inline or workflow).get("config") or {}
+        if not provider_name:
+            logger.debug("trigger %s has no action provider", trigger.id)
+            return
+        _ensure_default_providers_registered()
+        provider = get_action_provider(provider_name)
+        if provider is None:
+            logger.warning("trigger %s: unknown action provider %r", trigger.id, provider_name)
+            return
+        try:
+            ctx = ActionContext(event=event, context="", payload=payload)
+            # 🔴 The MODE DEFAULT the legacy dispatcher applied (gateway.py:820 — 300s for a command,
+            # 30s otherwise), because a `bash` fire is a real subprocess and 30s is not a command's
+            # budget. This call passed nothing, so every store-backed bash fire took the
+            # 30s SIGNATURE default and a migrated `zt_timeout: 600` cron was cut to 30. The
+            # per-action override lives in the config and is honoured by the provider itself (both
+            # `bash` and `run-script` prefer `action_config["timeout"]`), so this is only the floor.
+            timeout = 300 if provider_name == "bash" else 30
+            await provider.execute(config, ctx, timeout=timeout)
+        except Exception:  # noqa: BLE001 - a failed fire is logged, never crashes the loop
+            logger.warning("trigger %s: action failed", trigger.id, exc_info=True)
+        finally:
+            # 🔴 THE LIVE REFRESH. `ScheduleService._record_run` pushed `cron_history` so
+            # the Executions/Logs views update without polling — and `_record_run` is reachable only
+            # from `run_job` (manual) and `_run_job_isolated` (the retired timer). So since the
+            # cutover a SCHEDULED fire updated no open view: the user watched a stale page until
+            # navigating. In a `finally` because a FAILED fire is the one someone is watching for.
+            self._push_trigger_refresh()
+
+    async def _file_watch_poll_loop(self) -> None:
+        """Poll `file` triggers and fire the ones whose watched paths changed (§3 / crit 2 — S93).
+
+        This is the runtime that makes a chat-created "when a file in ~/notes changes…" automation
+        (S92) actually fire. It is DISJOINT from `ScheduleService`: that fires clock crons and reads
+        no `file` trigger, and the tick clock (`service.due_ids`) never surfaces a `file` trigger
+        (it has no `next_fire_at`). So running this beside the cron loop cannot double-fire anything
+        — which is what lets it land as an additive cutover rather than the clock switch-over the
+        roadmap still defers.
+
+        Incident mode suspends it, matching `_cron_callback`: an unattended fire is an unattended
+        fire regardless of what triggered it. One bad watch never stops the loop for the others
+        (`poll_all` isolates each), and the loop never dies on an exception — a poll loop that threw
+        once and stopped would silently retire every file automation the user has.
+        """
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers import file_poll
+        from personalclaw.triggers.store import TriggerStore
+
+        store = TriggerStore(base_dir=config_dir())
+        while True:
+            try:
+                await asyncio.sleep(file_poll.POLL_INTERVAL_SECS)
+                from personalclaw.guardrails.incident import incident_active
+
+                if incident_active():
+                    continue
+                for payload in file_poll.poll_all(store):
+                    await self._fire_file_trigger(payload)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - the loop must outlive any single poll's failure
+                logger.warning("file-watch poll loop iteration failed", exc_info=True)
+
+    async def _fire_file_trigger(self, payload: dict[str, Any]) -> None:
+        """Run one file trigger's declared action (S93), through the shared store dispatch.
+
+        Delegates to `_fire_store_trigger` (S100) rather than repeating the provider lookup: a clock
+        fire and a file fire must execute the same action the same way, and two near-identical
+        dispatches were exactly the dual path the clean break forbids.
+        """
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers.store import TriggerStore
+
+        trigger_id = str(payload.get("trigger_id") or "")
+        row = TriggerStore(base_dir=config_dir()).get(trigger_id)
+        if row is None:
+            return
+        # The event NAME identifies the source to the action; a clock fire and a file fire share the
+        # dispatch but not the label, so a provider can still tell what woke it.
+        await self._fire_store_trigger(row.trigger, payload, event="file.changed")
 
     async def _init_cron(self) -> None:
         """Initialize and start the cron service."""
@@ -1009,8 +1232,6 @@ class GatewayOrchestrator:
                 result_text = "_No response._"
                 for agent in agents:
                     agent_session_key = f"cron:{job.id}:{agent}"
-                    if self.cron_svc is not None:
-                        self.cron_svc.register_active_session_key(job.id, agent_session_key)
                     _acq = False
                     try:
                         client, is_new, _resumed = await self.sessions.get_or_create(
@@ -1047,15 +1268,10 @@ class GatewayOrchestrator:
                         if _acq:
                             self.sessions.release(agent_session_key)
                             await self.sessions.reset(agent_session_key)
-                            if self.cron_svc is not None:
-                                self.cron_svc.clear_active_session_key(job.id)
                 job.last_result = result_text
                 return result_text
 
             # ── Single-agent path ──
-            # Tell the reaper which key to target if this run hangs.
-            if self.cron_svc is not None:
-                self.cron_svc.register_active_session_key(job.id, session_key)
 
             _acquired = False
             try:
@@ -1400,20 +1616,19 @@ class GatewayOrchestrator:
                         # reset hangs. _subagent_done will clear it after the real reset.
                     else:
                         await self.sessions.reset(session_key)
-                        # reset done → reaper no longer needs this key.
-                        if self.cron_svc is not None:
-                            self.cron_svc.clear_active_session_key(job.id)
                 # Restore per-job env vars (single-agent path) — now handled via extra_env passthrough  # noqa: E501
 
         self.cron_svc = ScheduleService(base_dir=config_dir(), on_job=_cron_callback)
         if self._no_crons:
             logger.info("Cron scheduler disabled (--no-crons)")
         else:
-            await self.cron_svc.start()
-            if self.sessions:
-                self.cron_svc.start_reaper(self.sessions)
-            else:
-                logger.warning("Cron reaper not started: sessions not available")
+            # 🔴 THE CLOCK CUTOVER. The unified tick loop is the sole clock engine, so the
+            # legacy timer is NOT armed — measured: after the boot migration both engines hold the
+            # same crons, and arming both would double-fire `j-at` and `j-cron` on the owner's real
+            # store. `load_without_timer` still loads the jobs and rotates run history, because the
+            # rest of `ScheduleService` remains the CRUD surface + run store the API reads until the
+            # writes re-point.
+            await self.cron_svc.load_without_timer()
             # Reconcile app-declared crons (untrusted-app sandbox P3): register the
             # scheduled jobs enabled apps declare + are permitted (can_use_cron), and
             # prune stale app:* jobs. Idempotent; apps loaded before this via the
@@ -1433,6 +1648,40 @@ class GatewayOrchestrator:
                 reconcile_digest_cron(self.cron_svc)
             except Exception:
                 logger.warning("digest-cron reconcile failed", exc_info=True)
+            # The file-watch poll loop: fires `file` triggers whose watched paths changed —
+            # the runtime that makes the chat-created file automations actually run. Lives in the
+            # else-branch so --no-crons disables it too (a file watch is unattended background work
+            # like a cron). Disjoint from ScheduleService, so no double-fire.
+            self._file_watch_task = asyncio.create_task(self._file_watch_poll_loop())
+            # Import `crons.json` into the unified trigger store and arm the imported clocks.
+            # `migrate_from_crons` was called by NOTHING outside tests, so `triggers.json`
+            # was empty on a real machine — every cron lived only in the legacy file, which blocks
+            # re-pointing `/api/triggers` at the store and leaves the tick nothing to fire.
+            # Idempotent and additive: `crons.json` stays on disk (the "read-only one release",
+            # which `verify-migration` needs to diff) and the legacy scheduler still runs from
+            # it, so a bad import is fixed by editing the legacy file and restarting rather than
+            # by restoring a deletion.
+            try:
+                from personalclaw.triggers.boot_migrate import migrate_and_arm
+
+                # No explicit home: `migrate_and_arm` resolves it through its OWN `config_dir`, so
+                # there is exactly one place to redirect the boot migration (which is what
+                # `tests/conftest.py::_isolate_trigger_store` patches). Passing `config_dir()` from
+                # here instead bypassed that single point and made three pre-existing gateway tests
+                # migrate the USER's real crons into `~/.personalclaw/triggers.json`.
+                migrate_and_arm()
+            except Exception:
+                logger.warning("trigger-store migration failed at boot", exc_info=True)
+            # The unified CLOCK LOOP — now the only thing that fires a clock trigger. The
+            # legacy timer above is deliberately not armed; see `load_without_timer`.
+            self._clock_task = asyncio.create_task(self._clock_loop())
+            # The trigger REAPER, replacing `ScheduleService.start_reaper`. That one swept a
+            # dict written only by the retired timer's `_run_job_isolated`, so it has been provably
+            # inert — driven with a genuinely hung task, eight sweeps reaped nothing.
+            # This one reads the cross-process claims, so it bounds every store-backed run and
+            # survives a restart. It needs no `sessions`: the subagent manager's own live reaper
+            # owns the spawned PROCESS, and this owns the CLAIM (see `triggers/reaper.py`).
+            self._reaper_task = asyncio.create_task(self._trigger_reaper_loop())
 
     async def _init_heartbeat(self) -> None:
         """Initialize and start the heartbeat service."""
@@ -2678,18 +2927,6 @@ class GatewayOrchestrator:
                         logger.info(
                             "Cron session %s: last subagent done, session reset", parent_key
                         )
-                        # reset succeeded → reaper no longer needs the
-                        # registered ephemeral key. Clear inside try so a failed
-                        # reset leaves the key registered (ephemeral session may
-                        # still be alive — reaper must be able to target it).
-                        # parent_key is "cron:{job_id}" (persistent) or
-                        # "cron:{job_id}:{run_id}" (ephemeral); job_id is the
-                        # second colon-separated segment in both cases.
-                        cron_svc = getattr(self, "cron_svc", None)
-                        if cron_svc is not None:
-                            parts = parent_key.split(":", 2)
-                            if len(parts) >= 2:
-                                cron_svc.clear_active_session_key(parts[1])
                     except Exception:
                         logger.exception(
                             "Cron session %s: reset failed after last subagent", parent_key
@@ -2848,10 +3085,11 @@ class GatewayOrchestrator:
                 self._dashboard_port = addresses[0][1]
         if self.dashboard_state:
             self.dashboard_state.no_crons = self._no_crons  # dashboard mode
-            # Let the scheduler hint dashboard clients to refresh views when a
-            # run records (Executions/Logs live-update without polling).
-            _state = self.dashboard_state
-            self.cron_svc.set_refresh_callback(lambda *kinds: _state.push_refresh(*kinds))
+            # The scheduler's refresh callback is gone. It fired only from
+            # `_record_run`, reachable only from the retired timer and the manual-run path —
+            # and that path's HANDLER already pushes both kinds in its own `finally`. Scheduled
+            # fires now push through `_push_trigger_refresh` on the store-backed fire path,
+            # which is the one that actually runs.
             # Attach the inbox service (built in _init_inbox, which runs before the
             # dashboard state exists) so the Inbox handlers reach draft/classify/digest.
             self.dashboard_state._inbox_svc = self.inbox_svc
@@ -2932,6 +3170,14 @@ class GatewayOrchestrator:
             await self.workflow_watchdog.stop()
         if self.cron_svc:
             await self.cron_svc.stop()
+        for _task in (self._file_watch_task, self._clock_task, self._reaper_task):
+            if _task is None:
+                continue
+            _task.cancel()
+            try:
+                await _task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001 - shutdown is best-effort
+                pass
         if self.heartbeat_svc:
             self.heartbeat_svc.stop()
         if self.inbox_svc:

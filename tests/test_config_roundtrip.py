@@ -108,6 +108,11 @@ _SPECIAL = {
     # generic rule's out-of-range value would (correctly) come back clamped.
     ("memory", "push_min_confidence"): 0.55,
     ("skills", "auto_similarity_threshold"): 0.5,
+    # surface_mode_default is enum-constrained (off|passive|suggest) — a generated "off-x" would
+    # (correctly) be refused by load() and fall back to `off`, exactly as `stream_reveal` above.
+    # Declaring a real member proves the field ROUND-TRIPS without asserting that the coercion is a
+    # bug.
+    ("workflows", "surface_mode_default"): "suggest",
     ("tools", "projection_rules"): [
         ProjectionRuleConfig(name="t", match_regex="^x", strategy="log")
     ],

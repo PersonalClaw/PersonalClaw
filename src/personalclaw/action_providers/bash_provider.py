@@ -114,6 +114,20 @@ class BashActionProvider(ActionProvider):
         if not command:
             return ActionResult(success=False, error="Bash hook is missing 'command' field")
 
+        # 🔴 The action's OWN bound wins over the caller's default, matching `run-script`
+        # (which has always read `action_config["timeout"]` and preferred it). Measured on the
+        # store-backed fire path: a migrated command cron carries `{"command": ..., "timeout": 600}`
+        # in its action config — losslessly, the migration keeps it — but `_fire_store_trigger`
+        # calls `execute(config, ctx)` with no `timeout=`, so this took the 30s SIGNATURE DEFAULT
+        # and killed at 30s what the legacy dispatcher allowed 600s. Driven both ways: a
+        # `sleep 3` under `{"timeout": 1}` ran the full 3s (the user's bound ignored), and the
+        # 600s allowance a user configured was silently cut to 30.
+        try:
+            configured = int(action_config.get("timeout", 0) or 0)
+        except (ValueError, TypeError):
+            configured = 0
+        timeout = configured or timeout
+
         from personalclaw.sandbox import wrap_argv
 
         start = time.monotonic()

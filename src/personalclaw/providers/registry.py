@@ -343,6 +343,50 @@ class ActionTypeHandler(_TypeHandler):
         _providers.pop(getattr(instance, "name", ""), None)
 
 
+class DutyGateTypeHandler(_TypeHandler):
+    """Handler for ``provider.type == 'duty_gate'`` extensions (AUTOMATION-SUBSTRATE AUTO-A2).
+
+    A duty gate answers "is the user on duty right now" so a trigger can hold its fire outside
+    working hours — the canonical supplier is a future calendar app. Registered in the
+    ``triggers.calendar`` flat registry, matching the ``action_providers`` shape rather than
+    inventing a second registry idiom.
+
+    Lands in the SAME commit as its ``PROVIDER_TYPES`` entry (the #47 rule): a manifest type with no
+    runtime handler installs successfully and then does nothing, which is the failure
+    ``test_manifest_types_match_handlers`` exists to prevent.
+
+    Deregistration matters more here than for most types: the gate is consulted on every fire, and
+    ``evaluate_duty`` treats an unregistered name as fail-OPEN. So uninstalling the app that
+    supplied
+    a gate makes its triggers run unfiltered rather than stopping them — deliberate (§1.4), and what
+    ``automation doctor``'s ``unknown_duty_gate`` finding exists to surface.
+    """
+
+    def create(self, ext: RegisteredProvider) -> Any:
+        from personalclaw.providers.loader import load_factory
+        from personalclaw.providers.settings import ProviderSettings
+
+        config = ProviderSettings.load(ext.name)
+        factory = load_factory(ext)
+        return factory(config)
+
+    def register(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.triggers.calendar import register_duty_gate
+
+        name = getattr(instance, "name", "") or ext.name
+        gate = getattr(instance, "on_duty", None)
+        if not callable(gate):
+            raise ValueError(
+                f"duty-gate provider {name!r} must expose an async on_duty(now, ctx) -> DutyVerdict"
+            )
+        register_duty_gate(name, gate)
+
+    def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.triggers.calendar import _DUTY_GATES
+
+        _DUTY_GATES.pop(getattr(instance, "name", "") or ext.name, None)
+
+
 class ChannelTypeHandler(_TypeHandler):
     """Handler for ``provider.type == 'channel'`` extensions (comms transports).
 
@@ -634,6 +678,7 @@ def get_provider_registry() -> ProviderRegistry:
         _registry.register_type_handler("tool", ToolTypeHandler())
         _registry.register_type_handler("search", SearchTypeHandler())
         _registry.register_type_handler("action", ActionTypeHandler())
+        _registry.register_type_handler("duty_gate", DutyGateTypeHandler())
         _registry.register_type_handler("prompt", PromptTypeHandler())
         # Enable/disable + Settings seams only — each names where the entity
         # actually lives. See EntitySeamHandler: registering an instance here

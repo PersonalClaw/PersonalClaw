@@ -60,12 +60,30 @@ export function relTime(iso?: string): string {
   return new Date(t).toLocaleDateString()
 }
 
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/
+/** `due` is a date-only string (`2026-10-26`) — and `Date.parse` reads that shape as UTC
+ *  midnight per spec, so west of UTC it renders as the PREVIOUS day. Build local midnight
+ *  ourselves; full timestamps (with a time part or trailing Z) are already unambiguous and
+ *  pass through to Date.parse. Returns NaN for anything unparseable. */
+export function parseDueDate(due: string): number {
+  const m = DATE_ONLY.exec(due.trim())
+  if (!m) return Date.parse(due)
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  const local = new Date(y, mo - 1, d)
+  return local.getMonth() === mo - 1 && local.getDate() === d ? local.getTime() : NaN
+}
+
+const localMidnight = (t: number) => { const d = new Date(t); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() }
+/** Whole calendar days from today to `t` in LOCAL time, so "Due today" holds for the whole
+ *  local day instead of flipping at whatever hour UTC midnight lands on. */
+const dueDayDelta = (t: number) => Math.round((localMidnight(t) - localMidnight(Date.now())) / 86400000)
+
 /** Due-date relative label + urgency tone (overdue→danger, soon→warn). */
 export function dueMeta(due?: string): { label: string; tone: string } | null {
   if (!due) return null
-  const t = Date.parse(due)
+  const t = parseDueDate(due)
   if (Number.isNaN(t)) return { label: due, tone: 'var(--color-on-surface-low)' }
-  const days = Math.ceil((t - Date.now()) / 86400000)
+  const days = dueDayDelta(t)
   if (days < 0) return { label: `${-days}d overdue`, tone: 'var(--color-danger)' }
   if (days === 0) return { label: 'Due today', tone: 'var(--color-warn)' }
   if (days === 1) return { label: 'Due tomorrow', tone: 'var(--color-warn)' }

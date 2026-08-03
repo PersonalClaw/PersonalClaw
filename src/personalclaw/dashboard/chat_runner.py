@@ -1764,6 +1764,19 @@ async def _run_chat(
                 logger.debug("steer source wiring skipped", exc_info=True)
         state.sessions.set_steer_drains(session_key, _steerable)
 
+        # `PreResponse` (AUTO crit 5): declared, selectable in the hook UI, fired by nothing until
+        # now. Fired BEFORE the stream is created — the last moment the catalog's description
+        # ("before the agent streams its reply") is still true, since after `client.stream(...)` the
+        # first tokens may already be in flight. The payload carries no message text: a
+        # PreResponse hook is about the boundary, and `UserPromptSubmit` already fired with the
+        # prompt for hooks that want content.
+        from personalclaw.triggers.lifecycle_fire import fire as _fire_lifecycle
+        from personalclaw.triggers.lifecycle_fire import pre_response_payload
+
+        await _fire_lifecycle(
+            pre_response_payload(session_key=session.key, agent=getattr(session, "agent", "") or "")
+        )
+
         # Slash commands use _vendor.dev/commands/execute for full native output;
         # regular messages use session/prompt.
         event_stream = client.stream_command(message) if is_slash else client.stream(full_message)
@@ -2908,6 +2921,24 @@ async def _run_chat(
         _stop_text = redact_exfiltration_urls(assistant_text[:500])[0]
         _stop_text = redact_credentials(_stop_text)[0]
         await _fire(HOOK_EVENT_STOP, _stop_text)
+
+        # `PostResponse` (AUTO crit 5): declared, selectable in the hook UI, fired by nothing until
+        # now. It is NOT a duplicate of `Stop`, which fires here too: `Stop` carries the reply TEXT
+        # (truncated + redacted) for a hook that reacts to content, while `PostResponse` carries the
+        # turn's SHAPE — reply size and tool-call count — for a hook that meters activity. Two
+        # events at one moment is the catalog's own distinction; collapsing them would silently
+        # retire an event the UI still offers.
+        from personalclaw.triggers.lifecycle_fire import fire as _fire_lifecycle
+        from personalclaw.triggers.lifecycle_fire import post_response_payload
+
+        await _fire_lifecycle(
+            post_response_payload(
+                session_key=session.key,
+                agent=getattr(session, "agent", "") or "",
+                reply_chars=len(assistant_text or ""),
+                tool_calls=_turn_tool_call_count,
+            )
+        )
 
         # ── Bidirectional sync: mirror response to the linked channel thread ──
         # Rendering (mrkdwn, OPTIONS blocks) is the channel's concern — delegate to

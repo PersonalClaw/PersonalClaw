@@ -9,7 +9,7 @@ import { spring } from '../../design/motion'
  *
  *  Generic over the item type; `getKey` yields a stable key per item. */
 export function Reorderable<T>({
-  items, onReorder, getKey, renderItem, className, axis = 'y',
+  items, onReorder, getKey, renderItem, className, axis = 'y', canDrag,
 }: {
   items: T[]
   onReorder: (next: T[]) => void
@@ -17,20 +17,32 @@ export function Reorderable<T>({
   renderItem: (item: T) => ReactNode
   className?: string
   axis?: 'x' | 'y'
+  /** Per-item drag lock. Omit for the previous behaviour (everything drags). */
+  canDrag?: (item: T) => boolean
 }) {
   return (
     <Reorder.Group axis={axis} values={items} onReorder={onReorder} className={className} as="div">
-      {items.map((item) => (
-        <Reorder.Item
-          key={getKey(item)}
-          value={item}
-          as="div"
-          transition={spring.spatialDefault}
-          whileDrag={{ scale: 1.03, zIndex: 10 }}
-        >
-          {renderItem(item)}
-        </Reorder.Item>
-      ))}
+      {items.map((item) => {
+        // A locked item is rendered as a PLAIN div, not a `Reorder.Item` with `drag={false}`.
+        // Measured (S61k): `Reorder.Item` makes the whole row draggable, so styling the grip as
+        // disabled is cosmetic — the row still picks up and reorders. Keeping it out of the
+        // reorder group is what actually locks it.
+        const locked = canDrag ? !canDrag(item) : false
+        if (locked) {
+          return <div key={getKey(item)}>{renderItem(item)}</div>
+        }
+        return (
+          <Reorder.Item
+            key={getKey(item)}
+            value={item}
+            as="div"
+            transition={spring.spatialDefault}
+            whileDrag={{ scale: 1.03, zIndex: 10 }}
+          >
+            {renderItem(item)}
+          </Reorder.Item>
+        )
+      })}
     </Reorder.Group>
   )
 }

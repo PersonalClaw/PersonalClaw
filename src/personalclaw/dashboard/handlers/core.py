@@ -545,12 +545,38 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "workflows.model_tier_reasoning": {"type": "str", "max_len": 32},
     "workflows.model_tier_standard": {"type": "str", "max_len": 32},
     "workflows.model_tier_fast": {"type": "str", "max_len": 32},
+    # All four are live-editable: each changes how much the system does on
+    # its own, which is exactly the class of setting an owner reaches for mid-session rather than
+    # after a restart.
+    #
+    # The bounds are the ones the code already enforces, restated here so the API refuses out-of-
+    # range values instead of storing one the runtime silently clamps — a stored value that does not
+    # match the behaviour is worse than a rejection, because the user reads the stored one.
+    "workflows.surface_mode_default": {"type": "enum", "values": ["off", "passive", "suggest"]},
+    "workflows.max_materialized_per_foreach": {"type": "int", "min": 1, "max": 500},
+    # 0 = never expires (an author writing `0` means "wait for me"), and the upper bound is 30 days:
+    # a gate held longer than that is an abandoned run, not a patient one.
+    "workflows.confirmation_ttl_secs": {"type": "int", "min": 0, "max": 30 * 24 * 3600},
+    # Capped at MAX_LEASE_SECS (1h) — the ceiling `pool.Lease.expires_at` clamps to. Accepting a
+    # larger number here would store a week-long lease that the runtime silently shortens.
+    "workflows.lease_ttl_secs": {"type": "int", "min": 30, "max": 3600},
+    # AUTO-A1/A2 gate defaults. Strings rather than enums: a quiet window is an `HH:MM-HH:MM`
+    # range and a duty gate is a provider name an app can supply, so neither has a closed value set
+    # the API could check. `triggers.calendar.parse_default_window` validates the format and treats
+    # an unparseable value as NO default — the fail-safe reading, since a malformed window that
+    # accidentally matched all day would look exactly like a broken scheduler.
+    "workflows.default_quiet_windows": {"type": "str", "max_len": 64},
+    "workflows.duty_gate_default": {"type": "str", "max_len": 64},
     # LEARNING-FLYWHEEL capture: the knobs worth changing without a restart. The
     # evidence floor and the session-score threshold are how an owner tunes how
     # eagerly the system learns, and staging can be turned off if the log is
     # unwanted — so all three are live-editable.
     "learning.min_evidence": {"type": "int", "min": 1, "max": 20},
     "learning.staging_enabled": {"type": "bool"},
+    # LEARN-R21: the self-model gate. Live-editable because it is the one learning path
+    # that acts on what WORKED rather than on corrections — a user who finds that presumptuous
+    # should be able to stop it without a restart.
+    "learning.self_model_enabled": {"type": "bool"},
     "learning.min_session_score": {"type": "float", "min": 0.0, "max": 1.0},
     "learning.propose_quota_per_run": {"type": "int", "min": 1, "max": 25},
     "learning.curator_enabled": {"type": "bool"},

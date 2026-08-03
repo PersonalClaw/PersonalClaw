@@ -38,6 +38,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from personalclaw.knowledge import session_brief
@@ -617,6 +618,20 @@ class RunController:
                 "expires_at": cont.expires_at,
             },
         )
+        # The typed CONFIRMATION record's pending half. Emitted HERE rather
+        # than at a second site so it inherits this method's `(path, epoch)` idempotency for free:
+        # the watchdog polls a waiting run repeatedly, and a per-poll emission would put one
+        # "awaiting approval" row per poll into the ledger for a single question.
+        #
+        # `confirmation_id` is derived from `(run, gate, epoch)` by `confirmation.request_id`, NOT
+        # from the resume token. The token is single-use and rotates on rewind; the ID has to stay
+        # stable so `confirmation_pending` and `confirmation_resolved` pair up in the ledger.
+        self.publish_confirmation_pending(
+            path,
+            cont.node_id,
+            confirmation_id=_confirmation_id(self.run.id, cont.node_id or path, inst.epoch),
+            kind=_confirmation_kind(node.config if node else {}),
+        )
         # …and DURABLY, to the inbox. The SSE frame above only reaches a view that
         # happens to be open; a scheduled run parking at 3am would otherwise wait in silence
         # forever. Minted alongside the continuation so the two share the (path, epoch)
@@ -727,6 +742,19 @@ class RunController:
                 terminal_reason="denied",
             )
         inst.completed_at = _now()
+        # The resolution half. AFTER the claim is won and the epoch verified, so the ledger records
+        # answers that actually applied — emitting before the claim would log an approval for a race
+        # the caller lost, and the audit would show two people approving one gate.
+        self.publish_confirmation_resolved(
+            cont.instance_path,
+            cont.node_id,
+            confirmation_id=_confirmation_id(
+                self.run.id, cont.node_id or cont.instance_path, cont.epoch
+            ),
+            verb="approve" if approved else "reject",
+            approved=approved,
+            resolved_by=responder or channel or "dashboard",
+        )
         self.journal.write(
             journal_mod.GATE_RESOLVED,
             instance_path=cont.instance_path,
@@ -2502,6 +2530,100 @@ class RunController:
         """
         return [type("_T", (), {"workflow_binding": b})() for b in self._projected]
 
+    def _schedule_verification(self, spec: Any, path: str, node_id: str) -> None:
+        """Run a projected node's done-criterion and emit `task_verified`.
+
+        Scheduled, not inline: a criterion is a shell command or a file read (`pytest -q` is the
+        canonical authoring shape), and running it inside the sync settle path would block the whole
+        tick on someone else's test suite.
+
+        A node with NO criterion schedules nothing. `Task.can_mark_complete`'s rule is that a task
+        with no exit criteria is freely completable, and emitting a `task_verified(passed=True)` for
+        a node nobody wrote a check for would manufacture evidence that does not exist.
+
+        The emptiness test asks the PARSER, not truthiness. Measured (S61h): `"   "` is truthy, so a
+        whitespace-only criterion passed a `if not criterion` guard and then parsed to zero checks —
+        which the evaluator correctly reports as UNRUNNABLE, so the node showed a scary "could not
+        verify" for a field its author had effectively left blank.
+        """
+        criterion = getattr(spec, "done_criterion", "")
+        from personalclaw.workflows import verified_done as _vd
+
+        checks, problems = _vd.parse_criterion(criterion)
+        if not checks and not problems:
+            return
+
+        async def _verify_and_emit() -> None:
+            passed = await self._run_criterion(spec.done_criterion)
+            self.publish_task_verified(
+                path,
+                node_id,
+                task_id="",
+                # NOT `bool(passed)`: `None` means the check could not run, and collapsing it to
+                # False reports a failure that never happened.
+                passed=passed,
+                criterion=str(spec.done_criterion)[:200],
+            )
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(_verify_and_emit())
+            return
+        handle = loop.create_task(_verify_and_emit())
+        self._projection_writes.add(handle)
+        handle.add_done_callback(self._projection_writes.discard)
+
+    async def _run_criterion(self, raw: Any) -> bool | None:
+        """Evaluate a done-criterion to the TRISTATE `verified_done` expects.
+
+        `None` (could not run) is preserved all the way out, never collapsed to False. The whole
+        point of the tristate is that a missing binary is not a failing test: reporting "the check
+        failed" for a criterion that never executed sends the user to debug their code when the
+        problem is their environment, and §1 projects the two to different blocked kinds for exactly
+        that reason.
+        """
+        from personalclaw.workflows import verified_done as _vd
+
+        checks, problems = _vd.parse_criterion(raw)
+        if problems or not checks:
+            # An unparseable criterion is UNRUNNABLE, not failed. The author wrote something the
+            # engine could not read, which is a different problem from the work being wrong.
+            return None
+        verdict = _vd.Verdict()
+        for check in checks:
+            if check.kind is _vd.CheckKind.COMMAND:
+                from personalclaw.loop.gates import run_verify_command
+
+                outcome = await run_verify_command(
+                    check.command, None, label=f"criterion:{self.run.id}"
+                )
+                verdict.results.append(
+                    _vd.CheckResult(
+                        kind=check.kind.value,
+                        passed=outcome,
+                        weight=check.weight,
+                        detail=check.command[:120],
+                    )
+                )
+            else:
+                verdict.results.append(_vd.evaluate_file_phrase(check, self._read_criterion_file))
+        return verdict.passed
+
+    @staticmethod
+    def _read_criterion_file(path: str) -> str | None:
+        """Read a file for a `file_phrase` check, or None when it cannot be read.
+
+        None rather than "" — `evaluate_file_phrase` treats an unreadable file as UNRUNNABLE, and an
+        empty string would read as "the file exists and the phrase is absent", which is a
+        claim about
+        content nobody read.
+        """
+        try:
+            return Path(path).read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            return None
+
     def _schedule_task_write(self, spec: Any, path: str, node_id: str) -> None:
         """Schedule the projected Task write on the running loop, then emit the event.
 
@@ -2618,6 +2740,9 @@ class RunController:
                 # while the first write is still in flight.
                 self._projected.append(spec.binding)
                 self._schedule_task_write(spec, item.path, item.node.id)
+                # Verification rides the same scheduled path: a criterion is a command or a file
+                # read, and running it inline would block the tick on someone else's test suite.
+                self._schedule_verification(spec, item.path, item.node.id)
             if plan.existing:
                 # A rewind's dedup-merge. Emitted as a REFRESH rather than skipped silently:
                 # "did my rewind re-create the board" is a question only the event answers.
@@ -2706,8 +2831,9 @@ class RunController:
         )
 
     def publish_task_verified(
-        self, path: str, node_id: str, *, task_id: str, passed: bool, criterion: str = ""
+        self, path: str, node_id: str, *, task_id: str, passed: bool | None, criterion: str = ""
     ) -> None:
+        """Emit a verification outcome. `passed` is the TRISTATE — see `journal.task_verified`."""
         self.journal.task_verified(
             path, node_id, task_id=task_id, passed=passed, criterion=criterion
         )
@@ -2717,7 +2843,8 @@ class RunController:
                 "instance_path": path,
                 "node_id": node_id,
                 "task_id": task_id,
-                "passed": bool(passed),
+                "passed": passed is True,
+                "unrunnable": passed is None,
             },
         )
 
@@ -2782,6 +2909,43 @@ class RunController:
 
 
 # ── module helpers ───────────────────────────────────────────────────────────
+
+
+def _confirmation_id(run_id: str, gate_id: str, epoch: int) -> str:
+    """The stable confirmation id for one (run, gate, epoch).
+
+    Delegates to `confirmation.request_id` rather than composing a string here. Two id schemes for
+    one record is the failure mode where `confirmation_pending` and `confirmation_resolved` never
+    pair up in the ledger, and nobody notices until someone asks how long a gate waited.
+
+    The EPOCH is in the key because a rewind SHOULD produce a new confirmation — the question is
+    being asked about different work. Deriving from the resume token instead would break that: a
+    token is single-use and rotates per poll, so pending and resolved would carry different ids for
+    the same question.
+    """
+    from personalclaw.workflows.confirmation import request_id
+
+    return request_id(run_id, gate_id, epoch)
+
+
+def _confirmation_kind(node_config: dict[str, Any]) -> str:
+    """Which `ConfirmationType` this gate is, as its wire value.
+
+    A destructive gate is NOT the same record as an ordinary approval: §4 gives them different
+    expiry policies (auto-reject vs hold) and only the ordinary one may be muted. Reading the
+    node's own declared risk keeps that classification with the author who made it, rather than
+    inferring it from the prompt text at render time.
+    """
+    from personalclaw.workflows.confirmation import ConfirmationType
+
+    risk = str((node_config or {}).get("risk_category", "") or "").strip().lower()
+    if risk in {"destructive", "destructive_op", "irreversible"}:
+        return ConfirmationType.DESTRUCTIVE_CONFIRM.value
+    kind = str((node_config or {}).get("kind", "") or "").strip().lower()
+    if kind in {"input", "needs_input", "question"}:
+        return ConfirmationType.NEEDS_INPUT.value
+    return ConfirmationType.APPROVAL.value
+
 
 #: Max characters of a foreach item's label. A row shows one line, and a fan-out over long
 #: strings would otherwise put kilobytes of prose in the event stream for no gain.

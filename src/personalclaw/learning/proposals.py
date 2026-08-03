@@ -846,14 +846,28 @@ def _audit(operation: str, prop: Proposal, outcome: str) -> None:
         logger.debug("proposal SEL audit failed", exc_info=True)
 
 
-def reject(pid: str) -> bool:
+def reject(pid: str, *, actor: str = "user") -> bool:
     """Reject a proposal and REMEMBER it. Returns True if it existed.
 
     The remembering is the point: the record outlives the row, so the same content
     is skipped rather than re-filed on the next pass.
+
+    ``actor`` is gated for a subtler reason than accepting (S75): an agent that could
+    reject would clear its own bad proposals out of the queue before a human ever
+    read them — and the rejection exemplars §2.2 learns from would silently stop
+    accumulating. Returns False on a refusal rather than raising, matching the
+    not-found path: a caller that cannot reject and a row that does not exist are
+    the same outcome from the caller's side.
     """
+    from personalclaw.learning.inbox import require_human
+
     prop = _load(pid)
     if prop is None:
+        return False
+    gate = require_human(action="reject", actor=actor, status=prop.status)
+    if not gate.allowed:
+        _audit("learning_proposal_reject", prop, "blocked")
+        logger.warning("Blocked %s reject of %s: %s", actor, pid, gate.reason)
         return False
     prop.status = Status.REJECTED.value
     prop.updated_at = _now()
@@ -886,7 +900,7 @@ class AcceptError(Exception):
     """Raised when a proposal cannot be accepted."""
 
 
-def accept(pid: str, *, installer=None) -> Proposal:
+def accept(pid: str, *, installer=None, actor: str = "user") -> Proposal:
     """Accept a proposal: install via *installer*, then remember the decision.
 
     The installer is injected rather than dispatched here on purpose. This module
@@ -896,10 +910,26 @@ def accept(pid: str, *, installer=None) -> Proposal:
 
     The decision is recorded ONLY after the install succeeds. Recording first would
     mean a failed install permanently suppresses its own retry.
+
+    ``actor`` gates the call (LEARNING-FLYWHEEL §7 — S75). Measured before it existed:
+    NOTHING here knew who was accepting, so "the model cannot accept its own
+    proposals" held only because no agent tool happened to call this — an absence,
+    not a control, and one new MCP tool would have removed it silently. It defaults
+    to ``user`` so every existing human-facing caller is unaffected, and an agent or
+    engine caller is refused outright regardless of trust mode.
     """
+    from personalclaw.learning.inbox import audit_denial, require_human
+
     prop = _load(pid)
     if prop is None:
         raise AcceptError(f"no proposal {pid!r}")
+
+    gate = require_human(action="accept", actor=actor, status=prop.status)
+    if not gate.allowed:
+        row = audit_denial(action="accept", actor=actor, pid=pid, gate=gate)
+        _audit("learning_proposal_accept", prop, "blocked")
+        logger.warning("Blocked %s accept of %s: %s", actor, pid, row["reason"])
+        raise AcceptError(gate.reason)
     if installer is not None:
         try:
             installer(prop)

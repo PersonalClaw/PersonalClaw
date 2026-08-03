@@ -1,12 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { MotionConfig, motion } from 'framer-motion'
 import { ease, duration } from '../design/motion'
-import {
-  MessageSquare, Bell, ListChecks, Zap,
-  Inbox, Files, FileCode, BookOpen, Users, Wrench, Sparkles,
-  FileText, Settings, Terminal, Loader2, FolderKanban, Blocks,
-  LayoutDashboard, Compass, Workflow,
-} from 'lucide-react'
+import { Bell, Blocks, BookOpen, Brain, Compass, FileCode, FileText, Files, FolderKanban, Inbox, LayoutDashboard, ListChecks, Loader2, MessageSquare, Settings, Sparkles, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
 import { NavRail, type NavItem } from '../ui/NavRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
 import { IncidentBanner } from './IncidentBanner'
@@ -39,6 +34,7 @@ const SettingsPage = lazy(() => import('../pages/settings/SettingsPage').then((m
 const AgentsSection = lazy(() => import('../pages/agents/AgentsSection').then((m) => ({ default: m.AgentsSection })))
 const NotificationsPage = lazy(() => import('../pages/notifications/NotificationsPage').then((m) => ({ default: m.NotificationsPage })))
 const TriggersSection = lazy(() => import('../pages/triggers/TriggersSection').then((m) => ({ default: m.TriggersSection })))
+const LearningPage = lazy(() => import('../pages/learning/LearningPage').then((m) => ({ default: m.LearningPage })))
 const TasksSection = lazy(() => import('../pages/tasks/TasksSection').then((m) => ({ default: m.TasksSection })))
 const ProjectsSection = lazy(() => import('../pages/projects/ProjectsSection').then((m) => ({ default: m.ProjectsSection })))
 const PromptsSection = lazy(() => import('../pages/prompts/PromptsSection').then((m) => ({ default: m.PromptsSection })))
@@ -74,6 +70,7 @@ const NAV: NavItem[] = [
   { id: 'agents', label: 'Agents', icon: Users, section: 'Capabilities' },
   { id: 'tools', label: 'Tools', icon: Wrench, section: 'Capabilities' },
   { id: 'skills', label: 'Skills', icon: Sparkles, section: 'Capabilities' },
+  { id: 'learning', label: 'Learning', icon: Brain, section: 'Capabilities' },
   { id: 'prompts', label: 'Prompts', icon: FileText, section: 'Capabilities' },
   { id: 'workflows', label: 'Workflows', icon: Workflow, section: 'Capabilities' },
   // Apps group: the Store (browse/install) + each installed app's contributed UI
@@ -114,6 +111,7 @@ function renderPage(active: string, r: RouteProps) {
     case 'prompts': return <PromptsSection {...r} />
     case 'workflows': return <WorkflowsSection {...r} />
     case 'skills': return <SkillsPage {...r} />
+    case 'learning': return <LearningPage />
     case 'tools': return <ToolsPage {...r} />
     case 'agents': return <AgentsSection {...r} />
     case 'apps': return <AppsSection {...r} />

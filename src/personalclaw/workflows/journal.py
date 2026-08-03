@@ -758,9 +758,22 @@ class Journal:
         )
 
     def task_verified(
-        self, path: str, node_id: str, *, task_id: str, passed: bool, criterion: str = ""
+        self,
+        path: str,
+        node_id: str,
+        *,
+        task_id: str,
+        passed: bool | None,
+        criterion: str = "",
     ) -> None:
         """A done-criterion ran and the engine flipped (or withheld) the task's done state.
+
+        `passed` is the TRISTATE, not a boolean: `None` means the check could not run (a missing
+        binary, a timeout, a safety-screen refusal). Recorded as a separate `unrunnable` flag rather
+        than collapsed to False — measured (S61h), `bool(None)` is `False`, which would report "your
+        check failed" for a criterion that never executed and send the user to debug their code when
+        the problem is their environment. §1 projects the two to DIFFERENT blocked kinds
+        (`needs_input` vs `capability`) precisely because they need different fixes.
 
         `criterion` is recorded because "verification failed" without naming what was checked is a
         finding a user cannot act on, and the criterion is the def author's text.
@@ -770,7 +783,8 @@ class Journal:
             instance_path=path,
             node_id=node_id,
             task_id=task_id,
-            passed=bool(passed),
+            passed=passed is True,
+            unrunnable=passed is None,
             criterion=criterion,
         )
 

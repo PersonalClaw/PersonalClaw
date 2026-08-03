@@ -144,6 +144,33 @@ ProviderFactory = Callable[..., ModelProvider]
 StopOutcome = Literal["soft", "hard", "idle"]
 
 
+async def _fire_session_end(key: str, reason: str, session: "_Session") -> None:
+    """Fire `SessionEnd` (AUTO crit 5). Declared, selectable in the hook UI, fired by nothing until
+    now.
+
+    `reason` distinguishes the three real endings this module has — `removed` (resumable: tab close,
+    agent switch, idle kill), `destroyed` (permanent) and `shutdown` — because a cleanup hook that
+    cannot tell them apart either runs on every tab close or misses the case it was written for.
+
+    Fired AFTER the provider is shut down, so a hook observing the end cannot race the teardown it
+    is observing. Never raises: a session must still close when a hook script is broken.
+
+    `turns` comes from `prompt_count`, the field `_Session` actually carries. Measured: a first pass
+    read `session.messages`, which does not exist here (that lives on the dashboard's session
+    object), so every fire would have reported `turns=0` — a plausible number that is always wrong,
+    which is worse than an absent field.
+    """
+    from personalclaw.triggers.lifecycle_fire import fire, session_end_payload
+
+    await fire(
+        session_end_payload(
+            session_key=key,
+            reason=reason,
+            turns=int(getattr(session, "prompt_count", 0) or 0),
+        )
+    )
+
+
 @dataclass
 class _Session:
     provider: ModelProvider
@@ -1270,6 +1297,7 @@ class SessionManager:
         if session:
             await session.provider.shutdown()
             logger.info("Removed session (map preserved): %s", key)
+            await _fire_session_end(key, "removed", session)
 
     async def destroy(self, key: str) -> None:
         """Permanently destroy a session — no resume possible.
@@ -1285,6 +1313,8 @@ class SessionManager:
         finally:
             self._session_map.delete(key)
             logger.info("Destroyed session (map deleted): %s", key)
+            if session:
+                await _fire_session_end(key, "destroyed", session)
 
     async def close_all(self) -> None:
         """Shut down every session (called on shutdown)."""
@@ -1348,6 +1378,13 @@ class SessionManager:
                 "Timeout closing %d sessions — orphan cleanup at next startup", len(all_providers)
             )
         logger.info("All sessions closed (active=%d)", len(sessions))
+        # One `SessionEnd` per session, with `reason=shutdown`. Deliberately AFTER the gather rather
+        # than inside `_close_one`: the shutdown path is already bounded by a 5s timeout, and firing
+        # hooks inside that budget would let a slow hook script eat the time the providers need to
+        # exit cleanly. A hook that misses a shutdown is recoverable; an orphaned agent process is
+        # what the timeout exists to prevent.
+        for key, sess in sessions.items():
+            await _fire_session_end(key, "shutdown", sess)
 
     # ── Circuit breaker ──
 

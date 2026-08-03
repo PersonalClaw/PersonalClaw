@@ -707,8 +707,12 @@ export interface HookItem {
 // helpers project it onto ScheduleJob; the lifecycle helpers onto HookItem.
 export interface TriggerAction { provider: string; config: Record<string, unknown> }
 export interface Trigger {
-  kind: 'schedule' | 'lifecycle'; id: string; raw_id: string; name: string; enabled: boolean
+  kind: 'schedule' | 'lifecycle' | 'store'; id: string; raw_id: string; name: string; enabled: boolean
   action: TriggerAction
+  // store fields (kind=store) — the unified TriggerStore kinds with no legacy backend
+  // (file/web_watch/idle/run_completed/view/webhook). Created via the automation_* chat tools.
+  store_kind?: string; created_by?: string; spec?: Record<string, unknown>
+  health?: string; broken?: string[]
   // schedule fields (kind=schedule)
   message?: string; schedule?: string; cron_expr?: string | null; every_secs?: number | null
   agent?: string | null; model?: string | null; channel?: string | null; approval_mode?: string | null
@@ -756,8 +760,76 @@ export interface ActionProvider {
 // Server-sourced trigger $variable catalog (GET /api/triggers/variables). The UIs
 // read this instead of mirroring the per-event var lists — backend is the source
 // of truth (hooks.LIFECYCLE_EVENT_CATALOG + schedule.SCHEDULE_VARS).
-export interface LifecycleEventInfo { event: string; label: string; desc: string; vars: string[]; blocking: boolean }
+// `dormant`: the event is declared and configurable but NO code fires it — 7 of the 15 are.
+// Server-sourced for the same reason the vars are: a hard-coded list here would tell a user their
+// working hook is dead the moment the backend wires one.
+export interface LifecycleEventInfo { event: string; label: string; desc: string; vars: string[]; blocking: boolean; dormant?: boolean; dormant_reason?: string }
 export interface TriggerVariables { schedule: string[]; lifecycle: LifecycleEventInfo[] }
+// The Proposal Inbox row (GET /api/learning/proposals). `renderable` is the backend's own honesty
+// flag: a row missing provenance cannot be shown weighably, and `bulk_acceptable` already accounts
+// for it — the FE must not re-derive either, or the two will disagree about what is safe to accept.
+export interface LearningRow {
+  id: string; kind: string; title: string; provenance: string
+  source_cadence: string; source_excerpt: string
+  evidence_refs: string[]; reinforcements: number; confidence: number
+  manifest_valid: boolean; manifest_issues: string[]
+  risk_tier: string; status: string
+  renderable: boolean; bulk_acceptable: boolean
+}
+export interface LearningInbox {
+  rows: LearningRow[]; total: number
+  by_kind: Record<string, number>; by_tier: Record<string, number>
+  flagged: number; unrenderable: string[]; bulk_acceptable: number
+}
+// One day of the capture panel. An EMPTY bucket is the signal: `health()` cannot see a day where
+// capture never ran, which is the failure the staging tier exists to expose.
+export interface StagingDay {
+  day: string; passes: number; by_outcome: Record<string, number>
+  produced: number; errors: number; staged: number
+  cost_usd: number; proposal_ids: string[]
+}
+export interface StagingWeek {
+  days: number; buckets: StagingDay[]
+  silent_days: string[]; error_days: string[]
+  produced_total: number; cost_usd: number
+}
+
+// One projected fire in the week grid (GET /api/triggers/week — AUTO-A3). `suppressed_by` is "" for
+// a fire that will actually run, "quiet" inside a quiet window, "skipped" on one of the trigger's
+// skip_dates. The two suppression kinds stay distinct because they are different promises: a quiet
+// window defers a time of day and may catch up, while a skip date removes a whole day and never
+// does. The server ANNOTATES rather than filters — a grid that hid suppressed fires would show a
+// schedule the user does not have, and explaining an unexpected gap is the view's whole purpose.
+export interface WeekOccurrence {
+  trigger_id: string
+  trigger_name: string
+  /** Epoch seconds. Placed into a cell in the VIEWER's timezone; `server_tz` is captioned so a
+   *  mismatch with the host is legible instead of silent. */
+  at: number
+  suppressed_by: '' | 'quiet' | 'skipped' | 'off_duty'
+  reason: string
+}
+
+export interface WeekProjection {
+  start: string
+  end: string
+  server_tz: string
+  occurrences: WeekOccurrence[]
+  /** Trigger ids whose projection hit the per-trigger occurrence cap. Named rather than a bare
+   *  boolean: "some trigger was capped" is not actionable, and a silently partial week reads as an
+   *  accurate forecast. */
+  truncated: string[]
+}
+
+// One manual event-trigger fire (POST /api/triggers/event:{id}/run|test). `ran` and `success` are
+// deliberately separate: `ran` is whether the trigger reached its action provider at all (false for
+// incident mode, an unregistered provider, or a denylist block — `reason` says which), while
+// `success` is that provider's own verdict. Collapsing them would report a misconfigured action as
+// "never fired", which points the user at the wrong thing entirely.
+export interface EventFireResult {
+  ok: boolean
+  result: { ran: boolean; reason: string; success?: boolean; exit_code?: number; stdout?: string; stderr?: string; error?: string; duration_ms?: number }
+}
 // Knowledge = a library of TYPED items (note/bookmark/media/docs) with extracted
 // content + AI insights. The typed-format enum, media/file fields, structured
 // insights, and provider attribution mirror the target vision (OpenForge-style);
@@ -2058,8 +2130,34 @@ export const api = {
   // Triggers — the unified surface (schedule + lifecycle). The schedule helpers
   // below speak the schedule wire shape the shared Schedule* components already
   // use; the api layer namespaces the id (schedule:<id>) and routes to /api/triggers.
-  triggers: (type?: 'schedule' | 'lifecycle') =>
+  triggers: (type?: 'schedule' | 'lifecycle' | 'event') =>
     get<{ triggers: Trigger[]; server_tz: string }>(`/api/triggers${type ? `?type=${type}` : ''}`),
+  // The week-grid projection (AUTO-A3). `start` is a local ISO datetime; the backend computes every
+  // occurrence from the recurrence each trigger already carries — read-only, no store changes.
+  triggersWeek: (start?: string, days = 7) => {
+    const qs = new URLSearchParams()
+    if (start) qs.set('start', start)
+    qs.set('days', String(days))
+    return get<WeekProjection>(`/api/triggers/week?${qs.toString()}`)
+  },
+  // ── event-kind (data-event) triggers: the parity surface ──
+  // The backend handled `event` in list/create/DELETE only; toggle/run/test/PUT fell through to the
+  // schedule branch and answered 404, so the UI had no way to reach them and no client methods
+  // existed. `ran` is whether the trigger REACHED its provider; `success` is the provider's own
+  // verdict — a misconfigured action reports ran:true / success:false, which is a different problem
+  // from "it never fired" and must stay distinguishable.
+  eventTriggers: () => get<{ triggers: Trigger[] }>('/api/triggers?type=event').then((d) => d.triggers),
+  updateEventTrigger: (id: string, body: Record<string, unknown>) =>
+    put<{ ok: boolean; trigger: Trigger }>(`/api/triggers/event:${encodeURIComponent(id)}`, body),
+  deleteEventTrigger: (id: string) => del(`/api/triggers/event:${encodeURIComponent(id)}`),
+  toggleEventTrigger: (id: string, enabled?: boolean) =>
+    post<{ ok: boolean; trigger: Trigger }>(`/api/triggers/event:${encodeURIComponent(id)}/toggle`, enabled === undefined ? {} : { enabled }),
+  runEventTrigger: (id: string, body?: { key?: string; value?: string; event_type?: string }) =>
+    post<EventFireResult>(`/api/triggers/event:${encodeURIComponent(id)}/run`, body ?? {}),
+  testEventTrigger: (id: string, body?: { key?: string; value?: string; event_type?: string }) =>
+    post<EventFireResult>(`/api/triggers/event:${encodeURIComponent(id)}/test`, { ...(body ?? {}), test: true }),
+  eventTriggerHistory: (id: string) =>
+    get<{ runs: never[]; total: number; supported: boolean; reason: string; fire_count: number; last_fired_at: number }>(`/api/triggers/event:${encodeURIComponent(id)}/history`),
   // schedule trigger helpers (id is the bare schedule raw id — the shared
   // Schedule* components mutate by bare id, which the helpers re-namespace).
   schedules: () => get<{ triggers: Trigger[]; server_tz: string }>('/api/triggers?type=schedule')
@@ -2165,6 +2263,27 @@ export const api = {
   deleteSkill: (name: string) => del(`/api/skills/${encodeURIComponent(name)}`),
   verifySkill: (name: string) => post<SkillIntegrity>(`/api/skills/${encodeURIComponent(name)}/verify`),
   // Skill proposals inbox (skill-evolution-proposal-only) — propose-only review.
+  // ── Learning Flywheel §6.1: the Proposal Inbox + the staging week panel ──
+  // `accept`/`reject` carry NO actor: the backend derives it from the request, because a caller that
+  // could name itself `user` would make the human-installs gate decorative.
+  learningProposals: (opts?: { kind?: string; tier?: string; flagged?: boolean }) => {
+    const q = new URLSearchParams()
+    if (opts?.kind) q.set('kind', opts.kind)
+    if (opts?.tier) q.set('tier', opts.tier)
+    if (opts?.flagged) q.set('flagged', '1')
+    const qs = q.toString()
+    return get<LearningInbox>(`/api/learning/proposals${qs ? `?${qs}` : ''}`)
+  },
+  learningProposal: (id: string) =>
+    get<Record<string, unknown>>(`/api/learning/proposals/${encodeURIComponent(id)}`),
+  acceptLearningProposal: (id: string) =>
+    post<{ ok: boolean }>(`/api/learning/proposals/${encodeURIComponent(id)}/accept`, {}),
+  // `del` is non-generic (it resolves void and throws ApiError on !ok) — measured against its own
+  // signature rather than assumed symmetric with `get`/`post`.
+  rejectLearningProposal: (id: string) =>
+    del(`/api/learning/proposals/${encodeURIComponent(id)}`),
+  learningStagingWeek: (days = 7) =>
+    get<StagingWeek>(`/api/learning/staging/week?days=${days}`),
   skillProposals: () => get<{ proposals: SkillProposal[] }>('/api/skills/proposals').then((d) => d.proposals),
   skillProposalDetail: (id: string) => get<SkillProposalDetail>(`/api/skills/proposals/${encodeURIComponent(id)}`),
   acceptSkillProposal: (id: string, edits?: { description?: string; procedure_md?: string }) =>
@@ -2267,6 +2386,17 @@ export const api = {
   deleteHook: (id: string) => del(`/api/triggers/lifecycle:${encodeURIComponent(id)}`),
   toggleHook: (id: string) => post(`/api/triggers/lifecycle:${encodeURIComponent(id)}/toggle`, {}),
   testHook: (id: string, context?: string) => post<{ ok: boolean; result: { stdout: string; stderr: string; exit_code: number; error: string; duration_ms: number } }>(`/api/triggers/lifecycle:${encodeURIComponent(id)}/test`, { context: context ?? 'test' }),
+
+  // store triggers — the unified TriggerStore kinds with no legacy backend
+  // (file/web_watch/idle/…). Created via the automation_* chat tools; surfaced
+  // here so the Automations page can list/pause/run/delete them. The raw_id is
+  // itself <kind>:<slug>, so the namespaced route is `store:<raw_id>`.
+  storeTriggers: () => get<{ triggers: Trigger[] }>('/api/triggers?type=store').then((d) => d.triggers),
+  toggleStoreTrigger: (rawId: string, enabled: boolean) =>
+    post(`/api/triggers/store:${encodeURIComponent(rawId)}/toggle`, { enabled }),
+  deleteStoreTrigger: (rawId: string) => del(`/api/triggers/store:${encodeURIComponent(rawId)}`),
+  runStoreTrigger: (rawId: string, dryRun = false) =>
+    post(`/api/triggers/store:${encodeURIComponent(rawId)}/run`, dryRun ? { dry_run: true } : {}),
 
   // knowledge — typed item library + entities/graph + sources (see knowledge-entity-vision.md)
   knowledgeStats: () => get<KnowledgeStats>('/api/knowledge/stats'),

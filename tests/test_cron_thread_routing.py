@@ -80,6 +80,7 @@ def _run_callback(gateway, job, stream_result="done"):
             captured_callback = on_job
             service = MagicMock()
             service.start = AsyncMock()
+            service.load_without_timer = AsyncMock()
             return service
 
         mock_cron_cls.side_effect = capture_cron

@@ -594,6 +594,9 @@ PROVIDER_TYPES = frozenset(
         "search",
         "action",
         "prompt",
+        # AUTOMATION-SUBSTRATE AUTO-A2: an app-contributed is-the-user-on-duty predicate. Its
+        # `DutyGateTypeHandler` lands in the same commit (the #47 rule).
+        "duty_gate",
     }
 )
 # NOTE: this set MUST equal the runtime type-handler registry
