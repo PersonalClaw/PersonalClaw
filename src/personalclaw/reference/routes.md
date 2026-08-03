@@ -270,6 +270,11 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/knowledge/tags/{id}` — remove a tag from the taxonomy and every item.
 - `PATCH /api/knowledge/tags/{id}` — rename, or re-parent via `parent_id`.
 - `POST /api/knowledge/tags/{id}/merge` — {into} — fold this tag into another.
+- `GET /api/learning/proposals` — the inbox across all six kinds.
+- `DELETE /api/learning/proposals/{id}` — dismiss it, and REMEMBER the decision.
+- `GET /api/learning/proposals/{id}` — one full record.
+- `POST /api/learning/proposals/{id}/accept` — install it.
+- `GET /api/learning/staging/week` — the week-at-a-glance capture panel.
 - `GET /api/legibility/discover` — the curated Discover tips still worth showing.
 - `POST /api/legibility/discover/dismiss` — hide a Discover tip forever.
 - `DELETE /api/lessons` — remove lessons by substring.
