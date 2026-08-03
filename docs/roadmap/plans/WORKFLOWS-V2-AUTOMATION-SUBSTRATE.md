@@ -1175,3 +1175,54 @@ always wrong. `prompt_count` is the field that exists, and a test pins `turns=12
 wires another event, this fails and the deviation gets recorded again instead of the number quietly
 drifting" — so the assertion inverted rather than the number being edited. `verify_dormancy()` still
 re-derives the live set, so a future event declared ahead of its subsystem is still caught.
+
+### S83 — The `file` kind's watch runtime, and the store gap it exposed (35 tests) — PARTIAL
+
+**Toward criterion 2**: "*When a file in ~/notes changes, summarize it into my knowledge base*" is
+creatable in chat in one message.
+
+**🔴 THE `file` KIND WAS FULLY DECLARED AND ENTIRELY INERT.** It is in `models.KINDS`, its spec keys are
+`{paths, dedup}`, and a `file` trigger parses and stays `enabled=True` — measured, before writing any
+code. What does not exist: any filesystem watcher on its behalf, any `file` branch in the trigger
+handler (grepped: zero), and any chat tool that can express it (all nine `schedule_*` tools are
+clock-only; `schedule_natural` converts a cadence to cron). A user could author one through the API and
+wait forever.
+
+`triggers/file_watch.py` is the runtime. It reuses `fs_watch.ConfigFsWatcher`'s mechanism rather than
+adding a dependency — that module already solved poll + signature + seeded-first-pass + deletions for
+the config tree, and `watchdog` would put a platform-specific runtime (inotify/FSEvents/kqueue) into a
+package that currently runs anywhere. What this adds, each because the plan's §2 table requires it:
+
+- **Glob roots with `~` expansion.** A chat-authored trigger contains a tilde; a literal `~` directory
+  watches nothing, silently.
+- **CONTENT-HASH dedup keyed on `(path, content_hash)`** — the plan says "not path-only (R12)".
+  Verified against a real directory: an identical rewrite (editor double-save, `touch`) moves `mtime`
+  and does NOT fire. A path-only or mtime key re-fires on a no-op save.
+- **A three-way delta** (`added`/`modified`/`removed`), so "fired workflows foreach only over new
+  items". A summarize automation wants added+modified; a cleanup automation wants removed.
+- **The `vcs` preset**, `.git/refs/heads/*` + `.git/HEAD`. HEAD is included because a branch SWITCH
+  moves it without touching any ref. Tested by driving two real `git commit`s.
+- **A reported cap** (`MAX_WATCHED_FILES`, `truncated`). A `~/**` glob is hundreds of thousands of
+  paths; hashing them per poll is the `broad_watch_glob` failure `automation doctor` already flags.
+  Truncation is deterministic (sorted) so files do not appear and vanish between polls.
+
+**A defect my own test caught:** `WatchState.from_dict` put the `isinstance` guard inside the
+comprehension, so `.items()` was called on a string before the check and raised. A corrupt state record
+must degrade to "unseeded" — which seeds and fires nothing — not crash the poll loop serving every
+other trigger.
+
+**🛑 SCOPE BOUNDARY — the chat tool cannot be built yet, and this is a real finding, not a deferral.**
+Criterion 2 needs `automation_create` (§4), which needs somewhere to PUT a `file` trigger. Measured:
+**there is no unified trigger store.** `docs`' own words — the handler is "a facade: there is no
+`triggers.json` and no migration" — and it routes exactly three kinds (`schedule`/`lifecycle`/`event`)
+onto three legacy stores (`crons.json`, `event_triggers.json`, the hook config). The `file`, `webhook`,
+`idle`, `view`, `web_watch` and `run_completed` kinds have no persistence at all. Queue rows 62-70 built
+the entity, disposition table, dispatch, cron migration and event parity; **the unified store was never
+a row**. Building it plus `automation_create`'s eight-tool namespace plus the `schedule_*` alias
+retirement is a multi-session program, not a tail on this one, and writing a chat tool against a store
+that does not exist would be writing against a contract a later session defines — the exact failure this
+program's protocol forbids.
+
+So this session ships the runtime with its dedup and delta semantics settled and tested, and records the
+store as the blocking prerequisite. The runtime is what a store-and-service session would otherwise have
+to invent under time pressure.
