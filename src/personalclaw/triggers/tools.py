@@ -1,0 +1,508 @@
+"""The `automation_*` chat-tool namespace (§4 — S92).
+
+§4 specifies one namespace replacing `schedule_add/…`, and criterion 2 is its bar: *"When a file
+in ~/notes changes, summarize it into my knowledge base" is creatable in chat in ONE message.*
+
+S83 shipped the `file` kind's watch runtime and then recorded the honest reason it could not close
+criterion 2: "Criterion 2 needs `automation_create` (§4), which needs somewhere to PUT a `file`
+trigger. Measured: there is no unified trigger store." **S87 shipped that store.** Re-measured
+before writing a line here: a `file` trigger round-trips through `TriggerStore` with zero errors,
+and `SPEC_KEYS` accepts all nine kinds. The blocker is gone, so the tool lands.
+
+**🔴 WHAT THE PROBES FOUND — the per-minute-poll trap.** The only NL schedule path is
+`nl_to_cron`, cron-shaped by construction. Fed criterion 2's own sentence it returns an error,
+which is the *good* case; the bad case is a model asked for a cron expression while handed a
+file-watch request answering `* * * * *`, which validates and silently converts "when a file
+changes" into a per-minute LLM turn. So `nl_kind.route()` decides the KIND first, and a
+non-cadence request never reaches the cadence converter. Two further defects the probe caught
+before any test existed are recorded in `nl_kind` (a URL mis-routing to `file`, and a change verb
+that reached the dedup hint but not the routing check).
+
+**What this owns, and the boundary.** Eight tools over `TriggerStore`: create/list/update/pause/
+resume/run/history/delete. It does NOT own the fire path (S86), the tick (S88), dispatch (S89), or
+execution (S90) — `automation_run` hands off to the shipped executor rather than re-deriving a
+turn. Keeping those injected is what let the whole chain be driven end to end without a model.
+
+Per §4 + decision 5d, an agent-created trigger is tagged `created_by: agent`, **announced** in the
+tool's own result text, and **capped** (default 20 active) — "visible, not silent".
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+#: Decision 5d: "`created_by: workflow|agent` triggers are announced to the user on creation and
+#: capped (default 20 active) — visible, not silent." The cap counts ACTIVE agent-made rows only:
+#: a paused one is not doing anything, and counting it would make the cap unrecoverable without
+#: deleting history the user may still want.
+MAX_AGENT_TRIGGERS = 20
+
+#: The tool names §4's table declares. Data rather than eight scattered string literals, so
+#: `list_tools()`, the dispatcher, and the tests cannot drift out of step — the failure mode where
+#: a declared tool has no handler and reports "unknown tool" at the worst moment.
+TOOL_NAMES: tuple[str, ...] = (
+    "automation_create",
+    "automation_list",
+    "automation_update",
+    "automation_pause",
+    "automation_resume",
+    "automation_run",
+    "automation_history",
+    "automation_delete",
+)
+
+#: Fields an `automation_update` patch may set. An allowlist because a patch is agent-supplied:
+#: letting it reach `run_count`/`last_run_id`/`health_status` would let an automation rewrite its
+#: own health record, and §3.7's autopause thresholds on exactly those numbers.
+PATCHABLE: frozenset[str] = frozenset(
+    {
+        "name",
+        "spec",
+        "gates",
+        "workflow",
+        "enabled",
+        "overlap",
+        "session",
+        "model_tier",
+        "delivery",
+        "failure_delivery",
+        "yield_to_user",
+        "catch_up",
+        "expires_at",
+    }
+)
+
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+@dataclass
+class ToolResult:
+    """One tool call's outcome. `text` is what the agent sees; `data` is for a surface."""
+
+    ok: bool
+    text: str
+    data: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"ok": self.ok, "text": self.text, "data": dict(self.data)}
+
+
+def slug_for(name: str, kind: str) -> str:
+    """A stable, human-recognizable trigger id.
+
+    `kind:slug` matches the `/api/triggers` facade's namespace, which §7 step 2 calls "the
+    migration map" — an opaque uuid here would break that mapping and give the user an id they
+    cannot recognize in their own store.
+    """
+    base = _SLUG_RE.sub("-", (name or "").strip().lower()).strip("-") or "automation"
+    return f"{kind}:{base}"[:96]
+
+
+def _unique_id(store: Any, base: str) -> str:
+    """`base`, or `base-2`, `base-3`… — never silently overwriting an existing automation.
+
+    Measured against the real store: `upsert` is an UPSERT, so creating "daily digest" twice would
+    replace the first one and report success. A user who asked for a second automation and lost
+    their first would have no way to know.
+    """
+    existing = {row.trigger.id for row in store.load()}
+    if base not in existing:
+        return base
+    for n in range(2, 100):
+        candidate = f"{base}-{n}"
+        if candidate not in existing:
+            return candidate
+    return f"{base}-{len(existing) + 1}"
+
+
+def _active_agent_count(store: Any) -> int:
+    return sum(
+        1 for row in store.load() if row.trigger.created_by == "agent" and row.trigger.enabled
+    )
+
+
+def create(
+    store: Any,
+    *,
+    name: str,
+    when: str = "",
+    kind: str = "",
+    spec: dict[str, Any] | None = None,
+    workflow: dict[str, Any] | None = None,
+    message: str = "",
+    created_by: str = "agent",
+    cadence_to_cron: Any = None,
+) -> ToolResult:
+    """`automation_create` — §4's NL-friendly constructor. Criterion 2's one message.
+
+    `when` is routed by `nl_kind.route()` BEFORE any cadence conversion, which is the whole point:
+    a file-watch request must never reach a component whose only output shape is a cron expression.
+    An explicit `kind`+`spec` bypasses routing for a caller that already knows.
+
+    `cadence_to_cron` is injected (defaulting to the shipped `nl_to_cron`) so every branch of this
+    function is testable without a model — the same seam `ScheduleService` uses for `_on_job` and
+    the executor uses for its runner.
+    """
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.nl_kind import route
+
+    if not (name or "").strip():
+        return ToolResult(False, "Error: name is required.")
+
+    resolved_spec = dict(spec or {})
+    because = ""
+    if kind:
+        resolved_kind = kind
+    else:
+        routed = route(when)
+        if not routed.ok:
+            # The refusal is the RESULT, phrased for the user. Defaulting an unroutable request to
+            # a schedule is how "when a file changes" becomes a per-minute poll.
+            return ToolResult(False, f"Error: {routed.error}", {"when": when})
+        resolved_kind, because = routed.kind, routed.because
+        resolved_spec = {**routed.spec, **resolved_spec}
+        if routed.cadence and "expr" not in resolved_spec and "at" not in resolved_spec:
+            converter = cadence_to_cron or _default_cadence_to_cron
+            expr, err = converter(routed.cadence)
+            if err:
+                return ToolResult(False, f"Error: {err}", {"cadence": routed.cadence})
+            resolved_spec = {"kind": "cron", "expr": expr, **resolved_spec}
+
+    if created_by == "agent":
+        active = _active_agent_count(store)
+        if active >= MAX_AGENT_TRIGGERS:
+            # Decision 5d's cap. Refusing with the count and the remedy, because "limit reached"
+            # without a number leaves the user unable to tell what to pause.
+            return ToolResult(
+                False,
+                f"Error: {active} agent-created automations are already active "
+                f"(cap {MAX_AGENT_TRIGGERS}). Pause or delete one first.",
+                {"active": active, "cap": MAX_AGENT_TRIGGERS},
+            )
+
+    if message and not workflow:
+        workflow = {"provider": "run-prompt", "config": {"message": message}}
+    if not workflow:
+        return ToolResult(False, "Error: give a message or a workflow for the automation to run.")
+
+    trigger = Trigger(
+        id=_unique_id(store, slug_for(name, resolved_kind)),
+        name=name.strip(),
+        kind=resolved_kind,
+        enabled=True,
+        created_by=created_by,
+        spec=resolved_spec,
+        workflow=dict(workflow),
+    )
+    saved = store.upsert(trigger)
+
+    # §4 + decision 5d: ANNOUNCED, not silent. The routing reason rides along so a wrong route is
+    # correctable by the user instead of mysterious.
+    lines = [f"Created automation '{saved.name}' ({saved.id}), kind {saved.kind}."]
+    if because:
+        lines.append(f"  {because}")
+    if resolved_spec.get("expr"):
+        lines.append(f"  cron: {resolved_spec['expr']}")
+    if resolved_spec.get("paths"):
+        lines.append(f"  watching: {', '.join(resolved_spec['paths'])}")
+    if created_by == "agent":
+        lines.append(
+            f"  I created this for you — it is active now and visible on the Automations page "
+            f"({_active_agent_count(store)}/{MAX_AGENT_TRIGGERS} agent-created)."
+        )
+    return ToolResult(True, "\n".join(lines), {"trigger": saved.to_dict()})
+
+
+def _default_cadence_to_cron(cadence: str) -> tuple[str, str]:
+    """Bridge to the shipped `nl_to_cron` from this synchronous dispatch.
+
+    Mirrors `mcp_schedule._nl_to_cron_blocking` rather than inventing a second async bridge: the
+    two would drift, and this one is already proven against a running loop.
+    """
+    import asyncio
+
+    from personalclaw.nl_to_cron import nl_to_cron
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(nl_to_cron(cadence))
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        return pool.submit(asyncio.run, nl_to_cron(cadence)).result(timeout=60)
+
+
+def list_automations(store: Any, *, kind: str = "", state: str = "") -> ToolResult:
+    """`automation_list` — §4: "includes health rollups".
+
+    Broken rows are INCLUDED. `store.load()` keeps a row it could not parse (S87's lenient-parse
+    contract), and hiding it here would make a broken automation invisible in the one place an
+    agent looks to debug why nothing fired.
+    """
+    rows = store.load()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        trigger = row.trigger
+        if kind and trigger.kind != kind:
+            continue
+        if state == "active" and not trigger.enabled:
+            continue
+        if state == "paused" and trigger.enabled:
+            continue
+        out.append(
+            {
+                "id": trigger.id,
+                "name": trigger.name,
+                "kind": trigger.kind,
+                "enabled": trigger.enabled,
+                "created_by": trigger.created_by,
+                "health": trigger.health_status,
+                "runs": trigger.run_count,
+                "next_fire_at": trigger.next_fire_at,
+                "last_error": trigger.last_error_summary,
+                "broken": [i.message for i in row.errors],
+            }
+        )
+    if not out:
+        return ToolResult(True, "No automations match.", {"automations": []})
+    lines = []
+    for a in out:
+        flag = "" if a["enabled"] else " [paused]"
+        broken = f" ⚠ {a['broken'][0]}" if a["broken"] else ""
+        health = f" health={a['health']}" if a["health"] else ""
+        lines.append(f"{a['id']} — {a['name']} ({a['kind']}){flag}{health}{broken}")
+    return ToolResult(True, "\n".join(lines), {"automations": out})
+
+
+def update(store: Any, *, trigger_id: str, patch: dict[str, Any]) -> ToolResult:
+    """`automation_update` — patch an existing automation through the allowlist.
+
+    A rejected key is REPORTED, not dropped silently: an agent that thinks it changed
+    `health_status` and got no error would keep believing a stale model of the automation.
+    """
+    row = store.get(trigger_id)
+    if row is None:
+        return ToolResult(False, f"Error: no automation with id {trigger_id!r}.")
+    rejected = sorted(set(patch) - PATCHABLE)
+    applied = {k: v for k, v in patch.items() if k in PATCHABLE}
+    if not applied:
+        return ToolResult(
+            False,
+            f"Error: nothing to update. Not settable here: {', '.join(rejected) or 'none given'}.",
+            {"rejected": rejected},
+        )
+    trigger = row.trigger
+    for key, value in applied.items():
+        setattr(trigger, key, value)
+    saved = store.upsert(trigger)
+    text = f"Updated {saved.id}: {', '.join(sorted(applied))}."
+    if rejected:
+        text += f"\n  Ignored (not settable via this tool): {', '.join(rejected)}."
+    return ToolResult(True, text, {"trigger": saved.to_dict(), "rejected": rejected})
+
+
+def set_paused(store: Any, *, trigger_id: str, paused: bool) -> ToolResult:
+    """`automation_pause` / `automation_resume`.
+
+    Resume goes through `store.set_enabled`, which REFUSES to enable a row that failed to parse
+    (S87). That refusal is surfaced rather than swallowed: silently leaving a "resumed" automation
+    disabled is the class of lie this program keeps hunting.
+    """
+    row = store.get(trigger_id)
+    if row is None:
+        return ToolResult(False, f"Error: no automation with id {trigger_id!r}.")
+    saved = store.set_enabled(trigger_id, not paused)
+    if saved is None:
+        # 🔴 MEASURED: `set_enabled` returns None — not a trigger with `enabled` unchanged — when it
+        # refuses a broken row (S87). My first draft compared `saved.enabled`, a branch that could
+        # never run, so a refused resume would have reported the generic "could not change" with no
+        # hint that the row has a parse error the user must fix first.
+        if row.errors:
+            return ToolResult(
+                False,
+                f"Error: {trigger_id} could not be resumed — it has a parse error "
+                f"({row.errors[0].message}). Fix it first.",
+                {"errors": [i.message for i in row.errors]},
+            )
+        return ToolResult(False, f"Error: could not change {trigger_id!r}.")
+    return ToolResult(
+        True,
+        f"{'Paused' if paused else 'Resumed'} {saved.id} ({saved.name}).",
+        {"trigger": saved.to_dict()},
+    )
+
+
+def delete(store: Any, *, trigger_id: str, confirm: bool = False) -> ToolResult:
+    """`automation_delete` — §4: `(id, confirm: true)`.
+
+    The confirm flag is enforced, not decorative. Deleting an automation the user built and cannot
+    recover is exactly the irreversible action a tool call should not be able to take by accident.
+    """
+    if not confirm:
+        return ToolResult(
+            False,
+            f"Error: deleting {trigger_id!r} needs confirm: true. "
+            "Pause it instead if you might want it back.",
+        )
+    row = store.get(trigger_id)
+    if row is None:
+        return ToolResult(False, f"Error: no automation with id {trigger_id!r}.")
+    name = row.trigger.name
+    store.delete(trigger_id)
+    return ToolResult(True, f"Deleted {trigger_id} ({name}).", {"deleted": trigger_id})
+
+
+#: Gates a MANUAL fire may skip, per §4: "bypasses min-interval + max_runs_per_hour, never rate
+#: floors". `quiet` and `duty` are the per-trigger cadence limiters — the user asking for a run
+#: right now has overridden their own quiet hours by definition. Everything absent from this set is
+#: enforced on a manual fire exactly as on a scheduled one.
+MANUAL_BYPASSES: frozenset[str] = frozenset({"quiet", "duty"})
+
+#: 🔴 Gates a manual fire may NEVER skip, spelled out as data so the intent survives a refactor.
+#: `screen` is the prompt-injection boundary (criterion 6) and `capability` is the frozen action
+#: set — a "the user asked for it" bypass on either would make the trust boundary optional, which
+#: is precisely the escalation route criterion 6 is written against. `budget` stays because §4 says
+#: "never rate floors": a manual fire that could spend past the cap would make the cap advisory.
+MANUAL_NEVER_BYPASSES: frozenset[str] = frozenset({"screen", "capability", "budget", "claim"})
+
+
+def manual_gate_plan(dry_run: bool = False) -> dict[str, Any]:
+    """Which gates a manual `automation_run` skips and which still apply.
+
+    Returned as data (and asserted in tests against `firepath.GATE_ORDER`) so the bypass set can
+    never silently grow to include `screen` or `capability`. A bypass list that drifted into the
+    trust boundary is the kind of change that reads as a small convenience in a diff.
+    """
+    from personalclaw.triggers.firepath import GATE_ORDER
+
+    enforced = [g for g in GATE_ORDER if g not in MANUAL_BYPASSES]
+    return {
+        "bypassed": [g for g in GATE_ORDER if g in MANUAL_BYPASSES],
+        "enforced": enforced,
+        "dry_run": bool(dry_run),
+        # A dry run must not execute, so it stops after the gate walk. Reported explicitly because
+        # "dry run" that silently ran would be the worst possible surprise.
+        "executes": not dry_run,
+    }
+
+
+def run(
+    store: Any,
+    *,
+    trigger_id: str,
+    dry_run: bool = False,
+    runner: Any = None,
+) -> ToolResult:
+    """`automation_run` — §4: "(id, dry_run?) — manual fire / observe-mode replay".
+
+    A DISABLED automation still runs manually: pausing means "stop firing on your own", and
+    refusing a hand-driven run of a paused automation would remove the main way a user tests one
+    before re-enabling it. Reported in the result so nobody mistakes it for a resume.
+
+    `runner` is injected — this tool does NOT own the turn (S90 does). A `dry_run` never calls it
+    at all, which is the property that makes observe-mode safe to offer.
+    """
+    row = store.get(trigger_id)
+    if row is None:
+        return ToolResult(False, f"Error: no automation with id {trigger_id!r}.")
+    if row.errors:
+        return ToolResult(
+            False,
+            f"Error: {trigger_id} has a parse error and cannot run " f"({row.errors[0].message}).",
+            {"errors": [i.message for i in row.errors]},
+        )
+    plan = manual_gate_plan(dry_run)
+    trigger = row.trigger
+    lines = [
+        f"{'Dry run' if dry_run else 'Manual run'} of {trigger.id} ({trigger.name}).",
+        f"  gates enforced: {', '.join(plan['enforced'])}",
+        f"  bypassed (manual): {', '.join(plan['bypassed']) or 'none'}",
+    ]
+    if not trigger.enabled:
+        lines.append("  note: this automation is paused — running it here does not re-enable it.")
+    if dry_run:
+        lines.append("  nothing was executed.")
+        return ToolResult(True, "\n".join(lines), {"plan": plan, "trigger": trigger.to_dict()})
+    if runner is None:
+        # Honest refusal rather than a fabricated success. "Launched" with nothing behind it is the
+        # fire-and-forget lie S90's executor was written to keep out of this codebase.
+        lines.append("  no runner is wired in this context, so nothing was executed.")
+        return ToolResult(False, "\n".join(lines), {"plan": plan})
+    result = runner({"trigger_id": trigger.id, "workflow": dict(trigger.workflow)})
+    lines.append(f"  result: {result}")
+    return ToolResult(True, "\n".join(lines), {"plan": plan, "result": result})
+
+
+def _same_trigger(record_id: str, wanted: str) -> bool:
+    """Whether a history row belongs to this trigger, across the two id namespaces.
+
+    🔴 MEASURED, and it made the first draft return an empty feed for a trigger with real runs.
+    `history.schedule_run_to_record` synthesizes `schedule:<job_id>` when the caller does not pass
+    an explicit `trigger_id`, so a store id of `file:notes` arrives as `schedule:file:notes`. An
+    equality check silently reported "no recorded runs yet" for an automation that had run — the
+    worst possible answer for a tool whose whole purpose is letting an agent self-debug.
+
+    Matching on the suffix as well as equality keeps both namespaces readable without teaching this
+    tool the legacy prefix vocabulary.
+    """
+    if not record_id or not wanted:
+        return False
+    return record_id == wanted or record_id.endswith(f":{wanted}")
+
+
+def history(
+    store: Any,
+    *,
+    trigger_id: str,
+    n: int = 10,
+    schedule_runs: list[dict[str, Any]] | None = None,
+    hooks: list[Any] | None = None,
+    event_triggers: list[Any] | None = None,
+) -> ToolResult:
+    """`automation_history` — §4: "run/fire rows incl. typed outcomes (agents self-debug)".
+
+    Projects through S84's `unified_feed` rather than a second projection, so a `file` trigger, a
+    hook and a cron report the SAME record shape here as in the Runs inbox (criterion 4).
+
+    **Measured, and it corrected this function's first draft:** `history` exposes no reader — no
+    `recent_fires`, no store. `unified_feed` is a pure projection over source rows the CALLER
+    supplies. So the sources are parameters, which is also what makes the filtering testable
+    without a populated home. A caller with no sources gets an honest "no runs yet" rather than a
+    fabricated empty feed that looks authoritative.
+    """
+    row = store.get(trigger_id)
+    if row is None:
+        return ToolResult(False, f"Error: no automation with id {trigger_id!r}.")
+    from personalclaw.triggers.history import feed_response, unified_feed
+
+    records = unified_feed(
+        schedule_runs=schedule_runs,
+        hooks=hooks,
+        event_triggers=event_triggers,
+        limit=max(1, n) * 10,
+    )
+    mine = [r for r in records if _same_trigger(r.trigger_id, trigger_id)][: max(1, n)]
+    if not mine:
+        return ToolResult(
+            True,
+            f"{trigger_id} has no recorded runs yet.",
+            {"trigger_id": trigger_id, **feed_response([])},
+        )
+    # `started_at`/`scheduled_for`, not a `fired_at` — measured against the real `FireRecord`. A
+    # scheduled-but-suppressed row has no start time, so the scheduled slot is the honest fallback.
+    lines = [
+        f"{r.started_at or r.scheduled_for or '?'} {r.outcome}"
+        + (f" — {r.reason}" if r.reason else "")
+        for r in mine
+    ]
+    return ToolResult(
+        True,
+        f"{trigger_id} — last {len(mine)} run(s):\n" + "\n".join(lines),
+        {"trigger_id": trigger_id, **feed_response(mine)},
+    )
