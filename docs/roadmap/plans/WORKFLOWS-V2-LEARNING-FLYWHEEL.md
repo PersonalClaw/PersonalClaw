@@ -831,3 +831,70 @@ limiter" is ordinary vocabulary. Both directions are pinned by parameterized tes
   decisions. The `skipped(reason)` LEDGER WRITE is likewise the caller's: `Skip` is the vocabulary it
   will use. §3.3's machine-checkable lesson form (`check_command`, failure capsules) needs the lesson
   entity extension, which is a later step's schema change.
+
+### S75 — The Proposal Inbox and the accept gate (48 tests) — DONE
+
+§7's criterion 1 has two halves: one inbox across all six kinds with provenance, evidence manifests and
+risk-tier metadata — **and the model cannot accept its own proposals under any trust mode**. The second
+is load-bearing, and this session is where it became a control rather than a coincidence.
+
+**🔴 THE HARD INVARIANT WAS HOLDING BY ABSENCE.** `proposals.accept()` takes `(pid, installer=...)` and
+NOTHING in it knew who was accepting — no actor, no caller, no trust check. Grepped: no agent tool calls
+it today, which is the only reason the invariant held. **One new MCP tool would have removed it
+silently, with no test failing.** `require_human` is now called from inside the real `accept()` and
+`reject()`, and `test_the_real_accept_refuses_an_agent` drives the actual path rather than the decision
+in isolation.
+
+Gate decisions, each with the failure it prevents:
+
+- **The ENGINE is refused too**, not just the agent. S56 gives the engine authority to record a task
+  outcome because it OBSERVED the work — that is not authority to install autonomously-authored
+  behaviour, and an engine that could accept would make every gate upstream of it decorative.
+- **An UNKNOWN actor is denied, never assumed human.** The failure directions are not symmetric: denying
+  a human costs one click, while admitting an unrecognized caller is the hole this closes.
+- **There is deliberately NO trust parameter.** §7 says "under ANY trust mode", and a gate a mode could
+  relax is a gate whose invariant is a default. A test asserts the signature has no
+  `trust`/`yolo`/`force`/`override`.
+- **Reject is gated too**, for a subtler reason: an agent that could reject would clear its own bad
+  proposals from the queue before a human read them, and §2.2's rejection exemplars would silently stop
+  accumulating.
+- **Filing stays open to all three actors.** The whole design depends on non-human proposers; only the
+  DECISION is human-only, and separating `can_file` from `require_human` makes that asymmetry explicit
+  rather than implied.
+- **`actor` defaults to `user`**, so every existing human-facing caller is unaffected (746 existing tests
+  confirm) — a required parameter would have broken them all.
+- **A refused decision leaves the row PENDING** and writes a SEL `blocked` row. A blocked self-accept is
+  the signal that something calls the wrong path, and it would be invisible if only successes were
+  logged. The `Denial` enum keeps `self_accept` distinct from a generic permission denial: the first is
+  an incident, the second is a bug.
+- **The actor vocabulary is REUSED from S56's verified-done matrix**, which already carries the doctrine
+  ("the AGENT is a worker whose self-report is exactly what needs checking"). Two actor enums on one
+  machine would eventually disagree about who an `agent` is.
+
+Inbox decisions:
+
+- **`manual_only` sorts FIRST**, and an UNSCORED tier sorts above even that — burying destructive
+  proposals under a page of parameter tweaks is how one gets accepted by momentum, and an unrecognized
+  tier is the one case where nobody has judged the risk at all.
+- **Risk tier is metadata, never a lane** (§3.1: any auto tier is guardrail-violating). It orders,
+  filters, and bounds a bulk-accept CONTROL — every accept inside a bulk action still passes
+  `require_human` individually.
+- **A row needs provenance to be renderable.** A proposal whose source cannot be shown is one a reviewer
+  cannot weigh, and a queue of unweighable rows trains people to bulk-accept — defeating the invariant
+  while appearing to honour it. Unrenderable rows are REPORTED, not hidden: a missing provenance is a
+  proposer bug, and quietly dropping the row makes that bug invisible.
+- **`manifest_valid=false` still appears in the queue** (§3.1's lenient-but-recording), and
+  `flagged_only` is the filter that finds them — a flag nobody can filter to is a flag nobody sees.
+- **A defect found while probing:** a row with no provenance came back `bulk_acceptable=True` while
+  `renderable=False`, so a row the UI cannot honestly show was eligible for a control that accepts
+  without opening it. Bulk-accepting something a reviewer could not have read is the human-installs
+  invariant in name only. `renderable` is now a bulk precondition.
+- **A second defect:** the unknown-tier sort rank collided with a rank a known tier produces, so an
+  unscored proposal sorted BELOW `manual_only` instead of above it.
+
+- **NOT DONE (by scope):** the Learning page FE and the `/api/learning/proposals` routes. The unified
+  queue has no HTTP surface at all today (measured — only the older per-kind skills queue does), so the
+  API + page is its own session; this one owns the view model and the gate they will call. The
+  `risk_tier` field is passed into the projection rather than stored on `Proposal`, because only a
+  `template_diff` carries typed ops to derive one and stamping a meaningless tier on a lesson would make
+  the filter lie.
