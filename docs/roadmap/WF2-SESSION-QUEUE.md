@@ -1828,8 +1828,11 @@ the queue** — declared work, not new scope (see the ruling in the exhausted re
 | S84 | The cross-kind **run-history feed** was schedule-only; `FireRecord` was never constructed | AUTOMATION-SUBSTRATE crit 4 | ✅ DONE (#243) |
 | S85 | **`statusUrl` did not exist anywhere** — the notification→journal dead end (R18) | AUTOMATION-SUBSTRATE crit 10 | ✅ DONE (#244) |
 | S86 | **§3's fire path never existed** — 15 controls, zero live callers, no `service.py` | AUTOMATION-SUBSTRATE §3 (the order) | ✅ DONE (#245) |
+| S87 | **`triggers.json`** — the one store + the cron migration; found the `interval` data-loss bug | AUTOMATION-SUBSTRATE §1 + §6 step 2 | ✅ DONE (#246) |
 
-**BLOCKED (restated, now with the full picture) — the STORE and the SERVICE are one unbuilt foundation.**
+**PARTLY RESOLVED (S87) — the STORE is built; the SERVICE remains.** The claim below that the two are one unbuilt foundation was HALF WRONG: they are separate concerns and the service needs the store, not the reverse. S87 shipped `triggers.json` (#246) and found that the cron migration would have silently retired every interval cron. What remains is the runtime.
+
+**Original note, kept for the record —** the STORE and the SERVICE are one unbuilt foundation.**
 S83 found there is no unified trigger store; S86 found there is no `triggers/service.py` and that **every
 one** of the 15 trigger control modules has zero live callers. Sessions S62-S85 each recorded "NOT DONE (by
 scope): the service" — eight notes in the plan's execution log — and no queue row ever owned either piece.

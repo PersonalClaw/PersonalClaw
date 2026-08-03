@@ -1392,3 +1392,64 @@ Other decisions:
   service session is the hardest part to get right blind: it will call a tested ordering instead of
   re-deriving a 13-step sequence from prose and putting the fail-closed budget check on the wrong side of
   the claim lock.
+
+### S87 — `triggers.json`, the one store (35 tests) — DONE
+
+**§1's store, and §6 step 2's cron migration into it.** S83 and S86 both recorded the store as blocked;
+both were half right. They were right that the store and the SERVICE are separate concerns, and wrong to
+treat them as one unit — **the service needs the store, not the reverse.** Everything the store itself
+depends on was measured as already shipped, before this file existed:
+
+- `Trigger.to_dict()` + `parse_trigger()` round-trip **losslessly** (checked field by field: zero fields
+  fail to survive), so persistence needed no new serializer.
+- `parse_trigger` already never raises and already returns closest-match resolution (`'clok'` →
+  `closest='clock'`) — R15's entire requirement. A store that re-implemented validation would hold a
+  second opinion about what a valid trigger is.
+- `migrate_crons()` already consumes a raw `crons.json` dict and reports `lossless`/`unaccounted`.
+- `ScheduleService` already ships the exact fcntl-lock + atomic-write + mtime-`_sync` triad §1 names.
+
+**🔴 THE MIGRATION WOULD HAVE SILENTLY RETIRED EVERY INTERVAL CRON.** Found by driving the migration into
+the store rather than reading either module. `migrate.convert_job` emits `{kind: "interval",
+interval_secs}` for a legacy `every` cron — **deliberately**, and its docstring argues the case at length:
+"`{kind: cron}` is WRONG and `{kind: at}` is worse … would turn every recurring interval job into a
+one-shot that fires once and dies — the single most destructive possible mistranslation in this file."
+But `models.CLOCK_KINDS` was `{cron, at, sequence}` and never gained the member, so every migrated
+interval cron parsed with `unknown clock kind 'interval'`, landed `enabled=False`, and would have been
+retired by the migration whose whole purpose was preserving it. `interval_secs` was likewise not in
+`SPEC_KEYS['clock']`, so the row also warned on the very number that defines when it fires.
+
+**DEVIATION (recorded): §1.2's clock union widens from three members to four.** The plan's §1.2 lists
+`cron | at | sequence`; §6 promises a lossless migration. With three kinds those two cannot both hold,
+because `schedule.py`'s `every` is a real and common cron kind with no honest target. Measured against the
+OWNER's real store: **4 jobs, 1 of them `every`** — 25% data loss. The promise with data behind it wins,
+so the union widened rather than the migration lying. All 4 real jobs now migrate and parse clean.
+
+**A second silent no-op, in my own first draft.** I read `report.converted_rows`; the field is
+`converted`. So `written` was always 0 while `converted` said 1 — the migration reported success and
+persisted nothing. Now every converted row the entity refuses is RECORDED in `unparseable` with its
+errors, because a count that silently disagrees with reality is the worst possible outcome in the one path
+whose job is not losing the user's automations. That recording is also what would have surfaced the
+`interval` bug on its own.
+
+**The three §1 properties, each tested:**
+
+1. **A broken row never disappears.** `load()` returns every row including the malformed ones, each with
+   its issues; `enabled` is forced False. A store that dropped them would make an agent-authored typo
+   indistinguishable from a trigger the user never created — R15's "silently-dead trigger", except
+   unfixable because invisible.
+2. **A write never truncates.** Atomic tmp→rename under an exclusive lock, with a separate lock FILE
+   (locking `triggers.json` itself would break, since the rename invalidates a lock on the old inode).
+3. **A concurrent writer is never clobbered.** Every mutation re-reads under the lock — §6's carried-over
+   gotcha is that MCP tools write this store from another process, so a mutation built on a cached view
+   would silently delete a trigger created in chat seconds ago. Driven with two store instances.
+
+Also: `set_enabled` REFUSES to enable a row with parse errors (the service cannot dispatch it, and
+pretending to work is worse than being visibly broken) but still allows disabling one; the migration keeps
+`crons.json` on disk per §6's "old file read-only one release", since `verify-migration` needs both sides
+to diff; and it upserts rather than replacing, so it is idempotent and preserves hand-authored rows.
+
+- **NOT DONE (by scope):** the SERVICE — the loop, the WakeupDispatcher, the executor. The store existing
+  removes the blocker S83/S86 recorded; what remains is the runtime that reads it, calls S86's fire path,
+  and dispatches. Also not done: re-pointing the `/api/triggers` facade's three backends at this store
+  (§6's "the id namespace becomes the migration map"), which is a behaviour-visible cutover deserving its
+  own session.
