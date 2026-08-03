@@ -1832,8 +1832,17 @@ the queue** — declared work, not new scope (see the ruling in the exhausted re
 | S88 | **`TriggerService.tick`** — the loop's decisions; found the ISO-vs-epoch type seam | AUTOMATION-SUBSTRATE §3 + §3.1 | ✅ DONE (#247) |
 | S89 | **WakeupDispatcher** — inbox + wakeup; found `enqueue` drops idle-session payloads | AUTOMATION-SUBSTRATE §3.2 | ✅ DONE (#248) |
 | S90 | **The executor** — drain/run/classify; the substrate now runs END TO END | AUTOMATION-SUBSTRATE §3 + §1.3 | ✅ DONE (#249) |
+| S91 | **`automation verify-migration`** — §7 step 2's named cutover prerequisite; found `lossless: true` beside two silently-paused real automations | AUTOMATION-SUBSTRATE §7 step 2 + §8 | ✅ DONE (#250) |
 
-**RESOLVED (S87-S90) — the substrate is MECHANICALLY COMPLETE and runs end to end.**
+**RESOLVED (S87-S91) — the substrate is MECHANICALLY COMPLETE and runs end to end, and the
+cutover's named prerequisite now exists.** S91 shipped `personalclaw automation verify-migration`,
+which §7 step 2 names in the same breath as the migration and §8 lists as the migration-trust
+mitigation — S87's own docstring promised it by name and it did not exist. Driving it against a copy
+of the owner's real store found the gap it exists to close: four jobs migrate `lossless: true` and
+**two come out disabled** (`j-every`, a 5-minute interval, and `j-seq`, a 3-step `agent_sequence`).
+That is deliberate on the migration's part, but `lossless` beside two silently-stopped automations is
+technically accurate and practically misleading, so `VerifyReport.ok` is FALSE where `lossless` is
+TRUE. **Cutover (a) should now be gated on this command exiting 0.**
 `test_store_to_tick_to_dispatch_to_execute` drives store → tick → dispatch → execute with the LLM turn as
 the only injected piece. What remains is not mechanism but two behaviour-visible CUTOVERS, each its own
 session: (a) wiring the chain into gateway boot beside the live `ScheduleService` — both would fire the

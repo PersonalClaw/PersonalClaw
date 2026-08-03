@@ -1626,3 +1626,67 @@ Other decisions:
   re-pointing `/api/triggers`' three backends at the store (§6's "the id namespace becomes the migration
   map"). Each is a deliberate switch-over with user-visible risk, and each deserves its own session
   rather than riding along with the last mechanism.
+
+### S91 — `automation verify-migration`: §7 step 2's named cutover prerequisite (PR #250)
+
+**DONE.** §7 step 2 names the command in the same breath as the migration — "row-for-row cron
+migration (old file read-only one release; `personalclaw automation verify-migration` diff
+command)" — and §8 lists it as the mitigation for "Migration trust (crons are the most-loved
+automations)". S87 shipped the store and the migration and **its own docstring promised this
+command by name**; it did not exist. It is the plan's named prerequisite for the cutover, so it
+lands before the cutover rather than after.
+
+- **🔴 DISCOVERY — `lossless: true` beside two silently-paused real automations.** Driven against a
+  COPY of the owner's real `crons.json` (never the real home): four jobs migrate `lossless: true`
+  and **two come out `enabled=False`**. `j-every` (a 5-minute interval) and `j-seq` (a 3-step
+  `agent_sequence`) were `enabled=True` in the legacy file. That is NOT a bug —
+  `migrate.convert_job` pauses any row that produced a note, and its comment is right ("nothing
+  fires on a schedule the migration could not fully interpret … the opposite default would run a
+  half-understood automation unattended"). But `lossless: true` beside two silently-stopped
+  automations is **technically accurate and practically misleading**: a user reading "lossless"
+  concludes nothing needs doing while their 5-minute job has stopped. Closing exactly that gap is
+  why the plan put a diff command beside the migration instead of trusting the migration's own
+  summary. **Consequence for the cutover: gate step (a) on this command exiting 0, not on
+  `lossless`.**
+- **`VerifyReport.ok` is FALSE for a paused row where `migrate_crons`' `lossless` is TRUE.** The
+  deliberate divergence, pinned by
+  `test_a_paused_row_makes_verify_NOT_ok_even_though_the_migration_was_lossless`, which asserts
+  both verdicts in one test so the two cannot drift apart silently.
+- **Each paused row carries the migration's VERBATIM note.** "2 need review" sends a user hunting;
+  `j-every: legacy every has no trigger clock kind…` tells them what to do. Verbatim rather than
+  re-worded so the explanation cannot drift from the decision that caused it.
+- **Three things a `lossless` flag cannot say:** `paused` (was live, is not), `missing` (no
+  counterpart at all — the one true data-loss class), `field_drift` (per-row timing fields:
+  `skip_dates`, `timezone`, `strict_schedule`, `delete_after_run` — §1.3's quietly-losable class,
+  "a dropped `skip_dates` fires on a holiday and nobody knows why"). Plus `broken`, which needs its
+  own line because a row the entity refuses is `enabled=False` and therefore invisible to the
+  paused check (it was never enabled).
+- **Drift compares PRESENCE, not equality.** The migration legitimately renames (`strict_schedule`
+  → `strict`) and re-types (an epoch `at_ts` → an `at`), so demanding equal values would report
+  drift on every correctly-converted row. Driven both ways: `test_drift_is_detected_when_a_field_
+  really_is_absent` shows the check is capable of failing rather than merely never firing.
+- **An unreadable legacy file is not a clean migration.** `ok: False` plus a reason, distinct from
+  "no differences" — a check that never ran is not a check that passed, and reporting it as one is
+  how a user skips a check they think already passed.
+- **Nothing here writes.** A verify that mutated would be a migration, and the whole point is being
+  safe to run before deciding. `test_verify_writes_nothing` pins both files byte-for-byte, and the
+  render states the legacy file was not modified so the user need not trust that silently (§7's
+  "old file read-only one release"). Confirmed after the real-store probe: the owner's
+  `crons.json` was byte-identical afterwards.
+- **An id-less legacy row is reported, not skipped.** `migrate_crons` refuses it ("a generated id
+  would be un-recognizable against the user's file"), so the diff has to say one existed.
+- **The CLI exits 1 when attention is needed**, 0 when clean, `--json` for a script. A read-only
+  diff that always exited 0 could not GATE anything, and gating the cutover is precisely why §8
+  lists this command as the migration-trust mitigation.
+- **🔴 LANDMINE for any future CLI test — `python -m personalclaw.cli` exits 0 doing NOTHING.** The
+  module has no `__main__` guard, so `main()` never runs. A test invoking it that way would pass
+  against a command that does not exist. These tests drive the real console entry point
+  (`.venv/bin/personalclaw`), with a skipif for environments where it is not installed.
+- **DEVIATION (trivial):** reverted an unrelated regenerated `docs/design/consistency-audit.json`
+  (timestamp + file counts picking up earlier stack files) to keep the commit atomic.
+
+25 tests. Gate: `make lint` clean, **15410 passed**, 0 failed. Merge-clean against `origin/main`.
+
+- **NOT DONE (by scope, unchanged):** the two behaviour-visible CUTOVERS — (a) wiring the chain into
+  gateway boot beside the live `ScheduleService`, now gateable on `verify-migration` exiting 0, and
+  (b) re-pointing `/api/triggers`' three backends at the store.
