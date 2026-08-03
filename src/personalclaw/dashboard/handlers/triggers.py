@@ -140,6 +140,43 @@ def _last_run_status(state: DashboardState, job_id: str) -> str | None:
         return None
 
 
+def _schedule_rows(state: DashboardState) -> list[dict[str, Any]]:
+    """Every schedule trigger, read from the unified store (§6 re-point — S99).
+
+    The store is the source of truth once the boot migration has run (S98). The legacy service is
+    consulted ONLY when the store holds no clock rows, which happens on a home whose migration has
+    not run yet — reading the old file for one more boot is strictly better than showing a user zero
+    schedules. That fallback is what retires when `ScheduleService` does.
+
+    Names/results are redacted on the way out exactly as `_serialize_schedule` did: the projection
+    is a data mapping and knows nothing about credential scrubbing.
+    """
+    import time as _time
+
+    from personalclaw.triggers.schedule_view import to_schedule_row
+
+    store = _trigger_store()
+    now = _time.time()
+    clock_rows = [row for row in store.load() if row.trigger.kind == "clock"]
+    if clock_rows:
+        out: list[dict[str, Any]] = []
+        for row in clock_rows:
+            projected = to_schedule_row(
+                row.trigger,
+                now=now,
+                base_dir=store.base_dir,
+                last_run_status=_last_run_status(state, row.trigger.id) or "",
+            )
+            projected["name"] = _redact(projected.get("name") or "")
+            for key in ("message", "last_error", "schedule"):
+                if projected.get(key):
+                    projected[key] = _redact(str(projected[key]))
+            projected["broken"] = [i.message for i in row.errors]
+            out.append(projected)
+        return out
+    return [_serialize_schedule(state, job) for job in state.crons.list_jobs(include_disabled=True)]
+
+
 def _serialize_schedule(state: DashboardState, job) -> dict[str, Any]:
     from personalclaw.schedule import compute_next_run_ts, format_schedule, get_local_tz
 
@@ -276,8 +313,13 @@ async def api_triggers(request: web.Request) -> web.Response:
 
     triggers: list[dict[str, Any]] = []
     if want in ("", _SCHEDULE):
-        for job in state.crons.list_jobs(include_disabled=True):
-            triggers.append(_serialize_schedule(state, job))
+        # 🔴 §6's re-point: the schedule list is read from the UNIFIED STORE, not `state.crons`.
+        # Verified before switching — after the boot migration (S98) the store lists exactly the
+        # same job ids the legacy service does, so nothing vanishes from the page. Falls back to
+        # the legacy service only when the store holds no clock rows (a home whose migration has
+        # not run yet): showing a user zero schedules would be worse than reading the old file
+        # for one more boot.
+        triggers.extend(_schedule_rows(state))
     if want in ("", _LIFECYCLE):
         used_by = _used_by_index()
         for hook in _hook_store(state).list_all():
