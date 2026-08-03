@@ -176,7 +176,7 @@ mandatory.
 | 74 | Deterministic detector chain (free at both extremes, typed skip reasons) + closed FailureMode enum; FOUND the env-failure deny-filter catching 1 of 4 → now 12/12, 0 false positives | G37 | ✅ DONE (#230) |
 | 75 | Proposal Inbox view model + THE accept gate — found the "model cannot accept its own proposals" invariant holding only by ABSENCE of a caller; now enforced in the real accept()/reject() | G38 | ✅ DONE (#231) |
 | 76 | Week-at-a-glance panel — outcome records + proposal ids were already shipped; the real gap was that `health()` CANNOT SEE A SILENT DAY (absent day == healthy day) | G38 | ✅ DONE (#232) |
-| 77 | Accountability: EFFECTIVE…HARMFUL verdicts from ledger outcomes, auto-filed revert proposals; incognito capture gate closed + regression-tested | G39 | TODO |
+| 77 | Predict-then-verify 5-way verdicts + HARMFUL-only auto-reverts + proposer trust; incognito gate is CLOSED but SESSION_END/RUN_END have zero callers (gap now pinned) | G39 | ✅ DONE (#233) |
 
 ---
 

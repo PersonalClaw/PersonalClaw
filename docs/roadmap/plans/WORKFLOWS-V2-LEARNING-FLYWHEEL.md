@@ -936,3 +936,71 @@ panel.
   recorded the same finding for the proposal queue), so the API + page is one session covering both
   surfaces rather than two half-built ones. `week()` returns a fully-serialized shape with a
   fields-exact test, so that session wires rather than designs.
+
+### S77 — Predict-then-verify attribution, auto-filed reverts, the incognito gate (32 tests) — DONE
+
+The last spoke, and the one that closes the loop: everything upstream FILES proposals, and this measures
+what happened after a human accepted one. §3.1's rule is predict-then-verify rather than measure-after —
+an accepted proposal DECLARED which failures it would fix, so the verdict compares prediction against
+outcome instead of looking at a delta and inventing a story.
+
+**Measured before writing.** `refiner.canary_verdict` (S73) already returns the five verdict names from
+a scalar before/after, so this reuses that vocabulary rather than forking it — two verdict scales would
+make one proposal's history unreadable when it passed through both paths. And `learning/gate.py`'s
+permission half is genuinely CLOSED: probed across all three cadences with both an idle turn and a busy
+one carrying a correction, a restricted (incognito) session is refused every time.
+
+**🔴 WHAT IS NOT CLOSED IS COVERAGE.** `Cadence.SESSION_END` and `Cadence.RUN_END` are declared with
+**zero live call sites** — only `PER_TURN` has any. A gate cannot suppress a path nobody routes through
+it, which is this program's recurring "present and inert" class applied to a privacy control.
+`assert_gate_covers_cadences` turns that into a checkable fact and `test_the_uncovered_cadences_are_pinned`
+pins the current gap set, so wiring one — or adding a fourth cadence — must be a deliberate edit rather
+than a silent hole.
+
+**🔴 AND THE CHECKER FOUND ITSELF.** Its first version matched its own docstring's `Cadence.SESSION_END`
+mention and reported ZERO gaps for two cadences that genuinely had no callers — a coverage checker
+certifying coverage by finding its own prose. Exactly the self-referential trap S67's fire-site scan fell
+into, one module over. `test_the_coverage_checker_does_not_find_ITSELF` is the regression.
+
+The verdict ladder, and why each rung sits where it does:
+
+- **PENDING** under 3 post-acceptance runs. Not a guess: one run is an anecdote, and a change declared
+  effective on one run is a lucky run made permanent.
+- **HARMFUL** only when something regressed AND nothing predicted was fixed. Damage with no upside is
+  the unambiguous case, and the only one that auto-files a revert.
+- **MIXED** when regressions coexist with real fixes — deliberately NOT harmful, because the change did
+  something the user wanted, so reverting is their call rather than an automatic rollback.
+- **INEFFECTIVE** when nothing moved: clutter, not damage. Keeping it distinct is what keeps the revert
+  queue readable.
+- **A change with NO predictions can never be EFFECTIVE.** Without a prediction there is nothing to have
+  been right about, and letting it reach EFFECTIVE would reward filing manifests with empty
+  `predicted_fixes` — the shortcut §3.1's lenient validation makes tempting.
+
+Further decisions:
+
+- **A cluster present only in `after` counts as a regression.** It is a failure the change INTRODUCED —
+  the most important kind, and the one a `before`-keyed loop misses entirely.
+- **`unattributed_regressions`** is §3.1's "scariest class, surfaced loudly": what broke that nobody
+  predicted. A change scored only on its own predictions looks fine while having broken something
+  adjacent.
+- **Rates, not counts.** Five failures in five hundred runs is not worse than five in ten, and a
+  count-based comparison would call a busier week a regression.
+- **Only HARMFUL owes a revert.** Auto-filing for everything that did not help would bury the queue —
+  which is how the one revert that mattered gets skipped. The revert body NAMES the regressed clusters,
+  because a proposal saying only "this made things worse" is un-reviewable.
+- **A revert is a PROPOSAL, never an application.** Asserted against the source (no `accept(`, no
+  installer, no writes): "mechanical" in §3.1 means the proposal appears without anyone noticing the
+  regression, not that the rollback happens on its own — and S75's gate refuses a non-human accept
+  regardless.
+- **`harm_rate` is over DECIDED verdicts, not total.** A proposer with many PENDING changes would
+  otherwise look safer than one whose changes have been measured, inverting the signal exactly when a
+  new proposer starts filing. Proposers sort worst-first, because the useful question is which one to
+  trust less.
+- **An unknown verdict is counted under its own name, not dropped.** A verdict this module does not
+  recognize is a drift signal, and discarding it hides the drift.
+
+- **NOT DONE (by scope):** wiring `SESSION_END`/`RUN_END` through the gate. Each needs the cadence's own
+  call site (a session-teardown hook and the run-end capture pass), which belongs with those subsystems
+  — and the pinned gap test is what makes the omission visible rather than assumed-done. The curator
+  tick that computes deltas from the Run Ledger and calls `attribute` is likewise a call site; this
+  session owns the decision it will apply.
