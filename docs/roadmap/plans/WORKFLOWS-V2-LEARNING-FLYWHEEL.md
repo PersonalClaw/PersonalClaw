@@ -564,3 +564,71 @@ Frontmatter gains an optional declaration so resources are addressable without a
   them now would mean writing against a contract step 3 defines. `lessons.jsonl` deletion
   is step 2 by the plan's own re-tiering. The staging tier is wired to the per-turn cadence;
   session-end and run-end consume the same gate/hygiene/staging API when their steps land.
+
+### S71 — Per-arm precision, threshold tuning from data, Beta-Binomial trust (43 tests) — DONE
+
+§7 criterion 7 has three clauses and all three are now measurements: per-arm surfaced-vs-used precision
+is reportable per entity kind, threshold profiles are tunable from data, and a muted chip visibly
+lowers an entity's trust posterior. The plan's own reasoning drove the shape — "unenforced 'helpful'
+scores stay ornamental forever", so `used` is only ever a mechanically-observed fact.
+
+**Measured before writing.** Two of the three pieces already existed: `learning/surfacing.py` carries
+`THRESHOLD_PROFILES` with the deliberate 0.55/0.62 split, and `learning/usage.py` already persists
+`surfaced`/`used`/`successes`/`failures` per entity. The gap was the middle — `Candidate` had no `arm`,
+so nothing could attribute a surfacing to the path that produced it, and nothing computed a posterior
+from counts already on disk. So this session added attribution + statistics and deliberately did NOT
+add a second threshold table or a second usage store.
+
+**🔴 A DIVERGENCE I SHIPPED AND THEN CAUGHT BY COMPARING.** `memory_push.ARM_CONFIDENCE` already
+existed (`alias`/`exact_name`/`suffix`), with a docstring recording that "how the name was recognised
+IS the evidence". My first draft wrote a second table — and it disagreed immediately: `exact_name` at
+0.90 where the shipped table says 0.80. Two confidence scales for one arm name is precisely the drift
+this program keeps finding. The shipped table is now IMPORTED and the retrieval-only arms
+(`exact_title`/`path`/`keyword`/`embedding`) extend it, pinned by
+`test_the_shipped_arm_table_is_imported_not_restated`. **DEVIATION:** the plan says `exact_name ~0.9`;
+the shipped calibration says 0.8 and wins — a plan number does not override a value already in use.
+
+**🔴 A DEFECT FOUND BY MEASURING `fuse`, NOT BY READING IT.** With two sources finding the SAME entity
+at the same rank, RRF ties — and the survivor was whichever source dict happened to be iterated FIRST.
+So an entity matched by both exact-name and embedding was attributed to an arm chosen by insertion
+order, and the per-arm precision report would credit the wrong path. Fixed by carrying the STRONGEST
+arm across the dedup, which is the rule `memory_push` already applies ("being named explicitly once is
+not undone by also being a vector neighbour"), compared through `arm_confidence` rather than a second
+precedence list.
+
+**A second finding the probe surfaced.** `skill` had a 90%-precision `exact_name` arm and a 16%
+`embedding` arm, which average to a healthy-looking 49% — so no threshold moved and the report read as
+fine. A kind's threshold genuinely IS one number (it gates the fused score), so the aggregate is the
+right input for it; the fix is that the reason now NAMES the spread and points at the weak arm's own
+confidence as the actual remedy. `test_a_kind_whose_arms_disagree_sharply_says_so` pins it, and a
+one-sample arm cannot trigger the alert (it would otherwise fire forever at 100%).
+
+Decisions, each with the failure it prevents:
+
+- **Beta-Binomial, not a ratio.** A raw used/surfaced ratio says 1.0 after one lucky hit, so a
+  brand-new entity would outrank a proven one and one bad turn would condemn a good lesson. Ranking is
+  on the LOWER BOUND, so ignorance costs something: a 1-of-1 entity ranks below a 27-of-30 one despite
+  a better naive ratio. `precision_ratio()` exposes the naive number deliberately — having it visible
+  is what makes the difference legible.
+- **`LOWER_BOUND_Z = 1.0`, not 1.96.** At 95% a promising entity with 3 uses ranks below one with 30
+  mediocre ones, which stalls the flywheel this is supposed to steer.
+- **A mute is a full negative observation**, not a display flag — §7's clause says it must VISIBLY
+  lower trust, and anything less makes muting a gesture the numbers ignore. `apply_mute` returns a NEW
+  posterior so a caller cannot drop the result and silently lose the change.
+- **`INSUFFICIENT` is a distinct verdict from `POOR`.** They demand opposite responses (tighten vs
+  collect more), and collapsing them is how a threshold gets tuned on noise. Nothing is tuned below
+  `MIN_SAMPLES_FOR_TUNING = 20`.
+- **Proposals only, never applied.** §2.5 says recalibration happens "empirically, not by taste" — and
+  the corollary is that it also does not happen automatically: the 0.55/0.62 split was calibrated, so
+  overwriting it from a week of data would discard a real decision. A test asserts the live table is
+  unchanged after a proposal runs. A single proposal moves a threshold at most `MAX_THRESHOLD_STEP`.
+- **An unattributed surfacing is charged to the WEAKEST arm, never dropped.** Dropping would make the
+  report describe only the instrumented paths while claiming to describe surfacing as a whole.
+- **Counts are clamped**, so a `used` larger than `surfaced` (possible for an entity surfaced before
+  events existed) cannot produce a negative beta and a nonsense posterior.
+
+- **NOT DONE (by scope):** the `surfacing_events` TABLE and its 90d prune on the curator tick.
+  `per_arm_precision`/`build_report` take events as a list precisely so the store is a separate
+  concern — the same functions then serve the live report, a backfill over pruned history, and a test.
+  The arm is now on `Candidate` for producers to set; wiring each retrieval path to name its own arm
+  is per-path work in the modules that own those paths.

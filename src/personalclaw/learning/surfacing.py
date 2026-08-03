@@ -123,6 +123,13 @@ class Candidate:
     source_rank: int = 0
     salience: float = 0.0
     tier: Tier = Tier.L1
+    #: WHICH match path produced this candidate (LEARN-R4 / §2.5 — S71). Attribution is what makes
+    #: per-arm precision measurable: an exact-name hit and an embedding neighbour that both score
+    #: 0.7 are not equally trustworthy, and "a single scalar can't be calibrated per-arm". Empty
+    #: means unattributed, which `measure.per_arm_precision` charges to the WEAKEST arm rather
+    #: than dropping — so an un-instrumented path reads as weak instead of vanishing from its
+    #: own report.
+    arm: str = ""
 
     def text(self, tier: Tier) -> str:
         if tier is Tier.L2:
@@ -224,6 +231,22 @@ def score_candidate(cand: Candidate, query: str, intent: str = "default") -> flo
 # ── Fusion and diversification ──
 
 
+def _stronger_arm(left: str, right: str) -> str:
+    """The more trustworthy of two match arms (S71).
+
+    Compared by confidence rather than by name so the ordering follows the calibrated table instead
+    of a second hard-coded precedence list. An empty arm loses to any real one — unattributed is the
+    weakest possible evidence, not a tie.
+    """
+    if not left:
+        return right
+    if not right:
+        return left
+    from personalclaw.learning.measure import arm_confidence
+
+    return left if arm_confidence(left) >= arm_confidence(right) else right
+
+
 def fuse(sources: dict[str, list[Candidate]]) -> list[Candidate]:
     """Reciprocal-rank fusion across sources, then per-source diversification.
 
@@ -241,7 +264,20 @@ def fuse(sources: dict[str, list[Candidate]]) -> list[Candidate]:
         key = f"{cand.kind}\x1f{cand.key}"
         prior = fused.get(key)
         if prior is None or rrf > prior[0]:
+            # Carry the STRONGEST arm seen for this entity across the swap (S71). Measured: with two
+            # sources finding the same entity at the same rank, RRF ties and the winner was
+            # whichever source dict was iterated FIRST — so an entity matched by both exact-name
+            # and embedding was attributed by insertion order, and the per-arm precision report
+            # would credit the wrong path. Same rule `memory_push` already applies ("keep the
+            # STRONGEST arm seen"): being named explicitly once is not undone by also being a
+            # vector neighbour.
+            if prior is not None:
+                cand.arm = _stronger_arm(cand.arm, prior[1].arm)
             fused[key] = (rrf, cand)
+        elif cand.arm:
+            # The loser still carries evidence about HOW this entity was found; the survivor keeps
+            # the stronger of the two so no attribution is lost to a tie it did not win.
+            prior[1].arm = _stronger_arm(prior[1].arm, cand.arm)
 
     ordered = sorted(fused.values(), key=lambda pair: pair[1].salience, reverse=True)
     per_source: dict[str, int] = {}
