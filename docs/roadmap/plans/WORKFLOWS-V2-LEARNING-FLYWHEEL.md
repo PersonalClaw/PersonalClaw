@@ -898,3 +898,41 @@ Inbox decisions:
   `risk_tier` field is passed into the projection rather than stored on `Proposal`, because only a
   `template_diff` carries typed ops to derive one and stamping a meaningless tier on a lesson would make
   the filter lie.
+
+### S76 — Staging-tier observability: the week-at-a-glance panel (17 tests) — DONE
+
+**Measured before writing, and most of the session's scope was already shipped.** `record_flush`
+already persists all four `FlushOutcome` members AND `proposal_ids`; `health()` already computes an
+`all_ok_streak` over a window. So the honest remaining gap was narrow and specific:
+
+**🔴 `health()` CANNOT SEE A SILENT DAY.** It aggregates over the whole window, and an absent day
+contributes nothing to either the outcome counts or the streak — so a day where capture never ran is
+indistinguishable from a healthy day. That is the exact failure the staging tier exists to expose
+("a pass that crashes looks exactly like a quiet day"), surviving in the view built to expose it.
+`test_health_alone_cannot_see_a_silent_day` asserts the contrast directly: two windows with identical
+totals, one continuous and one with a two-day hole, are the same to `health()` and different in the
+panel.
+
+`StagingStore.week()` is the panel:
+
+- **Every day in the window gets a bucket, INCLUDING the empty ones.** Pre-seeded, because a gap that
+  vanishes from the list is a gap nobody sees. `silent_days` names them, and it is the alarming number:
+  no passes at all on a machine that was in use means capture did not run.
+- **`error_days` isolates which day broke** — "which day" is the question a maintainer actually asks,
+  and the windowed view can only say "two errors, somewhere".
+- **Proposal ids ride each bucket**, turning "a pass produced something" into "produced WHAT" so the
+  panel links straight to the Proposal Inbox rows a day generated. `produced` counts IDS, not passes:
+  one pass that filed three proposals produced three.
+- **Staged entries are bucketed separately from flushes.** A day that STAGED but never flushed is a
+  different failure from one that never ran — the signal arrived and nothing consumed it.
+- **Days bucket by LOCAL date, not by 86400-second slices.** A user reading "Tuesday" means their
+  Tuesday; a UTC-slice panel drifts hours off every reader's calendar.
+- **A malformed `proposal_ids` cell cannot empty the week.** The column is JSON text, and a hand-edited
+  or truncated row must not take out the whole panel — the observability surface failing silently would
+  be the same class of bug it exists to catch.
+- **`days=0` clamps to 1.** A caller passing zero wants today, not an empty panel.
+
+- **NOT DONE (by scope):** the FE panel and its route. There is no learning HTTP handler at all (S75
+  recorded the same finding for the proposal queue), so the API + page is one session covering both
+  surfaces rather than two half-built ones. `week()` returns a fully-serialized shape with a
+  fields-exact test, so that session wires rather than designs.

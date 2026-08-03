@@ -417,6 +417,93 @@ class StagingStore:
             "all_ok_streak": streak,
         }
 
+    def week(self, *, days: int = 7, now: float | None = None) -> dict[str, Any]:
+        """The week-at-a-glance panel: one bucket per DAY (§6 — S76).
+
+        `health()` answers "is capture working" over a WINDOW, and that aggregation hides the thing
+        this panel exists to show. Measured: a day with ZERO passes is indistinguishable from a
+        healthy day in the windowed view, because an absent day contributes nothing to either the
+        outcome counts or the streak — and silent capture death is precisely the failure the staging
+        tier was built to make visible.
+
+        So every day in the window gets a row, INCLUDING the empty ones. A gap is the signal.
+
+        Days are bucketed by local date rather than by 86400-second slices: a user reading "Tuesday"
+        means their Tuesday, and a UTC-slice panel drifts a few hours off every reader's calendar.
+        """
+        now = time.time() if now is None else now
+        span = max(1, days)
+        since = now - span * 86400
+
+        with self._cursor() as cur:
+            rows = cur.execute(
+                "SELECT outcome, cost_usd, proposal_ids, created_ts FROM flush_records "
+                "WHERE created_ts >= ? ORDER BY created_ts;",
+                (since,),
+            ).fetchall()
+            staged_rows = cur.execute(
+                "SELECT created_ts FROM staging WHERE created_ts >= ?;", (since,)
+            ).fetchall()
+
+        def _day(ts: float) -> str:
+            return datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+
+        # Pre-seed every day so an empty one renders as a gap rather than vanishing.
+        buckets: dict[str, dict[str, Any]] = {}
+        for offset in range(span):
+            key = _day(now - offset * 86400)
+            buckets[key] = {
+                "day": key,
+                "passes": 0,
+                "by_outcome": {},
+                "produced": 0,
+                "errors": 0,
+                "staged": 0,
+                "cost_usd": 0.0,
+                "proposal_ids": [],
+            }
+
+        for row in rows:
+            key = _day(float(row["created_ts"]))
+            bucket = buckets.get(key)
+            if bucket is None:
+                continue
+            outcome = str(row["outcome"])
+            bucket["passes"] += 1
+            bucket["by_outcome"][outcome] = bucket["by_outcome"].get(outcome, 0) + 1
+            bucket["cost_usd"] += float(row["cost_usd"] or 0.0)
+            if outcome == FlushOutcome.FLUSH_ERROR.value:
+                bucket["errors"] += 1
+            try:
+                ids = json.loads(row["proposal_ids"] or "[]")
+            except (TypeError, ValueError):
+                ids = []
+            if isinstance(ids, list) and ids:
+                # Proposal ids are what turn "a pass produced something" into "produced WHAT" — the
+                # panel links straight to the Proposal Inbox rows a day generated.
+                bucket["proposal_ids"].extend(str(i) for i in ids)
+                bucket["produced"] += len(ids)
+
+        for row in staged_rows:
+            bucket = buckets.get(_day(float(row["created_ts"])))
+            if bucket is not None:
+                bucket["staged"] += 1
+
+        ordered = [buckets[k] for k in sorted(buckets)]
+        for bucket in ordered:
+            bucket["cost_usd"] = round(bucket["cost_usd"], 6)
+        silent = [b["day"] for b in ordered if b["passes"] == 0]
+        return {
+            "days": span,
+            "buckets": ordered,
+            # The two summary numbers a panel headline needs. `silent_days` is the alarming one: a
+            # day with no passes at all on a machine that was in use means capture did not run.
+            "silent_days": silent,
+            "error_days": [b["day"] for b in ordered if b["errors"]],
+            "produced_total": sum(b["produced"] for b in ordered),
+            "cost_usd": round(sum(b["cost_usd"] for b in ordered), 6),
+        }
+
     def prune(self, *, retention_days: int = DEFAULT_RETENTION_DAYS, now: float | None = None):
         """Drop consumed entries past the retention window. Returns rows removed.
 
