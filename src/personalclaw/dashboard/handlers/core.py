@@ -573,6 +573,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # unwanted — so all three are live-editable.
     "learning.min_evidence": {"type": "int", "min": 1, "max": 20},
     "learning.staging_enabled": {"type": "bool"},
+    # LEARN-R21 (S72): the self-model gate. Live-editable because it is the one learning path
+    # that acts on what WORKED rather than on corrections — a user who finds that presumptuous
+    # should be able to stop it without a restart.
+    "learning.self_model_enabled": {"type": "bool"},
     "learning.min_session_score": {"type": "float", "min": 0.0, "max": 1.0},
     "learning.propose_quota_per_run": {"type": "int", "min": 1, "max": 25},
     "learning.curator_enabled": {"type": "bool"},

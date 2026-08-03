@@ -1218,6 +1218,17 @@ class LearningConfig:
             "a quiet day. Off = capture still runs, but its failures are invisible.",
         ),
     )
+    self_model_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Learn From What Works",
+            "Notice working patterns and OFFER them as behavioral principles. Every other "
+            "learning path only sees corrections and failures, so this is the one that can "
+            "learn from what quietly succeeds. It never installs anything: a pattern that "
+            "recurs and keeps working becomes a proposal you review, capped at a handful of "
+            "principles so it cannot grow without displacing one you already accepted.",
+        ),
+    )
     min_session_score: float = field(
         default=0.0,
         metadata=_meta(
@@ -3033,6 +3044,7 @@ class AppConfig:
                 skill_ladder=bool(learning_data.get("skill_ladder", True)),
                 min_evidence=int(learning_data.get("min_evidence", 3) or 3),
                 staging_enabled=bool(learning_data.get("staging_enabled", True)),
+                self_model_enabled=bool(learning_data.get("self_model_enabled", True)),
                 min_session_score=float(learning_data.get("min_session_score", 0.0) or 0.0),
                 context_budget_tokens=int(learning_data.get("context_budget_tokens", 4000) or 4000),
                 curator_enabled=bool(learning_data.get("curator_enabled", True)),
