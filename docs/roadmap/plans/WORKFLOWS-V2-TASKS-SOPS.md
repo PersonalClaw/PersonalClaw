@@ -1475,3 +1475,64 @@ to the right, the awaiting gate carries the warn ring, and **clicking Approve on
 gate and the run resumed** (`needs_input` → `running`). Zero console errors.
 
 - **NOT DONE:** checklist drag-reorder edit UX, config four-point wiring.
+
+### S61k — The config four-point wiring + checklist edit UX (49 tests) — DONE
+
+Two halves, and both turned out to hinge on something the plan does not mention.
+
+**The config four points — plus the fifth nobody writes down.** §8 names four `WorkflowsConfig`
+fields and four wiring points (dataclass + `_meta`, `load()` mapping, `to_dict()`, PATCH allowlist).
+All four are wired. But `materialize`, `confirmation` and `pool` each carry their own module constant,
+so every field could have been set, persisted, echoed by `to_dict`, rendered in Settings and
+**completely ignored** — the present-and-inert control this program keeps finding. So there is a fifth
+point: `workflows/settings.py`, one resolver per knob, module constant as the fallback, and the call
+sites bound to it. Three tests read the SOURCE of `plan_materialization`/`build_request`/`claim_task`
+to assert they resolve from config, because a behavioural test alone would pass again the next time
+someone "simplified" it back to the constant.
+
+**DEVIATION — `match_threshold` was NOT re-added.** §8's recon (correction #1) states it exists at
+`workflows.match_threshold`. Measured: it does not. `WorkflowsConfig`'s own docstring records why — it
+was DELETED with the old SOP feature under the namespace-reuse clean break, and a repo-wide grep finds
+the name only in that docstring. The new semantic channel is session-59 scope and its threshold is not
+user-tunable yet, so adding the knob now would ship exactly the inert control the rest of this session
+exists to prevent. Recorded rather than silently satisfied.
+
+Design calls, each with the failure it avoids:
+
+- **The resolvers are deliberately UNCACHED.** All four are in the live-editable PATCH set; a cached
+  read would keep applying the old number until the gateway restarted, which is the difference
+  between live-editable and restart-required.
+- **An explicit argument still beats config.** The config is the DEFAULT — a template declaring its
+  own gate lifetime must not be silently rewritten by a global preference.
+- **The PATCH bounds restate what the code enforces** (`lease_ttl_secs` max = `MAX_LEASE_SECS`,
+  `max_materialized_per_foreach` min = 1). A stored value the runtime silently clamps is worse than a
+  rejection, because the user reads the stored one. `confirmation_ttl_secs` min is 0, because
+  `expires_at` reads `<= 0` as "never expires" and refusing 0 would make an intent the record
+  supports unreachable through the API.
+- **An unreadable `config.json` degrades to the shipped constants.** A malformed file must not stop a
+  run from materializing its tasks.
+
+**The checklist UX, and a cosmetic-fix trap.** Drag-reorder already shipped; the plan's two rules did
+not. Two-stage destructive reveal now matches the shipped armed-delete pattern (arm, confirm,
+4s timeout) rather than inventing a second one — a checklist row is text the user typed and there is
+nothing to undo it with.
+
+Checked-locks-drag was the interesting one: **styling the grip as disabled is cosmetic.**
+`Reorderable` wraps every item in a `Reorder.Item`, which makes the whole ROW draggable, so a
+"locked" row still picked up and reordered. The lock had to move into the primitive — a locked item
+now renders as a plain `div`, outside the reorder group — which is what the new `canDrag` prop does.
+A completed step's position is the record of what happened in what order, which is the one thing a
+checklist is FOR.
+
+**Two guards earned their keep, and one false positive worth knowing.** The design-system
+primitive-adoption ratchet caught a raw button (278 > 277) — fixed by using the shared `Button`, not
+by raising the baseline. Then it failed AGAIN at the same count: the scanner counts the literal
+string, and my *comment* contained the tag name. The comment is now worded around it, with a note
+saying why. Separately, `test_config_roundtrip` correctly rejected the new enum field (its generic
+rule appends `-x`); the fix is a `_SPECIAL` entry declaring a real member, exactly as
+`dashboard.stream_reveal` already does.
+
+**Validated as a user** against a live gateway: `GET /api/config/personalclaw` serves all four fields;
+PATCH accepts `lease_ttl_secs=120` and `surface_mode_default=passive`; refuses `99999` ("must be
+between 30 and 3600"), `vibes` ("must be one of ['off','passive','suggest']") and `cap=0`; accepts
+`ttl=0`. The resolvers then read the patched values with **no restart**.

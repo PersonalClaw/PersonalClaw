@@ -96,6 +96,18 @@ def workspace_root() -> Path:
     return root
 
 
+def _surface_mode_default(value: object) -> str:
+    """Coerce the new-def surfacing default, refusing anything but the three declared modes.
+
+    An unknown value reads as `off`, matching `DefMetadata.from_dict`'s per-field rule: a typo must
+    not silently START surfacing every newly authored def, which is the direction that spends tokens
+    and injects text nobody asked for. One tolerance rule, applied in both places — a second, looser
+    one here would let a config typo do what the def-level parser refuses.
+    """
+    word = str(value or "").strip().lower()
+    return word if word in {"off", "passive", "suggest"} else "off"
+
+
 def _safe_int(value: object, default: int) -> int:
     """Convert *value* to int, returning *default* on failure."""
     try:
@@ -1797,6 +1809,51 @@ class WorkflowsConfig:
         default="background",
         metadata=_meta("Model Tier — Fast", "Use case for the `fast` tier."),
     )
+    # TASKS-SOPS §8 (S61k): the four fields the plan names, each wired through all four points.
+    #
+    # `match_threshold` is deliberately NOT re-added. The plan's recon says it exists at
+    # `workflows.match_threshold`; measured — it does not, and this class's own docstring records
+    # why: it was DELETED with the old SOP feature under the namespace-reuse clean break. The new
+    # semantic channel is session-59 scope and its threshold is not user-tunable yet; adding a knob
+    # nothing reads would be exactly the present-and-inert control this program keeps finding.
+    surface_mode_default: str = field(
+        default="off",
+        metadata=_meta(
+            "New Workflow Surfacing",
+            "What a NEWLY authored workflow does before you opt it in: `off` never surfaces "
+            "itself (explicit /workflow always works), `passive` injects its guidance, `suggest` "
+            "may propose running itself. Defaults to off — auto-trigger-by-default is the mistake "
+            "that made pasted content fire workflows.",
+            choices=["off", "passive", "suggest"],
+        ),
+    )
+    max_materialized_per_foreach: int = field(
+        default=20,
+        metadata=_meta(
+            "Task Fan-Out Cap",
+            "The most Tasks one foreach node may put on your board. A 200-item fan-out would "
+            "otherwise bury every other task; the run still executes all items — only the board "
+            "rows are capped, and the run reports what it withheld.",
+        ),
+    )
+    confirmation_ttl_secs: int = field(
+        default=7 * 24 * 3600,
+        metadata=_meta(
+            "Approval Lifetime",
+            "How long a pending approval stays live. A week, because the realistic case is being "
+            "away — a gate expiring overnight turns travel into lost work. 0 means never expires. "
+            "A destructive confirmation auto-REJECTS on expiry; an ordinary one keeps waiting.",
+        ),
+    )
+    lease_ttl_secs: int = field(
+        default=900,
+        metadata=_meta(
+            "Task Claim Lifetime",
+            "How long a session's exclusive claim on a task lasts before another may take it. "
+            "Deliberately short: a worker that needs longer renews, which proves it is alive, "
+            "whereas a long lease only delays discovering that it is not. Capped at one hour.",
+        ),
+    )
 
     def lane_caps(self) -> dict[str, int]:
         """Per-lane admission caps for the frontier (WF2-R21). `compute` is unmetered —
@@ -2933,6 +2990,16 @@ class AppConfig:
                 model_tier_fast=str(
                     workflows_data.get("model_tier_fast", "background") or "background"
                 ),
+                surface_mode_default=_surface_mode_default(
+                    workflows_data.get("surface_mode_default")
+                ),
+                max_materialized_per_foreach=_safe_int(
+                    workflows_data.get("max_materialized_per_foreach", 20), 20
+                ),
+                confirmation_ttl_secs=_safe_int(
+                    workflows_data.get("confirmation_ttl_secs", 7 * 24 * 3600), 7 * 24 * 3600
+                ),
+                lease_ttl_secs=_safe_int(workflows_data.get("lease_ttl_secs", 900), 900),
             ),
             learning=LearningConfig(
                 enabled=bool(learning_data.get("enabled", True)),

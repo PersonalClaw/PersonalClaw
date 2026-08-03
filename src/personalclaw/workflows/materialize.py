@@ -259,7 +259,7 @@ def plan_materialization(
     nodes: list[dict[str, Any]],
     *,
     existing_tasks: list[Any] | None = None,
-    cap: int = FANOUT_TASK_CAP,
+    cap: int | None = None,
 ) -> MaterializationPlan:
     """Decide which nodes need a task, deduping against what already exists. Dedup runs on TWO
     keys, and both are needed. `(run_id, node_id)` catches the same node being re-
@@ -268,6 +268,13 @@ def plan_materialization(
     work; checking only the second would collide two genuinely different nodes whose titles
     happen to match.
     """
+    if cap is None:
+        # Resolved from config, not the module constant. `max_materialized_per_foreach` is in the
+        # live-editable PATCH set, and reading the constant here would make the setting storable,
+        # displayable and completely ignored (S61k).
+        from personalclaw.workflows.settings import fanout_task_cap
+
+        cap = fanout_task_cap()
     plan = MaterializationPlan()
     seen_pairs: set[tuple[str, str]] = set()
     seen_prints: set[str] = set()
