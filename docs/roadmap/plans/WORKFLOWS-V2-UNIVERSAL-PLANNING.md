@@ -766,3 +766,197 @@ Where each new piece plugs into the pluggable-provider architecture (nothing her
   and belongs with the review/revision cycle in session 43. The preflight step the planner should
   emit (aggregating requirements one hop from referenced providers) needs the provider-requirement
   data the grounding bundle does not yet carry.
+
+- **2026-08-02 — DONE (#182) — Review + revision (session 43 of the WF2 queue).**
+  Branch `feature-wf2-planning-review`. `workflows/revision.py`: typed merge-by-id patches with the
+  `NO_UPDATE` sentinel, TTL'd draft sketches, the announce-block review surface, a structural cost
+  estimate, plan-as-markdown, and inferred-vs-stated chips. Wired into both `workflow_plan` paths.
+  12467 tests (+50), lint clean at 626 files.
+
+- **The load-bearing property: an untouched stage CANNOT change.** The merge walks the original tree
+  and substitutes; it never rebuilds. "Absent means preserved" is therefore structural rather than a
+  promise — there is no code path that writes an untouched node.
+
+- **Every refusal is deliberate.** A `replace` naming a node that does not exist is REJECTED rather
+  than silently converted to an `add` (inventing a stage the user never asked for); a duplicate `add`
+  is rejected with "use replace"; an `add` naming a missing anchor is rejected rather than appended,
+  because a silent relocation is the kind nobody reviews; and a `replace` cannot RENAME its node,
+  since that would break every binding pointing at it when the user asked to change the stage rather
+  than re-address it.
+
+- **DISCOVERY — the announce block and the contract lint disagreed about the same plan.** The header
+  reported "Unchecked: review-accuracy, review-clarity, store, record-decision" on `publish-article`
+  while the lint deliberately exempts all four (two feed a verified stage, two are zero-token). Two
+  views of one plan disagreeing is worse than either alone: the user believes the scarier one, and
+  the lint they might have trusted looks wrong. The header now applies the same exemptions.
+
+- **DISCOVERY — the EXPIRED sketch reason was one-shot.** Dropping a stale sketch on read is right (a
+  sweep needs a clock nobody owns), but without a tombstone the second attempt on the same id
+  reported "unknown sketch" — losing the distinction that tells a user their revision was reasonable
+  and the draft merely aged out. A bounded tombstone set keeps the honest answer available.
+
+- **The cost estimate returns COUNTS, never a price.** A dollar figure derived from a node count is a
+  confident number built on an unknown per-call cost, and a user who sees "$0.42" believes it. It
+  multiplies through fan-out (a stage inside a foreach is not one call) and NAMES unbounded loops
+  separately rather than folding them in — an unbounded loop makes the number a floor, and
+  presenting a floor as an estimate understates the one case that runs away.
+
+- **NOT DONE:** the streaming render (progressive buffer-append re-parse, shimmer on in-flight steps)
+  is a frontend concern with no backend seam in this session — the plan tool returns a complete
+  surface, and streaming it needs the SSE events the plan lists for `RUN_LIFECYCLE`, which belong
+  with a UI slice. The one small-model naming call (`{title, description, per-step labels}`) is
+  likewise unwired: `plan_markdown` uses deterministic labels from each node's own config, which is
+  the stated fallback. `revise{step_ref, comment}` exists as the patch grammar but is not yet an
+  answer verb on `workflow_resume` — that is an engine-surface change belonging with the autonomy
+  work in session 44.
+
+### 2026-08-02 — session 44 (autonomy + risk) DONE
+
+`workflows/autonomy.py` (new): the risk-signal registry, autonomy floors and offers, HITL/AFK
+attention typing compiled to the engine's own `require_hitl`, the confirmation matrix, the three
+interrupts, and earned trust. `_autonomy_surface` ships it from `_plan` alongside the review surface
+from session 43. 82 tests in `tests/test_workflows_autonomy.py`.
+
+- **The registry reuses the engine's `RiskLevel` rather than declaring a second vocabulary.** A
+  private gradient would drift from the one the approval UI already renders, and two gradients
+  disagreeing about the same node is how a user learns to ignore both. Every signal states a
+  CONSEQUENCE, not just a name: an informed-consent question built from `destructive_op hit` is not
+  informed, while "this can delete data that cannot be recovered" is a decision a person can make.
+
+- **DISCOVERY — three measured false positives, all found by scanning the SHIPPED library rather
+  than fixtures.** (1) A bare `\btruncate\b` matched `| truncate(1500)` and flagged THREE templates
+  as destructive for shortening a string in a prompt. (2) A bare `\bcredential\b` fired on
+  `audit-sweep`'s finder, whose entire job is to look FOR credential-handling problems — reading
+  about a risk is not taking one. (3) Generic production patterns fired on "write a report about our
+  production architecture". All three are now action-shaped (verb + target, or write-verb +
+  preposition), and each is pinned by a regression test. A scanner that fires on a template doing
+  its job gets suppressed wholesale, and the real findings go with it.
+
+- **DISCOVERY — the provider check `continue`d past the pattern scan.** A `run-script` node whose
+  argument said `drop table users` was reported only as "uses the `run-script` provider" — the same
+  verdict on far worse evidence. Capability and content are now both recorded, because a reviewer
+  triaging by evidence needs to see which one fired.
+
+- **The scan reads action ARGUMENTS, not just prompts.** A `bash` node's danger is entirely in its
+  command; a scan that read only prompts would miss every action node's actual payload. A command
+  assembled from a binding cannot be scanned at plan time at all, which is why `bash` is dangerous
+  by capability whatever its literal argument says.
+
+- **Silent honor and silent refusal are both failures.** Honoring `unattended` on a plan that deletes
+  production is the obvious one; quietly downgrading it is the one that makes a user distrust the
+  control and stop reading it. A request above the ceiling produces exactly ONE consent question
+  naming the consequence. Live-measured: `code-implementation` (uses `bash`) is capped at per-stage
+  with `unattended` absent from the offer, while `publish-article` earns unattended and still stops
+  at its approval gate — `compile_require_hitl(..., Mode.UNATTENDED)["approve"]` is `True`, because
+  an approval gate exists to pause for a person and no mode retires it.
+
+- **A single failure RESETS earned trust rather than averaging it away.** Twenty clean runs and one
+  failure earns nothing: a template that broke once is one whose next run deserves eyes, and
+  averaging is how earned trust becomes a rubber stamp. A first run is report-only for the same
+  reason — the cost is one extra approval, and the alternative is discovering the behaviour by having
+  it happen. The commitment stamps mode, executor and environment TOGETHER, since
+  unattended-in-a-worktree and unattended-on-the-real-filesystem are different grants.
+
+- **An author's explicit `require_hitl` is never downgraded.** The author knows something the scanner
+  does not, and a scanner that overrode them would make the declaration useless. Containers are not
+  typed at all: a sequence is a scheduling policy, and putting a stop on something that does no work
+  is a pause a user cannot act on.
+
+- **NOT DONE:** permission pre-approval as durable session allow-rules needs the approval store's
+  scope model (an autonomy-mode grant is not a tool grant, and conflating them would widen a tool
+  approval into a mode approval); per-template p50/p95 spend needs Run Ledger aggregation that the
+  Evaluation-Substrate plan owns; mid-run demotion (dropping from unattended to per-stage when a
+  risk appears at runtime rather than plan time) needs a controller seam this session does not touch
+  — `should_interrupt` is the plan-time half of it. `revise{step_ref, comment}` as an answer verb on
+  `workflow_resume` carried forward from session 43 remains unwired for the same reason: it is an
+  engine-surface change, and the seam belongs with the entry surfaces in session 45.
+
+### 2026-08-02 — session 45 (grill + entry surfaces + template pipeline) DONE — Universal Planning CLOSED
+
+Four new modules, all pure: `grill_protocol.py` (the structured `rigor: deep` protocol),
+`rigor.py` (the cheap end of the axis), `template_pipeline.py` (mining, discover-then-freeze,
+the nudge, entity scrubbing), `eval_specs.py` (per-template benchmarks derived from the artifact).
+`_plan` gains a `rigor_note`, the fast-path refinement gate, and a `_grill_surface`. 286 new tests.
+
+- **The existing `grill.py` was NOT replaced.** It is the vendor-neutral `assess → recall →
+  decompose → save` machinery and the plan's ABSORB note reads as a rewrite; treating it as one
+  would have deleted a seam the goal loops and the chat skill both use. The protocol sits on top:
+  recommendation-bearing questions, the channel split, pacing, probes, Step-0, prohibitions.
+
+- **Facts are looked up, not asked — mechanically.** A question is routed to a lookup channel or it
+  is asked, never both. The three channels stay separate callables (memory recall, knowledge search,
+  the brownfield pass) because a merged "context fetch" would make it impossible to say which
+  subsystem answered, and the plan states that boundary normatively.
+
+- **DISCOVERY — an arbitrary asymmetry in the lookup router.** The hand-listed codebase phrases had
+  `which file` and `what module` but not `which module`, so a natural phrasing fell through to ASK.
+  An asymmetric router is worse than a narrow one: it works often enough that nobody notices the
+  half that does not. Replaced with an interrogative × noun cross-product, which removes the class.
+
+- **A deferral is never a confirmed requirement.** "You decide" / "no preference" / "idk" fold into
+  ASSUMPTIONS with the recommendation attached, and an unanswered load-bearing question with no
+  recommendation is an OPEN QUESTION that blocks emission. Three lists, so a guess can never be
+  presented as something the user said.
+
+- **Prohibitions are frozen and reach every worker.** The block is injected into each model-bearing
+  node rather than the root — a worker reads its own config, so a root-level prohibition is one
+  nobody sees. Zero-token nodes are skipped. The boundary answer splits on newlines and semicolons
+  but NOT commas: "don't touch prod, staging, or CI" is one boundary, and shredding it into three
+  partial ones produces three weaker rules.
+
+- **DISCOVERY — the fast path was inert from the only surface that can request it.** `workflow_plan`'s
+  published rigor vocabulary is `minimal`/`standard`/`deep`, and `is_fast` matched only the literal
+  `fast`. A caller asking for `minimal` got the standard path plus a note saying so. The same bug in
+  `rigor_note` printed "Fast path (rigor=standard …)", a note contradicting its own headline. Both
+  now share one `_FAST_WORDS` alias set.
+
+- **DISCOVERY — the risk half of the deep-rigor trigger was present and inert.** The plan makes ANY
+  risk-registry hit force `rigor: deep` and `deep_triggered` implemented it, but nothing was feeding
+  it hits — so a destructive plan the classifier happened to call `standard` went ungrilled.
+  `_grill_surface` now runs session 44's `scan_risk` over the proposed tree. Verified live: a `bash`
+  node running `rm -rf /var/data` triggers the grill on an intent classified STANDARD.
+
+- **The refinement gate lands after the first OUTPUT, not at the end.** The whole premise of the fast
+  path is refining against something built; a gate at the end refines nothing. A bare single-node
+  root (the shape the fast path produces most often) is wrapped into a sequence rather than skipped —
+  refusing there would make the mechanism inert exactly where it matters. Scheduling is idempotent.
+
+- **The acceptance ratchet is append-only and deduplicated by exact text.** A criteria list that can
+  shrink is one where a later revision silently drops the check an earlier failure earned. Two
+  SIMILAR criteria are both kept: collapsing them would be the planner deciding they are the same.
+  `revise_from_artifact` deliberately does NOT edit nodes — that stays with session 43's merge-by-id,
+  because a second edit path is a second chance to silently rewrite a stage nobody complained about.
+
+- **A denial is a decision, in mining.** A tool the user refused in the session never enters the
+  mined permission signature, even if a later call succeeded. A miner counting only successes would
+  re-request it, which reads as the system overriding the user rather than forgetting.
+
+- **Entity scrubbing is deliberately conservative.** Sentence-initial capitals are skipped (measured
+  as the single largest source of junk slots — otherwise every prompt's first word becomes a
+  parameter), `NON_ENTITY_TOKENS` is the single point of truth so a domain acronym cannot be
+  parameterized in one path and not another, and one entity across two stages binds ONE input.
+
+- **DISCOVERY — two defects in the derived eval, both found by running it on the real library.**
+  (1) A hand-rolled tree walk over guessed key names (`branches`/`then`/`otherwise`) found **4 of 13**
+  nodes in `deep-research` and 2 of 8 in `audit-sweep`: the engine's branch children live under
+  `cases`/`default_case`, so every branch subtree was silently skipped. Replaced with the engine's
+  own `walk` over a typed `Node`. (2) Testing for `stage` alone reported `deep-research` — which
+  makes five `infer` model calls — as "all nodes are deterministic — the outputs are facts, not
+  opinions", filing it as needing no judge. A confident false claim about the exact property the
+  eval exists to check. Now uses the engine's `LLM_KINDS`. After both fixes only `knowledge-health`
+  is genuinely judge-free, where before three templates were.
+
+- **The eval names what it cannot grade.** `graded_checks` says what a judge would have to assess and
+  leaves the judging to LEARNING-FLYWHEEL; `graded_note` explains an empty list, because an empty
+  list with no explanation reads as "nothing to grade", which is a claim. The suite reports the
+  free/graded split so a passing CI run cannot be read as "every template was evaluated".
+
+- **NOT DONE:** the QuestionSlider widget, the streaming render, and the `suggest_template` chat tool
+  registration are frontend/tool-surface work — `Round.to_ask()` returns the engine's own typed `Ask`
+  precisely so no planner-specific renderer is needed, and the nudge's anti-nag state has no
+  persistence seam in this session (it takes a `NudgeState` the caller owns). `source_session_id` on
+  `workflow_plan` is unwired: `mine_session` takes parsed records so the rules are testable, but
+  resolving a session id to a transcript path belongs with the tool-schema change. The grounding A/B
+  harness (UP-R13.2) needs the judge LEARNING-FLYWHEEL owns. `revise{step_ref, comment}` as a
+  `workflow_resume` answer verb remains carried forward — twice now — because it is an engine-surface
+  change and every planning session has correctly declined to reach into the resume grammar.

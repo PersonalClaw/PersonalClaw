@@ -72,6 +72,21 @@ while not terminal:
 | `patterns.py` | the seven proven graph shapes, their slots, when each is WRONG, and the deterministic shape pick |
 | `generation.py` | the generated planning prompt, the mechanical self-check, repair-not-regenerate, and the decline path |
 | `contracts.py` | derived parameter schemas, per-stage done-means contracts and their lint, and blocking-vs-open decision typing |
+| `revision.py` | typed merge-by-id patches, the NO_UPDATE sentinel, TTL'd draft sketches, and the announce-block review surface |
+| `autonomy.py` | the risk-signal registry, autonomy floors and offers, HITL/AFK typing compiled to `require_hitl`, the confirmation matrix, the three interrupts, earned trust |
+| `grill_protocol.py` | the structured `rigor: deep` protocol: recommendation-bearing questions, the facts-vs-decisions channel split, adaptive pacing, stress probes, the Step-0 schema, frozen prohibitions |
+| `rigor.py` | the cheap end of the axis: `rigor: fast` + its auto-scheduled refinement gate, Specify's one-stage rewrite, the append-only acceptance ratchet, revise-spec-from-artifact |
+| `template_pipeline.py` | chat-session mining, discover-then-freeze candidates on the scope ladder, the `suggest_template` nudge with its anti-nag rules, entity scrubbing |
+| `eval_specs.py` | per-template eval specs derived from the template artifact — fixtures, structural and parameterization checks, and the named-not-graded judge surface |
+| `containers.py` | the Work board projection (state grouping, claim leases, per-section `/work` isolation), the substrate-checked boot sweep, and the project context block + wayfinder ledger contract |
+| `publish.py` | the `publish:` declaration, material-change version gating, typed lineage (flattened to scalar event metadata), evidence bundles, the terminal handoff report and the append-only results ledger |
+| `batch_compile.py` | batch `subagent_run` compiled to a `parallel[stage...]` run: the N≥2 threshold, capability classes, the single-writer lint, static depth rejection, typed leaf outputs compiled to `output_contract`, and the safety-filtered recall view |
+| `workspace.py` | the `workspace` provisioning block (mode/preserve/setup/teardown/env), reserved-var rejection, the secret-filtered spawn env with presence-only flags, and tolerant `.folder.yaml` contracts |
+| `ownership.py` | run-owned session keys (`workflow:<run>:<node>`), the SEL + prompt-use-case registrations, incognito/temporary inheritance read from both the durable line and the live registry, and the engine-level learning-node skip |
+| `needs_input.py` | the NeedsInputItem card (block kind, blocker, attempted, evidence, recommendation, one decision), owner binding, once-only staleness re-notify, and the refs round trip |
+| `worktrees.py` | code-kind run worktrees on the proven `loop/worktree.py` machinery: preserve-in, marker-guarded setup, resume safety, teardown-before-deletion, the per-run branch, the machinery-free review diff, and the two reintegration verbs |
+| `introspection.py` | the nine-question checklist, RunStats as a pure journal projection, verification debt, said-no gate statistics with a sample-gated fake-check badge, per-template p50/p95 cards, and the Proof section |
+| `project_export.py` | project export/import: the allowlisted portable set, per-entity sha256 in a versioned manifest, secrets as presence flags only, import refusals (unsafe member, digest/size mismatch, unknown schema) and `imported-N` collision slots |
 | `scope.py` | filesystem write-scope enforcement by post-hoc diff |
 | `watchdog.py` | the supervisor: adoption, reaping, per-run publishing |
 

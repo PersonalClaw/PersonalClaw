@@ -506,6 +506,43 @@ def _project_context_preamble(project_id: str) -> str:
             lines.append(
                 f"- Project brief (the goal/scope/background of this project — treat as foundational context): {brief}"  # noqa: E501
             )
+        # WORK-CONTAINERS §1.2 (S46): the LIVING overview and the wayfinder ledgers, appended to
+        # THIS composer rather than a second one. A parallel project-context builder would drift,
+        # and an agent that sees a different project description in chat than in a run gives
+        # answers nobody can reconcile. Overview is current state; the decisions ledger is history —
+        # kept as separate lines because collapsing them loses one or the other.
+        try:
+            from personalclaw import project_context as _pctx
+
+            overview = _pctx.read_overview(project_id)
+            if overview:
+                lines.append(
+                    "- Project overview (CURRENT state — what this project now knows; revised as "
+                    f"runs complete, distinct from the append-only history below): {overview}"
+                )
+            decisions = _pctx.read_ledger(project_id, "decisions")
+            if decisions:
+                lines.append(f"- Decisions so far ({len(decisions)}, newest last):")
+                for entry in decisions[-8:]:
+                    lines.append(f"    • {entry}")
+            fog = _pctx.read_ledger(project_id, "fog")
+            if fog:
+                lines.append(
+                    "- Not yet specified (open questions not precise enough to be tasks — "
+                    "ask rather than assume):"
+                )
+                for entry in fog[:8]:
+                    lines.append(f"    • {entry}")
+            out_of_scope = _pctx.read_ledger(project_id, "out_of_scope")
+            if out_of_scope:
+                lines.append(
+                    "- Out of scope (deliberately excluded — do NOT re-propose these without "
+                    "the user redrawing the brief):"
+                )
+                for entry in out_of_scope[:8]:
+                    lines.append(f"    • {entry}")
+        except Exception:
+            logger.debug("project living context for preamble failed", exc_info=True)
         ws = str(getattr(proj, "workspace_dir", "") or "").strip()
         if ws:
             lines.append(f"- Workspace: {ws}")
@@ -523,12 +560,28 @@ def _project_context_preamble(project_id: str) -> str:
             try:
                 from pathlib import Path
 
+                from personalclaw.project_context import inlined_context_files
+
+                # Files whose CONTENT is already inlined above are excluded from the listing.
+                # Measured on a live project: the overview and all three ledgers appeared both as
+                # inlined text and as "read any for continuity", inviting the agent to spend four
+                # tool calls re-reading what it had already been given — and a listing that
+                # recommends redundant work is one an agent learns to ignore wholesale.
+                already = inlined_context_files(project_id)
                 entries = sorted(
-                    (p for p in Path(cdir).iterdir() if p.is_file() and not p.name.startswith(".")),
+                    (
+                        p
+                        for p in Path(cdir).iterdir()
+                        if p.is_file() and not p.name.startswith(".") and p.name not in already
+                    ),
                     key=lambda p: p.name,
                 )
                 if entries:
-                    lines.append("    Files in it (read any for continuity):")
+                    # Wording tracks whether anything WAS excluded: "Files in it" over-claims
+                    # completeness when four were held back, and "Other files" is confusing when
+                    # nothing was.
+                    header = "Other files in it" if already else "Files in it"
+                    lines.append(f"    {header} (read any for continuity):")
                     for p in entries[:30]:
                         try:
                             kb = max(1, round(p.stat().st_size / 1024))

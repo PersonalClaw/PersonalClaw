@@ -31,6 +31,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from personalclaw.workflows import needs_input
+
 logger = logging.getLogger(__name__)
 
 #: The registered notification pair. `loop/needs_input` already exists, carries
@@ -99,6 +101,15 @@ def raise_gate_item(
     resume_token: str,
     ask: dict[str, Any] | None = None,
     handoff: dict[str, Any] | None = None,
+    #: S51: the structured NeedsInputItem inputs. Optional, so a caller that has none still raises
+    #: the row it raises today — a required argument here would have made the whole existing gate
+    #: path a breaking change for a payload most callers cannot yet supply.
+    failure: dict[str, Any] | None = None,
+    attempts: list[dict[str, Any]] | None = None,
+    evidence: dict[str, Any] | None = None,
+    owner: str = "",
+    project_id: str = "",
+    now: float = 0.0,
 ) -> str:
     """Project one waiting gate into the inbox + a notification. Returns the item id or "".
 
@@ -118,11 +129,29 @@ def raise_gate_item(
             item_kind=ItemKind.NEEDS_INPUT.value,
             title=ask_title(workflow, node_id, ask),
             body=ask_body(ask, handoff),
+            # The structured card rides the EXISTING free-form `refs` dict (S51). The inbox is a
+            # general attention store shared with channel messages, so widening `InboxItem`'s schema
+            # for one item kind would make every other kind carry empty workflow fields. Today's
+            # keys are preserved verbatim so a surface written against them keeps working.
             refs={
                 "workflow": run_id,
                 "workflow_name": workflow,
                 "workflow_node": node_id,
                 "resume_token": resume_token,
+                **needs_input.card_refs(
+                    needs_input.build_item(
+                        run_id=run_id,
+                        node_id=node_id,
+                        ask=ask,
+                        failure=failure,
+                        attempts=attempts,
+                        evidence=evidence,
+                        resume_token=resume_token,
+                        owner=owner,
+                        project_id=project_id,
+                        now=now,
+                    )
+                ),
             },
             dedup_key=dedup_key(run_id, instance_path, epoch),
         )

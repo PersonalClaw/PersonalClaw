@@ -394,3 +394,635 @@ Sessions C1-C2 are **prerequisites for any width increase** and are independentl
 - **The strongest evidence argues for restraint, which is an unsatisfying answer.** MASLab and Agentless both say a good single agent is hard to beat, and pruning beats adding. The honest implication: fan-out earns its place for **read breadth, wall-clock, and context capacity** — not as a general quality strategy. Any task that widens fan-out for "better answers" without a token-matched measurement is contradicting item 5.
 - **Our own future measurements will sit near the noise floor.** That is why (e) mandates reporting inconclusive results as inconclusive. A plan that only ever reports wins is not measuring.
 - **Deferring the roster question.** The goal-loop roster stays as-is deliberately; if a future session wants role-specialized loop workers, evidence items 1-3 say the burden of proof is on that change, and item 3 says the productive version is *different models*, not different personas.
+
+---
+
+## Execution log
+
+### 2026-08-02 — session 46 (project umbrella + truthful lifecycle + Work board) DONE
+
+`workflows/containers.py` (new): the Work board projection with state grouping and claim leases, the
+substrate-checked boot sweep, per-section `/work` isolation, the project context block and the
+wayfinder ledger contract. `project_context.py` (new): the living overview, the three ledgers, the
+injected block, the handoff snapshot. 83 tests across two files.
+
+- **No second umbrella noun.** Project already had the right shape, so this adds only what the run
+  engine needs from it. `WorkflowRun.project_id` was ALREADY a column and `resolve_project_id`
+  already auto-creates — the binding the plan asks for exists, so the session did not re-derive it.
+
+- **A second project-context composer was NOT created.** `chat_utils._project_context_preamble`
+  already assembles the project block for chat sessions; the overview and ledgers were appended to
+  IT. A parallel builder would drift, and an agent seeing a different project description in chat
+  than in a run gives answers nobody can reconcile.
+
+- **DISCOVERY — two board rules were inert from one wrong type read.** `WorkflowRun.origin` is a
+  `RunOrigin` object, not a string. Reading it with `str(...)` produced a dataclass repr, so every
+  origin comparison silently failed: no run was ever collapsed, and no origin was ever suppressed
+  from attention. Compounding it, the collapse/suppress sets named `housekeeping` and `heartbeat` —
+  neither of which exists in `OriginKind`. A rule keyed on a value that can never occur is a rule
+  that never fires, and nothing reports it. Both sets are now drawn from the enum, with a test that
+  every value in them is a real `OriginKind`.
+
+- **The boot sweep checks the SUBSTRATE before calling anything a zombie.** Marking every stale
+  `running` run aborted is the obvious implementation and it destroys recoverable work while
+  reporting success. An isolated substrate that survived the restart yields `suspended` + resumable;
+  an inline run can never be suspended, because its substrate IS the dead process and offering a
+  Resume that cannot work is worse than no affordance. A run already terminal is left untouched —
+  re-deciding it would let a boot sweep overwrite a real outcome with an inferred one.
+
+- **`queued` is derived from a record with no `started_at`.** That is what §5.2's record-before-slot
+  ordering buys: without the distinction, a run waiting for a concurrency slot is indistinguishable
+  from one doing work, and the board reports work in flight that has not begun.
+
+- **An expired claim is not rendered.** A badge naming a holder who no longer holds it tells the user
+  the work is taken when it is free. The same holder RENEWS rather than being refused (a worker that
+  lost its in-memory state would otherwise be locked out of its own work until the TTL expired), and
+  only the holder may release (otherwise a second worker could steal work mid-execution by releasing
+  first).
+
+- **Per-section isolation is the `/work` contract, and it is tested by failing a source.** Five
+  heterogeneous sources fail independently; a single try/catch around the aggregate would let a
+  stale legacy-loop reader take down the run list and the whole first paint. All-sources-failed
+  reports `ERROR`, not `PARTIAL` — "partial" on an empty board reads as "there is not much work",
+  which is a claim about the user's work rather than about the failure.
+
+- **Overview is current state; the ledgers are history.** Separate files, separate functions: the
+  overview is replaced atomically in place, the ledgers are append-only with no update or delete. One
+  file for all three ledgers would make every append a read-modify-write of all of them, and a torn
+  write would lose two ledgers to fix one. The boundary answer splits on newlines and semicolons but
+  not commas, matching S45's prohibitions rule.
+
+- **DISCOVERY — the enriched preamble recommended redundant reads.** Measured live: the overview and
+  all three ledgers appeared BOTH as inlined text and in the context-dir listing's "read any for
+  continuity", inviting four tool calls to re-read what the agent had just been given. First fix
+  excluded them by FILENAME, which broke a pre-existing test for the right reason: a hand-authored
+  `decisions.md` that is not in ledger format inlines nothing, so a name-based exclusion would hide
+  a file the agent has never seen. Hiding an unread file is the worse failure of the two — a
+  redundant pointer wastes a tool call, a hidden file loses the context entirely. The exclusion is
+  now content-based, and the listing header tracks whether anything was actually held back.
+
+- **A context READ never materializes a project.** `resolve_project_id` auto-creates; a read path
+  that also did would mean a typo'd id invents a project, and opening a project page could create
+  one.
+
+- **NOT DONE:** the hub Work tab FE itself (`GET /api/projects/{id}/work` route registration and the
+  React board) — the projection is the backend half, and the route belongs with the dashboard
+  handler slice; lease FILES on the `concurrency.single_flight` flock convention (the lease record
+  and its policy are here; the flock is a storage seam this session does not open); `workflow:` SEL
+  source registration and `session._app` keying (§5.1 — it touches `session_map.py`/`sync_bridge.py`,
+  which §5.1 itself scopes out); the overview's automatic revision on run completion (needs the
+  controller's completion hook, and writing it from a projection would put an engine write in a read
+  path). Sessions 47-54 own artifacts reuse, subagent batch hardening, run workspace/environment,
+  session ownership, the needs-input inbox, worktrees, introspection and export/import.
+
+### 2026-08-02 — session 47 (artifacts reuse) DONE
+
+`workflows/publish.py` (new): the `publish:` declaration, material-change version gating, typed
+lineage, evidence bundles, the terminal handoff report, the append-only results ledger.
+`engine.apply_publish` wires it at the SAME dispatch seam `required_artifacts` uses. 57 tests.
+
+- **No second Artifact noun.** The existing `artifacts/` entity is used as-is; this session adds a
+  declaration and its rules. `publish:` translates into a registry upsert, and a refinement run
+  updates the same artifact BY NAME, which is where the registry's native versioning gives "stable
+  name across revisions" for free.
+
+- **A declaration is a promise about output, so a malformed `publish:` FAILS the node.** Degrading to
+  "no publish" would let a node whose author declared a deliverable report success while producing
+  nothing — the completion-lie class `required_artifacts` exists to catch. The deliberate asymmetry:
+  a REGISTRY failure does not fail the node. A bad declaration is the author's bug (fail loudly); an
+  artifact-store outage is the environment's (degrade honestly, keep the completed stage).
+
+- **Material-change gating protects a finite resource.** The registry keeps 50 snapshots; a
+  five-round refinement loop publishing each round would consume the window in five runs, so the
+  window that exists to hold real revision history would hold near-duplicates. Verified live: three
+  publishes of which one was identical produced exactly two versions. A NOOP is a first-class
+  outcome, not a failure — "nothing material changed" is the right answer for a converged loop, and
+  reporting it as an error would make convergence look broken. Publishing an EMPTY body over a real
+  one is refused outright: that is the one publish that destroys work while bumping the version.
+
+- **DISCOVERY — provenance was computed and discarded.** Driving the real registry showed the plan
+  computing a full run/node lineage while the artifact landed with `event.metadata == {}`, no
+  `run_id` anywhere on disk. `ArtifactEvent.metadata` and `clean_event_metadata` BOTH already
+  existed, but only `record_impression` could reach them — no create/update path exposed the
+  parameter. Added `event_metadata` to `create`, `update` and `create_binary` (a named parameter, not
+  an open passthrough), and wired `update()`'s event write, which was constructing its
+  `ArtifactEvent` without metadata at all.
+
+- **DISCOVERY — the nested lineage dict was stringified into an unparseable repr.**
+  `clean_event_metadata` bounds event metadata to string-keyed scalars ≤256 chars — a deliberate size
+  bound. Passing the lineage dict through produced `"{'informed_by': ['knowledge:item-7']}"`, a
+  Python repr no reader can parse. Widening the sanitizer would loosen a bound that exists on
+  purpose, so the lineage flattens to scalar `lineage_<edge>` keys instead; `flatten_lineage` and
+  `parse_lineage` ship together so the format is one decision in one place. Verified round-tripping
+  through the real registry.
+
+- **DISCOVERY — the publish outcome needed a DECLARED `NodeResult` field.** Setting it as an ad-hoc
+  instance attribute works at runtime and never reaches the journal, so the ledger would show a
+  published artifact with no record of the publish. A string output stays reachable at its original
+  binding path — wrapping it in a dict would break every `{{nodes.x.output}}` downstream, so
+  publishing a node's output would silently change what its consumers read.
+
+- **Typed lineage, not a flat link list.** SOURCE is provenance, INFORMED_BY is evidence, RELATED is
+  navigation; a reader following an untyped edge cannot tell which question they are answering, and
+  the provenance edge is the one an audit has to trust. An unknown edge type is refused rather than
+  stored.
+
+- **Evidence bundles and the handoff report are Artifact compositions.** Bundle files are sorted by
+  name so two runs producing the same evidence produce byte-identical manifests — an unstable order
+  would make every bundle look changed to the material-change gate, defeating it for the artifact
+  kind that is re-published most. Every handoff section is present even when empty: an absent
+  `side_effects` reads as "nothing was committed or sent", which is the claim a user most wants to be
+  true and least wants guessed. A skip with no reason is flagged, because the reader cannot tell a
+  deliberate omission from a silent failure without re-doing the work.
+
+- **The results ledger keeps reverted attempts and repeated attempt numbers.** An attempt log that
+  dropped failures would make a five-attempt convergence look like a first-try success, and the next
+  run would repeat the four failures. Two rows for attempt 3 means it was re-run; collapsing them
+  would hide the retry, which is the most useful thing the ledger records.
+
+- **NOT DONE:** media self-containment (copying referenced local files into the version dir with
+  content-hash names) needs the artifact version-dir write path, which is registry-internal; the
+  cockpit's structured version diffs and multi-view output tabs are FE work on the
+  `contentTypes.ts` registry; the per-run file drop and outbox need the multipart ingestion route and
+  its approval gate. Sessions 48-54 own the rest of section F.
+
+### 2026-08-02 — session 48 (subagent batch hardening) DONE
+
+`workflows/batch_compile.py` (new): the N≥2 threshold rule, capability classes, the single-writer
+lint, static depth rejection, typed leaf outputs compiled to the engine's existing `output_contract`,
+the lineage env, and the safety-filtered recall view. 52 tests.
+
+- **The threshold rule is the ergonomics.** N=1 stays a raw spawn — "go check X while I keep chatting"
+  is chat-native delegation, and a run record plus project resolution on it is ceremony the personal
+  feel does not survive. N≥2 compiles and gains the journal, per-branch retry, resume-after-restart
+  and fork.
+
+- **DISCOVERY — per-leaf error isolation is NOT the default, contrary to my first implementation.**
+  I emitted `on_error: "continue"` and wrote a comment claiming the container default already
+  isolated failures. Driving `derive_state` showed the opposite: a `parallel` with `join: all` (the
+  default) goes FAILED the moment one child fails, so one bad leaf would have sunk a five-way
+  fan-out — the exact inverse of "four still return". And `"continue"` is not a value the engine
+  recognizes at all (it checks `fail_run`, defaulting to `null_continue`). The compile now emits
+  `join: quorum, quorum: 1`, measured: DONE with one leaf failed, FAILED when all fail.
+
+- **DISCOVERY — four emitted config keys were read by nothing.** `workspace`, `capability`,
+  `tool_posture` and `timeout_secs` all went into node config; a grep of the engine found no reader
+  for any of them. In a module whose entire subject is least-privilege, keys that look like
+  enforcement and enforce nothing is the worst version of this bug — a caller reads
+  `"read_only": true` in the spec and believes it. Unenforced declarations now travel in a separate
+  `postures` map, and `CompileResult.unenforced()` names which seam each one still needs (the
+  tool-handler depth flag, the §4.1 workspace block, and the fact that the engine's node timeout is
+  per-RUN with no per-node override to bind to).
+
+- **Typed outputs compile into the EXISTING `output_contract`.** The engine already validates it
+  before any binding resolves; a second validator over one field would disagree eventually, with the
+  one that ran last winning silently. Schema fields with no contract equivalent are DROPPED rather
+  than approximated — an approximated check that passes malformed data is worse than no check,
+  because it is believed.
+
+- **Capability classes default to `research`** — the safe direction to be wrong in. A research leaf
+  that needed to write fails visibly and is re-declared; a mutating leaf that only needed to read has
+  ambient write access nobody asked for. The write-marker list is deliberately over-inclusive so a
+  newly-added write tool is denied by default; an allowlist of known writers would silently admit
+  every tool added after it was written. Orchestration tools are denied at EVERY depth, because a
+  leaf that can spawn can fan out without a budget and the depth counter alone would let it happen
+  once per level.
+
+- **Static depth rejection, not just a counter.** Today's no-recursion rule is prompt-level, so a
+  leaf that decided to fan out again would succeed once per level before any counter noticed. The
+  depth check also fires below the compile threshold: a single task at depth is still a spawn a leaf
+  should not be making, and returning `compiled: False` with no finding would read as "nothing to see
+  here".
+
+- **A research leaf declaring writes is an ERROR, a multi-writer collision is a WARN.** The first is a
+  contradiction only the author can resolve; the second may be disjoint regions of one directory, and
+  refusing would block a legitimate fan-out — but it must be said, because two workers writing one
+  file lose an update while both report success.
+
+- **The recall view fails CLOSED.** If `security.redact` raises, the view is withheld rather than
+  shown unredacted: failing closed costs the projection, failing open costs a credential. Redaction
+  goes through that existing chokepoint rather than a local pattern set, because a second redactor
+  drifts and the drift shows up as a credential in a UI.
+
+- **NOT DONE:** the actual `mcp_subagents.subagent_run` cutover to call `compile_batch` — the compile
+  and its contract are the mechanism, but routing the tool through it needs the spawn path to apply
+  the postures, and applying them needs the tool-handler seam that does not exist yet (§3 says so
+  explicitly: "NOT per-context tool filtering, which doesn't exist"). Shipping the route without the
+  seam would replace a working fire-and-forget batch with one that claims least-privilege it does not
+  have. Also not done: TTL-bound scoped file sessions, the sibling-awareness wrapper, N-variant
+  comparison metrics, and the agent-roster projection + drift check (R16) — the roster is a
+  `config.json agents{}` projection, which is a Platform-Legibility-shaped change, not a batch one.
+
+### 2026-08-02 — session 49 (run workspace + environment) DONE
+
+`workflows/workspace.py` (new): the `workspace` provisioning block, reserved-var rejection, the
+secret-filtered spawn env with presence-only flags, and tolerant `.folder.yaml` contracts. 72 tests.
+
+**ARCC was not queried (MCP server unavailable in this session).** Standard practice applied instead:
+secrets stay in the existing credential seam (`{{secret:KEY}}` + the credential store), values never
+reach a run record/journal/UI, and every surface shows presence flags only.
+
+- **`scratch` is the default mode and `in_place` is never one.** Being wrong about isolation should
+  cost a copy, not the original — `in_place` is the mode in which a destructive step runs against
+  real state, which is the shape of the deleted-real-model incident. An unknown mode is FATAL rather
+  than defaulted, because defaulting would silently run in a mode nobody chose and the modes differ
+  in exactly the way that matters.
+
+- **A greedy `preserve_patterns` entry is refused.** `**` copies the whole tree into the workspace it
+  is being isolated from, which defeats the isolation. But real patterns matter: a worktree with no
+  `.env` is one where every build fails, and a user whose first isolated run cannot install
+  dependencies concludes isolation is broken rather than unconfigured.
+
+- **DISCOVERY — the shared secret-hint list missed provider-specific credential shapes.** Wiring the
+  env filter measured `GITHUB_PAT` as NON-secret, so a run declaring inherit-from-host would have
+  passed a GitHub personal access token straight into a leaf's environment. A hint list is only as
+  good as its worst-covered credential, and bespoke names are exactly what a generic list misses.
+  Widened `SECRET_KEY_HINTS` (the SHARED list in `secrets.py`, not a second one) with `_pat`, `pat_`,
+  `session_key`, `access_key`, `refresh`, `signing`, `webhook` — then checked the other direction:
+  `PATTERN_FILE`, `COMPATIBILITY`, `NODE_ENV`, `PORT` and `LANG` all still read as non-secret.
+
+- **An ungranted secret is ABSENT, not empty.** An empty string reads to a child as "this credential
+  is configured and blank", producing an authentication failure rather than a
+  missing-configuration error — the first is far harder to diagnose. Withheld keys are RETURNED so
+  the cockpit can say "2 declared secrets were not granted" instead of a child failing invisibly.
+
+- **`{"VAR": null}` means inherit, which is a third state.** Different from omitting the key (absent)
+  and from `""` (set and empty). Inheritance is still FILTERED: a host var that is itself a secret
+  must be granted explicitly, or "inherit my environment" becomes a blanket credential grant.
+
+- **A reserved env var is REJECTED, not overridden.** `HOME`, `PATH`, `PYTHONPATH`, the `XDG_`/`LD_`/
+  `DYLD_`/`PERSONALCLAW_` prefixes: redirecting any of them relocates every config file, credential
+  store and binary the system resolves through them — including the machinery enforcing every other
+  rule in the module.
+
+- **Order is the provisioning contract.** preserve → setup → run, and teardown → delete. An
+  `npm install` that runs before `.npmrc` is copied in reaches for the wrong registry; a teardown
+  that runs after deletion runs against a directory that no longer holds the services or artifacts it
+  was meant to stop and sync. Setup is marker-guarded and content-addressed, because setup runs on
+  EVERY resume by contract — a `git clone` that re-runs fails, and a setup block that fails on resume
+  makes resume unusable. A marker keyed by index would skip an edited step as though it had run.
+
+- **Folder contracts are tolerant by construction.** Every problem is a warning; an unparseable
+  contract yields defaults plus a warning, because the alternative is a directory that becomes
+  unusable over a typo in a metadata file. Unknown fields are KEPT, not dropped — a round-trip that
+  lost them would corrupt a newer app's contract when an older core rewrote the file (the
+  23-of-25-dropped-memories class). `transient` is the fallback lifecycle: content that should have
+  been permanent and got cleaned is recoverable from the run that made it, while content that should
+  have been transient and persisted is a leak nobody notices. `agent_writable` defaults to False,
+  because defaulting to writable would make every folder that forgot to declare a permission an open
+  one — and forgetting is the common case. `immutable` + `agent_writable` resolves toward the safety
+  declaration and reports the conflict.
+
+- **NOT DONE:** actual provisioning I/O — `plan_provisioning` returns the ordered plan and the caller
+  performs it; wiring it into the controller's run-start path is a controller change this session
+  does not open. PID-liveness lock files outside the workspace, `preserved_workspace_path` on the run
+  record, reuse-with-safe-ff-only-refresh for named workspaces, and the Apply Locally / Checkout
+  Branch verbs need the run-record schema and the code cockpit (session 52 owns worktrees). Container
+  mode (§4.4) is opt-in and explicitly deferred to last by the plan. The two new config defaults
+  (`workspace_default_mode`, `workspace_teardown_on_expiry`) are not wired: the four-point config
+  contract needs a `WorkflowsConfig` field plus `_EDITABLE_CONFIG` plus an FE control, and adding a
+  knob nothing reads yet would be the inert-control class this program keeps finding.
+
+### 2026-08-02 — session 50 (session ownership + incognito enforcement) DONE
+
+`workflows/ownership.py` (new): run-owned session keys, the two seam registrations, incognito/temporary
+inheritance, and the engine-level learning-node skip. `sel.py` + `context.py` each gained one prefix
+entry; `engine.dispatch_stage` gained the skip and the owned parent key. 79 tests.
+
+- **Two seams had to learn `workflow:`, and BOTH were fixed at the function that is actually called.**
+  `sel._infer_source` is what `log_tool_call` invokes, so a helper elsewhere returning "workflow"
+  would have been a parallel path the audit log never consults — every run-owned tool call would
+  still record as `channel`, the catch-all, making "what did the run do" unanswerable from the log
+  even though every event is in it. Same for `context._prompt_use_case_for`: without the entry an
+  owned session resolved to the `chat` prompt, framing a stage worker as a conversational assistant.
+  Both verified with a no-regression sweep over every existing prefix.
+
+- **Behaviour keys off `_app`, not the key prefix** — verified in code (`gateway.py` and
+  `chat_runner.py` both branch on `session._app == "loop"`). The `loop_`/`loop:` prefix-match in the
+  prompt resolver is a known near-miss the plan says not to repeat, so ownership sets `_app` and the
+  key is only an identifier.
+
+- **DISCOVERY — the engine helper called a PHANTOM API.** The first version used `store.load()` and
+  read `run.memory_mode`; NEITHER exists (`store.get` is the real reader, and there is no such
+  field). Wrapped in a best-effort `except`, that would have raised on every stage and been
+  swallowed — an enforcement control that silently never fires, which is the exact class this program
+  keeps producing. The mode now lives in `WorkflowRun.extra` (already persisted and round-tripped),
+  so no schema change is needed, and a test asserts `store.load` does NOT exist so a future rename
+  cannot re-introduce the phantom.
+
+- **DISCOVERY — my own test wrote two runs into the REAL `~/.personalclaw`.** Patching
+  `personalclaw.config.loader.config_dir` does NOT reach `workflows.store`, which imports `config_dir`
+  at module level. The runs then leaked into `test_context`'s `active_workflows_block()` assertions —
+  two failures that passed in isolation and failed only in the full xdist mix. Root-caused rather
+  than reruns: switched to patching `workflows.store.config_dir` (the established convention in
+  `test_workflows_run_delete._isolated_home`), added an `_assert_isolated` guard so a future
+  mis-patch fails loudly instead of writing to a real home, and cleaned the two leaked rows plus
+  their two empty run dirs out of the real home after verifying the db held nothing else.
+
+- **An unrecognized `memory_mode` parses as INCOGNITO, not NORMAL.** The value exists because someone
+  asked for privacy; a typo or a newer mode name this build does not know must not read as "record
+  everything". A lost note is recoverable, a memory the user believed was never written is not. The
+  distinction against ABSENCE is deliberate: no recorded mode means the run predates the feature or
+  came from an unrestricted origin, both genuinely unrestricted.
+
+- **Inheritance reads BOTH sources**, following `session_search.is_restricted`'s precedent rather than
+  inventing a third store: the durable JSONL line first (it survives a restart), then the
+  process-global registry (it only knows sessions this process has seen). Checking only the registry
+  would mean a gateway restart silently un-marks every incognito run in flight.
+
+- **The engine SKIPS learning nodes outright in a restricted run** — the primary control, DEGRADED
+  rather than FAILED because the node was deliberately not run. Trusting each persist provider's own
+  gate would make correctness depend on every write path checking a flag, and a path added later
+  would leak by default. Nodes can also DECLARE `persists_memory: true`, which is how an
+  app-contributed writer opts in rather than leaking past a hardcoded provider list.
+
+- **`temporary` needs BOTH registry marks.** `is_temporary` gates reads while `is_restricted` (true
+  for either) gates writes, so marking only temporary would leave the write gate depending on one
+  function's internals. The marks are RETURNED as names rather than performed, keeping the module
+  testable without mutating process-global state every other test shares.
+
+- **NOT DONE:** the actual `session_restrictions` marking and JSONL `memory_mode` write at run start —
+  `restriction_calls` and `durable_metadata` are the contract, but performing them needs the run-start
+  path in the controller/service, and stamping `extra` there is a service change this session does not
+  open. Converting EXISTING `loop-<id>`/`cron:<id>` sessions to run-ownership is explicitly scoped OUT
+  by §5.1 itself (it touches `session_map.py`/`sync_bridge.py`/Slack bridging); only new `workflow:`
+  keys are introduced here. The completion-summary mirror into the launching session needs the
+  blocking-run path.
+
+### 2026-08-02 — session 51 (needs-input inbox) DONE
+
+`workflows/needs_input.py` (new): the NeedsInputItem card, owner binding, once-only staleness
+re-notify, and the refs round trip. `attention.raise_gate_item` now attaches the structured card. 71
+tests.
+
+- **Most of this session's nominal scope ALREADY EXISTED and was not rebuilt.** `attention.py` already
+  projects a waiting gate into the inbox via `emit_attention_item`, already dedups per
+  `(run, instance_path, epoch)`, already carries the resume token in `refs`, and `ItemKind.NEEDS_INPUT`
+  plus `NON_CHANNEL_KINDS` were already registered. The genuine gaps were the STRUCTURE (blocker /
+  attempted / evidence / recommendation, one decision), owner binding, and staleness re-notify.
+
+- **DISCOVERY — the block classifier matched failure classes that do not exist.** The first version
+  keyed on `dependency`, `capability` and `config`; the engine's real `FailureClass` values are
+  `user`, `transient`, `network`, `permission`, `protocol`, `budget`, `timeout`, `internal`. So every
+  capability failure fell through to "a decision" and the card asked the user to decide about a
+  missing credential instead of telling them to add one. Fixed by enumerating the real enum, plus a
+  parametrized sweep over EVERY value so a future class cannot land on a default by accident. Two
+  consequences of reading the real list: `budget` is a capability block (a spent budget needs a human
+  to raise it), and `protocol`/`internal` are deliberately NOT transient — filing a bug as retryable
+  means it retries forever while nobody is told.
+
+- **A transient block is not user-actionable.** Surfacing a rate limit as a decision asks the user to
+  do the system's waiting, and it trains them to click through cards — which is how a real approval
+  gets clicked through too.
+
+- **Owner binding is anti-hijack, and an UNBOUND card is deliberately open.** Only the requesting
+  session may satisfy an owned item, because a gate surfaced into a shared channel would otherwise be
+  answerable by anyone who sees it. But a card with no owner is answerable from anywhere: a run the
+  user started themselves should be answerable from whichever surface they are at, and requiring an
+  owner match there would mean starting a run in chat and being unable to answer it from the
+  dashboard. The refusal NAMES the owner, since "not allowed" leaves the user unable to act.
+
+- **Staleness reminds exactly once, and the counter is what makes the cap real.** Reminding without
+  incrementing would remind every sweep, which is the failure the cap exists to prevent. A `seen`
+  card can still be reminded — seen is the read/unread boundary, not an answer, and a card the user
+  glanced at and left is exactly what a reminder is for.
+
+- **The card rides the EXISTING free-form `refs` dict.** The inbox is a general attention store shared
+  with channel messages, so widening `InboxItem`'s schema for one item kind would make every other
+  kind carry empty workflow fields. Today's keys (`workflow`, `workflow_name`, `workflow_node`,
+  `resume_token`) are preserved verbatim so a surface written against them keeps working, and the
+  card's inputs are all OPTIONAL — a required argument would have made the existing gate path a
+  breaking change for a payload most callers cannot yet supply.
+
+- **`attempted` earns the recommendation its credibility.** The same suggestion reads as a guess
+  without it and as a considered next step with it. Failed attempts are KEPT: a log showing only
+  successes would make a five-attempt struggle look like a first-try block, and the user would wonder
+  why the system gave up so fast. Evidence is trimmed to 600 chars because an inbox row is a glance
+  and the full detail is one deep link away.
+
+- **Validated live against a real `InboxStore`** (via the `live_store` type-check seam, which the
+  module's own docstring warns is isinstance-checked precisely so a MagicMock cannot absorb real
+  writes): the row the inbox holds carries the card, the evidence is trimmed, the owner blocks a
+  stranger, and the legacy refs keys survive.
+
+- **NOT DONE:** journal-event reification (§6.1 asks for needs-input/approval as first-class journal
+  event types so the inbox is a pure projection) — the emit path is imperative today and converting it
+  is a journal-format change that Self-Verification's replay harness gates; `permission_suggestions` +
+  `updated_input` on the reply contract (modify-and-approve) needs `workflow_resume`'s answer grammar,
+  the same engine-surface change carried forward from S43/S45; the cross-project inbox aggregation
+  view, count pills, digest-batching and the Open Decisions lane are FE work; OS-level notification
+  routing already exists behind `notification_allowed()` and is deliberately untouched.
+
+### 2026-08-02 — session 52 (code-kind worktrees) DONE
+
+`workflows/worktrees.py` (new): preserve-in, marker-guarded setup, resume safety,
+teardown-before-deletion, the per-run branch, the machinery-free review diff, and the two
+reintegration verbs — all on the proven `loop/worktree.py` machinery rather than a second git
+implementation. 58 tests, driven against a REAL git repo.
+
+- **Two properties were MEASURED on the real machinery before any code was written.**
+  `add_worktree` on an existing id returns the SAME path rather than failing — which is what makes
+  resume free rather than something to implement. And an untracked `.env` is genuinely ABSENT from a
+  fresh worktree, which is why `preserve_patterns` is adoption-critical: a worktree where every build
+  fails reads to a user as "isolation is broken".
+
+- **DISCOVERY — the review diff listed the engine's own machinery as user changes.** Driving a real
+  worktree showed the changed-files panel reporting the preserved `.env` AND `.pclaw-setup/` alongside
+  the one file the run actually edited. A review panel full of machinery is one the user skims, with
+  the file that mattered in the same list. The first fix excluded by filename and only half worked:
+  git reports an untracked directory as `.pclaw-setup/` WITH a trailing slash, so a prefix check
+  written against the bare name matched nothing — an exclusion that existed and did half its job.
+  Both sides of the comparison are now normalized, and preserved files are passed IN from the
+  preserve pass rather than re-derived from globs (which would disagree with reality the moment a
+  pattern matched something the copy skipped).
+
+- **The status parser was verified against real `git status --porcelain` output**, not handwritten
+  fixtures. The two-column form is easy to get wrong: a parser reading one column would report a
+  staged deletion as unstaged, making the cockpit's stage/discard buttons act on the wrong thing.
+  Real output also settled the rename shape (`R  old -> new` — the NEW path is what the user
+  reviews). An unknown code is KEPT rather than dropped, because a file the parser does not
+  understand is still a file the user changed.
+
+- **DISCOVERY (pre-existing, root-caused and fixed) — `test_provider_resolution_unify.py` leaked a
+  synthetic provider entry into the process-global registry.** The full gate went red on
+  `test_cli.py::TestDoctor::test_doctor_with_agent` with `SystemExit: 1`, deterministically, and green
+  in isolation. Three wrong hypotheses were tested and discarded before the real one (a `config_dir`
+  monkeypatch, a `PATH` mutation, and a process-wide `shutil.which` patch — all correctly scoped).
+  The actual cause: `SomeAcpAgent` is registered into `get_default_registry()` and never removed, so
+  `cli_doctor` reported `SomeAcpAgent (acp_agent): error` and exited 1 for ANY test sharing that
+  worker afterwards. Fixed with an autouse cleanup fixture at the file that owns the entry. This
+  session's tests only shifted the worker interleaving that exposed it.
+
+- **Preserve copies IN, never OUT.** A pattern that copied a worktree file back over the user's real
+  tree would make an isolated run able to modify the thing it was isolated from. Denylisted names are
+  refused whatever the glob matches (`.git` would corrupt the worktree's own repo state), and an
+  oversize match is skipped WITH a reason — a user whose build fails needs to know their file was
+  skipped for being 4MB.
+
+- **Setup markers are content-addressed and setup NEVER blocks the run.** Setup runs on every resume
+  by contract, so each step guards itself; a marker keyed by position would skip an EDITED step as
+  though it had run. Refusing to run the workflow because `npm install` failed would make declaring
+  setup a liability, and a user would stop declaring it.
+
+- **Teardown before deletion, commit before removal, and `keep_open` for when the workspace IS the
+  deliverable.** Teardown's job is to stop services and sync work out, and both need the directory to
+  still exist. An ephemeral workspace whose run record points at a deleted directory has lost the
+  work, so a per-run branch means the record references git. `keep_open` still runs teardown —
+  keeping the directory is not keeping the processes.
+
+- **The substrate is built HERE so S46's boot sweep has one source of truth.** The sweep's whole
+  decision turns on whether an isolated substrate is alive; two places computing that would eventually
+  disagree, and the disagreement shows up as a run aborted despite having recoverable work. Verified
+  end to end: a live worktree yields SUSPENDED + resumable, a missing one yields an honest abort.
+
+- **Reintegration is offered, never performed.** `Apply Locally` and `Checkout Branch` are both
+  surfaced with conflicts named on the offer — "apply this" that then fails with a conflict is worse
+  than "apply this (2 files conflict)". Checkout stays safe even with conflicts, because nothing
+  merges until the user decides to.
+
+- **NOT DONE:** the actual subprocess execution of setup/teardown commands — `pending_setup` and
+  `plan_teardown` decide, and the caller performs, because running shell commands from a planning
+  module would put an unbounded execution surface behind a pure API. PID-liveness lock files outside
+  the workspace and the ff-only refresh for named workspaces need the run-record schema. The cockpit
+  diff panel and the two verb buttons are FE work on this contract. Container mode (§4.4) remains
+  opt-in and deferred by the plan.
+
+### 2026-08-02 — session 53 (introspection checklist) DONE
+
+`workflows/introspection.py` (new): the nine-question checklist as a checkable contract, RunStats as a
+pure journal projection, verification debt, said-no gate statistics with a sample-gated fake-check
+badge, per-template p50/p95 cards, and the Proof section. 43 tests, driven against real journals
+written by the engine's own `Journal`.
+
+- **No metrics store was added.** The plan is explicit — "pass-rate, failure distribution and latency
+  percentiles are queries over this — not a separate metrics store" — so every number here is a
+  projection over `journal.ledger()`. A test asserts the projection agrees with the engine's own
+  `run_totals()` on tokens/cost/steps, because two aggregates over one stream that disagreed would
+  make the cockpit and the run row show different numbers with no way to tell which was right.
+
+- **DISCOVERY — `GATE_REJECTED` is declared in `journal.py` and emitted NOWHERE.** A said-no metric
+  reading it would report zero rejections for every gate in the library and therefore flag all of them
+  as fake checks — a warning badge on everything, which is the same as no badge. Rejections are
+  derived from `GATE_RESOLVED`'s own `approved` field instead, which the controller does write on both
+  the auto-approve and human-resolution paths. A drift test pins this: it matches the shape of an
+  actual emitter (`write(... GATE_REJECTED`) rather than any mention, so it does not fail on its own
+  explanation, and it was verified to catch both a qualified and a bare-name emitter while ignoring
+  the declaration, a docstring reference, and a read/filter.
+
+- **DISCOVERY — a `step_attempt` on a non-gate created a gate-table row.** Attributing every attempt
+  event made `publish` (an action) appear in the said-no table with `total: 0` and a 0.0 pass rate — a
+  row that reads as a gate which has never passed anything, in a table whose credibility is the only
+  reason anyone reads it. Retries are now attributed only to nodes already known to be gates.
+
+- **The fake-check badge requires a SAMPLE.** "0 rejections in 0 runs" and "0 rejections in 40 runs"
+  are different claims, and only the second is evidence. A badge firing on the third run of a new
+  template would teach the user to ignore badges before the metric had ever been right. One real
+  rejection clears it permanently — the gate has demonstrated it can say no, which is all the badge
+  was testing for.
+
+- **Verification debt is counted by BINDING, not adjacency.** A node whose output a later gate consumed
+  is verified even with three nodes between them; counting "the next node is a gate" would report a
+  correctly-verified reviewer as debt, and a debt number that flags correct structure gets ignored.
+  The warn threshold is deliberately NOT zero, because a plan legitimately contains zero-token actions
+  whose output IS the check (S42's contract lint already exempts them).
+
+- **p50 and p95, never a mean.** A mean hides both the typical case and the bad one: one runaway run
+  moves it, and nothing tells you whether the usual run is cheap. Percentiles are nearest-rank rather
+  than interpolated, so every reported figure is a run that actually happened — with the handful of
+  runs a personal instance accumulates, an interpolated p95 invents a value between two real runs. A
+  template with ONE run still gets a card, because withholding it would leave the newest template (the
+  one most likely to be surprising) invisible on the surface that answers "what is costing money".
+
+- **The failure rate counts RUNS, not steps.** A run with four failed steps is one bad run; counting
+  steps would make a single messy run look like a systemic problem.
+
+- **The nine questions are named in CODE.** `checklist_gaps` reports which the supplied state cannot
+  answer, which is what turns "glanceable" from a taste claim into a validation script — a surface
+  rendering eight of nine has a specific hole. An empty value counts as ANSWERED: "nothing is blocked"
+  is an answer, and treating it as a gap would make an idle instance look broken.
+
+- **The Proof section states its own caveats.** A section with no evidence and no warning is the worst
+  possible surface, because it looks like proof. High verification debt plus a confident summary is
+  exactly the shape that makes unattended work untrustworthy, so the debt earns an explicit warning.
+  The summary reports counts rather than a verdict — a summary that said "succeeded" would be the run
+  grading itself.
+
+- **NOT DONE:** the cockpit and hub FE that render these projections (chip ribbon, cost/latency strip,
+  template cards, Proof section, warning badges) — this session delivers the contract they read.
+  Trajectory replay needs the resolved-prompt and context-snapshot payloads the journal records but
+  does not yet expose as a timeline projection. The live touched-items feed needs the knowledge/artifact
+  mutation events to carry run attribution, which S47's lineage started but only for artifacts. Making
+  `GATE_REJECTED` a real event (so a rejection is a first-class journal fact rather than a derived one)
+  is a journal-format change Self-Verification's replay harness gates.
+
+### 2026-08-02 — session 54 (project export/import) DONE — section F CLOSED
+
+`workflows/project_export.py` (new): the allowlisted portable set, per-entity sha256 in a versioned
+manifest, secrets as presence flags only, typed import refusals, and `imported-N` collision slots.
+65 tests.
+
+**This is net-new coverage, not an extension.** `snapshot.VALID_COMPONENTS` is
+`(memory, crons, config, skills, workspace, notifications, security)` — neither `projects/` nor
+`tasks/` nor `artifacts/` appears in it, so a project could not be moved off the machine at all. The
+plan's reality note was verified rather than trusted.
+
+- **Secrets never travel — not encrypted, not optional, absent.** The exclude-set is
+  `portability.EXPORT_EXCLUDE`, which is itself a projection of the state inventory's `secret=True`
+  entries; a local copy here would re-create exactly the two-list drift that let stores escape
+  coverage before. The strongest test is not "the file was skipped" but "the secret BYTES do not
+  appear anywhere in the manifest", which is what matters when a manifest is pasted into a bug report.
+  A presence flag takes the value's place, so an importer knows a credential is expected and can
+  prompt — strictly more useful than the credential travelling.
+
+- **DISCOVERY — the exclusion reason was matched as PROSE, and the prose lied.** The reason string for
+  a never-exported directory read "directory is never exported (size or secrets)", and the
+  presence-flag branch tested `"secret" in why` — so every file inside `worktrees/` was reported to
+  the user as a credential they must re-enter. Measured on a real export: `big.js` and `keys.json`
+  both appeared in the "credentials to re-enter" list. Exclusion reasons are now typed CODES with a
+  separate human-text table; a prose string is for reading, a code is for branching, and conflating
+  them makes the branch depend on wording.
+
+- **The import safety rules were COMPARED against `snapshot._data_filter`, not assumed to match.** They
+  agree on every traversal case (`../`, absolute, mid-path). The one divergence is deliberate and
+  stricter: a project-scope exclusion for `worktrees/` that the general filter has no reason to know.
+  Symlink and hardlink refusal stays in the filter, which is where the TOCTOU gap is — the plan-time
+  check is the readable half, not a replacement, and a test pins that the filter still rejects both so
+  the non-duplication stays honest.
+
+- **A checksum mismatch REFUSES the entity, and one bad entry costs that entry.** Importing a file
+  whose hash does not match is importing something the exporter did not send; whether that is
+  corruption or tampering does not change what the importer should do. A partial import is the normal
+  outcome for an archive that travelled, so the refusals are named individually rather than failing the
+  project. An entry with NO digest is also refused: unverifiable is not the same as fine, and accepting
+  it would make the manifest's integrity claim optional, which means it is not a claim.
+
+- **An unknown manifest schema is refused rather than guessed.** Guessing at a shape this build does
+  not know is how an import silently writes the wrong thing.
+
+- **A name collision gets an `imported-N` slot, never an overwrite.** The user's existing project is
+  the one thing an import must not damage, and a silent merge would be worse than either — a project
+  that is neither the original nor the imported one. Slots count from the existing ones, so importing
+  the same archive three times produces three projects rather than failing on the second, and a
+  re-imported slot name does not double-suffix into "P (imported-1) (imported-1)".
+
+- **The portable set is an ALLOWLIST.** A project dir accumulates whatever features write into it, so a
+  denylist would export a future feature's private state by default — which is precisely how a
+  credential escapes. Artifact BODIES do not travel (a 50-version image history would dwarf the
+  archive; the lineage names the run that can regenerate it), and a run's JOURNAL does not travel
+  (it carries every resolved prompt, the single most likely place a credential was echoed into an
+  output).
+
+- **Manifest serialization is canonical**, so two exports of an unchanged project produce identical
+  digests. A digest that changed without the content changing could not detect tampering.
+
+- **NOT DONE:** the archive I/O itself — `plan_export` decides what belongs and what it hashes to, and
+  the caller writes the ZIP, because putting archive extraction behind a pure planning API would hide
+  the one operation whose safety filter must run at extraction time. Optional client-side AES-GCM
+  encryption (PBKDF2-SHA-256) and extract-to-unique-tmp with janitor cleanup belong with that I/O. The
+  `projects` component registration in `snapshot.VALID_COMPONENTS` and `portability` is a one-line
+  addition per file that needs the archive path first, or it would advertise a component that cannot
+  be produced. The CLI/REST surface and the FE export button are surface work on this contract.
+
+---
+
+**Section F (Work Containers) is COMPLETE:** sessions 46-54, PRs #185-#193.
