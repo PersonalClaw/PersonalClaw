@@ -1809,3 +1809,39 @@ registry threaded through the plan path, and T5 needs a `one_shot_completion` ca
 belong with session 41's grounding work where the model plumbing already lands. Hybrid COMPOSITION
 returns the names to compose but does not yet build the subworkflow spec. `presets` and
 `lighter_path` are surfaced in the match result and not yet acted on by the planner.
+
+---
+
+## QUEUE EXHAUSTED — BLOCKED (E6: owner scope decision) — 2026-08-03
+
+All **77 of 77** rows are `✅ DONE` with real PR numbers (sections A–I). The autonomous nudge asks for
+"the first session whose status is not DONE"; there is no such row, so steps 1-7 have no subject. The
+five other `BLOCKED` strings in this file are prose — the protocol text at line ~27 and historical
+deviation notes — not live entries.
+
+**Why this is E6 and not something to work around.** Adding a queue row IS the scope decision. The
+workspace brief reserves it: "the roadmap is owner-maintained — propose changes via issue, not by
+editing `docs/roadmap/` in a PR." Choosing session 78 would be choosing the program's direction.
+
+**Deferred work already recorded in the plans, for whoever writes the next row:**
+
+1. **The learning HTTP surface — shovel-ready.** S75 and S76 each measured that NO learning HTTP
+   handler exists (only the older per-kind skills queue has one). Both deferred their FE/API halves to
+   ONE session covering both surfaces rather than two half-built ones, and both left fully-serialized
+   shapes with fields-exact tests (`inbox.build_view`, `StagingStore.week`) — so that session wires
+   rather than designs.
+
+2. **`SESSION_END` / `RUN_END` gate coverage — NOT a gap-fill (corrected 2026-08-03).** S77 pinned
+   these two cadences as having zero live callers. Measured afterwards: there is no session-teardown
+   hook and no run-end capture pass anywhere in `src/personalclaw`, so this is not a gate someone
+   forgot to wire — the cadences were declared ahead of the subsystems that would use them. Building
+   the capture passes is NEW scope, and `Cadence.RUN_END` overlaps `triggers.models`' existing
+   `run_completed` event, which the next author should reconcile rather than duplicate.
+   `accountability.assert_gate_covers_cadences()` keeps the gap visible either way.
+
+3. **The 22-PR stack (#210 → #233) is unmerged.** `origin/main` is still at #196, so every row above
+   #196 is DONE-in-branch. GitHub merges each stacked PR into its own base, not `main` — see the
+   stacked-PR mechanics memory before merging.
+
+**State at block:** clean tree on `feature-wf2-accountability`; `make lint` green (665 files);
+`pytest -n 4 --dist worksteal` → 14939 passed, 29 skipped, 13 xfailed. Nothing half-finished.
