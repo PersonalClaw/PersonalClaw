@@ -147,7 +147,8 @@ mandatory.
 | 61e | The 5 task-projection events on BOTH channels (ledger kinds + `_publish` + the FE union, guarded in both directions) — UNBLOCKS the stream unions | G30 | ✅ DONE (#205) |
 | 61f | The projection CALL SITE: `RunController` projects settled leaves via `materialize` (+ container/opt-out/failure refusals, refresh dedup), verified on real runs | G30 | ✅ DONE (#206) |
 | 61g | The Task WRITE through the provider (engine actor, drained at completion, shielded bound) + 3 measured defects + the def-registry leak fix | G30 | ✅ DONE (#207) |
-| 61h | Still open: verified_done + confirmation call sites, DagView-in-run-detail, checklist edit UX, config four-point wiring | G30 | TODO |
+| 61h | The VERIFICATION call site (criterion execution, tristate preserved, drained) | G30 | ✅ DONE (#210) |
+| 61i | Still open: the confirmation-gate emission call site, DagView-in-run-detail, checklist edit UX, config four-point wiring | G30 | TODO |
 
 ## H. Automation Substrate (`-AUTOMATION-SUBSTRATE.md`) — final step needs Loops Phase 4
 
