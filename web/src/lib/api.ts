@@ -756,8 +756,20 @@ export interface ActionProvider {
 // Server-sourced trigger $variable catalog (GET /api/triggers/variables). The UIs
 // read this instead of mirroring the per-event var lists — backend is the source
 // of truth (hooks.LIFECYCLE_EVENT_CATALOG + schedule.SCHEDULE_VARS).
-export interface LifecycleEventInfo { event: string; label: string; desc: string; vars: string[]; blocking: boolean }
+// `dormant` (S67): the event is declared and configurable but NO code fires it — 7 of the 15 are.
+// Server-sourced for the same reason the vars are: a hard-coded list here would tell a user their
+// working hook is dead the moment the backend wires one.
+export interface LifecycleEventInfo { event: string; label: string; desc: string; vars: string[]; blocking: boolean; dormant?: boolean; dormant_reason?: string }
 export interface TriggerVariables { schedule: string[]; lifecycle: LifecycleEventInfo[] }
+// One manual event-trigger fire (POST /api/triggers/event:{id}/run|test). `ran` and `success` are
+// deliberately separate: `ran` is whether the trigger reached its action provider at all (false for
+// incident mode, an unregistered provider, or a denylist block — `reason` says which), while
+// `success` is that provider's own verdict. Collapsing them would report a misconfigured action as
+// "never fired", which points the user at the wrong thing entirely.
+export interface EventFireResult {
+  ok: boolean
+  result: { ran: boolean; reason: string; success?: boolean; exit_code?: number; stdout?: string; stderr?: string; error?: string; duration_ms?: number }
+}
 // Knowledge = a library of TYPED items (note/bookmark/media/docs) with extracted
 // content + AI insights. The typed-format enum, media/file fields, structured
 // insights, and provider attribution mirror the target vision (OpenForge-style);
@@ -2058,8 +2070,26 @@ export const api = {
   // Triggers — the unified surface (schedule + lifecycle). The schedule helpers
   // below speak the schedule wire shape the shared Schedule* components already
   // use; the api layer namespaces the id (schedule:<id>) and routes to /api/triggers.
-  triggers: (type?: 'schedule' | 'lifecycle') =>
+  triggers: (type?: 'schedule' | 'lifecycle' | 'event') =>
     get<{ triggers: Trigger[]; server_tz: string }>(`/api/triggers${type ? `?type=${type}` : ''}`),
+  // ── event-kind (data-event) triggers: the S67 parity surface ──
+  // The backend handled `event` in list/create/DELETE only; toggle/run/test/PUT fell through to the
+  // schedule branch and answered 404, so the UI had no way to reach them and no client methods
+  // existed. `ran` is whether the trigger REACHED its provider; `success` is the provider's own
+  // verdict — a misconfigured action reports ran:true / success:false, which is a different problem
+  // from "it never fired" and must stay distinguishable.
+  eventTriggers: () => get<{ triggers: Trigger[] }>('/api/triggers?type=event').then((d) => d.triggers),
+  updateEventTrigger: (id: string, body: Record<string, unknown>) =>
+    put<{ ok: boolean; trigger: Trigger }>(`/api/triggers/event:${encodeURIComponent(id)}`, body),
+  deleteEventTrigger: (id: string) => del(`/api/triggers/event:${encodeURIComponent(id)}`),
+  toggleEventTrigger: (id: string, enabled?: boolean) =>
+    post<{ ok: boolean; trigger: Trigger }>(`/api/triggers/event:${encodeURIComponent(id)}/toggle`, enabled === undefined ? {} : { enabled }),
+  runEventTrigger: (id: string, body?: { key?: string; value?: string; event_type?: string }) =>
+    post<EventFireResult>(`/api/triggers/event:${encodeURIComponent(id)}/run`, body ?? {}),
+  testEventTrigger: (id: string, body?: { key?: string; value?: string; event_type?: string }) =>
+    post<EventFireResult>(`/api/triggers/event:${encodeURIComponent(id)}/test`, { ...(body ?? {}), test: true }),
+  eventTriggerHistory: (id: string) =>
+    get<{ runs: never[]; total: number; supported: boolean; reason: string; fire_count: number; last_fired_at: number }>(`/api/triggers/event:${encodeURIComponent(id)}/history`),
   // schedule trigger helpers (id is the bare schedule raw id — the shared
   // Schedule* components mutate by bare id, which the helpers re-namespace).
   schedules: () => get<{ triggers: Trigger[]; server_tz: string }>('/api/triggers?type=schedule')

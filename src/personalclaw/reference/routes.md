@@ -550,10 +550,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/triggers/{id}` — DELETE /api/triggers/{id}.
 - `PUT /api/triggers/{id}` — DELETE /api/triggers/{id}.
 - `POST /api/triggers/{id}/ack` — acknowledge a schedule trigger notification.
-- `GET /api/triggers/{id}/history` — per-trigger run records (schedule only).
+- `GET /api/triggers/{id}/history` — run records; other kinds answer `supported: false`.
 - `GET /api/triggers/{id}/history/{run_id}` — one full run record.
 - `POST /api/triggers/{id}/run` — fire now.
-- `POST /api/triggers/{id}/test` — execute a lifecycle trigger's action once.
+- `POST /api/triggers/{id}/test` — execute a lifecycle or event trigger's action once.
 - `POST /api/triggers/{id}/to-chat` — open a schedule trigger as a chat session.
 - `POST /api/triggers/{id}/toggle` — enable/disable.
 - `POST /api/update` — git pull, reinstall, rebuild, restart gateway.

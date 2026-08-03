@@ -26,6 +26,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from personalclaw.atomic_write import atomic_write
 
@@ -153,6 +154,94 @@ class EventTriggerStore:
         self.save(items)
 
 
+# ── the shared fire path (S67) ──
+
+
+@dataclass
+class FireOutcome:
+    """Whether an event trigger's action ran, and why not when it did not.
+
+    Typed because `/test` has a caller waiting for an answer while the live fire is
+    fire-and-forget. Before this, both paths returned `None` on every refusal — incident mode, an
+    unknown provider and a denylist block were indistinguishable from success, so a `/test` button
+    could only ever report "ok". A reason string is what makes the test surface honest.
+    """
+
+    ran: bool
+    reason: str = ""
+    result: object = None
+
+    def to_dict(self) -> dict:
+        out: dict = {"ran": self.ran, "reason": self.reason}
+        result = self.result
+        if result is not None:
+            out["success"] = bool(getattr(result, "success", False))
+            for field_name in ("exit_code", "stdout", "stderr", "error", "duration_ms"):
+                value = getattr(result, field_name, None)
+                if value not in (None, "", 0):
+                    out[field_name] = value
+        return out
+
+
+async def execute_event_action(
+    t: EventTrigger,
+    *,
+    event_type: str,
+    key: str,
+    value: str,
+    test: bool = False,
+) -> FireOutcome:
+    """Run one event trigger's action through both guardrail gates. Returns a typed outcome.
+
+    Extracted from `EventTriggerEngine._fire` (S67) so the live fire and the `/test` endpoint cannot
+    diverge. A test button that reimplemented dispatch would eventually pass while the real fire
+    failed — which is worse than having no test button, because it certifies a broken trigger.
+
+    Both gates are preserved for a test fire and NOT bypassed. A `/test` that ignored the denylist
+    would execute exactly the action an operator blocked, from a UI button, and report success; a
+    `/test` that ignored incident mode would run unattended work during the incident the kill switch
+    was thrown for. `test` only tags the payload, so a provider can tell a rehearsal from the real
+    thing.
+    """
+    from personalclaw.guardrails.incident import incident_active
+
+    if incident_active():
+        return FireOutcome(False, "incident mode is active: unattended fires are suspended")
+
+    from personalclaw.action_providers import ActionContext, get_action_provider
+
+    provider = get_action_provider(t.action_provider)
+    if provider is None:
+        return FireOutcome(False, f"action provider {t.action_provider!r} is not registered")
+
+    # Annotated: the literal alone infers `dict[str, str]`, which mypy correctly refuses at the
+    # `payload["test"] = True` below. Same two-step the migration path needed (S66).
+    payload: dict[str, Any] = {
+        "event_type": event_type,
+        "key": key,
+        "value": value[:2000],
+        "trigger_id": t.id,
+    }
+    if test:
+        payload["test"] = True
+    ctx = ActionContext(
+        event=f"memory.{event_type}", context=f"{key}: {value[:200]}", payload=payload
+    )
+
+    # Denylist gate (AUTONOMY-GUARDRAILS §1.2): a blocked action never runs, so an app-contributed
+    # provider fired by a memory event inherits it.
+    from personalclaw.guardrails.denylist import enforce_action
+
+    decision = enforce_action(t.action_provider, t.action_config, ctx)
+    if decision.blocked:
+        matched = getattr(decision, "matched", "") or ""
+        reason = getattr(decision, "reason", "") or "blocked by a guardrail rule"
+        return FireOutcome(False, f"denylist: {matched} — {reason}" if matched else reason)
+
+    result = await provider.execute(t.action_config, ctx)
+    return FireOutcome(True, "", result)
+
+
 # ── runtime engine (module-level singleton; subscribed by vector_memory) ──
 
 _engine: "EventTriggerEngine | None" = None
@@ -223,33 +312,9 @@ class EventTriggerEngine:
 
     async def _fire(self, t: EventTrigger, *, event_type: str, key: str, value: str) -> None:
         try:
-            # Incident kill switch (§1.3): suspend unattended event-trigger fires.
-            from personalclaw.guardrails.incident import incident_active
-
-            if incident_active():
-                return
-
-            from personalclaw.action_providers import ActionContext, get_action_provider
-
-            provider = get_action_provider(t.action_provider)
-            if provider is None:
-                return
-            payload = {
-                "event_type": event_type,
-                "key": key,
-                "value": value[:2000],
-                "trigger_id": t.id,
-            }
-            ctx = ActionContext(
-                event=f"memory.{event_type}", context=f"{key}: {value[:200]}", payload=payload
-            )
-            # Denylist gate (AUTONOMY-GUARDRAILS §1.2): a blocked action never runs,
-            # so an app-contributed provider fired by a memory event inherits it.
-            from personalclaw.guardrails.denylist import enforce_action
-
-            if enforce_action(t.action_provider, t.action_config, ctx).blocked:
-                return
-            await provider.execute(t.action_config, ctx)
+            outcome = await execute_event_action(t, event_type=event_type, key=key, value=value)
+            if not outcome.ran:
+                logger.debug("event-trigger %s did not run: %s", t.id, outcome.reason)
         except Exception as exc:
             # PLATFORM-LEGIBILITY §2: this fire is background/fire-and-forget (no
             # result surface), so the coded WHAT/WHY/FIX envelope becomes the log
