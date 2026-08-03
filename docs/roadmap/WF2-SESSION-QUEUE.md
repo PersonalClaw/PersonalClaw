@@ -1825,6 +1825,7 @@ the queue** — declared work, not new scope (see the ruling in the exhausted re
 | S81 | The Automations **Week tab** (the endpoint's other half) | AUTOMATION-SUBSTRATE AUTO-A3 | ✅ DONE (#240) |
 | S82 | The 7 **dormant lifecycle events** never fired (configurable + dead) | AUTOMATION-SUBSTRATE crit 5, clause 2 | ✅ DONE (#241) |
 | S83 | The `file` kind's **watch runtime** — declared, and nothing watched a filesystem | AUTOMATION-SUBSTRATE crit 2 (partial) | 🟡 PARTIAL (#242) |
+| S84 | The cross-kind **run-history feed** was schedule-only; `FireRecord` was never constructed | AUTOMATION-SUBSTRATE crit 4 | ✅ DONE (#243) |
 
 **BLOCKED — the unified trigger store does not exist, and no queue row owns it.** Criterion 2's chat
 half (`automation_create`, §4) needs somewhere to persist a `file` trigger. The handler is a FACADE

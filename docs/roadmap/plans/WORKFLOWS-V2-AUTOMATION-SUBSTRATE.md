@@ -1226,3 +1226,68 @@ program's protocol forbids.
 So this session ships the runtime with its dedup and delta semantics settled and tested, and records the
 store as the blocking prerequisite. The runtime is what a store-and-service session would otherwise have
 to invent under time pressure.
+
+### S84 — One run-history feed across all three kinds (37 tests) — DONE
+
+**This closes criterion 4**: "a hook, an event trigger, and a cron all show run history in the same feed
+with the same record shape and typed outcomes."
+
+**🔴 THE CROSS-KIND FEED WAS SCHEDULE-ONLY, AND SAID SO.** `GET /api/triggers/history` — the route a user
+opens to answer "what did my machine do" — carried the docstring "cross-trigger run index (schedule
+runs)". Hooks and event triggers were silently absent. The per-trigger route answered `supported: false`
+for both, which was honest in S67 when only schedules had rows, and became the thing standing between
+this criterion and done.
+
+**🔴 AND `FireRecord` — the typed row S62 built for exactly this — WAS NEVER CONSTRUCTED.** `grep
+'FireRecord('` outside its own module returned nothing. The shared shape the criterion asks for already
+existed on paper, exported from `triggers/__init__`, produced by nobody. `FIRE_OUTCOMES` likewise.
+
+Three incompatible sources, measured before writing:
+
+| Kind | What it keeps |
+|---|---|
+| `schedule` | real `ScheduleRun` rows: status ∈ `{success, failure, timeout, launched}`, duration, trace |
+| `lifecycle` | NO run store — `last_run`/`last_status`/`run_count` on the hook, and a transient result |
+| `event` | a COUNTER: `fire_count` + `last_fired_at`, no per-fire rows at all |
+
+`triggers/history.py` projects each onto `FireRecord`. It does **not** migrate: the unified store is the
+program S83 recorded as unbuilt, and a projection is what makes the feed honest meanwhile.
+
+**Two honesty rules, both load-bearing:**
+
+1. **A counter is not a run.** An event trigger's `fire_count=5` becomes ONE synthetic row with
+   `incomplete=True`, `weight=ledger`, and the count in `counters` — never five fabricated rows with
+   invented timestamps. `FireRecord.incomplete` documents itself for exactly this case.
+2. **`launched` is not `ran`.** The schedule store's honest T7 status maps to `deferred`. Calling it
+   `ran` would report success for a background turn nobody has seen — the distinction T7 was introduced
+   to keep. It also stays `LEDGER` weight, since it has not earned a run record yet.
+
+Also: a hook or event trigger that NEVER fired projects `None`, not a zero row. A synthetic row for
+something that never ran reads as "it ran and recorded nothing" — the same lie `supported: false` was
+written to avoid. And `timeout` folds into `failed` because `FIRE_OUTCOMES` has no timeout member;
+adding one would change a vocabulary five modules switch on, so the REASON carries it.
+
+**Three of my own errors, each caught by measuring rather than reading.**
+
+- `RunWeight` has `LEDGER`/`FULL`, not the `RUN` I assumed. The semantic is "did this earn a run
+  directory", which is why a `deferred` fire is `LEDGER`.
+- I wrote `store.list_hooks()`; the method is `list_all()`. The `except` around it would have swallowed
+  the `AttributeError` and the feed would have quietly contained zero hooks — the exact defect being
+  fixed, reintroduced invisibly.
+- My first app fixture wrote events to `tmp_path` while the handler's `_event_store()` resolves through
+  `config_dir()`. The event rows vanished from the feed while every other assertion passed.
+
+`?shape=legacy` preserves the raw dicts for the existing cron-history UI, which renders `trace`/`summary`
+that the typed row does not carry. The default is the unified shape — leaving legacy as the default would
+mean the criterion is met only by a flag nobody sets.
+
+**🔴 A LEAK IN THIS SESSION'S OWN CODE, found while auditing criterion 11 an hour later.** `reason`
+carries a schedule run's raw `error`/`summary`, so a run that failed while printing a token put that
+token straight into the unified feed. The live endpoint happens to pre-redact via `_redact_run`, so the
+SHIPPED path was safe — but these projections are public functions, and a second caller passing raw store
+rows would leak. Redaction now happens at this boundary (3 sites), delegating to the platform redactors
+rather than a private pattern copy. `test_no_projected_row_leaks_a_credential_into_the_feed` greps the
+whole serialized feed, so a NEW field that forgets to redact fails even before its own test exists.
+
+Worth stating as a rule: "the caller happens to redact" is not a security property. The projection is
+the boundary, and boundaries defend themselves.

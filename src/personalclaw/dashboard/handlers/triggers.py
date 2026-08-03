@@ -1011,7 +1011,21 @@ async def api_triggers_doctor(request: web.Request) -> web.Response:
 
 
 async def api_trigger_history_all(request: web.Request) -> web.Response:
-    """GET /api/triggers/history — cross-trigger run index (schedule runs)."""
+    """GET /api/triggers/history — the run feed across ALL THREE kinds (AUTO crit 4).
+
+    Criterion 4: "a hook, an event trigger, and a cron all show run history in the same
+    feed with the same record shape and typed outcomes". This route existed and was
+    **schedule-only** — its own docstring said "(schedule runs)" — so the feed a user opens
+    to answer "what did my machine do" showed one kind of automation and silently omitted
+    the other two.
+
+    `?shape=legacy` keeps the raw `ScheduleRun` dicts for the cron-history UI, which renders
+    `trace`/`summary` fields the typed row does not carry. The default is the UNIFIED shape:
+    a caller asking for history without naming a shape wants the honest cross-kind answer,
+    and defaulting to legacy would mean the criterion is met only by a flag nobody sets.
+    """
+    from personalclaw.triggers import history as H
+
     state: DashboardState = request.app["state"]
     try:
         limit = max(1, min(int(request.query.get("limit", "20")), 100))
@@ -1019,12 +1033,50 @@ async def api_trigger_history_all(request: web.Request) -> web.Response:
     except ValueError:
         return web.json_response({"error": "invalid limit/offset"}, status=400)
     raw_filter = request.query.get("trigger_id") or None
+    kind_filter = ""
     if raw_filter:
-        _, raw_filter = _split_id(raw_filter)
+        kind_filter, raw_filter = _split_id(raw_filter)
     runs, total = await state.crons.list_all_runs(offset=offset, limit=limit, job_id=raw_filter)
     names = {j.id: j.name for j in state.crons.list_jobs(include_disabled=True)}
     enriched = [_redact_run(r, job_name=names.get(r.get("job_id", ""), "")) for r in runs]
-    return web.json_response({"runs": enriched, "total": total})
+
+    if (request.query.get("shape") or "").lower() == "legacy":
+        return web.json_response({"runs": enriched, "total": total})
+
+    # The other two kinds contribute only when the caller has not filtered to a specific
+    # trigger of a
+    # different kind — a `?trigger_id=schedule:x` request asking for one cron must not gain rows for
+    # every hook on the machine.
+    hooks: list[Any] = []
+    events: list[Any] = []
+    if not raw_filter or kind_filter == _LIFECYCLE:
+        try:
+            store = _hook_store(state)
+            # `list_all()`, not `list_hooks()` — checked against the class. A wrong name here would
+            # have been caught by nothing: the `except` below swallows the AttributeError and the
+            # feed would quietly contain zero hooks — the defect this session exists to fix.
+            hooks = [h for h in store.list_all() if not raw_filter or h.id == raw_filter]
+        except Exception:
+            logger.debug("unified history: hook store unavailable", exc_info=True)
+    if not raw_filter or kind_filter == _EVENT:
+        try:
+            events = [t for t in _event_store().load() if not raw_filter or t.id == raw_filter]
+        except Exception:
+            logger.debug("unified history: event store unavailable", exc_info=True)
+
+    records = H.unified_feed(
+        schedule_runs=enriched if (not raw_filter or kind_filter == _SCHEDULE) else [],
+        hooks=hooks,
+        event_triggers=events,
+        limit=limit,
+    )
+    payload = H.feed_response(records)
+    # `total` stays the SCHEDULE total: it is the only kind with a real paginated store, so a sum
+    # mixing it with two summary rows would make the pager overshoot. The projected rows are counted
+    # separately in the response.
+    payload["schedule_total"] = total
+    payload["outcomes"] = H.outcome_counts(records)
+    return web.json_response(payload)
 
 
 def register_trigger_routes(app: web.Application) -> None:
