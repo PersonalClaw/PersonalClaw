@@ -2178,3 +2178,32 @@ covers it. Three of those tests also asserted the SUPERSEDED contract (`crons.ad
 than the old mock — a mock assertion would pass forever without the write happening.
 **Generalizable, now twice: any code path that WRITES a store built from `config_dir()` must resolve
 it through one redirectable function, and `ls ~/.personalclaw` after a suite run is the check.**
+
+### S102 — The manual-run re-point (§6 — stacked on S101)
+
+**DONE.** `POST /api/triggers/{id}/run` now fires a store-backed clock trigger through the same
+`_run_store` path every other store kind uses, so a **Run button and an autonomous tick execute the
+same action the same way** — the last live firing path that still went through `ScheduleService`.
+
+- **🔴 The already-running check was wrong in an API worker.** `state.crons.is_running` reads a
+  PROCESS-LOCAL dict, so a dashboard worker that does not own the scheduler loop answered "idle" for
+  a trigger that was actively running — and would have started a second run. It now reads S97's
+  cross-process claim store, which is exactly the gap that store was built to close.
+- **Read-time expiry is preserved:** a crashed run does not make the Run button permanently unusable
+  (asserted), because the claim read applies `CLAIM_MAX_DURATION_SECS` rather than requiring a
+  janitor.
+- The dry run reports S92's gate plan with the full enforced set (`screen`, `budget`, `claim`,
+  `yield`, `capability`) — the manual-bypass boundary is unchanged.
+- The legacy branch survives only for a home whose migration has not run; it retires with
+  `ScheduleService`.
+
+**SCOPE NOTE — retiring `ScheduleService` is NOT one session.** Measured 19 distinct methods with
+live callers after this: the run store (`list_runs`/`get_run`/`delete_runs`/`list_all_runs`), the
+session reaper (`start_reaper`/`register_active_session_key`/`clear_active_session_key`), `status`,
+`set_refresh_callback`, and 9 `list_jobs` sites across the facade's week grid + doctor + history,
+plus `suggestions.py` and `messaging.py`. `ScheduleRunStore` is keyed by a plain id and survives the
+cutover unchanged, so the run-record methods are a re-point rather than a deletion. Each remaining
+surface is its own session; this one took the firing path because it was the last behaviour-visible
+one.
+
+4 tests (39 in the store-facade file). Gate: `make lint` clean, **15673 passed**, real home untouched.
