@@ -1200,3 +1200,50 @@ an unknown run id, and `approve` reaches the run and reports the real `not_found
   edit UX, config four-point wiring, and the FE stream unions (blocked — the engine emits none of
   `task_materialized`/`confirmation_pending`/`confirmation_resolved`/`task_verified`/
   `cascade_blocked`).
+
+### S61e — The task-projection events, both channels (20 py + 1 FE test) — DONE (UNBLOCKS §7)
+
+S61c recorded the FE stream unions as BLOCKED: the engine emitted none of `task_materialized`,
+`confirmation_pending`, `confirmation_resolved`, `task_verified` or `cascade_blocked`, and registering
+a union member for an event nothing sends would be the same present-and-inert control this program
+keeps finding. **That block is now cleared** — the events exist on both channels.
+
+**Two channels, ONE vocabulary.** The five names are ledger kinds (`journal.LEDGER_KINDS`, so a
+downstream refiner and the existing drift test see them) AND SSE events published through
+`RunController._publish`, differing only by the `workflow_` prefix. A test asserts the prefix relation
+mechanically, because a consumer folding the live stream and one reconstructing from history would
+otherwise need two vocabularies for one fact and the second always drifts.
+
+**Measured: `_publish` has NO server-side allowlist.** It accepts any event name, so the FE's
+`WORKFLOW_LIFECYCLE` array is the only thing standing between an emitted event and a frontend that
+never receives it — EventSource silently drops an unregistered type, with no error anywhere. Two tests
+now guard that in both directions: a backend test asserts every emitted kind appears in the FE array
+(by reading the file), and the pre-existing `workflowMeta.test.ts` drift guard asserts the reverse
+plus "no extras". A second test pins the no-allowlist fact, so if one is ever added THAT test fails
+and the coupling becomes belt-and-braces rather than the only guard.
+
+Per-event decisions, each of which is a real distinction a reader needs:
+
+- **`task_materialized` carries `refreshed`.** §1 makes idempotent recompute the NORMAL path, so a
+  reader counting materializations over-counts the run's output on every rewind without it.
+- **`confirmation_pending` is recorded when the WAIT STARTS**, not only when answered. A run that sat
+  unanswered for a week and one answered instantly are indistinguishable from the resolution alone —
+  and the wait is the number a user cares about.
+- **`confirmation_resolved` carries BOTH the verb and the boolean.** The boolean is what the engine
+  acted on; the verb is what the user chose. Recording only the boolean would leave an audit unable to
+  tell a reject from an expiry auto-reject — the exact distinction §4's per-type expiry policy exists
+  to create. An unattributed resolution records `unknown` rather than empty.
+- **`task_verified` names the CRITERION.** "Verification failed" without naming what was checked is a
+  finding a user cannot act on, and the criterion is the def author's own text.
+- **`cascade_blocked` is ONE event carrying every blocked id.** N events for one upstream failure
+  would make the run look like it failed N times, and §1 already debounces the notification — two
+  collapse points would disagree.
+
+**The durable record does not depend on a live observer.** The emitters write the ledger first, then
+publish; a broken observer (verified with a raising publish fn) leaves the history intact, and a run
+with no observer at all (a CLI run, a replay) still produces its history.
+
+- **NOT DONE:** the DagView-in-run-detail composition (`WorkflowRunDetail` renders no DAG today — a
+  view-composition change, not a seam gap), checklist drag-reorder edit UX, config four-point wiring,
+  and the engine CALL SITES that will invoke these five emitters during a real run (the materialize/
+  verified_done/confirmation modules own those decisions and are still uncalled from `tick`).

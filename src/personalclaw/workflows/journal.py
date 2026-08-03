@@ -113,6 +113,19 @@ SEEN_SET = "seen_set"
 BUFFER_SEAL = "buffer_seal"
 DELAY_CLAMPED = "delay_clamped"
 
+#: TASKS-SOPS §1/§4/§5 (S61e): the task-projection events. Ledger kinds rather than a parallel
+#: channel, because every one of them answers a question a reader asks of the ledger and nowhere
+#: else: WHY does this task exist (`task_materialized`), WHO answered this gate
+#: (`confirmation_pending`/`confirmation_resolved`), WHAT evidence flipped it (`task_verified`),
+#: and WHICH upstream failure blocked it (`cascade_blocked`). Without them a projected task's whole
+#: provenance is invisible — the board shows a task and the ledger shows the run, with nothing
+#: connecting the two.
+TASK_MATERIALIZED = "task_materialized"
+CONFIRMATION_PENDING = "confirmation_pending"
+CONFIRMATION_RESOLVED = "confirmation_resolved"
+TASK_VERIFIED = "task_verified"
+CASCADE_BLOCKED = "cascade_blocked"
+
 #: The subset a downstream refiner reads. Named so a drift test can assert the engine
 #: still emits all of them.
 LEDGER_KINDS = frozenset(
@@ -138,6 +151,11 @@ LEDGER_KINDS = frozenset(
         CRYSTALLIZED,
         HANDOFF,
         CARRYOVER,
+        TASK_MATERIALIZED,
+        CONFIRMATION_PENDING,
+        CONFIRMATION_RESOLVED,
+        TASK_VERIFIED,
+        CASCADE_BLOCKED,
         DECISION,
         BREAKER_TRIP,
         STEERING,
@@ -667,8 +685,111 @@ class Journal:
             "output_ref": ref,
         }
 
+    # ── ledger queries ───────────────────────────────────────────────────────────
 
-# ── ledger queries ───────────────────────────────────────────────────────────
+    # ── TASKS-SOPS projection events (S61e) ──
+
+    def task_materialized(
+        self,
+        path: str,
+        node_id: str,
+        *,
+        task_id: str,
+        fingerprint: str = "",
+        refreshed: bool = False,
+    ) -> None:
+        """A leaf node became (or refreshed) a Task.
+
+        `refreshed` distinguishes a rewind's dedup-merge from a first materialization. Without it a
+        reader counting `task_materialized` events over-counts the run's output every time it was
+        rewound — and §1 makes idempotent recompute the NORMAL path, so that is not a rare case.
+        """
+        self.write(
+            TASK_MATERIALIZED,
+            instance_path=path,
+            node_id=node_id,
+            task_id=task_id,
+            fingerprint=fingerprint,
+            refreshed=bool(refreshed),
+        )
+
+    def confirmation_pending(
+        self, path: str, node_id: str, *, confirmation_id: str, kind: str = "approval"
+    ) -> None:
+        """A gate is waiting on a human. Paired with `confirmation_resolved` by `confirmation_id`.
+
+        Recorded when the gate STARTS waiting, not only when it is answered: a run that sat
+        unanswered for a week and one answered instantly are indistinguishable from the
+        resolution alone, and the wait is the number a user cares about.
+        """
+        self.write(
+            CONFIRMATION_PENDING,
+            instance_path=path,
+            node_id=node_id,
+            confirmation_id=confirmation_id,
+            confirmation_kind=kind,
+        )
+
+    def confirmation_resolved(
+        self,
+        path: str,
+        node_id: str,
+        *,
+        confirmation_id: str,
+        verb: str,
+        approved: bool,
+        resolved_by: str = "",
+    ) -> None:
+        """A human answered. Carries BOTH the verb and the boolean.
+
+        The boolean is what the engine acted on; the verb is what the user chose. They cannot
+        disagree today, but recording only the boolean would make an audit unable to distinguish a
+        reject from an expiry auto-reject — which is exactly the distinction §4's per-type expiry
+        policy exists to create.
+        """
+        self.write(
+            CONFIRMATION_RESOLVED,
+            instance_path=path,
+            node_id=node_id,
+            confirmation_id=confirmation_id,
+            verb=verb,
+            approved=bool(approved),
+            resolved_by=resolved_by or "unknown",
+        )
+
+    def task_verified(
+        self, path: str, node_id: str, *, task_id: str, passed: bool, criterion: str = ""
+    ) -> None:
+        """A done-criterion ran and the engine flipped (or withheld) the task's done state.
+
+        `criterion` is recorded because "verification failed" without naming what was checked is a
+        finding a user cannot act on, and the criterion is the def author's text.
+        """
+        self.write(
+            TASK_VERIFIED,
+            instance_path=path,
+            node_id=node_id,
+            task_id=task_id,
+            passed=bool(passed),
+            criterion=criterion,
+        )
+
+    def cascade_blocked(
+        self, path: str, node_id: str, *, blocked_task_ids: list[str], cause: str
+    ) -> None:
+        """An upstream failure blocked dependents. ONE event for the whole cascade.
+
+        The blocked ids ride as a list rather than one event each: §1 debounces the
+        notification, and a ledger recording N events for one upstream failure would make
+        the run look like it failed N times.
+        """
+        self.write(
+            CASCADE_BLOCKED,
+            instance_path=path,
+            node_id=node_id,
+            blocked_task_ids=list(blocked_task_ids),
+            cause=cause,
+        )
 
 
 def ledger(run_id: str, *, kinds: set[str] | None = None) -> list[dict[str, Any]]:
