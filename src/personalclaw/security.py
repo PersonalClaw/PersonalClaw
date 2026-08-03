@@ -398,6 +398,20 @@ _CREDENTIAL_PATTERNS = re.compile(
     r"|sk-[A-Za-z0-9]{32,}"  # OpenAI classic / compatible
     r"|gh[pousr]_[A-Za-z0-9]{20,}"  # GitHub token
     r"|AIza[0-9A-Za-z_-]{35}"  # Google API key
+    # Measured while wiring the ConfirmationRequest preview (S57): the patterns above missed
+    # THREE shapes that a real payload carries. `sk-[A-Za-z0-9]{32,}` cannot match a key with
+    # hyphens or underscores in the body (`sk-live-ABC...`), and there was no generic
+    # assignment or bearer form at all — so `api_key=<anything>` and
+    # `Authorization: Bearer <jwt>` both survived into a redacted preview. A preview is the
+    # single most likely place for a fetched credential to reach an inbox row.
+    r"|sk-[A-Za-z0-9][A-Za-z0-9_-]{20,}"  # provider keys with hyphens/underscores in the body
+    # Generic `key = value` credential assignment. Keyed on the NAME so the value's shape does
+    # not have to be guessed — an unknown provider's key format is exactly what a shape-based
+    # pattern misses.
+    r"|(?i:api[_-]?key|secret[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret"
+    r"|password|passwd|private[_-]?key)\s*[:=]\s*[^\s,;'\"]{8,}"
+    # `Authorization: Bearer <token>` / a bare bearer token.
+    r"|(?i:bearer)\s+[A-Za-z0-9._~+/-]{16,}=*"
     r")",
 )
 

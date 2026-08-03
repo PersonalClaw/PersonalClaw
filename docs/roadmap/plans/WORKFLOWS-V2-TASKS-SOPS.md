@@ -718,3 +718,71 @@ schema, cascade-fail over the binding graph, the stuck-work sweep and idempotent
   the Tasks-board stuck-work strip are surface wiring on this contract. The clean-exit checklist
   template belongs with the bundled-template work in §8; the granularity lint belongs with SOP
   migration in session 58.
+
+### 2026-08-02 — session 57 (ConfirmationRequest + gates) DONE
+
+`workflows/confirmation.py` (new): the one durable typed record, per-type expiry policy, the four-verb
+resolution vocabulary, `require_hitl`, per-stage mute, tool profiles and the DagView approve/deny card.
+Two SHIPPED defects fixed in `human_input.py` and `security.py`. 58 tests.
+
+- **DISCOVERY (shipped bug, in a correctness-critical path) — single-use resolution did not hold.**
+  `consume_continuation` documented "`unlink` is the atomic primitive — two racing resumes both read
+  the file, but only one `unlink` succeeds". Measured with 8 threads racing one token: MULTIPLE callers
+  received the payload in **36 of 40 trials**. Two reasons, both fatal to the claim — every caller had
+  already READ the file before unlinking, and `unlink` does not reliably raise `FileNotFoundError` for
+  the losers on this filesystem. That is the exact double-approval replay the single-use rule exists to
+  prevent: two resumes carrying one clarification into downstream steps. Replaced with `os.rename` as
+  the claim primitive, which decides the winner BEFORE anything is read — measured 0 of 40 — and
+  leaves the claimed record on disk under a `.claimed` suffix so a resolution that crashes mid-resume
+  is recoverable and auditable rather than silently gone. All 49 existing continuation tests still
+  pass.
+
+- **DISCOVERY (shipped gap in a security control) — `security.redact` missed three real credential
+  shapes.** Found while checking that the ConfirmationRequest preview was actually safe:
+  `sk-live-ABCDEFGH1234567890` survived (the `sk-[A-Za-z0-9]{32,}` pattern cannot match a key with
+  hyphens or underscores in its body), and there was **no generic assignment form and no bearer form at
+  all** — so `api_key=<anything>` and `Authorization: Bearer <jwt>` both passed through untouched.
+  Widened with a hyphen-tolerant provider pattern, a NAME-keyed assignment pattern (so an unknown
+  provider's key format does not have to be guessed) and a bearer pattern. Checked in BOTH directions:
+  every previously-covered shape still redacts, and ordinary prose ("the API key rotation policy",
+  "we discussed passwords", "bearer of bad news") is untouched. 283 security tests pass.
+
+- **DISCOVERY — `str(None)` is `"None"`, which is not empty.** An absent payload previewed as the
+  literal word "None" in an inbox row — a value a user reads as content the run produced. Caught by
+  the test asserting an empty payload previews as empty.
+
+- **The preview is redacted at CONSTRUCTION, and fails closed.** Redacting at render time means every
+  surface has to remember; if `redact` is unavailable the preview is withheld, because a preview is the
+  field most likely to carry a fetched credential and an unredacted one is worse than none.
+
+- **Expiry is per-TYPE, declared rather than defaulted.** A destructive confirmation AUTO-REJECTS on
+  expiry — the action does not happen, which is the recoverable direction, and auto-approving because
+  nobody looked would be the worst behaviour this module could have. An approval or needs-input HOLDS:
+  the user being slow does not make the work unnecessary. A single global default would have to be
+  wrong for one of them. `ttl: 0` means never rather than instantly, because an author writing it means
+  "wait for me".
+
+- **Four resolution verbs, and SKIP is not REJECT.** Skip leaves the item pending for the next pass; a
+  queue without it forces the user to answer in the order the engine happened to ask. Reject resolves
+  AND resumes, down the declined path — leaving it pending would strand a run whose answer was given.
+  An unknown verb is REFUSED rather than treated as a reject: a typo silently declining work the user
+  meant to allow is a failure they cannot diagnose.
+
+- **A destructive confirmation cannot be MUTED.** "Stop asking me about deletions" is a request to
+  remove the last check before an unrecoverable action — the one setting that cannot be undone by
+  changing it back.
+
+- **Tool profiles reuse S48's `Capability` vocabulary.** Two least-privilege vocabularies would
+  disagree about a tool and the looser one would win. An unknown profile name is refused rather than
+  defaulted: loose would silently over-grant, strict would silently break a stage that needs to write
+  and the author would debug the wrong thing.
+
+- **`require_hitl` must be the boolean `True`.** A truthy string is an author mistake, and treating
+  `"false"` as a gate would surprise them in the direction of extra prompts they cannot explain.
+
+- **NOT DONE:** persisting the record itself — it rides the existing continuation store by design (one
+  claim primitive, one directory, one audit trail), and the writer belongs with the controller's
+  gate-entry path, which is the same seam S55/S56 are waiting on. The FE DagView wiring of
+  `onApprove`/`onDeny` is the declared extension point this session supplies the backend for (§7 wires
+  it). The needs-info question template and the `guardrails`/`postconditions` def sections (R9) are
+  session-58 SOP work.
