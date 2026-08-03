@@ -439,6 +439,36 @@ async def api_run_resume(request: web.Request) -> web.Response:
     return _reply(result)
 
 
+async def api_run_confirm(request: web.Request) -> web.Response:
+    """Resolve a pending confirmation by verb — the seam the DagView's Approve/Deny binds to.
+
+    Guarded by the same operation as `resume`, deliberately: this IS a resume with a verb
+    vocabulary on top, and a separate permission would let a caller who may not answer a gate
+    answer it through the other door.
+    """
+    denied = _guard(request, "workflow_run_resume")
+    if denied is not None:
+        return denied
+    run_id = request.match_info.get("run_id", "")
+    body = await _json_body(request)
+    if isinstance(body, web.Response):
+        return body
+    result = service.resolve_confirmation(
+        run_id,
+        supervisor=_supervisor(request),
+        verb=str(body.get("verb", "") or ""),
+        token=str(body.get("resume_token", "") or ""),
+        note=str(body.get("note", "") or ""),
+    )
+    _audit(
+        request,
+        "workflow_run_confirm",
+        "success" if result.get("ok") else "failure",
+        f"{run_id}:{body.get('verb', '')}",
+    )
+    return _reply(result)
+
+
 async def api_run_rewind(request: web.Request) -> web.Response:
     return await _reentry(request, "workflow_run_rewind", service.rewind_run)
 
@@ -606,6 +636,7 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_post("/api/workflows/runs/{run_id}/cancel", api_run_cancel)
     app.router.add_post("/api/workflows/runs/{run_id}/pause", api_run_pause)
     app.router.add_post("/api/workflows/runs/{run_id}/resume", api_run_resume)
+    app.router.add_post("/api/workflows/runs/{run_id}/confirm", api_run_confirm)
     app.router.add_post("/api/workflows/runs/{run_id}/steer", api_run_steer)
     app.router.add_get("/api/workflows/runs/{run_id}/steering", api_run_steering)
     app.router.add_post("/api/workflows/runs/{run_id}/rewind", api_run_rewind)

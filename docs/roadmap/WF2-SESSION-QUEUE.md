@@ -143,7 +143,8 @@ mandatory.
 | 61 | Def-side surfacing fields (`DefMetadata`: surface_mode, cadence_days, escalation, packs, hands_off_to, guided) + the def→record adapter — RE-SCOPED from UX, which was unbuildable: the fields S55-S60 read did not exist | G30 | ✅ DONE (#201) |
 | 61b | Backend wiring: `metadata` write path on `author_def`, `GET /api/workflows/surfacing` (freshness + scope + packs + doctor findings), `TaskComplete` emission from `update_task` | G30 | ✅ DONE (#202) |
 | 61c | FE surfacing surfaces: `surfacingMeta` presentation layer, composer-chip rule, allowlisted deep-link params, templates-list freshness/mode/pack/doctor rendering, validated as-a-user against a live gateway | G30 | ✅ DONE (#203) |
-| 61d | Remaining wiring (deferred): checklist edit UX, config four-point wiring, FE stream unions (blocked — the engine does not emit those events yet), lease write path, confirmation resolve endpoints | G30 | TODO |
+| 61d | Lease write path (flock'd CAS + sweep, 0/12 multi-winner across 8 processes) + `POST /runs/{id}/confirm` verb resolve + the FE node→token join | G30 | ✅ DONE (#204) |
+| 61e | Still open: DagView-in-run-detail composition, checklist edit UX, config four-point wiring, FE stream unions (BLOCKED — engine emits none of those events) | G30 | TODO |
 
 ## H. Automation Substrate (`-AUTOMATION-SUBSTRATE.md`) — final step needs Loops Phase 4
 

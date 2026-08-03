@@ -1137,3 +1137,66 @@ be corrected by the owner; nothing here was built against the absent API.
   not emitted by the engine yet — registering a union member for an event nothing sends would be the
   same present-and-inert control this program keeps finding), the lease write path, and the
   confirmation resolve endpoints.
+
+### S61d — The lease write path + the confirmation resolve endpoint (34 py + 5 FE tests) — DONE
+
+S60 built the lease DECISION rules as pure functions; S57 built the confirmation verbs. Neither had
+durability or a caller. Both now do.
+
+**The lease write path survives real process contention — measured, not assumed.** Eight separate
+PROCESSES racing one task through `claim_task`, 12 trials: **0 multi-winner**. That is the property
+the whole mechanism exists for, and it is the same class of claim S57 measured failing 36 of 40 times
+in its read-then-`unlink` form. The read-modify-write is wrapped in `single_flight` (the established
+flock primitive) because per-entity JSON files have no transactions, so "read the lease, decide,
+write the lease" is otherwise a race between the read and the write. A LOSER of the lock is told the
+task is held rather than proceeding — single-flight means don't double-run, and a caller ignoring the
+miss would be performing exactly the double-claim the lock prevents.
+
+Design decisions:
+
+- **The lease is a SIDECAR file, not a field on `Task`.** Three reasons in order of cost: a
+  once-a-minute renewal written into the entity file rewrites the task every time and races
+  concurrent edits to unrelated fields; `Task` is the SHARED model across every provider, so a
+  native-only concurrency concept on it makes every provider's task carry a field only one can
+  honour; and a sidecar can be deleted to force-release without touching user data.
+- **A corrupt or holderless lease file reads as UNCLAIMED.** Degrading to unclaimed risks a brief
+  double-claim; degrading to claimed would strand the task permanently with no holder to release it.
+  The contention resolves; the strand does not.
+- **A task id is sanitized before it becomes a filename.** It arrives from an HTTP path and a
+  provider id is not a trust boundary — verified: `../../evil` lands as `.._.._evil.json` inside the
+  directory.
+- **The sweep deletes unparseable files too.** They already read as "no lease" to every reader, so
+  removing them is cleanup rather than a decision, and leaving them means the directory grows forever.
+
+**`resolve_confirmation` rides `resume_run`, and converts the verb to the approval BOOLEAN.** The
+engine's gate resolution reads a boolean, so passing `"reject"` through would make a rejection truthy
+— the single worst mistranslation available in this path, and pinned by a test. It rides the one
+resume path because the claim primitive lives with the token, and a second resolve path would be a
+second chance to double-approve. `skip`/`quit` deliberately do NOT touch the run or consume the
+token: they are decisions about the QUEUE, not answers to the gate, and burning a single-use claim on
+a non-answer would strand the gate forever. An unknown verb is refused, not read as a reject.
+
+`POST /api/workflows/runs/{run_id}/confirm` is guarded by the SAME operation as `resume` (this IS a
+resume with a verb vocabulary on top — a separate permission would let a caller who may not answer a
+gate answer it through the other door), audits the verb, and does NOT accept `channel` from the body,
+for the same reason `api_run_resume` does not: `channel` marks a remote reply the engine owner-binds,
+and forwarding it from an untrusted body would let a caller claim to be a channel.
+
+FE: `confirmWorkflowRun` plus `tokenForNode`/`canResolveNode` — the `(run_id, node_id)` join between
+the DagView's node ids and the continuation list's resume tokens. An empty token is NOT sent as a
+wildcard: the backend reads a missing token as "the newest pending gate", which is right for a chat
+user saying "approve it" and wrong for a click on a specific node. An EXPIRED continuation is not
+answerable either, so both verbs go false together — a node still offering Approve after its gate was
+answered is how a user double-approves.
+
+**Validated over HTTP** against a live gateway (isolated dev home): a typo'd verb is a 400
+(`bad_request`), `skip` returns `resumed=false, still_pending=true` without touching the run even for
+an unknown run id, and `approve` reaches the run and reports the real `not_found`.
+
+- **NOT DONE:** the DagView component itself is in `pages/tasks/`, and wiring its `onApprove`/`onDeny`
+  props needs the run-detail view to render a DAG at all (it currently does not — `WorkflowRunDetail`
+  has no `DagView` usage). That is a view-composition change, not a seam gap: the backend, the client
+  method and the node→token join all exist and are tested. Also still open: checklist drag-reorder
+  edit UX, config four-point wiring, and the FE stream unions (blocked — the engine emits none of
+  `task_materialized`/`confirmation_pending`/`confirmation_resolved`/`task_verified`/
+  `cascade_blocked`).

@@ -2684,6 +2684,15 @@ export const api = {
   startWorkflowRun: (body: { name: string; inputs?: Record<string, unknown>; mode?: 'blocking' | 'background'; project_id?: string; idempotency_key?: string }) =>
     post<{ run_id: string; status: string; blocking?: boolean; needs_input?: WorkflowContinuation[] }>('/api/workflows/runs', body),
   workflowRun: (id: string) => get<WorkflowRunDetailData>(`/api/workflows/runs/${encodeURIComponent(id)}`),
+  /** Resolve a pending confirmation by VERB — the backend the DagView's Approve/Deny binds to.
+   *  Separate from `resumeWorkflowRun` because the verb vocabulary is the point: an unknown verb is
+   *  REFUSED server-side rather than treated as a reject, so a typo cannot silently decline work the
+   *  user meant to allow. */
+  confirmWorkflowRun: (id: string, body: { verb: 'approve' | 'reject' | 'skip' | 'quit'; resume_token?: string; note?: string }) =>
+    post<{ ok?: boolean; verb?: string; approved?: boolean; resumed?: boolean; still_pending?: boolean; code?: string; message?: string }>(
+      `/api/workflows/runs/${encodeURIComponent(id)}/confirm`,
+      body,
+    ),
   workflowRunOutput: (id: string, nodeId: string) =>
     get<{ run_id: string; node_id: string; instance_path: string; state: string; output: unknown }>(
       `/api/workflows/runs/${encodeURIComponent(id)}/outputs/${encodeURIComponent(nodeId)}`),

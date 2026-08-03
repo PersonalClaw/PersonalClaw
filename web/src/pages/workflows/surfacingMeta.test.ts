@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest'
 import type { WorkflowSurfacingRow } from '../../lib/api'
 import {
   cadenceLabel,
+  canResolveNode,
   composerChip,
   findingsByDef,
   freshnessLook,
   modeLook,
   needsAttention,
   packChips,
+  tokenForNode,
   tracksCadence,
 } from './surfacingMeta'
 import { missingRequired, validateDeepLinkParams } from './templateStart'
@@ -230,5 +232,38 @@ describe('required inputs are RE-DERIVED, not trusted', () => {
 
   it('is empty for a template with no inputs', () => {
     expect(missingRequired({}, undefined)).toEqual([])
+  })
+})
+
+describe('node → resume-token join', () => {
+  const conts = [
+    { node_id: 'approve', resume_token: 'tok-a' },
+    { node_id: 'publish', resume_token: 'tok-p' },
+  ]
+
+  it('finds the token for a node', () => {
+    expect(tokenForNode(conts, 'publish')).toBe('tok-p')
+  })
+
+  it('returns EMPTY for a node with nothing pending', () => {
+    // Not passed to the endpoint as a wildcard: the backend reads a missing token as "the newest
+    // pending gate", which is right for a chat user saying "approve it" and wrong for a click on a
+    // specific node.
+    expect(tokenForNode(conts, 'other')).toBe('')
+  })
+
+  it('ignores an EXPIRED continuation', () => {
+    // The token is gone, so the button would fail — showing it teaches the user the UI lies.
+    expect(tokenForNode([{ node_id: 'a', resume_token: 't', expired: true }], 'a')).toBe('')
+  })
+
+  it('handles an absent list', () => {
+    expect(tokenForNode(undefined as never, 'a')).toBe('')
+  })
+
+  it('gates BOTH verbs on the same answer', () => {
+    // A node still offering Approve after its gate was answered is how a user double-approves.
+    expect(canResolveNode(conts, 'approve')).toBe(true)
+    expect(canResolveNode(conts, 'gone')).toBe(false)
   })
 })
