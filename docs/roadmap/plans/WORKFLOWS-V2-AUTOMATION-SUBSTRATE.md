@@ -826,3 +826,73 @@ history → delete all behave as the table above says.
   owner, not in an API-parity session; wiring them from here would mean seven speculative touches
   across unrelated modules. `DORMANCY_NOTES` names the owning subsystem for each so the work is
   findable, and `verify_dormancy()` fails if one is wired without updating the list.
+
+### S68 — Generalized autopause, parking, quarantine + Runs-inbox surfacing (53 tests) — DONE
+
+§2 says autopause-after-5 **already exists** for the cron action path and the substrate *generalizes*
+it. So the session started by driving `GatewayOrchestrator._maybe_autopause` directly rather than
+reading it.
+
+**🔴 A SHIPPED BUG, measured: five denylist blocks silently disable a trigger.** `_maybe_autopause` is
+called from four sites and increments the same counter at every one, with no notion of WHY the fire
+produced no work. Driven directly:
+
+| call site | before | after |
+|---|---|---|
+| unknown action provider | counts 1 of 5 — takes **5 pointless fires** to stop | `config_error` → pauses on fire 1 |
+| **denylist block** | counts 1 of 5 — **5 blocks set `enabled = False`** | does not call autopause at all |
+| provider raised | counts 1 of 5 regardless of cause | classified from the exception; outages don't count |
+| `result.success is False` | counts 1 of 5 | unchanged — still pauses at 5 |
+
+The denylist row is the real defect: a policy the operator configured **on purpose** read as five
+failures and disabled the user's trigger for behaving exactly as designed. That is R7's point, and why
+S62's `TRUE_FAILURE_OUTCOMES` is a single-member set.
+
+**🔴 A hazard caught BEFORE shipping — parking via `enabled` would strand the trigger forever.** The
+natural implementation is "not `fires_automatically` ⇒ `enabled = False`". But `ScheduleJob` has no
+`retry_after` field and the legacy scheduler has **no clock-driven unpark sweep**, so a parked trigger
+would never come back — strictly worse than the over-counting being fixed. On the legacy path a park
+is therefore ADVISORY: the fire is not counted (the part that matters) and the job stays armed to
+retry on its own schedule. The real parked state lands when the trigger store owns the row.
+`test_gateway_never_disables_on_an_outage_however_long` pins it.
+
+Decisions, each with the failure it prevents:
+
+- **Only `FAILED` spends the budget**, delegated to S62's set rather than re-listed — a second copy is
+  a second thing to forget, and both drift directions are silent. A parameterized walk over the whole
+  closed vocabulary catches an outcome added later that quietly starts or stops counting.
+- **An outage PARKS and leaves the counter UNTOUCHED** — not reset. Resetting would let a flapping
+  credential clear a real failure streak on every other fire; counting would leave the automation
+  disabled after the user renews the token.
+- **A success clears a park** — a successful fire is proof the outage ended, and leaving the state set
+  would keep skipping a trigger that demonstrably works.
+- **`classify_exception` puts auth BEFORE transport.** An expired credential frequently arrives as an
+  HTTP error whose *type* is a transport class; reading it as transport tells the user to check their
+  network when the fix is to re-authenticate. Both park, so only the explanation differs — which is
+  the entire value. Matched on type NAMES + message substrings, because providers raise plain
+  `RuntimeError` with the reason only in the message, and a type-only classifier would autopause every
+  expired token.
+- **An unclassified exception/exit is `FAILED`, never benign.** Fail-safe direction: defaulting to a
+  parking exit would let genuinely broken work retry forever without ever autopausing. An unknown
+  `exit_type` also logs loudly, so a caller's typo cannot silently restore the 5-fire behaviour.
+- **Quarantine is ordered FIRST** in `evaluate`, so nothing below can put an injection-screened trigger
+  back into a firing state, and it is **not resumable from a button** — one click is too cheap a
+  gesture for "run the thing that looked like an attack".
+- **Inbox cards are keyed `(trigger, state)`, not per fire.** Per-fire keying yields exactly one card
+  ever, because an autopaused trigger stops firing — so a trigger that pauses, is resumed, and pauses
+  again would never surface the second time. One card per EPISODE, a new one on re-entry.
+- **A PARK gets no card.** It self-heals; a card the user cannot act on trains them to dismiss the
+  surface that carries the real ones. `paused` (a user decision) is likewise never attention-worthy.
+- **A quarantine card offers no Resume**, because `resume_state` refuses it and a button that returns a
+  refusal is worse than no button.
+- **`last_error` rides the card body** — "paused after 5 consecutive failures" with no error is an
+  alert the user must go digging to act on.
+
+The denylist fix is asserted against the SOURCE (`test_the_denylist_call_site_no_longer_autopauses`):
+the fix is the ABSENCE of a call, which no behavioural test can see.
+
+- **NOT DONE (by scope):** the persisted `state`/`retry_after`/`health_status` columns and the unpark
+  sweep — they belong to the trigger store, which does not exist yet (§2's absorb order puts it after
+  the migration). `unpark_due` is written and tested so the sweep is a call site, not a design task.
+  The inbox WRITE is likewise a service concern; `attention_card` returns the record and
+  `is_duplicate_card` owns the dedup rule.

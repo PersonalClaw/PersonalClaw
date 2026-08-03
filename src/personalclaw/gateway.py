@@ -755,7 +755,9 @@ class GatewayOrchestrator:
         if provider is None:
             job.last_status = "error"
             job.last_error = f"unknown action provider {job.provider!r}"
-            self._maybe_autopause(job)
+            # A config error, not a failure: no such provider will ever exist on
+            # retry, so waiting for 5 identical fires is 4 pointless runs (S68).
+            self._maybe_autopause(job, exit_type="config_error")
             return None
 
         config = job.action.get("config") or {}
@@ -830,7 +832,10 @@ class GatewayOrchestrator:
             job.last_status = "error"
             job.last_error = f"blocked by guardrails denylist: {_deny.reason}"
             job.last_outcome = "skip"
-            self._maybe_autopause(job)
+            # A POLICY decision, not a failure — and NO autopause (S68). Measured
+            # before: five consecutive blocks set ``enabled = False``, so a
+            # denylist the operator configured on purpose silently disabled the
+            # user's trigger for behaving exactly as designed.
             return None
 
         self._running_script_ids.add(job.id)
@@ -856,7 +861,12 @@ class GatewayOrchestrator:
 
             job.last_status = "error"
             job.last_error = provider_failure(job.provider, exc).render()
-            self._maybe_autopause(job)
+            # Classified from the exception: an auth/transport outage does not
+            # spend the failure budget, so a trigger is not still disabled after
+            # the user renews the credential (S68).
+            from personalclaw.triggers.autopause import classify_exception
+
+            self._maybe_autopause(job, exit_type=classify_exception(exc))
             logger.exception("Action cron job '%s' (%s) failed", job.name, job.provider)
             return None
         finally:
@@ -886,15 +896,59 @@ class GatewayOrchestrator:
         self._maybe_autopause(job)
         return None
 
-    def _maybe_autopause(self, job: "ScheduleJob") -> None:
-        """Disable a zero-token job after 5 consecutive failures."""
-        job.consecutive_failures = (job.consecutive_failures or 0) + 1
-        if job.consecutive_failures >= 5:
+    def _maybe_autopause(self, job: "ScheduleJob", *, exit_type: str = "") -> None:
+        """Apply the typed autopause decision for a failed fire (S68).
+
+        Generalized from "increment a counter at every call site" to the §3.7
+        taxonomy. What changed, measured by driving the old version directly:
+
+        * A **denylist block no longer counts at all.** Five consecutive blocks
+          used to set ``enabled = False``, so a policy the operator configured on
+          purpose disabled the user's trigger for working as designed. That call
+          site no longer calls this method.
+        * An **auth/transport outage does not spend the budget.** Burning
+          failures on an expired token leaves the automation disabled even after
+          the user fixes it.
+        * A **config error pauses on the first fire** — no such provider will
+          exist on retry, so four more fires are pointless.
+        * **Five true failures still pause**, exactly as before (the budget is
+          the same 5), so a job tuned against the old tolerance sees no change.
+
+        ``exit_type`` defaults to ``failed``, preserving the plain-failure path.
+        """
+        from personalclaw.triggers.autopause import ExitType as _Exit
+        from personalclaw.triggers.autopause import evaluate as _evaluate
+        from personalclaw.triggers.models import TriggerState as _State
+
+        decision = _evaluate(
+            exit_type=exit_type or _Exit.FAILED.value,
+            consecutive_failures=job.consecutive_failures or 0,
+            now=time.time(),
+        )
+        job.consecutive_failures = decision.consecutive_failures
+        if decision.state == _State.PARKED.value:
+            # A park must NOT touch ``enabled`` here. ``ScheduleJob`` has no
+            # ``retry_after`` field and the legacy scheduler has no clock-driven
+            # unpark sweep, so disabling would strand the trigger PERMANENTLY —
+            # strictly worse than the over-counting this fixes. On this path a
+            # park is advisory: the fire is not counted (the part that matters)
+            # and the job stays armed to retry on its own schedule. The real
+            # parked state lands when the trigger store owns the row.
+            logger.info(
+                "Cron job '%s' hit a transient outage (%s) — not counted",
+                job.name,
+                decision.reason,
+            )
+            return
+        if not decision.fires_automatically:
+            # ``enabled`` is what the legacy scheduler reads, so the decision has
+            # to land there for the pause to take effect at all.
             job.enabled = False
             logger.warning(
-                "Cron job '%s' auto-paused after %d consecutive failures",
+                "Cron job '%s' stopped itself (%s): %s",
                 job.name,
-                job.consecutive_failures,
+                decision.state,
+                decision.reason,
             )
 
     def _day_budget_exceeded(self, *, context: str) -> bool:
