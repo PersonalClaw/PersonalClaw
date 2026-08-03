@@ -786,3 +786,46 @@ Two SHIPPED defects fixed in `human_input.py` and `security.py`. 58 tests.
   `onApprove`/`onDeny` is the declared extension point this session supplies the backend for (§7 wires
   it). The needs-info question template and the `guardrails`/`postconditions` def sections (R9) are
   session-58 SOP work.
+
+### S58 — Surfacing core (`workflows/surfacing.py`, 80 tests) — DONE
+
+Three defects measured, all of them "present and inert":
+
+- **The prose detector vetoed a legitimate trigger.** A substring scan for common connectives
+  flagged `ship the release` — a phrase an author would reasonably register — so a def could be
+  linted into unusability. Fixed by matching SUBORDINATING phrases only, plus a hard
+  `MAX_TRIGGER_WORDS = 6` word cap: the property that makes a trigger bad is that it is a
+  sentence, and a word count measures that directly where a connective scan guesses at it.
+
+- **`!`-prefix negative triggers were parsed here AND in `skills/surfacing`.** Two parsers for one
+  author-facing syntax drift, and the drift shows as a veto that fires on the skill path and not
+  the workflow path (or the reverse) for the same `match_text`. `trigger_phrases` is now the one
+  splitter and `_keyword_score`'s convention is the one it implements.
+
+- **`render_suggest` could have forked from `render_passive`.** The plan asks for a coexistence
+  period, which is exactly the window in which two renders diverge unnoticed — both look
+  plausible and nobody diffs them. `drift()` asserts the suggest render CONTAINS the passive
+  render verbatim (not "resembles"), so a fork fails a test rather than shipping.
+
+Decisions worth recording:
+
+- **`SUGGEST` is required for a suggestion, not merely "not off".** A passive def surfaces
+  guidance and proposes running nothing; collapsing the two modes would let a def that was
+  migrated for guidance start proposing execution.
+
+- **An empty digest renders as `""`, not as an empty labelled block.** A block titled "Standing
+  guidance" with nothing under it reads as the system having nothing to say, which is worse than
+  saying nothing. The suggestion path still renders, because a suggestion's value is the CALL.
+
+- **`veto_reasons` returns ALL reasons.** A def vetoed for three reasons has an author who should
+  see three; returning the first would send them to fix one and be surprised again.
+
+- **A migrated SOP lands in PASSIVE unless it declared `auto_surface`.** Surfacing is preserved by
+  the migration; execution suggestion is not something a migration grants. `findings` is separate
+  from `metadata` so a silent normalization is auditable — the SOP is a document the user wrote.
+
+- **`unreachable()` is the reachability floor.** A def in a surfacing mode with no positive trigger
+  can never surface and its author has no way to notice; S59 owns the full doctor.
+
+- **NOT DONE:** the cadence and fingerprint channels, layered scope resolution, parameter pre-fill,
+  and the reachability doctor surface are all session-59 scope, as the queue splits them.
