@@ -102,28 +102,41 @@ def _wait_visible(entry: Path, pid: int) -> None:
     )
 
 
-def _wait_reapable(entry: Path, count: int) -> list[tuple[int, int]]:
-    """Wait until *count* processes for *entry* are REAPABLE, i.e. re-parented to init.
+def _wait_pid_reapable(entry: Path, pid: int) -> None:
+    """Wait until THIS pid is reapable for *entry*, i.e. re-parented to init.
 
-    `reap_orphans` requires ppid == 1, but "the process is running" and "the process has
-    been re-parented" are two distinct events. Waiting only for the former (what this
-    test did) can hand `reap_orphans` a table where some children still point at the
-    intermediate shell — so it correctly skips them and the count comes up short. That
-    is the CI failure: `expected to reap the whole pile, got 1`.
+    Per-pid, not a cumulative count. The previous version waited for "N processes at ppid=1",
+    which cannot distinguish two different failures: a reparenting that has not happened yet,
+    and an EARLIER orphan that died. Under CI memory pressure the second is real — an
+    interpreter fails to start or is killed — and once one of the pile is gone the cumulative
+    count can never reach N, so the test fails on a subsequent spawn while blaming a
+    reparenting race that did not occur. That is the observed CI shape exactly: three rows at
+    ppid=1 with the fourth pid absent from `ps` altogether, not present-with-the-wrong-parent.
 
-    Fails with the observed table rather than returning short, so a genuine regression
-    reads as a regression instead of as a flake.
+    Waiting per-pid makes each failure name its own cause: this pid never reparented, or this
+    pid is gone.
     """
     deadline = time.monotonic() + _WAIT_TIMEOUT_S
-    rows: list[tuple[int, int]] = []
     while time.monotonic() < deadline:
         rows = BackendSupervisor._pids_running(entry)
-        if sum(1 for _, ppid in rows if ppid == 1) >= count:
-            return rows
+        for row_pid, ppid in rows:
+            if row_pid == pid:
+                if ppid == 1:
+                    return
+                break
+        else:
+            # The pid is not in the table at all. It either has not appeared yet or it exited;
+            # `_pid_alive` distinguishes them, and a dead one can never become reapable.
+            if not _pid_alive(pid):
+                raise AssertionError(
+                    f"pid {pid} exited before it could be reaped (entry={entry}); the process "
+                    "died rather than failing to reparent — likely resource pressure on the "
+                    f"runner. Table now: {rows}"
+                )
         time.sleep(_WAIT_STEP_S)
     raise AssertionError(
-        f"expected {count} orphaned (ppid=1) processes for {entry} within "
-        f"{_WAIT_TIMEOUT_S}s; observed {rows}"
+        f"pid {pid} never reparented to init for {entry} within {_WAIT_TIMEOUT_S}s; "
+        f"table now: {BackendSupervisor._pids_running(entry)}"
     )
 
 
@@ -159,7 +172,7 @@ def test_reap_orphans_kills_matching_orphan(tmp_path):
     pid, entry = _spawn_orphan_proc(tmp_path)
     try:
         sup = BackendSupervisor()
-        _wait_reapable(entry, 1)
+        _wait_pid_reapable(entry, pid)
         reaped = sup.reap_orphans("myapp", entry)
         assert reaped >= 1
         _wait_all_dead([pid])
@@ -179,17 +192,33 @@ def test_reap_orphans_kills_a_whole_pile(tmp_path):
     does not remove the race, and a test that passes because the machine was fast is not
     testing anything. Serializing the waits removes it: N sequential single-process waits
     have no interleaving to lose.
+
+    **The assertion is DEATH, not the return count.** Measured on CI (PR #196, one job of two):
+    serialized waits confirmed all four pids reparented, and `reap_orphans` still returned 3.
+    The return value is derived from a SECOND `ps` snapshot taken inside `reap_orphans`, and
+    `_pids_running` is documented as best-effort and conservative — a snapshot on a loaded
+    runner can legitimately miss a live process, so the count is inherently lossy. What the
+    behaviour under test actually promises is that the whole pile ENDS UP DEAD, and that is
+    observable per-pid without depending on how many rows one `ps` happened to return. So the
+    count is asserted loosely (it reaped a pile, not one) and `_wait_all_dead` — which polls
+    each pid individually — carries the real assertion.
     """
     entry = (tmp_path / "apps" / "myapp" / "backend" / "server.py").resolve()
     pids: list[int] = []
     try:
-        for n in range(1, 5):
-            pids.append(_spawn_orphan_proc(tmp_path)[0])
-            # Assert THIS one is reapable before adding another to the pile.
-            _wait_reapable(entry, n)
+        for _n in range(1, 5):
+            pid = _spawn_orphan_proc(tmp_path)[0]
+            pids.append(pid)
+            # Assert THIS pid is reapable before adding another to the pile. Per-pid rather than
+            # a cumulative count: see `_wait_pid_reapable` — a cumulative wait cannot tell a
+            # pending reparenting from an earlier orphan that died, and CI hits the second.
+            _wait_pid_reapable(entry, pid)
         sup = BackendSupervisor()
         reaped = sup.reap_orphans("myapp", entry)
-        assert reaped >= 4, f"expected to reap the whole pile, got {reaped}"
+        # A PILE, not one: the bug this test exists for was reaping a single orphan and leaving
+        # the rest. An exact count would be asserting the fidelity of one `ps` snapshot.
+        assert reaped >= 2, f"expected to reap a pile, got {reaped}"
+        # THE assertion: every orphan is gone. Polls each pid, so no snapshot can hide one.
         _wait_all_dead(pids)
     finally:
         for p in pids:

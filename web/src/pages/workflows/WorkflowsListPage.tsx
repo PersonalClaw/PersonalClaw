@@ -5,12 +5,13 @@ import { EmptyState, ListRow, Loading } from '../../ui/ListScaffold'
 import { SearchField } from '../../ui/SearchField'
 import { Segmented } from '../../ui/Segmented'
 import { QuietButton } from '../../ui/QuietButton'
-import { api, type WorkflowDef, type WorkflowDefSummary, type WorkflowRunSummary } from '../../lib/api'
+import { api, type WorkflowDef, type WorkflowDefSummary, type WorkflowRunSummary, type WorkflowSurfacingFinding, type WorkflowSurfacingRow } from '../../lib/api'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { confirmDelete, promptForm } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
 import { fmtElapsed, isTerminal, runLook } from './workflowMeta'
 import { coerceInputs, inputFields, startsWithoutInput } from './templateStart'
+import { cadenceLabel, findingsByDef, freshnessLook, modeLook, needsAttention, packChips } from './surfacingMeta'
 
 const TABS = [
   { key: 'runs', label: 'Runs' },
@@ -30,18 +31,27 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
   const [q, setQ] = useQueryParam(routeQuery, setQuery, 'q', '', { replace: true })
 
   const [defs, setDefs] = useState<WorkflowDefSummary[]>([])
+  // Surfacing state rides ALONGSIDE the thin def list rather than replacing it: the thin list is
+  // what the picker needs, and a surfacing read costs a run-history lookup per def. A failed
+  // surfacing read degrades to a plain list rather than an empty page — the templates are still
+  // startable without their freshness column.
+  const [surfacing, setSurfacing] = useState<Record<string, WorkflowSurfacingRow>>({})
+  const [findings, setFindings] = useState<WorkflowSurfacingFinding[]>([])
   const [runs, setRuns] = useState<WorkflowRunSummary[]>([])
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [d, r] = await Promise.all([
+      const [d, r, s] = await Promise.all([
         api.workflowDefs().catch(() => ({ defs: [], total: 0 })),
         api.workflowRuns({ limit: 100 }).catch(() => ({ runs: [], total: 0, limit: 0, offset: 0 })),
+        api.workflowSurfacing().catch(() => ({ defs: [], total: 0, findings: [] })),
       ])
       setDefs(d.defs)
       setRuns(r.runs)
+      setSurfacing(Object.fromEntries(s.defs.map((row) => [row.name, row])))
+      setFindings(s.findings)
     } finally {
       setLoading(false)
     }
@@ -59,11 +69,20 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
     return [...matched].sort((a, b) => rank(a.status) - rank(b.status))
   }, [runs, q])
 
+  const byDef = useMemo(() => findingsByDef(findings), [findings])
+
   const filteredDefs = useMemo(() => {
     const needle = q.trim().toLowerCase()
-    if (!needle) return defs
-    return defs.filter((d) => `${d.name}\n${d.description}\n${d.tags.join(' ')}`.toLowerCase().includes(needle))
-  }, [defs, q])
+    const matched = needle
+      ? defs.filter((d) => `${d.name}\n${d.description}\n${d.tags.join(' ')}`.toLowerCase().includes(needle))
+      : defs
+    // Overdue-and-broken first, matching the backend's own overdue-first order (`sort_key`) — a
+    // template that needs attention below thirty that do not is one nobody sees. Ties keep the
+    // server's name order rather than being re-sorted here.
+    const rank = (name: string) =>
+      needsAttention(surfacing[name] ?? { overdue: false }, (byDef[name] ?? []).length) ? 0 : 1
+    return [...matched].sort((a, b) => rank(a.name) - rank(b.name))
+  }, [defs, q, surfacing, byDef])
 
   const start = useCallback(async (name: string) => {
     // Every bundled template declares a required input, and starting with none is refused by the
@@ -177,8 +196,58 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
                     <Workflow size={15} className="shrink-0 text-on-surface-low" />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-on-surface text-[0.9375rem]">{d.name}</div>
-                      {d.description && <div className="truncate text-on-surface-low text-[0.75rem]">{d.description}</div>}
+                      {(() => {
+                        const row = surfacing[d.name]
+                        const defFindings = byDef[d.name] ?? []
+                        // The finding wins the subtitle when there is one: "no channel can reach
+                        // this def" is more urgent than its description, and showing both would
+                        // truncate the part that matters.
+                        if (defFindings.length > 0) {
+                          return (
+                            <div className="truncate text-warning text-[0.75rem]" title={defFindings.map((f) => f.detail).join(' · ')}>
+                              {defFindings[0].detail}
+                            </div>
+                          )
+                        }
+                        const cadence = row ? cadenceLabel(row) : ''
+                        const subtitle = [d.description, cadence].filter(Boolean).join(' · ')
+                        return subtitle ? <div className="truncate text-on-surface-low text-[0.75rem]">{subtitle}</div> : null
+                      })()}
                     </div>
+                    {(() => {
+                      const row = surfacing[d.name]
+                      if (!row) return null
+                      const nodes = []
+                      // Freshness only when the def declares a cadence: a band for an untracked def
+                      // would imply a schedule it does not have.
+                      if (row.cadence_days > 0) {
+                        const look = freshnessLook(row.freshness)
+                        const Icon = look.icon
+                        nodes.push(
+                          <span key="fresh" className={`flex shrink-0 items-center gap-xs text-[0.75rem] ${look.tone}`} title={look.hint}>
+                            <Icon size={12} /> {look.label}
+                          </span>,
+                        )
+                      }
+                      // The surfacing mode is always shown, INCLUDING `off`: "this never surfaces"
+                      // is the fact a user most often wants to check, and hiding it would make an
+                      // off def indistinguishable from one whose chip they simply had not seen.
+                      const mode = modeLook(row.surface_mode)
+                      const ModeIcon = mode.icon
+                      nodes.push(
+                        <span key="mode" className={`flex shrink-0 items-center gap-xs text-[0.75rem] ${mode.tone}`} title={mode.hint}>
+                          <ModeIcon size={12} /> {mode.label}
+                        </span>,
+                      )
+                      for (const pack of packChips(row)) {
+                        nodes.push(
+                          <span key={`pack-${pack}`} className="shrink-0 text-on-surface-low text-[0.75rem]" title={`Pack: ${pack}`}>
+                            {pack}
+                          </span>,
+                        )
+                      }
+                      return nodes
+                    })()}
                     <span className="shrink-0 text-on-surface-low text-[0.75rem]">v{d.version}</span>
                     {d.source === 'bundled' && <span className="shrink-0 text-on-surface-low text-[0.75rem]">bundled</span>}
                     <QuietButton onClick={(e) => { e.stopPropagation(); start(d.name) }} title={`Run ${d.name}`}>

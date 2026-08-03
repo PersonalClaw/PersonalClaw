@@ -39,10 +39,16 @@ logger = logging.getLogger("personalclaw.config.loader")
 # Fields with enum constraints and their allowed values
 # agent.provider is intentionally NOT here — it accepts an open ``acp:<cli>``
 # space (any connected ACP runtime), so it carries no closed enum constraint.
-_ENUM_FIELDS: list[tuple[str, str, list[str]]] = [
-    ("agent", "approval_mode", ["auto", "interactive", "trust_reads"]),
-    ("agent", "sandbox", ["auto", "off"]),
-    ("agent", "log_level", ["DEBUG", "INFO", "WARNING", "ERROR"]),
+#: (section, key, allowed, case_insensitive). The last flag matters: `load()` deliberately
+#: upper-cases `agent.log_level` BEFORE jsonschema validation ("Normalize case-insensitive enum
+#: fields before validation", loader.py), so `"iNFO"` is a VALID way to write `INFO` — not a
+#: violation. Hypothesis found that: with a plain `bad_value not in allowed` filter it eventually
+#: generated `"iNFO"`, the loader correctly resolved it to `INFO`, and the property test failed
+#: while asserting the loader was wrong. The flag lets the filter model the real contract instead.
+_ENUM_FIELDS: list[tuple[str, str, list[str], bool]] = [
+    ("agent", "approval_mode", ["auto", "interactive", "trust_reads"], False),
+    ("agent", "sandbox", ["auto", "off"], False),
+    ("agent", "log_level", ["DEBUG", "INFO", "WARNING", "ERROR"], True),
 ]
 
 # Top-level keys the loader recognises. Derived from the SAME authoritative sources the
@@ -369,8 +375,14 @@ class TestConfigLoaderProperties:
 
         **Validates: Requirements 6.3**
         """
-        section, key, allowed = _ENUM_FIELDS[field_idx]
-        assume(bad_value not in allowed)
+        section, key, allowed, case_insensitive = _ENUM_FIELDS[field_idx]
+        # A case-insensitive field normalizes before validation, so a case variant of an allowed
+        # value is NOT a violation — filtering only on exact membership makes the test assert that
+        # the loader's own documented normalization is a bug.
+        if case_insensitive:
+            assume(bad_value.upper() not in {a.upper() for a in allowed})
+        else:
+            assume(bad_value not in allowed)
 
         data: dict = {section: {key: bad_value}}
         loaded = _load_from_dict(data)

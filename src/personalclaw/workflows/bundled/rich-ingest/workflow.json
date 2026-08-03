@@ -176,6 +176,16 @@
         ]
       },
       {
+        "kind": "gate",
+        "id": "grounded-in-transcript",
+        "label": "Did the lenses stay in the transcript?",
+        "config": {
+          "kind": "judge",
+          "risk": "safe",
+          "prompt": "Extracted decisions:\n{{nodes.lens-decisions.output.items | default([]) | json}}\n\nExtracted facts:\n{{nodes.lens-facts.output.items | default([]) | json}}\n\nDoes every item quote or closely paraphrase something the transcript actually contained? An item that reads plausibly for this kind of meeting but was not said is the failure to catch — it becomes a stored fact nobody can trace."
+        }
+      },
+      {
         "kind": "foreach",
         "id": "store-decisions",
         "label": "Store decisions",

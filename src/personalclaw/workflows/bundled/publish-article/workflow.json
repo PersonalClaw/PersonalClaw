@@ -164,6 +164,16 @@
       },
       {
         "kind": "gate",
+        "id": "accuracy-held",
+        "label": "Did the revision actually address the accuracy findings?",
+        "config": {
+          "kind": "judge",
+          "risk": "safe",
+          "prompt": "The accuracy reviewer raised these:\n{{nodes.review-accuracy.output.findings | json}}\n\nThe revision:\n{{nodes.revise.output.body}}\n\nDid the revision address every accuracy finding, either by fixing the claim or by cutting it? A claim that was hedged rather than fixed or cut has NOT been addressed. Answer strictly — you are the last check before this is stored as reference."
+        }
+      },
+      {
+        "kind": "gate",
         "id": "approve",
         "label": "Approve for storage",
         "config": {

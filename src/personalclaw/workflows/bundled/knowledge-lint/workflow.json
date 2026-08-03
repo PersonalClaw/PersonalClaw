@@ -76,7 +76,7 @@
         "config": {
           "provider": "knowledge-consolidate",
           "with": {
-            "apply": false,
+            "apply": "{{inputs.apply}}",
             "min_cluster_size": "{{inputs.min_cluster_size}}"
           }
         }
@@ -101,19 +101,35 @@
               "on_item_error": "skip"
             },
             "body": {
-              "kind": "stage",
-              "id": "condense",
-              "label": "Consolidate one cluster",
-              "config": {
-                "model_tier": "fast",
-                "prompt": "{{item.prompt}}\n\nReturn ONE consolidated item. Preserve every distinct detail from the inputs; if two inputs disagree, record both with their sources rather than choosing. Do not add anything the inputs do not contain.",
-                "schema": {
-                  "title": "string",
-                  "summary": "string",
-                  "content": "string",
-                  "details_dropped": "boolean"
+              "kind": "sequence",
+              "id": "condense-and-check",
+              "children": [
+                {
+                  "kind": "stage",
+                  "id": "condense",
+                  "label": "Consolidate one cluster",
+                  "config": {
+                    "model_tier": "fast",
+                    "prompt": "{{item.prompt}}\n\nReturn ONE consolidated item. Preserve every distinct detail from the inputs; if two inputs disagree, record both with their sources rather than choosing. Do not add anything the inputs do not contain.",
+                    "schema": {
+                      "title": "string",
+                      "summary": "string",
+                      "content": "string",
+                      "details_dropped": "boolean"
+                    }
+                  }
+                },
+                {
+                  "kind": "gate",
+                  "id": "detail-preserved",
+                  "label": "Did the merge keep every distinct detail?",
+                  "config": {
+                    "kind": "judge",
+                    "risk": "safe",
+                    "prompt": "The cluster's inputs were given in this prompt:\n{{item.prompt}}\n\nThe consolidated result:\n{{nodes.condense.output.content}}\n\nWas every distinct detail preserved, and were disagreements recorded rather than resolved? The doctrine is consolidate-never-generate: a fact that entered the cluster and is absent from the result has been destroyed, and no later pass can tell."
+                  }
                 }
-              }
+              ]
             }
           },
           "false": {

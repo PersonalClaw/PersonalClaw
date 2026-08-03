@@ -447,6 +447,7 @@ class NativeArtifactProvider(ArtifactProvider):
         actor: str | None = None,
         session_id: str | None = None,
         project_id: str = "",
+        event_metadata: dict | None = None,
     ) -> Artifact:
         """Create a BINARY artifact (kind:image): bytes stored on disk, content=raw ref.
 
@@ -476,7 +477,12 @@ class NativeArtifactProvider(ArtifactProvider):
             )
             ts = _now()
             event = ArtifactEvent(
-                ts=ts, type="created", by=actor or "", session_id=session_id or "", version=1
+                ts=ts,
+                type="created",
+                by=actor or "",
+                session_id=session_id or "",
+                version=1,
+                metadata=clean_event_metadata(event_metadata or {}),
             )
             art = Artifact(
                 slug=final_slug,
@@ -612,6 +618,7 @@ class NativeArtifactProvider(ArtifactProvider):
         session_id: str | None = None,
         project_id: str = "",
         collection: str = "",
+        event_metadata: dict | None = None,
     ) -> Artifact:
         name = (name or "").strip()[:MAX_NAME_LEN] or "Untitled"
         # Binary kinds (image) must go through create_binary — their body is bytes,
@@ -627,7 +634,12 @@ class NativeArtifactProvider(ArtifactProvider):
             )
             ts = _now()
             event = ArtifactEvent(
-                ts=ts, type="created", by=actor or "", session_id=session_id or "", version=1
+                ts=ts,
+                type="created",
+                by=actor or "",
+                session_id=session_id or "",
+                version=1,
+                metadata=clean_event_metadata(event_metadata or {}),
             )
             art = Artifact(
                 slug=final_slug,
@@ -667,6 +679,7 @@ class NativeArtifactProvider(ArtifactProvider):
         description: str | None = None,
         tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
         collection: str | None = None,
+        event_metadata: dict | None = None,
     ) -> Artifact | None:
         # Validate event type BEFORE any side effect so an invalid type can't
         # orphan a versions/vN.html. 'reverted' is NOT an update event — it has its
@@ -722,6 +735,7 @@ class NativeArtifactProvider(ArtifactProvider):
                     by=actor or "",
                     session_id=session_id or "",
                     version=art.version,
+                    metadata=clean_event_metadata(event_metadata or {}),
                 )
                 self._append_event(art, ev)
 

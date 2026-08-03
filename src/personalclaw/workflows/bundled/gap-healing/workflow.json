@@ -81,6 +81,16 @@
         }
       },
       {
+        "kind": "gate",
+        "id": "evidence-sufficient",
+        "label": "Are the drafts grounded in the excerpts?",
+        "config": {
+          "kind": "judge",
+          "risk": "safe",
+          "prompt": "The excerpts the store actually contains:\n{{nodes.gaps.output.excerpts | json}}\n\nThe drafts:\n{{nodes.draft.output.drafts | json}}\n\nIs each draft built only from those excerpts, and does any draft claiming sufficient_evidence actually have it? A confidently-written entry the excerpts do not support is worse than the gap it filled, because the next draft will cite it."
+        }
+      },
+      {
         "kind": "action",
         "id": "file",
         "label": "File as proposals",

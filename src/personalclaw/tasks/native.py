@@ -1,10 +1,10 @@
-"""Native filesystem-backed task provider.
-
-Stores tasks as individual JSON files under PERSONALCLAW_HOME/tasks/.
+"""Native filesystem-backed task provider. Stores tasks as individual JSON files under
+PERSONALCLAW_HOME/tasks/.
 """
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from pathlib import Path
@@ -18,8 +18,25 @@ from personalclaw.tasks.models import (
     TaskDependency,
     TaskPriority,
     TaskStatus,
+    WorkflowTaskBinding,
 )
 from personalclaw.tasks.provider import TaskProvider
+from personalclaw.workflows import pool
+
+logger = logging.getLogger(__name__)
+
+
+def _coerce_binding(raw: Any) -> "WorkflowTaskBinding | None":
+    """Accept a typed binding OR its dict form; anything else is no binding. Both shapes arrive
+    in practice — the engine passes the dataclass, and a REST/tool caller passes JSON.
+    Refusing either would push the coercion out to every call site, and the site that forgot
+    would create a task the engine does not own while the board shows it as managed.
+    """
+    if isinstance(raw, WorkflowTaskBinding):
+        return raw
+    if isinstance(raw, dict) and raw:
+        return WorkflowTaskBinding.from_dict(raw)
+    return None
 
 
 def create_provider(config: dict[str, Any] | None = None) -> "NativeTaskProvider":
@@ -35,14 +52,42 @@ def _now_iso() -> str:
 
 
 def _current_username() -> str:
-    """The owner's attribution handle, or ``""``. Never raises — attribution
-    decorates a write, so it must never be the reason one fails."""
+    """The owner's attribution handle, or ``""``. Never raises — attribution decorates a write,
+    so it must never be the reason one fails.
+    """
     try:
         from personalclaw.identity import current_username
 
         return current_username()
     except Exception:
         return ""
+
+
+async def _fire_task_complete(task: Task) -> None:
+    """Fire the `TaskComplete` lifecycle hook for a task that just finished.
+
+    Swallows everything. A hook is an OBSERVER of a task edit, not a participant: a user's broken
+    script must not turn a successful `PUT /api/tasks/{id}` into a 500, and the task is already
+    written by the time this runs. The event/context shape comes from `pool.lifecycle_payload`, so
+    the payload and the edge rule live together rather than being restated here.
+    """
+    try:
+        from personalclaw.hooks import get_global_hook_store
+
+        store = get_global_hook_store()
+        if store is None:
+            return
+        binding = getattr(task, "workflow_binding", None)
+        payload = pool.lifecycle_payload(
+            task_id=task.id,
+            title=task.title,
+            status=task.status.value,
+            run_id=getattr(binding, "run_id", "") or "",
+            node_id=getattr(binding, "node_id", "") or "",
+        )
+        await store.fire(payload["event"], context=payload["context"])
+    except Exception:  # noqa: BLE001 - an observer never fails the write it observed
+        logger.debug("TaskComplete hook fire failed", exc_info=True)
 
 
 class NativeTaskProvider(TaskProvider):
@@ -108,9 +153,10 @@ class NativeTaskProvider(TaskProvider):
         return {t.id: t for t in self._all_tasks()}
 
     def _derive_project_label(self, task_list_id: str, cache: dict | None = None) -> str:
-        """A task's ``project`` label = its task list's project name. A task with no
-        task list has no project label (empty string) — never a stale id. ``cache``
-        (task_list_id → label) avoids re-reading project files per task in a list."""
+        """A task's ``project`` label = its task list's project name. A task with no task list
+        has no project label (empty string) — never a stale id. ``cache`` (task_list_id →
+        label) avoids re-reading project files per task in a list.
+        """
         if not task_list_id:
             return ""
         if cache is not None and task_list_id in cache:
@@ -133,8 +179,9 @@ class NativeTaskProvider(TaskProvider):
 
     @staticmethod
     def _coerce_dependencies(value: Any) -> list[TaskDependency]:
-        """Accept either a list of edge dicts or a flat list of prerequisite ids
-        (treated as BLOCKS edges) from older / simpler callers."""
+        """Accept either a list of edge dicts or a flat list of prerequisite ids (treated as
+        BLOCKS edges) from older / simpler callers.
+        """
         # A bare scalar (a single id dict/string, e.g. an LLM passing depends_on:
         # "task-123" instead of ["task-123"]) must be wrapped — iterating it would
         # treat a string's CHARACTERS as separate prerequisite ids, fabricating
@@ -210,6 +257,17 @@ class NativeTaskProvider(TaskProvider):
                 research_notes=fields.get("research_notes", []),
                 execution_notes=fields.get("execution_notes", []),
                 agent_instructions_template=fields.get("agent_instructions_template", ""),
+                # Workflow projection. Enumerated HERE as well as on the
+                # model:
+                # this provider builds its Task field-by-field, so a new model field is dropped on
+                # create unless it is named — measured, the binding round-tripped through
+                # `to_dict`/`from_dict` and still arrived empty from `create_task`.
+                workflow_binding=_coerce_binding(fields.get("workflow_binding")),
+                blocked_kind=str(fields.get("blocked_kind", "") or ""),
+                preview=str(fields.get("preview", "") or ""),
+                done_criterion=str(fields.get("done_criterion", "") or ""),
+                evidence=fields.get("evidence", []),
+                attempts=fields.get("attempts", []),
                 created_at=now,
                 updated_at=now,
             )
@@ -231,15 +289,19 @@ class NativeTaskProvider(TaskProvider):
         return await asyncio.to_thread(_create)
 
     async def update_task(self, task_id: str, **fields: Any) -> Task | None:
-        """Apply ``fields``, reject cycles, reconcile dependency-driven status, and
-        return the edited task. The full set of tasks whose status changed via
-        cascade is exposed on ``task._reconciled`` for the handler to return."""
+        """Apply ``fields``, reject cycles, reconcile dependency-driven status, and return the
+        edited task. The full set of tasks whose status changed via cascade is exposed on
+        ``task._reconciled`` for the handler to return.
+        """
 
         def _update() -> Task | None:
             tasks = self._task_map()
             task = tasks.get(task_id)
             if not task:
                 return None
+            # The pre-edit status, for the edge-triggered completion event below. Captured BEFORE
+            # the field loop because the loop mutates `task` in place.
+            previous_status = task.status.value
             status_or_deps_changed = False
             for key, val in fields.items():
                 if key == "status":
@@ -294,9 +356,22 @@ class NativeTaskProvider(TaskProvider):
                         self._write_task(c)
                         changed.append(c)
             task._reconciled = changed  # type: ignore[attr-defined]
+            task._completed_edge = pool.should_fire_completion(  # type: ignore[attr-defined]
+                previous_status, task.status.value
+            )
             return task
 
-        return await asyncio.to_thread(_update)
+        edited = await asyncio.to_thread(_update)
+        # Fire the task-completion lifecycle hook. Measured in S60 —
+        # `TaskComplete` is declared in `hooks.HOOK_EVENTS`, allowlisted in
+        # `validation.ALLOWED_HOOK_EVENTS` and rendered by the hook UI, and NO call site in the
+        # repo ever fired it, so a user could configure "when a task finishes" and get nothing.
+        # EDGE-triggered (`should_fire_completion`): an idempotent projection recompute is the
+        # normal path for workflow-bound tasks, and a level-triggered fire would emit one hook per
+        # rebuild.
+        if edited is not None and getattr(edited, "_completed_edge", False):
+            await _fire_task_complete(edited)
+        return edited
 
     async def delete_task(self, task_id: str) -> bool:
         def _delete() -> bool:

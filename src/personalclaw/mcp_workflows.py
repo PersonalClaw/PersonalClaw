@@ -28,7 +28,9 @@ import json
 import logging
 from typing import Any
 
+from personalclaw.workflows import grill_protocol as grill_mod
 from personalclaw.workflows import intent as intent_mod
+from personalclaw.workflows import rigor as rigor_mod
 from personalclaw.workflows import service
 from personalclaw.workflows.context_block import needs_staging, staged_spec_echo
 
@@ -764,9 +766,23 @@ def _plan(args: dict[str, Any]) -> str:
             },
         )
 
+    grounded = _grounding_for(goal, classified)
+
+    # The rigor axis, applied to the SCAFFOLD path only — a matched template returned above
+    # already carries a tested shape, and stapling a refinement gate onto it would refine against a
+    # structure nobody asked to change.
+    proposed = (grounded or {}).get("skeleton") or scaffold
+    fast_spec = {"root": proposed}
+    if rigor_mod.is_fast(classified, requested=requested):
+        fast_spec = rigor_mod.schedule_refinement(fast_spec)
+        proposed = fast_spec["root"]
+
     body = {
         "ok": True,
-        "planner": "scaffold-v1",
+        # Renamed: this is no longer a bare structural stub. It carries the live grounding bundle,
+        # a picked shape with a validated skeleton, and the constraint block — which is the whole
+        # difference the plan measured (first-try-valid 0/5 → 4/5).
+        "planner": "grounded-v1" if grounded else "scaffold-v1",
         "goal": goal,
         "rigor": rigor,
         # The routing is reported even when nothing matched: "no template fit, and here is why"
@@ -775,19 +791,243 @@ def _plan(args: dict[str, Any]) -> str:
             "intent": classified.to_dict(),
             "match": match.to_dict() if match is not None else {"reason": "matcher unavailable"},
         },
-        "proposed_root": scaffold,
+        "proposed_root": proposed,
+        # Which rigor path ran and why. A user who got a thin plan needs to know it was the
+        # fast path rather than the planner doing badly.
+        "rigor_note": rigor_mod.rigor_note(classified, requested=requested),
+        **({"grounding": grounded} if grounded else {}),
+        **_grill_surface(goal, classified, {"root": proposed}),
         "next_step": (
             "Adapt this tree to the goal, then call workflow_author with save=false to "
             "validate it before saving."
         ),
         "note": (
-            "This is a structural scaffold, not a domain plan — the template-aware planner "
-            "lands with UNIVERSAL-PLANNING. Use the manifest below for the shapes the "
-            "engine accepts."
+            "Fill the shape's slots and adapt the tree, then call workflow_author with "
+            "save=false to validate. The `grounding` block below is read from THIS system's live "
+            "registries — anything not in it does not exist here. If you cannot plan the goal "
+            'with what is listed, return {"cannot_plan": "<why>"} rather than inventing a node.'
         ),
         "manifest": {k: v for k, v in service.manifest().items() if k != "ok"},
     }
     return _fmt(body, summary=f"Draft plan for: {goal}")
+
+
+def _grill_surface(goal: str, classified: Any, spec: dict | None = None) -> dict:
+    """The `rigor: deep` protocol's plan-time half: whether to grill, and the stress probes.
+
+    The ROUNDS are not built here, and that is deliberate. A round needs the planner's recommended
+    answers, and a recommendation is what makes deep grilling fast rather than tedious — emitting
+    rounds with empty recommendations would ship the tedium without the speed. So this surface
+    reports the trigger and the probes (both derivable with no model call) and hands the caller the
+    protocol's own vocabulary to build rounds with.
+
+    The risk scan is passed through rather than skipped: the plan makes ANY risk-registry hit
+    force `rigor: deep`, and `deep_triggered` implements it — but measured, nothing was feeding it
+    hits, so that half of the trigger was present and inert. A destructive plan the classifier
+    happened to call `standard` would have gone ungrilled.
+
+    Best-effort: a missing grill block loses advice, never enforcement.
+    """
+    try:
+        hits = []
+        if spec:
+            from personalclaw.workflows.autonomy import scan_risk
+
+            hits = scan_risk(spec)
+        triggered, why = grill_mod.deep_triggered(classified, hits)
+        if not triggered:
+            return {}
+        probes = grill_mod.stress_probes(goal)
+        return {
+            "grill": {
+                "triggered": True,
+                "why": why,
+                "protocol": {
+                    "questions_ship_recommendations": True,
+                    "batch_at": 3,
+                    "max_batch": grill_mod.MAX_BATCH,
+                    "escape_hatch": grill_mod.OTHER,
+                    "boundary_question": grill_mod.BOUNDARY_QUESTION,
+                    "lookup_channels": [c.value for c in grill_mod.Channel if c.value != "ask"],
+                },
+                "stress_probes": [p.to_dict() for p in probes],
+                "note": (
+                    "Ship every question WITH your recommended answer as its default, route "
+                    "discoverable facts to a lookup channel instead of asking, and treat an "
+                    "unanswered load-bearing question as a BLOCKER rather than assuming a value."
+                ),
+            }
+        }
+    except Exception:
+        logger.debug("grill surface failed", exc_info=True)
+        return {}
+
+
+def _autonomy_surface(definition: dict) -> dict:
+    """The risk scan, the autonomy offer, and the confirmations the recommended mode will raise.
+
+    Best-effort like the other surfaces. A missing autonomy block must not stop a plan reaching the
+    user — but note the asymmetry: the ENGINE's own gate policy still governs what actually runs, so
+    a failure here loses advice, never enforcement.
+    """
+    try:
+        from personalclaw.workflows import autonomy as autonomy_mod
+
+        spec = {"inputs": definition.get("inputs") or {}, "root": definition.get("root") or {}}
+        meta = definition.get("metadata") or {}
+        raw_floor = str(meta.get("autonomy_floor", "") or "") if isinstance(meta, dict) else ""
+        floor = None
+        if raw_floor:
+            try:
+                floor = autonomy_mod.Mode(raw_floor)
+            except ValueError:
+                logger.debug("unknown autonomy_floor %r — ignoring", raw_floor)
+
+        hits = autonomy_mod.scan_risk(spec)
+        offer = autonomy_mod.offer_autonomy(spec, template_floor=floor, hits=hits)
+        confirmations = autonomy_mod.build_confirmations(spec, offer.recommended)
+        return {
+            "risk": [h.to_dict() for h in hits],
+            "autonomy": offer.to_dict(),
+            "attention": {k: v.value for k, v in autonomy_mod.type_attention(spec, hits).items()},
+            "require_hitl": autonomy_mod.compile_require_hitl(spec, offer.recommended),
+            "confirmations": [c.to_dict() for c in confirmations],
+        }
+    except Exception:
+        logger.debug("autonomy surface unavailable", exc_info=True)
+        return {}
+
+
+def _review_surface(goal: str, definition: dict, routing: dict | None) -> dict:
+    """The announce block, a structural cost estimate, and the plan as markdown.
+
+    Best-effort like the contract review: a header is an enhancement, and a failure to render one
+    must not stop a working plan reaching the user.
+    """
+    try:
+        from personalclaw.workflows import contracts as contracts_mod
+        from personalclaw.workflows import revision as revision_mod
+
+        spec = {"inputs": definition.get("inputs") or {}, "root": definition.get("root") or {}}
+        stage_contracts = contracts_mod.derive_contracts(spec)
+        decisions = contracts_mod.type_decisions(spec)
+        cost = revision_mod.estimate_cost(spec)
+
+        intent = None
+        match = None
+        if routing:
+            from personalclaw.workflows import intent as intent_mod
+            from personalclaw.workflows.matcher import Candidate, MatchResult
+
+            raw_intent = routing.get("intent") or {}
+            if raw_intent.get("rigor"):
+                # Rebuilt rather than threaded: the routing dict has already crossed a JSON
+                # boundary, and re-deriving from the goal would classify twice and could disagree
+                # with what the caller was shown.
+                intent = intent_mod.Intent(
+                    rigor=intent_mod.Rigor(raw_intent["rigor"]),
+                    stakes=intent_mod.Level(raw_intent.get("stakes", "low")),
+                    irreversible=bool(raw_intent.get("irreversible")),
+                    shape=str(raw_intent.get("shape", "") or ""),
+                    signals=raw_intent.get("signals") or {},
+                )
+            raw_match = routing.get("match") or {}
+            if raw_match.get("primary"):
+                match = MatchResult(
+                    primary=str(raw_match["primary"]),
+                    confidence=float(raw_match.get("confidence") or 0.0),
+                    reason=str(raw_match.get("reason", "") or ""),
+                )
+                _ = Candidate  # imported for the type's side of the contract
+
+        header = revision_mod.announce_block(
+            intent=intent, match=match, contracts=stage_contracts, decisions=decisions, cost=cost
+        )
+        return {
+            "announce": header,
+            "cost_estimate": cost,
+            "plan_markdown": revision_mod.plan_markdown(
+                spec, goal=goal, header=header, contracts=stage_contracts
+            ),
+            "inferred": revision_mod.inferred_chips(spec, goal),
+            "revision_grammar": {
+                "no_update_sentinel": revision_mod.NO_UPDATE,
+                "ops": ["replace", "add", "remove", "annotate"],
+                "semantics": (
+                    "merge by node id — same id replaces, new id adds, absent id is preserved "
+                    "untouched. Emit ONLY changed steps; a whole-spec rewrite re-rolls the stages "
+                    "nobody complained about."
+                ),
+            },
+        }
+    except Exception:
+        logger.debug("review surface unavailable", exc_info=True)
+        return {}
+
+
+def _contract_review(definition: dict) -> dict:
+    """The derived form, the per-stage contracts, and the typed decisions.
+
+    Best-effort: a review surface is an enhancement to the plan, and a contract derivation that
+    failed must not stop the user launching a template that works. Returns `{}` rather than partial
+    keys so a caller cannot mistake an error for "this template has no contracts".
+    """
+    try:
+        from personalclaw.workflows import contracts as contracts_mod
+
+        spec = {
+            "inputs": definition.get("inputs") or {},
+            "root": definition.get("root") or {},
+        }
+        stage_contracts = contracts_mod.derive_contracts(spec)
+        decisions = contracts_mod.type_decisions(spec)
+        return {
+            "parameters": [p.to_dict() for p in contracts_mod.resolve_unfilled_inputs(spec)],
+            "parameter_types": contracts_mod.template_types(spec),
+            "declared_but_unused": contracts_mod.declared_but_unused(spec),
+            "stage_contracts": [c.to_dict() for c in stage_contracts],
+            "contract_issues": contracts_mod.contract_issues(stage_contracts),
+            "decisions": [d.to_dict() for d in decisions],
+            "open_decisions": contracts_mod.open_decisions(decisions),
+        }
+    except Exception:
+        logger.debug("contract review unavailable", exc_info=True)
+        return {}
+
+
+def _grounding_for(goal: str, classified: Any) -> dict | None:
+    """The grounding bundle, the picked shape, and the generated prompt.
+
+    Returns None when grounding cannot be assembled, and the caller falls back to the bare
+    scaffold — the bundle is an enhancement to planning, and a planner with a stub is still better
+    off than one handed an exception.
+    """
+    try:
+        from personalclaw.workflows import generation, grounding, patterns
+
+        bundle = grounding.build_bundle()
+        shape, reason = patterns.pick_shape(goal, classifier_shape=getattr(classified, "shape", ""))
+        return {
+            "bundle": bundle.to_dict(),
+            "index": bundle.index(),
+            "shape": shape.to_dict() if shape else None,
+            "shape_reason": reason,
+            "skeleton": dict(shape.skeleton) if shape else None,
+            "prompt": generation.planning_prompt(
+                goal, bundle=bundle, shape=shape, shape_reason=reason
+            ),
+            "emission_schema": (
+                generation.spec_json_schema() if bundle.structured_output else None
+            ),
+            "self_check_rules": (
+                "unique ids · valid kinds · gates have criteria · foreach has items · loops are "
+                "bounded · a work node exists · a stopping condition exists · no unfilled slots · "
+                "bindings resolve"
+            ),
+        }
+    except Exception:
+        logger.debug("grounding unavailable — falling back to the bare scaffold", exc_info=True)
+        return None
 
 
 def _def_resolvable(name: str) -> bool:
@@ -859,6 +1099,18 @@ def _plan_from_template(goal: str, template: str, *, routing: dict | None = None
         # needs to know which happened: an auto-matched template is a decision to check, a named
         # one is a decision already made.
         **({"routing": routing} if routing else {}),
+        # UP-R3/R8/R16: the review surface. Derived from the tree rather than declared, so the
+        # launch form and the spec cannot disagree — measured, three shipped templates offered an
+        # input nothing read.
+        **_contract_review(definition),
+        # UP-R4/R7: the announce block, the cost shape, and the markdown artifact. Veto-first
+        # ordering — detection and risk decide whether to read on; the pipeline is what they read
+        # if they do.
+        **_review_surface(goal, definition, routing),
+        # UP-R4/R6: what autonomy this plan may be RUN at, and what it will stop for. Computed at
+        # plan time so "this will stop you twice" is a fact before approval rather than a discovery
+        # made while waiting.
+        **_autonomy_surface(definition),
         "proposed_root": definition.get("root"),
         "template_inputs": definition.get("inputs") or {},
         # How this template is actually driven — few-shot for the edit the model is about to make.
