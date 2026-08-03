@@ -1342,3 +1342,48 @@ is that every module-level registry in this codebase needs one.
   four-point wiring. Also worth an owner note: `test_terminal_handler`'s real-PTY test intermittently
   errors in teardown (`OSError: Bad file descriptor`, ~1 run in 3) — pre-existing fragility this
   session's timing changes made visible, not caused.
+
+### S61h — The verification call site, and the tristate it must not collapse (17 tests) — DONE
+
+`verified_done` (S56) had no caller: a projected node's `done_criterion` was never executed by a run.
+Wired into the controller beside the projection write — scheduled, not inline, because a criterion is
+a shell command (`pytest -q` is the canonical authoring shape) and running it in the sync settle path
+would block the whole tick on someone else's test suite. Tracked in the same in-flight set as the
+writes, so `run_to_completion`'s drain covers it.
+
+**The defect this session found in its own first draft.** The evaluator returns a TRISTATE
+(`True` / `False` / `None` = could not run) and the emitter wrote `bool(passed)`. `bool(None)` is
+`False`, so a criterion whose binary was missing reported **"your check failed"** — sending the user
+to debug their code when the problem is their environment. §1 projects those two to DIFFERENT blocked
+kinds (`needs_input` vs `capability`) precisely because they need different fixes, so collapsing them
+at the emitter threw away the distinction the taxonomy exists to create. The event now carries
+`passed` AND `unrunnable`, and a test asserts all three outcomes are distinguishable — measured on
+real runs: `true` → (True, False), `false` → (False, False), a missing binary → (False, True).
+
+**A second, smaller one:** the "has a criterion" guard used truthiness, so `"   "` passed it, parsed
+to zero checks, and reported UNRUNNABLE — a scary "could not verify" for a field its author had
+effectively left blank. The guard now asks the PARSER, which is the component that already knows what
+counts as empty.
+
+Decisions:
+
+- **A node with no criterion emits NOTHING.** `Task.can_mark_complete`'s rule is that a task with no
+  exit criteria is freely completable; emitting `passed=True` for a node nobody wrote a check for
+  would manufacture evidence that does not exist.
+- **An unparseable criterion is UNRUNNABLE, not failed.** The author wrote something the engine could
+  not read, which is a different problem from the work being wrong.
+- **An unreadable file check is UNRUNNABLE too** — `evaluate_file_phrase`'s own rule: the phrase may
+  well be there in a file this process cannot see, and "the phrase is missing" would be a claim about
+  content nobody read. The reader returns `None`, never `""`.
+- **A broken verifier does not fail the run.** The node succeeded and its output is journaled; a
+  broken criterion must not retroactively fail work that completed.
+
+**Owner note — a pre-existing flake, measured not caused.**
+`test_terminal_handler.py::TestTerminalWsIntegration::test_rest_create_list_delete` swings between
+0.25s and ~11s **on clean `origin/main`**, in isolation, with `setup=0.01s` and `call=0.01s` — the
+time is entirely outside the test body (interpreter/loop teardown around `aiohttp`'s `TestServer` and
+`asyncio` subprocess machinery). Under `/usr/bin/time` it is a steady 0.58s, so it is environmental
+scheduling, not code. On a shared xdist worker the spike can exceed the suite's 120s timeout and red
+an unrelated job. It flaked CI on this stack twice. Worth an owner decision: either give that one test
+a longer `@pytest.mark.timeout`, or drop its real-`TestServer` round trip for a direct handler call
+like the rest of the file uses.
