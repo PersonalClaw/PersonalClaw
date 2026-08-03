@@ -1827,6 +1827,16 @@ the queue** — declared work, not new scope (see the ruling in the exhausted re
 | S83 | The `file` kind's **watch runtime** — declared, and nothing watched a filesystem | AUTOMATION-SUBSTRATE crit 2 (partial) | 🟡 PARTIAL (#242) |
 | S84 | The cross-kind **run-history feed** was schedule-only; `FireRecord` was never constructed | AUTOMATION-SUBSTRATE crit 4 | ✅ DONE (#243) |
 | S85 | **`statusUrl` did not exist anywhere** — the notification→journal dead end (R18) | AUTOMATION-SUBSTRATE crit 10 | ✅ DONE (#244) |
+| S86 | **§3's fire path never existed** — 15 controls, zero live callers, no `service.py` | AUTOMATION-SUBSTRATE §3 (the order) | ✅ DONE (#245) |
+
+**BLOCKED (restated, now with the full picture) — the STORE and the SERVICE are one unbuilt foundation.**
+S83 found there is no unified trigger store; S86 found there is no `triggers/service.py` and that **every
+one** of the 15 trigger control modules has zero live callers. Sessions S62-S85 each recorded "NOT DONE (by
+scope): the service" — eight notes in the plan's execution log — and no queue row ever owned either piece.
+Consequence: every AUTO criterion probes as "machinery present" while no gate runs on a real fire. S86 ships
+§3's ORDER as a tested composition so the eventual service session calls it instead of re-deriving 13 steps
+from prose. What remains needs `triggers.json` + the WakeupDispatcher + the executor — a multi-session
+program, and the owner's call on scope.
 
 **BLOCKED — the unified trigger store does not exist, and no queue row owns it.** Criterion 2's chat
 half (`automation_create`, §4) needs somewhere to persist a `file` trigger. The handler is a FACADE
