@@ -94,3 +94,58 @@ export function startsWithoutInput(
 ): boolean {
   return !Object.values(inputs ?? {}).some((p) => p.required)
 }
+
+/** Deep-link params, validated against a template's DECLARED inputs (TASKS-SOPS §7 R15).
+ *
+ *  A suggestion card links into the planner as `#/workflows/new?template=X&param=Y`. Those params
+ *  arrive from a URL, which is not a trust boundary — a hand-edited or shared link can carry
+ *  anything. So this is an ALLOWLIST against the template's own input schema, not a filter of
+ *  known-bad keys: a denylist would silently pass whatever it had not been taught about, and the
+ *  URL is exactly the place nobody would look for an injected value.
+ *
+ *  Returns the accepted params AND the rejected keys. Reporting rejections rather than dropping
+ *  them silently is what lets a stale link explain itself: a card generated before an input was
+ *  renamed should say which parameter no longer exists, not quietly start the run without it.
+ */
+export function validateDeepLinkParams(
+  raw: Record<string, string> | URLSearchParams,
+  inputs: Record<string, WorkflowInputParam> | undefined,
+): { accepted: Record<string, string>; rejected: string[] } {
+  const declared = new Set(Object.keys(inputs ?? {}))
+  const entries: Array<[string, string]> =
+    raw instanceof URLSearchParams ? Array.from(raw.entries()) : Object.entries(raw ?? {})
+  const accepted: Record<string, string> = {}
+  const rejected: string[] = []
+  for (const [key, value] of entries) {
+    // `template` names the destination, not an input — it is consumed by the router, so it is
+    // neither accepted as a param nor reported as a rejection (that would be a false alarm on
+    // every single link).
+    if (key === 'template') continue
+    if (!declared.has(key)) {
+      rejected.push(key)
+      continue
+    }
+    // An empty value is not a value. Pre-filling a field with '' would make a required input LOOK
+    // answered while the engine still refuses the run — the user would see a filled form and an
+    // inexplicable rejection.
+    if (value === '') continue
+    accepted[key] = value
+  }
+  return { accepted, rejected: rejected.sort() }
+}
+
+/** Whether every REQUIRED input is satisfied by these params.
+ *
+ *  Re-derived from the schema rather than trusted from the link, for the same reason the backend
+ *  re-derives `all_filled` instead of believing the extractor: a link claiming to be complete while
+ *  omitting a required input produces a run that fails engine validation AFTER the user was told it
+ *  was ready to go. */
+export function missingRequired(
+  params: Record<string, string>,
+  inputs: Record<string, WorkflowInputParam> | undefined,
+): string[] {
+  return Object.entries(inputs ?? {})
+    .filter(([name, param]) => param.required && !params[name])
+    .map(([name]) => name)
+    .sort()
+}
