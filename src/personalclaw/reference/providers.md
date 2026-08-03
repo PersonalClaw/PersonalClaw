@@ -7,6 +7,7 @@ The extension-provider taxonomy (the capability types an app can contribute) and
 - `action`
 - `agent`
 - `channel`
+- `duty_gate`
 - `inbox`
 - `knowledge`
 - `memory`

@@ -164,7 +164,7 @@ mandatory.
 | 67 | Event-kind API parity (toggle/update/run/test/history: all 404'd or silently no-op'd) + dormancy surfaced for the **7** (not 8 — S60 wired TaskComplete) | G33 | ✅ DONE (#221) |
 | 68 | Autopause after 5 TRUE failures (found: 5 denylist BLOCKS disabled a trigger) + typed exits park + Runs-inbox surfacing | G34 | ✅ DONE (#222) |
 | 69 | Injection screen 5/18→18/18 caught + 0 false positives, wired into the fire path (found: payloads reached providers UNFENCED) + deny-by-default capability fence + zero-silent-drop rows | G34 | ✅ DONE (#223) |
-| 70 | Calendar-aware scheduling: quiet-hours semantics, duty-gate hook, week-grid view; `automation doctor` | G35 | TODO |
+| 70 | Quiet-hours semantics for a key RESERVED since S62 (wrap rule matched to the shipped matcher) + fail-open duty-gate provider seam (#47 rule) + week-grid endpoint + `automation doctor` (6 findings) | G35 | ✅ DONE (#224) |
 
 ## I. Learning Flywheel steps 5-8 (`-LEARNING-FLYWHEEL.md`) — needs the Run Ledger + everything above
 

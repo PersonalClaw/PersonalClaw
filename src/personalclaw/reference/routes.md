@@ -545,8 +545,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/tools/toggle` — enable/disable a native-provider tool.
 - `GET /api/triggers` — every trigger, both kinds.
 - `POST /api/triggers` — create a schedule or lifecycle trigger.
+- `GET /api/triggers/doctor` — structural problems across every trigger (§7 criterion 12).
 - `GET /api/triggers/history` — cross-trigger run index (schedule runs).
 - `GET /api/triggers/variables` — the ``$variables`` each trigger kind exposes.
+- `GET /api/triggers/week` — the week-grid projection, from `?start=` (AUTO-A1 — S70).
 - `DELETE /api/triggers/{id}` — DELETE /api/triggers/{id}.
 - `PUT /api/triggers/{id}` — DELETE /api/triggers/{id}.
 - `POST /api/triggers/{id}/ack` — acknowledge a schedule trigger notification.
