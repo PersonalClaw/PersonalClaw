@@ -1879,3 +1879,56 @@ succeeds. FE-only session — no Python changed.
 
 - **STILL deferred (class-B):** the §6 re-point of the schedule/event backends onto the store (the
   clock switch-over), and the `schedule_*` MCP-alias retirement (§4).
+
+### S96 — Arm the clock: the cutover's real blocker (§3.1 — stacked on S95)
+
+**DONE. This is the step the clock cutover was actually blocked on**, and it was not the double-fire
+risk the queue described. Measured before writing a line, against a REAL migrated store:
+
+    store.migrate_from_crons()   # lossless: true, enabled: true
+    SVC.boot(store, now=NOW)     # {'rearmed': [], 'total': 1}
+    # next_fire_at after boot:   '(none)'  →  due_ids() == []   forever
+
+- **🔴 A migrated cron was PERMANENTLY INERT.** `due_ids` only surfaces triggers that HAVE a
+  `next_fire_at`, and nothing computed a FIRST one: `scheduling.recompute_from_completion` handled
+  intervals only, `boot_recovery` can only RECOVER an existing fire (handed 0.0 it returns 0.0), and
+  `service.next_after_completion` returned 0.0 for every non-interval kind on the stated premise that
+  "the recurrence engine" owned them — **there was no recurrence engine**. So the entire clock half of
+  the unified store reported migrated-and-enabled and could never fire. Retiring `ScheduleService` in
+  that state would have silently stopped every cron on the machine.
+- **🔴 FIXING THAT EXPOSED A WORSE SECOND DEFECT: a fire STORM.** With boot arming added, a cron
+  fired once and then kept `next_fire_at` at its **elapsed** slot — so every later tick read it as
+  still-due and re-fired the same past slot. Not merely inert. Pinned by
+  `test_a_second_tick_at_the_same_instant_fires_nothing`, which is the assertion that would have
+  caught both defects.
+- **`triggers/arm.py` is now the ONE recurrence computation** (spec → next fire) and owns all four
+  `CLOCK_KINDS`, so there is no second path to disagree with it. `next_after_completion` delegates to
+  it for cron/at; intervals keep §3.1's completion-anchored rule.
+- **Semantics inherited, not invented.** `schedule.compute_next_run_ts` is the shipped live answer to
+  the same question, and its two subtle rules are preserved verbatim: a cron is evaluated in the
+  trigger's OWN timezone (croniter interprets the expression in the base's tz; evaluating in UTC
+  silently shifts every tz-bearing job by the offset, and on a DST boundary that is a moving target),
+  and **an elapsed one-shot returns 0.0, never `now`** — re-arming a missed appointment turns it into
+  an immediate surprise fire. Verified: `0 9 * * *` → 09:00Z / 14:00Z (NY) / 03:30Z+1d (Kolkata).
+- **`delete_after_run` was declared and consumed by NOTHING.** It is in the clock spec, the migration
+  defaults it True for an `at`, and no code read it. The tick now retires a trigger with no next
+  fire: delete the row, or (when False) clear the fire and disable so it stays visible in the UI.
+  Either way it never keeps an elapsed timestamp. `TickResult.retired` names it — "it stopped
+  existing" is the state change a user most needs explained.
+- **An UNARMABLE trigger is skipped, never armed to `now`** (invalid cron, elapsed one-shot,
+  non-clock kind). Firing on a guessed cadence is worse than not firing, and the row is already
+  visible as broken in the store and the doctor.
+- **DEVIATION — an existing test asserted the bug.**
+  `test_a_non_interval_trigger_yields_no_recompute` pinned `next_after_completion(cron) == 0.0` on
+  the "recurrence engine owns it" premise. That premise was false and the 0.0 WAS the storm, so the
+  test is replaced by `test_a_cron_recomputes_from_its_own_expression` (which also pins that a
+  30-min-late completion does not push the 9am slot) plus
+  `test_an_elapsed_one_shot_yields_no_recompute` for the case where 0.0 is genuinely right.
+- Verified identical on **Python 3.12 and 3.13** — the cross-version check S93's glob bug taught.
+
+26 new tests. Gate: `make lint` clean.
+
+- **NEXT in the cutover (now unblocked, each a clean break):** retire `ScheduleService` for the tick
+  loop; re-point `/api/triggers`' schedule + event backends at the store (§6); retire the
+  `schedule_*` MCP aliases (§4). `ScheduleRunStore` survives all three unchanged — it is keyed by a
+  plain id string, so any trigger id can use it (measured).

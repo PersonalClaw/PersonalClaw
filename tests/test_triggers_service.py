@@ -209,17 +209,41 @@ def test_the_next_fire_is_computed_from_COMPLETION(store):
     )
 
 
-def test_a_non_interval_trigger_yields_no_recompute():
-    """`cron`/`at`/`sequence` recurrences belong to the recurrence engine; guessing one here would
-    compete with it."""
+def test_a_cron_recomputes_from_its_own_expression():
+    """🔴 SUPERSEDED CONTRACT (S96). This test previously asserted `== 0.0` on the premise that
+    "`cron`/`at`/`sequence` recurrences belong to the recurrence engine" — but no recurrence engine
+    ever existed, so the 0.0 meant a cron that fired kept its ELAPSED `next_fire_at` and every later
+    tick re-fired the same past slot. `arm.next_fire` is now that engine, and it owns all four clock
+    kinds, so there is exactly one answer to "when next" rather than two that can disagree.
+
+    A cron recomputes from its EXPRESSION, never from completion — recomputing from completion would
+    drift a 9am job later every day."""
     cron = Trigger(
         id="c",
         name="c",
         kind="clock",
+        enabled=True,
         spec={"kind": "cron", "expr": "0 9 * * *"},
         workflow={"provider": "run-prompt", "config": {}},
     )
-    assert SVC.next_after_completion(cron, completed_at=NOW, now=NOW) == 0.0
+    # NOW is 08:00Z, so the next slot is today's 09:00Z regardless of when the run completed.
+    assert SVC.next_after_completion(cron, completed_at=NOW, now=NOW) == 1_800_003_600.0
+    late = SVC.next_after_completion(cron, completed_at=NOW + 1800, now=NOW + 1800)
+    assert late == 1_800_003_600.0  # a 30-min-late completion does not push the 9am slot
+
+
+def test_an_elapsed_one_shot_yields_no_recompute():
+    """An `at` genuinely has no next fire. 0.0 is correct here — and the tick RETIRES the row rather
+    than leaving it holding a past timestamp (which was the storm)."""
+    once = Trigger(
+        id="o",
+        name="o",
+        kind="clock",
+        enabled=True,
+        spec={"kind": "at", "at": NOW - 60},
+        workflow={"provider": "run-prompt", "config": {}},
+    )
+    assert SVC.next_after_completion(once, completed_at=NOW, now=NOW) == 0.0
 
 
 def test_a_zero_interval_does_not_schedule_an_immediate_refire():
