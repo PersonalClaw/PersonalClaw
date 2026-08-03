@@ -1,6 +1,7 @@
 """The one automation substrate: triggers fire workflows (AUTOMATION-SUBSTRATE).
 
-Session 62 is the ENTITY layer only — the record, its per-kind specs, and the fire/run records with
+Session 62 is the ENTITY layer only — the record, its per-kind specs, and
+the fire/run records with
 typed outcomes. The scheduler (`TriggerService`) is session 63, dispatch is 64, and the
 lossless cron
 migration is 66. Nothing here schedules or fires anything, deliberately: the shape has to be settled
