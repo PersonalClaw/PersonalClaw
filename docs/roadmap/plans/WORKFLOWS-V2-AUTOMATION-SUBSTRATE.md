@@ -2037,3 +2037,32 @@ own home, plus the `_isolate_trigger_store` autouse fixture (modelled on the shi
 `_isolate_session_map`, which exists for exactly this hazard). **Generalizable: a new boot-time writer
 must resolve its home through ONE function the tests can redirect — passing the path in from the
 caller silently defeats every fixture.** Verified: the full suite now leaves the real home clean.
+
+### S99 — The schedule re-point: `/api/triggers` reads the store (§6 — stacked on S98)
+
+**DONE.** §6: "the existing `/api/triggers` facade becomes the single API by re-pointing its three
+backends at one store". The schedule LIST is now read from `triggers.json` through S98's projection.
+
+- **Verified BEFORE switching, not after.** After the boot migration the store lists exactly the same
+  job ids the legacy service does (driven against a copy of the owner's real `crons.json`: both
+  return `['j-at','j-cron','j-every','j-seq']`), so nothing vanishes from the Automations page. That
+  check is the whole reason this was safe to do as a clean break rather than a dual-write.
+- **A legacy fallback survives for exactly one condition:** the store holds NO clock rows, which
+  happens on a home whose migration has not run yet. Reading the old file for one more boot is
+  strictly better than telling a user their automations are gone. That branch is what retires when
+  `ScheduleService` does — it is the only remaining read of `state.crons.list_jobs` in the list path.
+- **Redaction stays in the handler.** The projection is a data mapping and knows nothing about
+  credential scrubbing, so `name`/`message`/`last_error`/`schedule` are redacted on the way out
+  exactly as `_serialize_schedule` did. Pinned by a test that puts a provider key in a trigger name.
+- **A broken clock row is LISTED with its error** (S87's lenient parse), not hidden — an automation
+  the user cannot see is one they cannot fix.
+- Driven end to end against the owner's real data through the real aiohttp handler: `j-cron` renders
+  `name: "nightly backup"`, `cron_expr: "0 3 * * *"`, `timezone: "Europe/London"`,
+  `schedule: "At 3:00 AM BST"` and a real future `next_run_ts` — the tz-aware prose proves the
+  delegation to `schedule.format_schedule` works through the whole stack.
+
+5 tests (20 in the store-facade file; the 32 pre-existing facade tests pass unchanged). Gate:
+`make lint` clean, **15639 passed**, real home untouched.
+
+- **NEXT:** re-point the schedule WRITE paths (create/update/toggle/delete/run) onto `tools.py`, then
+  retire `ScheduleService`, then the `schedule_*` MCP aliases. `ScheduleRunStore` survives unchanged.

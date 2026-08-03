@@ -379,3 +379,94 @@ def test_store_only_kinds_excludes_clock_and_event():
     assert "event" not in T._STORE_ONLY_KINDS
     assert "file" in T._STORE_ONLY_KINDS
     assert "web_watch" in T._STORE_ONLY_KINDS
+
+
+# ── 🔴 §6's schedule re-point (S99) ──
+
+
+def test_the_schedule_list_is_read_from_the_store(home, state, monkeypatch):
+    """🔴 §6's re-point: "the existing facade becomes the single API by re-pointing its three
+    backends at one store". Verified before switching that the store lists the SAME job ids the
+    legacy service does after the boot migration, so nothing vanishes from the page."""
+    from personalclaw.triggers import boot_migrate as BM
+
+    (home / "crons.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "jobs": [
+                    {
+                        "id": "j-cron",
+                        "name": "Nightly",
+                        "enabled": True,
+                        "schedule": {"kind": "cron", "cron_expr": "0 9 * * *"},
+                        "action": {"provider": "bash", "config": {"command": "x"}},
+                    }
+                ],
+            }
+        )
+    )
+    BM.migrate_and_arm(home, now=1_800_000_000.0)
+    state.crons.list_jobs.return_value = []  # the legacy service is EMPTY on purpose
+    resp = _run(T.api_triggers(_req("GET", "/api/triggers", state)))
+    rows = [t for t in _body(resp)["triggers"] if t["kind"] == "schedule"]
+    assert [r["raw_id"] for r in rows] == ["j-cron"]
+    assert rows[0]["cron_expr"] == "0 9 * * *"
+    assert rows[0]["next_run_ts"]  # armed by the boot migration
+
+
+def test_an_empty_store_falls_back_to_the_legacy_service(home, state):
+    """🔴 A home whose migration has not run yet must NOT show zero schedules. Reading the old file
+    for one more boot is strictly better than telling a user their automations are gone — and that
+    fallback is what retires when `ScheduleService` does."""
+    from personalclaw.schedule import ScheduleDefinition, ScheduleJob
+
+    job = ScheduleJob(
+        id="legacy1",
+        name="Legacy",
+        enabled=True,
+        action={"provider": "bash", "config": {}},
+        schedule=ScheduleDefinition(kind="every", every_secs=3600),
+    )
+    state.crons.list_jobs.return_value = [job]
+    state.crons.is_running.return_value = False
+    state.crons.running_since.return_value = None
+    state.crons.last_run_status.return_value = ""
+    resp = _run(T.api_triggers(_req("GET", "/api/triggers", state)))
+    rows = [t for t in _body(resp)["triggers"] if t["kind"] == "schedule"]
+    assert [r["raw_id"] for r in rows] == ["legacy1"]
+
+
+def test_a_store_backed_schedule_row_is_redacted(home, state):
+    """The projection is a data mapping and knows nothing about credential scrubbing, so the handler
+    still redacts on the way out — exactly as `_serialize_schedule` did."""
+    from personalclaw.triggers.models import Trigger
+
+    _store(home).upsert(
+        Trigger(
+            id="clock:leaky",
+            name="token sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345",
+            kind="clock",
+            enabled=True,
+            spec={"kind": "cron", "expr": "0 9 * * *"},
+            workflow={"provider": "bash", "config": {"command": "x"}},
+        )
+    )
+    state.crons.list_jobs.return_value = []
+    resp = _run(T.api_triggers(_req("GET", "/api/triggers", state)))
+    row = next(t for t in _body(resp)["triggers"] if t["kind"] == "schedule")
+    assert "sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345" not in row["name"]
+
+
+def test_a_broken_clock_row_is_listed_with_its_error(home, state):
+    """S87's lenient parse keeps a broken row; the schedule list must show it rather than hiding an
+    automation the user cannot otherwise debug."""
+    _store(home).path.write_text(
+        json.dumps(
+            {"version": 1, "triggers": [{"id": "clock:x", "name": "X", "kind": "clock", "spec": 5}]}
+        )
+    )
+    state.crons.list_jobs.return_value = []
+    resp = _run(T.api_triggers(_req("GET", "/api/triggers", state)))
+    rows = [t for t in _body(resp)["triggers"] if t["kind"] == "schedule"]
+    assert rows and rows[0]["broken"]
