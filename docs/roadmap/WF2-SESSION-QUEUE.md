@@ -158,7 +158,7 @@ mandatory.
 |---|---|---|---|
 | 62 | Trigger entity + per-kind specs + fire/run records with typed outcomes | G31 | ✅ DONE (#216) |
 | 63 | Disposition table AS CODE (14 rows, module-existence checked) + the crash-safe scheduling discipline (jitter parity with the shipped scheduler asserted) | G31 | ✅ DONE (#217) |
-| 64 | Dispatch architecture (inbox + wakeup) + event-bus delivery contract | G32 | TODO |
+| 64 | Dispatch (inbox + wakeup, resume-never-droppable) + the delivery contract + the SPOOL that fixes the reproduced sync-context silent drop | G32 | ✅ DONE (#218) |
 | 65 | Missed fires: review-don't-storm; catch_up exactly-once staggered | G32 | TODO |
 | 66 | Cron migration: lossless from the real store, identical firing incl. jitter/tz/skip_dates | G33 | TODO |
 | 67 | Event-kind API parity (toggle/update/run/test/history) + the 8 dormant lifecycle events | G33 | TODO |
