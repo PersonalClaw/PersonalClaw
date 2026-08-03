@@ -630,3 +630,51 @@ The delivery contract, each rule with the failure it prevents:
 - **NOT DONE (by scope):** the loop that drains the spool and the queue (that is the service), the
   missed-fire review card (§3.4, session 65), foreground yield and resource slots (§3.5), budgets and
   triage (§3.6), and the migration (66, which must use S62's `LEGACY_FIELD_MAP`).
+
+### S65 — Missed fires: review, don't lie, don't storm (37 tests) — DONE
+
+Local-first means a closed lid stops the loop, so the honest question after a restart is not "what
+should have run" but "what do I tell the user about what didn't".
+
+**The defect this session found in its own first draft.** The shared enumeration budget originally
+bounded the COUNT. Driven with thirty triggers each down a week: the alphabetically-first minutely
+trigger spent all 480 counting its own 10,080 missed slots, and **twenty-nine triggers got no review
+card at all** — the page would have shown one automation and silently omitted the rest, which is exactly
+the "don't lie" failure §3.4 names. Fixed by budgeting the ROWS BUILT instead: counting is one
+division, allocating objects is what makes boot slow. Same budget, 24 of 30 triggers get cards, every
+count stays exact so the summaries stay honest, and the body comment records the measurement so a later
+"simplification" cannot reintroduce it.
+
+**A second measurement, where the test was wrong and the code was right.** The newest MISSED slot is one
+interval back, not `now`: the slot at `now` is DUE and the scheduler is about to fire it. Listing it as
+missed would offer a review card for work already on its way. The assertion was corrected, not the
+implementation, and the docstring now says why.
+
+The three separations, each preventing a specific bad outcome:
+
+- **Enumerate, bounded, honest.** The newest ~20 per trigger become reviewable rows; everything older
+  collapses into ONE summary that still carries the exact count. `truncated` is a SEPARATE flag from
+  the summaries because they answer different questions — a summary says "this trigger missed more than
+  we listed", `truncated` says "the enumeration itself stopped early, so even the counts are a floor".
+  Reporting a floor as a total is the same lie in different clothes.
+- **Review, don't auto-run.** "Run the 3am backup now, at 9am" is sometimes right and sometimes exactly
+  wrong, so it is the user's decision. Run-now records `ran_late`, dismiss records `skipped_missed`, and
+  an unknown action is `refused` with a reason — every branch writes a ledger row, because a dismissed
+  card that left no trace would be a silent drop with a UI on it.
+- **`catch_up` fires ONCE, staggered, and explains its refusals.** Opt-in (RunAtLoad semantics are a
+  choice, not a default), once per trigger regardless of how many slots were missed, and spread by the
+  same deterministic per-id jitter the scheduler uses — without all three, a laptop opening after a
+  weekend runs every automation it owns in the same second. A DISABLED trigger is never restarted by a
+  catch-up: an automation the user switched off coming back to life because the machine rebooted is the
+  most damaging possible reading of the feature. Every candidate gets an explanation including the
+  refusals, because a `catch_up: true` trigger that did NOT fire needs one as much as one that did.
+
+Two supporting rules: the hourly cap backstops catch-up but a MANUAL fire bypasses it (the cap exists
+to stop the machine running away on its own, and a person clicking Run is not the machine running away),
+and `roll_forward` preserves phase rather than rolling to `now + interval` — the same grid-anchoring
+rule as the scheduler, so a re-open neither re-enumerates nor re-phases a schedule that was correct
+before the machine slept.
+
+- **NOT DONE (by scope):** the review card's FE surface, the boot sequence that calls these (the
+  service), foreground yield and resource slots (§3.5), budgets and triage (§3.6), and the migration
+  (66 — which must use S62's `LEGACY_FIELD_MAP`).

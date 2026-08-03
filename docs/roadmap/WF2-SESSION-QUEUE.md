@@ -159,7 +159,7 @@ mandatory.
 | 62 | Trigger entity + per-kind specs + fire/run records with typed outcomes | G31 | ✅ DONE (#216) |
 | 63 | Disposition table AS CODE (14 rows, module-existence checked) + the crash-safe scheduling discipline (jitter parity with the shipped scheduler asserted) | G31 | ✅ DONE (#217) |
 | 64 | Dispatch (inbox + wakeup, resume-never-droppable) + the delivery contract + the SPOOL that fixes the reproduced sync-context silent drop | G32 | ✅ DONE (#218) |
-| 65 | Missed fires: review-don't-storm; catch_up exactly-once staggered | G32 | TODO |
+| 65 | Missed fires: bounded honest enumeration (budget bounds ROWS, not counts — measured), review decisions that always write a row, catch_up once + staggered | G32 | ✅ DONE (#219) |
 | 66 | Cron migration: lossless from the real store, identical firing incl. jitter/tz/skip_dates | G33 | TODO |
 | 67 | Event-kind API parity (toggle/update/run/test/history) + the 8 dormant lifecycle events | G33 | TODO |
 | 68 | Autopause after 5 true failures (typed exits park instead) + Runs-inbox surfacing | G34 | TODO |
