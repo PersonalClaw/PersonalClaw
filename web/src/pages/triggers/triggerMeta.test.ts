@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { eventDormancyReason, eventIsDormant, lifecycleEventMeta } from './triggerMeta'
-import type { TriggerVariables } from '../../lib/api'
+import { eventDormancyReason, eventIsDormant, lifecycleEventMeta, storeToTrigger } from './triggerMeta'
+import type { TriggerVariables, Trigger as WireTrigger } from '../../lib/api'
 
 // ── Lifecycle-event dormancy, from the UI's side (S67) ──────────────────────
 //
@@ -86,5 +86,64 @@ describe('lifecycleEventMeta', () => {
     const em = lifecycleEventMeta(null, 'Whatever')
     expect(em.event).toBe('Whatever')
     expect(em.dormant).toBeUndefined()
+  })
+})
+
+// ── storeToTrigger: the file/web_watch/idle/… kinds surfaced from the unified store (S94/S95) ──
+//
+// These automations are created in chat (the automation_* tools) and, before S94, were invisible on
+// the Automations page — created, fired, and unlistable. The mapper projects the wire row onto the
+// shared list view-model. The key invariants: the store's own id survives as rawId (it is itself
+// <kind>:<slug>, and the toggle/run/delete helpers re-namespace it), a broken row is carried so the
+// list can flag it rather than hiding it, and an unknown store_kind degrades to a neutral label
+// instead of a blank row.
+
+const storeRow = (over: Partial<WireTrigger> = {}): WireTrigger => ({
+  kind: 'store', id: 'store:file:summarize-notes', raw_id: 'file:summarize-notes',
+  name: 'Summarize notes', enabled: true, action: { provider: 'run-prompt', config: {} },
+  store_kind: 'file', spec: { paths: ['~/notes/**'] }, broken: [],
+  ...over,
+})
+
+describe('storeToTrigger', () => {
+  it('projects a file automation onto the list view-model', () => {
+    const t = storeToTrigger(storeRow())
+    expect(t.kind).toBe('store')
+    expect(t.storeKind).toBe('file')
+    expect(t.whenLabel).toBe('On file change')
+    expect(t.actionLabel).toBe('Run Prompt')
+    expect(t.enabled).toBe(true)
+  })
+
+  it('keeps the store id as rawId so mutations re-namespace correctly', () => {
+    // The namespaced id is `store:file:summarize-notes`; rawId must be the store's own
+    // `file:summarize-notes`, or toggle/run/delete would target the wrong path.
+    const t = storeToTrigger(storeRow())
+    expect(t.id).toBe('store:file:summarize-notes')
+    expect(t.rawId).toBe('file:summarize-notes')
+  })
+
+  it('carries a broken row rather than hiding it', () => {
+    const t = storeToTrigger(storeRow({ broken: ['unknown trigger kind'] }))
+    expect(t.broken).toEqual(['unknown trigger kind'])
+  })
+
+  it('falls back to a neutral label for an unknown store_kind', () => {
+    const t = storeToTrigger(storeRow({ store_kind: 'brand_new_kind' }))
+    // Not blank — the raw kind stands in so the row is still readable.
+    expect(t.whenLabel).toBe('brand_new_kind')
+  })
+
+  it('labels each declared store kind', () => {
+    const kinds: Array<[string, string]> = [
+      ['file', 'On file change'],
+      ['web_watch', 'On web page change'],
+      ['idle', 'When idle'],
+      ['run_completed', 'When a run finishes'],
+      ['webhook', 'On webhook'],
+    ]
+    for (const [k, label] of kinds) {
+      expect(storeToTrigger(storeRow({ store_kind: k })).whenLabel).toBe(label)
+    }
   })
 })

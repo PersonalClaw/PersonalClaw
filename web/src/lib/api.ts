@@ -707,8 +707,12 @@ export interface HookItem {
 // helpers project it onto ScheduleJob; the lifecycle helpers onto HookItem.
 export interface TriggerAction { provider: string; config: Record<string, unknown> }
 export interface Trigger {
-  kind: 'schedule' | 'lifecycle'; id: string; raw_id: string; name: string; enabled: boolean
+  kind: 'schedule' | 'lifecycle' | 'store'; id: string; raw_id: string; name: string; enabled: boolean
   action: TriggerAction
+  // store fields (kind=store) — the unified TriggerStore kinds with no legacy backend
+  // (file/web_watch/idle/run_completed/view/webhook). Created via the automation_* chat tools.
+  store_kind?: string; created_by?: string; spec?: Record<string, unknown>
+  health?: string; broken?: string[]
   // schedule fields (kind=schedule)
   message?: string; schedule?: string; cron_expr?: string | null; every_secs?: number | null
   agent?: string | null; model?: string | null; channel?: string | null; approval_mode?: string | null
@@ -2382,6 +2386,17 @@ export const api = {
   deleteHook: (id: string) => del(`/api/triggers/lifecycle:${encodeURIComponent(id)}`),
   toggleHook: (id: string) => post(`/api/triggers/lifecycle:${encodeURIComponent(id)}/toggle`, {}),
   testHook: (id: string, context?: string) => post<{ ok: boolean; result: { stdout: string; stderr: string; exit_code: number; error: string; duration_ms: number } }>(`/api/triggers/lifecycle:${encodeURIComponent(id)}/test`, { context: context ?? 'test' }),
+
+  // store triggers — the unified TriggerStore kinds with no legacy backend
+  // (file/web_watch/idle/…). Created via the automation_* chat tools; surfaced
+  // here so the Automations page can list/pause/run/delete them. The raw_id is
+  // itself <kind>:<slug>, so the namespaced route is `store:<raw_id>`.
+  storeTriggers: () => get<{ triggers: Trigger[] }>('/api/triggers?type=store').then((d) => d.triggers),
+  toggleStoreTrigger: (rawId: string, enabled: boolean) =>
+    post(`/api/triggers/store:${encodeURIComponent(rawId)}/toggle`, { enabled }),
+  deleteStoreTrigger: (rawId: string) => del(`/api/triggers/store:${encodeURIComponent(rawId)}`),
+  runStoreTrigger: (rawId: string, dryRun = false) =>
+    post(`/api/triggers/store:${encodeURIComponent(rawId)}/run`, dryRun ? { dry_run: true } : {}),
 
   // knowledge — typed item library + entities/graph + sources (see knowledge-entity-vision.md)
   knowledgeStats: () => get<KnowledgeStats>('/api/knowledge/stats'),

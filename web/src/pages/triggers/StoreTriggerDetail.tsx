@@ -1,0 +1,153 @@
+import { useState } from 'react'
+import { Trash2, Play, FlaskConical, Loader2, AlertTriangle } from 'lucide-react'
+import { Button } from '../../ui/Button'
+import { Toggle } from '../../ui/Toggle'
+import { confirmDelete } from '../../ui/dialog'
+import { api, type Trigger as WireTrigger } from '../../lib/api'
+import { actionLabel } from './triggerMeta'
+
+/** Inspector for a store-backed trigger (file/web_watch/idle/…) in the SidePanel.
+ *
+ *  Read-only by design: these automations are AUTHORED in chat ("when a file in ~/notes changes,
+ *  summarize it…") through the automation_* tools, so the create/edit surface is the conversation,
+ *  not a form. What the page owns is management — pause/resume, run/dry-run, delete — which is
+ *  exactly what the user cannot do from chat once the automation exists. Every mutation routes
+ *  through the same /api/triggers store namespace the backend added (S94), which itself reuses the
+ *  chat tools' own functions, so this panel and a chat command cannot answer differently.
+ */
+export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
+  trigger: WireTrigger
+  onChanged: () => void
+  onDeleted: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [runFlash, setRunFlash] = useState<string | null>(null)
+  const [err, setErr] = useState('')
+
+  const broken = trigger.broken ?? []
+  const paths = Array.isArray(trigger.spec?.paths) ? (trigger.spec!.paths as string[]) : []
+
+  async function toggle() {
+    setBusy(true)
+    setErr('')
+    try {
+      await api.toggleStoreTrigger(trigger.raw_id, !trigger.enabled)
+      onChanged()
+    } catch (e) {
+      // A broken row refuses to enable (S87), surfaced by the API as an error — show WHY rather
+      // than flipping a switch that silently did nothing.
+      setErr(e instanceof Error ? e.message : 'Could not change this automation')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function run(dry: boolean) {
+    setBusy(true)
+    setErr('')
+    setRunFlash(null)
+    try {
+      await api.runStoreTrigger(trigger.raw_id, dry)
+      setRunFlash(dry ? 'Dry run — nothing executed' : 'Ran')
+      onChanged()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Run failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function remove() {
+    if (!(await confirmDelete('automation', trigger.name))) return
+    setBusy(true)
+    try {
+      await api.deleteStoreTrigger(trigger.raw_id)
+      onDeleted()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-l px-m py-m">
+      {broken.length > 0 && (
+        <div
+          className="flex items-start gap-2 rounded-lg px-3 py-2 text-[0.8125rem]"
+          style={{ background: 'color-mix(in srgb, var(--color-danger) 12%, transparent)', color: 'var(--color-danger)' }}
+        >
+          <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+          <div>
+            <div style={{ fontWeight: 500 }}>This automation has a problem and will not fire.</div>
+            <div className="mt-0.5">{broken[0]}</div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Enabled</div>
+          <div className="text-on-surface-low text-[0.8125rem]">
+            {trigger.enabled ? 'Firing on its own' : 'Paused — it will not fire until re-enabled'}
+          </div>
+        </div>
+        <Toggle on={trigger.enabled} onChange={toggle} disabled={busy} label="Enabled" />
+      </div>
+
+      <Section label="When it runs">
+        <div className="text-on-surface text-[0.875rem]">{storeKindLabel(trigger.store_kind)}</div>
+        {paths.length > 0 && (
+          <ul className="mt-1 flex flex-col gap-0.5">
+            {paths.map((p) => (
+              <li key={p} className="font-mono text-on-surface-low text-[0.8125rem] break-all">{p}</li>
+            ))}
+          </ul>
+        )}
+      </Section>
+
+      <Section label="What it runs">
+        <div className="text-on-surface text-[0.875rem]">{actionLabel(trigger.action?.provider)}</div>
+      </Section>
+
+      {trigger.created_by === 'agent' && (
+        <div className="text-on-surface-low text-[0.75rem]">Created for you automatically. Manage it here or ask in chat to change it.</div>
+      )}
+
+      {err && <div className="text-danger text-[0.8125rem]">{err}</div>}
+      {runFlash && !err && <div className="text-on-surface-low text-[0.8125rem]">{runFlash}</div>}
+
+      <div className="flex flex-wrap items-center gap-2 pt-1">
+        <Button variant="secondary" size="sm" onClick={() => run(false)} disabled={busy}>
+          {busy ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} Run now
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => run(true)} disabled={busy}>
+          <FlaskConical size={14} /> Dry run
+        </Button>
+        <div className="flex-1" />
+        <Button variant="ghost" size="sm" onClick={remove} disabled={busy} className="text-danger">
+          <Trash2 size={14} /> Delete
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</div>
+      {children}
+    </div>
+  )
+}
+
+function storeKindLabel(kind?: string): string {
+  const map: Record<string, string> = {
+    file: 'When a watched file changes',
+    web_watch: 'When a watched web page changes',
+    idle: 'After a period of inactivity',
+    run_completed: 'When a workflow run finishes',
+    view: 'When its surface is viewed',
+    webhook: 'When its webhook receives a request',
+  }
+  return map[kind ?? ''] ?? (kind || 'Automation')
+}
