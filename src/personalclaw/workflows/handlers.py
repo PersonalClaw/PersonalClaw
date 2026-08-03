@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from aiohttp import web
@@ -180,6 +181,16 @@ async def api_defs_list(request: web.Request) -> web.Response:
     )
 
 
+async def api_defs_surfacing(request: web.Request) -> web.Response:
+    """The templates list with its surfacing state — what the UX renders.
+
+    A separate route from `GET /api/workflows` rather than a widened one: the thin list is on the
+    hot path for the planner's picker, and making every caller pay for a per-def run-history lookup
+    to render a name would be a cost nobody asked for.
+    """
+    return _reply(await service.list_defs_surfacing(now=time.time()))
+
+
 async def api_def_detail(request: web.Request) -> web.Response:
     return _reply(await service.get_def(request.match_info.get("name", "")))
 
@@ -203,6 +214,7 @@ async def api_def_save(request: web.Request) -> web.Response:
         description=str(body.get("description", "") or ""),
         inputs=body.get("inputs") if isinstance(body.get("inputs"), dict) else None,
         tags=[str(t) for t in (body.get("tags") or [])],
+        metadata=body.get("metadata") if isinstance(body.get("metadata"), dict) else None,
         save=bool(body.get("save", True)),
         # A def saved through the API is the USER acting, not an agent — so it skips the
         # agent-provenance dry run, which exists for specs a model generated.
@@ -600,7 +612,10 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_post("/api/workflows/runs/{run_id}/run-from", api_run_from)
     app.router.add_post("/api/workflows/runs/{run_id}/fork", api_run_fork)
 
-    # Definitions.
+    # Definitions. `surfacing` is a literal path and MUST precede `/{name}`, or a request for it
+    # would match the def-detail route and look for a definition named "surfacing" — the same
+    # ordering hazard this function's docstring records for `/runs`.
+    app.router.add_get("/api/workflows/surfacing", api_defs_surfacing)
     app.router.add_get("/api/workflows", api_defs_list)
     app.router.add_post("/api/workflows", api_def_save)
     app.router.add_get("/api/workflows/{name}", api_def_detail)

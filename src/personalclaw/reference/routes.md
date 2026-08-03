@@ -590,6 +590,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/workflows/runs/{run_id}/run-from` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/steer` — POST a mid-run steering instruction (LOOPS-EVOLUTION R14).
 - `GET /api/workflows/runs/{run_id}/steering` — GET what is queued but unconsumed — so the UI can show it as pending.
+- `GET /api/workflows/surfacing` — The templates list with its surfacing state — what the UX renders.
 - `DELETE /api/workflows/{name}` — _(no summary)_
 - `GET /api/workflows/{name}` — _(no summary)_
 
