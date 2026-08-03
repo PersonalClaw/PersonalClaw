@@ -1,4 +1,4 @@
-import { useId, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { X, Plus, GripVertical, Check, Search, AlertTriangle } from 'lucide-react'
 import { IconButton } from '../../ui/IconButton'
@@ -115,6 +115,18 @@ export function ChecklistEditor<T extends { description?: string }>({ items, onC
 }) {
   const [draft, setDraft] = useState('')
   const addId = useId()
+  // Two-stage destructive reveal (TASKS-SOPS §7 R15, S61k), matching the shipped armed-delete
+  // pattern in the workflows list rather than inventing a second one: first click arms, second
+  // confirms, and the arm times out. A checklist row is one click from gone otherwise, and the item
+  // it deletes is text the user typed — there is nothing to undo it with.
+  const [armed, setArmed] = useState<number | null>(null)
+  useEffect(() => {
+    if (armed === null) return
+    // Disarmed on a timer for the same reason the list page does it: a row left armed indefinitely
+    // becomes a trap the next time the user reaches for that area.
+    const timer = window.setTimeout(() => setArmed(null), 4000)
+    return () => window.clearTimeout(timer)
+  }, [armed])
   const add = () => {
     const v = draft.trim()
     if (!v) return
@@ -134,7 +146,26 @@ export function ChecklistEditor<T extends { description?: string }>({ items, onC
       {dragHandle}
       <button type="button" onClick={() => toggle(i)} className="shrink-0 inline-flex size-5 items-center justify-center rounded-sm border transition-colors" style={{ borderColor: it[doneKey] ? 'var(--color-ok)' : 'var(--color-outline-variant)', background: it[doneKey] ? 'var(--color-ok)' : 'transparent' }}>{it[doneKey] ? <Check size={13} className="text-white" /> : null}</button>
       <span className={`flex-1 text-[0.8125rem] ${it[doneKey] ? 'text-on-surface-low line-through' : 'text-on-surface'}`}>{String(it.description ?? '')}</span>
-      <SquareIconButton icon={X} tone="danger" label="Remove" onClick={() => remove(i)} className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" />
+      {armed === i ? (
+        // The shared primitive rather than bespoke chrome: the design-system ratchet caught the raw
+        // element (278 > 277 baseline), which is exactly what it is for — a one-off confirm chip
+        // would drift from every other danger affordance the first time the tokens moved.
+        //
+        // The comment itself is worded around the tag name on purpose: the scanner counts the
+        // literal string, so writing it here would flag this file for a raw element that is not in
+        // it (measured — that is what the second ratchet failure was).
+        <Button
+          variant="danger"
+          size="xs"
+          className="shrink-0"
+          onClick={() => { remove(i); setArmed(null) }}
+          title="Click again to remove this item"
+        >
+          Remove?
+        </Button>
+      ) : (
+        <SquareIconButton icon={X} tone="danger" label="Remove" onClick={() => setArmed(i)} className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" />
+      )}
     </>
   )
   const rowClass = 'group flex items-center gap-s rounded-md bg-surface-container px-2 py-1.5'
@@ -149,10 +180,30 @@ export function ChecklistEditor<T extends { description?: string }>({ items, onC
         <Reorderable
           items={keyed}
           getKey={({ i }) => String(i)}
+          // Checked-locks-drag, enforced by the primitive rather than by styling: a completed
+          // step's position is the record of what happened in what order, which is the one thing a
+          // checklist is FOR.
+          canDrag={({ it }) => !it[doneKey]}
           onReorder={(next) => onChange(next.map((k) => k.it))}
           renderItem={({ it, i }) => (
             <div className={`${rowClass} mb-1.5`}>
-              {rowInner(it, i, <GripVertical size={14} className="shrink-0 cursor-grab text-on-surface-low active:cursor-grabbing" />)}
+              {/* Checked-locks-drag (R15). A completed step's position is history — reordering it
+                  would rewrite the record of what happened in what order, which is the one thing a
+                  checklist is FOR. The grip stays visible but inert so the row still reads as part
+                  of the same list rather than looking broken. */}
+              {rowInner(
+                it,
+                i,
+                <span
+                  className="shrink-0"
+                  title={it[doneKey] ? 'A completed step keeps its place' : undefined}
+                >
+                  <GripVertical
+                    size={14}
+                    className={`text-on-surface-low ${it[doneKey] ? 'cursor-not-allowed opacity-40' : 'cursor-grab active:cursor-grabbing'}`}
+                  />
+                </span>,
+              )}
             </div>
           )}
         />

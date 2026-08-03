@@ -545,6 +545,21 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "workflows.model_tier_reasoning": {"type": "str", "max_len": 32},
     "workflows.model_tier_standard": {"type": "str", "max_len": 32},
     "workflows.model_tier_fast": {"type": "str", "max_len": 32},
+    # TASKS-SOPS §8 (S61k). All four are live-editable: each changes how much the system does on
+    # its own, which is exactly the class of setting an owner reaches for mid-session rather than
+    # after a restart.
+    #
+    # The bounds are the ones the code already enforces, restated here so the API refuses out-of-
+    # range values instead of storing one the runtime silently clamps — a stored value that does not
+    # match the behaviour is worse than a rejection, because the user reads the stored one.
+    "workflows.surface_mode_default": {"type": "enum", "values": ["off", "passive", "suggest"]},
+    "workflows.max_materialized_per_foreach": {"type": "int", "min": 1, "max": 500},
+    # 0 = never expires (an author writing `0` means "wait for me"), and the upper bound is 30 days:
+    # a gate held longer than that is an abandoned run, not a patient one.
+    "workflows.confirmation_ttl_secs": {"type": "int", "min": 0, "max": 30 * 24 * 3600},
+    # Capped at MAX_LEASE_SECS (1h) — the ceiling `pool.Lease.expires_at` clamps to. Accepting a
+    # larger number here would store a week-long lease that the runtime silently shortens.
+    "workflows.lease_ttl_secs": {"type": "int", "min": 30, "max": 3600},
     # LEARNING-FLYWHEEL capture: the knobs worth changing without a restart. The
     # evidence floor and the session-score threshold are how an owner tunes how
     # eagerly the system learns, and staging can be turned off if the log is

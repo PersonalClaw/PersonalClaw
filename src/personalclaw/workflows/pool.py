@@ -718,7 +718,7 @@ def read_lease(task_id: str) -> Lease | None:
 
 
 def claim_task(
-    task_id: str, *, holder: str, now: float, ttl_seconds: int = DEFAULT_LEASE_SECS
+    task_id: str, *, holder: str, now: float, ttl_seconds: int | None = None
 ) -> tuple[Lease | None, str]:
     """Acquire or renew a lease, under a cross-process lock. Returns `(lease, error)`.
 
@@ -733,6 +733,11 @@ def claim_task(
     """
     from personalclaw.concurrency import single_flight
 
+    if ttl_seconds is None:
+        # From config, not the constant: `workflows.lease_ttl_secs` is live-editable (S61k).
+        from personalclaw.workflows.settings import lease_ttl_secs
+
+        ttl_seconds = lease_ttl_secs()
     with single_flight(f"task-lease:{task_id}") as acquired:
         if not acquired:
             return None, LeaseError.HELD_BY_OTHER.value

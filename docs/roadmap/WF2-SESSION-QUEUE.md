@@ -150,7 +150,7 @@ mandatory.
 | 61h | The VERIFICATION call site (criterion execution, tristate preserved, drained) | G30 | ✅ DONE (#210) |
 | 61i | The confirmation-gate emission (pending on the continuation's idempotency, resolved after the claim) + the `master_fd=99` fixture bug behind the terminal flake | G30 | ✅ DONE (#211) |
 | 61j | DagView composition: `runDag` layout + List/Graph toggle + the gate verbs wired to `/confirm`; fixed container-less depth and the clipped overlay | G30 | ✅ DONE (#214) |
-| 61k | Still open: checklist drag-reorder edit UX, config four-point wiring | G30 | TODO |
+| 61k | Config four-point wiring + the fifth point (`workflows/settings.py` resolvers, so the knobs are not inert) + checklist two-stage delete and a REAL checked-locks-drag | G30 | ✅ DONE (#215) |
 
 ## H. Automation Substrate (`-AUTOMATION-SUBSTRATE.md`) — final step needs Loops Phase 4
 
