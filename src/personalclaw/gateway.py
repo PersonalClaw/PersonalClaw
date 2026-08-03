@@ -1568,6 +1568,25 @@ class GatewayOrchestrator:
             # else-branch so --no-crons disables it too (a file watch is unattended background work
             # like a cron). Disjoint from ScheduleService, so no double-fire.
             self._file_watch_task = asyncio.create_task(self._file_watch_poll_loop())
+            # Import `crons.json` into the unified trigger store and arm the imported clocks (S98).
+            # Measured: `migrate_from_crons` was called by NOTHING outside tests, so `triggers.json`
+            # was empty on a real machine — every cron lived only in the legacy file, which blocks
+            # re-pointing `/api/triggers` at the store (§6) and leaves the tick nothing to fire.
+            # Idempotent and additive: `crons.json` stays on disk (§6's "read-only one release",
+            # which `verify-migration` needs to diff) and the legacy scheduler still runs from
+            # it, so a bad import is fixed by editing the legacy file and restarting rather than
+            # by restoring a deletion.
+            try:
+                from personalclaw.triggers.boot_migrate import migrate_and_arm
+
+                # No explicit home: `migrate_and_arm` resolves it through its OWN `config_dir`, so
+                # there is exactly one place to redirect the boot migration (which is what
+                # `tests/conftest.py::_isolate_trigger_store` patches). Passing `config_dir()` from
+                # here instead bypassed that single point and made three pre-existing gateway tests
+                # migrate the USER's real crons into `~/.personalclaw/triggers.json`.
+                migrate_and_arm()
+            except Exception:
+                logger.warning("trigger-store migration failed at boot", exc_info=True)
 
     async def _init_heartbeat(self) -> None:
         """Initialize and start the heartbeat service."""

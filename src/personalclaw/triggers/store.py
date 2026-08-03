@@ -371,12 +371,51 @@ class TriggerStore:
                 # to see WHICH job did not make it rather than a count that silently disagrees.
                 refused_rows.append({"id": trigger.id, "errors": [i.message for i in errors]})
                 continue
+            # 🔴 PRESERVE RUNTIME STATE on a re-migration (S98). This docstring already
+            # promised "running it twice is idempotent", and for CONFIG it was — but the
+            # converted row carries an EMPTY `next_fire_at`, `run_count`, health, etc., so a
+            # plain upsert clobbered them. Measured: boot armed `j-cron`, the next boot's
+            # migration blanked the arm, and the trigger was re-armed on EVERY boot — which
+            # re-phases a schedule (a 9am job armed at 03:00 becomes "next 9am from now") and
+            # loses the run history the UI reads. Config comes from `crons.json` (the source of
+            # truth for what the job IS); runtime state belongs to what has happened since.
+            existing = self.get(trigger.id)
+            if existing is not None:
+                _carry_runtime_state(existing.trigger, trigger)
             self.upsert(trigger)
             written += 1
         payload["written"] = written
         payload["unparseable"] = refused_rows
         payload["source_kept"] = True
         return payload
+
+
+#: Fields that belong to what has HAPPENED to a trigger, not to what it IS. A re-migration
+#: rewrites config from `crons.json` but must carry these across, or every boot blanks the arm
+#: and the history (measured: a 9am job re-armed each boot re-phases to "next 9am from now").
+RUNTIME_FIELDS: tuple[str, ...] = (
+    "next_fire_at",
+    "last_run_id",
+    "run_count",
+    "last_success_at",
+    "last_failure_at",
+    "health_status",
+    "last_error_summary",
+    "state",
+)
+
+
+def _carry_runtime_state(existing: Trigger, incoming: Trigger) -> None:
+    """Copy runtime state from the row already in the store onto a freshly converted one.
+
+    Only the fields in `RUNTIME_FIELDS`, and only when the existing row actually has a value — a
+    blank existing field must not overwrite a converted one that carries something (the migration
+    does set `health_status` from the legacy `last_status`, for instance).
+    """
+    for name in RUNTIME_FIELDS:
+        value = getattr(existing, name, None)
+        if value not in (None, "", 0):
+            setattr(incoming, name, value)
 
 
 def health(store: TriggerStore) -> dict[str, Any]:

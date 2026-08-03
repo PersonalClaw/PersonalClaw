@@ -1976,3 +1976,64 @@ did either.
 - **NEXT in the cutover:** with `is_running`/`running_since` now answerable from the store, re-point
   `/api/triggers`' schedule backend (23 of the 46 `state.crons.*` call sites live in that one file),
   then retire `ScheduleService`, then the `schedule_*` aliases. `ScheduleRunStore` survives unchanged.
+
+### S98 — Boot migration + the schedule projection (§7 step 2 / §6 — stacked on S97)
+
+**DONE.** Two blockers for the §6 API re-point, both measured before writing.
+
+- **🔴 THE MIGRATION WAS NEVER CALLED.** `store.migrate_from_crons()` exists, is documented
+  idempotent, and had **no caller outside tests**. So on a real machine `triggers.json` is EMPTY:
+  every cron lives only in `crons.json`. Two consequences that made the rest of the cutover
+  unbuildable — (a) re-pointing `/api/triggers`' schedule backend at the store would show the user
+  **zero schedules** while their crons kept firing from the legacy service, and (b) the tick has
+  nothing to fire, so S96's arming and S97's overlap gate act on rows that were never imported.
+  `boot_migrate.migrate_and_arm()` now runs in `_init_cron`, imports, and ARMS the imports (an
+  imported cron has an empty `next_fire_at`, which is exactly S96's inert case).
+- **🔴 AND THE MIGRATION WAS NOT IDEMPOTENT FOR RUNTIME STATE.** Driven against a copy of the owner's
+  real `crons.json`: boot armed `j-cron`, and the NEXT boot's migration **blanked the arm** — a plain
+  `upsert` of the freshly converted row overwrote `next_fire_at`, `run_count`, `last_run_id` and the
+  health fields with the empty values a conversion produces. So every boot re-armed the trigger,
+  which **re-phases a schedule** (a 9am job armed at 03:00 becomes "next 9am from now") and loses the
+  run history the UI reads. The store's own docstring claimed idempotency; it held for CONFIG only.
+  Fixed with `RUNTIME_FIELDS` + `_carry_runtime_state`: config is refreshed from `crons.json` (still
+  authoritative for what the job IS this release), runtime state belongs to what has happened since.
+  Both directions are tested — a rename in the legacy file still propagates.
+- **The schedule projection (`schedule_view.py`)** renders a clock `Trigger` in the EXACT wire shape
+  `_serialize_schedule` produced from a `ScheduleJob`, which is the re-point's real contract.
+  Compared field-for-field against the live serializer while building: legacy keys are a strict
+  subset (only `next_fire_at` + `run_count` added), and the cadence prose matches byte-for-byte
+  because `describe_cadence` **delegates to the shipped `schedule.format_schedule`** — a hand-rolled
+  version produced `0 9 * * * (America/New_York)` where the live API produces `At 9:00 AM EDT`, worse
+  prose AND a second formatter that would drift.
+- **Both action shapes project.** A migrated cron nests its action under `workflow.inline`; S92's
+  chat tools write a FLAT `{provider, config}`. Reading only one would render an empty action for
+  half the rows in a real store.
+- **`is_running`/`running_since` come from S97's claim store**, which is what makes them answerable
+  from an API process that does not own the scheduler loop.
+- **The three `LEGACY_FIELD_MAP` drops are honoured as None, not fabricated:** `created_ts`
+  (display-only — inventing a creation date is a lie the UI renders as fact), `last_result` (the run
+  record owns a run's output; a copy on the trigger was a second truth), and `acked_items`. The last
+  was **verified dead before dropping**: `/api/triggers/{id}/ack` has ZERO callers (no frontend client
+  method, no MCP tool) and the owner's real store carries ZERO acked entries.
+- **Boot-safe:** a missing legacy file is not an error, an unreadable one reports a reason and never
+  raises into boot (a gateway that refused to start over a cron typo is far worse), and `crons.json`
+  is left untouched on disk per §6's "read-only one release" so `verify-migration` can still diff.
+  S91's verifier runs at boot so "was my migration faithful" is answered where it is actionable.
+
+24 tests. Gate: `make lint` clean.
+
+- **NEXT:** re-point the facade's schedule branch onto `to_schedule_row` (the projection now exists
+  and the store is populated), then retire `ScheduleService`, then the `schedule_*` aliases.
+
+**🔴 S98 ADDENDUM — the boot wiring wrote to the OWNER'S REAL HOME, and finding it took four wrong
+guesses.** After the first green suite, `~/.personalclaw/triggers.json` existed with the owner's real
+cron ids in it. Bisecting found three PRE-EXISTING tests (`test_gateway`, `test_cron_acp_retry`,
+`test_cron_thread_routing`) that call `_init_cron` with **no home isolation at all** — harmless until
+this session, because that path never wrote before. The fix took two attempts because the first was
+aimed at the wrong seam: a `conftest` fixture patching `boot_migrate.config_dir` did nothing while
+`_init_cron` passed `config_dir()` **from gateway.py** as an explicit argument, bypassing the single
+redirect point. Corrected by calling `migrate_and_arm()` with no argument so the module resolves its
+own home, plus the `_isolate_trigger_store` autouse fixture (modelled on the shipped
+`_isolate_session_map`, which exists for exactly this hazard). **Generalizable: a new boot-time writer
+must resolve its home through ONE function the tests can redirect — passing the path in from the
+caller silently defeats every fixture.** Verified: the full suite now leaves the real home clean.
