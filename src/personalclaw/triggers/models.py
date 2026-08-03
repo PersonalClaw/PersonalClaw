@@ -198,6 +198,10 @@ SPEC_KEYS: dict[str, frozenset[str]] = {
             "kind",
             "expr",
             "at",
+            # The `interval` clock kind's payload (S87). Paired with `CLOCK_KINDS`' fourth member:
+            # without this key a migrated `every` cron parses its own spec as an unknown field and
+            # warns on the very number that defines when it fires.
+            "interval_secs",
             "timezone",
             "jitter_secs",
             "strict",
@@ -216,7 +220,20 @@ SPEC_KEYS: dict[str, frozenset[str]] = {
 }
 
 #: The `clock` spec's tagged-union discriminator values (§1.2).
-CLOCK_KINDS: frozenset[str] = frozenset({"cron", "at", "sequence"})
+#:
+#: **DEVIATION from §1.2's literal three-member union: `interval` is the fourth (S87).** Found by
+#: driving the migration into the store: `migrate.convert_job` emits `{kind: "interval",
+#: interval_secs}` for a legacy `every` cron — deliberately, and its docstring explains why at
+#: length ("`{kind: cron}` is WRONG and `{kind: at}` is worse … would turn every recurring interval
+#: job into a one-shot that fires once and dies — the single most destructive possible
+#: mistranslation in this file"). But `CLOCK_KINDS` never gained the member, so every migrated
+#: interval cron parsed with `unknown clock kind 'interval'`, landed `enabled=False`, and would have
+#: been silently retired by the migration that was supposed to preserve it.
+#:
+#: Measured against the OWNER's real store: 4 jobs, of which 1 uses `every`. The plan's §1.2 union
+#: and its §6 lossless-migration promise cannot both hold with three kinds, and the promise is the
+#: one with data behind it. So the union widens rather than the migration lying.
+CLOCK_KINDS: frozenset[str] = frozenset({"cron", "at", "sequence", "interval"})
 
 #: Minimum interval for an LLM-invoking clock trigger, in seconds (R1). A floor rather than a hard
 #: rule: the plan makes it overridable, because a 5-minute local-model poll is a legitimate choice —
