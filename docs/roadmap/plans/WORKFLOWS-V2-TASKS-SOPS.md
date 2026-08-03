@@ -899,3 +899,71 @@ Decisions worth recording:
   templates-list UI (freshness gradient, scope chips, grouped pack proposal) — the plan assigns the
   surfaces to §7/session 7, and the fields land with the def-model session. The semantic channel
   (channel 1) is untouched by design: it is the existing mechanism.
+
+### S60 — Pool + hand-offs + blueprints (`workflows/pool.py`, 78 tests) — DONE
+
+Probed the seams first. Three findings, one of them a defect in this session's own first draft:
+
+- **`TaskComplete` is a declared hook event that NOTHING fires.** It is in `hooks.HOOK_EVENTS`,
+  allowlisted in `validation.py::ALLOWED_HOOK_EVENTS`, and rendered by the hook UI with
+  `_LIFECYCLE_BASE_VARS` — so a user can configure "when a task finishes" and get nothing.
+  `validation.py` admits it in a comment: "the rest are reserved for future firing sites and
+  currently never trigger". A repo-wide search for `fire(` finds exactly one call site
+  (`fire_tool_hooks`). This session supplies the payload builder (shaped to `ScriptHookStore.fire`'s
+  real signature, asserted by test) and the EDGE-trigger rule that make it fireable.
+  **DEVIATION:** the plan's `TaskCreated` is not a shipped event name. Adding one here would create
+  a vocabulary the hook UI does not render, so task-creation events wait until the event is declared
+  where users can see it.
+
+- **Acyclicity was ALREADY server-authoritative.** `tasks/native.py` calls
+  `reconcile.would_create_cycle` on both create and update. The plan's "the server-side write path
+  adds the authoritative check" was already satisfied, so `plan_edges` delegates rather than
+  shipping a second DFS — asserted by a spy test, because two cycle checkers means the looser one
+  lets AionUI's A-blocks-B/B-blocks-A deadlock through. A missing checker reports
+  "cycle check unavailable" rather than "no cycle": fail-closed, or a broken import silently
+  disables the guard.
+
+- **My own priority scale was INVENTED.** The first draft weighted `urgent | high | medium | low`.
+  The shipped `TaskPriority` is `critical | high | medium | low | trivial` — there is no `urgent`.
+  So `critical`, the most important rung in the product, would have fallen through to the default
+  weight and ranked BELOW `high`. Caught by a test asserting the weight table's keys equal the enum
+  values; that test is the one worth keeping.
+
+Decisions worth recording:
+
+- **The frontier EXCLUDES leased work by default.** A list that shows what another session is
+  actively holding invites exactly the double-execution the leases prevent. `include_leased` exists
+  for the board, which displays claims rather than picking work.
+- **`next` is `frontier`'s head by construction,** so the list and the pick cannot disagree — the
+  point of having one projection instead of a per-surface re-derivation.
+- **A task blocking others outranks an equal that blocks nothing.** That is the whole value of a
+  dependency-aware pool; ties then break on recency and id, because an unstable "next task" makes
+  an agent thrash between two equals.
+- **An EXPIRED lease is takeable but NOT renewable.** Between expiry and renewal another session
+  may already hold it; extending silently would produce two holders who both think they won. A
+  takeover resets `renewals` — carrying the dead holder's count forward makes a stuck task look
+  actively worked. A same-holder re-acquire is a renewal, so a restarted session is not locked out
+  of its own task.
+- **One of two prerequisites completing does NOT unblock.** The bug a naive "completion unblocks
+  dependents" rule ships with: work becomes visible before its other prerequisite is done. A FAILED
+  blocker cascades regardless of siblings and carries the blocker's REASON, because the dependent's
+  card should say why. A cascade burst coalesces into ONE notification.
+- **Completion firing is EDGE-triggered.** §1 makes idempotent projection recompute the normal
+  path, so a level-triggered fire would emit a hook per rebuild.
+- **A hand-off SUGGESTS and carries only ALLOWLISTED fields.** Auto-starting a successor spends a
+  second run's budget on a decision the user did not make; passing the whole outcome would carry a
+  previous run's credentials and artifacts into new inputs, and a hand-off is exactly the seam
+  where nobody would look. `review → fix` requires an explicit user request, per the plan.
+- **A GATED def can never be a blueprint.** A blueprint has no engine, so there is nothing to
+  pause, and rendering a gate as a numbered message shows the user an approval that approves
+  nothing. Hydration is replace-not-merge and re-hydrating the same blueprint into the same session
+  is a no-op — the defensive case is a client retrying the open, and a merge would print step 1
+  twice.
+
+- **NOT DONE:** the seed template library's actual def files (`checklist`, `sop-guided`,
+  `audit-and-file`, `clean-exit`, the franklioxygen imports) — the hand-off EDGES that bind them
+  ship here, but the defs themselves are content that belongs with the def-model fields, and
+  authoring defs against a `WorkflowDef` that still lacks `surface_mode`/`cadence_days`/`scope`
+  would mean writing them twice. The lease WRITE path (flocked read-modify-write on the task JSON)
+  and the `TaskComplete` emission call site are single-line wirings into `tasks/native.py` that
+  belong with §7's wiring session; the decision rules they implement are complete and tested here.
