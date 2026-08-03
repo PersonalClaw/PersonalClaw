@@ -1004,3 +1004,66 @@ Further decisions:
   — and the pinned gap test is what makes the omission visible rather than assumed-done. The curator
   tick that computes deltas from the Run Ledger and calls `attribute` is likewise a call site; this
   session owns the decision it will apply.
+
+### S78 — The Learning HTTP surface: the Proposal Inbox page (24 + 15 tests) — DONE
+
+**This closes success criterion 1**, which was unmet for want of a route. The criterion says "One
+Proposal Inbox **SHOWS** all six proposal kinds with provenance, evidence manifests, and risk-tier
+metadata; accept installs, reject dismisses — and the model cannot accept its own proposals under any
+trust mode". Everything behind that sentence shipped in S75/S76 with **no HTTP surface and no page**:
+`inbox.build_view` and `StagingStore.week` both returned fully-serialized shapes, and grepping found no
+`/api/learning` route and no Learning page. Both prior sessions recorded the deferral; this is the
+session they deferred to.
+
+**DEVIATION — no queue row.** The queue was exhausted at 77/77 when this ran, and the previous cycles
+recorded `BLOCKED (E6)` on the grounds that adding a row is a scope decision. That was right about
+INVENTING scope and wrong about this: an unmet acceptance criterion of a plan already in the queue is
+declared work, not new direction. Recorded here rather than as a new numbered row, since the plan's own
+criterion is the authority.
+
+**🔴 THE ACTOR IS THE WHOLE POINT, and a route is where it would have been lost.** S75 put
+`require_human` inside `proposals.accept()` and defaulted `actor="user"` so existing callers kept
+working. A route that omitted the actor would therefore have handed EVERY caller — including an
+app-scoped token — the reviewer's authority, silently re-opening the hole S75 closed. So `_actor`
+DERIVES it from the request (`request["app"]` → `agent`, `request["user"]` → `user`, otherwise `""`),
+never from the body: a caller that could name itself `user` would make the gate decorative. Driven over
+real HTTP: an app token gets **403** on both accept and reject, an unidentified caller gets 403, and
+only the dashboard user succeeds.
+
+Further decisions:
+
+- **A missing row is 404 and a refused actor is 403.** Collapsing them would report a permission
+  decision as a typo and vice versa.
+- **The kill switch 404s rather than 403s.** With learning off there is no inbox, and "forbidden" would
+  imply one exists behind a permission wall. But `_enabled()` fails **OPEN** on an unreadable config:
+  a hidden queue looks like an empty one, and proposals would accumulate unseen.
+- **A corrupt proposal file cannot empty the queue.** Proposals are per-file, and one unreadable file
+  hiding the rest is how a backlog silently disappears — the listing degrades to `[]` rather than 500.
+- **Literal paths register before `/{id}`**, so `staging` is not captured as a proposal id. The
+  ordering landmine S67 and S70 each paid for once.
+- **Only a `template_diff` gets a risk tier.** Nothing else carries typed ops to derive one, so
+  fabricating `low` for a lesson would hand it bulk-accept eligibility nobody computed.
+- **The FE re-derives NO judgement.** Ordering, bulk eligibility and renderability all arrive decided;
+  `bulkBlockedReason` only EXPLAINS the backend's flag, and a test asserts it still refuses when every
+  visible field looks fine. Two implementations of "safe to bulk-accept" would eventually disagree, and
+  the FE would be the copy shipping the permissive answer.
+- **An unrenderable row still renders, labelled** ("untitled — proposer bug"). Hiding it would make a
+  proposer bug invisible, which is the same reasoning S75 used for reporting rather than dropping.
+- **`dayLabel` parses the bucket as LOCAL time.** `new Date('2024-01-01')` parses as UTC and would shift
+  the weekday a day west of the reader; the backend buckets by local date, so the label must agree.
+
+**Two defects found by driving rather than reading.** (1) `del()` in `api.ts` is NOT generic — it
+resolves void and throws on `!ok`; assuming symmetry with `get`/`post` failed typecheck. (2) A live
+`404` on every route looked like a defect in `_enabled()` and was a **stale gateway process** — backend
+changes never hot-reload, and the sibling route registered six lines away answered 200 the whole time,
+which is what isolated it.
+
+**Validated end to end** against a live gateway on an isolated dev home: all five routes 200, a seeded
+proposal renders with provenance + evidence + tier, `accept` over real HTTP installs it and clears the
+queue, and the week panel returns 7 buckets with `silent_days` populated.
+
+- **NOT DONE (by scope):** bulk-accept as a UI CONTROL. The backend computes eligibility per row and the
+  page explains it, but the multi-select affordance is its own interaction design — and §3.1 is explicit
+  that bulk is ergonomics, never a lane, so shipping the explanation before the control is the safe
+  order. Proposal DETAIL (the full change manifest rendered as a diff) also stays deferred: the route
+  serves the record, and the diff view belongs with the Versions tab that renders template diffs.

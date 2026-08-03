@@ -1812,7 +1812,7 @@ returns the names to compose but does not yet build the subworkflow spec. `prese
 
 ---
 
-## QUEUE EXHAUSTED — BLOCKED (E6: owner scope decision) — 2026-08-03
+## QUEUE EXHAUSTED — 2026-08-03 (one criterion since closed; see below)
 
 All **77 of 77** rows are `✅ DONE` with real PR numbers (sections A–I). The autonomous nudge asks for
 "the first session whose status is not DONE"; there is no such row, so steps 1-7 have no subject. The
@@ -1825,11 +1825,12 @@ editing `docs/roadmap/` in a PR." Choosing session 78 would be choosing the prog
 
 **Deferred work already recorded in the plans, for whoever writes the next row:**
 
-1. **The learning HTTP surface — shovel-ready.** S75 and S76 each measured that NO learning HTTP
-   handler exists (only the older per-kind skills queue has one). Both deferred their FE/API halves to
-   ONE session covering both surfaces rather than two half-built ones, and both left fully-serialized
-   shapes with fields-exact tests (`inbox.build_view`, `StagingStore.week`) — so that session wires
-   rather than designs.
+1. **The learning HTTP surface — ✅ DONE (#234, "S78").** Shipped as the Learning page + five
+   `/api/learning` routes, closing LEARNING-FLYWHEEL success criterion 1 ("One Proposal Inbox SHOWS
+   all six kinds…"). **Correction to the BLOCKED reasoning above:** declining to INVENT a session was
+   right, but an unmet acceptance criterion of a plan already in the queue is DECLARED work, not new
+   direction — that distinction is what unblocked it. Filed under the plan's criterion rather than a
+   new numbered row, since the criterion is the authority.
 
 2. **`SESSION_END` / `RUN_END` gate coverage — NOT a gap-fill (corrected 2026-08-03).** S77 pinned
    these two cadences as having zero live callers. Measured afterwards: there is no session-teardown

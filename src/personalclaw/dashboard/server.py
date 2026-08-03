@@ -442,6 +442,12 @@ async def start_dashboard(
     from personalclaw.dashboard.handlers.feedback import register_feedback_routes
 
     register_feedback_routes(app)
+    # Learning Flywheel §6.1 — the Proposal Inbox + the staging week panel. Its accept route is the
+    # HTTP half of §7's human-installs invariant: the actor is derived from the request, never the
+    # body, so an app-scoped token cannot name itself a reviewer.
+    from personalclaw.dashboard.handlers.learning import register_learning_routes
+
+    register_learning_routes(app)
     # Investigate Anywhere (plan 60) — chat-with-context from any entity row
     from personalclaw.dashboard.handlers.investigate import register_investigate_routes
 

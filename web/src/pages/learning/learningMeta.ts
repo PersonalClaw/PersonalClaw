@@ -1,0 +1,94 @@
+import { Sparkles, BookOpen, Workflow, GitPullRequest, Trash2, ArrowUpDown, HelpCircle } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+import type { LearningRow, StagingDay } from '../../lib/api'
+
+// ── Proposal kinds ──
+// The six the backend serves. Labelled here because "lesson_batch" and "tier_migration" are internal
+// names a reviewer should never have to decode, and an unknown kind falls back to its raw id rather
+// than an empty chip — a row whose kind cannot be named is still a row that needs deciding.
+const KIND_META: Record<string, { label: string; icon: LucideIcon }> = {
+  skill: { label: 'Skill', icon: Sparkles },
+  lesson_batch: { label: 'Lessons', icon: BookOpen },
+  template: { label: 'Template', icon: Workflow },
+  template_diff: { label: 'Template edit', icon: GitPullRequest },
+  retirement: { label: 'Retirement', icon: Trash2 },
+  tier_migration: { label: 'Tier change', icon: ArrowUpDown },
+}
+
+export function kindLabel(kind: string): string {
+  return KIND_META[kind]?.label ?? kind
+}
+export function kindIcon(kind: string): LucideIcon {
+  return KIND_META[kind]?.icon ?? HelpCircle
+}
+
+// ── Risk tiers ──
+// Metadata for ordering and filtering, NEVER an auto-apply lane (§3.1: any "auto" tier is
+// guardrail-violating). The tones deliberately escalate: `manual_only` reads as the one to stop at.
+export const TIER_TONE: Record<string, string> = {
+  low: 'var(--color-on-surface-var)',
+  review: 'var(--color-info)',
+  manual_only: 'var(--color-warn)',
+}
+export const TIER_LABEL: Record<string, string> = {
+  low: 'Low risk',
+  review: 'Review',
+  manual_only: 'Manual only',
+}
+export function tierTone(tier: string): string {
+  // An UNSCORED tier gets the warn tone, matching the backend's sort: nobody judged its risk, which
+  // is more urgent than a judged destructive edit, not less.
+  return TIER_TONE[tier] ?? 'var(--color-warn)'
+}
+export function tierLabel(tier: string): string {
+  return TIER_LABEL[tier] ?? 'Unscored'
+}
+
+/** Why a row cannot be accepted from a bulk control, or "" when it can.
+ *
+ *  Reads the backend's own `bulk_acceptable`/`renderable` flags rather than re-deriving the rule —
+ *  two implementations of "safe to bulk-accept" would eventually disagree, and the FE would be the
+ *  one shipping the permissive answer. This only EXPLAINS the flag. */
+export function bulkBlockedReason(row: LearningRow): string {
+  if (row.bulk_acceptable) return ''
+  if (!row.renderable) return 'missing provenance — cannot be shown weighably'
+  if (row.risk_tier === 'manual_only') return 'destructive edits are never bulk-accepted'
+  if (!row.manifest_valid) return 'its change manifest is invalid'
+  if (!row.evidence_refs.length) return 'no evidence to check'
+  return 'not eligible for bulk accept'
+}
+
+// ── The staging week panel ──
+/** How a day should render. `silent` is the alarming one: no passes at all means capture did not run,
+ *  and an aggregate view cannot see it — which is the whole reason this panel exists. */
+export type DayState = 'silent' | 'error' | 'produced' | 'ok'
+
+export function dayState(day: StagingDay): DayState {
+  if (day.passes === 0) return 'silent'
+  if (day.errors > 0) return 'error'
+  if (day.produced > 0) return 'produced'
+  return 'ok'
+}
+
+export const DAY_TONE: Record<DayState, string> = {
+  silent: 'var(--color-warn)',
+  error: 'var(--color-danger)',
+  produced: 'var(--color-primary)',
+  ok: 'var(--color-on-surface-low)',
+}
+
+export const DAY_HINT: Record<DayState, string> = {
+  silent: 'No capture pass ran — this is the gap an aggregate view cannot see',
+  error: 'A capture pass errored',
+  produced: 'Produced proposals',
+  ok: 'Ran, produced nothing',
+}
+
+/** A short weekday label for a `YYYY-MM-DD` bucket. Parsed as LOCAL time (the backend buckets by
+ *  local date), because `new Date('2024-01-01')` is parsed as UTC and would shift the label a day
+ *  west of the reader. */
+export function dayLabel(day: string): string {
+  const [y, m, d] = day.split('-').map(Number)
+  if (!y || !m || !d) return day
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'short' })
+}
