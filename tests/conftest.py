@@ -54,6 +54,25 @@ def _isolate_session_map(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_trigger_store(tmp_path_factory, monkeypatch):
+    """Point the BOOT TRIGGER MIGRATION at a per-test tmp home (S98).
+
+    Same hazard and same remedy as `_isolate_session_map` above. `GatewayOrchestrator._init_cron`
+    now runs `boot_migrate.migrate_and_arm(config_dir())`, which imports `crons.json` into
+    `triggers.json` and ARMS the imported clocks. Three pre-existing tests call `_init_cron` with no
+    home isolation at all (`test_gateway`, `test_cron_acp_retry`, `test_cron_thread_routing`) — they
+    were harmless only because that path never wrote before. Observed: a full-suite run migrated the
+    USER's real crons into `~/.personalclaw/triggers.json`.
+
+    Scoped to `boot_migrate.config_dir`, not a global `Path.home` patch, for the reason the fixture
+    above gives: a blanket patch breaks the tests that assert real-home safety rails. A test that
+    patches this itself still overrides it (last wins), and every test that passes an explicit
+    `base_dir` is unaffected."""
+    store_home = tmp_path_factory.mktemp("pclaw-triggers")
+    monkeypatch.setattr("personalclaw.triggers.boot_migrate.config_dir", lambda: store_home)
+
+
+@pytest.fixture(autouse=True)
 def _reset_trust_mode():
     """Reset the process-global YOLO/auto-approve trust state around every test.
 
