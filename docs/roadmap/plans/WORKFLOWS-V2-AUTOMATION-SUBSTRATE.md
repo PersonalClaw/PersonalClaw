@@ -1506,3 +1506,66 @@ remembering to log.
   which is a different subsystem — and §3.2's own design says they are separate. Also not done: wiring
   this tick into the gateway boot sequence, which is a behaviour-visible cutover next to the live
   `ScheduleService`, and re-pointing `/api/triggers` at the store (§6's cutover).
+
+### S89 — The WakeupDispatcher: inbox + wakeup, `wake` vs `resume` (29 tests) — DONE
+
+**§3.2's dispatcher.** S88's `tick()` returns fires and deliberately does not run them; this is what
+receives them. The seam I recorded as "a different subsystem" in S88 turned out to be present and
+measurable — `SessionManager.enqueue`/`dequeue`, the semaphore, and S64's `droppable`/`coalesce_family`/
+`cycle_guard` decisions were all shipped.
+
+**🔴 TWO HAZARDS IN THE SHIPPED `enqueue`, both measured before a line was written, both invisible to
+reading.**
+
+1. **It DROPS the payload for an IDLE session.** `enqueue` returns False and appends nothing unless
+   `session.semaphore.locked()` or `force=True`. Driven: an idle session's queue stayed at length 0. **A
+   3am cron fires precisely when the session is idle** — that is the normal case, not the edge — so a
+   naive enqueue would silently lose exactly the fires this subsystem exists to deliver. Every enqueue
+   here passes `force=True`, which is what the flag was added for ("covers the startup race where a task
+   exists but hasn't acquired the lock").
+2. **It returns False when the session does not exist at all**, also normal for a trigger whose session
+   was never opened. So a failed queue is REPORTED (`NO_SESSION`) rather than assumed to be a delivery —
+   the caller creates the session or spools.
+
+Neither is a bug in `enqueue`: it was written for mid-turn chat nudges, where "the session is idle so
+just run it" is correct. It is the wrong DEFAULT for a trigger fire, and the difference does not appear
+until you drive it.
+
+**§3.2's asymmetry, implemented and tested:**
+
+- **`wake` is droppable.** It means "there is work in the inbox"; a session already running will drain
+  the queue itself, so a second wake is noise. That is §3.2's "natural implementation of `overlap: skip`".
+- **`resume` is never droppable.** It carries a gate ANSWER for a parked run. Dropping one because the
+  session looks busy would strand the run forever waiting for a reply that was thrown away — §3.2 names
+  this as what makes R11 resume-targets and R13 approvals safe. An undeliverable resume is `REQUEUED`.
+
+Delegated to `dispatch.droppable()` rather than re-deriving the rule, so the spool and the dispatcher
+cannot disagree about which payloads may be discarded. Verified: `droppable('wake') is True`,
+`droppable('resume') is False` — the shipped predicate already encoded exactly §3.2's rule.
+
+Other decisions:
+
+- **`is_running` reads the same semaphore `enqueue` checks.** Asking a different question (provider
+  alive, session exists) would make the dispatcher and the queue disagree about "busy", landing the
+  payload on the wrong side of the drop rule.
+- **The `cron:` prefix is preserved verbatim**, per §3.2's "extend the session-key conventions table
+  rather than invent a parallel one". `_STATELESS_PREFIXES`, the `cron-{id}` dashboard pairing and
+  `schedule_trigger`'s HTTP path all key off it; a `trigger:` rename would silently opt every migrated
+  trigger out of conventions it already relies on.
+- **A resume's session key is passed in, not derived.** A workflow gate parks the RUN's session, not
+  necessarily the trigger's, and deriving it would deliver the answer somewhere the parked run is not
+  listening — which reads to the user as "the gate never got my reply".
+- **The message id is derived, not random.** The queue's `cancelled` set keys on it, so a fresh id per
+  attempt would make a cancelled fire un-cancellable on retry.
+- **Sequence numbers come from batch position**, so a coalesced five-trigger wake drains in tick order —
+  without them a user watching two dependent automations would see them run backwards.
+- **One `Delivery` per wakeup, always**, with a typed `Disposition`. §7 crit 8's "zero silent drops"
+  applies to dispatch as much as to the fire path.
+
+Driven end to end: store → `tick()` → `dispatch_fires()` → three session inboxes, one payload each.
+
+- **NOT DONE (by scope):** the EXECUTOR that drains the inbox and runs the turn. That is the
+  `SubagentManager.spawn` path with `__wf_depth`, the `headless` profile, and outcome classification — a
+  substantial piece, and the last one before the substrate is end-to-end live. Also still open: wiring
+  the tick into gateway boot alongside the live `ScheduleService`, and re-pointing `/api/triggers` at the
+  store (§6's cutover).
