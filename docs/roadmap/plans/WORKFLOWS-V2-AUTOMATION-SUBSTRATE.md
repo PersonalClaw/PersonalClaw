@@ -1569,3 +1569,60 @@ Driven end to end: store → `tick()` → `dispatch_fires()` → three session i
   substantial piece, and the last one before the substrate is end-to-end live. Also still open: wiring
   the tick into gateway boot alongside the live `ScheduleService`, and re-pointing `/api/triggers` at the
   store (§6's cutover).
+
+### S90 — The executor: drain, run, classify (38 tests) — DONE
+
+**§3's fire path now runs end to end.** S86 built the gate order, S87 the store, S88 the tick, S89 the
+dispatcher; this is the last link — it drains what S89 queued, runs it, and classifies the outcome into
+`FIRE_OUTCOMES`.
+
+`test_store_to_tick_to_dispatch_to_execute` drives the WHOLE substrate: store → `tick()` →
+`dispatch_fires()` → `drain()`, with three triggers, three session inboxes, and the next fire persisted
+before any of them ran. The only injected piece is the runner, because §3 puts the LLM turn behind
+`SubagentManager.spawn` — the one dependency that genuinely needs a model.
+
+**Two honesty contracts INHERITED rather than invented**, both already fought for in shipped code, both
+re-verified by probe:
+
+1. **The `_STATUS_PENDING` sentinel.** `schedule._execute` seeds `last_status = "_pending"` and defaults
+   to `"ok"` ONLY if the sentinel survived. Its own comment says why: "so a failed action's 'error' is no
+   longer CLOBBERED by an unconditional 'ok' (the honest-status bug T7 set out to kill: a failed run
+   recorded as success)". Reproduced exactly, and `test_the_sentinel_constant_matches_the_shipped_one`
+   pins the constant so the two modules cannot drift apart on what "nothing reported yet" means.
+2. **`launched` is not success.** `engine.dispatch_action`: "'launched' means background work STARTED, not
+   that it succeeded … Reporting it as success would make a fire-and-forget action look verified." S84's
+   history projection maps it to `deferred`; this is the **third** surface to preserve the distinction.
+
+**The design decision that follows from (2):** a `DEFERRED` outcome is `settled=False`, and that has two
+consequences the tests pin. `delivery_for` returns **None** for it — a "finished" notification for work
+nobody has seen would be exactly the fire-and-forget lie. And `health_delta` counts it toward **neither**
+success nor failure: counting a launched-but-unverified run as success marks a broken automation healthy,
+while counting it as failure would autopause one that works. Excluding it is the only honest option.
+
+Other decisions:
+
+- **The runner is INJECTED**, matching `ScheduleService._on_job`. A trigger executor that imported the
+  action registry directly would be untestable without a live provider, and the shipped scheduler already
+  proved this seam works. A runner may report by returning `{"status": …}` or via `.last_status` (the
+  shipped `ScheduleJob` shape) or by raising — all three are honoured.
+- **An exception WINS over any reported status**, and `dispatch.classify_handler_outcome` owns the
+  mapping, so a transport error stays distinguishable from a genuine failure. That is what keeps
+  `autopause`'s "5 TRUE failures" threshold honest (S68's finding: a denylist BLOCK once disabled a
+  trigger by counting as a failure). `test_only_true_failures_advance_the_autopause_counter` pins it.
+- **An unrecognized status becomes `failed`, not `ran`** — a status this build cannot classify must not be
+  counted as a success, since a success is what a rollup treats as nothing to look at.
+- **A non-trigger queue row is SKIPPED, not run.** A chat nudge shares the session queue, and executing
+  an unrecognized payload as if it were a fire is how one subsystem's message becomes another's action.
+- **The drain cap is reported** (`truncated`), because a partial drain that looked complete would make a
+  backed-up queue invisible.
+- **One failing fire does not strand the rest of the inbox** — driven with a runner that raises on the
+  second of three.
+- **`ledger_rows` marks `phase: "execute"`.** S86 writes a row per fire EVALUATED; this writes one per
+  fire that RAN. Both halves are needed: a fire that passed every gate and then died in the executor
+  would otherwise leave only a `ran` row from the gate walk.
+
+- **NOT DONE (by scope):** the two behaviour-visible CUTOVERS. Wiring this chain into gateway boot beside
+  the live `ScheduleService` (both would fire the same crons until the old one is retired) and
+  re-pointing `/api/triggers`' three backends at the store (§6's "the id namespace becomes the migration
+  map"). Each is a deliberate switch-over with user-visible risk, and each deserves its own session
+  rather than riding along with the last mechanism.
