@@ -63,11 +63,22 @@ def test_a_recursive_glob_finds_nested_files(notes):
     assert _names([str(p) for p in expand_globs(_pat(notes))]) == ["a.md", "b.md", "c.md"]
 
 
+def test_a_bare_trailing_double_star_matches_files_on_every_python(notes):
+    """🔴 CROSS-VERSION REGRESSION. On Python 3.12 a trailing `**` segment matches DIRECTORIES
+    ONLY, so `~/notes/**` (exactly what nl_kind emits for a directory watch) expanded to ZERO files
+    and the whole file-watch runtime silently saw nothing; 3.13 changed `**` to also match files.
+    Measured 0-vs-2 files for `{dir}/**` on 3.12. `expand_globs` normalizes a trailing `/**` to
+    `/**/*` so a directory watch finds its files identically on both — this is the shape the poll
+    loop actually receives, and this test is why it can no longer silently watch nothing on 3.12."""
+    found = expand_globs([str(notes / "**")])
+    assert _names([str(p) for p in found]) == ["a.md", "b.md", "c.md"]
+
+
 def test_directories_are_never_watched(notes):
     """A directory's mtime moves when any child changes, so watching it would double-fire alongside
     the child that actually changed."""
     found = expand_globs([str(notes / "**")])
-    assert all(p.is_file() for p in found)
+    assert found and all(p.is_file() for p in found)
 
 
 def test_a_tilde_is_expanded():
