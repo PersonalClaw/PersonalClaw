@@ -24,21 +24,16 @@ import asyncio
 import fcntl
 import json
 import logging
-import os
-import signal
 import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Iterator
+from typing import Any, Awaitable, Callable, Iterator
 from zoneinfo import ZoneInfo
 
 from personalclaw.autonomous_framing import with_autonomous_framing
-
-if TYPE_CHECKING:
-    from personalclaw.session import SessionManager
 
 try:
     from cron_descriptor import Options, get_description  # type: ignore[import-untyped]
@@ -66,8 +61,6 @@ _JOB_TIMEOUT_SECS = 1800  # 30 min per job
 # survives — so an action that self-reports "error" is not clobbered (T7).
 _STATUS_PENDING = "_pending"
 _TIMER_POLL_SECS = 30  # check for due cron-expr jobs
-_REAPER_INTERVAL = 60  # seconds between reaper sweeps
-_REAPER_RESET_TIMEOUT = 30.0  # max seconds for session reset in reaper
 
 # Jitter bounds (seconds) to spread job execution and avoid traffic spikes
 _JITTER_HOURLY_MAX = 20 * 60  # 0–20 minutes for hourly jobs
@@ -511,14 +504,7 @@ class ScheduleService:
         self._executing: set[str] = set()  # job IDs currently running
         self._running_tasks: dict[str, asyncio.Task[None]] = {}  # strong refs to prevent GC
         self._job_start_times: dict[str, float] = {}  # job ID → epoch start
-        self._reaped_jobs: set[str] = set()  # job IDs killed by the reaper
         self._job_jitter: dict[str, float] = {}  # job ID → jitter seconds applied
-        # job_id → active session_key for the in-flight run.
-        # Populated by the dispatcher (gateway callback) so the reaper can
-        # target per-run ephemeral keys when persistent_session=False.
-        self._active_session_keys: dict[str, str] = {}
-        self._sessions: "SessionManager | None" = None
-        self._reaper_task: asyncio.Task[None] | None = None
         # Execution-run history (the ScheduleRun sub-entity store, service-owned).
         self._run_store = ScheduleRunStore(base_dir=self._dir)
         # job_id → (started_at, trigger) for the in-flight run, so the run
@@ -563,13 +549,6 @@ class ScheduleService:
     async def stop(self) -> None:
         """Stop the timer loop and cancel running jobs."""
         self._running = False
-        if self._reaper_task:
-            self._reaper_task.cancel()
-            try:
-                await self._reaper_task
-            except (asyncio.CancelledError, Exception):
-                pass
-            self._reaper_task = None
         if self._timer_task:
             self._timer_task.cancel()
             self._timer_task = None
@@ -580,169 +559,6 @@ class ScheduleService:
             self._running_tasks.clear()
 
     # ── Reaper ──
-
-    def start_reaper(self, sessions: "SessionManager") -> None:
-        """Start the periodic reaper loop.  Call once after the event loop is running."""
-        self._sessions = sessions
-        if self._reaper_task is None:
-            self._reaper_task = asyncio.create_task(self._reaper_loop())
-
-    async def _reaper_loop(self) -> None:
-        """Periodically force-kill cron jobs that exceed the timeout.
-
-        Defense-in-depth: catches cases where ``asyncio.wait_for`` in
-        ``_execute_with_timeout`` fails to fire (event-loop saturation,
-        orphaned tasks).
-        """
-        while True:
-            await asyncio.sleep(_REAPER_INTERVAL)
-            now = time.time()
-            for job_id, started in list(self._job_start_times.items()):
-                elapsed = now - started
-                jitter_allowance = self._job_jitter.get(job_id, 0.0)
-                if elapsed <= _JOB_TIMEOUT_SECS + jitter_allowance:
-                    continue
-                task = self._running_tasks.get(job_id)
-                if task and task.done():
-                    # Normal timeout path already completed; just clean up tracking.
-                    self._job_start_times.pop(job_id, None)
-                    continue
-                logger.warning(
-                    "Reaper: cron job %s exceeded %ds (ran %.0fs), force-killing",
-                    job_id,
-                    _JOB_TIMEOUT_SECS,
-                    elapsed,
-                )
-                try:
-                    await self._force_reap(job_id, elapsed)
-                except Exception:
-                    logger.exception("Reaper: failed to reap cron job %s", job_id)
-
-    async def _force_reap(self, job_id: str, elapsed: float) -> None:
-        """Kill a cron job's session process and cancel its task."""
-        # use the active per-run session key if registered;
-        # fall back to the stable key for persistent sessions.
-        session_key = self._active_session_keys.get(job_id) or f"cron:{job_id}"
-        self._reaped_jobs.add(job_id)
-        self._job_start_times.pop(job_id, None)  # prevent repeated reaping
-        # Kill the session process first.
-        if self._sessions:
-            try:
-                await asyncio.wait_for(
-                    self._sessions.reset(session_key), timeout=_REAPER_RESET_TIMEOUT
-                )
-            except asyncio.TimeoutError:
-                logger.warning("Reaper: reset hung for cron %s, attempting SIGKILL", job_id)
-                self._sigkill_session(session_key)
-            except Exception:
-                logger.exception("Reaper: reset failed for cron %s, attempting SIGKILL", job_id)
-                self._sigkill_session(session_key)
-
-        # Cancel the asyncio task and clean up tracking state directly.
-        # Don't rely on _run_job_isolated's finally — the reaper exists for
-        # cases where the normal path is stuck (idempotent with finally).
-        task = self._running_tasks.pop(job_id, None)
-        if task and not task.done():
-            task.cancel()
-        self._executing.discard(job_id)
-
-        # Update job state and persist.
-        by_id = {j.id: j for j in self._jobs}
-        job = by_id.get(job_id)
-        if job:
-            job.last_status = "error"
-            job.last_error = (
-                f"Reaped after {int(elapsed)}s (exceeded {_JOB_TIMEOUT_SECS}s deadline)"
-            )
-            job.last_run_ts = time.time()
-            try:
-                self._save()
-            except Exception:
-                logger.exception("Reaper: failed to persist state for cron %s", job_id)
-
-        # SEL audit.
-        try:
-            from personalclaw.sel import sel
-
-            sel().log_tool_invocation(
-                session_key=session_key,
-                source="cron",
-                tool_name="reaper_force_kill",
-                outcome="reaped",
-                metadata={
-                    "job_id": job_id,
-                    "session_key": session_key,
-                    "elapsed": int(elapsed),
-                },
-            )
-        except Exception:
-            logger.exception("Reaper: SEL audit failed for cron %s", job_id)
-
-    def _sigkill_session(self, session_key: str) -> None:
-        """Best-effort SIGKILL when graceful reset hangs.
-
-        Uses killpg to kill the entire process group, then sweeps
-        escaped children in different PGIDs (MCP servers).
-        """
-        if not self._sessions:
-            return
-        try:
-            from personalclaw.acp.client import (
-                _get_child_pids,
-                _get_start_time,
-                _is_our_child,
-                _kill_escaped_children,
-            )
-
-            session = self._sessions._sessions.get(session_key)
-            if not session:
-                logger.warning("Reaper: no session found for %s", session_key)
-                return
-            client = getattr(session.provider, "_client", None)
-            raw_pid = getattr(client, "_pid", None) if client else None
-            pid = raw_pid if isinstance(raw_pid, int) else None
-            if not pid:
-                logger.warning("Reaper: no PID found for %s", session_key)
-                return
-            # Snapshot child tree before killing — children in different
-            # PGIDs survive killpg.
-            raw_children = getattr(client, "_child_pids", None)
-            child_pids: dict[int, int | None] = (
-                dict(raw_children) if isinstance(raw_children, dict) else {}
-            )
-            for p in _get_child_pids(pid):
-                if p not in child_pids:
-                    child_pids[p] = _get_start_time(p)
-            # Validate PID hasn't been recycled before killing.
-            original_start = getattr(client, "_start_time", None)
-            if original_start is None:
-                logger.debug("Reaper: PID %d already dead for %s", pid, session_key)
-                _kill_escaped_children(child_pids)
-                return
-            if not _is_our_child(pid, expected_start=original_start):
-                logger.warning("Reaper: PID %d recycled for %s, skipping killpg", pid, session_key)
-                stored = dict(raw_children) if isinstance(raw_children, dict) else {}
-                _kill_escaped_children(stored)
-                return
-            # Kill the entire process group first
-            logger.warning(
-                "Reaper: killpg for PID %d (%d children) for %s",
-                pid,
-                len(child_pids),
-                session_key,
-            )
-            try:
-                os.killpg(os.getpgid(pid), signal.SIGKILL)
-            except (ProcessLookupError, OSError):
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except (ProcessLookupError, OSError):
-                    pass
-            _kill_escaped_children(child_pids)
-        except Exception:
-            logger.exception("Reaper: SIGKILL failed for %s", session_key)
-
-    # ── Public API ──
 
     def add_job(
         self,
@@ -917,27 +733,6 @@ class ScheduleService:
         return False
 
     # ── Active session tracking ──
-
-    def register_active_session_key(self, job_id: str, session_key: str) -> None:
-        """Record the session key used by the current run of ``job_id``.
-
-        The dispatcher calls this at the start of each run. The reaper reads
-        it when force-killing a timed-out job. Overwrites any existing entry
-        for the same job_id (prior run already ended or was reaped).
-        """
-        self._active_session_keys[job_id] = session_key
-
-    def clear_active_session_key(self, job_id: str) -> None:
-        """Clear the active session key for ``job_id``.
-
-        Called by the dispatcher in its finally/cleanup path so the reaper
-        falls back to the stable key for the next (not yet started) run.
-        """
-        self._active_session_keys.pop(job_id, None)
-
-    def get_active_session_key(self, job_id: str) -> str | None:
-        """Return the active session key for ``job_id``, or None if unregistered."""
-        return self._active_session_keys.get(job_id)
 
     async def run_job(self, job_id: str, *, dry_run: bool = False) -> bool:
         """Manually trigger a job, then lock+merge results back to disk.
@@ -1179,18 +974,15 @@ class ScheduleService:
         finally:
             self._job_start_times.pop(job.id, None)
             self._job_jitter.pop(job.id, None)
-            reaped = job.id in self._reaped_jobs
-            self._reaped_jobs.discard(job.id)
             self._executing.discard(job.id)
             self._running_tasks.pop(job.id, None)
             # For 'every' jobs, use scheduled_ts to prevent cumulative drift
-            if not reaped and job.schedule.kind == "every":
+            if job.schedule.kind == "every":
                 job.last_run_ts = scheduled_ts
-            if not reaped:
-                try:
-                    self._merge_job_result(job)
-                except Exception:
-                    logger.exception("Failed to merge result for job '%s'", job.name)
+            try:
+                self._merge_job_result(job)
+            except Exception:
+                logger.exception("Failed to merge result for job '%s'", job.name)
             # Record the run as a ScheduleRun sub-entity (all execution modes,
             # since this is above the on_job dispatch). Guarded so a history
             # failure never breaks job execution.
