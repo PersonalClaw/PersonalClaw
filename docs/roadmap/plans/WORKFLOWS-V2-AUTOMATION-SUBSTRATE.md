@@ -1453,3 +1453,56 @@ to diff; and it upserts rather than replacing, so it is idempotent and preserves
   and dispatches. Also not done: re-pointing the `/api/triggers` facade's three backends at this store
   (§6's "the id namespace becomes the migration map"), which is a behaviour-visible cutover deserving its
   own session.
+
+### S88 — `TriggerService`'s tick: the loop's decisions, composed (38 tests) — DONE
+
+**§3's scheduler, minus execution.** S87 unblocked this by shipping the store; every dependency was
+verified importable before a line was written (`store`, `firepath`, `scheduling`, `missed`, `dispatch`,
+`delivery`, `autopause` — 12 of 12 present).
+
+**The boundary, and why it is not a hedge.** §3.2 says "the scheduler never executes directly": a fired
+trigger enqueues onto the target session's inbox plus a wakeup, and a WakeupDispatcher drives it. So
+`tick()` returns the fires that passed every gate and the caller dispatches. A service that both decided
+and executed would make crash-safety untestable — §3.2's safety comes from the payload surviving in an
+inbox, which is only true if deciding and running are separate things.
+
+**🔴 A TYPE SEAM THAT BROKE EVERY COMPARISON, found by driving a tick against the real store.**
+`Trigger.next_fire_at` is declared `str` — the entity keeps every timestamp as ISO (`last_success_at`,
+`last_failure_at`, all `str`), which is right for a JSON row a human may edit. But `scheduling.is_due`,
+`boot_recovery` and `next_wake_delay` all take `float` epochs, and **nothing converted**. A round-tripped
+trigger came back with `next_fire_at == '1234.5'` and the first comparison against `now` raised
+`TypeError: '>' not supported between instances of 'str' and 'float'`. The tick could not have fired
+anything.
+
+The conversion (`to_epoch`/`to_iso`) belongs in the service, not in either module: the entity owns the
+persisted schema and `scheduling` owns the arithmetic, and changing either to match the other would break
+the half that is already correct. This is the third contract mismatch between two shipped trigger modules
+found this run (after `interval`/`CLOCK_KINDS` in S87 and async `evaluate_duty` in S86) — all three
+invisible to reading, all three immediate under a probe.
+
+**The three §3.1 properties, each driven against a real store:**
+
+1. **Persist-before-execute.** `next_fire_at` advances and is written BEFORE the fire is handed out. A
+   crash between tick and dispatch loses one fire; a crash with the old value still on disk fires twice,
+   and a double-fire is the failure a user cannot undo. Verified: the persisted value moved +3600s and is
+   the ISO the schema declares, not a float left in a `str` field.
+2. **Recompute from COMPLETION, anchored to creation.** Never from the missed slot (a run overrunning its
+   interval would produce a catch-up storm). A non-interval trigger yields 0.0 — `cron`/`at`/`sequence`
+   belong to the recurrence engine, and guessing here would compete with it.
+3. **Boot stagger.** Six triggers overdue by the same amount came back with distinct timestamps (43s
+   spread), so a restart cannot fire every automation in one second.
+
+Also: the 30s sleep cap is the store-propagation contract (§6's MCP-process gotcha), not a nicety — a loop
+sleeping until a far-future fire would not notice another process's write for hours; `MIN_SLEEP_SECS`
+stops a due-now trigger spinning the loop; `persist=False` makes the whole tick a dry run for `automation
+doctor` (the fire path still runs, so it reports exactly what a real tick would do); the spool drain is
+exposed SEPARATELY because a tick with no due clock trigger must still drain it, and burying it in the
+due-set walk would skip it exactly when the machine was otherwise idle; and every evaluated trigger yields
+a typed ledger row, so §7 crit 8's "zero silent drops" is a property of the tick rather than of a caller
+remembering to log.
+
+- **NOT DONE (by scope):** the WakeupDispatcher and the executor. Those need the session-inbox seam
+  (`cron:{id}` conventions, `_STATELESS_PREFIXES`, the `SubagentManager.spawn` path with `__wf_depth`),
+  which is a different subsystem — and §3.2's own design says they are separate. Also not done: wiring
+  this tick into the gateway boot sequence, which is a behaviour-visible cutover next to the live
+  `ScheduleService`, and re-pointing `/api/triggers` at the store (§6's cutover).
