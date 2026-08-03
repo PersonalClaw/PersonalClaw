@@ -487,9 +487,16 @@ _MAX_BACKFILLS_PER_CALL = 5  # cap lazy embedding backfills to bound latency
 # injection paths (L1 manifest, semantic context). lesson.* rides the lesson
 # block; the M5 agent-facing classes (procedural priors, self-persona,
 # commitments) inject through their own paths (or not at all, for commitments).
+#
+# `user.selfmodel.*` joins them (LEARN-R21 / §2.6 — S71). Measured before adding
+# it: the prefix was absent, so a behavioural principle the harness observed about
+# its OWN working patterns would have rendered as a FACT ABOUT THE USER. It is a
+# statement about the harness, and only §2.6's compact snapshot may inject it —
+# never the fact block.
 _NON_FACT_KEY_CLAUSE = (
     "key NOT LIKE 'lesson.%' AND key NOT LIKE 'user.procedural.%' "
-    "AND key NOT LIKE 'user.persona.%' AND key NOT LIKE 'user.commitment.%'"
+    "AND key NOT LIKE 'user.persona.%' AND key NOT LIKE 'user.commitment.%' "
+    "AND key NOT LIKE 'user.selfmodel.%'"
 )
 
 

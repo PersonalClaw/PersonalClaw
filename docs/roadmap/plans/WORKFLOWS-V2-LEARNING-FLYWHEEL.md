@@ -632,3 +632,67 @@ Decisions, each with the failure it prevents:
   concern — the same functions then serve the live report, a backfill over pruned history, and a test.
   The arm is now on `Candidate` for producers to set; wiring each retrieval path to name its own arm
   is per-path work in the modules that own those paths.
+
+### S72 — The capped self-model: reinforcement-promoted, propose-don't-write (42 tests) — DONE
+
+The flywheel's ONLY mechanism that learns from what quietly WORKS — every other cadence learns from
+corrections and failures, so this is the one that can notice a habit that keeps succeeding. That
+asymmetry is also what makes it worth constraining, and §2.6's three constraints are enforced
+MECHANICALLY here rather than by convention.
+
+**🔴 A LEAK MEASURED BEFORE THE MODULE EXISTED.** `user.selfmodel.*` was NOT in
+`vector_memory._NON_FACT_KEY_CLAUSE`, so a behavioural principle the harness observed about its OWN
+working patterns would have rendered in the user-FACT block — a category error (it is a statement about
+the system, not the user) and a leak into a surface it was never meant to reach. The exclusion landed
+with this session; `test_the_selfmodel_prefix_is_excluded_from_fact_blocks` is the regression.
+
+Conversely, `user.*` was ALREADY in `_BUILTIN_PREFIXES`, so the plan's "prefix allowlisted" step needed
+no change. Measuring both is what kept the session from inventing an allowlist entry it did not need.
+
+The three constraints, and how each is enforced:
+
+1. **Propose, never install.** `build_proposal` returns None for a refused plan, so the cap and the
+   thresholds sit ON THE PATH to the queue rather than after it — a caller cannot file by ignoring the
+   plan. `test_nothing_in_this_module_writes_memory` asserts the ABSENCE of every write primitive
+   against the source, because "never self-installed" is a property no behavioural test can see.
+2. **Bounded by construction.** A full tier does not refuse — it names the weakest entry as a
+   DISPLACEMENT. Refusing outright would freeze the self-model at its first six principles, so the cap
+   would prevent bloat by preventing learning. A newcomer must BEAT the weakest, not tie it, or the
+   tier churns between two similar principles forever. `over_cap` catches hand-edited data that
+   predates the caps.
+3. **Only a compact snapshot injects.** Retrospections are excluded from it entirely (evidence for
+   promotion, not guidance for a turn), theories render under an explicit "Unproven" heading, and
+   truncation drops whole ENTRIES — half a principle is an instruction whose reader cannot tell it is
+   half, the same rule `learning/surfacing.py` applies to lessons. A dangling heading is dropped rather
+   than rendered.
+
+Decisions, each with the failure it prevents:
+
+- **Both thresholds are a CONJUNCTION** (`seen_count ≥ 2` AND `confidence ≥ 0.72`). Repetition alone
+  promotes a coincidence that happened twice; confidence alone promotes one strongly-felt observation.
+- **An ACCEPTED reaction after a FAILED turn is not reinforcement.** The user may have accepted a
+  partial answer and moved on; reading that as reinforcement is how a broken habit gets promoted.
+- **A correction outweighs an acceptance 2:1.** Being told you were wrong is stronger evidence than not
+  being told you were wrong, and a symmetric scale would let a habit that fails a third of the time
+  still promote.
+- **A NEUTRAL observation counts toward repetition but not confidence.** The pattern did recur;
+  pretending otherwise would let an unobservable outcome erase half the threshold.
+- **Four facets, not one bag.** They have different lifetimes and different AUTHORITY — collapsing them
+  would let a working theory inject with the weight of a rule.
+- **`lesson_batch` is reused rather than a new proposal kind minted.** §2.6 says an accepted principle
+  is "lessons-shaped", and the existing kind already carries the review UI, the fingerprint dedup, and
+  the decision store; a new kind would be a second review surface for one shape of thing. The
+  `observed-reinforcement` provenance marker is what distinguishes it at a glance.
+- **The fingerprint goes through the shared `proposals.content_fingerprint`.** A second hashing scheme
+  would make the self-model the one proposer able to re-file something the user already declined.
+- **Evidence on a proposal is bounded to 3 lines.** A proposal a reviewer will not read is not evidence.
+
+`learning.self_model_enabled` is wired through all four config points (dataclass + `_meta`, `load()`,
+`to_dict`, `_EDITABLE_CONFIG`) and is live-editable: it is the one learning path that acts on what
+WORKED, so a user who finds that presumptuous should be able to stop it without a restart.
+
+- **NOT DONE (by scope):** the observer CALL SITE (what records a turn's route/tools/outcome/reaction
+  into the staging log) and the memory read/write of live entries. Both belong to the capture cadence
+  and `MemoryService` respectively — this session owns the decisions those call sites will apply, which
+  is why every function here is pure. Declined promotions feeding §2.2's rejection exemplars with
+  escalating cooldowns needs the rejection-exemplar store from a later step.
