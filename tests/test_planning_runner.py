@@ -155,8 +155,7 @@ async def test_spawn_falls_back_to_files_dir_when_workspace_gone(tmp_path, monke
 @pytest.mark.asyncio
 async def test_planner_brief_gets_autonomous_framing(tmp_path, monkeypatch):
     # The planner runs UNATTENDED — the brief sent to the agent must carry the
-    # autonomous-run framing so the base chat prompt's "[OPTIONS: …]" rule doesn't
-    # leak into the planner's narration (the user-reported menu leak).
+    # autonomous-run framing so it never offers menus or waits for an absent user.
     monkeypatch.setattr(R, "PLANNER_POLL_SECS", 0.01)
     monkeypatch.setattr(R, "PLANNER_FIRST_IDLE", 0)
     files_dir = tmp_path / "fd"
@@ -176,7 +175,7 @@ async def test_planner_brief_gets_autonomous_framing(tmp_path, monkeypatch):
     )
     msg = svc.add_kwargs["message"]
     assert "[AUTONOMOUS RUN" in msg
-    assert "[OPTIONS:" in msg and "Do NOT offer interactive menus" in msg  # the counter
+    assert "Do NOT offer interactive menus" in msg  # the no-menus instruction
     assert "design the steps" in msg  # original brief preserved
 
 

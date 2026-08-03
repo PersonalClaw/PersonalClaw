@@ -1100,7 +1100,6 @@ class ContextBuilder:
         is_new_session: bool,
         session_key: str | None = None,
         channel_id: str | None = None,
-        interactive: bool = True,
         agent: str | None = None,
         resumed: bool = False,
         thread_ts: str | None = None,
@@ -1382,13 +1381,6 @@ class ContextBuilder:
             parts.append(hook_result.text)
         else:
             parts.append(text)
-
-        # Lightweight reminder for OPTIONS syntax (rendered as buttons in dashboard)
-        if interactive:
-            parts.append(
-                "\n\n(If presenting choices, end with [OPTIONS: choice1 | choice2 | choice3]. "
-                "Users can select multiple options before submitting.)"
-            )
 
         # Widget instructions — dashboard only (channel/CLI can't render iframes)
         _is_dashboard = session_key and (

@@ -106,16 +106,15 @@ def task_mode_denies(
 # user approves with one click — the same propose->approve handshake as a tool
 # approval. End the reply with a [SWITCH_TO_AGENT: <continuation>] marker; the UI
 # renders it as a primary button that flips the session to Agent AND runs the
-# continuation. This is the affordance to use — NOT an [OPTIONS: …] chip (which only
-# re-sends literal text and leaves the session in the restricted mode).
+# continuation. This is the affordance to use for an escalation — a plain textual
+# suggestion only re-sends literal text and leaves the session restricted.
 _SWITCH_HINT = (
     " You cannot change the mode yourself, but you can offer a one-click switch: when "
     "the user wants you to actually do the work, end your reply with a marker "
     "[SWITCH_TO_AGENT: <short imperative continuation>] — e.g. "
     "[SWITCH_TO_AGENT: create the file] or [SWITCH_TO_AGENT: execute the plan above]. "
     "The UI turns it into a 'Switch to Agent & run it' button; clicking it flips this "
-    "session to Agent mode and runs your continuation. Use this marker for the switch, "
-    "never an [OPTIONS: …] chip."
+    "session to Agent mode and runs your continuation. Use this marker for the switch."
 )
 
 # Prepended to EVERY restricted-mode framing. The session's mode can change mid-

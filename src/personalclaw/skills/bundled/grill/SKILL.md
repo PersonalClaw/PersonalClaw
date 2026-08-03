@@ -15,8 +15,6 @@ description: Structured questioning to reach shared understanding before action.
 - "poke holes", "what am I missing", "think this through", "before we start", "help me think/decide", "let's align", "what should I consider", "what would you ask"
 - Show a confirmation gate BEFORE activating:
   > Want me to grill you on this one question at a time, or just give you the full critique?
-  >
-  > [OPTIONS: Grill me one at a time | Just give me the full critique]
 - If user picks "full critique": respond with a comprehensive dump (no skill mode).
 - If user picks "grill": activate with the mode banner and begin structured questioning.
 
