@@ -78,6 +78,13 @@ def expand_globs(patterns: list[str] | tuple[str, ...], *, base: Path | None = N
         if not pattern:
             continue
         pattern = os.path.expanduser(pattern)
+        # 🔴 PORTABILITY: on Python 3.12 a trailing `**` segment matches DIRECTORIES ONLY, so
+        # `~/notes/**` expands to zero files and the watch silently sees nothing; 3.13 changed it to
+        # also match files. Normalize a trailing `**` to `**/*` (recursive descent + a file name),
+        # which matches every file under the root identically on both — measured 0 vs 2 files for
+        # the two spellings on 3.12. `**/*` is left alone.
+        if pattern.endswith("/**") or pattern == "**":
+            pattern = pattern[:-2] + "**/*" if pattern.endswith("/**") else "**/*"
         try:
             if os.path.isabs(pattern):
                 # `Path.glob` refuses absolute patterns, so anchor at the filesystem root and make

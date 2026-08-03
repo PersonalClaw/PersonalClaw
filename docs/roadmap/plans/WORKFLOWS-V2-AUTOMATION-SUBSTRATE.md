@@ -1753,3 +1753,54 @@ errors and `SPEC_KEYS` accepts all nine kinds. Blocker gone, so the tool landed.
   and (b) re-pointing `/api/triggers`' three backends at the store. S92 adds a THIRD follow-on now
   visible: the `schedule_*` MCP tools remain live alongside `automation_*` — §4 keeps them as
   aliases "for one release, then removed", so their retirement is a later session, not this one.
+
+### S93 — The file-watch poll runtime, wired into gateway boot (§3 / crit 2 — stacked on S92)
+
+**DONE. Fully closes S83** (create + fire) and closes criterion 2 end to end. S92 made file
+automations creatable in chat; this makes them FIRE. **Measured before writing:**
+`file_watch.changed_files` (S83) had ZERO live callers, and the tick clock (`service.due_ids`)
+only surfaces triggers with a `next_fire_at` — a `file` trigger has none. So a chat-created "when a
+file in ~/notes changes…" automation was present-and-inert: creatable, never fired.
+
+- **🔴 THE DESIGN FINDING — file triggers are DISJOINT from `ScheduleService`, and that is what
+  makes this a safe additive cutover.** `ScheduleService` fires clock crons and reads no `file`
+  trigger; the tick clock never surfaces a `file` trigger (no `next_fire_at`). So a file-watch poll
+  loop booted beside the cron loop CANNOT double-fire — pinned by
+  `test_file_triggers_are_disjoint_from_the_clock_tick`. This reframed the "boot cutover" the queue
+  described: wiring the tick loop to fire CLOCK triggers beside `ScheduleService` WOULD double-fire
+  every cron (the genuine class-B switch-over, still deferred). The file-watch runtime is the
+  additive slice — it fires a kind nothing else fires, and it is exactly what S92 left inert.
+- **`file_poll.py`:** enumerate enabled+parseable `file` triggers, poll each one's globs against its
+  persisted `WatchState`, hand a real change to the action path. The seeding pass fires NOTHING (a
+  freshly enabled watch reporting every existing file as new would run the automation over the whole
+  directory the first time — `WatchState.seeded` exists for this). One bad watch never stops the
+  loop for the others (`poll_all` isolates each).
+- **🔴 WatchState is a SIDECAR** (`config_dir()/trigger-watch/<safe-id>.json`, atomic tmp→rename),
+  NOT a trigger field. A watch's hash map is high-churn runtime state; writing it back onto the
+  trigger would rewrite `triggers.json` on every poll and race every unrelated edit — the same
+  reason leases are sidecars (S61d). The seed survives a restart
+  (`test_the_seed_survives_a_restart`), or every gateway restart would re-fire the whole directory.
+  A corrupt sidecar degrades to unseeded (re-seed, fire nothing), never crashes the loop.
+- **Gateway wiring:** `_file_watch_poll_loop` (a task created in `_init_cron`'s else-branch, so
+  `--no-crons` disables it too — a file watch is unattended background work like a cron) polls every
+  `POLL_INTERVAL_SECS` (60s — a watch is not a clock; sub-second polling of every glob is the
+  `broad_watch_glob` cost). Incident mode suspends it, matching `_cron_callback`. The loop never
+  dies on an exception. `_shutdown` cancels the task (a dangling poll would leak into the next
+  process).
+- **`_fire_file_trigger` routes through the SAME action-provider registry `_run_action_job` uses**,
+  so a file trigger and a cron execute the same action the same way — no second dispatch path to
+  drift. The trigger's `workflow` is already `{provider, config}` shaped (S92 builds it that way),
+  so no fake `ScheduleJob` synthesis. A failed action is logged, never propagated.
+- **🔴 TWO GUESSED SIGNATURES corrected by measuring, not reading:** (1) I first imported
+  `file_watch.expand_paths`; the real name is `expand_globs`. (2) `ActionProvider.execute` is
+  `execute(action_config, ctx, timeout)`, not `execute(ctx)`, and `ActionContext.context` is a
+  `str` (a preamble), not a dict — mypy caught the second, a driven probe caught the first. Both are
+  the recurring "build against the real object, not the remembered one" lesson.
+
+22 tests (15 `file_poll` + 7 gateway wiring). Gate: `make lint` clean.
+
+- **STILL not done (by scope):** the CLOCK cutover — retiring `ScheduleService` in favour of the
+  tick loop for clock triggers — remains the genuine class-B switch-over (both would fire the same
+  crons until the old one is removed), gateable on `verify-migration` per S91. And re-pointing
+  `/api/triggers`' three backends at the store (§6). S92's `schedule_*`-alias retirement also
+  remains a later session.

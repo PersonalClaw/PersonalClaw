@@ -311,6 +311,7 @@ class GatewayOrchestrator:
         self.conv_log: ConversationLog | None = None
         self.consolidator: HistoryConsolidator | None = None
         self.cron_svc: ScheduleService | None = None
+        self._file_watch_task: "asyncio.Task[None] | None" = None  # S93 file-watch poll loop
         self._running_script_ids: set[str] = set()  # zero-token jobs in flight
         self.heartbeat_svc: HeartbeatService | None = None
         self.loop_watchdog: "LoopWatchdog | None" = None
@@ -996,6 +997,81 @@ class GatewayOrchestrator:
             logger.debug("day-budget check failed (fail-open)", exc_info=True)
             return False
 
+    async def _file_watch_poll_loop(self) -> None:
+        """Poll `file` triggers and fire the ones whose watched paths changed (§3 / crit 2 — S93).
+
+        This is the runtime that makes a chat-created "when a file in ~/notes changes…" automation
+        (S92) actually fire. It is DISJOINT from `ScheduleService`: that fires clock crons and reads
+        no `file` trigger, and the tick clock (`service.due_ids`) never surfaces a `file` trigger
+        (it has no `next_fire_at`). So running this beside the cron loop cannot double-fire anything
+        — which is what lets it land as an additive cutover rather than the clock switch-over the
+        roadmap still defers.
+
+        Incident mode suspends it, matching `_cron_callback`: an unattended fire is an unattended
+        fire regardless of what triggered it. One bad watch never stops the loop for the others
+        (`poll_all` isolates each), and the loop never dies on an exception — a poll loop that threw
+        once and stopped would silently retire every file automation the user has.
+        """
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers import file_poll
+        from personalclaw.triggers.store import TriggerStore
+
+        store = TriggerStore(base_dir=config_dir())
+        while True:
+            try:
+                await asyncio.sleep(file_poll.POLL_INTERVAL_SECS)
+                from personalclaw.guardrails.incident import incident_active
+
+                if incident_active():
+                    continue
+                for payload in file_poll.poll_all(store):
+                    await self._fire_file_trigger(payload)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - the loop must outlive any single poll's failure
+                logger.warning("file-watch poll loop iteration failed", exc_info=True)
+
+    async def _fire_file_trigger(self, payload: dict[str, Any]) -> None:
+        """Run one file trigger's declared workflow action, with the change payload injected.
+
+        Routes through the SAME action-provider registry `_run_action_job` uses, so a file trigger
+        and a cron execute the same action the same way — no second dispatch path to drift. The
+        trigger's `workflow` is already `{provider, config}` shaped (S92 builds it that way from the
+        chat tool), so no synthesis of a fake `ScheduleJob` is needed.
+        """
+        from personalclaw.action_providers import ActionContext, get_action_provider
+        from personalclaw.action_providers.registry import _ensure_default_providers_registered
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers.store import TriggerStore
+
+        trigger_id = str(payload.get("trigger_id") or "")
+        row = TriggerStore(base_dir=config_dir()).get(trigger_id)
+        if row is None:
+            return
+        workflow = row.trigger.workflow or {}
+        provider_name = str(workflow.get("provider") or "")
+        if not provider_name:
+            logger.debug("file trigger %s has no workflow provider", trigger_id)
+            return
+        _ensure_default_providers_registered()
+        provider = get_action_provider(provider_name)
+        if provider is None:
+            logger.warning("file trigger %s: unknown action provider %r", trigger_id, provider_name)
+            return
+        action_config = workflow.get("config") or {}
+        try:
+            # `execute(action_config, ctx, timeout)` — measured signature, not `execute(ctx)`. The
+            # change payload rides ctx.payload so the action (e.g. run-prompt) can reference the
+            # changed files; the provider's own config is the first positional.
+            ctx = ActionContext(
+                event="file.changed",
+                context="",
+                payload=payload,
+            )
+            await provider.execute(action_config, ctx)
+        except Exception:  # noqa: BLE001 - a failed fire is logged, never crashes the poll loop
+            logger.warning("file trigger %s: action failed", trigger_id, exc_info=True)
+
     async def _init_cron(self) -> None:
         """Initialize and start the cron service."""
 
@@ -1487,6 +1563,11 @@ class GatewayOrchestrator:
                 reconcile_digest_cron(self.cron_svc)
             except Exception:
                 logger.warning("digest-cron reconcile failed", exc_info=True)
+            # The file-watch poll loop (S93): fires `file` triggers whose watched paths changed —
+            # the runtime that makes S92's chat-created file automations actually run. Lives in the
+            # else-branch so --no-crons disables it too (a file watch is unattended background work
+            # like a cron). Disjoint from ScheduleService, so no double-fire.
+            self._file_watch_task = asyncio.create_task(self._file_watch_poll_loop())
 
     async def _init_heartbeat(self) -> None:
         """Initialize and start the heartbeat service."""
@@ -2986,6 +3067,12 @@ class GatewayOrchestrator:
             await self.workflow_watchdog.stop()
         if self.cron_svc:
             await self.cron_svc.stop()
+        if self._file_watch_task is not None:
+            self._file_watch_task.cancel()
+            try:
+                await self._file_watch_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001 - shutdown is best-effort
+                pass
         if self.heartbeat_svc:
             self.heartbeat_svc.stop()
         if self.inbox_svc:
