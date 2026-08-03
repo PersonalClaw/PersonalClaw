@@ -470,3 +470,227 @@ def test_a_broken_clock_row_is_listed_with_its_error(home, state):
     resp = _run(T.api_triggers(_req("GET", "/api/triggers", state)))
     rows = [t for t in _body(resp)["triggers"] if t["kind"] == "schedule"]
     assert rows and rows[0]["broken"]
+
+
+# ── 🔴 §6's schedule WRITE re-point (S101) ──
+
+
+def _create_schedule(state, **over):
+    body = {
+        "trigger_type": "schedule",
+        "name": "Nightly",
+        "cron": "0 9 * * *",
+        "action": {"provider": "bash", "config": {"command": "echo hi"}},
+    }
+    body.update(over)
+    return _run(T.api_trigger_create(_req("POST", "/api/triggers", state, body=body)))
+
+
+def test_create_writes_to_the_store(home, state):
+    """🔴 §6's write re-point: a created schedule lands in `triggers.json`, not `crons.json`."""
+    resp = _create_schedule(state)
+    assert resp.status == 200
+    assert _store(home).get("clock:nightly") is not None
+
+
+def test_a_created_schedule_is_ARMED(home, state):
+    """🔴 THE defect this session found first: `tools.create` persisted `next_fire_at=""`, and
+    `due_ids` only surfaces rows that HAVE one — so every cron created through the chat tools (since
+    S92) or this API would never fire. Arming at creation is the difference between "runs tonight"
+    and "runs after the user restarts the gateway"."""
+    _create_schedule(state)
+    trigger = _store(home).get("clock:nightly").trigger
+    assert trigger.next_fire_at  # not ""
+    from personalclaw.triggers import service as SVC
+
+    due_at = SVC.to_epoch(trigger.next_fire_at) + 1
+    assert SVC.due_ids([trigger], now=due_at) == ["clock:nightly"]
+
+
+def test_the_spec_carries_every_schedule_field(home, state):
+    _create_schedule(
+        state, timezone="America/New_York", skip_dates=["2027-12-25"], strict_schedule=True
+    )
+    spec = _store(home).get("clock:nightly").trigger.spec
+    assert spec["kind"] == "cron"
+    assert spec["expr"] == "0 9 * * *"
+    assert spec["timezone"] == "America/New_York"
+    assert spec["skip_dates"] == ["2027-12-25"]
+    assert spec["strict"] is True
+
+
+def test_channel_and_silent_become_DELIVERY(home, state):
+    """`LEGACY_FIELD_MAP`: `channel → delivery`, `silent → delivery == none`. Writing them into the
+    action config (where they used to live) would make the projection render them empty."""
+    _create_schedule(state, channel="C0AP3QR7Z4M")
+    assert _store(home).get("clock:nightly").trigger.delivery == "channel:C0AP3QR7Z4M"
+    _run(
+        T.api_trigger_detail(
+            _req("DELETE", "/api/triggers/x", state, match_info={"id": "schedule:clock:nightly"})
+        )
+    )
+    _create_schedule(state, silent=True)
+    assert _store(home).get("clock:nightly").trigger.delivery == "none"
+
+
+def test_the_action_is_stored_in_the_migrated_shape(home, state):
+    """`workflow.inline` is what a migrated cron uses, and what `schedule_view` + the gateway's
+    shared dispatch both read — so an API-created row and a migrated one are indistinguishable
+    downstream."""
+    _create_schedule(state)
+    workflow = _store(home).get("clock:nightly").trigger.workflow
+    assert workflow["inline"]["provider"] == "bash"
+
+
+def test_an_interval_and_a_one_shot_both_create(home, state):
+    _create_schedule(state, name="Every", cron=None, every=300)
+    assert _store(home).get("clock:every").trigger.spec == {
+        "kind": "interval",
+        "interval_secs": 300,
+    }
+    _create_schedule(state, name="Once", cron=None, at=4_000_000_000.0)
+    spec = _store(home).get("clock:once").trigger.spec
+    assert spec["kind"] == "at"
+    # `delete_after_run` so the tick RETIRES it instead of leaving an elapsed timestamp (S96).
+    assert spec["delete_after_run"] is True
+
+
+def test_create_still_validates_before_writing(home, state):
+    """The re-point moves where a row is PERSISTED, never what the API accepts."""
+    assert _create_schedule(state, name="").status == 400
+    assert _create_schedule(state, cron=None).status == 400  # no cadence
+    assert _create_schedule(state, timezone="Mars/Olympus").status == 400
+    assert _create_schedule(state, channel="not a channel id").status == 400
+    assert _store(home).load() == []
+
+
+# ── update ──
+
+
+def test_update_changes_the_cadence_and_RE_ARMS(home, state):
+    """🔴 A new cadence invalidates the armed fire. Keeping the old one would fire on the PREVIOUS
+    schedule after the user changed it."""
+    _create_schedule(state)
+    before = _store(home).get("clock:nightly").trigger.next_fire_at
+    resp = _run(
+        T.api_trigger_detail(
+            _req(
+                "PUT",
+                "/api/triggers/x",
+                state,
+                body={"cron": "0 10 * * *"},
+                match_info={"id": "schedule:clock:nightly"},
+            )
+        )
+    )
+    assert resp.status == 200
+    trigger = _store(home).get("clock:nightly").trigger
+    assert trigger.spec["expr"] == "0 10 * * *"
+    assert trigger.next_fire_at != before
+
+
+def test_a_cadence_change_KEEPS_timezone_and_skip_dates(home, state):
+    """🔴 §1.3's quietly-losable class. Replacing `{kind, expr}` wholesale would silently drop the
+    holidays — a user changing 9am to 10am must not lose their `skip_dates`."""
+    _create_schedule(state, timezone="America/New_York", skip_dates=["2027-12-25"])
+    _run(
+        T.api_trigger_detail(
+            _req(
+                "PUT",
+                "/api/triggers/x",
+                state,
+                body={"cron": "0 10 * * *"},
+                match_info={"id": "schedule:clock:nightly"},
+            )
+        )
+    )
+    spec = _store(home).get("clock:nightly").trigger.spec
+    assert spec["timezone"] == "America/New_York"
+    assert spec["skip_dates"] == ["2027-12-25"]
+
+
+def test_update_renames_through_the_allowlist(home, state):
+    _create_schedule(state)
+    _run(
+        T.api_trigger_detail(
+            _req(
+                "PUT",
+                "/api/triggers/x",
+                state,
+                body={"name": "Renamed"},
+                match_info={"id": "schedule:clock:nightly"},
+            )
+        )
+    )
+    assert _store(home).get("clock:nightly").trigger.name == "Renamed"
+
+
+def test_updating_an_unknown_schedule_is_404(home, state):
+    state.crons.update_job.return_value = None
+    resp = _run(
+        T.api_trigger_detail(
+            _req(
+                "PUT",
+                "/api/triggers/x",
+                state,
+                body={"name": "x"},
+                match_info={"id": "schedule:ghost"},
+            )
+        )
+    )
+    assert resp.status == 404
+
+
+# ── toggle ──
+
+
+def test_toggle_pauses_and_re_enabling_ARMS(home, state):
+    """🔴 Re-enabling must arm, or the trigger sits enabled and inert until the next boot sweep."""
+    _create_schedule(state)
+    nid = {"id": "schedule:clock:nightly"}
+    _run(T.api_trigger_toggle(_req("POST", "/x", state, body={"enabled": False}, match_info=nid)))
+    trigger = _store(home).get("clock:nightly").trigger
+    assert trigger.enabled is False
+    trigger.next_fire_at = ""  # a disabled row that was never armed
+    _store(home).upsert(trigger)
+
+    _run(T.api_trigger_toggle(_req("POST", "/x", state, body={"enabled": True}, match_info=nid)))
+    after = _store(home).get("clock:nightly").trigger
+    assert after.enabled is True
+    assert after.next_fire_at
+
+
+def test_toggle_with_no_body_flips_the_current_state(home, state):
+    _create_schedule(state)
+    nid = {"id": "schedule:clock:nightly"}
+    _run(T.api_trigger_toggle(_req("POST", "/x", state, body={}, match_info=nid)))
+    assert _store(home).get("clock:nightly").trigger.enabled is False
+
+
+# ── delete ──
+
+
+def test_delete_removes_the_store_row(home, state):
+    _create_schedule(state)
+    resp = _run(
+        T.api_trigger_detail(
+            _req("DELETE", "/x", state, match_info={"id": "schedule:clock:nightly"})
+        )
+    )
+    assert resp.status == 200
+    assert _store(home).get("clock:nightly") is None
+
+
+def test_delete_still_drops_the_run_history(home, state):
+    """Run history lives in `ScheduleRunStore` (keyed by a plain id, so it survives the cutover), so
+    a delete has two halves: drop the trigger AND drop its runs."""
+    from unittest.mock import AsyncMock
+
+    state.crons.delete_runs = AsyncMock()
+    _create_schedule(state)
+    _run(
+        T.api_trigger_detail(
+            _req("DELETE", "/x", state, match_info={"id": "schedule:clock:nightly"})
+        )
+    )
+    state.crons.delete_runs.assert_awaited_once()

@@ -46,9 +46,12 @@ class TestScheduleTriggerApprovalMode:
         )
         resp = await api_trigger_create(request)
         assert resp.status == 200
-        # add_job receives the action; the approval_mode is folded into it.
-        call = request.app["state"].crons.add_job.call_args
-        assert call.kwargs["action"]["config"]["approval_mode"] == "auto"
+        # 🔴 SUPERSEDED CONTRACT (S101 write re-point): the action rides `workflow.inline` in the
+        # store now, not an `add_job` kwarg. The approval_mode is still folded into its config.
+        from personalclaw.dashboard.handlers.triggers import _trigger_store
+
+        workflow = _trigger_store().get("clock:t").trigger.workflow
+        assert workflow["inline"]["config"]["approval_mode"] == "auto"
 
     @pytest.mark.asyncio
     async def test_invalid_approval_mode_rejected(self):
@@ -77,7 +80,13 @@ class TestScheduleTriggerApprovalMode:
         )
         resp = await api_trigger_create(request)
         assert resp.status == 200
-        assert request.app["state"].crons.add_job.return_value.silent is True
+        # 🔴 SUPERSEDED CONTRACT (S101 write re-point). This asserted the legacy `add_job` mock's
+        # `.silent`; the row now lives in the unified store, where `silent` is `delivery == "none"`
+        # (LEGACY_FIELD_MAP). Reading the mock would pass forever without the write happening.
+        from personalclaw.dashboard.handlers.triggers import _trigger_store
+
+        trigger = _trigger_store().get("clock:t").trigger
+        assert trigger.delivery == "none"
 
     @pytest.mark.asyncio
     async def test_no_approval_mode_accepted(self):

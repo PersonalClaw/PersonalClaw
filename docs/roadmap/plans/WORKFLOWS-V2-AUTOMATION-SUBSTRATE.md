@@ -2122,3 +2122,59 @@ is exactly what the cutover retires, so both were rewritten to assert the new on
 The reaper still starts: it reaps stuck sessions, not fires. Same lesson as S96's
 `test_a_non_interval_trigger_yields_no_recompute`: **when a deliberate contract change reddens a
 test, read whether the test or the code is wrong before touching either.**
+
+### S101 — The schedule WRITE re-point (§6 — stacked on S100)
+
+**DONE.** `POST/PUT/DELETE /api/triggers` and `/toggle` now persist to `triggers.json` through
+`tools.py`. Safe to do only after S100, because a store write finally has an engine that fires it.
+
+- **🔴 `tools.create` NEVER ARMED A CLOCK TRIGGER.** Measured before writing a line: `create`
+  persisted `next_fire_at=""`, and `service.due_ids` only surfaces rows that HAVE one. So **every
+  cron created through the chat tools since S92 — and every one the API would now create — would
+  never fire.** Fixed in `tools.create` itself rather than at the call site, because the chat path
+  has the same bug. Arming at creation rather than waiting for the next boot sweep is the difference
+  between "runs tonight" and "runs after the user restarts the gateway". An unarmable spec (invalid
+  cron, elapsed one-shot) still refuses rather than guessing a cadence, and a `file`/event trigger is
+  never armed — it fires on its source, and arming it would make it poll.
+- **🔴 A CADENCE EDIT SILENTLY DROPPED `timezone`/`skip_dates`.** Replacing the spec with
+  `{kind, expr}` wholesale loses exactly the fields §1.3 calls quietly-losable and S91's
+  `verify-migration` exists to catch. `_carried()` keeps `timezone`/`skip_dates`/`strict` across a
+  cadence change — a user moving a job from 9am to 10am must not lose their holidays.
+- **A new cadence CLEARS the armed fire, then re-arms.** Keeping the old `next_fire_at` would fire on
+  the PREVIOUS schedule after the user changed it.
+- **Re-enabling ARMS** (`_arm_if_needed`), or the row sits `enabled=True` and inert until the next
+  boot. `arm.needs_arming` selects exactly the unarmed population, so a live schedule is never
+  re-armed mid-flight (that skips or doubles a fire).
+- **Legacy addresses honoured, not re-invented:** cadence → `spec` (`expr`/`interval_secs`/`at`, the
+  store's spellings), `channel`/`silent` → `delivery`, action → `workflow.inline` (the migrated
+  shape, so an API-created row and a migrated one are indistinguishable to `schedule_view` and the
+  gateway's shared dispatch). A one-shot gets `delete_after_run` so S96's tick RETIRES it instead of
+  leaving an elapsed timestamp.
+- **Every validation is unchanged** — name, action normalization, channel format, timezone
+  membership, cadence presence all still reject before anything is persisted (asserted). The
+  re-point moves where a row is PERSISTED, never what the API accepts.
+- **`tools.update`'s allowlist still protects the health fields** §3.7 autopauses on, so the API
+  cannot rewrite a trigger's own failure record.
+- **One projection for reads and writes.** `_schedule_row_for` is factored out of `_schedule_rows` so
+  a create/update response and a list row are byte-identical in shape; two projections would drift.
+- **Run history stays in `ScheduleRunStore`** (keyed by a plain id, so it survives the cutover), so a
+  delete has two halves: drop the trigger, drop its runs.
+- Each legacy write keeps a fallback for a home whose migration has not run yet; those branches
+  retire with `ScheduleService`.
+
+19 tests (35 in the store-facade file). Gate: `make lint` clean.
+
+- **NEXT:** retire `ScheduleService` (its CRUD now has no live caller on the store path), then the
+  `schedule_*` MCP aliases.
+
+**S101 ADDENDUM — the write re-point wrote to the OWNER'S REAL HOME, the same landmine as S98 one
+seam over.** Four pre-existing dashboard tests (`test_dashboard_cron_approval`,
+`test_dashboard_cron_channel`) call the create handler with no home isolation; harmless until the
+handler started PERSISTING. Observed on a full-suite run: `clock:t`, `clock:t-2`, `clock:t-3`,
+`clock:test` in `~/.personalclaw/triggers.json`. Fixed structurally — `_trigger_store()` now resolves
+through the module's own `config_dir` so there is ONE redirect point, and `_isolate_trigger_store`
+covers it. Three of those tests also asserted the SUPERSEDED contract (`crons.add_job.call_args`,
+`add_job.return_value.silent`); each was rewritten to assert the STORE row, which is a stronger check
+than the old mock — a mock assertion would pass forever without the write happening.
+**Generalizable, now twice: any code path that WRITES a store built from `config_dir()` must resolve
+it through one redirectable function, and `ls ~/.personalclaw` after a suite run is the check.**

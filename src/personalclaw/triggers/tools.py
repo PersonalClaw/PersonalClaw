@@ -199,6 +199,17 @@ def create(
         spec=resolved_spec,
         workflow=dict(workflow),
     )
+    # 🔴 ARM A CLOCK TRIGGER ON CREATION (S101). Measured: `create` persisted `next_fire_at=""`, and
+    # `service.due_ids` only surfaces rows that HAVE one — so every cron created through this
+    # function (the chat tools since S92, and the API from this session) would never fire. Arming at
+    # creation rather than waiting for the next boot sweep is the difference between "runs tonight"
+    # and "runs after the user restarts the gateway". An unarmable spec (invalid cron, elapsed
+    # one-shot) returns "" and is left alone — `arm` refuses rather than guessing a cadence.
+    from personalclaw.triggers.arm import arm as _arm
+
+    armed = _arm(trigger)
+    if armed:
+        trigger.next_fire_at = armed
     saved = store.upsert(trigger)
 
     # §4 + decision 5d: ANNOUNCED, not silent. The routing reason rides along so a wrong route is

@@ -45,9 +45,12 @@ class TestScheduleTriggerChannel:
         request.json = AsyncMock(return_value=_schedule_body(channel="C0AP77JJSN6"))
         resp = await api_trigger_create(request)
         assert resp.status == 200
-        mock_state.crons.add_job.assert_called_once()
-        call = mock_state.crons.add_job.call_args
-        assert call.kwargs.get("channel") == "C0AP77JJSN6"
+        # 🔴 SUPERSEDED CONTRACT (S101 write re-point): the channel is `delivery` on the store row
+        # (LEGACY_FIELD_MAP: `channel → delivery`), not an `add_job` kwarg.
+        from personalclaw.dashboard.handlers.triggers import _trigger_store
+
+        trigger = _trigger_store().get("clock:test").trigger
+        assert trigger.delivery == "channel:C0AP77JJSN6"
 
     @pytest.mark.asyncio
     async def test_invalid_channel_rejected(self):
