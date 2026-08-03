@@ -71,7 +71,17 @@ export function ListRow({ index = 0, onClick, children, accent }: {
       whileHover={interactive ? { y: -expr(3, 0.3), boxShadow: 'var(--shadow-lift)' } : undefined}
       whileTap={interactive ? { scale: 1 - expr(0.01, 0.3) } : undefined}
       onClick={onClick}
-      className={`group relative flex items-center gap-l overflow-hidden rounded-lg bg-surface-container px-l py-l text-left transition-colors hover:bg-surface-high ${interactive ? 'cursor-pointer' : ''}`}
+      // A clickable row is a div, so nothing about it is operable for free — and
+      // worse, whileTap makes motion mark it focusable, so Tab LANDS on a row that
+      // Enter/Space can't fire. Naming the button role, owning the tab stop, and
+      // keying Enter/Space (Space scrolls the page unless prevented) closes that
+      // trap. The inset ring is TileButton's — the kit's other whole-card target.
+      role={interactive ? 'button' : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onKeyDown={interactive ? (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick!() }
+      } : undefined}
+      className={`group relative flex items-center gap-l overflow-hidden rounded-lg bg-surface-container px-l py-l text-left transition-colors hover:bg-surface-high ${interactive ? 'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50' : ''}`}
     >
       {accent && <span className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: accent }} />}
       {children}
