@@ -144,7 +144,8 @@ mandatory.
 | 61b | Backend wiring: `metadata` write path on `author_def`, `GET /api/workflows/surfacing` (freshness + scope + packs + doctor findings), `TaskComplete` emission from `update_task` | G30 | ✅ DONE (#202) |
 | 61c | FE surfacing surfaces: `surfacingMeta` presentation layer, composer-chip rule, allowlisted deep-link params, templates-list freshness/mode/pack/doctor rendering, validated as-a-user against a live gateway | G30 | ✅ DONE (#203) |
 | 61d | Lease write path (flock'd CAS + sweep, 0/12 multi-winner across 8 processes) + `POST /runs/{id}/confirm` verb resolve + the FE node→token join | G30 | ✅ DONE (#204) |
-| 61e | Still open: DagView-in-run-detail composition, checklist edit UX, config four-point wiring, FE stream unions (BLOCKED — engine emits none of those events) | G30 | TODO |
+| 61e | The 5 task-projection events on BOTH channels (ledger kinds + `_publish` + the FE union, guarded in both directions) — UNBLOCKS the stream unions | G30 | ✅ DONE (#205) |
+| 61f | Still open: engine call sites for the 5 emitters (tick → materialize/verified_done/confirmation), DagView-in-run-detail composition, checklist edit UX, config four-point wiring | G30 | TODO |
 
 ## H. Automation Substrate (`-AUTOMATION-SUBSTRATE.md`) — final step needs Loops Phase 4
 

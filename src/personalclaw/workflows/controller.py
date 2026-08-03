@@ -2448,6 +2448,113 @@ class RunController:
             out["item_label"] = label
         return out
 
+    # ── TASKS-SOPS projection events (S61e) ──
+    #
+    # Thin wrappers over `_publish` + the matching journal kind, so the LIVE stream and the
+    # REPLAYABLE ledger carry the same fact under the same name. A consumer folding the stream and
+    # one reconstructing from history would otherwise need two vocabularies for one event — and the
+    # second one always drifts.
+
+    def publish_task_materialized(
+        self,
+        path: str,
+        node_id: str,
+        *,
+        task_id: str,
+        fingerprint: str = "",
+        refreshed: bool = False,
+    ) -> None:
+        self.journal.task_materialized(
+            path, node_id, task_id=task_id, fingerprint=fingerprint, refreshed=refreshed
+        )
+        self._publish(
+            "workflow_task_materialized",
+            {
+                "instance_path": path,
+                "node_id": node_id,
+                "task_id": task_id,
+                "refreshed": bool(refreshed),
+            },
+        )
+
+    def publish_confirmation_pending(
+        self, path: str, node_id: str, *, confirmation_id: str, kind: str = "approval"
+    ) -> None:
+        self.journal.confirmation_pending(path, node_id, confirmation_id=confirmation_id, kind=kind)
+        self._publish(
+            "workflow_confirmation_pending",
+            {
+                "instance_path": path,
+                "node_id": node_id,
+                "confirmation_id": confirmation_id,
+                "confirmation_kind": kind,
+            },
+        )
+
+    def publish_confirmation_resolved(
+        self,
+        path: str,
+        node_id: str,
+        *,
+        confirmation_id: str,
+        verb: str,
+        approved: bool,
+        resolved_by: str = "",
+    ) -> None:
+        self.journal.confirmation_resolved(
+            path,
+            node_id,
+            confirmation_id=confirmation_id,
+            verb=verb,
+            approved=approved,
+            resolved_by=resolved_by,
+        )
+        self._publish(
+            "workflow_confirmation_resolved",
+            {
+                "instance_path": path,
+                "node_id": node_id,
+                "confirmation_id": confirmation_id,
+                "verb": verb,
+                "approved": bool(approved),
+            },
+        )
+
+    def publish_task_verified(
+        self, path: str, node_id: str, *, task_id: str, passed: bool, criterion: str = ""
+    ) -> None:
+        self.journal.task_verified(
+            path, node_id, task_id=task_id, passed=passed, criterion=criterion
+        )
+        self._publish(
+            "workflow_task_verified",
+            {
+                "instance_path": path,
+                "node_id": node_id,
+                "task_id": task_id,
+                "passed": bool(passed),
+            },
+        )
+
+    def publish_cascade_blocked(
+        self, path: str, node_id: str, *, blocked_task_ids: list[str], cause: str
+    ) -> None:
+        """ONE event for the whole cascade, matching §1's debounce.
+
+        N events for one upstream failure would make the run look like it failed N times, and the
+        notification layer already collapses them — two different collapse points would disagree.
+        """
+        self.journal.cascade_blocked(path, node_id, blocked_task_ids=blocked_task_ids, cause=cause)
+        self._publish(
+            "workflow_cascade_blocked",
+            {
+                "instance_path": path,
+                "node_id": node_id,
+                "blocked_task_ids": list(blocked_task_ids),
+                "cause": cause,
+            },
+        )
+
     def _publish(self, event: str, payload: dict[str, Any]) -> None:
         """Publish one event, stamped with the identity a consumer needs to fold safely.
 

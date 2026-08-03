@@ -26,6 +26,17 @@ export const WORKFLOW_LIFECYCLE = [
   'workflow_mutation_rejected',
   'workflow_forked',
   'workflow_progress',
+  // TASKS-SOPS §7 (S61e): the task-projection events. Registered here because EventSource
+  // SILENTLY DROPS an event type nobody listened for — a member missing from this list is not a
+  // component that ignores the event, it is an event the frontend never receives, with no error
+  // anywhere to say so. Each is backed by a real emitter (`RunController._publish`) and a ledger
+  // kind of the same name, so a consumer can fold the live stream and reconstruct from history
+  // without learning two vocabularies.
+  'workflow_task_materialized',
+  'workflow_confirmation_pending',
+  'workflow_confirmation_resolved',
+  'workflow_task_verified',
+  'workflow_cascade_blocked',
 ] as const
 
 export type WorkflowLifecycleEvent = (typeof WORKFLOW_LIFECYCLE)[number]
