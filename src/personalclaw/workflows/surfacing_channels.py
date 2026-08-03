@@ -1061,3 +1061,150 @@ def check_fixtures(fixtures: Sequence[TriggerFixture], matcher: Callable[[str], 
         elif not fired and fixture.expect_match:
             failures.append(f"[{fixture.kind}] did NOT fire on {fixture.prompt!r} but must")
     return failures
+
+
+# ── the def→record adapter (S61) ──
+
+
+def meta_from_def(metadata: Any) -> Any:
+    """Build S58's `SurfacingMeta` from a def's `DefMetadata`.
+
+    ONE conversion point. Two readers of the same fields drift, and the drift shows as a def that
+    surfaces through one path and not the other for identical metadata — the exact failure S58's
+    `drift()` check exists to catch for renders, applied here to the fields themselves.
+
+    `surface_mode` is coerced by `DefMetadata.from_dict` already, so an unknown value has become
+    `off` before it arrives; this maps the string to the enum without a second tolerance rule.
+    """
+    from personalclaw.workflows.surfacing import SurfaceMode, SurfacingMeta
+
+    try:
+        mode = SurfaceMode(str(getattr(metadata, "surface_mode", "off") or "off"))
+    except ValueError:
+        mode = SurfaceMode.OFF
+    return SurfacingMeta(
+        match_text=str(getattr(metadata, "match_text", "") or ""),
+        summary=str(getattr(metadata, "summary", "") or ""),
+        when_to_use=str(getattr(metadata, "when_to_use", "") or ""),
+        agent_digest=str(getattr(metadata, "agent_digest", "") or ""),
+        surface_mode=mode,
+        requirements=list(getattr(metadata, "requirements", {}) or {}),
+        cadence_days=int(getattr(metadata, "cadence_days", 0) or 0),
+    )
+
+
+def cadence_from_def(
+    name: str,
+    metadata: Any,
+    *,
+    last_completed_at: float = 0.0,
+    last_escalated_at: float = 0.0,
+    in_flight: bool = False,
+) -> CadenceState:
+    """Build a `CadenceState` from a def's metadata plus the derived run facts.
+
+    The run facts are PARAMETERS rather than looked up here: `last_completed` reads the run table,
+    and a channel that queried per def would issue one query per template on every list render.
+    The caller batches; this stays pure.
+    """
+    return CadenceState(
+        name=name,
+        cadence_days=int(getattr(metadata, "cadence_days", 0) or 0),
+        last_completed_at=last_completed_at,
+        escalation=(
+            Escalation.AUTO
+            if str(getattr(metadata, "escalation", "manual") or "manual") == "auto"
+            else Escalation.MANUAL
+        ),
+        last_escalated_at=last_escalated_at,
+        in_flight=in_flight,
+    )
+
+
+def handoffs_from_def(metadata: Any) -> list[Any]:
+    """Build S60's `HandOff` edges from a def's declared `hands_off_to`.
+
+    Skips entries with no `target_def`: an edge pointing nowhere would render as a suggestion the
+    user cannot accept, and a dead affordance teaches them to ignore the live ones.
+    """
+    from personalclaw.workflows.pool import HandOff
+
+    out: list[Any] = []
+    for raw in getattr(metadata, "hands_off_to", []) or []:
+        target = str((raw or {}).get("target_def", "") or "").strip()
+        if not target:
+            continue
+        out.append(
+            HandOff(
+                target_def=target,
+                condition=str(raw.get("condition", "") or ""),
+                context_fields=[str(f) for f in (raw.get("context_fields") or [])],
+                requires_user_request=raw.get("requires_user_request") is True,
+            )
+        )
+    return out
+
+
+def doctor_entry(
+    name: str,
+    metadata: Any,
+    *,
+    disabled: bool = False,
+    shadowed_by: str = "",
+    unmet_requirements: Sequence[str] = (),
+    indexed: bool = False,
+) -> dict[str, Any]:
+    """One def as a `doctor()` entry.
+
+    Built here rather than at each call site so "which channels can reach this def" is answered
+    once. A surface that assembled this dict itself would forget `packs` and report every
+    pack-gated def as unreachable.
+    """
+    return {
+        "name": name,
+        "surface_mode": str(getattr(metadata, "surface_mode", "off") or "off"),
+        "match_text": str(getattr(metadata, "match_text", "") or ""),
+        "cadence_days": int(getattr(metadata, "cadence_days", 0) or 0),
+        "packs": list(getattr(metadata, "packs", []) or []),
+        "indexed": indexed,
+        "disabled": disabled,
+        "shadowed_by": shadowed_by,
+        "unmet_requirements": list(unmet_requirements),
+    }
+
+
+def route_from_def(metadata: Any, root: Any) -> Any:
+    """Pick the surfacing route for a def, reading the REAL node tree.
+
+    Uses `models.walk` and `models.LLM_KINDS` rather than a hand-rolled traversal: S45 measured a
+    hand-rolled walk finding 4 of 13 nodes because branch children live under `cases`/
+    `default_case`, and S45's `stage`-only LLM check called a five-`infer` template deterministic.
+    Both mistakes here would route a substantial def to a blueprint, which has no engine to run it.
+    """
+    from personalclaw.workflows import models as _models
+    from personalclaw.workflows.pool import route
+
+    has_gates = False
+    has_schema = False
+    max_turns = 1
+    try:
+        for _path, node in _models.walk(root):
+            config = node.config or {}
+            if node.kind is _models.NodeKind.GATE:
+                has_gates = True
+            if config.get("schema"):
+                has_schema = True
+            turns = config.get("max_turns")
+            if isinstance(turns, int):
+                max_turns = max(max_turns, turns)
+    except Exception:
+        # An unwalkable spec routes to RUN: the engine is the only thing that can report why a
+        # malformed graph will not run, and a blueprint would silently render nothing.
+        return route(surface_mode="passive", has_gates=True, max_turns=1, has_schema=False)
+    return route(
+        surface_mode=str(getattr(metadata, "surface_mode", "off") or "off"),
+        has_gates=has_gates,
+        max_turns=max_turns,
+        has_schema=has_schema,
+        guided=getattr(metadata, "guided", False) is True,
+    )

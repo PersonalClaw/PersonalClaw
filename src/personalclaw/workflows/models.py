@@ -497,6 +497,37 @@ class RunDefaults:
         )
 
 
+#: Accepted surfacing modes. An unknown value reads as `off` rather than a surfacing mode: a typo
+#: must not silently START surfacing a def, which is the direction that spends tokens and injects
+#: text the author did not intend.
+_SURFACE_MODES = frozenset({"off", "passive", "suggest"})
+
+#: Accepted escalation modes. Unknown reads as `manual` — the mode that materializes nothing.
+_ESCALATION_MODES = frozenset({"manual", "auto"})
+
+
+def _surface_mode(value: Any) -> str:
+    word = str(value or "").strip().lower()
+    return word if word in _SURFACE_MODES else "off"
+
+
+def _escalation(value: Any) -> str:
+    word = str(value or "").strip().lower()
+    return word if word in _ESCALATION_MODES else "manual"
+
+
+def _non_negative_int(value: Any) -> int:
+    """Coerce to a non-negative int; anything unparseable is 0 (= "no cadence").
+
+    Negative is clamped rather than kept: a negative cadence would make every comparison read as
+    overdue, so a fat-fingered `-7` would nag forever.
+    """
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 @dataclass
 class DefMetadata:
     """Declared, not inferred. `requirements` is what a run-start preflight checks so a
@@ -529,6 +560,33 @@ class DefMetadata:
     #: Free-text phrases for T4's embedding tie-break.
     match_text: str = ""
 
+    # TASKS-SOPS §2 (S61): the surfacing contract's def-side fields. TYPED for the same measured
+    # reason the block above records — `from_dict` drops what it does not name, so a field kept in
+    # an open dict is a field the matcher reads as absent while the author believes it is set.
+    #
+    #: The surfacing ladder (`off` | `passive` | `suggest`). `off` for a NEW def: OpenSquilla
+    #: shipped auto-trigger-by-default and retreated to manual-first after pasted content kept
+    #: firing workflows. Explicit `/workflow <name>` invocation always works regardless.
+    surface_mode: str = "off"
+    #: Verbatim guidance injected in passive mode, between fence markers.
+    agent_digest: str = ""
+    #: One-line summary for the chip and the list. Not a description — `when_to_use` is that.
+    summary: str = ""
+    #: When a reader should reach for this def.
+    when_to_use: str = ""
+    #: Cadence channel (R8): days between intended runs. 0 means the author did not ask to be
+    #: nagged — the same reading `ttl: 0` gets in §4.
+    cadence_days: int = 0
+    #: Cadence escalation mode (`manual` | `auto`). Auto materializes at most one task per day
+    #: while overdue.
+    escalation: str = "manual"
+    #: Fingerprint packs (R19) this def belongs to. A def with no pack is not pack-gated.
+    packs: list[str] = field(default_factory=list)
+    #: Declared hand-off edges (R7): `[{target_def, condition, context_fields, ...}]`.
+    hands_off_to: list[dict[str, Any]] = field(default_factory=list)
+    #: Blueprint mode (R16): render as a guided conversation rather than injected text.
+    guided: bool = False
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "risk": self.risk,
@@ -542,6 +600,15 @@ class DefMetadata:
             "lighter_path": self.lighter_path,
             "presets": list(self.presets),
             "match_text": self.match_text,
+            "surface_mode": self.surface_mode,
+            "agent_digest": self.agent_digest,
+            "summary": self.summary,
+            "when_to_use": self.when_to_use,
+            "cadence_days": self.cadence_days,
+            "escalation": self.escalation,
+            "packs": list(self.packs),
+            "hands_off_to": [dict(h) for h in self.hands_off_to],
+            "guided": self.guided,
         }
 
     @classmethod
@@ -558,6 +625,15 @@ class DefMetadata:
             lighter_path=str(d.get("lighter_path", "") or ""),
             presets=[str(pr) for pr in (d.get("presets") or [])],
             match_text=str(d.get("match_text", "") or ""),
+            surface_mode=_surface_mode(d.get("surface_mode")),
+            agent_digest=str(d.get("agent_digest", "") or ""),
+            summary=str(d.get("summary", "") or ""),
+            when_to_use=str(d.get("when_to_use", "") or ""),
+            cadence_days=_non_negative_int(d.get("cadence_days")),
+            escalation=_escalation(d.get("escalation")),
+            packs=[str(pk) for pk in (d.get("packs") or [])],
+            hands_off_to=[dict(h) for h in (d.get("hands_off_to") or []) if isinstance(h, dict)],
+            guided=d.get("guided") is True,
             requirements={
                 str(k): [str(x) for x in (v or [])]
                 for k, v in (reqs.items() if isinstance(reqs, dict) else [])

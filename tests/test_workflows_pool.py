@@ -636,12 +636,21 @@ def test_an_ordinary_lightweight_def_stays_PASSIVE():
     )
 
 
-def test_an_OFF_def_never_routes_to_a_run_or_blueprint():
-    """`off` means the def does not surface itself; routing it to a run would start work the user
-    switched off."""
+def test_an_OFF_def_never_routes_to_a_BLUEPRINT():
+    """Materializing a guided conversation for a def the user switched off would put it on screen
+    anyway — the one thing `off` has to prevent here."""
     assert (
-        route(surface_mode="off", has_gates=True, max_turns=9, has_schema=True, guided=True)
+        route(surface_mode="off", has_gates=False, max_turns=1, has_schema=False, guided=True)
         is SurfaceRoute.PASSIVE
+    )
+
+
+def test_STRUCTURE_wins_over_the_mode():
+    """Corrected in S61 after measuring it: short-circuiting on `off` first reported a GATED def as
+    PASSIVE, which tells a caller it may be injected as text and silently drops the gate. This
+    function answers what a def IS; whether it may surface is `surfacing.veto_reasons`."""
+    assert (
+        route(surface_mode="off", has_gates=True, max_turns=1, has_schema=False) is SurfaceRoute.RUN
     )
 
 
