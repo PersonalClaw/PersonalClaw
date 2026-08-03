@@ -908,3 +908,124 @@ def test_the_doctor_reads_the_real_workflow_ref(home, state):
     assert trigger.workflow  # `workflow.inline`, which the doctor now sees
     data = _body(_run(T.api_triggers_doctor(_req("GET", "/api/triggers/doctor", state))))
     assert data["healthy"] in (True, False)  # it ran rather than erroring
+
+
+# ── 🔴 §6's chat-injection + history re-point (S104) ──
+
+
+def test_the_job_shim_serves_the_injection_from_the_store(home, state):
+    """Measured: `inject_schedule_result_to_session` reads exactly `job.id`, `job.name` and
+    `job.agent_id` — nothing else. So a store row is projected onto that tiny surface rather than
+    the whole legacy entity, and the handler stops needing `ScheduleService`."""
+    _create_schedule(state, name="Nightly Backup")
+    shim = T._job_shim_for(state, "clock:nightly-backup")
+    assert shim is not None
+    assert shim.id == "clock:nightly-backup"
+    assert shim.name == "Nightly Backup"
+    assert shim.agent_id == ""  # present and empty, never absent
+
+
+def test_the_shim_falls_back_to_the_legacy_job(home, state):
+    """A home whose migration has not run yet still opens its crons as a chat."""
+    from personalclaw.schedule import ScheduleDefinition, ScheduleJob
+
+    state.crons.list_jobs.return_value = [
+        ScheduleJob(
+            id="legacy1",
+            name="Legacy",
+            action={"provider": "bash", "config": {}},
+            schedule=ScheduleDefinition(kind="every", every_secs=3600),
+        )
+    ]
+    assert T._job_shim_for(state, "legacy1").name == "Legacy"
+
+
+def test_the_shim_is_None_for_an_unknown_id(home, state):
+    """So the caller can still fall back to a history-only session rather than 404-ing a trigger the
+    user has conversation history for."""
+    state.crons.list_jobs.return_value = []
+    assert T._job_shim_for(state, "ghost") is None
+
+
+def test_the_last_result_comes_from_the_RUN_STORE(home, state):
+    """🔴 `LEGACY_FIELD_MAP` maps `last_result` to None deliberately — the RUN RECORD owns a run's
+    output, and a copy on the trigger was a second truth that could disagree with it. The run store
+    is keyed by a plain id, so it serves a store-backed trigger and a legacy job identically."""
+    from unittest.mock import AsyncMock
+
+    state.crons.list_runs = AsyncMock(
+        return_value=([{"job_id": "clock:nightly", "summary": "backup done"}], 1)
+    )
+    assert _run(T._last_result_for(state, "clock:nightly")) == "backup done"
+
+
+def test_the_last_result_prefers_an_error_when_there_is_no_summary(home, state):
+    """A failed run's output IS its error; returning "" would make a failure look like a silent
+    run."""
+    from unittest.mock import AsyncMock
+
+    state.crons.list_runs = AsyncMock(
+        return_value=([{"job_id": "x", "summary": "", "error": "boom"}], 1)
+    )
+    assert _run(T._last_result_for(state, "x")) == "boom"
+
+
+def test_no_runs_yields_an_empty_result_not_an_error(home, state):
+    from unittest.mock import AsyncMock
+
+    state.crons.list_runs = AsyncMock(return_value=([], 0))
+    assert _run(T._last_result_for(state, "x")) == ""
+
+
+def test_an_unreadable_run_store_does_not_break_the_injection(home, state):
+    """A history problem is not a reason to refuse opening the chat."""
+    from unittest.mock import AsyncMock
+
+    state.crons.list_runs = AsyncMock(side_effect=OSError("disk gone"))
+    assert _run(T._last_result_for(state, "x")) == ""
+
+
+def test_the_name_map_covers_EVERY_kind(home, state):
+    """🔴 The unified history feed carries file/web_watch/event runs too, so a name map that only
+    knew about schedules would blank exactly the rows the new kinds contribute — which reads in
+    the UI as a run of a deleted automation."""
+    from personalclaw.triggers.models import Trigger
+
+    _create_schedule(state, name="Nightly")
+    _store(home).upsert(
+        Trigger(
+            id="file:notes",
+            name="Notes Watcher",
+            kind="file",
+            enabled=True,
+            spec={"paths": ["~/notes/**"]},
+            workflow={"provider": "run-prompt", "config": {}},
+        )
+    )
+    names = T._trigger_names(state)
+    assert names["clock:nightly"] == "Nightly"
+    assert names["file:notes"] == "Notes Watcher"
+
+
+def test_the_name_map_merges_legacy_jobs(home, state):
+    """A home mid-migration still labels its own rows."""
+    from personalclaw.schedule import ScheduleDefinition, ScheduleJob
+
+    state.crons.list_jobs.return_value = [
+        ScheduleJob(
+            id="legacy1",
+            name="Legacy",
+            action={},
+            schedule=ScheduleDefinition(kind="every", every_secs=60),
+        )
+    ]
+    _create_schedule(state, name="Nightly")
+    names = T._trigger_names(state)
+    assert names["legacy1"] == "Legacy"
+    assert names["clock:nightly"] == "Nightly"
+
+
+def test_the_name_map_survives_an_unreadable_legacy_service(home, state):
+    state.crons.list_jobs.side_effect = RuntimeError("no service")
+    _create_schedule(state, name="Nightly")
+    assert T._trigger_names(state)["clock:nightly"] == "Nightly"
