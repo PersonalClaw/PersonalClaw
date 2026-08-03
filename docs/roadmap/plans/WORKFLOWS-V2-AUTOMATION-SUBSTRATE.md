@@ -457,3 +457,56 @@ Fits the round-1 amendment cleanly: `duty_gate` (AUTO-A2) already establishes th
 | ID | Task | Files | Done when |
 |---|---|---|---|
 | AUTO-A4 | `trigger_source` provider seam: `PROVIDER_TYPES` + `_TypeHandler` (same commit), manifest declaration + install-consent surfacing, namespaced `app:<name>:<event>` bus sources with mandatory fencing + provenance at ingestion; app disable → bound triggers park typed; SDK re-export | `apps/manifest.py`, `providers/registry.py`, event-bus ingestion, `sdk/` facade, `tests/` (`test_manifest_types_match_handlers`) | a fixture app's source fires an `event` trigger end-to-end (fenced payload, frozen capabilities honored); disabling the app parks its triggers with a reason row; #47 guard green; core contains no vendor names |
+
+## Execution log
+
+### S62 — The Trigger entity, per-kind specs, and typed fire records (72 tests) — DONE
+
+Entity layer only, deliberately. The scheduler is 63, dispatch is 64, migration is 66 — and the shape
+has to be settled first because the migration is the step that cannot be redone cheaply.
+
+**The measurement that shaped the session.** `ScheduleJob` has 33 fields and `EventTrigger` 11.
+Checked against the new dataclass: **31 of those 44 have no same-named home on `Trigger`.** A
+migration written against the dataclass alone would silently drop `skip_dates` (the trigger keeps
+firing on a holiday), `strict_schedule` (a missed slot catches up when the author said not to),
+`content_re` (an event trigger fires on everything) and the delivery/session fields. So
+`LEGACY_FIELD_MAP` lands in THIS session rather than in 66, mapping every one of the 44 to a
+destination — with `None` plus a reason for the deliberate drops, because an unexplained omission
+is indistinguishable from an oversight when someone reads it in six months.
+`unmapped_legacy_fields()` runs the check against the REAL dataclasses, so a field added to
+`ScheduleJob` next month fails a test here instead of vanishing during the migration.
+
+Contracts made checkable rather than trusted:
+
+- **Never-throw structural validation (R15).** `parse_trigger` returns `(trigger, issues)` and never
+  raises — verified against `None`, `[]`, a string, an int and `{}`. A near-miss key yields a warning
+  naming the closest known field (`debounce_seconds` → `debounce_secs`), and a far-off name suggests
+  NOTHING: suggesting `timezone` for `xyzzy` is worse than silence, because the reader trusts it. A
+  structurally broken trigger loads DISABLED — visible and editable, which is what makes the warning
+  actionable, but never dispatched.
+- **Silent drops are banned (R2).** `Outcome` is closed (12 members) and `fire_issues` asserts that
+  every non-clean outcome carries a one-line reason — the rule is only real if something checks it,
+  since a suppression written without a reason satisfies the type and defeats the purpose. A
+  parameterized test walks all 12 outcomes rather than spot-checking three.
+- **Only a TRUE failure counts toward autopause.** Five skipped fires because quiet hours held is the
+  configuration working; autopausing for that would punish the user for saying "not at night".
+- **Productivity is the materiality predicate, not the outcome.** A run can end `ran` and have touched
+  nothing, so the runs-inbox view keys on `mutated` — an outcome-based view would show a page of runs
+  that changed nothing.
+- **Gate failure modes are classified per gate**, and an UNCLASSIFIED gate fails CLOSED. Budget and
+  storm guards fail open (a hung budget probe must not stop every automation); security fences do not.
+  The default for a gate nobody classified is refusal, because that is the safe direction for a
+  control whose semantics are unknown.
+- **Phase-2 kinds (`pulse`, `observe`) are NOT accepted yet.** A kind the service cannot dispatch
+  would let a user author a trigger that never fires — the exact failure the never-throw validation
+  exists to prevent.
+- **A webhook with no `token_ref` is refused, not defaulted.** A generated default would be a secret
+  nobody chose.
+
+Notes for the sessions that follow: `fires_automatically` asks `enabled` AND `state` AND `kind` in one
+place, because checking `enabled` alone is how an autopaused trigger keeps firing. `classify_weight`
+is the ledger-vs-full rule (≥2 nodes, any LLM, or resumable ⇒ full) that keeps a minutely trigger from
+producing 1440 run directories a day.
+
+- **NOT DONE (by scope):** `TriggerService`, the disposition table, dispatch, the cron migration, and
+  the API surface. No store either — `triggers.json` arrives with the service that owns its lock.

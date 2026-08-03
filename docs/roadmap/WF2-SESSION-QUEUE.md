@@ -156,7 +156,7 @@ mandatory.
 
 | # | Session | PR group | Status |
 |---|---|---|---|
-| 62 | Trigger entity + per-kind specs + fire/run records with typed outcomes | G31 | TODO |
+| 62 | Trigger entity + per-kind specs + fire/run records with typed outcomes | G31 | ✅ DONE (#216) |
 | 63 | Disposition table + TriggerService (one scheduler) + crash-safe scheduling discipline | G31 | TODO |
 | 64 | Dispatch architecture (inbox + wakeup) + event-bus delivery contract | G32 | TODO |
 | 65 | Missed fires: review-don't-storm; catch_up exactly-once staggered | G32 | TODO |
