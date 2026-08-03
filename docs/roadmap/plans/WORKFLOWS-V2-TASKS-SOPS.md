@@ -1247,3 +1247,53 @@ with no observer at all (a CLI run, a replay) still produces its history.
   view-composition change, not a seam gap), checklist drag-reorder edit UX, config four-point wiring,
   and the engine CALL SITES that will invoke these five emitters during a real run (the materialize/
   verified_done/confirmation modules own those decisions and are still uncalled from `tick`).
+
+### S61f — The engine CALL SITE for task projection (14 tests, real runs) — DONE
+
+S55 built `materialize` as pure decision functions; S61e gave the events a channel. Nothing invoked
+either during a real run — a grep for `materialize.` outside its own module found **zero** hits, so
+every rule in it was reachable only from a unit test. `RunController` now projects where a node
+settles, and the tests drive REAL runs to completion rather than calling the hook: a call site that is
+never reached is precisely the defect being fixed, and only an executed run proves it fires.
+
+**Two measured API mismatches, both of which would have projected NOTHING — silently.**
+
+1. `should_materialize`/`plan_materialization` read the node key **`id`**, not `node_id`. `node_id` is
+   the name the *binding* uses, and passing it would have failed the has-an-id refusal for every
+   node.
+2. `plan.create` holds **`TaskSpec`** objects, not dicts. `entry.get("task_id")` would have raised
+   inside the hook's own `except` — which swallows by design — so the projection would have failed
+   invisibly on every single node while the run reported success.
+
+Both are the same hazard this program keeps hitting: a plausible-looking integration against an
+unread contract. Both are now pinned by tests that assert the SOURCE passes the right keys, because a
+behavioural test alone would pass again the next time someone "fixes" the key name.
+
+Verified against real executed runs (bash actions, providers registered — note that `bash` is
+registered on demand, and without `_ensure_default_providers_registered()` the probe run fails with
+"unknown action provider" and never reaches the success path at all):
+
+- both leaf nodes of a two-step sequence project, with distinct fingerprints, on BOTH channels;
+- a `parallel` container does NOT project while its children do — a board row for a container is a
+  row nobody can act on, and the container's work IS its children;
+- an explicit `materialize_task: false` is honoured (the author's declaration outranks the kind
+  heuristic, which is why `should_materialize` checks it first);
+- a FAILED node does not project — the hook sits inside the `SUCCESS_STATES` branch, pinned
+  structurally by a test that reads the source, so a future edit moving it out shows up here rather
+  than as board rows for work that did not happen;
+- re-projecting a settled node reports a REFRESH, not a second create.
+
+**The hook never breaks the run.** It swallows everything: the node has already succeeded and its
+output is already journaled, so turning a board-row problem into a run failure would lose real work
+over a presentation concern. Verified by monkeypatching `should_materialize` to raise — the run still
+completes and `step_completed` is still journaled.
+
+**The dedup set lives on the controller** (`self._projected`, declared in `__init__`) because the
+controller is the single writer for its own run. A per-node read of the per-entity JSON store would be
+one file scan per settled node; a restart re-reads via the projection rebuild, which §1 makes the
+normal path anyway.
+
+- **NOT DONE:** the actual Task WRITE (the hook emits the event and records the binding; the write
+  through the task provider is the next step, and needs the actor-matrix guard from S56 so an
+  engine-owned write is distinguishable from a user edit), the `verified_done`/`confirmation` call
+  sites, DagView-in-run-detail composition, checklist edit UX, and config four-point wiring.

@@ -145,7 +145,8 @@ mandatory.
 | 61c | FE surfacing surfaces: `surfacingMeta` presentation layer, composer-chip rule, allowlisted deep-link params, templates-list freshness/mode/pack/doctor rendering, validated as-a-user against a live gateway | G30 | ✅ DONE (#203) |
 | 61d | Lease write path (flock'd CAS + sweep, 0/12 multi-winner across 8 processes) + `POST /runs/{id}/confirm` verb resolve + the FE node→token join | G30 | ✅ DONE (#204) |
 | 61e | The 5 task-projection events on BOTH channels (ledger kinds + `_publish` + the FE union, guarded in both directions) — UNBLOCKS the stream unions | G30 | ✅ DONE (#205) |
-| 61f | Still open: engine call sites for the 5 emitters (tick → materialize/verified_done/confirmation), DagView-in-run-detail composition, checklist edit UX, config four-point wiring | G30 | TODO |
+| 61f | The projection CALL SITE: `RunController` projects settled leaves via `materialize` (+ container/opt-out/failure refusals, refresh dedup), verified on real runs | G30 | ✅ DONE (#206) |
+| 61g | Still open: the Task WRITE through the provider (needs S56's actor matrix), the verified_done + confirmation call sites, DagView-in-run-detail, checklist edit UX, config four-point wiring | G30 | TODO |
 
 ## H. Automation Substrate (`-AUTOMATION-SUBSTRATE.md`) — final step needs Loops Phase 4
 
