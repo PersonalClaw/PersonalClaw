@@ -766,3 +766,68 @@ Further decisions:
   the refiner LLM sees them is that call site's responsibility (S69 built the screen it will use). The
   teacher/student split, triad generation, and the experience directory are §3.1's explicit "optional
   widening once the floor works".
+
+### S74 — Detectors (§3.2) + typed failure data (§3.3) (73 tests) — DONE
+
+Two spokes, one discipline: a DETERMINISTIC chain decides and a model is consulted only at the score
+boundary. §3.2 replaced "pure LLM-prompt branches" because a model asked "is this template-worthy" costs
+a call per candidate and answers unstably.
+
+**🔴 THE GUARDRAIL §3.3 DEPENDS ON WAS CATCHING 1 OF 4.** `is_environment_failure_claim` is the
+deny-filter that keeps a flaky network from becoming a durable lesson — and measured against real
+failure text it caught **1 of 4**: "connection refused", `ECONNRESET`, and rate-limit noise all passed
+straight through. §3.3 routes EVERY `step_failed` through it, so landing that spoke on the shipped
+filter would have turned transport noise into permanent lessons that teach the agent to refuse valid
+actions. Widened to **12/12** with the false-positive direction checked at **0/9** — a bare `429` had
+been filtering the legitimate lesson "the 429 rate limiter config lives in settings.py", so a status
+code now only counts with failure context, and `rate limited` (past tense) is a report while "rate
+limiter" is ordinary vocabulary. Both directions are pinned by parameterized tests.
+
+**§3.2 — the gate chain.** Free at both extremes, paid only in the middle:
+
+- **Hard pre-gates run first**, cheapest and most decisive: <2 steps (a command, not a procedure), a
+  template already surfaced (no library gap), >80% budget burn (§3.2's "near-death plans make bad
+  templates" — a run that flailed to its answer teaches the expensive path). A one-step plan never gets
+  scored at all.
+- **The structural score is deterministic and reproducible** — verb diversity measured against STEP
+  COUNT (three verbs across three steps is structure; three across twelve is repetition), back-reference
+  dependencies, slot density weighted highest (a plan with no parameterizable slot cannot be reused
+  however well-structured it is), −1 per hardcoded entity. Components stay visible because a scalar
+  cannot say WHICH signal was weak, and §3.2 tunes thresholds from data.
+- **A high score auto-FILES with zero model calls**; a low score is dropped free; only the band between
+  costs anything. Filing, not installing — the human-accept invariant is what makes a free auto-file
+  safe.
+- **Every negative decision names a TYPED skip reason.** §3.2: "the flywheel's negative space is how
+  thresholds get tuned". Prose reasons are unfilterable; the counts per reason are what say which gate
+  earns its place. `test_every_negative_decision_names_a_typed_reason` asserts the whole set.
+- **Plan similarity needs threshold AND window.** A below-threshold match is a different plan; an
+  out-of-window match is the same plan from a project that ended — and they get DIFFERENT skip reasons,
+  because counting either would propose a template for work nobody does any more.
+
+**§3.3 — typed failure data.**
+
+- **A closed `FailureMode` enum** (schema/constraint/spec-mismatch/timeout/environment + the RCA seed
+  code/config/data/infra/dependency/process) makes `failure_distribution()` computable. Prose failure
+  text cannot be counted, and a refiner that cannot count cannot choose a target.
+- **The environment check wins OUTRIGHT.** A traceback containing `ECONNRESET` classifies as
+  environment, not code — a message that is both is still the world's fault, and classifying it as code
+  would route it to a lesson.
+- **Unmatched text is `UNKNOWN`, never a guess.** Otherwise the distribution silently attributes it to
+  whichever mode the pattern list leans toward, and the refiner targets a dominant mode that does not
+  exist.
+- **`dominant_mode` EXCLUDES what a refiner cannot fix.** Measured on a corpus where environment is the
+  biggest bucket (8 of 20): the target is `schema_violation` (5), and an all-environment corpus returns
+  `""` rather than the raw top mode. A refiner cannot fix the network, and proposing against it would
+  be a diff that cannot work.
+- **Lessons are keyed `(template, failure_mode, signature)`** so §3.3b's re-injection can find them —
+  §3.3 calls a lesson "a persistent mutation hint", and a hint nobody can look up by template is a note
+  in a drawer. The dedupe signature REUSES the refiner's `failure_signature`: two schemes would make a
+  clustered failure and its lesson un-joinable, so the refiner would target a cluster whose lesson it
+  cannot find.
+
+- **NOT DONE (by scope):** the detector CALL SITES — the fifth `run_skill_ladder_review` branch, the
+  per-spec embedding + registry-miss logging, intent inversion, positive-path trace mining, and grill's
+  dormant `SaveFn`. Each is a hook in a module that owns its own signal, and all consume these
+  decisions. The `skipped(reason)` LEDGER WRITE is likewise the caller's: `Skip` is the vocabulary it
+  will use. §3.3's machine-checkable lesson form (`check_command`, failure capsules) needs the lesson
+  entity extension, which is a later step's schema change.
