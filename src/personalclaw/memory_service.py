@@ -1350,7 +1350,17 @@ class MemoryService:
             negative and self._memory_write_blocked(negative, source)
         ):
             return False
-        return vs.write_lesson(rule, category=category, negative=negative, source=source)
+        ok = vs.write_lesson(rule, category=category, negative=negative, source=source)
+        if ok:
+            # `MemoryWrite` (AUTO crit 5): selectable in the hook UI since it was declared, and
+            # fired by nothing until now. Emitted only on a SUCCESSFUL write, and only after the
+            # write — a hook that ran for a blocked or failed write would report memory the user
+            # does not have. The payload carries the category and source, never the rule text:
+            # a lesson body is user content, and it must not travel into something that executes.
+            from personalclaw.triggers.lifecycle_fire import fire_sync, memory_write_payload
+
+            fire_sync(memory_write_payload(kind="lesson", key=category, scope=source))
+        return ok
 
     def get_lessons(self, limit: int | None = None) -> list[dict]:
         vs = self._vs

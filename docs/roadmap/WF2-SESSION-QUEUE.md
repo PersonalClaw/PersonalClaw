@@ -1823,6 +1823,7 @@ the queue** — declared work, not new scope (see the ruling in the exhausted re
 | S79 | The adversarial test must cover the REFINER path | LEARNING-FLYWHEEL crit 4 | ✅ DONE (#235) |
 | S80 | The named ambient blocks must fit ONE slot-allocated budget | LEARNING-FLYWHEEL crit 5 | ✅ DONE (#236) |
 | S81 | The Automations **Week tab** (the endpoint's other half) | AUTOMATION-SUBSTRATE AUTO-A3 | ✅ DONE (#240) |
+| S82 | The 7 **dormant lifecycle events** never fired (configurable + dead) | AUTOMATION-SUBSTRATE crit 5, clause 2 | ✅ DONE (#241) |
 
 ### 🔴 The stacked-merge incident (2026-08-03) — resolved by #239
 

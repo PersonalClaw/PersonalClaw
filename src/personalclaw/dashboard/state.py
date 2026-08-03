@@ -1020,6 +1020,22 @@ class DashboardState:
             "ts": time.time(),
         }
         self.broadcast_ws("approval", self._pending_approvals[approval_id])
+        # `ApprovalRequest` (AUTO crit 5): declared, selectable in the hook UI, fired by nothing
+        # until now. Emitted alongside the WS broadcast — the same moment the user is asked — so a
+        # hook can mirror the prompt to another channel while the future is still pending.
+        #
+        # OBSERVATIONAL ONLY: the hook's result is not awaited into the decision and cannot resolve
+        # `fut`. Letting a hook answer would turn a local approval gate into an unreviewed remote
+        # one. The redacted `safe_tool` is passed, not the raw tool or its input.
+        from personalclaw.triggers.lifecycle_fire import approval_request_payload
+        from personalclaw.triggers.lifecycle_fire import fire as _fire_lifecycle
+
+        await _fire_lifecycle(
+            approval_request_payload(
+                tool=safe_tool, source=source, session_key=session, approval_id=approval_id
+            ),
+            tool_name=safe_tool,
+        )
         timeout = self._approval_timeout_for(source)
         try:
             return await asyncio.wait_for(fut, timeout=timeout)
