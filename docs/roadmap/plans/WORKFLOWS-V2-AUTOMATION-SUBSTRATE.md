@@ -678,3 +678,66 @@ before the machine slept.
 - **NOT DONE (by scope):** the review card's FE surface, the boot sequence that calls these (the
   service), foreground yield and resource slots (§3.5), budgets and triage (§3.6), and the migration
   (66 — which must use S62's `LEGACY_FIELD_MAP`).
+
+### S66 — The lossless cron migration (35 tests, driven against a real store) — DONE
+
+The step that cannot be redone cheaply, so it is written against S62's `LEGACY_FIELD_MAP` rather than
+against the dataclass, and `unconverted_fields()` proves PER JOB that every field a row carried was
+either translated or explicitly dropped-with-a-reason. "Looks right" is not the bar; the bar is that
+nothing left the building unaccounted for. Measured result on a store the real service wrote:
+**lossless, zero unaccounted fields.**
+
+**Driven against a real file, not a fixture I wrote.** The tests build jobs with the actual shipped
+`ScheduleService` and let IT write `crons.json`, then migrate what is on disk. A hand-written fixture
+encodes my belief about the format; `_save`'s own projection encodes the format. (Two smaller findings
+fell out of that: the file has 31 keys per row, and on macOS `tmp_path / "crons.json"` misses it
+because the temp dir resolves through a `/var` → `/private/var` symlink — the fixture reads
+`service._path`.)
+
+**Two measurements that changed the implementation.**
+
+1. **`ScheduleService._save` persists 33 of the dataclass's 35 fields — `dry_run` and `last_outcome`
+   never reach disk.** They are runtime-only, so the migration cannot read them and must not claim to;
+   a converter that mapped them would be translating a value that is always the default.
+   `NEVER_PERSISTED` records it, and a test re-derives the set from `_save`'s source so a future edit
+   that starts persisting them fails here rather than silently making the exclusion wrong.
+2. **The three legacy schedule kinds do NOT line up with the trigger clock's three.** Legacy `every`
+   has no equivalent, and mapping it onto `at` — the tempting shape match, since both carry one
+   number — would turn every recurring interval job into a **one-shot that fires once and dies**. It
+   converts to an explicit interval spec with a note instead.
+
+Conversion decisions, each with the user-visible failure it avoids:
+
+- **`timezone`, `skip_dates`, `strict_schedule` ride the spec verbatim** for every kind. These are the
+  quietly-losable ones: a dropped `skip_dates` fires on Christmas, a dropped `strict` catches up when
+  the author said not to, a dropped `timezone` runs at the wrong hour for half the year. None of those
+  failures names itself.
+- **`delete_after_run` carries the ROW's choice, not §1.2's default.** A one-shot the user marked to
+  keep must not be deleted because the new default says otherwise.
+- **`silent` beats a channel.** The legacy flag means the agent sends via `send_message` itself, so a
+  trigger that ALSO auto-delivered would double-post — the user-visible symptom that would make
+  someone distrust the whole migration.
+- **`persistent_session` + a key becomes `pinned:`; a key WITHOUT the flag stays `fresh`.** Pinning the
+  stateless per-fire convention would silently make every fire share one growing session, and the
+  drift shows up as an automation that gets slower and stranger over weeks.
+- **An `agent_sequence` is NOT flattened to its first step.** §2 says a sequence becomes a def, which
+  is authoring work; silently inlining step one would leave the user with a "successful" automation
+  doing a third of the job. The steps are preserved in the note and the trigger is left disabled.
+- **A row the migration could not fully interpret loads DISABLED and paused, even if it was enabled.**
+  The opposite default runs a half-understood automation unattended. A CLEAN row stays enabled —
+  pausing everything out of caution is its own kind of breakage.
+- **A row with no id is REFUSED, not given one.** A generated id would be un-recognizable against the
+  user's own file, and "which of my jobs is this" is the first question they would ask.
+- **A never-run job is `ok`, not unhealthy, and gets NO fabricated timestamps.** Rendering epoch 0 as
+  1970-01-01 puts a date on screen that reads as a real event.
+- **`dropped` is reported separately from `unaccounted`.** A dropped field was a decision the map
+  records; an unaccounted one is a bug in the migration. Collapsing them would hide the second behind
+  the first.
+- **The whole thing returns a REPORT and writes nothing.** A migration whose only output is a
+  rewritten store is one nobody can check until it is too late; this one can be run as a dry run and
+  diffed.
+
+- **NOT DONE (by scope):** the store write itself and the cutover sequence (the service owns
+  `triggers.json` and its lock), the `hooks.json` / `event_triggers.json` conversions (the
+  `EventTrigger` half of the map is written and tested, but its converter is the event-kind session),
+  and the API re-pointing (session 67).
