@@ -170,7 +170,7 @@ mandatory.
 
 | # | Session | PR group | Status |
 |---|---|---|---|
-| 71 | Measure: per-arm surfaced-vs-used precision, tunable threshold profiles, trust posterior | G36 | TODO |
+| 71 | Measure: per-arm precision (found: `fuse` attributed by dict-insertion order) + data-driven threshold proposals + Beta-Binomial trust; reconciled a forked ARM_CONFIDENCE table | G36 | ✅ DONE (#227) |
 | 72 | Self-model: capped, reinforcement-promoted, propose-don't-write | G36 | TODO |
 | 73 | Run outcomes → template refinement (the flagship): typed ledger evidence, median-of-3 critic, held-out replay gate | G37 | TODO |
 | 74 | Repeated ad-hoc work → suggested templates; failed stages → lessons + procedural priors | G37 | TODO |
