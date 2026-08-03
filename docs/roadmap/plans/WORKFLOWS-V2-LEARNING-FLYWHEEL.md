@@ -696,3 +696,73 @@ WORKED, so a user who finds that presumptuous should be able to stop it without 
   and `MemoryService` respectively — this session owns the decisions those call sites will apply, which
   is why every function here is pure. Declined promotions feeding §2.2's rejection exemplars with
   escalating cooldowns needs the rejection-exemplar store from a later step.
+
+### S73 — The refiner's acceptance discipline: cluster → median-of-3 → GateOK (71 tests) — DONE
+
+The flagship spoke, and the one with the most ways to go wrong. §3.1's "acceptance discipline" section
+is longer than its mechanism section for a reason: an optimizer editing templates from run outcomes
+random-walks them under judge noise unless every gate is strict. This session is that discipline as
+pure decisions, so the pipeline that calls a model can be tested without one.
+
+**Measured first — every prerequisite was already in place.** `journal.LEDGER_KINDS` carries all the
+events the refiner reads INCLUDING `user_edited_mid_flight`, §3.1's "gold" signal (a repeated identical
+hand-fix is the user saying what the template should say). And `mutations.OpKind` is a CLOSED ten-op
+vocabulary, so a `template_diff` is expressed in the ENGINE'S OWN terms rather than in a second edit
+language that would need its own validator. `test_evidence_kinds_exist_in_the_real_ledger` keeps that
+true — a renamed event would starve the refiner silently, and zero failures is indistinguishable from a
+healthy template.
+
+The four gates, and the failure each prevents:
+
+- **Failure clustering first, LLM second.** A zero-cost pass groups failures by MECHANISM and ranks by
+  frequency × unresolvedness — the product, not the sum, because a frequent failure that self-heals is
+  not worth an edit and neither is a permanent one that happened once. Noise-stripping is what makes it
+  work: without it every failure carries its own run id, path and duration, so 100 instances of one bug
+  cluster into 100 clusters of one and the refiner proposes against a cluster of size 1.
+- **The power floor is enforced BEFORE the model tier**, and counts DISTINCT runs — three failures in
+  one run is one run's evidence. A proposal built from two runs would be rejected downstream anyway,
+  after paying for it.
+- **Median of 3 critic runs with an epsilon margin.** A single enthusiastic outlier cannot carry
+  acceptance (the whole reason for a median rather than a mean), a short critic pass REJECTS rather than
+  falling back to a mean, and a parse failure scores 0 — an LLM with no parseable score has endorsed
+  nothing.
+- **GateOK.** The target cluster must improve by ≥ 0.02 AND every other cluster may regress by at most
+  1%. Both halves are load-bearing: requiring target improvement stops a diff being accepted for a
+  coincidental gain elsewhere, and bounding the others stops an edit that fixes one failure by breaking
+  two. An UNMEASURED target FAILS rather than scoring 0 — "no evidence" must not read as "no
+  regression" — and a cluster the replay stopped scoring counts as a regression, because silence is not
+  a pass.
+- **The frozen region.** Prompts, retries and gates are editable; `id`/`triggers`/surfacing metadata
+  never are — they decide WHEN a template runs, and a self-editing system that can change its own
+  trigger conditions drifts without anyone approving the drift. Frozen fields are detected in every
+  container (`fields`/`config`/`set`/`patch`/`field`), the run-control ops
+  (`rewind`/`run_from`/`fork`/`skip`) are refused as CATEGORY ERRORS rather than risky edits (they act
+  on a live run, not a stored template), and an unrecognized op name is checked against the engine's
+  own vocabulary so a typo cannot become a silently-ignored no-op inside an accepted diff.
+
+Further decisions:
+
+- **One illegal op rejects the WHOLE diff.** A partially applied diff is a template nobody authored:
+  neither what the refiner proposed nor what the user reviewed.
+- **`evaluate_diff` runs the gates cheapest-and-most-decisive first**, so a frozen-region op never pays
+  for three critic runs. A dropped diff still RECORDS why for the log while staying invisible to the
+  user — a review queue full of rejected machine guesses trains people to stop reading it.
+- **Risk tier = the RISKIEST op in the diff**, not the average: a destructive delete bundled with four
+  parameter tweaks is a destructive diff. There is deliberately **no `AUTO` member** on the enum for a
+  caller to reach for — §3.1 says any auto tier is guardrail-violating and the human-installs invariant
+  is absolute.
+- **A manifest that cannot be checked is an assertion.** `falsifiable` requires run ids + metric +
+  `measured_at`; run ids are deduped and bounded to 20. `confidence` is DERIVED from the critic margin
+  that actually gated the diff, never self-reported — a self-reported confidence is the same ornamental
+  signal §2.5 rejects for helpfulness.
+- **`canary_verdict` returns PENDING under 3 runs.** Declaring a diff effective after one run is how a
+  lucky run becomes a permanent change. HARMFUL is reachable because §3.1 auto-FILES a revert proposal
+  for it — through the queue, never silently.
+
+- **NOT DONE (by scope):** the refiner AGENT itself (the trigger-fired workflow that calls a model over
+  the digest, with its `propose_*`-only tool set) and the version store. §3.1 puts the agent on the
+  `run-workflow` action provider per AUTOMATION-SUBSTRATE's doctrine, so it is a template plus a
+  trigger rather than Python — and it consumes exactly these decisions. Fencing run transcripts before
+  the refiner LLM sees them is that call site's responsibility (S69 built the screen it will use). The
+  teacher/student split, triad generation, and the experience directory are §3.1's explicit "optional
+  widening once the floor works".
