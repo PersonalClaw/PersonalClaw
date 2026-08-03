@@ -759,6 +759,60 @@ def pending_steering(run_id: str) -> dict[str, Any]:
     return _ok(run_id=run_id, pending=items, count=len(items))
 
 
+def resolve_confirmation(
+    run_id: str,
+    *,
+    supervisor: Any = None,
+    verb: str = "",
+    token: str = "",
+    note: str = "",
+    responder: str = "",
+) -> dict[str, Any]:
+    """Resolve a pending confirmation by VERB — the backend the DagView's Approve/Deny needs.
+
+    Rides `resume_run` rather than reaching into the controller: there is ONE place a resume
+    token is consumed (the claim primitive lives with the token, and S57 measured a read-then-
+    unlink version letting multiple callers consume one approval in 36 of 40 races). A second
+    resolve path would be a second chance to double-approve.
+
+    What this adds over `resume_run` is the VERB vocabulary: `approve | reject | skip | quit`,
+    with an unknown verb REFUSED rather than treated as a reject. A typo silently declining an
+    approval would reject work the user meant to allow, and they would have no way to know why.
+
+    `skip` and `quit` resolve nothing on purpose — skip leaves the item pending for the next
+    pass (different from rejecting it) and quit stops asking without answering. Neither touches
+    the run, so neither consumes the token.
+    """
+    from personalclaw.workflows.confirmation import resolve as resolve_verb
+
+    resolution, error = resolve_verb(verb, note=note)
+    if resolution is None:
+        return _err("WF_CONFIRM_VERB_INVALID", error)
+    if not resolution.resumes:
+        # Skip/quit are decisions ABOUT the queue, not answers to the gate. Returning ok=True with
+        # `resumed=False` says exactly that; consuming the token here would burn a single-use claim
+        # on a non-answer and strand the gate forever.
+        return _ok(
+            run_id=run_id,
+            resumed=False,
+            still_pending=resolution.still_pending,
+            verb=resolution.verb,
+        )
+    result = resume_run(
+        run_id,
+        supervisor=supervisor,
+        token=token,
+        # The gate's answer is the APPROVAL BOOLEAN, which is what the engine's gate resolution
+        # reads. Passing the verb string would make `reject` truthy — the single worst possible
+        # mistranslation in this path.
+        answer=resolution.approved,
+        responder=responder,
+    )
+    result.setdefault("verb", resolution.verb)
+    result.setdefault("approved", resolution.approved)
+    return result
+
+
 def resume_run(
     run_id: str,
     *,

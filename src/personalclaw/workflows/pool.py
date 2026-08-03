@@ -32,8 +32,11 @@ Measured before building (S60):
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 # ── leases ──
@@ -662,3 +665,141 @@ def route(
     if guided and surface_mode != "off":
         return SurfaceRoute.BLUEPRINT
     return SurfaceRoute.PASSIVE
+
+
+# ── the lease WRITE path (S61d) ──
+
+
+def leases_dir() -> Path:
+    """Where lease records live.
+
+    A SIDECAR file per task under `config_dir()/task_leases/`, not a field on `Task`. Three reasons,
+    in order of how much they'd hurt:
+
+    * A lease is ephemeral and contended; the task JSON is the durable entity. Putting a
+      once-a-minute renewal into the entity file means every renewal rewrites the task, and every
+      rewrite races a concurrent edit to a field that has nothing to do with claiming.
+    * `Task` is the SHARED model across every task provider. A native-only concurrency concept on it
+      would make every provider's task carry a field only one of them can honour.
+    * A sidecar can be deleted to force-release without touching user data.
+    """
+    from personalclaw.config.loader import config_dir
+
+    return Path(config_dir()) / "task_leases"
+
+
+def _lease_path(task_id: str) -> Path:
+    """The lease file for a task id, with the id sanitized.
+
+    A task id reaches this from an HTTP path. `t-<8hex>` is the native shape, but a provider id is
+    not a trust boundary, so anything outside the safe set is replaced rather than trusted to stay
+    inside the directory.
+    """
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", task_id or "unknown")
+    return leases_dir() / f"{safe}.json"
+
+
+def read_lease(task_id: str) -> Lease | None:
+    """The current lease for a task, or None.
+
+    An unreadable or malformed file reads as NO LEASE. Degrading to unclaimed risks a double-claim;
+    degrading to claimed would strand the task permanently with no holder to release it — and a task
+    nobody can ever work is worse than one two sessions might briefly contend for, because the
+    contention resolves and the strand does not.
+    """
+    path = _lease_path(task_id)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(data, dict) or not data.get("holder"):
+        return None
+    return Lease.from_dict(data)
+
+
+def claim_task(
+    task_id: str, *, holder: str, now: float, ttl_seconds: int = DEFAULT_LEASE_SECS
+) -> tuple[Lease | None, str]:
+    """Acquire or renew a lease, under a cross-process lock. Returns `(lease, error)`.
+
+    The read-modify-write is wrapped in `single_flight` — the established flock primitive — because
+    per-entity JSON files have no transactions, so "read the lease, decide, write the lease" is
+    otherwise a race between the read and the write. A LOSER of the lock is told the task is held
+    rather than proceeding: single-flight means don't double-run, and a caller that ignored the miss
+    would be doing exactly the double-claim the lock exists to prevent.
+
+    The decision itself is `acquire`, unchanged — this function is only the durability around it, so
+    there is one rule and one place it is applied.
+    """
+    from personalclaw.concurrency import single_flight
+
+    with single_flight(f"task-lease:{task_id}") as acquired:
+        if not acquired:
+            return None, LeaseError.HELD_BY_OTHER.value
+        lease, error = acquire(
+            read_lease(task_id),
+            task_id=task_id,
+            holder=holder,
+            now=now,
+            ttl_seconds=ttl_seconds,
+        )
+        if lease is None:
+            return None, error
+        _write_lease(lease)
+        return lease, ""
+
+
+def release_task(task_id: str, *, holder: str) -> tuple[bool, str]:
+    """Release a lease the caller holds. Returns `(released, error)`.
+
+    Under the same lock as the claim: an unlocked release could delete a lease another caller took
+    microseconds earlier at the expiry boundary.
+    """
+    from personalclaw.concurrency import single_flight
+
+    with single_flight(f"task-lease:{task_id}") as acquired:
+        if not acquired:
+            return False, LeaseError.HELD_BY_OTHER.value
+        _none, error = release(read_lease(task_id), holder=holder)
+        if error:
+            return False, error
+        _lease_path(task_id).unlink(missing_ok=True)
+        return True, ""
+
+
+def _write_lease(lease: Lease) -> None:
+    """Persist a lease atomically, through the store's writer.
+
+    Reuses `store.atomic_write` rather than a bare `write_text`: a torn lease file reads as no lease
+    (see `read_lease`), which silently drops a live claim.
+    """
+    from personalclaw.workflows import store as _store
+
+    path = _lease_path(lease.task_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _store.atomic_write(path, json.dumps(lease.to_dict(), indent=2))
+
+
+def sweep_task_leases(now: float) -> list[str]:
+    """Delete every expired lease file and return the freed task ids.
+
+    The auto-release the diagnostics sweep performs. Reads whatever is on disk rather than taking a
+    list, because the point is to find claims whose HOLDER is gone — a caller that could enumerate
+    live leases would not need the sweep.
+    """
+    freed: list[str] = []
+    root = leases_dir()
+    if not root.is_dir():
+        return freed
+    for path in sorted(root.glob("*.json")):
+        try:
+            lease = Lease.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        except Exception:
+            # An unparseable lease file is already "no lease" to every reader, so removing it is
+            # cleanup rather than a decision.
+            path.unlink(missing_ok=True)
+            continue
+        if lease.expired(now):
+            path.unlink(missing_ok=True)
+            freed.append(lease.task_id)
+    return freed

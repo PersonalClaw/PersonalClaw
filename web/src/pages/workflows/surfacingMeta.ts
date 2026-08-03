@@ -115,3 +115,34 @@ export const PACK_ICON: LucideIcon = Layers
 export function needsAttention(row: Pick<WorkflowSurfacingRow, 'overdue'>, findingCount: number): boolean {
   return row.overdue || findingCount > 0
 }
+
+/** Join a DAG node to the resume token that answers its gate (TASKS-SOPS §7 R6).
+ *
+ *  The DagView's `onApprove`/`onDeny` receive a node id; the confirm endpoint needs a resume token.
+ *  Both sides already carry `(run_id, node_id)` — the continuation list is keyed by node id and a
+ *  materialized task's `workflow_binding` names the same pair — so this is a lookup, not a new
+ *  identifier.
+ *
+ *  Returns '' when nothing is pending for that node. An empty token is NOT passed to the endpoint as
+ *  a wildcard: the backend treats a missing token as "use the newest pending gate", which is right
+ *  for a chat user saying "approve it" and wrong for a click on a specific node. Approving the wrong
+ *  gate is worse than reporting that this one has nothing to answer. */
+export function tokenForNode(
+  continuations: Array<{ node_id: string; resume_token: string; expired?: boolean }>,
+  nodeId: string,
+): string {
+  const match = (continuations ?? []).find((c) => c.node_id === nodeId && !c.expired)
+  return match?.resume_token ?? ''
+}
+
+/** Whether a node can be approved or denied right now.
+ *
+ *  Both verbs go false together: a node still offering Approve after its gate was answered is how a
+ *  user double-approves, which is exactly what the claim primitive was fixed to prevent. An EXPIRED
+ *  continuation is not answerable either — the token is gone, so the button would fail. */
+export function canResolveNode(
+  continuations: Array<{ node_id: string; resume_token: string; expired?: boolean }>,
+  nodeId: string,
+): boolean {
+  return tokenForNode(continuations, nodeId) !== ''
+}
