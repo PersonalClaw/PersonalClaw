@@ -312,6 +312,7 @@ class GatewayOrchestrator:
         self.consolidator: HistoryConsolidator | None = None
         self.cron_svc: ScheduleService | None = None
         self._file_watch_task: "asyncio.Task[None] | None" = None  # S93 file-watch poll loop
+        self._clock_task: "asyncio.Task[None] | None" = None  # S100 unified clock loop
         self._running_script_ids: set[str] = set()  # zero-token jobs in flight
         self.heartbeat_svc: HeartbeatService | None = None
         self.loop_watchdog: "LoopWatchdog | None" = None
@@ -997,6 +998,71 @@ class GatewayOrchestrator:
             logger.debug("day-budget check failed (fail-open)", exc_info=True)
             return False
 
+    async def _clock_loop(self) -> None:
+        """Drive the unified clock: tick → dispatch → execute (§3 — S100).
+
+        The sole engine that fires clock triggers now. `triggers/loop.run_forever` owns the cadence
+        and the resilience (one bad tick never kills the loop); this method only supplies the two
+        things the gateway knows: the store's home and the runner.
+
+        The runner is the SAME action-provider dispatch a file-watch fire uses, so a clock
+        fire and a
+        file fire execute the same action the same way — one dispatch path rather than two
+        that drift.
+        """
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers import loop as clock_loop
+        from personalclaw.triggers.store import TriggerStore
+
+        store = TriggerStore(base_dir=config_dir())
+
+        async def _runner(payload: dict[str, Any]) -> Any:
+            trigger_id = str(payload.get("trigger_id") or "")
+            row = store.get(trigger_id)
+            if row is None:
+                return {"status": "error"}
+            await self._fire_store_trigger(row.trigger, payload)
+            return {"status": "launched"}
+
+        await clock_loop.run_forever(
+            store,
+            runner=_runner,
+            sessions=self.sessions,
+            base_dir=store.base_dir,
+        )
+
+    async def _fire_store_trigger(
+        self, trigger: Any, payload: dict[str, Any], *, event: str = "trigger.fired"
+    ) -> None:
+        """Run one store-backed trigger's declared action through the action-provider registry.
+
+        Shared by the clock loop and the file-watch loop, so every store-backed fire goes
+        through one
+        dispatch. A failed action is logged rather than raised: the outcome belongs to the
+        executor's
+        typed classification, and a raise here would strand the rest of the drain.
+        """
+        from personalclaw.action_providers import ActionContext, get_action_provider
+        from personalclaw.action_providers.registry import _ensure_default_providers_registered
+
+        workflow = trigger.workflow or {}
+        inline = workflow.get("inline") if isinstance(workflow.get("inline"), dict) else None
+        provider_name = str((inline or workflow).get("provider") or "")
+        config = (inline or workflow).get("config") or {}
+        if not provider_name:
+            logger.debug("trigger %s has no action provider", trigger.id)
+            return
+        _ensure_default_providers_registered()
+        provider = get_action_provider(provider_name)
+        if provider is None:
+            logger.warning("trigger %s: unknown action provider %r", trigger.id, provider_name)
+            return
+        try:
+            ctx = ActionContext(event=event, context="", payload=payload)
+            await provider.execute(config, ctx)
+        except Exception:  # noqa: BLE001 - a failed fire is logged, never crashes the loop
+            logger.warning("trigger %s: action failed", trigger.id, exc_info=True)
+
     async def _file_watch_poll_loop(self) -> None:
         """Poll `file` triggers and fire the ones whose watched paths changed (§3 / crit 2 — S93).
 
@@ -1032,15 +1098,12 @@ class GatewayOrchestrator:
                 logger.warning("file-watch poll loop iteration failed", exc_info=True)
 
     async def _fire_file_trigger(self, payload: dict[str, Any]) -> None:
-        """Run one file trigger's declared workflow action, with the change payload injected.
+        """Run one file trigger's declared action (S93), through the shared store dispatch.
 
-        Routes through the SAME action-provider registry `_run_action_job` uses, so a file trigger
-        and a cron execute the same action the same way — no second dispatch path to drift. The
-        trigger's `workflow` is already `{provider, config}` shaped (S92 builds it that way from the
-        chat tool), so no synthesis of a fake `ScheduleJob` is needed.
+        Delegates to `_fire_store_trigger` (S100) rather than repeating the provider lookup: a clock
+        fire and a file fire must execute the same action the same way, and two near-identical
+        dispatches were exactly the dual path the clean break forbids.
         """
-        from personalclaw.action_providers import ActionContext, get_action_provider
-        from personalclaw.action_providers.registry import _ensure_default_providers_registered
         from personalclaw.config.loader import config_dir
         from personalclaw.triggers.store import TriggerStore
 
@@ -1048,29 +1111,9 @@ class GatewayOrchestrator:
         row = TriggerStore(base_dir=config_dir()).get(trigger_id)
         if row is None:
             return
-        workflow = row.trigger.workflow or {}
-        provider_name = str(workflow.get("provider") or "")
-        if not provider_name:
-            logger.debug("file trigger %s has no workflow provider", trigger_id)
-            return
-        _ensure_default_providers_registered()
-        provider = get_action_provider(provider_name)
-        if provider is None:
-            logger.warning("file trigger %s: unknown action provider %r", trigger_id, provider_name)
-            return
-        action_config = workflow.get("config") or {}
-        try:
-            # `execute(action_config, ctx, timeout)` — measured signature, not `execute(ctx)`. The
-            # change payload rides ctx.payload so the action (e.g. run-prompt) can reference the
-            # changed files; the provider's own config is the first positional.
-            ctx = ActionContext(
-                event="file.changed",
-                context="",
-                payload=payload,
-            )
-            await provider.execute(action_config, ctx)
-        except Exception:  # noqa: BLE001 - a failed fire is logged, never crashes the poll loop
-            logger.warning("file trigger %s: action failed", trigger_id, exc_info=True)
+        # The event NAME identifies the source to the action; a clock fire and a file fire share the
+        # dispatch but not the label, so a provider can still tell what woke it.
+        await self._fire_store_trigger(row.trigger, payload, event="file.changed")
 
     async def _init_cron(self) -> None:
         """Initialize and start the cron service."""
@@ -1539,7 +1582,13 @@ class GatewayOrchestrator:
         if self._no_crons:
             logger.info("Cron scheduler disabled (--no-crons)")
         else:
-            await self.cron_svc.start()
+            # 🔴 THE CLOCK CUTOVER (S100). The unified tick loop is the sole clock engine, so the
+            # legacy timer is NOT armed — measured: after the boot migration both engines hold the
+            # same crons, and arming both would double-fire `j-at` and `j-cron` on the owner's real
+            # store. `load_without_timer` still loads the jobs and rotates run history, because the
+            # rest of `ScheduleService` remains the CRUD surface + run store the API reads until the
+            # writes re-point.
+            await self.cron_svc.load_without_timer()
             if self.sessions:
                 self.cron_svc.start_reaper(self.sessions)
             else:
@@ -1587,6 +1636,9 @@ class GatewayOrchestrator:
                 migrate_and_arm()
             except Exception:
                 logger.warning("trigger-store migration failed at boot", exc_info=True)
+            # The unified CLOCK LOOP (S100) — now the only thing that fires a clock trigger. The
+            # legacy timer above is deliberately not armed; see `load_without_timer`.
+            self._clock_task = asyncio.create_task(self._clock_loop())
 
     async def _init_heartbeat(self) -> None:
         """Initialize and start the heartbeat service."""
@@ -3086,10 +3138,12 @@ class GatewayOrchestrator:
             await self.workflow_watchdog.stop()
         if self.cron_svc:
             await self.cron_svc.stop()
-        if self._file_watch_task is not None:
-            self._file_watch_task.cancel()
+        for _task in (self._file_watch_task, self._clock_task):
+            if _task is None:
+                continue
+            _task.cancel()
             try:
-                await self._file_watch_task
+                await _task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001 - shutdown is best-effort
                 pass
         if self.heartbeat_svc:

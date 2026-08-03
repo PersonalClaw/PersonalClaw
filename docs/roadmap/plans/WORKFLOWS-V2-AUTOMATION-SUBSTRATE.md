@@ -2066,3 +2066,59 @@ backends at one store". The schedule LIST is now read from `triggers.json` throu
 
 - **NEXT:** re-point the schedule WRITE paths (create/update/toggle/delete/run) onto `tools.py`, then
   retire `ScheduleService`, then the `schedule_*` MCP aliases. `ScheduleRunStore` survives unchanged.
+
+### S100 — THE CLOCK CUTOVER: one clock engine (§3 / §6 — stacked on S99)
+
+**DONE. The tick loop is now the sole thing that fires a clock trigger**, and `ScheduleService`'s
+timer is no longer armed. Two measurements decided both the scope and the order.
+
+- **🔴 A STORE-ONLY TRIGGER HAD NO FIRING PATH.** S88 shipped `service.tick()`, S96 taught it to arm,
+  S97 made `overlap` enforce, S98 imported the crons, S99 re-pointed the API's read — and nothing ever
+  CALLED the tick. Measured on the boot path: `boot starts ScheduleService: True` /
+  `boot starts a TICK loop: False`. So a trigger created the new way (store only, as `tools.create`
+  writes it) was invisible to the legacy service and unreachable by the engine that could fire it.
+  **This inverted the planned order:** re-pointing the API's WRITES first — what the queue implied —
+  would have produced silently dead automations, so the loop had to land before the writes.
+- **🔴 RUNNING BOTH LOOPS WOULD DOUBLE-FIRE.** Measured against the owner's real store after the boot
+  migration: the legacy timer would fire `['j-at','j-cron','j-every','j-seq']` and the tick would fire
+  `['j-at','j-cron']` — a real overlap of two live automations. So this is a switch-over, not an
+  addition, exactly as the queue warned; the owner's clean-break directive settles which side wins.
+- **The seam is `_arm_timer`, and only that.** `ScheduleService.load_without_timer()` loads the jobs
+  and rotates run history while leaving `_running` False — verified: 4 jobs loaded, `_timer_task is
+  None`, `list_runs` still readable. `_running` staying False also stops `_load`'s own "restore timers
+  from disk" branch from arming the legacy loop behind the cutover's back. The rest of the class is
+  still the CRUD surface + run store the facade reads, so it retires when the writes re-point, not
+  here.
+- **`triggers/loop.py` owns no policy.** It sleeps on `TickResult.next_sleep`, hands each fire to
+  S89's dispatcher and S90's executor, and bounds one iteration's sleep. `CancelledError` propagates
+  so `_shutdown` can stop it; every other exception is logged and the loop continues — a clock loop
+  that died on one bad tick would silently retire every automation on the machine.
+- **🔴 FOUND WHILE WIRING: `executor.drain` took no `base_dir`**, so `run_one`'s claim release was a
+  no-op on every drained fire — which would have blocked an `overlap: skip` trigger for the full 1h
+  claim expiry after its first run. S97's release only works if the root reaches it, and the loop is
+  the only caller that knows which store a drain belongs to. Threaded and pinned by a test that fires,
+  runs, and then fires the next slot.
+- **One dispatch path, not two.** The clock loop and the file-watch loop now share
+  `_fire_store_trigger`; `_fire_file_trigger` delegates to it. The event NAME is threaded
+  (`trigger.fired` vs `file.changed`) so a provider can still tell what woke it — caught by an
+  existing S93 test when the first dedupe collapsed the label too.
+- **`now` is threaded through the loop.** The first probe of this file fired nothing because
+  `tick_once` used wall-clock while the fixture was armed for 2027; a loop only testable against the
+  real clock cannot be driven deterministically.
+
+19 tests. Gate: `make lint` clean.
+
+- **NEXT:** re-point the schedule WRITE paths (create/update/toggle/delete/run) onto `tools.py` — now
+  safe, because a store write finally has an engine that fires it. Then `ScheduleService` retires, then
+  the `schedule_*` MCP aliases. `ScheduleRunStore` survives.
+
+**S100 ADDENDUM — 32 tests went red, and every one was a superseded contract, not a bug.** The
+cutover changed a boot API, so (a) 20 cron test doubles stubbed `svc.start = AsyncMock()` and awaited
+a bare `MagicMock` for the new method (`TypeError: object MagicMock can't be used in 'await'
+expression`) — each gained a `load_without_timer` stub; and (b) two tests ASSERTED the old contract
+(`start.assert_called_once()` / `assert_awaited_once()`), i.e. that boot arms the legacy timer. That
+is exactly what the cutover retires, so both were rewritten to assert the new one —
+`load_without_timer` awaited AND `start` **not** called — with the reason recorded in the docstring.
+The reaper still starts: it reaps stuck sessions, not fires. Same lesson as S96's
+`test_a_non_interval_trigger_yields_no_recompute`: **when a deliberate contract change reddens a
+test, read whether the test or the code is wrong before touching either.**

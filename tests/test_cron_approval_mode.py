@@ -86,6 +86,7 @@ class TestCronApprovalModeGateway:
                 captured_cb = on_job
                 svc = MagicMock()
                 svc.start = AsyncMock()
+                svc.load_without_timer = AsyncMock()
                 return svc
 
             mock_cron_cls.side_effect = capture_cron
@@ -572,19 +573,28 @@ class TestNoCronsFlag:
         with patch("personalclaw.gateway.ScheduleService") as mock_cls:
             svc = MagicMock()
             svc.start = AsyncMock()
+            svc.load_without_timer = AsyncMock()
             mock_cls.return_value = svc
             asyncio.run(gw._init_cron())
             svc.start.assert_not_called()
             assert gw.cron_svc is svc  # still instantiated, just not started
 
-    def test_default_starts_crons(self) -> None:
+    def test_default_loads_crons_without_arming_the_legacy_timer(self) -> None:
+        """🔴 SUPERSEDED CONTRACT (S100 clock cutover). This asserted `start()` — which ARMS the
+        legacy firing timer. The unified tick loop is now the sole clock engine, and measuring
+        showed why that must be exclusive: after the boot migration both engines hold the same
+        crons, so arming both would double-fire `j-at` and `j-cron` on the owner's real store.
+        Boot now calls `load_without_timer()`, which still loads the jobs and rotates run history
+        (the CRUD surface and run store the API reads) while leaving `_running` False."""
         gw = self._make_gateway(no_crons=False)
         with patch("personalclaw.gateway.ScheduleService") as mock_cls:
             svc = MagicMock()
             svc.start = AsyncMock()
+            svc.load_without_timer = AsyncMock()
             mock_cls.return_value = svc
             asyncio.run(gw._init_cron())
-            svc.start.assert_called_once()
+            svc.load_without_timer.assert_called_once()
+            svc.start.assert_not_called()
 
     def test_init_stores_no_crons(self) -> None:
         """GatewayOrchestrator.__init__ stores _no_crons attribute."""
