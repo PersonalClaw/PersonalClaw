@@ -270,6 +270,11 @@ class GateOutcome(str, Enum):
     ALLOWED = "allowed"
     QUIET = "quiet"
     OFF_DUTY = "off_duty"
+    #: A date the job's own `skip_dates` excludes (§AUTO-A3's "struck columns"). A distinct outcome
+    #: from QUIET because they are different promises: a quiet window suppresses a TIME OF DAY and
+    #: may catch up, while a skip date removes a WHOLE DAY and never does. Collapsing them would
+    #: render a struck column as a shaded band, which reads as "delayed" rather than "cancelled".
+    SKIPPED = "skipped"
 
 
 @dataclass
@@ -482,6 +487,39 @@ class Occurrence:
 MAX_OCCURRENCES_PER_TRIGGER = 200
 
 
+def _resolve_zone(tz_name: str):
+    """The zone a projected fire's calendar date is read in.
+
+    Mirrors `schedule._job_tz`'s resolution order — the job's own zone, then the app config's, then
+    the server's — because the grid has to strike the same column the scheduler will skip. It is NOT
+    a call into that function: importing the scheduler here would pull the whole cron service into a
+    pure-decision module, and the ORDER is the contract, not the code.
+
+    An unparseable name falls back to server-local rather than raising. A trigger with a typo'd
+    timezone still has real fires, and a grid that 500s on one bad row shows nothing at all.
+    """
+    from zoneinfo import ZoneInfo
+
+    names = [tz_name]
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        names.append(AppConfig.load().timezone or "")
+    except Exception:
+        # Silent by design: this module is pure decisions and carries no logger (adding one for a
+        # fallback path would be the first import of logging into it). An unreadable config timezone
+        # is not an error — it just means the next candidate applies.
+        pass
+    for name in names:
+        if not name:
+            continue
+        try:
+            return ZoneInfo(name)
+        except Exception:
+            continue
+    return None  # `.astimezone(None)` is server-local — the documented fallback.
+
+
 def project_occurrences(
     *,
     trigger_id: str,
@@ -492,12 +530,25 @@ def project_occurrences(
     days: int = 7,
     gates: dict[str, Any] | None = None,
     cap: int = MAX_OCCURRENCES_PER_TRIGGER,
+    skip_dates: list[str] | None = None,
+    tz_name: str = "",
 ) -> tuple[list[Occurrence], bool]:
     """Project one trigger's fires across the window. Returns `(occurrences, truncated)`.
 
-    Quiet windows are applied as ANNOTATIONS, not filters: a suppressed slot is still returned,
-    marked with why. Dropping them would make the grid show a schedule the user does not have, and
-    the whole point of the view is to explain why a trigger is not firing when they expect it to.
+    Quiet windows and skip dates are applied as ANNOTATIONS, not filters: a suppressed slot is still
+    returned, marked with why. Dropping them would make the grid show a schedule the user does not
+    have, and the whole point of the view is to explain why a trigger is not firing when they expect
+    it to.
+
+    **`skip_dates` and `tz_name` were measured as a gap, together.** AUTO-A3 requires skip dates to
+    render as struck columns, and this function did not read them at all — driven with a daily
+    trigger and tomorrow-plus-one declared a skip date, the projection returned that fire completely
+    unannotated while `SchedulerService` would refuse it. Worse, the two halves have to arrive
+    together: the scheduler resolves the calendar date through `_job_tz(job)` (the JOB's timezone),
+    while this function converted with `.astimezone()` (the SERVER's). For a `Asia/Tokyo` job on a
+    UTC host the same instant is a different calendar date, so honouring `skip_dates` against server
+    time would have struck the WRONG column — a grid that is confidently wrong, which is worse than
+    the one that was merely silent.
 
     The duty gate is deliberately NOT evaluated here. It is async, provider-backed, and answers
     about
@@ -510,6 +561,11 @@ def project_occurrences(
     from datetime import timezone as _tz
 
     windows, _issues = parse_windows((gates or {}).get("quiet_hours"))
+    # `gates.skip_dates` is accepted as well as the explicit argument: §1.1 reserves the key on the
+    # unified Trigger entity, while a legacy `ScheduleJob` carries the list as a top-level field.
+    # Accepting only one of the two would have quietly ignored half the triggers.
+    skips = {str(d).strip() for d in (skip_dates or (gates or {}).get("skip_dates") or []) if d}
+    job_zone = _resolve_zone(tz_name)
     end_ts = (start + timedelta(days=days)).timestamp()
     start_ts = start.timestamp()
 
@@ -526,15 +582,26 @@ def project_occurrences(
     while at < end_ts:
         if len(out) >= max(1, cap):
             return out, True
-        moment = datetime.fromtimestamp(at, tz=_tz.utc).astimezone()
+        # Rendered in the JOB's zone when it declares one, so the grid's columns are the same
+        # calendar days the scheduler will compare `skip_dates` against.
+        moment = datetime.fromtimestamp(at, tz=_tz.utc).astimezone(job_zone)
         window = in_quiet_window(windows, moment) if windows else None
+        local_date = moment.strftime("%Y-%m-%d")
+        if local_date in skips:
+            # SKIP wins over QUIET. Both suppress the fire, and reporting the quiet window on a day
+            # that is struck anyway would send the user to fix the wrong setting.
+            suppressed, reason = GateOutcome.SKIPPED.value, f"skip date {local_date}"
+        elif window:
+            suppressed, reason = GateOutcome.QUIET.value, f"quiet hours {window.start}–{window.end}"
+        else:
+            suppressed, reason = "", ""
         out.append(
             Occurrence(
                 trigger_id=trigger_id,
                 trigger_name=trigger_name,
                 at=at,
-                suppressed_by=GateOutcome.QUIET.value if window else "",
-                reason=(f"quiet hours {window.start}–{window.end}" if window else ""),
+                suppressed_by=suppressed,
+                reason=reason,
             )
         )
         at += interval_secs

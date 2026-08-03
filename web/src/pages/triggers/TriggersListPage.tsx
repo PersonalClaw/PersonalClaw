@@ -1,12 +1,14 @@
 import { useEffect, useMemo } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Plus, Zap, Clock, CheckCircle2, XCircle, Circle, Rocket, Pencil } from 'lucide-react'
+import { Plus, Zap, Clock, CheckCircle2, XCircle, Circle, Rocket, Pencil, CalendarDays } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { EmptyState, ListRow, ListSkeleton } from '../../ui/ListScaffold'
 import { SidePanel } from '../../ui/SidePanel'
 import { ListControls } from '../../ui/ListControls'
+import { Segmented } from '../../ui/Segmented'
+import { WeekGridView } from './WeekGridView'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { useQueryParam, useEditFlag, type RouteProps } from '../../app/useQueryState'
@@ -41,6 +43,9 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
   const [openIdRaw, setOpenId] = useQueryParam(query, setQuery, 'open', '')
   const openId = openIdRaw || null
   const [editing, setEditing] = useEditFlag(query, setQuery)
+  // List | Week (AUTO-A3). URL-addressable, unlike the run-detail toggle: a week grid is something
+  // you send someone ("look at Thursday"), and the section is already query-state driven.
+  const [view, setView] = useQueryParam(query, setQuery, 'view', 'list', { replace: true })
 
   // Schedules carry live next-run/running state → persist:false (instant in-app
   // revisit, but never stale across a hard reload). Hooks + action providers are
@@ -82,14 +87,26 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
         />
       }
       controls={(triggers === null || counts.all > 0)
-        ? <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search triggers', label: 'Search triggers' }}>
-            <FilterMenu sections={[{
+        ? <ListControls
+            // Search and the type filter belong to the LIST. The week grid plots every enabled clock
+            // trigger by construction, so a search box over it would be a control that changes
+            // nothing — worse than an absent one.
+            search={view === 'list' ? { value: q, onChange: setQ, placeholder: 'Search triggers', label: 'Search triggers' } : undefined}
+          >
+            <Segmented
+              ariaLabel="Triggers view"
+              size="sm"
+              value={view}
+              onChange={setView}
+              options={[{ key: 'list', label: 'List', icon: Zap }, { key: 'week', label: 'Week', icon: CalendarDays }]}
+            />
+            {view === 'list' && <FilterMenu sections={[{
               title: 'Type',
               value: filter,
               defaultKey: 'all',
               onChange: setFilter,
               options: FILTERS.map((f) => ({ key: f.key, label: f.label, count: counts[f.key as TriggerKind] })),
-            } satisfies FilterSectionDef]} />
+            } satisfies FilterSectionDef]} />}
           </ListControls>
         : undefined}
       panel={
@@ -104,6 +121,11 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
         )
       }
     >
+      {view === 'week' ? (
+        // Click-through routes into the SAME side panel the list opens (`?open=<id>`), so a cell and
+        // a row lead to one inspector rather than two surfaces that drift apart.
+        <WeekGridView onOpenTrigger={(id) => setQuery({ open: id, edit: null, view: 'list' })} />
+      ) : (
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
         {triggers === null ? <ListSkeleton rows={6} /> : triggers.length === 0 ? (
               <EmptyState icon={Zap} title={q || filter !== 'all' ? 'No matching triggers' : 'No triggers'} hint={q || filter !== 'all' ? 'Try a different filter.' : 'A trigger runs an action when something happens — a schedule tick or an agent-loop lifecycle event. Create one to automate work.'} action={!q && filter === 'all' ? { label: 'New trigger', onClick: onCreate, icon: Plus } : undefined} />
@@ -148,6 +170,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
               </div>
             )}
       </div>
+      )}
     </WorkbenchLayout>
   )
 }

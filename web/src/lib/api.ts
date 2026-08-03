@@ -790,6 +790,33 @@ export interface StagingWeek {
   produced_total: number; cost_usd: number
 }
 
+// One projected fire in the week grid (GET /api/triggers/week — AUTO-A3). `suppressed_by` is "" for
+// a fire that will actually run, "quiet" inside a quiet window, "skipped" on one of the trigger's
+// skip_dates. The two suppression kinds stay distinct because they are different promises: a quiet
+// window defers a time of day and may catch up, while a skip date removes a whole day and never
+// does. The server ANNOTATES rather than filters — a grid that hid suppressed fires would show a
+// schedule the user does not have, and explaining an unexpected gap is the view's whole purpose.
+export interface WeekOccurrence {
+  trigger_id: string
+  trigger_name: string
+  /** Epoch seconds. Placed into a cell in the VIEWER's timezone; `server_tz` is captioned so a
+   *  mismatch with the host is legible instead of silent. */
+  at: number
+  suppressed_by: '' | 'quiet' | 'skipped' | 'off_duty'
+  reason: string
+}
+
+export interface WeekProjection {
+  start: string
+  end: string
+  server_tz: string
+  occurrences: WeekOccurrence[]
+  /** Trigger ids whose projection hit the per-trigger occurrence cap. Named rather than a bare
+   *  boolean: "some trigger was capped" is not actionable, and a silently partial week reads as an
+   *  accurate forecast. */
+  truncated: string[]
+}
+
 // One manual event-trigger fire (POST /api/triggers/event:{id}/run|test). `ran` and `success` are
 // deliberately separate: `ran` is whether the trigger reached its action provider at all (false for
 // incident mode, an unregistered provider, or a denylist block — `reason` says which), while
@@ -2101,6 +2128,14 @@ export const api = {
   // use; the api layer namespaces the id (schedule:<id>) and routes to /api/triggers.
   triggers: (type?: 'schedule' | 'lifecycle' | 'event') =>
     get<{ triggers: Trigger[]; server_tz: string }>(`/api/triggers${type ? `?type=${type}` : ''}`),
+  // The week-grid projection (AUTO-A3). `start` is a local ISO datetime; the backend computes every
+  // occurrence from the recurrence each trigger already carries — read-only, no store changes.
+  triggersWeek: (start?: string, days = 7) => {
+    const qs = new URLSearchParams()
+    if (start) qs.set('start', start)
+    qs.set('days', String(days))
+    return get<WeekProjection>(`/api/triggers/week?${qs.toString()}`)
+  },
   // ── event-kind (data-event) triggers: the S67 parity surface ──
   // The backend handled `event` in list/create/DELETE only; toggle/run/test/PUT fell through to the
   // schedule branch and answered 404, so the UI had no way to reach them and no client methods

@@ -930,6 +930,12 @@ async def api_triggers_week(request: web.Request) -> web.Response:
             start=start,
             days=days,
             gates=getattr(job, "gates", None) or {},
+            # AUTO-A3's struck columns, and the zone they are struck in. Both are read off the job
+            # because the SCHEDULER reads them off the job: it compares `skip_dates` against the
+            # date in `_job_tz(job)`, so a grid on server time would strike the wrong column for
+            # any job with its own timezone. Measured: a Tokyo job's skip date silently missed.
+            skip_dates=list(getattr(job, "skip_dates", None) or []),
+            tz_name=str(getattr(job, "timezone", "") or ""),
         )
         occurrences.extend(row.to_dict() for row in rows)
         if cut:

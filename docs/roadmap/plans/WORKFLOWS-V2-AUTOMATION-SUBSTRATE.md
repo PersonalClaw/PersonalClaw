@@ -1048,3 +1048,69 @@ EMPTY value counts as a setting — someone who cleared their quiet hours meant 
   page)", and this session built the endpoint + projection it consumes; the tab itself is that
   session's work. The gates are also not yet called from the fire path — that is the scheduler's
   `is_due` seam, and `evaluate_quiet`/`evaluate_duty` are written as the pure decisions it will apply.
+
+### S81 — AUTO-A3's Week tab, and the two halves of skip_dates it needed (28 FE + 11 BE tests) — DONE
+
+**This closes AUTO-A3**, whose acceptance bar names both halves: "`GET /api/triggers/week` (computed
+occurrences incl. quiet-window/skip-date/duty annotations) **+ the Automations Week tab** (7x24 grid,
+shaded quiet bands, click-through)". S70 shipped the endpoint and recorded the tab as NOT DONE
+("extends Session 8"); this is that session.
+
+**The endpoint had ZERO frontend consumers.** Grepped `web/src` for `triggersWeek` and
+`triggers/week` — nothing. The projection has been computing a week of fires that no surface rendered
+since S70.
+
+**Two coupled BACKEND defects, found by probing before any UI existed.**
+
+1. **`project_occurrences` did not read `skip_dates` AT ALL.** AUTO-A3 requires them as struck columns.
+   Driven with a daily trigger and one day declared a skip date, the projection returned that fire
+   completely UNANNOTATED while `SchedulerService._should_run` refuses it — a grid confidently showing
+   a fire that will not happen. Worse than the silence it replaced.
+2. **The date had to be resolved in the JOB's timezone, not the server's.** The scheduler compares
+   `skip_dates` against `datetime.fromtimestamp(now, _job_tz(job))`; the projection used
+   `.astimezone()` (server-local). For an `Asia/Tokyo` job on a UTC host the same instant is a
+   different calendar date, so honouring `skip_dates` against server time would have struck the WRONG
+   column. Fixing (1) without (2) would have shipped a confidently-wrong grid. A test asserts
+   grid/scheduler agreement across UTC, Tokyo and Los Angeles, and a second pins the pre-fix miss.
+
+`GateOutcome.SKIPPED` is a NEW outcome rather than reusing `QUIET`, because the two are different
+promises: a quiet window defers a time of day and may catch up, while a skip date removes a whole day
+and never does. Rendering a struck column as a shaded band would read as "delayed" rather than
+"cancelled". SKIP also wins over QUIET on a cell where both apply — reporting quiet hours for a date
+that is struck anyway sends the user to change the wrong setting.
+
+**`gates.skip_dates` AND the top-level field are both accepted.** §1.1 reserves the key on the unified
+Trigger entity while a legacy `ScheduleJob` carries the list as a field; accepting one would have
+quietly ignored half the triggers. The explicit argument wins when both are present.
+
+**The FE half.** A pure `weekGrid.ts` (placement, folding, labels) + a `WeekGridView.tsx` that draws
+it — the same decision/render split `runDag.ts` uses, so the arithmetic is testable without a DOM.
+Design notes worth keeping:
+
+- **Cells COUNT their fires.** A minutely trigger returns 200 rows (its own cap) that collapse into a
+  few cells; one mark per row would paint 200 identical squares in one hour.
+- **Empty HOURS collapse, empty WEEKS do not.** A 24-row grid where 17 rows are dead makes the user
+  scroll past nothing; but a grid with zero rows reads as broken, so an empty week renders all 24 and
+  the caller shows its own empty state.
+- **Placement compares CALENDAR DATES, not epoch arithmetic.** Adding `i * 86400` drifts an hour across
+  a DST transition and lands a 00:30 fire on the previous day.
+- **Local time is the display contract, with the server's zone captioned when they differ.** The person
+  reading the grid wants to know when THEIR machine sees the fire; a silently renumbered grid would be
+  the worst version of this.
+- **The cap is reported.** `truncated` names the triggers, because a silently partial week reads as an
+  accurate forecast (S65's rule, new surface).
+
+**Three of my own errors, all caught by tooling rather than by reading.** (a) I referenced
+`cell.triggerIds` before it existed on the type — and fixing it properly meant deduping cells on the
+trigger ID rather than the NAME, since nothing forbids two triggers sharing a name. (b) `Button` takes
+children, not an `icon` prop. (c) **The design ratchet (`primitiveAdoption.test.ts`) rejected 168 raw
+button elements as new bespoke chrome.** The `Button` primitive is a sheen-animated pill with no
+`aria-label` — wrong for a 24px heat cell, and 168 would animate on hover. Resolved by making the cell
+a `td` carrying `role="button"` + `tabIndex` + a keyboard handler, so the semantics survive without
+minting chrome; the baseline was NOT raised. Note the scanner is a regex over source text, so a literal
+button tag in a COMMENT also counts.
+
+- **NOT DONE (by scope):** cron-expression triggers are still omitted from the projection (they need
+  the shipped one-fire-at-a-time evaluator; a wrong band is worse than a missing one), and the duty gate
+  is still deliberately unevaluated — it is async and provider-backed, and a calendar's answer for next
+  Thursday is not knowable now. Both are stated in the empty state so the omission is legible.
