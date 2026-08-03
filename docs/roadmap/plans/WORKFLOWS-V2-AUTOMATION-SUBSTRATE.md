@@ -1291,3 +1291,50 @@ whole serialized feed, so a NEW field that forgets to redact fails even before i
 
 Worth stating as a rule: "the caller happens to redact" is not a security property. The projection is
 the boundary, and boundaries defend themselves.
+
+### S85 — The outbound delivery contract: statusUrl, stable event ids, formatting (36 tests) — DONE
+
+**This closes criterion 10**: "a completed-run notification deep-links (statusUrl) to the exact run
+journal row; a retried delivery does not double-ping."
+
+**🔴 `statusUrl` DID NOT EXIST ANYWHERE.** A grep for `statusUrl` or `status_url` across
+`src/personalclaw` returned nothing. A completed-run notification carried a title and a body, so a user
+reading "Nightly digest finished" had no route to the run that produced it — R18's own words: "the
+notification→journal dead end".
+
+`triggers/delivery.py` owns R18's three pieces:
+
+- **`statusUrl`** — `#/workflows/runs/<run_id>`, verified against the live route (`WorkflowsSection`
+  documents it) rather than invented. A fire with no run behind it (a `LEDGER`-weight suppressed or noop
+  fire) falls back to `#/triggers?open=<id>`, because pointing at a nonexistent run would 404. Neither
+  known → `""`, not a bare `#/` that costs the user a click to discover it goes nowhere.
+- **A stable event id, DERIVED not random.** `sha256(trigger|run|attempt)`. A `uuid4()` or a timestamp
+  would be a DIFFERENT id on the retry, which is exactly the double-ping the criterion forbids.
+  `attempt_key` distinguishes a genuine re-fire (which should ping) from a transport retry (which must
+  not).
+- **Destination-aware formatting.** Prefix-matched on `channel:` — the id carries a workspace suffix in
+  practice (`channel:slack:T0123`), so an exact `== "channel:slack"` would send rich blocks to every
+  real Slack destination and render `[object Object]`.
+
+**No second notification path**, as R18 requires. Every function here produces the ARGUMENTS for
+`DashboardState.notify`, which already applies `notification_allowed()` and the per-(source, kind) rule.
+`statusUrl` rides `meta` — the dict `notify` already merges into the note — so it reaches every surface
+without `InboxItem` or the note schema gaining a field, the same seam S51's structured card uses.
+
+Two decisions worth keeping: the event TYPE is two names (`automation.run.succeeded|failed`) rather than
+one with a boolean, because a channel consumer routes on the name and `{"ok": false}` would make "only
+tell me about failures" a body inspection. And the notification KIND is chosen per OUTCOME (`INFO` vs
+`ERROR`) so a failure can escalate past a digest rule while a success cannot — both drawn from
+`notification_kinds` so the user's existing rules apply, since an invented kind matches no rule and
+silently resolves to `immediate`.
+
+**A defect found by RUNNING the module, not reading it.** The first docstring quoted its own grep pattern
+literally — a backslash-pipe alternation inside a non-raw docstring is an invalid escape sequence, and
+Python emitted a `SyntaxWarning` on import. My explanatory note then reintroduced the same escape, which
+turned it into a hard `SyntaxError` under `-W error`. Now stated as prose, with
+`test_the_module_imports_without_a_syntax_warning` as the regression.
+
+**A probe result I nearly mis-read as a defect:** my first redaction check used a fake `sk-ABCDEF…`
+string and reported no redaction. The redactors are correct — that string matches no real credential
+pattern. Verified against `sk-ant-api03-…`, which redacts. Worth recording because "the security control
+did nothing" is exactly the conclusion a bad fixture invites.
