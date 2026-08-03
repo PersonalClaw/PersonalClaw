@@ -1812,7 +1812,7 @@ returns the names to compose but does not yet build the subworkflow spec. `prese
 
 ---
 
-## QUEUE EXHAUSTED — 2026-08-03 (one criterion since closed; see below)
+## QUEUE EXHAUSTED — 2026-08-03 (three criteria since closed; see below)
 
 All **77 of 77** rows are `✅ DONE` with real PR numbers (sections A–I). The autonomous nudge asks for
 "the first session whose status is not DONE"; there is no such row, so steps 1-7 have no subject. The
@@ -1825,12 +1825,23 @@ editing `docs/roadmap/` in a PR." Choosing session 78 would be choosing the prog
 
 **Deferred work already recorded in the plans, for whoever writes the next row:**
 
-1. **The learning HTTP surface — ✅ DONE (#234, "S78").** Shipped as the Learning page + five
-   `/api/learning` routes, closing LEARNING-FLYWHEEL success criterion 1 ("One Proposal Inbox SHOWS
-   all six kinds…"). **Correction to the BLOCKED reasoning above:** declining to INVENT a session was
-   right, but an unmet acceptance criterion of a plan already in the queue is DECLARED work, not new
-   direction — that distinction is what unblocked it. Filed under the plan's criterion rather than a
-   new numbered row, since the criterion is the authority.
+1. **Unmet SUCCESS CRITERIA are declared work, not new scope — three closed since.** The BLOCKED
+   reasoning above was right to refuse INVENTING a session, but wrong as a stopping rule: an unmet
+   acceptance criterion of a plan already in the queue is work the plan itself declares. Filed under
+   the criterion rather than as new numbered rows, because the criterion is the authority.
+
+   | Crit | What was unmet | Closed by | PR |
+   |---|---|---|---|
+   | 1 | One Proposal Inbox showing all six kinds; the model cannot accept its own proposals | Learning page + five `/api/learning` routes + the actor-derived accept gate | #234 |
+   | 4 | The adversarial test must cover the REFINER path | `screen_evidence`/`fenced_evidence` — the refiner path had NO screen and NO fence | #235 |
+   | 5 | The named ambient blocks must fit ONE slot-allocated budget | `learning/ambient.py` — the allocator, the preamble and `context_budget_tokens` were all inert | #236 |
+
+   **Audited and genuinely met (verified by probing, not by reading):** crit 6 (`/api/lessons`
+   consumers — three live routes + the MCP client path), crit 7 (`measure.py` exports per-arm
+   precision, threshold tuning and the trust posterior), crit 8 (staging outcomes + the week panel
+   shipped in #234), crit 9 (`accountability.attribute` + `revert_proposal`), crit 10 (the PER_TURN
+   gate is called from `chat_runner` and refuses restricted sessions). Crit 2 and 3 were closed by
+   their own sessions.
 
 2. **`SESSION_END` / `RUN_END` gate coverage — NOT a gap-fill (corrected 2026-08-03).** S77 pinned
    these two cadences as having zero live callers. Measured afterwards: there is no session-teardown
