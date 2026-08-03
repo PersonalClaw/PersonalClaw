@@ -1830,8 +1830,9 @@ the queue** — declared work, not new scope (see the ruling in the exhausted re
 | S86 | **§3's fire path never existed** — 15 controls, zero live callers, no `service.py` | AUTOMATION-SUBSTRATE §3 (the order) | ✅ DONE (#245) |
 | S87 | **`triggers.json`** — the one store + the cron migration; found the `interval` data-loss bug | AUTOMATION-SUBSTRATE §1 + §6 step 2 | ✅ DONE (#246) |
 | S88 | **`TriggerService.tick`** — the loop's decisions; found the ISO-vs-epoch type seam | AUTOMATION-SUBSTRATE §3 + §3.1 | ✅ DONE (#247) |
+| S89 | **WakeupDispatcher** — inbox + wakeup; found `enqueue` drops idle-session payloads | AUTOMATION-SUBSTRATE §3.2 | ✅ DONE (#248) |
 
-**MOSTLY RESOLVED (S87 + S88) — the STORE and the TICK are built; only DISPATCH/EXECUTION remains.** The claim below that the two are one unbuilt foundation was HALF WRONG: they are separate concerns and the service needs the store, not the reverse. S87 shipped `triggers.json` (#246) and found that the cron migration would have silently retired every interval cron. What remains is the runtime.
+**MOSTLY RESOLVED (S87-S89) — STORE + TICK + DISPATCH are built; only the EXECUTOR remains.** The claim below that the two are one unbuilt foundation was HALF WRONG: they are separate concerns and the service needs the store, not the reverse. S87 shipped `triggers.json` (#246) and found that the cron migration would have silently retired every interval cron. What remains is the runtime.
 
 **Original note, kept for the record —** the STORE and the SERVICE are one unbuilt foundation.**
 S83 found there is no unified trigger store; S86 found there is no `triggers/service.py` and that **every
