@@ -1838,6 +1838,17 @@ the queue** — declared work, not new scope (see the ruling in the exhausted re
 | S94 | **`/api/triggers` surfaces store-only kinds** (file/web_watch/idle/…) via a `store` namespace — closes the present-and-inert gap S92/S93 opened (created + fired but unlistable on the Automations page). List + toggle + run + delete route through S92's `tools.py`; legacy backends untouched | AUTOMATION-SUBSTRATE §6 (additive slice) | ✅ DONE (#256) |
 | S95 | **Automations page shows store triggers** — the FE half of S94: an "Automations" filter tab lists file/web_watch/idle/… triggers, with a `StoreTriggerDetail` inspector for pause/run/dry-run/delete. Closes "implementation owns product too" for S92-S94 — the automation is now visible AND manageable in the UI, not just in chat + the API | AUTOMATION-SUBSTRATE §5 (FE) + crit 2 | ✅ DONE (#257) |
 
+| S96 | **Arm the clock** — a spec→next-fire primitive for all four `CLOCK_KINDS`, wired into boot + the tick. Clears the REAL clock-cutover blocker: a migrated cron was permanently inert (`next_fire_at` empty ⇒ never due), and fixing that exposed a fire storm (a fired cron kept its ELAPSED slot and re-fired it every tick). One-shots now retire via `delete_after_run` instead of holding a past timestamp | AUTOMATION-SUBSTRATE §3.1 (clock cutover step 1) | ✅ DONE (#263) |
+
+**🔴 THE CLOCK CUTOVER'S REAL BLOCKER WAS NOT DOUBLE-FIRE — IT WAS THAT THE TICK COULD NOT ARM A
+CLOCK.** Measured on a real migrated store: `boot()` reported `rearmed: []`, `next_fire_at` stayed
+empty, and `due_ids` returned `[]` forever — a migrated cron reported lossless-and-enabled and could
+never fire. `recompute_from_completion` handled intervals only; `boot_recovery` needs an existing
+fire; `next_after_completion` returned 0.0 for every non-interval kind on the premise that a
+"recurrence engine" owned them, and no such engine existed. S96 is that engine. **The cutover's
+remaining steps (retire `ScheduleService`, re-point the schedule/event API backends, retire the
+`schedule_*` aliases) are now unblocked and sequenced after it** — each a clean break, no dual paths.
+
 **Criterion 2 is now closed create → fire → SEE → manage.** S92 create (chat), S93 fire (poll loop),
 S94 API surface, S95 the Automations page. A user can create "when a file in ~/notes changes…" in
 chat, watch it fire, and find/pause/run/delete it on the Triggers page under the Automations tab —

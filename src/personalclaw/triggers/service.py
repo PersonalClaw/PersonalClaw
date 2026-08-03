@@ -122,6 +122,10 @@ class TickResult:
     next_sleep: float = MAX_SLEEP_SECS
     #: Trigger ids whose `next_fire_at` this tick advanced and persisted.
     rescheduled: list[str] = field(default_factory=list)
+    #: Trigger ids retired this tick — a one-shot that has no next fire. Named rather than silent:
+    #: "it stopped existing" is the one state change a user most needs to see explained, and leaving
+    #: an elapsed `next_fire_at` in place instead would re-fire the same past slot every tick.
+    retired: list[str] = field(default_factory=list)
     #: Set when the store changed under us — the caller should re-read before acting on stale state.
     store_changed: bool = False
 
@@ -135,6 +139,7 @@ class TickResult:
             "ledger_rows": list(self.ledger_rows),
             "next_sleep": self.next_sleep,
             "rescheduled": list(self.rescheduled),
+            "retired": list(self.retired),
             "store_changed": self.store_changed,
             "suppressed": self.suppressed,
         }
@@ -239,15 +244,33 @@ def plan_boot(triggers: list[Trigger], *, now: float) -> list[tuple[str, float, 
     Only ENABLED triggers are planned: a disabled one has no upcoming fire by definition, and
     arming one
     would resurrect it at the next tick.
+
+    **🔴 A trigger with NO `next_fire_at` is ARMED from its spec first (S96).** Measured: a migrated
+    cron lands `enabled=True` with an empty `next_fire_at`, and `boot_recovery` can only RECOVER an
+    existing fire — handed 0.0 it returns 0.0, so the trigger stayed inert forever and `due_ids`
+    never surfaced it. `arm.next_fire` computes the first fire from the spec (cron/interval/at/
+    sequence); recovery then applies its stagger to that. Without this step the whole clock half of
+    the store is present-and-inert, which is why the cutover could not proceed.
     """
+    from personalclaw.triggers.arm import next_fire
     from personalclaw.triggers.scheduling import boot_recovery
 
     out: list[tuple[str, float, str]] = []
     for trigger in triggers:
         if not trigger.enabled:
             continue
+        current = to_epoch(trigger.next_fire_at)
+        if current <= 0:
+            # Nothing to recover — compute the FIRST fire from the spec. An unarmable trigger
+            # (invalid cron, elapsed one-shot, non-clock kind) returns 0.0 and is skipped rather
+            # than being armed to `now`, which would fire a missed appointment immediately.
+            armed = next_fire(trigger, now=now)
+            if armed <= 0:
+                continue
+            out.append((trigger.id, armed, "armed from spec"))
+            continue
         new_at, reason = boot_recovery(
-            next_fire_at=to_epoch(trigger.next_fire_at),
+            next_fire_at=current,
             now=now,
             trigger_id=trigger.id,
             catch_up=bool(getattr(trigger, "catch_up", False)),
@@ -316,19 +339,27 @@ def next_after_completion(trigger: Trigger, *, completed_at: float, now: float) 
     creation grid (so a recompute does not re-phase a 9am job to whenever the last run
     happened to end).
 
-    Returns 0.0 for a non-interval trigger: `cron`/`at`/`sequence` recurrences are the
-    recurrence engine's
-    job, and guessing one here would compete with it.
+    **🔴 EVERY clock kind reschedules here now (S96).** This returned 0.0 for
+    `cron`/`at`/`sequence` on the premise that "the recurrence engine" owned them — but no
+    such engine existed, so measured: a cron fired once and then kept `next_fire_at` at its
+    ELAPSED slot, which every later tick read as still-due. Not merely inert: a fire storm on
+    one past slot. `arm.next_fire` is the one recurrence computation (spec → next fire) and it
+    owns all four kinds, so there is no second path to disagree with. A `cron` recomputes from
+    ITS OWN expression (never from completion, which would drift a 9am job later every day);
+    an `interval` keeps §3.1's completion-anchored rule.
     """
+    from personalclaw.triggers.arm import next_fire
     from personalclaw.triggers.scheduling import recompute_from_completion
 
     interval = _interval_secs(trigger)
-    if interval <= 0:
-        return 0.0
-    anchor = _created_at(trigger) or now
-    return recompute_from_completion(
-        interval_secs=interval, created_at=anchor, completed_at=completed_at
-    )
+    if interval > 0:
+        anchor = _created_at(trigger) or now
+        return recompute_from_completion(
+            interval_secs=interval, created_at=anchor, completed_at=completed_at
+        )
+    # cron / at: the spec decides. `at` correctly yields 0.0 once elapsed — a one-shot has no next
+    # fire, and `delete_after_run` retires the row.
+    return next_fire(trigger, now=max(now, completed_at))
 
 
 async def tick(
@@ -375,10 +406,27 @@ async def tick(
         # twice, and
         # a double-fire is the one failure a user cannot undo.
         advanced = next_after_completion(trigger, completed_at=now, now=now)
-        if advanced > 0 and persist:
-            trigger.next_fire_at = to_iso(advanced)
-            store.upsert(trigger)
-            result.rescheduled.append(trigger.id)
+        if persist:
+            if advanced > 0:
+                trigger.next_fire_at = to_iso(advanced)
+                store.upsert(trigger)
+                result.rescheduled.append(trigger.id)
+            else:
+                # 🔴 A trigger with no next fire is RETIRED here, never left holding its elapsed
+                # `next_fire_at`. Measured: a one-shot `at` kept the past timestamp, so EVERY later
+                # tick read it as still-due and re-fired it — a storm on a single past slot, not
+                # merely an inert row. `delete_after_run` (declared in the clock spec, defaulting
+                # True for a migrated `at`, and until now consumed by nothing) decides which:
+                # delete the row, or clear the fire and disable so it stays visible in the UI.
+                spec = trigger.spec if isinstance(trigger.spec, dict) else {}
+                if bool(spec.get("delete_after_run", False)):
+                    store.delete(trigger.id)
+                    result.retired.append(trigger.id)
+                else:
+                    trigger.next_fire_at = ""
+                    trigger.enabled = False
+                    store.upsert(trigger)
+                    result.retired.append(trigger.id)
 
         ctx = fp.FireContext(
             trigger_id=trigger.id,
