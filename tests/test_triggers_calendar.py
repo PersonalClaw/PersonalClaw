@@ -14,7 +14,8 @@ session's scope, and the wrap semantics are preserved verbatim across it.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -574,6 +575,157 @@ def test_a_trigger_with_no_recurrence_projects_nothing():
     assert project_occurrences(
         trigger_id="t", trigger_name="x", interval_secs=60, first_fire_at=0, start=MONDAY
     ) == ([], False)
+
+
+# ── skip dates: AUTO-A3's struck columns (S81) ──
+
+
+def _daily(**over):
+    """A daily projection over one week, from MONDAY."""
+    kwargs = dict(
+        trigger_id="t",
+        trigger_name="Nightly",
+        interval_secs=86400,
+        first_fire_at=MONDAY.timestamp(),
+        start=MONDAY,
+        days=7,
+    )
+    kwargs.update(over)
+    return project_occurrences(**kwargs)
+
+
+def test_a_skip_date_is_struck_not_silently_fired():
+    """🔴 The measured gap: `project_occurrences` did not read `skip_dates` at ALL.
+
+    AUTO-A3 requires skip dates to render as struck columns. Driven with a daily trigger and one day
+    declared a skip date, the projection returned that fire completely UNANNOTATED while
+    `SchedulerService._should_run` would refuse it — a grid confidently showing a fire that will not
+    happen.
+    """
+    day = (MONDAY + timedelta(days=2)).strftime("%Y-%m-%d")
+    occurrences, _ = _daily(skip_dates=[day])
+    struck = [o for o in occurrences if o.suppressed_by == GateOutcome.SKIPPED.value]
+    assert len(struck) == 1
+    assert struck[0].reason == f"skip date {day}"
+    # And nothing else moved: the other six fires are untouched.
+    assert len([o for o in occurrences if not o.suppressed_by]) == 6
+
+
+def test_the_grid_agrees_with_the_scheduler_about_the_calendar_date():
+    """The two halves had to land together, and this is why.
+
+    `SchedulerService` resolves the date through `_job_tz(job)` — the JOB's timezone — while the
+    projection converted with `.astimezone()`, the SERVER's. For an `Asia/Tokyo` job on a UTC host
+    the same instant is a different calendar date, so honouring `skip_dates` against server time
+    would have struck the WRONG column: a grid that is confidently wrong, which is worse than one
+    that was merely silent.
+    """
+    # 21:30 UTC is the 5th in UTC and the 6th in Tokyo.
+    inst = datetime(2026, 8, 5, 21, 30, tzinfo=timezone.utc)
+    start = datetime.fromtimestamp(inst.timestamp() - 3600)
+    for tz_name in ("UTC", "Asia/Tokyo", "America/Los_Angeles"):
+        job_date = datetime.fromtimestamp(inst.timestamp(), ZoneInfo(tz_name)).strftime("%Y-%m-%d")
+        occurrences, _ = project_occurrences(
+            trigger_id="t",
+            trigger_name="x",
+            interval_secs=86400,
+            first_fire_at=inst.timestamp(),
+            start=start,
+            days=3,
+            skip_dates=[job_date],
+            tz_name=tz_name,
+        )
+        first = [o for o in occurrences if abs(o.at - inst.timestamp()) < 1]
+        assert first, f"no fire projected at the instant under test for {tz_name}"
+        assert (
+            first[0].suppressed_by == GateOutcome.SKIPPED.value
+        ), f"{tz_name}: the grid did not strike the date the scheduler skips"
+
+
+def test_a_skip_date_read_in_server_time_would_miss_a_foreign_zone():
+    """The pre-fix failure mode, pinned so the tz argument cannot be quietly dropped.
+
+    With no `tz_name`, a Tokyo job's own skip date does NOT match — the server's calendar date for
+    that instant is the previous day. This is the exact silent miss the paired fix prevents.
+    """
+    inst = datetime(2026, 8, 5, 21, 30, tzinfo=timezone.utc)
+    tokyo_date = datetime.fromtimestamp(inst.timestamp(), ZoneInfo("Asia/Tokyo")).strftime(
+        "%Y-%m-%d"
+    )
+    occurrences, _ = project_occurrences(
+        trigger_id="t",
+        trigger_name="x",
+        interval_secs=86400,
+        first_fire_at=inst.timestamp(),
+        start=datetime.fromtimestamp(inst.timestamp() - 3600),
+        days=3,
+        skip_dates=[tokyo_date],
+        tz_name="",  # server-local
+    )
+    first = [o for o in occurrences if abs(o.at - inst.timestamp()) < 1]
+    assert first
+    # Only meaningful when the host is not already on Tokyo time; CI runs UTC.
+    server_date = datetime.fromtimestamp(inst.timestamp()).strftime("%Y-%m-%d")
+    if server_date != tokyo_date:
+        assert first[0].suppressed_by != GateOutcome.SKIPPED.value
+
+
+def test_a_skip_date_wins_over_a_quiet_window():
+    """Both suppress the fire, but they are different promises.
+
+    A quiet window defers a time of day and may catch up; a skip date removes the whole day and
+    never does. Reporting "quiet hours" for a date that is struck anyway would send the user to
+    change the wrong setting.
+    """
+    day = (MONDAY + timedelta(days=1)).strftime("%Y-%m-%d")
+    occurrences, _ = _daily(
+        skip_dates=[day],
+        gates={"quiet_hours": {"start": "00:00", "end": "23:59"}},
+    )
+    on_day = [o for o in occurrences if datetime.fromtimestamp(o.at).strftime("%Y-%m-%d") == day]
+    assert on_day
+    assert on_day[0].suppressed_by == GateOutcome.SKIPPED.value
+    assert "skip date" in on_day[0].reason
+
+
+def test_skip_dates_are_read_from_gates_too():
+    """§1.1 reserves `gates.skip_dates` on the unified Trigger entity, while a legacy `ScheduleJob`
+    carries the list as a top-level field. Accepting only one would have quietly ignored half the
+    triggers."""
+    day = (MONDAY + timedelta(days=3)).strftime("%Y-%m-%d")
+    occurrences, _ = _daily(gates={"skip_dates": [day]})
+    assert any(o.suppressed_by == GateOutcome.SKIPPED.value for o in occurrences)
+
+
+def test_the_explicit_argument_beats_the_gates_key():
+    """One trigger cannot have two skip lists; the explicit field is the caller's answer."""
+    explicit = (MONDAY + timedelta(days=1)).strftime("%Y-%m-%d")
+    in_gates = (MONDAY + timedelta(days=4)).strftime("%Y-%m-%d")
+    occurrences, _ = _daily(skip_dates=[explicit], gates={"skip_dates": [in_gates]})
+    struck = {
+        datetime.fromtimestamp(o.at).strftime("%Y-%m-%d")
+        for o in occurrences
+        if o.suppressed_by == GateOutcome.SKIPPED.value
+    }
+    assert struck == {explicit}
+
+
+def test_malformed_skip_dates_never_break_the_projection():
+    """A trigger with a typo'd date still has real fires, and a grid that 500s shows nothing."""
+    occurrences, _ = _daily(skip_dates=["", "  ", "not-a-date", None])  # type: ignore[list-item]
+    assert len(occurrences) == 7
+    assert not any(o.suppressed_by for o in occurrences)
+
+
+def test_an_unparseable_timezone_falls_back_instead_of_raising():
+    occurrences, _ = _daily(tz_name="Mars/Olympus_Mons")
+    assert len(occurrences) == 7
+
+
+def test_skipped_is_a_distinct_gate_outcome():
+    """Not folded into QUIET: the UI colours them differently because they mean different things."""
+    assert GateOutcome.SKIPPED.value == "skipped"
+    assert GateOutcome.SKIPPED.value != GateOutcome.QUIET.value
 
 
 # ── automation doctor (§7 criterion 12) ──

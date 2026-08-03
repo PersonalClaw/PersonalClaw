@@ -1812,6 +1812,34 @@ returns the names to compose but does not yet build the subworkflow spec. `prese
 
 ---
 
+## POST-QUEUE WORK (criteria + acceptance bars the 91 rows did not cover)
+
+The 91 rows are `✅ DONE`. Four sessions since then closed **acceptance criteria of plans already in
+the queue** — declared work, not new scope (see the ruling in the exhausted record below).
+
+| Session | What was unmet | Plan / bar | PR |
+|---|---|---|---|
+| S78 | One Proposal Inbox showing six kinds; the model cannot accept its own proposals | LEARNING-FLYWHEEL crit 1 | ✅ DONE (#234) |
+| S79 | The adversarial test must cover the REFINER path | LEARNING-FLYWHEEL crit 4 | ✅ DONE (#235) |
+| S80 | The named ambient blocks must fit ONE slot-allocated budget | LEARNING-FLYWHEEL crit 5 | ✅ DONE (#236) |
+| S81 | The Automations **Week tab** (the endpoint's other half) | AUTOMATION-SUBSTRATE AUTO-A3 | ✅ DONE (#240) |
+
+### 🔴 The stacked-merge incident (2026-08-03) — resolved by #239
+
+Every PR from #223–#236 went green and reported **merged** — into its own **stacked base branch**, not
+into `main`. `origin/main` stayed at #222 (S68) while twelve sessions (S69–S80) sat only on those base
+branches. The bases were then deleted as "merged" (true of the PR, false of `main`), leaving the work
+only in the local object store.
+
+**Nothing was lost.** PR #239 replays the 13 commits `main` lacked, cherry-picked in lineage order onto
+current `main`; the resulting tree is **byte-identical** to the original stack tip (`da423978460c`),
+proving a faithful replay. The eleven commits already on `main` as squashes (S61h–S68) were skipped —
+which is why a naive `merge-tree` of the old tip reported nine conflicts and #239 reports none. `main`
+was NOT force-pushed; the recovery lands as an ordinary fast-forward.
+
+**The check that would have caught it** is `git merge-base --is-ancestor <branch> origin/main`, not the
+PR's merged flag or `mergeStateStatus: CLEAN`. Branch cleanup is now gated on the former.
+
 ## QUEUE EXHAUSTED — 2026-08-03 (three criteria since closed; see below)
 
 All **77 of 77** rows are `✅ DONE` with real PR numbers (sections A–I). The autonomous nudge asks for
