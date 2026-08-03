@@ -568,3 +568,65 @@ is how a rewrite loses the semantics a rename would have kept.
 - **NOT DONE (by scope):** the service loop itself, the store (`triggers.json` arrives with the service
   that owns its lock), dispatch/inbox+wakeup (§3.2, session 64), the event-bus contract (§3.3), and the
   cron migration (session 66) — which must use S62's `LEGACY_FIELD_MAP`.
+
+### S64 — Dispatch (inbox + wakeup) and the event-bus delivery contract (45 tests) — DONE
+
+**A shipped silent drop, reproduced before anything was written.** `event_triggers._schedule_fire`
+records the fire, then calls `asyncio.get_running_loop()` and `return`s when there is none. Driven
+against a real store in a sync context: `fire_count` becomes **1** and the action is **dropped with
+nothing anywhere recording that it did not run**. That is exactly the silent drop §1.3 bans, in
+shipped code — the plan calls it "the verified sync-CLI silent-skip" and it is verified now. The
+reproduction is pinned as a test, so the spool cannot be removed without a failure showing why it
+existed.
+
+`trigger-spool.jsonl` is the fix, and its shape follows from the failure modes:
+
+- **JSONL, append-only.** A partial write at power-loss damages one line; a single JSON array would
+  lose every spooled fire to one truncated write. `drain_spool` skips a damaged line and reports the
+  count rather than refusing the file.
+- **Draining does NOT truncate.** Peek-then-deliver-then-ack applied to the spool — truncating on read
+  would lose every spooled fire to a crash during handling, which is the same bug one layer up.
+- **`clear_spool` keeps what arrived DURING the drain.** That window is exactly when a busy machine
+  spools most, so an unconditional truncate drops the fires it was busiest producing.
+- **A spool write failure does not break the caller.** The event is lost, but the memory write that
+  triggered it still succeeds; the opposite trade would let an unwritable disk take down ordinary use.
+
+The delivery contract, each rule with the failure it prevents:
+
+- **The cursor advances only on CONSUMED events.** `delivered` → consume. `permanent` → consume
+  loudly, because holding a bad payload forever is a poison pill that stalls every later event.
+  `transient` → HOLD (the event is not lost; the next tick retries), until a bounded budget, then GIVE
+  UP loudly — holding indefinitely on one unreachable provider would stop every other automation,
+  which is worse than one loudly-dropped event.
+- **An unclassified throw is TRANSIENT, not permanent.** A handler that raised on a network blip must
+  be retried; treating an unclassified exception as permanent turns a recoverable failure into data
+  loss. A handler that explicitly reports `permanent` is believed — it knows something the dispatcher
+  cannot see.
+- **The cursor is monotonic per (trigger, stream)** and `advance` refuses to move backwards, which is
+  what stops enabling one trigger from replaying a month of history. Advancing resets the held-retry
+  count, because a carried-over count would give the next event a shorter budget than the first.
+- **Deterministic `event_id` from a sorted-key payload hash.** `json.dumps` preserves insertion order,
+  so an unsorted hash would differ for two dicts with identical content — defeating the dedup window
+  exactly when it matters, on a sender retrying with a re-serialized body. Verified: same id across key
+  order AND across seq.
+- **`is_duplicate` reads and does not mutate.** The caller records the hash only after deciding to
+  process, so a crash between the check and the work leaves the event deliverable; marking inside the
+  check would make dedup itself a source of dropped events.
+- **`RESUME` is never droppable.** A `wake` may be skipped when the session is busy (the run in flight
+  drains the inbox — that IS `overlap: skip`, and what autonudge already does for a mid-turn nudge),
+  but a resume carries a gate answer for a parked run, and a guard that ate it would strand the run
+  forever waiting for an answer the user already gave. An unknown kind is treated as droppable so a bad
+  value cannot pin a busy session.
+- **The cycle guard reads `spawned_by`, not a depth counter.** Depth catches the hook-recursion storm
+  one level late, and by then a mutating automation has already made one unwanted write.
+- **Coalescing keeps the LATEST of a family**, not the first: for a `FileChanged` burst, acting on the
+  first means reading a file the user has since changed again. Events an hour apart are two facts, not
+  a burst.
+- **Delivery state is PER TARGET.** One fire can have several (notify AND inbox); a single status makes
+  "delivered" mean "delivered somewhere", which a user reads as "it worked" when half of it did not. A
+  dispatch with NO targets is not delivered — correct for `delivery: none`, a bug for anything else, so
+  the honest answer is False and the caller decides.
+
+- **NOT DONE (by scope):** the loop that drains the spool and the queue (that is the service), the
+  missed-fire review card (§3.4, session 65), foreground yield and resource slots (§3.5), budgets and
+  triage (§3.6), and the migration (66, which must use S62's `LEGACY_FIELD_MAP`).
