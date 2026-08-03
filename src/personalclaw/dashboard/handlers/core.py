@@ -560,6 +560,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # Capped at MAX_LEASE_SECS (1h) — the ceiling `pool.Lease.expires_at` clamps to. Accepting a
     # larger number here would store a week-long lease that the runtime silently shortens.
     "workflows.lease_ttl_secs": {"type": "int", "min": 30, "max": 3600},
+    # AUTO-A1/A2 (S70) gate defaults. Strings rather than enums: a quiet window is an `HH:MM-HH:MM`
+    # range and a duty gate is a provider name an app can supply, so neither has a closed value set
+    # the API could check. `triggers.calendar.parse_default_window` validates the format and treats
+    # an unparseable value as NO default — the fail-safe reading, since a malformed window that
+    # accidentally matched all day would look exactly like a broken scheduler.
+    "workflows.default_quiet_windows": {"type": "str", "max_len": 64},
+    "workflows.duty_gate_default": {"type": "str", "max_len": 64},
     # LEARNING-FLYWHEEL capture: the knobs worth changing without a restart. The
     # evidence floor and the session-score threshold are how an owner tunes how
     # eagerly the system learns, and staging can be turned off if the log is

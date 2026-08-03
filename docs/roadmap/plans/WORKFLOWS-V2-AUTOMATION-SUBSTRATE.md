@@ -975,3 +975,76 @@ Decisions, each with the failure it prevents:
   call site will use, and the criterion is proven against it today. The webhook/file ingestion
   boundaries also do not screen yet — they have no trigger-sourced entry point until the
   `trigger_source` provider seam (AUTO-A4) lands.
+
+### S70 — Quiet windows, the duty-gate seam, the week grid, `automation doctor` (120 tests) — DONE
+
+`gates.quiet_hours` has been a RESERVED key with no semantics since S62 — declared in `GATE_KEYS`,
+accepted by validation, consulted by NOTHING. AUTO-A1's job was to give it meaning; AUTO-A2 adds the
+duty gate beside it.
+
+**Measured first: there was already a quiet-window matcher.** `providers/entity_routes._in_quiet_window`
+gets the hard part right (a window may wrap midnight; a zero-length window never matches) but is
+notification-scoped and cannot express what AUTO-A1 needs — no day-of-week, one window per call,
+server-local minutes with no timezone, and a bare bool with no catch-up-or-skip resolution. So the
+wrap SEMANTICS are preserved verbatim and asserted identical across all 48 half-hours of the day
+(`test_wrap_semantics_match_the_shipped_notification_matcher`): two different answers to "is 23:00
+inside 22:00→08:00" on one machine would be a bug nobody could explain.
+
+Decisions, each with the failure it prevents:
+
+- **A quiet window SUPPRESSES; it does not cancel.** `quiet_resolution` is per-trigger because a single
+  hard-coded choice is wrong for half of all automations — a nightly backup wants catch-up, a team-channel
+  post wants skip, and guessing produces either a 3am Slack message or a backup that silently never ran.
+  **`skip` is the default** because it is the reversible one.
+- **A catch-up is computed from the window's END, never "now + an hour".** A catch-up scheduled from
+  inside a 10-hour window lands back inside it and never happens — the single most likely bug here, so
+  the function returns a concrete instant and a test asserts the landing is outside.
+- **The day check applies to the day the window STARTED on.** For a Friday-night 22:00→08:00 band,
+  02:00 Saturday is still inside it; reading the Saturday date would end the suppression at midnight,
+  which is not what "Friday night" means to anyone.
+- **An invalid window is DROPPED with an issue**, never promoted to "suppress everything" — a malformed
+  band that accidentally matched all day would look exactly like a broken scheduler. `parse_hhmm`
+  returns None rather than defaulting to midnight for the same reason.
+- **The duty gate FAILS OPEN on every path** — unknown provider, raising provider, timeout — and only
+  an explicit `on_duty=False` suppresses. §1.4 classifies it fail-open because it calls OUT to a
+  provider: uninstalling a calendar app must not silently stop every automation that referenced it.
+  Time-boxed at 2s since it runs on EVERY fire, and LLM-free by contract.
+- **The built-in `manual` gate defaults to ON-duty.** It ships enabled-by-name in core, so defaulting
+  to off-duty would silence every automation of anyone who named it without setting the flag.
+- **The `duty_gate` provider type + `DutyGateTypeHandler` land in the SAME commit** (the #47 rule),
+  and registration REFUSES a provider without an async `on_duty` — a gate that registers and then
+  fails on every fire fails OPEN, so the automation runs unfiltered, which is the opposite of what its
+  author asked for. Catching the shape at install turns that into an error.
+- **The week grid ANNOTATES suppressed slots rather than filtering them.** A grid that hid them would
+  show a schedule the user does not have, and explaining why a trigger is *not* firing is the whole
+  point of the view. Capped at 200/trigger with the capped ids NAMED — a 1-minute trigger is 10,080
+  fires a week, and a silently partial week reads as an accurate forecast (S65's rule, new surface).
+  The duty gate is deliberately NOT evaluated there: asking a calendar app about next Thursday 200
+  times would be both slow and meaningless.
+- **`automation doctor` reports six findings, each invisible at runtime:** the two §7 criterion 12
+  names by hand (orphaned workflow ref, broad watch glob) plus quiet windows covering all 168 hours,
+  an invalid window (so the user believes they are protected when they are not), `catch_up` with no
+  window, and an unregistered duty gate (which fails open, so the trigger runs UNFILTERED). Every
+  finding carries a `fix` — a doctor that reports problems without saying what to do is a list of
+  complaints users learn to ignore. `known_workflows=None` means "cannot verify" and suppresses the
+  orphan check rather than reporting every reference as broken.
+
+**Two things measurement corrected mid-session.** (1) `BROAD_GLOB_SEGMENTS` was 2, which flagged
+`~/projects/**` — a perfectly reasonable scope for someone who keeps all their work in one directory.
+One segment is the honest line: it catches `~/**` and `/**` and leaves any named directory alone.
+(2) A resolution-only block (`{"resolution": "catch_up"}`) was parsed as one malformed window, so the
+doctor reported a spurious `invalid_quiet_window` on top of the real finding — two complaints for one
+mistake, with the wrong one first.
+
+**DEVIATION — `AutomationConfig` does not exist.** §5 assumes it; there is no automation or triggers
+config section in `loader.py`. The two gate defaults (`default_quiet_windows`, `duty_gate_default`)
+are wired into `WorkflowsConfig` instead, which already owns the trigger-adjacent engine knobs — all
+four config points plus the S61k "fifth point" resolver, so the values are actually read. The config
+form is a compact `HH:MM-HH:MM` string rather than JSON, because this is a Settings text field; an
+unparseable value means NO default (fail-safe). A trigger's own setting always wins, and an explicitly
+EMPTY value counts as a setting — someone who cleared their quiet hours meant to clear them.
+
+- **NOT DONE (by scope):** the FE Week tab. AUTO-A1 says the grid "extends Session 8 (FE Automations
+  page)", and this session built the endpoint + projection it consumes; the tab itself is that
+  session's work. The gates are also not yet called from the fire path — that is the scheduler's
+  `is_due` seam, and `evaluate_quiet`/`evaluate_duty` are written as the pure decisions it will apply.

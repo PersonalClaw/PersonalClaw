@@ -880,6 +880,130 @@ async def api_trigger_history_detail(request: web.Request) -> web.Response:
     return web.json_response({"run": _redact_run(run)})
 
 
+async def api_triggers_week(request: web.Request) -> web.Response:
+    """GET /api/triggers/week — the week-grid projection, from `?start=` (AUTO-A1 — S70).
+
+    Read-only, and NO store changes: every occurrence is computed from the recurrence the trigger
+    already carries. Quiet windows come back as ANNOTATIONS on each slot rather than as filters — a
+    grid that hid suppressed fires would show a schedule the user does not have, and explaining why
+    a trigger is not firing when they expect it to is the whole point of the view.
+
+    The duty gate is deliberately NOT evaluated. It is async, provider-backed, and answers about a
+    moment in time; asking a calendar app about next Thursday 200 times would be both slow and
+    meaningless.
+    """
+    from datetime import datetime, timedelta
+
+    from personalclaw.triggers.calendar import project_occurrences
+
+    state: DashboardState = request.app["state"]
+    raw_start = (request.query.get("start") or "").strip()
+    try:
+        start = datetime.fromisoformat(raw_start) if raw_start else datetime.now()
+    except ValueError:
+        return web.json_response({"error": "start must be an ISO date"}, status=400)
+    try:
+        days = max(1, min(int(request.query.get("days", "7")), 31))
+    except ValueError:
+        return web.json_response({"error": "days must be an integer"}, status=400)
+
+    occurrences: list[dict[str, Any]] = []
+    truncated: list[str] = []
+    for job in state.crons.list_jobs(include_disabled=True):
+        if not job.enabled:
+            # Only enabled triggers are plotted: a disabled one has no fires, and drawing them
+            # would make the grid a wish list rather than a forecast.
+            continue
+        schedule = getattr(job, "schedule", None)
+        interval = float(getattr(schedule, "every_secs", 0) or 0)
+        if interval <= 0:
+            # `cron`/`at` recurrences need the shipped evaluator, which answers one fire at a time;
+            # the interval kinds are what this projection covers today. A cron trigger is omitted
+            # rather than mis-plotted — a wrong band is worse than a missing one here.
+            continue
+        first = float(getattr(job, "last_run_ts", 0) or getattr(job, "created_ts", 0) or 0)
+        rows, cut = project_occurrences(
+            trigger_id=f"{_SCHEDULE}:{job.id}",
+            trigger_name=job.name,
+            interval_secs=interval,
+            first_fire_at=first,
+            start=start,
+            days=days,
+            gates=getattr(job, "gates", None) or {},
+        )
+        occurrences.extend(row.to_dict() for row in rows)
+        if cut:
+            truncated.append(f"{_SCHEDULE}:{job.id}")
+
+    from personalclaw.schedule import get_local_tz
+
+    tz_name, _ = get_local_tz()
+    return web.json_response(
+        {
+            "start": start.isoformat(),
+            "end": (start + timedelta(days=days)).isoformat(),
+            "server_tz": tz_name,
+            "occurrences": occurrences,
+            # Named rather than a bare bool: "some trigger was capped" is not actionable, and a grid
+            # that silently showed a partial week would read as an accurate forecast.
+            "truncated": truncated,
+        }
+    )
+
+
+async def api_triggers_doctor(request: web.Request) -> web.Response:
+    """GET /api/triggers/doctor — structural problems across every trigger (§7 criterion 12).
+
+    Every finding here is invisible at runtime: the trigger looks configured and behaves differently
+    than its author intended. An orphaned workflow ref fires and fails forever; a broad watch glob
+    fires on everything the user owns; an unknown duty gate fails OPEN, so the automation runs
+    unfiltered — the opposite of what its author asked for.
+    """
+    from personalclaw.triggers.calendar import diagnose
+
+    state: DashboardState = request.app["state"]
+
+    known_workflows: set[str] | None = None
+    try:
+        from personalclaw.workflows import service as _wf
+
+        # `list_defs` is ASYNC and returns `{"defs": [ {...dict...} ]}` — not objects. Measured:
+        # a `{d.name for d in ...}` comprehension over the coroutine fails into the except below,
+        # which would silently suppress the orphan check rather than report it.
+        listing = await _wf.list_defs()
+        known_workflows = {
+            str(d.get("name")) for d in (listing.get("defs") or []) if isinstance(d, dict)
+        }
+    except Exception:
+        # None means "cannot verify", which suppresses the orphan check rather than reporting every
+        # reference as broken. A doctor that cries wolf when it cannot read the registry is worse
+        # than one that stays quiet about that dimension.
+        logger.debug("doctor: workflow defs unavailable", exc_info=True)
+
+    rows: list[dict[str, Any]] = []
+    for job in state.crons.list_jobs(include_disabled=True):
+        rows.append(
+            {
+                "id": f"{_SCHEDULE}:{job.id}",
+                "gates": getattr(job, "gates", None) or {},
+                "workflow": getattr(job, "workflow", None) or {},
+                "spec": {"glob": getattr(job, "watch_glob", "") or ""},
+            }
+        )
+    for trigger in _event_store().load():
+        rows.append(
+            {
+                "id": f"{_EVENT}:{trigger.id}",
+                "gates": {},
+                "workflow": {},
+                "spec": {"glob": trigger.key_glob or ""},
+            }
+        )
+
+    report = diagnose(rows, known_workflows=known_workflows)
+    return web.json_response(report.to_dict())
+
+
 async def api_trigger_history_all(request: web.Request) -> web.Response:
     """GET /api/triggers/history — cross-trigger run index (schedule runs)."""
     state: DashboardState = request.app["state"]
@@ -903,6 +1027,10 @@ def register_trigger_routes(app: web.Application) -> None:
     app.router.add_post("/api/triggers", api_trigger_create)
     app.router.add_get("/api/triggers/variables", api_trigger_variables)
     app.router.add_get("/api/triggers/history", api_trigger_history_all)
+    # Registered BEFORE `/{id}` so aiohttp does not capture the literal segments as trigger ids —
+    # the ordering landmine S67 already paid for with `/surfacing`.
+    app.router.add_get("/api/triggers/week", api_triggers_week)
+    app.router.add_get("/api/triggers/doctor", api_triggers_doctor)
     app.router.add_put("/api/triggers/{id}", api_trigger_detail)
     app.router.add_delete("/api/triggers/{id}", api_trigger_detail)
     app.router.add_post("/api/triggers/{id}/toggle", api_trigger_toggle)

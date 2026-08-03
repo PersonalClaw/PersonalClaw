@@ -1854,6 +1854,26 @@ class WorkflowsConfig:
             "whereas a long lease only delays discovering that it is not. Capped at one hour.",
         ),
     )
+    default_quiet_windows: str = field(
+        default="",
+        metadata=_meta(
+            "Default Quiet Hours",
+            "A quiet window applied to new automations that do not set their own, as "
+            "`HH:MM-HH:MM` (e.g. `22:00-08:00`). Empty means no default — an automation you "
+            "created deliberately should run when you told it to, so this only fills a gap you "
+            "left. A window may wrap midnight. Per-trigger settings always win.",
+        ),
+    )
+    duty_gate_default: str = field(
+        default="",
+        metadata=_meta(
+            "Default Duty Gate",
+            "The is-the-user-on-duty check applied to new automations that name none. Empty "
+            "means no gate. `manual` is the built-in on/off toggle; apps can supply others (a "
+            "calendar, for instance). The gate always fails OPEN — if it cannot answer, the "
+            "automation still fires, so a broken calendar app can never silence everything.",
+        ),
+    )
 
     def lane_caps(self) -> dict[str, int]:
         """Per-lane admission caps for the frontier (WF2-R21). `compute` is unmetered —
@@ -3000,6 +3020,10 @@ class AppConfig:
                     workflows_data.get("confirmation_ttl_secs", 7 * 24 * 3600), 7 * 24 * 3600
                 ),
                 lease_ttl_secs=_safe_int(workflows_data.get("lease_ttl_secs", 900), 900),
+                default_quiet_windows=str(
+                    workflows_data.get("default_quiet_windows", "") or ""
+                ).strip(),
+                duty_gate_default=str(workflows_data.get("duty_gate_default", "") or "").strip(),
             ),
             learning=LearningConfig(
                 enabled=bool(learning_data.get("enabled", True)),

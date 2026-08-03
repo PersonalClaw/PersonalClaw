@@ -518,3 +518,132 @@ def test_the_facade_has_no_remaining_parity_gaps(state, event_store):
             if resp.status != 400:
                 support[kind].add(op)
     assert parity_report(support) == {}
+
+
+# ── S70: the week grid + automation doctor (AUTO-A1, §7 criterion 12) ──
+
+
+def _every_job(job_id, name, *, interval=3600, gates=None, workflow=None, glob="", enabled=True):
+    from datetime import datetime
+
+    from personalclaw.schedule import ScheduleDefinition, ScheduleJob, make_agent_action
+
+    job = ScheduleJob(
+        id=job_id,
+        name=name,
+        action=make_agent_action(message="x"),
+        schedule=ScheduleDefinition(kind="every", every_secs=interval),
+        created_ts=datetime(2024, 1, 1).timestamp(),
+        enabled=enabled,
+    )
+    job.gates = gates or {}
+    job.workflow = workflow or {}
+    job.watch_glob = glob
+    return job
+
+
+def test_week_grid_annotates_suppressed_slots(state):
+    """A grid that HID suppressed fires would show a schedule the user does not have."""
+    state.crons.list_jobs.return_value = [
+        _every_job("j1", "Hourly", gates={"quiet_hours": {"start": "22:00", "end": "08:00"}})
+    ]
+    req = _req("GET", "/api/triggers/week", state, query="start=2024-01-01&days=1")
+    resp = _run(T.api_triggers_week(req))
+    assert resp.status == 200
+    body = _body(resp)
+    assert len(body["occurrences"]) == 24
+    suppressed = [o for o in body["occurrences"] if o["suppressed_by"] == "quiet"]
+    assert len(suppressed) == 10 and all(o["reason"] for o in suppressed)
+    assert body["truncated"] == []
+
+
+def test_week_grid_omits_disabled_and_cron_triggers(state):
+    """A disabled trigger has no fires; a cron recurrence needs the shipped evaluator.
+
+    Omitting the cron kind is deliberate — a wrong band is worse than a missing one on a forecast.
+    """
+    from personalclaw.schedule import ScheduleDefinition, ScheduleJob, make_agent_action
+
+    cron = ScheduleJob(
+        id="j2",
+        name="Cron",
+        action=make_agent_action(message="y"),
+        schedule=ScheduleDefinition(kind="cron", cron_expr="0 9 * * *"),
+    )
+    state.crons.list_jobs.return_value = [
+        _every_job("j1", "Hourly"),
+        _every_job("j3", "Off", enabled=False),
+        cron,
+    ]
+    body = _body(
+        _run(T.api_triggers_week(_req("GET", "/api/triggers/week", state, query="days=1")))
+    )
+    assert {o["trigger_name"] for o in body["occurrences"]} == {"Hourly"}
+
+
+def test_week_grid_reports_which_triggers_were_capped(state):
+    """Named, not a bare bool: "some trigger was capped" is not actionable, and a silently partial
+    week reads as an accurate forecast."""
+    state.crons.list_jobs.return_value = [_every_job("j1", "Minutely", interval=60)]
+    body = _body(
+        _run(T.api_triggers_week(_req("GET", "/api/triggers/week", state, query="days=7")))
+    )
+    assert body["truncated"] == ["schedule:j1"]
+
+
+def test_week_grid_rejects_a_bad_start(state):
+    state.crons.list_jobs.return_value = []
+    resp = _run(T.api_triggers_week(_req("GET", "/api/triggers/week", state, query="start=nope")))
+    assert resp.status == 400
+
+
+def test_week_grid_bounds_the_window(state):
+    """31 days max: an unbounded `days` is a cheap way to make the endpoint slow."""
+    state.crons.list_jobs.return_value = [_every_job("j1", "Hourly")]
+    body = _body(
+        _run(T.api_triggers_week(_req("GET", "/api/triggers/week", state, query="days=9999")))
+    )
+    from datetime import datetime
+
+    span = datetime.fromisoformat(body["end"]) - datetime.fromisoformat(body["start"])
+    assert span.days == 31
+
+
+def test_doctor_reports_across_both_trigger_kinds(state, event_store):
+    """The doctor walks schedule AND event triggers — a problem in either is equally silent."""
+    _ev(event_store, key_glob="*")
+    state.crons.list_jobs.return_value = [
+        _every_job("j1", "Orphan", workflow={"def": "gone"}),
+        _every_job("j2", "Ungated", gates={"duty_gate": {"provider": "acme-calendar"}}),
+    ]
+    resp = _run(T.api_triggers_doctor(_req("GET", "/api/triggers/doctor", state)))
+    assert resp.status == 200
+    body = _body(resp)
+    codes = {f["code"] for f in body["findings"]}
+    assert "unknown_duty_gate" in codes
+    assert "broad_watch_glob" in codes  # from the event trigger's `*` key glob
+    assert body["healthy"] is False
+    assert all(f["fix"] for f in body["findings"])
+
+
+def test_doctor_reports_healthy_when_nothing_is_wrong(state, event_store):
+    state.crons.list_jobs.return_value = [
+        _every_job("j1", "Fine", gates={"quiet_hours": {"start": "22:00", "end": "08:00"}})
+    ]
+    body = _body(_run(T.api_triggers_doctor(_req("GET", "/api/triggers/doctor", state))))
+    assert body["healthy"] is True and body["count"] == 0
+
+
+def test_week_and_doctor_routes_register_before_the_id_route():
+    """`/week` and `/doctor` must not be captured as trigger ids.
+
+    The ordering landmine S67 already paid for with `/surfacing`: aiohttp matches in registration
+    order, so a literal path registered after `/{id}` is unreachable.
+    """
+    import inspect
+
+    src = inspect.getsource(T.register_trigger_routes)
+    week = src.index('"/api/triggers/week"')
+    doctor = src.index('"/api/triggers/doctor"')
+    by_id = src.index('"/api/triggers/{id}"')
+    assert week < by_id and doctor < by_id
