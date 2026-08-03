@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 from fakes import FAKE_MODEL_CAPABILITY, FAKE_MODEL_TYPE, ensure_fake_model_type
 
 import personalclaw.providers.provider_bridge as pb
@@ -25,23 +24,6 @@ from personalclaw.llm.registry import ProviderEntry, get_default_registry
 ensure_fake_model_type(get_default_registry())
 _MODEL_TYPE = FAKE_MODEL_TYPE
 _MODEL_CAPS = FAKE_MODEL_CAPABILITY.capabilities
-
-
-@pytest.fixture(autouse=True)
-def _drop_synthetic_acp_entry():
-    """Remove the synthetic `SomeAcpAgent` entry after each test in this file.
-
-    The provider registry is a process-global singleton, so an entry registered here outlives the
-    test. Measured: the leaked entry made `cli_doctor` report "SomeAcpAgent (acp_agent): error" and
-    exit 1, failing `test_cli.py::TestDoctor::test_doctor_with_agent` — a test with nothing to do
-    with provider resolution, deterministically in the full xdist mix and never in isolation. Any
-    test that happens to share a worker after this file inherits a broken doctor.
-    """
-    yield
-    reg = get_default_registry()
-    entries = getattr(reg, "_entries", None)
-    if isinstance(entries, dict):
-        entries.pop("SomeAcpAgent", None)
 
 
 def _ensure_registry_entry(name: str, *, model: str = "gpt-x") -> None:

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from aiohttp import web
@@ -180,6 +181,16 @@ async def api_defs_list(request: web.Request) -> web.Response:
     )
 
 
+async def api_defs_surfacing(request: web.Request) -> web.Response:
+    """The templates list with its surfacing state — what the UX renders.
+
+    A separate route from `GET /api/workflows` rather than a widened one: the thin list is on the
+    hot path for the planner's picker, and making every caller pay for a per-def run-history lookup
+    to render a name would be a cost nobody asked for.
+    """
+    return _reply(await service.list_defs_surfacing(now=time.time()))
+
+
 async def api_def_detail(request: web.Request) -> web.Response:
     return _reply(await service.get_def(request.match_info.get("name", "")))
 
@@ -203,6 +214,7 @@ async def api_def_save(request: web.Request) -> web.Response:
         description=str(body.get("description", "") or ""),
         inputs=body.get("inputs") if isinstance(body.get("inputs"), dict) else None,
         tags=[str(t) for t in (body.get("tags") or [])],
+        metadata=body.get("metadata") if isinstance(body.get("metadata"), dict) else None,
         save=bool(body.get("save", True)),
         # A def saved through the API is the USER acting, not an agent — so it skips the
         # agent-provenance dry run, which exists for specs a model generated.
@@ -427,6 +439,36 @@ async def api_run_resume(request: web.Request) -> web.Response:
     return _reply(result)
 
 
+async def api_run_confirm(request: web.Request) -> web.Response:
+    """Resolve a pending confirmation by verb — the seam the DagView's Approve/Deny binds to.
+
+    Guarded by the same operation as `resume`, deliberately: this IS a resume with a verb
+    vocabulary on top, and a separate permission would let a caller who may not answer a gate
+    answer it through the other door.
+    """
+    denied = _guard(request, "workflow_run_resume")
+    if denied is not None:
+        return denied
+    run_id = request.match_info.get("run_id", "")
+    body = await _json_body(request)
+    if isinstance(body, web.Response):
+        return body
+    result = service.resolve_confirmation(
+        run_id,
+        supervisor=_supervisor(request),
+        verb=str(body.get("verb", "") or ""),
+        token=str(body.get("resume_token", "") or ""),
+        note=str(body.get("note", "") or ""),
+    )
+    _audit(
+        request,
+        "workflow_run_confirm",
+        "success" if result.get("ok") else "failure",
+        f"{run_id}:{body.get('verb', '')}",
+    )
+    return _reply(result)
+
+
 async def api_run_rewind(request: web.Request) -> web.Response:
     return await _reentry(request, "workflow_run_rewind", service.rewind_run)
 
@@ -594,13 +636,17 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_post("/api/workflows/runs/{run_id}/cancel", api_run_cancel)
     app.router.add_post("/api/workflows/runs/{run_id}/pause", api_run_pause)
     app.router.add_post("/api/workflows/runs/{run_id}/resume", api_run_resume)
+    app.router.add_post("/api/workflows/runs/{run_id}/confirm", api_run_confirm)
     app.router.add_post("/api/workflows/runs/{run_id}/steer", api_run_steer)
     app.router.add_get("/api/workflows/runs/{run_id}/steering", api_run_steering)
     app.router.add_post("/api/workflows/runs/{run_id}/rewind", api_run_rewind)
     app.router.add_post("/api/workflows/runs/{run_id}/run-from", api_run_from)
     app.router.add_post("/api/workflows/runs/{run_id}/fork", api_run_fork)
 
-    # Definitions.
+    # Definitions. `surfacing` is a literal path and MUST precede `/{name}`, or a request for it
+    # would match the def-detail route and look for a definition named "surfacing" — the same
+    # ordering hazard this function's docstring records for `/runs`.
+    app.router.add_get("/api/workflows/surfacing", api_defs_surfacing)
     app.router.add_get("/api/workflows", api_defs_list)
     app.router.add_post("/api/workflows", api_def_save)
     app.router.add_get("/api/workflows/{name}", api_def_detail)

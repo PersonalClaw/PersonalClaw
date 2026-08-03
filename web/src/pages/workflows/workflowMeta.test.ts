@@ -148,6 +148,15 @@ describe('WORKFLOW_LIFECYCLE', () => {
       'workflow_mutation_rejected',
       'workflow_forked',
       'workflow_progress',
+      // TASKS-SOPS §7 (S61e): the task-projection events. Each has a real `_publish` site
+      // (`RunController.publish_task_materialized` and its four siblings), so they belong in this
+      // mirror list — and the backend test `test_workflows_projection_events.py` asserts the
+      // reverse direction, that every emitted kind appears in the union.
+      'workflow_task_materialized',
+      'workflow_confirmation_pending',
+      'workflow_confirmation_resolved',
+      'workflow_task_verified',
+      'workflow_cascade_blocked',
     ]
     for (const ev of published) expect(WORKFLOW_LIFECYCLE).toContain(ev)
     // And no extras: a listener for an event nobody publishes is dead code that reads as

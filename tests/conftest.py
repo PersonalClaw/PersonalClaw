@@ -197,5 +197,59 @@ def _git_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GIT_COMMITTER_EMAIL", "test@example.com")
 
 
+@pytest.fixture(autouse=True)
+def _restore_provider_registry() -> object:
+    """Undo any provider-registry ENTRY a test registers into the process-global singleton.
+
+    `get_default_registry()` is a module-level singleton, so an entry a test registers outlives it
+    and lands in whatever test shares the worker next. Snapshot-and-restore rather than a list of
+    known names: three separate files leak (`test_can_resolve_use_case`, `test_provider_resolution_
+    unify`, `test_provider_create_bedrock`), each under names of its own, and a name list silently
+    stops covering the next one added.
+
+    Measured symptoms — both deterministic in an xdist mix, both invisible in isolation, both in
+    files with nothing to do with provider resolution:
+
+    * a leaked CHAT-capable entry makes `workflows.preflight`'s `can_resolve_use_case` probe
+      succeed, so `test_workflows_api.py`'s preflight-422 test got a 202 — a workflow run STARTED
+      because another file had left a model provider behind;
+    * a leaked `acp_agent` entry made `cli_doctor` exit 1 in `test_cli.py`.
+
+    Registered TYPES are deliberately left alone: `register_type` is how a test simulates an
+    installed provider app, it is idempotent, and a type with no entry resolves nothing.
+    """
+    from personalclaw.llm.registry import get_default_registry
+
+    entries = getattr(get_default_registry(), "_entries", None)
+    before = set(entries) if isinstance(entries, dict) else set()
+    yield
+    if isinstance(entries, dict):
+        for name in set(entries) - before:
+            entries.pop(name, None)
+
+
+@pytest.fixture(autouse=True)
+def _restore_workflow_def_registry() -> object:
+    """Undo any workflow DEF provider a test registers into the process-global registry.
+
+    `workflows.defs` holds a module-level provider dict, so a test that registers one leaks it into
+    whatever test shares the worker next. Measured: `test_workflows_grill_protocol.py` calls
+    `register_bundled_provider()` (18 bundled templates) and never removes it, which makes
+    `test_workflows_api.py`'s `test_listing_is_empty_with_no_providers` see 18 instead of 0 and
+    `test_save_then_list_then_get` see 19 instead of 1 — deterministically for a given xdist
+    distribution, and invisible when either file runs alone. Reproduced on a clean tree, so it is
+    pre-existing; ANY change to the suite's test count can surface or hide it.
+
+    Snapshot-and-restore rather than a name list, for the reason the provider-registry guard above
+    records: a list stops covering the next name someone adds.
+    """
+    from personalclaw.workflows import defs as _defs
+
+    before = set(_defs.list_providers())
+    yield
+    for name in set(_defs.list_providers()) - before:
+        _defs.unregister_provider(name)
+
+
 # (The slack-suite autouse fixtures — enterprise bypass, emoji reset, allowlist
 # reset — moved to apps/slack-channel/tests/conftest.py with the slack tests.)

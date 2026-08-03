@@ -647,3 +647,698 @@ fingerprint dedup, fan-out caps and the write-rejection rule. 92 tests.
   The `push_refresh()`/WS refresh hint and the `TaskCreated`/`TaskCompleted` hook events are surface
   wiring on the same seam. FE `taskMeta` STATUSES mapping for the new `SKIPPED` column and the
   `blocked_kind` badge are FE work. The granularity lint (R2) belongs with SOP migration in session 58.
+
+### 2026-08-02 — session 56 (verified done + enforcement) DONE
+
+`workflows/verified_done.py` (new): engine-owned criterion execution over the existing
+`loop/gates` tristate, pass-state gating, the three-actor transition matrix, the weighted acceptance
+schema, cascade-fail over the binding graph, the stuck-work sweep and idempotent timing. 70 tests.
+
+- **The tristate was VERIFIED by running the real machinery**, not assumed. `run_verify_command`
+  returns `None` for a missing binary AND for a command the safety screen refuses (`rm -rf /` →
+  `None`, logged as "refusing to run"). Both matter: reading `None` as a pass makes a broken check
+  indistinguishable from a passing one, and the broken one is silent. `UNRUNNABLE` also wins over
+  `FAILED` when both are present — "one check failed and one could not run" is a criterion nobody has
+  evaluated, and calling it a failure sends the user after the wrong problem.
+
+- **DISCOVERY — gating on `Verdict.passed` alone blocked every CRITERION-FREE task.** An empty verdict
+  is `None` (nothing was evaluated), so a task with no `done_criterion` — which is most tasks —
+  projected as permanently BLOCKED. Caught by checking against the EXISTING seam rather than my own
+  reasoning: `Task.can_mark_complete` already documents that "a task with no exit criteria is freely
+  completable". Two seams disagreeing about the same question would make completability depend on
+  which one ran. A test now pins the agreement.
+
+- **A worker does not judge its own work, at BOTH levels.** The node-level version is the engine
+  running the criterion; the task-level version is the actor matrix refusing `AGENT → done`. The
+  agent's allowed set is `{blocked}` with kinds `{needs_input, capability}` — it may PROPOSE and may
+  not CLAIM. It specifically may not file its own failure as `transient`, because that is requesting
+  its own retry. The refusal names the alternative, since a refusal that does not say what to do reads
+  as the feature being broken.
+
+- **A USER may not SKIP a task.** A skip is a routing decision the run makes, so a user who wants work
+  skipped asks the run (`workflow_skip`) and the board and the run agree afterwards. The engine may
+  record any outcome — it observed the work, and restricting it would mean an engine that saw a
+  failure could not record one.
+
+- **Every check must pass, and the score is for the REPORT.** An acceptance criterion with a failed
+  check has not been met; 0.8 is not "mostly done", it is one unmet requirement. The weighting exists
+  because the author said which checks matter, and a zero weight is treated as 1 rather than as
+  "ignore" — a check that ran and failed is information, and silently dropping it would let an author
+  disable a check by typo. A malformed check is DROPPED and reported, never treated as passing.
+
+- **The cascade follows the BINDING graph.** Driven on a graph with a later sibling reading the failed
+  node's output — the shape a tree walk misses, and the one where an unblocked task is most
+  misleading. Transitive (a cascaded block cascades onward), terminates on a dependency cycle
+  (verified with an alarm), leaves unrelated work alone, and notifies ONCE: a parallel fan-in failure
+  produces N events in milliseconds, and N alerts for one cause is how a user mutes the channel that
+  was about to tell them something important. Clearing covers exactly the set the block covered — a
+  dependent left blocked after its prerequisite recovered is the same lie in the other direction.
+
+- **The sweep REPORTS rather than fixes.** Auto-resolving a stall would hide the condition that caused
+  it and the same stall would recur with nothing recorded. It is tolerant of unparseable timestamps
+  for the same reason a diagnostics pass exists at all: raising on one bad row would stop it reporting
+  every other stall. A task with NO timestamps is not flagged — absence is not staleness, and flagging
+  it would put every freshly-created task on the strip.
+
+- **`cancelled` is sticky and `started_at` is written once.** Projection is an idempotent REBUILD —
+  the normal path — so without stickiness every rebuild would resurrect work someone deliberately
+  stopped. And a retry that rewrote `started_at` would make a task running for an hour look
+  thirty-seconds old, which is exactly the field the heartbeat sweep reads to decide whether work has
+  stalled.
+
+- **`done_without_evidence` takes `Any`, deliberately.** The sweep reads status off a provider-supplied
+  object, and a provider handing back a raw string must get a truthful answer rather than a type
+  error; the identity comparison makes a non-status value read as "not done", which is the safe
+  direction.
+
+- **NOT DONE:** the engine call sites — criterion execution is decided here and performed by the
+  caller (one implementation of the tristate and one safety screen, both already in `loop/gates`), and
+  wiring it into the controller's completion path needs the S55 materialization call site that is
+  itself still pending. The `intake_refresh` Run Ledger event, the debounced `state.notify()` call and
+  the Tasks-board stuck-work strip are surface wiring on this contract. The clean-exit checklist
+  template belongs with the bundled-template work in §8; the granularity lint belongs with SOP
+  migration in session 58.
+
+### 2026-08-02 — session 57 (ConfirmationRequest + gates) DONE
+
+`workflows/confirmation.py` (new): the one durable typed record, per-type expiry policy, the four-verb
+resolution vocabulary, `require_hitl`, per-stage mute, tool profiles and the DagView approve/deny card.
+Two SHIPPED defects fixed in `human_input.py` and `security.py`. 58 tests.
+
+- **DISCOVERY (shipped bug, in a correctness-critical path) — single-use resolution did not hold.**
+  `consume_continuation` documented "`unlink` is the atomic primitive — two racing resumes both read
+  the file, but only one `unlink` succeeds". Measured with 8 threads racing one token: MULTIPLE callers
+  received the payload in **36 of 40 trials**. Two reasons, both fatal to the claim — every caller had
+  already READ the file before unlinking, and `unlink` does not reliably raise `FileNotFoundError` for
+  the losers on this filesystem. That is the exact double-approval replay the single-use rule exists to
+  prevent: two resumes carrying one clarification into downstream steps. Replaced with `os.rename` as
+  the claim primitive, which decides the winner BEFORE anything is read — measured 0 of 40 — and
+  leaves the claimed record on disk under a `.claimed` suffix so a resolution that crashes mid-resume
+  is recoverable and auditable rather than silently gone. All 49 existing continuation tests still
+  pass.
+
+- **DISCOVERY (shipped gap in a security control) — `security.redact` missed three real credential
+  shapes.** Found while checking that the ConfirmationRequest preview was actually safe:
+  `sk-live-ABCDEFGH1234567890` survived (the `sk-[A-Za-z0-9]{32,}` pattern cannot match a key with
+  hyphens or underscores in its body), and there was **no generic assignment form and no bearer form at
+  all** — so `api_key=<anything>` and `Authorization: Bearer <jwt>` both passed through untouched.
+  Widened with a hyphen-tolerant provider pattern, a NAME-keyed assignment pattern (so an unknown
+  provider's key format does not have to be guessed) and a bearer pattern. Checked in BOTH directions:
+  every previously-covered shape still redacts, and ordinary prose ("the API key rotation policy",
+  "we discussed passwords", "bearer of bad news") is untouched. 283 security tests pass.
+
+- **DISCOVERY — `str(None)` is `"None"`, which is not empty.** An absent payload previewed as the
+  literal word "None" in an inbox row — a value a user reads as content the run produced. Caught by
+  the test asserting an empty payload previews as empty.
+
+- **The preview is redacted at CONSTRUCTION, and fails closed.** Redacting at render time means every
+  surface has to remember; if `redact` is unavailable the preview is withheld, because a preview is the
+  field most likely to carry a fetched credential and an unredacted one is worse than none.
+
+- **Expiry is per-TYPE, declared rather than defaulted.** A destructive confirmation AUTO-REJECTS on
+  expiry — the action does not happen, which is the recoverable direction, and auto-approving because
+  nobody looked would be the worst behaviour this module could have. An approval or needs-input HOLDS:
+  the user being slow does not make the work unnecessary. A single global default would have to be
+  wrong for one of them. `ttl: 0` means never rather than instantly, because an author writing it means
+  "wait for me".
+
+- **Four resolution verbs, and SKIP is not REJECT.** Skip leaves the item pending for the next pass; a
+  queue without it forces the user to answer in the order the engine happened to ask. Reject resolves
+  AND resumes, down the declined path — leaving it pending would strand a run whose answer was given.
+  An unknown verb is REFUSED rather than treated as a reject: a typo silently declining work the user
+  meant to allow is a failure they cannot diagnose.
+
+- **A destructive confirmation cannot be MUTED.** "Stop asking me about deletions" is a request to
+  remove the last check before an unrecoverable action — the one setting that cannot be undone by
+  changing it back.
+
+- **Tool profiles reuse S48's `Capability` vocabulary.** Two least-privilege vocabularies would
+  disagree about a tool and the looser one would win. An unknown profile name is refused rather than
+  defaulted: loose would silently over-grant, strict would silently break a stage that needs to write
+  and the author would debug the wrong thing.
+
+- **`require_hitl` must be the boolean `True`.** A truthy string is an author mistake, and treating
+  `"false"` as a gate would surprise them in the direction of extra prompts they cannot explain.
+
+- **NOT DONE:** persisting the record itself — it rides the existing continuation store by design (one
+  claim primitive, one directory, one audit trail), and the writer belongs with the controller's
+  gate-entry path, which is the same seam S55/S56 are waiting on. The FE DagView wiring of
+  `onApprove`/`onDeny` is the declared extension point this session supplies the backend for (§7 wires
+  it). The needs-info question template and the `guardrails`/`postconditions` def sections (R9) are
+  session-58 SOP work.
+
+### S58 — Surfacing core (`workflows/surfacing.py`, 80 tests) — DONE
+
+Three defects measured, all of them "present and inert":
+
+- **The prose detector vetoed a legitimate trigger.** A substring scan for common connectives
+  flagged `ship the release` — a phrase an author would reasonably register — so a def could be
+  linted into unusability. Fixed by matching SUBORDINATING phrases only, plus a hard
+  `MAX_TRIGGER_WORDS = 6` word cap: the property that makes a trigger bad is that it is a
+  sentence, and a word count measures that directly where a connective scan guesses at it.
+
+- **`!`-prefix negative triggers were parsed here AND in `skills/surfacing`.** Two parsers for one
+  author-facing syntax drift, and the drift shows as a veto that fires on the skill path and not
+  the workflow path (or the reverse) for the same `match_text`. `trigger_phrases` is now the one
+  splitter and `_keyword_score`'s convention is the one it implements.
+
+- **`render_suggest` could have forked from `render_passive`.** The plan asks for a coexistence
+  period, which is exactly the window in which two renders diverge unnoticed — both look
+  plausible and nobody diffs them. `drift()` asserts the suggest render CONTAINS the passive
+  render verbatim (not "resembles"), so a fork fails a test rather than shipping.
+
+Decisions worth recording:
+
+- **`SUGGEST` is required for a suggestion, not merely "not off".** A passive def surfaces
+  guidance and proposes running nothing; collapsing the two modes would let a def that was
+  migrated for guidance start proposing execution.
+
+- **An empty digest renders as `""`, not as an empty labelled block.** A block titled "Standing
+  guidance" with nothing under it reads as the system having nothing to say, which is worse than
+  saying nothing. The suggestion path still renders, because a suggestion's value is the CALL.
+
+- **`veto_reasons` returns ALL reasons.** A def vetoed for three reasons has an author who should
+  see three; returning the first would send them to fix one and be surprised again.
+
+- **A migrated SOP lands in PASSIVE unless it declared `auto_surface`.** Surfacing is preserved by
+  the migration; execution suggestion is not something a migration grants. `findings` is separate
+  from `metadata` so a silent normalization is auditable — the SOP is a document the user wrote.
+
+- **`unreachable()` is the reachability floor.** A def in a surfacing mode with no positive trigger
+  can never surface and its author has no way to notice; S59 owns the full doctor.
+
+- **NOT DONE:** the cadence and fingerprint channels, layered scope resolution, parameter pre-fill,
+  and the reachability doctor surface are all session-59 scope, as the queue splits them.
+
+### S59 — Surfacing channels + resolution (`workflows/surfacing_channels.py`, 113 tests) — DONE
+
+Probed the seams live before writing a line. Three findings, one of which changed the design:
+
+- **The `create-task` hook silently drops unknown keys.** Measured: an action config carrying
+  `linked_def` and `workflow_binding` returned `success=True` and created a task whose
+  `workflow_binding` was `None`, with neither value in the persisted JSON —
+  `CreateTaskActionProvider.execute` renders `title_template`/`body_template` and passes through
+  only `priority`/`project`/`assignee`/`due`/`labels`. The plan's "materialized tasks carry an
+  explicit bidirectional link block" would therefore have been a control that runs, reports
+  success and enforces nothing. **DEVIATION:** the link block lives in the cadence ledger (which
+  has to hold the throttle timestamp anyway, so one record holds both directions), and
+  `escalation_action` emits ONLY keys the provider actually reads — pinned by a test that fails if
+  a future key is added blind.
+
+- **`WorkflowDef` has no `scope`, `cadence_days`, `fingerprint` or `overrides` field yet**
+  (measured against `dataclasses.fields`). So this session's records are standalone and def-side
+  wiring belongs to the session that adds the fields. Asserting against a field that does not
+  exist is how a test passes while the feature is absent.
+
+- **A pre-existing suite-wide test-isolation leak, root-caused and fixed.** `test_workflows_api`'s
+  preflight-422 test failed in the full xdist run at 13715→13826 tests purely because the
+  distribution shifted. Bisected to THREE files that register provider entries into the
+  process-global `get_default_registry()` singleton and never remove them
+  (`test_can_resolve_use_case`, `test_provider_resolution_unify`, `test_provider_create_bedrock`).
+  A leaked CHAT-capable entry makes `preflight`'s `can_resolve_use_case` probe succeed, so the run
+  STARTED (202) instead of being refused (422) — a workflow ran because an unrelated file left a
+  model provider behind. Confirmed pre-existing by reproducing the two-file pairing on a clean
+  tree. Fixed with ONE snapshot-and-restore autouse fixture in `tests/conftest.py` alongside the
+  other process-global guards; a name-list fixture was tried first and missed `MyCloud2`, which is
+  why the shipped version snapshots. Registered TYPES are left alone (idempotent, and a type with
+  no entry resolves nothing).
+
+Decisions worth recording:
+
+- **NEVER_RUN is its own freshness band.** A checklist authored yesterday has not failed to run;
+  reporting it as maximally stale on day one trains a user to ignore the column. It surfaces
+  overdue-first but does NOT auto-materialize — an authored-and-never-run def is a draft, and a
+  "you are overdue" task for something never started reads as the system malfunctioning.
+- **Lateness sorts PROPORTIONALLY.** Absolute lateness parks every long-cadence def permanently at
+  the top of the list.
+- **Last-completed is DERIVED from `store.list_runs`,** never cached on the def: a cached stamp and
+  the run table disagree the first time a run is deleted. A broken store degrades to "never run"
+  rather than raising — the channel runs inside a turn.
+- **Escalation throttles per DAY, not per tick,** as the plan states; a tick-rate throttle puts one
+  task on the board per scheduler pass.
+- **A pack with no predicates scores 0.0, not 1.0.** A pack matching everything would propose
+  itself in every directory — the over-firing failure this channel exists to avoid. The scan is
+  bounded (`MAX_SCAN_FILES`) and skips vendor dirs: a fingerprint inside `node_modules` describes a
+  dependency, not this project.
+- **`propose_packs` carries `enabled_anything=False` as a FIELD.** Propose-don't-enable as
+  something a test can check, not a docstring claim.
+- **A DISABLED def neither shadows nor wins.** Calling it shadowed would tell the user something
+  else is winning when nothing is. An unknown scope sorts widest, so a scope this build cannot read
+  never shadows a def the user explicitly wrote.
+- **Availability is probed in order (installed → enabled → available)** and a probe that RAISES
+  reads as UNAVAILABLE. An availability hook is code from a removable bundle; treating its crash as
+  a pass surfaces a suggestion that dies at dispatch — the exact failure preflight prevents.
+- **`all_filled` is re-derived from the schema,** never trusted from the extractor, and
+  `suggestion_inputs` never emits a placeholder: a placeholder passes the engine's presence check
+  and then executes a step against a made-up value.
+- **The doctor accepts ANY channel** (trigger, cadence, pack, index). Checking only `match_text`
+  would report every cadence-only def as broken, which trains a user to ignore the doctor. `off` is
+  not a finding — it is a deliberate choice and explicit invocation always works.
+
+- **NOT DONE:** the def-side fields (`cadence_days`, `scope`, `fingerprint`, `overrides`) and the
+  templates-list UI (freshness gradient, scope chips, grouped pack proposal) — the plan assigns the
+  surfaces to §7/session 7, and the fields land with the def-model session. The semantic channel
+  (channel 1) is untouched by design: it is the existing mechanism.
+
+### S60 — Pool + hand-offs + blueprints (`workflows/pool.py`, 78 tests) — DONE
+
+Probed the seams first. Three findings, one of them a defect in this session's own first draft:
+
+- **`TaskComplete` is a declared hook event that NOTHING fires.** It is in `hooks.HOOK_EVENTS`,
+  allowlisted in `validation.py::ALLOWED_HOOK_EVENTS`, and rendered by the hook UI with
+  `_LIFECYCLE_BASE_VARS` — so a user can configure "when a task finishes" and get nothing.
+  `validation.py` admits it in a comment: "the rest are reserved for future firing sites and
+  currently never trigger". A repo-wide search for `fire(` finds exactly one call site
+  (`fire_tool_hooks`). This session supplies the payload builder (shaped to `ScriptHookStore.fire`'s
+  real signature, asserted by test) and the EDGE-trigger rule that make it fireable.
+  **DEVIATION:** the plan's `TaskCreated` is not a shipped event name. Adding one here would create
+  a vocabulary the hook UI does not render, so task-creation events wait until the event is declared
+  where users can see it.
+
+- **Acyclicity was ALREADY server-authoritative.** `tasks/native.py` calls
+  `reconcile.would_create_cycle` on both create and update. The plan's "the server-side write path
+  adds the authoritative check" was already satisfied, so `plan_edges` delegates rather than
+  shipping a second DFS — asserted by a spy test, because two cycle checkers means the looser one
+  lets AionUI's A-blocks-B/B-blocks-A deadlock through. A missing checker reports
+  "cycle check unavailable" rather than "no cycle": fail-closed, or a broken import silently
+  disables the guard.
+
+- **My own priority scale was INVENTED.** The first draft weighted `urgent | high | medium | low`.
+  The shipped `TaskPriority` is `critical | high | medium | low | trivial` — there is no `urgent`.
+  So `critical`, the most important rung in the product, would have fallen through to the default
+  weight and ranked BELOW `high`. Caught by a test asserting the weight table's keys equal the enum
+  values; that test is the one worth keeping.
+
+Decisions worth recording:
+
+- **The frontier EXCLUDES leased work by default.** A list that shows what another session is
+  actively holding invites exactly the double-execution the leases prevent. `include_leased` exists
+  for the board, which displays claims rather than picking work.
+- **`next` is `frontier`'s head by construction,** so the list and the pick cannot disagree — the
+  point of having one projection instead of a per-surface re-derivation.
+- **A task blocking others outranks an equal that blocks nothing.** That is the whole value of a
+  dependency-aware pool; ties then break on recency and id, because an unstable "next task" makes
+  an agent thrash between two equals.
+- **An EXPIRED lease is takeable but NOT renewable.** Between expiry and renewal another session
+  may already hold it; extending silently would produce two holders who both think they won. A
+  takeover resets `renewals` — carrying the dead holder's count forward makes a stuck task look
+  actively worked. A same-holder re-acquire is a renewal, so a restarted session is not locked out
+  of its own task.
+- **One of two prerequisites completing does NOT unblock.** The bug a naive "completion unblocks
+  dependents" rule ships with: work becomes visible before its other prerequisite is done. A FAILED
+  blocker cascades regardless of siblings and carries the blocker's REASON, because the dependent's
+  card should say why. A cascade burst coalesces into ONE notification.
+- **Completion firing is EDGE-triggered.** §1 makes idempotent projection recompute the normal
+  path, so a level-triggered fire would emit a hook per rebuild.
+- **A hand-off SUGGESTS and carries only ALLOWLISTED fields.** Auto-starting a successor spends a
+  second run's budget on a decision the user did not make; passing the whole outcome would carry a
+  previous run's credentials and artifacts into new inputs, and a hand-off is exactly the seam
+  where nobody would look. `review → fix` requires an explicit user request, per the plan.
+- **A GATED def can never be a blueprint.** A blueprint has no engine, so there is nothing to
+  pause, and rendering a gate as a numbered message shows the user an approval that approves
+  nothing. Hydration is replace-not-merge and re-hydrating the same blueprint into the same session
+  is a no-op — the defensive case is a client retrying the open, and a merge would print step 1
+  twice.
+
+- **NOT DONE:** the seed template library's actual def files (`checklist`, `sop-guided`,
+  `audit-and-file`, `clean-exit`, the franklioxygen imports) — the hand-off EDGES that bind them
+  ship here, but the defs themselves are content that belongs with the def-model fields, and
+  authoring defs against a `WorkflowDef` that still lacks `surface_mode`/`cadence_days`/`scope`
+  would mean writing them twice. The lease WRITE path (flocked read-modify-write on the task JSON)
+  and the `TaskComplete` emission call site are single-line wirings into `tasks/native.py` that
+  belong with §7's wiring session; the decision rules they implement are complete and tested here.
+
+### S61 — Def-side surfacing fields + the def→record adapter (33 tests) — DONE (RE-SCOPED)
+
+**RE-SCOPE, recorded as a deviation.** The queue names session 61 "UX + validation: composer chips,
+validated deep-links, checklist edit UX, config four-point wiring, end-to-end as-a-user sweep".
+Measured before starting: **every mechanism S55-S60 built is unreachable from an authored def.**
+`WorkflowDef`/`DefMetadata` had no `surface_mode`, `cadence_days`, `escalation`, `packs`,
+`hands_off_to` or `guided` field (checked against `dataclasses.fields`), and no core module imports
+`materialize`, `verified_done`, `confirmation`, `pool` or `surfacing_channels` — they are pure
+decision modules with no callers. A composer chip for a def that cannot declare
+`surface_mode`, or a templates list sorting by a `cadence_days` that does not exist, would be UI
+over nothing; the end-to-end as-a-user sweep the session ends with cannot pass either. So this
+session took the actual blocker — the def-side fields plus ONE adapter per record type — and the FE
+surfaces + the sweep move to the next session, which will have something to drive.
+
+Findings:
+
+- **The fields went on `DefMetadata`, typed, not in `extra`.** That block's own comment records why:
+  `from_dict` drops what it does not name, and annotating all 18 bundled templates with `keywords`
+  once left the matcher reading 0 of 18 while running on description overlap at 0.02-0.22
+  confidence. A field in an open dict is a field the reader treats as absent.
+
+- **Coercion goes in the SAFE direction, per field.** An unknown `surface_mode` reads as `off` (a
+  typo must not start surfacing); an unknown `escalation` reads as `manual` (materializes nothing);
+  a negative `cadence_days` clamps to 0 rather than being kept, because a negative cadence makes
+  every comparison read as overdue and a fat-fingered `-7` would nag forever; a non-numeric cadence
+  is 0 rather than a load failure, since def metadata is hand-authored YAML; `guided` must be the
+  boolean `True`, matching §4's `require_hitl` rule.
+
+- **A test that passed for the WRONG reason, caught by measuring.** `Node.cases` is a **dict**
+  keyed by label, not a list. The first version of the branch fixture built a list, `models.walk`
+  raised `AttributeError`, and `route_from_def`'s except-branch swallowed it and returned RUN — so
+  the assertion "a gate buried in branch cases routes to RUN" passed while proving nothing about
+  traversal. Fixed the fixture; the assertion now exercises the real walk.
+
+- **`route()`'s `off` short-circuit was WRONG, and S60's test had pinned the wrong behaviour.**
+  Returning PASSIVE for an `off` def BEFORE the structural check reported a **gated** def as
+  passive — which tells a caller it may be injected as text and silently drops the gate. Structure
+  now decides first: `route` answers "what IS this def", and whether it may surface is
+  `surfacing.veto_reasons`, a separate question with a separate answer. What `off` still governs is
+  BLUEPRINT, because materializing a guided conversation for a def the user switched off would put
+  it on screen anyway. The S60 test was updated to the corrected rule with the measurement recorded.
+
+- **One adapter per record type, not per call site.** `meta_from_def`, `cadence_from_def`,
+  `handoffs_from_def`, `doctor_entry`, `route_from_def`. Two readers of the same fields drift, and
+  the drift shows as a def that surfaces through one path and not the other for identical metadata —
+  S58's `drift()` check applied to the fields themselves. The adapter deliberately does NOT
+  re-implement tolerance (`from_dict` already coerced), and `doctor_entry` is built centrally
+  because a surface assembling that dict itself would forget `packs` and report every pack-gated def
+  as unreachable. `cadence_from_def` takes the run facts as PARAMETERS: a channel that queried per
+  def would issue one query per template on every list render.
+
+- **NOT DONE (moves to the next session):** composer chips, validated deep-links, checklist edit UX,
+  the templates-list freshness/scope/pack rendering, config four-point wiring, the FE stream-union
+  registrations, and the end-to-end as-a-user sweep. Also still unwired: the lease write path, the
+  `TaskComplete` emission call site, and the confirmation resolve endpoints — all single call sites
+  into existing files, now unblocked because the def can finally declare what they read.
+
+### S61b — The wiring that makes surfacing reachable (23 tests) — DONE (PARTIAL: backend only)
+
+S55-S61 built decision modules and gave the def somewhere to declare its surfacing. **Nothing called
+any of it.** Three gaps measured, each of which left a shipped mechanism unreachable:
+
+- **`author_def` had NO `metadata` parameter.** Every `DefMetadata` field — including the
+  `surface_mode`, `cadence_days` and `packs` the channels read — could be loaded from disk and never
+  SET through the API. A field with a read path and no write path is a field only a hand-edited file
+  can use, which is exactly what the config round-trip contract exists to prevent. Added, and the
+  write goes through `DefMetadata.from_dict(...).to_dict()` so the tolerant per-field coercion
+  applies to the WRITE as well: coercing on read alone would store `surface_mode: vibes` while every
+  surface displayed `off`, and nobody could explain the gap.
+
+- **`list_defs` drops `metadata` entirely.** Its projection is name/description/source/version/
+  tags/provider, so a templates list built on it cannot render a freshness gradient, a surfacing
+  toggle or a pack chip no matter what a def declares. Added `list_defs_surfacing` +
+  `GET /api/workflows/surfacing` as a SECOND route rather than widening the first: the thin list is
+  on the planner picker's hot path, and making every caller pay a per-def run-history lookup to
+  render a name is a cost nobody asked for. Cadence facts are batched, not per-def.
+
+- **`TaskComplete` was never fired.** Now emitted from `NativeTaskProvider.update_task`,
+  edge-triggered via `pool.should_fire_completion`, with the payload built by
+  `pool.lifecycle_payload` so the shape and the rule live together. Verified by measurement: fires
+  once on a real completion, does NOT re-fire on an idempotent re-save, and fires again after a
+  genuine reopen. The fire is an OBSERVER — it swallows everything, because a user's broken hook
+  script must not turn a successful `PUT /api/tasks/{id}` into a 500 when the task is already
+  written.
+
+Landmines re-confirmed while probing (all already in the engine-landmines memory, all cost a cycle
+each anyway): action args go under `config.with` (not `args`); `registry.update_task`'s second
+positional is `provider_name` as a KEYWORD (a positional `"native"` silently became the task id and
+returned None); a `sequence` with no children fails validation, so probe specs need a real child.
+
+- **Route ordering:** `/api/workflows/surfacing` is registered BEFORE `/api/workflows/{name}`, with a
+  test asserting the index order. aiohttp matches in registration order, so the reverse would make a
+  GET for it look for a definition named "surfacing" — the same hazard the function's own docstring
+  records for `/runs`.
+
+- **A test-isolation lesson, measured twice now.** Three of this session's tests asserted on
+  `defs[0]` or on an empty list and passed in isolation while failing in the xdist mix: the def
+  registry is process-global and a full run has bundled providers registered. They now scope rows to
+  their own provider. Same class as the provider-registry leak S59 fixed — a global registry means a
+  test's view is never just its own writes.
+
+- **NOT DONE (the FE half):** composer chips, validated deep-links, checklist edit UX, the
+  templates-list rendering of freshness/scope/packs, config four-point wiring, the FE stream-union
+  registrations, and the end-to-end as-a-user sweep. The backend they consume is now real and
+  driveable (`GET /api/workflows/surfacing` returns rows + doctor findings; metadata is writable
+  through `POST /api/workflows`), so the FE session is unblocked. The lease write path and the
+  confirmation resolve endpoints remain unwired.
+
+### S61c — The FE surfacing surfaces, validated as a user (34 FE tests) — DONE (PARTIAL)
+
+The frontend half of §7's surfacing UX, driven against a live gateway rather than asserted.
+
+- **`surfacingMeta.ts` mirrors `workflowMeta.ts`'s discipline:** one place decides the tone and label
+  for a freshness band or surfacing mode, because three components each choosing their own colour is
+  how "overdue" looks urgent in one place and calm in another. Every helper is pure and reads the
+  BACKEND's computed state — `overdue` comes from the response, never recomputed from
+  `cadence_days` + `last_completed_at`, because the thresholds (`DUE_SOON_AT`, `STALE_MULTIPLE`)
+  have an owner and a second comparison would drift the first time one moved.
+
+- **An `off` def gets NO composer chip.** The chip exists to show the user what the matcher injected
+  and let them switch it off; a def that injects nothing has nothing to show, so a chip would be an
+  affordance with no referent. Only `suggest` gets the run affordance — a passive def proposes
+  running nothing, which is the whole reason the two modes are separate.
+
+- **Deep-link params are an ALLOWLIST against the template's declared inputs**, and the rejected keys
+  are REPORTED. A URL is not a trust boundary: a shared or hand-edited link can carry anything, and a
+  denylist would silently pass whatever it had not been taught about. Reporting rejections is what
+  lets a stale card explain itself — one generated before an input was renamed should say which
+  parameter no longer exists rather than quietly starting the run without it. An empty value is
+  dropped rather than pre-filled: `''` makes a required input LOOK answered while the engine still
+  refuses, so the user sees a filled form and an inexplicable rejection. `missingRequired` re-derives
+  from the schema for the same reason the backend re-derives `all_filled`.
+
+- **The list degrades rather than blanking.** A failed surfacing read leaves the plain def list
+  intact — the templates are still startable without their freshness column. Surfacing rides
+  ALONGSIDE the thin list rather than replacing it, because that list is the picker's hot path.
+
+- **Freshness renders ONLY for a def that declares a cadence** (a band for an untracked def implies a
+  schedule it does not have), while the surfacing MODE renders always, including `off`: "this never
+  surfaces" is the fact a user most often wants to check, and hiding it makes an off def
+  indistinguishable from one whose chip they simply had not seen. A doctor finding WINS the subtitle
+  over the description — "no channel can reach this def" is more urgent, and showing both truncates
+  the part that matters.
+
+**Validated as a user** (live gateway on an isolated dev home, `AUTH_MODE=none`): authored three defs
+over HTTP — one with full surfacing metadata, one unreachable, one with a typo'd mode — then read
+them back through `GET /api/workflows/surfacing` and the def detail. Confirmed: the typo'd
+`surface_mode: vibes` + `cadence_days: -9` persisted as `off`/`0` (coercion on the WRITE);
+`ghost-sop` was the only doctor finding; the overdue def sorted first among 29 templates; the
+metadata round-tripped intact. Then drove the Definitions tab in a browser: attention-first order,
+the finding as ghost-sop's subtitle, "Every 7 days · files a task when overdue", the "Never run"
+band, the Guidance/Off mode chips and the `ci` pack chip all render — with **zero console
+messages**.
+
+**DISCOVERY (stale plan premise, E1-class — recorded, not blocking).** The plan's recon correction #4
+states "`WorkflowScope` already has FOUR tiers (`GLOBAL | WORKSPACE | AGENT | SESSION`,
+workflows/models.py) with an up-only promotion ladder (`workflows/registry.py::promote_workflow`)".
+Measured: there is no `WorkflowScope` in `workflows/models.py`, no `scope` field on `WorkflowDef`, and
+no `workflows/registry.py` module at all (ImportError). S59's `resolve_scopes`/`SCOPE_ORDER` therefore
+own the ladder outright rather than preserving an existing one, and the promotion ladder S45's
+`template_pipeline.SCOPE_LADDER` describes is the only one that exists. The plan's §2 R18 text should
+be corrected by the owner; nothing here was built against the absent API.
+
+- **NOT DONE:** checklist drag-reorder edit UX (needs the checklist def shape, which is S62+ content),
+  config four-point wiring, the FE stream-union registrations for `task_materialized`/
+  `confirmation_pending`/`confirmation_resolved`/`task_verified`/`cascade_blocked` (those events are
+  not emitted by the engine yet — registering a union member for an event nothing sends would be the
+  same present-and-inert control this program keeps finding), the lease write path, and the
+  confirmation resolve endpoints.
+
+### S61d — The lease write path + the confirmation resolve endpoint (34 py + 5 FE tests) — DONE
+
+S60 built the lease DECISION rules as pure functions; S57 built the confirmation verbs. Neither had
+durability or a caller. Both now do.
+
+**The lease write path survives real process contention — measured, not assumed.** Eight separate
+PROCESSES racing one task through `claim_task`, 12 trials: **0 multi-winner**. That is the property
+the whole mechanism exists for, and it is the same class of claim S57 measured failing 36 of 40 times
+in its read-then-`unlink` form. The read-modify-write is wrapped in `single_flight` (the established
+flock primitive) because per-entity JSON files have no transactions, so "read the lease, decide,
+write the lease" is otherwise a race between the read and the write. A LOSER of the lock is told the
+task is held rather than proceeding — single-flight means don't double-run, and a caller ignoring the
+miss would be performing exactly the double-claim the lock prevents.
+
+Design decisions:
+
+- **The lease is a SIDECAR file, not a field on `Task`.** Three reasons in order of cost: a
+  once-a-minute renewal written into the entity file rewrites the task every time and races
+  concurrent edits to unrelated fields; `Task` is the SHARED model across every provider, so a
+  native-only concurrency concept on it makes every provider's task carry a field only one can
+  honour; and a sidecar can be deleted to force-release without touching user data.
+- **A corrupt or holderless lease file reads as UNCLAIMED.** Degrading to unclaimed risks a brief
+  double-claim; degrading to claimed would strand the task permanently with no holder to release it.
+  The contention resolves; the strand does not.
+- **A task id is sanitized before it becomes a filename.** It arrives from an HTTP path and a
+  provider id is not a trust boundary — verified: `../../evil` lands as `.._.._evil.json` inside the
+  directory.
+- **The sweep deletes unparseable files too.** They already read as "no lease" to every reader, so
+  removing them is cleanup rather than a decision, and leaving them means the directory grows forever.
+
+**`resolve_confirmation` rides `resume_run`, and converts the verb to the approval BOOLEAN.** The
+engine's gate resolution reads a boolean, so passing `"reject"` through would make a rejection truthy
+— the single worst mistranslation available in this path, and pinned by a test. It rides the one
+resume path because the claim primitive lives with the token, and a second resolve path would be a
+second chance to double-approve. `skip`/`quit` deliberately do NOT touch the run or consume the
+token: they are decisions about the QUEUE, not answers to the gate, and burning a single-use claim on
+a non-answer would strand the gate forever. An unknown verb is refused, not read as a reject.
+
+`POST /api/workflows/runs/{run_id}/confirm` is guarded by the SAME operation as `resume` (this IS a
+resume with a verb vocabulary on top — a separate permission would let a caller who may not answer a
+gate answer it through the other door), audits the verb, and does NOT accept `channel` from the body,
+for the same reason `api_run_resume` does not: `channel` marks a remote reply the engine owner-binds,
+and forwarding it from an untrusted body would let a caller claim to be a channel.
+
+FE: `confirmWorkflowRun` plus `tokenForNode`/`canResolveNode` — the `(run_id, node_id)` join between
+the DagView's node ids and the continuation list's resume tokens. An empty token is NOT sent as a
+wildcard: the backend reads a missing token as "the newest pending gate", which is right for a chat
+user saying "approve it" and wrong for a click on a specific node. An EXPIRED continuation is not
+answerable either, so both verbs go false together — a node still offering Approve after its gate was
+answered is how a user double-approves.
+
+**Validated over HTTP** against a live gateway (isolated dev home): a typo'd verb is a 400
+(`bad_request`), `skip` returns `resumed=false, still_pending=true` without touching the run even for
+an unknown run id, and `approve` reaches the run and reports the real `not_found`.
+
+- **NOT DONE:** the DagView component itself is in `pages/tasks/`, and wiring its `onApprove`/`onDeny`
+  props needs the run-detail view to render a DAG at all (it currently does not — `WorkflowRunDetail`
+  has no `DagView` usage). That is a view-composition change, not a seam gap: the backend, the client
+  method and the node→token join all exist and are tested. Also still open: checklist drag-reorder
+  edit UX, config four-point wiring, and the FE stream unions (blocked — the engine emits none of
+  `task_materialized`/`confirmation_pending`/`confirmation_resolved`/`task_verified`/
+  `cascade_blocked`).
+
+### S61e — The task-projection events, both channels (20 py + 1 FE test) — DONE (UNBLOCKS §7)
+
+S61c recorded the FE stream unions as BLOCKED: the engine emitted none of `task_materialized`,
+`confirmation_pending`, `confirmation_resolved`, `task_verified` or `cascade_blocked`, and registering
+a union member for an event nothing sends would be the same present-and-inert control this program
+keeps finding. **That block is now cleared** — the events exist on both channels.
+
+**Two channels, ONE vocabulary.** The five names are ledger kinds (`journal.LEDGER_KINDS`, so a
+downstream refiner and the existing drift test see them) AND SSE events published through
+`RunController._publish`, differing only by the `workflow_` prefix. A test asserts the prefix relation
+mechanically, because a consumer folding the live stream and one reconstructing from history would
+otherwise need two vocabularies for one fact and the second always drifts.
+
+**Measured: `_publish` has NO server-side allowlist.** It accepts any event name, so the FE's
+`WORKFLOW_LIFECYCLE` array is the only thing standing between an emitted event and a frontend that
+never receives it — EventSource silently drops an unregistered type, with no error anywhere. Two tests
+now guard that in both directions: a backend test asserts every emitted kind appears in the FE array
+(by reading the file), and the pre-existing `workflowMeta.test.ts` drift guard asserts the reverse
+plus "no extras". A second test pins the no-allowlist fact, so if one is ever added THAT test fails
+and the coupling becomes belt-and-braces rather than the only guard.
+
+Per-event decisions, each of which is a real distinction a reader needs:
+
+- **`task_materialized` carries `refreshed`.** §1 makes idempotent recompute the NORMAL path, so a
+  reader counting materializations over-counts the run's output on every rewind without it.
+- **`confirmation_pending` is recorded when the WAIT STARTS**, not only when answered. A run that sat
+  unanswered for a week and one answered instantly are indistinguishable from the resolution alone —
+  and the wait is the number a user cares about.
+- **`confirmation_resolved` carries BOTH the verb and the boolean.** The boolean is what the engine
+  acted on; the verb is what the user chose. Recording only the boolean would leave an audit unable to
+  tell a reject from an expiry auto-reject — the exact distinction §4's per-type expiry policy exists
+  to create. An unattributed resolution records `unknown` rather than empty.
+- **`task_verified` names the CRITERION.** "Verification failed" without naming what was checked is a
+  finding a user cannot act on, and the criterion is the def author's own text.
+- **`cascade_blocked` is ONE event carrying every blocked id.** N events for one upstream failure
+  would make the run look like it failed N times, and §1 already debounces the notification — two
+  collapse points would disagree.
+
+**The durable record does not depend on a live observer.** The emitters write the ledger first, then
+publish; a broken observer (verified with a raising publish fn) leaves the history intact, and a run
+with no observer at all (a CLI run, a replay) still produces its history.
+
+- **NOT DONE:** the DagView-in-run-detail composition (`WorkflowRunDetail` renders no DAG today — a
+  view-composition change, not a seam gap), checklist drag-reorder edit UX, config four-point wiring,
+  and the engine CALL SITES that will invoke these five emitters during a real run (the materialize/
+  verified_done/confirmation modules own those decisions and are still uncalled from `tick`).
+
+### S61f — The engine CALL SITE for task projection (14 tests, real runs) — DONE
+
+S55 built `materialize` as pure decision functions; S61e gave the events a channel. Nothing invoked
+either during a real run — a grep for `materialize.` outside its own module found **zero** hits, so
+every rule in it was reachable only from a unit test. `RunController` now projects where a node
+settles, and the tests drive REAL runs to completion rather than calling the hook: a call site that is
+never reached is precisely the defect being fixed, and only an executed run proves it fires.
+
+**Two measured API mismatches, both of which would have projected NOTHING — silently.**
+
+1. `should_materialize`/`plan_materialization` read the node key **`id`**, not `node_id`. `node_id` is
+   the name the *binding* uses, and passing it would have failed the has-an-id refusal for every
+   node.
+2. `plan.create` holds **`TaskSpec`** objects, not dicts. `entry.get("task_id")` would have raised
+   inside the hook's own `except` — which swallows by design — so the projection would have failed
+   invisibly on every single node while the run reported success.
+
+Both are the same hazard this program keeps hitting: a plausible-looking integration against an
+unread contract. Both are now pinned by tests that assert the SOURCE passes the right keys, because a
+behavioural test alone would pass again the next time someone "fixes" the key name.
+
+Verified against real executed runs (bash actions, providers registered — note that `bash` is
+registered on demand, and without `_ensure_default_providers_registered()` the probe run fails with
+"unknown action provider" and never reaches the success path at all):
+
+- both leaf nodes of a two-step sequence project, with distinct fingerprints, on BOTH channels;
+- a `parallel` container does NOT project while its children do — a board row for a container is a
+  row nobody can act on, and the container's work IS its children;
+- an explicit `materialize_task: false` is honoured (the author's declaration outranks the kind
+  heuristic, which is why `should_materialize` checks it first);
+- a FAILED node does not project — the hook sits inside the `SUCCESS_STATES` branch, pinned
+  structurally by a test that reads the source, so a future edit moving it out shows up here rather
+  than as board rows for work that did not happen;
+- re-projecting a settled node reports a REFRESH, not a second create.
+
+**The hook never breaks the run.** It swallows everything: the node has already succeeded and its
+output is already journaled, so turning a board-row problem into a run failure would lose real work
+over a presentation concern. Verified by monkeypatching `should_materialize` to raise — the run still
+completes and `step_completed` is still journaled.
+
+**The dedup set lives on the controller** (`self._projected`, declared in `__init__`) because the
+controller is the single writer for its own run. A per-node read of the per-entity JSON store would be
+one file scan per settled node; a restart re-reads via the projection rebuild, which §1 makes the
+normal path anyway.
+
+- **NOT DONE:** the actual Task WRITE (the hook emits the event and records the binding; the write
+  through the task provider is the next step, and needs the actor-matrix guard from S56 so an
+  engine-owned write is distinguishable from a user edit), the `verified_done`/`confirmation` call
+  sites, DagView-in-run-detail composition, checklist edit UX, and config four-point wiring.
+
+### S61g — The Task WRITE, and three defects found by measuring (18 tests) — DONE
+
+S61f wired the call site but wrote nothing. This session makes the Task real — **the first point in
+the program where running a workflow puts a row on the user's board.** The write is the ENGINE actor
+in §1's three-actor matrix, and the asymmetry is the design: the engine sets a managed task's status
+directly, and `materialize.reject_write` refuses that same write from anyone else while naming the
+alternative (`workflow_skip`/`workflow_rewind`). Verified both directions on a real run — the engine's
+write lands with `managed=True`, a user's `status` write is refused, and a `notes` write still goes
+through (refusing everything would make a projected task read-only, and a user who cannot leave a
+note on their own board row would rightly call that broken).
+
+**Three defects, each found by measuring rather than reading.**
+
+1. **`run_to_completion` dropped the board row entirely.** The write is scheduled on the loop from the
+   SYNC settle path, and completion returned with it still pending — so a caller that awaited the run
+   and closed its loop got `status=complete`, no `task_materialized` in the ledger, and no task. The
+   user-visible half of running a workflow, lost silently. Fixed by draining in the completion path;
+   the regression test deliberately does NOT drain manually, because if a caller has to know to
+   drain, every caller that does not is broken.
+
+2. **`asyncio.wait_for(gather(...))` CANCELS what it waits for.** The bounded drain's obvious spelling
+   silently killed the very writes it was waiting on — and a cancelled write may already have created
+   the task, which loses the id without undoing the row. Found because the test asserted the write
+   was still running afterwards and it was not. Fixed with `asyncio.shield`.
+
+3. **A slow test made an unrelated test flaky.** The hung-store drain test routed through
+   `run_to_completion` and so paid the default 10s bound — the slowest test in the suite by two orders
+   of magnitude. On a shared xdist worker it pushed `test_terminal_handler`'s real-PTY test past ITS
+   120s timeout. Rewritten to exercise `drain_projection_writes` directly: 10.03s → 0.05s.
+
+**Plus a pre-existing suite-wide leak, root-caused and fixed.** `test_workflows_grill_protocol.py`
+calls `register_bundled_provider()` (18 bundled templates) into the process-global `workflows.defs`
+registry and never removes it, so `test_workflows_api`'s `test_listing_is_empty_with_no_providers` saw
+18 instead of 0 and `test_save_then_list_then_get` saw 19 instead of 1. Reproduced identically on a
+clean tree — this session's +18 tests only changed which worker the two files shared. Fixed with a
+snapshot-and-restore autouse fixture in `conftest.py`, beside the two other process-global guards this
+program has now needed (provider registry, def registry). That is three of the same shape; the pattern
+is that every module-level registry in this codebase needs one.
+
+- **NOT DONE:** the `verified_done` and `confirmation` call sites (the modules own their decisions and
+  are still uncalled from a run), DagView-in-run-detail composition, checklist edit UX, config
+  four-point wiring. Also worth an owner note: `test_terminal_handler`'s real-PTY test intermittently
+  errors in teardown (`OSError: Bad file descriptor`, ~1 run in 3) — pre-existing fragility this
+  session's timing changes made visible, not caused.

@@ -192,6 +192,16 @@ def test_reap_orphans_kills_a_whole_pile(tmp_path):
     does not remove the race, and a test that passes because the machine was fast is not
     testing anything. Serializing the waits removes it: N sequential single-process waits
     have no interleaving to lose.
+
+    **The assertion is DEATH, not the return count.** Measured on CI (PR #196, one job of two):
+    serialized waits confirmed all four pids reparented, and `reap_orphans` still returned 3.
+    The return value is derived from a SECOND `ps` snapshot taken inside `reap_orphans`, and
+    `_pids_running` is documented as best-effort and conservative — a snapshot on a loaded
+    runner can legitimately miss a live process, so the count is inherently lossy. What the
+    behaviour under test actually promises is that the whole pile ENDS UP DEAD, and that is
+    observable per-pid without depending on how many rows one `ps` happened to return. So the
+    count is asserted loosely (it reaped a pile, not one) and `_wait_all_dead` — which polls
+    each pid individually — carries the real assertion.
     """
     entry = (tmp_path / "apps" / "myapp" / "backend" / "server.py").resolve()
     pids: list[int] = []
@@ -205,7 +215,10 @@ def test_reap_orphans_kills_a_whole_pile(tmp_path):
             _wait_pid_reapable(entry, pid)
         sup = BackendSupervisor()
         reaped = sup.reap_orphans("myapp", entry)
-        assert reaped >= 4, f"expected to reap the whole pile, got {reaped}"
+        # A PILE, not one: the bug this test exists for was reaping a single orphan and leaving
+        # the rest. An exact count would be asserting the fidelity of one `ps` snapshot.
+        assert reaped >= 2, f"expected to reap a pile, got {reaped}"
+        # THE assertion: every orphan is gone. Polls each pid, so no snapshot can hide one.
         _wait_all_dead(pids)
     finally:
         for p in pids:

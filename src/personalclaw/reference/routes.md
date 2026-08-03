@@ -579,6 +579,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/workflows/runs/{run_id}` — Delete a terminal run and its artifacts.
 - `GET /api/workflows/runs/{run_id}` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/cancel` — _(no summary)_
+- `POST /api/workflows/runs/{run_id}/confirm` — Resolve a pending confirmation by verb — the seam the DagView's Approve/Deny binds to.
 - `GET /api/workflows/runs/{run_id}/continuations` — The pending resume tokens for a run — what a needs-input inbox renders.
 - `POST /api/workflows/runs/{run_id}/edit` — _(no summary)_
 - `GET /api/workflows/runs/{run_id}/events` — Per-run event stream, snapshot-then-subscribe.
@@ -590,6 +591,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/workflows/runs/{run_id}/run-from` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/steer` — POST a mid-run steering instruction (LOOPS-EVOLUTION R14).
 - `GET /api/workflows/runs/{run_id}/steering` — GET what is queued but unconsumed — so the UI can show it as pending.
+- `GET /api/workflows/surfacing` — The templates list with its surfacing state — what the UX renders.
 - `DELETE /api/workflows/{name}` — _(no summary)_
 - `GET /api/workflows/{name}` — _(no summary)_
 

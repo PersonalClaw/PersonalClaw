@@ -32,7 +32,7 @@ from typing import Any
 from personalclaw.workflows import attention, blocks
 from personalclaw.workflows import defs as defs_mod
 from personalclaw.workflows import journal as journal_mod
-from personalclaw.workflows import macros, mutations, secrets, store, template_lint
+from personalclaw.workflows import macros, models, mutations, secrets, store, template_lint
 from personalclaw.workflows.models import (
     TERMINAL_RUN_STATUSES,
     InstanceState,
@@ -102,6 +102,91 @@ async def list_defs(*, tag: str = "", source: str = "") -> dict[str, Any]:
     return _ok(defs=out, total=len(out))
 
 
+async def list_defs_surfacing(*, now: float = 0.0) -> dict[str, Any]:
+    """The templates list WITH its surfacing state — freshness, scope, packs, route, reachability.
+
+    `list_defs` deliberately returns a thin projection (name/description/source/version/tags/
+    provider). Measured (S61b): that projection drops `metadata` entirely, so a templates list built
+    on it CANNOT render a freshness gradient, a scope chip, or a surfacing toggle no matter what the
+    def declares — the fields would be present on disk and invisible to every surface. This is the
+    read the UX consumes.
+
+    Cadence facts are batched here rather than looked up per def: one `list_runs` call per template
+    on every list render is the shape that makes a list feel broken on a machine with history.
+    """
+    from personalclaw.workflows import surfacing_channels as channels
+
+    defs_by_name: dict[str, Any] = {}
+    for provider_name in defs_mod.list_providers():
+        provider = defs_mod.get_provider(provider_name)
+        if provider is None:
+            continue
+        try:
+            found, _total = await provider.list_defs(limit=500)
+        except Exception:
+            logger.debug("workflow def provider %s failed to list", provider_name)
+            continue
+        for item in found:
+            name = ""
+            metadata: Any = None
+            if isinstance(item, dict):
+                name = str(item.get("name", "") or "")
+                metadata = models.DefMetadata.from_dict(item.get("metadata") or {})
+            else:
+                name = str(getattr(item, "name", "") or "")
+                metadata = getattr(item, "metadata", None)
+            if not name or metadata is None:
+                continue
+            defs_by_name.setdefault(name, (provider_name, metadata))
+
+    rows: list[dict[str, Any]] = []
+    doctor_entries: list[dict[str, Any]] = []
+    for name, (provider_name, metadata) in sorted(defs_by_name.items()):
+        cadence = channels.cadence_from_def(
+            name, metadata, last_completed_at=channels.last_completed(name)
+        )
+        rows.append(
+            {
+                "name": name,
+                "provider": provider_name,
+                "surface_mode": metadata.surface_mode,
+                "summary": metadata.summary,
+                "when_to_use": metadata.when_to_use,
+                "cadence_days": metadata.cadence_days,
+                "escalation": metadata.escalation,
+                "packs": list(metadata.packs),
+                "guided": metadata.guided,
+                "freshness": channels.freshness(cadence, now).value,
+                "overdue": channels.overdue(cadence, now),
+                "last_completed_at": cadence.last_completed_at,
+                "hands_off_to": [h.to_dict() for h in channels.handoffs_from_def(metadata)],
+            }
+        )
+        doctor_entries.append(channels.doctor_entry(name, metadata))
+
+    # Overdue-first, matching the list the plan describes; `sort_key` owns the rule so the API and
+    # any other surface cannot disagree about the order.
+    order = {
+        name: channels.sort_key(
+            channels.cadence_from_def(
+                name,
+                meta,
+                last_completed_at=next(
+                    (r["last_completed_at"] for r in rows if r["name"] == name), 0.0
+                ),
+            ),
+            now,
+        )
+        for name, (_prov, meta) in defs_by_name.items()
+    }
+    rows.sort(key=lambda r: order.get(str(r["name"]), (9, 0.0, str(r["name"]))))
+    return _ok(
+        defs=rows,
+        total=len(rows),
+        findings=[f.to_dict() for f in channels.doctor(doctor_entries)],
+    )
+
+
 async def get_def(name: str) -> dict[str, Any]:
     """One definition in full, with secret values stripped to `_has*` flags.
 
@@ -133,6 +218,7 @@ async def author_def(
     description: str = "",
     inputs: dict[str, Any] | None = None,
     tags: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
     save: bool = True,
     provenance: str = "chat",
     strict: bool = True,
@@ -145,6 +231,12 @@ async def author_def(
 
     `strict` rejects on WARNINGS too. Authoring is exactly when a warning is cheap to fix,
     and a template that ships with a known smell propagates it to every run.
+
+    `metadata` is the def's declared surfacing/matching block. Measured (S61b): there was NO write
+    path for it — the parameter did not exist, so every `DefMetadata` field (including the
+    `surface_mode`, `cadence_days` and `packs` the surfacing channels read) could be loaded from
+    disk and never SET through the API. A field with a read path and no write path is a field only a
+    hand-edited file can use, which is the config round-trip contract's exact failure.
     """
     if not valid_name(name):
         return _err(
@@ -160,6 +252,12 @@ async def author_def(
         "tags": tags or [],
         "provenance": provenance,
     }
+    if metadata:
+        # Through `DefMetadata.from_dict` and back out, so the tolerant per-field coercion (unknown
+        # `surface_mode` → `off`, negative `cadence_days` → 0) applies to the WRITE and not only to
+        # the read. Coercing on read alone would store a value the next reader silently
+        # reinterprets.
+        spec["metadata"] = models.DefMetadata.from_dict(metadata).to_dict()
 
     # Macros expand HERE, before validation and before the write — so what is stored, what is
     # validated and what the engine runs are the same core nodes. Expanding at run time
@@ -659,6 +757,60 @@ def pending_steering(run_id: str) -> dict[str, Any]:
     pending = run.extra.get("steering_queue")
     items = pending if isinstance(pending, list) else []
     return _ok(run_id=run_id, pending=items, count=len(items))
+
+
+def resolve_confirmation(
+    run_id: str,
+    *,
+    supervisor: Any = None,
+    verb: str = "",
+    token: str = "",
+    note: str = "",
+    responder: str = "",
+) -> dict[str, Any]:
+    """Resolve a pending confirmation by VERB — the backend the DagView's Approve/Deny needs.
+
+    Rides `resume_run` rather than reaching into the controller: there is ONE place a resume
+    token is consumed (the claim primitive lives with the token, and S57 measured a read-then-
+    unlink version letting multiple callers consume one approval in 36 of 40 races). A second
+    resolve path would be a second chance to double-approve.
+
+    What this adds over `resume_run` is the VERB vocabulary: `approve | reject | skip | quit`,
+    with an unknown verb REFUSED rather than treated as a reject. A typo silently declining an
+    approval would reject work the user meant to allow, and they would have no way to know why.
+
+    `skip` and `quit` resolve nothing on purpose — skip leaves the item pending for the next
+    pass (different from rejecting it) and quit stops asking without answering. Neither touches
+    the run, so neither consumes the token.
+    """
+    from personalclaw.workflows.confirmation import resolve as resolve_verb
+
+    resolution, error = resolve_verb(verb, note=note)
+    if resolution is None:
+        return _err("WF_CONFIRM_VERB_INVALID", error)
+    if not resolution.resumes:
+        # Skip/quit are decisions ABOUT the queue, not answers to the gate. Returning ok=True with
+        # `resumed=False` says exactly that; consuming the token here would burn a single-use claim
+        # on a non-answer and strand the gate forever.
+        return _ok(
+            run_id=run_id,
+            resumed=False,
+            still_pending=resolution.still_pending,
+            verb=resolution.verb,
+        )
+    result = resume_run(
+        run_id,
+        supervisor=supervisor,
+        token=token,
+        # The gate's answer is the APPROVAL BOOLEAN, which is what the engine's gate resolution
+        # reads. Passing the verb string would make `reject` truthy — the single worst possible
+        # mistranslation in this path.
+        answer=resolution.approved,
+        responder=responder,
+    )
+    result.setdefault("verb", resolution.verb)
+    result.setdefault("approved", resolution.approved)
+    return result
 
 
 def resume_run(

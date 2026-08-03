@@ -135,12 +135,19 @@ mandatory.
 | # | Session | PR group | Status |
 |---|---|---|---|
 | 55 | Projection core: `workflow_binding` + new Task fields, `TaskStatus.SKIPPED`, auto-materialization + fingerprint dedup + fan-out caps, typed state projection | G27 | ✅ DONE (#195) |
-| 56 | Verified done + enforcement: engine-owned criterion execution, pass-state gating, three-actor matrix, managed-write rejection, cascade-fail, stuck-work sweep | G27 | TODO |
-| 57 | ConfirmationRequest + gates: durable record + atomic single-use resolution + auto-resume, `require_hitl`, DagView Approve/Deny, per-stage mute, tool profiles | G28 | TODO |
-| 58 | Surfacing core: `surface_mode` enum, trigger-phrase `match_text` + collision check, metadata split + lints, one-source-two-wrappers injection, SOP migration | G28 | TODO |
-| 59 | Surfacing channels + resolution: cadence channel + overdue escalation, fingerprint channel + packs, layered scope resolution, parameter pre-fill, reachability doctor | G29 | TODO |
-| 60 | Pool + templates: frontier/next projections, evented unblock, TTL'd leases, write-time acyclicity, lifecycle events, seed template library | G29 | TODO |
-| 61 | UX + validation: composer chips, validated deep-links, checklist edit UX, config four-point wiring, end-to-end as-a-user sweep | G30 | TODO |
+| 56 | Verified done + enforcement: engine-owned criterion execution, pass-state gating, three-actor matrix, managed-write rejection, cascade-fail, stuck-work sweep | G27 | ✅ DONE (#196) |
+| 57 | ConfirmationRequest + gates: durable record + atomic single-use resolution + auto-resume, `require_hitl`, DagView Approve/Deny, per-stage mute, tool profiles | G28 | ✅ DONE (#197) |
+| 58 | Surfacing core: `surface_mode` enum, trigger-phrase `match_text` + collision check, metadata split + lints, one-source-two-wrappers injection, SOP migration | G28 | ✅ DONE (#198) |
+| 59 | Surfacing channels + resolution: cadence channel + overdue escalation, fingerprint channel + packs, layered scope resolution, parameter pre-fill, reachability doctor | G29 | ✅ DONE (#199) |
+| 60 | Pool + templates: frontier/next projections, evented unblock, TTL'd leases, write-time acyclicity, lifecycle events, seed template library | G29 | ✅ DONE (#200) |
+| 61 | Def-side surfacing fields (`DefMetadata`: surface_mode, cadence_days, escalation, packs, hands_off_to, guided) + the def→record adapter — RE-SCOPED from UX, which was unbuildable: the fields S55-S60 read did not exist | G30 | ✅ DONE (#201) |
+| 61b | Backend wiring: `metadata` write path on `author_def`, `GET /api/workflows/surfacing` (freshness + scope + packs + doctor findings), `TaskComplete` emission from `update_task` | G30 | ✅ DONE (#202) |
+| 61c | FE surfacing surfaces: `surfacingMeta` presentation layer, composer-chip rule, allowlisted deep-link params, templates-list freshness/mode/pack/doctor rendering, validated as-a-user against a live gateway | G30 | ✅ DONE (#203) |
+| 61d | Lease write path (flock'd CAS + sweep, 0/12 multi-winner across 8 processes) + `POST /runs/{id}/confirm` verb resolve + the FE node→token join | G30 | ✅ DONE (#204) |
+| 61e | The 5 task-projection events on BOTH channels (ledger kinds + `_publish` + the FE union, guarded in both directions) — UNBLOCKS the stream unions | G30 | ✅ DONE (#205) |
+| 61f | The projection CALL SITE: `RunController` projects settled leaves via `materialize` (+ container/opt-out/failure refusals, refresh dedup), verified on real runs | G30 | ✅ DONE (#206) |
+| 61g | The Task WRITE through the provider (engine actor, drained at completion, shielded bound) + 3 measured defects + the def-registry leak fix | G30 | ✅ DONE (#207) |
+| 61h | Still open: verified_done + confirmation call sites, DagView-in-run-detail, checklist edit UX, config four-point wiring | G30 | TODO |
 
 ## H. Automation Substrate (`-AUTOMATION-SUBSTRATE.md`) — final step needs Loops Phase 4
 
