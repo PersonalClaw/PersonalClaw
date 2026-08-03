@@ -174,7 +174,7 @@ mandatory.
 | 72 | Self-model: capped (full tier DISPLACES, never appends) + propose-never-install + compact snapshot; found `user.selfmodel.*` leaking into user-FACT blocks | G36 | ✅ DONE (#228) |
 | 73 | Refiner acceptance discipline: mechanism clustering (freq × unresolvedness) + power floor + median-of-3 critic + GateOK + frozen region, all as pure decisions | G37 | ✅ DONE (#229) |
 | 74 | Deterministic detector chain (free at both extremes, typed skip reasons) + closed FailureMode enum; FOUND the env-failure deny-filter catching 1 of 4 → now 12/12, 0 false positives | G37 | ✅ DONE (#230) |
-| 75 | Proposal Inbox: six kinds, provenance, evidence manifests, risk tiers; model cannot accept its own proposals | G38 | TODO |
+| 75 | Proposal Inbox view model + THE accept gate — found the "model cannot accept its own proposals" invariant holding only by ABSENCE of a caller; now enforced in the real accept()/reject() | G38 | ✅ DONE (#231) |
 | 76 | Staging tier observability: FLUSH_OK/ERROR/proposal-id outcome records, week-at-a-glance panel | G38 | TODO |
 | 77 | Accountability: EFFECTIVE…HARMFUL verdicts from ledger outcomes, auto-filed revert proposals; incognito capture gate closed + regression-tested | G39 | TODO |
 
