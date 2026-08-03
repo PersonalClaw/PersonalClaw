@@ -156,13 +156,19 @@ class TestCronService:
         assert job.schedule.kind == "cron"
         assert job.schedule.cron_expr == "0 9 * * MON-FRI"
 
-    def test_status(self, tmp_path: Path) -> None:
+    def test_the_service_no_longer_answers_status(self, tmp_path: Path) -> None:
+        """🔴 SUPERSEDED CONTRACT (S107). `status()` reported `{"running", "jobs", "enabled"}` —
+        and after the S100/S101 cutover it reported all zeros plus `running: false` on a healthy
+        machine, because the counts came from a service the store had replaced and
+        `load_without_timer` never sets `_running`. They moved to `schedule_view.counts()` (see
+        `test_dashboard_status_snapshot.py`), so the method is deleted rather than left as a
+        second, wrong answer to the same question."""
         svc = ScheduleService(base_dir=tmp_path)
         svc._load()
         svc.add_job(name="s", action=make_agent_action(message="m"), every_secs=300)
-        status = svc.status()
-        assert status["jobs"] == 1
-        assert status["enabled"] == 1
+        assert not hasattr(svc, "status")
+        # The job itself is still there — this retires a REPORTING surface, not the CRUD.
+        assert len(svc.list_jobs()) == 1
 
     def test_load_corrupted(self, tmp_path: Path) -> None:
         (tmp_path / "crons.json").write_text("not json")

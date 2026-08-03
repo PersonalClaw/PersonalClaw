@@ -511,7 +511,6 @@ class ScheduleService:
         # record can be tagged "scheduled" vs "manual".
         self._job_run_meta: dict[str, tuple[float, str]] = {}
         # Optional callback to push a live-refresh hint to dashboard clients.
-        self._push_refresh: Callable[[str], None] | None = None
 
     # ── Lifecycle ──
 
@@ -809,11 +808,6 @@ class ScheduleService:
             error=job.last_error or "",
         )
         await self._run_store.append(run)
-        if self._push_refresh:
-            try:
-                self._push_refresh("cron_history")
-            except Exception:
-                logger.debug("push_refresh callback failed", exc_info=True)
 
     async def list_runs(
         self, job_id: str, offset: int = 0, limit: int = 10
@@ -858,24 +852,12 @@ class ScheduleService:
         """Epoch start of the in-flight run for this job, or None."""
         return self._job_start_times.get(job_id)
 
-    def set_refresh_callback(self, cb: "Callable[[str], None] | None") -> None:
-        """Register a callback to hint dashboard clients to refresh a view."""
-        self._push_refresh = cb
-
     def list_jobs(self, include_disabled: bool = False) -> list[ScheduleJob]:
         """List jobs, optionally including disabled ones."""
         self._sync()
         if include_disabled:
             return list(self._jobs)
         return [j for j in self._jobs if j.enabled]
-
-    def status(self) -> dict[str, Any]:
-        """Service status summary."""
-        return {
-            "running": self._running,
-            "jobs": len(self._jobs),
-            "enabled": sum(1 for j in self._jobs if j.enabled),
-        }
 
     # ── Timer ──
 

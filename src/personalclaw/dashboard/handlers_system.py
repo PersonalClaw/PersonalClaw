@@ -108,7 +108,14 @@ async def api_status(request: web.Request) -> web.Response:
         {
             "uptime_secs": int(uptime),
             "messages_received": state.messages_received,
-            "cron": state.crons.status(),
+            # The unified store's counts (S107), not `ScheduleService.status()`. That reported
+            # `{"running": false, "jobs": 0, "enabled": 0}` on a healthy machine with automations:
+            # the counts came from a service the cutover emptied, and `running` was False BY DESIGN
+            # because `load_without_timer` never sets it — so the field claimed the scheduler was
+            # down while the clock loop was firing normally. `running` is dropped rather than
+            # rewired: the honest question is whether the CLOCK is running, and that belongs to the
+            # doctor's engine check, which already answers it.
+            "cron": state.trigger_counts(),
             "stats": Stats().snapshot(),
             "stats_summary": Stats().summary(),
             "update_progress": state._update_progress,

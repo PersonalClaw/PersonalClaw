@@ -2396,3 +2396,54 @@ MagicMock answers any attribute and would have passed vacuously either way.
   `is_running`/`running_since`), and the non-facade callers (`suggestions.py`, `messaging.py`,
   `discover.py`, `app_crons.py`, `digest_provider.py`, `state.py`, `handlers_system.py`). Then the
   class, then the `schedule_*` MCP aliases. `ScheduleRunStore` survives.
+
+### S107 — Status + live refresh: three surfaces that went blind at the cutover (§6)
+
+**DONE.** `status`/`set_refresh_callback` retired from `ScheduleService`. All three defects are the
+same shape: a surface reading a service the S100/S101 cutover emptied, reporting an honest answer
+from the wrong source.
+
+**🔴 DEFECT 1 — `GET /api/status` reported the scheduler as down, with zero automations.**
+`state.crons.status()` returned `{"running": false, "jobs": 0, "enabled": 0}`. Driven against a home
+with three VALID store triggers (two enabled, firing): all zeros. And `running: false` was doubly
+misleading — `load_without_timer` leaves `_running` False **by design** (S100), so the field claimed
+the scheduler was down on a perfectly healthy machine. `running` is DROPPED rather than rewired: the
+honest question is whether the CLOCK loop is running, and the doctor's engine check already answers
+it. A status field that lies is worse than one that is absent.
+
+**🔴 DEFECT 2 — the dashboard's "triggers" metric read 0.** `state.py`'s `status_snapshot` computed
+`cron_jobs` from `len(self.crons.list_jobs())`, which `SystemHealth.tsx` renders as the `triggers`
+count. Same cause, different call site — which is why the fix is ONE helper
+(`DashboardState.trigger_counts()` over `schedule_view.counts()`) rather than two re-points that
+could drift.
+
+- `broken` is now reported alongside `total`/`enabled`, because the store knows it and the legacy
+  service could not: a row failing validation refuses to enable, and a user whose trigger silently
+  stopped counting should see the reason on the status surface.
+- The legacy jobs are folded in BY ID, so a home mid-migration counts each automation once. Verified:
+  a legacy job sharing a store id does not double-count, a raising legacy half is survived, and an
+  unusable store reports zeros rather than 500ing the page a user opens when something is wrong.
+
+**🔴 DEFECT 3 — a scheduled fire updated no open view.** `ScheduleService._record_run` pushed
+`cron_history` so Executions/Logs live-update without polling; `_record_run` is reachable only from
+`run_job` (manual) and `_run_job_isolated` (the retired timer). Measured: none of `loop`, `executor`,
+`wakeup`, `service`, `_clock_loop`, or `_fire_store_trigger` mentions `push_refresh` — so since the
+cutover a user watching the run feed saw a stale page until they navigated. Now pushed from
+`_fire_store_trigger`'s `finally` (both `crons` and `cron_history`), because a FAILED fire is exactly
+the one someone is watching for. Driven with a raising provider to confirm the failure path pushes.
+
+**The callback seam retires with the method.** `set_refresh_callback` fired only from `_record_run`,
+and the manual-run HANDLER already pushes both kinds in its own `finally` — so keeping it would have
+meant a configurable hook nothing configures plus a duplicate broadcast on the one path it reached.
+
+**DEVIATION — one superseded test rewritten.** `test_contains_core_fields` asserted `cron_jobs == 2`
+off a `crons.list_jobs()` mock returning DICT-shaped jobs. Those have no `.id`, so they contribute
+nothing to the fold-in — which is precisely why that assertion could never have caught the regression
+it looked like it was guarding. Split into a store-driven count test plus 7 new `trigger_counts`
+tests and 5 refresh tests.
+
+- **REMAINING on the `ScheduleService` retirement:** the residual CRUD fallbacks (`list_jobs` ×7 +
+  `ack_job`/`enable_job`/`remove_job`/`update_job`/`run_job`/`is_running`/`running_since`) and the
+  non-facade callers (`suggestions.py`, `messaging.py`, `discover.py`, `app_crons.py`,
+  `digest_provider.py`). Then the class, then the `schedule_*` MCP aliases. `ScheduleRunStore`
+  survives.
