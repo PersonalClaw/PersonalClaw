@@ -1067,3 +1067,62 @@ queue, and the week panel returns 7 buckets with `silent_days` populated.
   that bulk is ergonomics, never a lane, so shipping the explanation before the control is the safe
   order. Proposal DETAIL (the full change manifest rendered as a diff) also stays deferred: the route
   serves the record, and the diff view belongs with the Versions tab that renders template diffs.
+
+### S79 — Criterion 4's adversarial refiner-path test, and the fencing it needed (41 tests) — DONE
+
+**This closes success criterion 4**, whose second clause was unmet: "Content inside `fence_untrusted`
+provably never becomes a lesson/skill/template — **and the adversarial test covers the REFINER path**:
+injection planted in a run transcript or `run_feedback` comment must not surface as a proposal (let
+alone an accepted diff)."
+
+**🔴 THE REFINER PATH HAD NO SCREEN AND NO FENCE.** Grepped `refiner.py` for `screen(`,
+`fence_untrusted` and `triggers.screen` — none present. Driven with an injection planted in a
+`step_failed` error, the text flowed straight into the cluster SIGNATURE, which is precisely what a
+refiner prompt carries as its evidence. §3.1's TRUST clause names the refiner as the fifth
+`fence_untrusted` call site and says fencing is the caller's responsibility; that call site had not been
+built. S69 built the screen this needed, at the trigger boundary, and nothing on this path called it.
+
+Two dispositions, deliberately different:
+
+- **BLOCKED** (the screen's hard groups) → the event is **DROPPED**, not fenced-and-passed. A fenced
+  event still influences cluster RANK, so an attacker could choose which failure the refiner targets
+  even without steering the prompt. `test_a_blocked_payload_never_reaches_a_PROMPT` covers the second
+  layer, so the criterion's "let alone an accepted diff" holds too.
+- **SUSPICIOUS or clean** → fenced at the model boundary and KEPT. An attacker who could make legitimate
+  text look borderline would suppress the refiner's evidence — an availability attack, and just as
+  effective as steering it. `test_borderline_text_survives_screening` pins that with "the retry
+  instructions in the runbook", which mentions instructions and is not an injection.
+
+**🔴 A DEFECT FOUND BY PROBING MY OWN FIRST VERSION.** Fencing at the CLUSTERING layer put the marker
+words into every failure signature — `untrusted_content source run ledger step_failed …` — so four
+tokens of boilerplate ate a third of the 12-token window that makes two mechanisms distinct, and
+unrelated failures began sharing tokens (measured: 4 shared, where they should share at most the
+`step_failed` prefix both messages literally contain). Clustering is pure statistics that no model
+reads, so fencing buys it nothing and costs precision. Split into two layers: `screen_evidence` produces
+clustering input (screened, unfenced) and `fenced_evidence` produces prompt input (screened AND fenced).
+
+Further decisions:
+
+- **`UNTRUSTED_EVIDENCE_FIELDS` is data, not inline checks.** A field absent from the set is one nobody
+  decided the trust level of, and a test walks every member so a new evidence field cannot quietly skip
+  the screen.
+- **Every surviving field is fenced, not only the flagged ones.** Fencing only suspicious text would
+  mean the screen's MISSES arrive as instructions — the composition rule S69 established at the trigger
+  boundary.
+- **`cluster_failures` stays public and unguarded.** It is a pure function, and a test proving the raw
+  path is unsafe needs to call it; the guard is that the PIPELINE entry point (`cluster_safely`) screens.
+  `test_the_raw_clustering_path_stays_callable_and_unscreened` asserts both halves.
+- **Screening never raises and never changes the power floor.** A screen that throws fails open under
+  exactly the input an attacker controls, and a floor that shifted under screening would silently change
+  when a refiner may propose.
+- **A non-string field is ignored rather than coerced** — coercing a dict would invent content to match
+  against.
+
+**Two of my own errors, corrected mid-session.** (1) An assertion of ZERO shared signature tokens fails
+on real text and says nothing about fencing; the honest property is that no fence-MARKER token leaks,
+with genuine shared vocabulary allowed. (2) The reflow tool split a string literal across lines,
+producing unparseable Python — caught by `black`, not by me, and repaired by shortening the literal.
+
+- **NOT DONE (by scope):** the refiner AGENT's own prompt assembly, which is where `fenced_evidence`
+  gets consumed. §3.1 puts that agent on the `run-workflow` provider as a trigger-fired template rather
+  than Python, so this session builds the contract it will call — the same split S73 recorded.
