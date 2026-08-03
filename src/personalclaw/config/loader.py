@@ -1218,6 +1218,17 @@ class LearningConfig:
             "a quiet day. Off = capture still runs, but its failures are invisible.",
         ),
     )
+    self_model_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Learn From What Works",
+            "Notice working patterns and OFFER them as behavioral principles. Every other "
+            "learning path only sees corrections and failures, so this is the one that can "
+            "learn from what quietly succeeds. It never installs anything: a pattern that "
+            "recurs and keeps working becomes a proposal you review, capped at a handful of "
+            "principles so it cannot grow without displacing one you already accepted.",
+        ),
+    )
     min_session_score: float = field(
         default=0.0,
         metadata=_meta(
@@ -1852,6 +1863,26 @@ class WorkflowsConfig:
             "How long a session's exclusive claim on a task lasts before another may take it. "
             "Deliberately short: a worker that needs longer renews, which proves it is alive, "
             "whereas a long lease only delays discovering that it is not. Capped at one hour.",
+        ),
+    )
+    default_quiet_windows: str = field(
+        default="",
+        metadata=_meta(
+            "Default Quiet Hours",
+            "A quiet window applied to new automations that do not set their own, as "
+            "`HH:MM-HH:MM` (e.g. `22:00-08:00`). Empty means no default — an automation you "
+            "created deliberately should run when you told it to, so this only fills a gap you "
+            "left. A window may wrap midnight. Per-trigger settings always win.",
+        ),
+    )
+    duty_gate_default: str = field(
+        default="",
+        metadata=_meta(
+            "Default Duty Gate",
+            "The is-the-user-on-duty check applied to new automations that name none. Empty "
+            "means no gate. `manual` is the built-in on/off toggle; apps can supply others (a "
+            "calendar, for instance). The gate always fails OPEN — if it cannot answer, the "
+            "automation still fires, so a broken calendar app can never silence everything.",
         ),
     )
 
@@ -3000,6 +3031,10 @@ class AppConfig:
                     workflows_data.get("confirmation_ttl_secs", 7 * 24 * 3600), 7 * 24 * 3600
                 ),
                 lease_ttl_secs=_safe_int(workflows_data.get("lease_ttl_secs", 900), 900),
+                default_quiet_windows=str(
+                    workflows_data.get("default_quiet_windows", "") or ""
+                ).strip(),
+                duty_gate_default=str(workflows_data.get("duty_gate_default", "") or "").strip(),
             ),
             learning=LearningConfig(
                 enabled=bool(learning_data.get("enabled", True)),
@@ -3009,6 +3044,7 @@ class AppConfig:
                 skill_ladder=bool(learning_data.get("skill_ladder", True)),
                 min_evidence=int(learning_data.get("min_evidence", 3) or 3),
                 staging_enabled=bool(learning_data.get("staging_enabled", True)),
+                self_model_enabled=bool(learning_data.get("self_model_enabled", True)),
                 min_session_score=float(learning_data.get("min_session_score", 0.0) or 0.0),
                 context_budget_tokens=int(learning_data.get("context_budget_tokens", 4000) or 4000),
                 curator_enabled=bool(learning_data.get("curator_enabled", True)),

@@ -564,3 +564,637 @@ Frontmatter gains an optional declaration so resources are addressable without a
   them now would mean writing against a contract step 3 defines. `lessons.jsonl` deletion
   is step 2 by the plan's own re-tiering. The staging tier is wired to the per-turn cadence;
   session-end and run-end consume the same gate/hygiene/staging API when their steps land.
+
+### S71 — Per-arm precision, threshold tuning from data, Beta-Binomial trust (43 tests) — DONE
+
+§7 criterion 7 has three clauses and all three are now measurements: per-arm surfaced-vs-used precision
+is reportable per entity kind, threshold profiles are tunable from data, and a muted chip visibly
+lowers an entity's trust posterior. The plan's own reasoning drove the shape — "unenforced 'helpful'
+scores stay ornamental forever", so `used` is only ever a mechanically-observed fact.
+
+**Measured before writing.** Two of the three pieces already existed: `learning/surfacing.py` carries
+`THRESHOLD_PROFILES` with the deliberate 0.55/0.62 split, and `learning/usage.py` already persists
+`surfaced`/`used`/`successes`/`failures` per entity. The gap was the middle — `Candidate` had no `arm`,
+so nothing could attribute a surfacing to the path that produced it, and nothing computed a posterior
+from counts already on disk. So this session added attribution + statistics and deliberately did NOT
+add a second threshold table or a second usage store.
+
+**🔴 A DIVERGENCE I SHIPPED AND THEN CAUGHT BY COMPARING.** `memory_push.ARM_CONFIDENCE` already
+existed (`alias`/`exact_name`/`suffix`), with a docstring recording that "how the name was recognised
+IS the evidence". My first draft wrote a second table — and it disagreed immediately: `exact_name` at
+0.90 where the shipped table says 0.80. Two confidence scales for one arm name is precisely the drift
+this program keeps finding. The shipped table is now IMPORTED and the retrieval-only arms
+(`exact_title`/`path`/`keyword`/`embedding`) extend it, pinned by
+`test_the_shipped_arm_table_is_imported_not_restated`. **DEVIATION:** the plan says `exact_name ~0.9`;
+the shipped calibration says 0.8 and wins — a plan number does not override a value already in use.
+
+**🔴 A DEFECT FOUND BY MEASURING `fuse`, NOT BY READING IT.** With two sources finding the SAME entity
+at the same rank, RRF ties — and the survivor was whichever source dict happened to be iterated FIRST.
+So an entity matched by both exact-name and embedding was attributed to an arm chosen by insertion
+order, and the per-arm precision report would credit the wrong path. Fixed by carrying the STRONGEST
+arm across the dedup, which is the rule `memory_push` already applies ("being named explicitly once is
+not undone by also being a vector neighbour"), compared through `arm_confidence` rather than a second
+precedence list.
+
+**A second finding the probe surfaced.** `skill` had a 90%-precision `exact_name` arm and a 16%
+`embedding` arm, which average to a healthy-looking 49% — so no threshold moved and the report read as
+fine. A kind's threshold genuinely IS one number (it gates the fused score), so the aggregate is the
+right input for it; the fix is that the reason now NAMES the spread and points at the weak arm's own
+confidence as the actual remedy. `test_a_kind_whose_arms_disagree_sharply_says_so` pins it, and a
+one-sample arm cannot trigger the alert (it would otherwise fire forever at 100%).
+
+Decisions, each with the failure it prevents:
+
+- **Beta-Binomial, not a ratio.** A raw used/surfaced ratio says 1.0 after one lucky hit, so a
+  brand-new entity would outrank a proven one and one bad turn would condemn a good lesson. Ranking is
+  on the LOWER BOUND, so ignorance costs something: a 1-of-1 entity ranks below a 27-of-30 one despite
+  a better naive ratio. `precision_ratio()` exposes the naive number deliberately — having it visible
+  is what makes the difference legible.
+- **`LOWER_BOUND_Z = 1.0`, not 1.96.** At 95% a promising entity with 3 uses ranks below one with 30
+  mediocre ones, which stalls the flywheel this is supposed to steer.
+- **A mute is a full negative observation**, not a display flag — §7's clause says it must VISIBLY
+  lower trust, and anything less makes muting a gesture the numbers ignore. `apply_mute` returns a NEW
+  posterior so a caller cannot drop the result and silently lose the change.
+- **`INSUFFICIENT` is a distinct verdict from `POOR`.** They demand opposite responses (tighten vs
+  collect more), and collapsing them is how a threshold gets tuned on noise. Nothing is tuned below
+  `MIN_SAMPLES_FOR_TUNING = 20`.
+- **Proposals only, never applied.** §2.5 says recalibration happens "empirically, not by taste" — and
+  the corollary is that it also does not happen automatically: the 0.55/0.62 split was calibrated, so
+  overwriting it from a week of data would discard a real decision. A test asserts the live table is
+  unchanged after a proposal runs. A single proposal moves a threshold at most `MAX_THRESHOLD_STEP`.
+- **An unattributed surfacing is charged to the WEAKEST arm, never dropped.** Dropping would make the
+  report describe only the instrumented paths while claiming to describe surfacing as a whole.
+- **Counts are clamped**, so a `used` larger than `surfaced` (possible for an entity surfaced before
+  events existed) cannot produce a negative beta and a nonsense posterior.
+
+- **NOT DONE (by scope):** the `surfacing_events` TABLE and its 90d prune on the curator tick.
+  `per_arm_precision`/`build_report` take events as a list precisely so the store is a separate
+  concern — the same functions then serve the live report, a backfill over pruned history, and a test.
+  The arm is now on `Candidate` for producers to set; wiring each retrieval path to name its own arm
+  is per-path work in the modules that own those paths.
+
+### S72 — The capped self-model: reinforcement-promoted, propose-don't-write (42 tests) — DONE
+
+The flywheel's ONLY mechanism that learns from what quietly WORKS — every other cadence learns from
+corrections and failures, so this is the one that can notice a habit that keeps succeeding. That
+asymmetry is also what makes it worth constraining, and §2.6's three constraints are enforced
+MECHANICALLY here rather than by convention.
+
+**🔴 A LEAK MEASURED BEFORE THE MODULE EXISTED.** `user.selfmodel.*` was NOT in
+`vector_memory._NON_FACT_KEY_CLAUSE`, so a behavioural principle the harness observed about its OWN
+working patterns would have rendered in the user-FACT block — a category error (it is a statement about
+the system, not the user) and a leak into a surface it was never meant to reach. The exclusion landed
+with this session; `test_the_selfmodel_prefix_is_excluded_from_fact_blocks` is the regression.
+
+Conversely, `user.*` was ALREADY in `_BUILTIN_PREFIXES`, so the plan's "prefix allowlisted" step needed
+no change. Measuring both is what kept the session from inventing an allowlist entry it did not need.
+
+The three constraints, and how each is enforced:
+
+1. **Propose, never install.** `build_proposal` returns None for a refused plan, so the cap and the
+   thresholds sit ON THE PATH to the queue rather than after it — a caller cannot file by ignoring the
+   plan. `test_nothing_in_this_module_writes_memory` asserts the ABSENCE of every write primitive
+   against the source, because "never self-installed" is a property no behavioural test can see.
+2. **Bounded by construction.** A full tier does not refuse — it names the weakest entry as a
+   DISPLACEMENT. Refusing outright would freeze the self-model at its first six principles, so the cap
+   would prevent bloat by preventing learning. A newcomer must BEAT the weakest, not tie it, or the
+   tier churns between two similar principles forever. `over_cap` catches hand-edited data that
+   predates the caps.
+3. **Only a compact snapshot injects.** Retrospections are excluded from it entirely (evidence for
+   promotion, not guidance for a turn), theories render under an explicit "Unproven" heading, and
+   truncation drops whole ENTRIES — half a principle is an instruction whose reader cannot tell it is
+   half, the same rule `learning/surfacing.py` applies to lessons. A dangling heading is dropped rather
+   than rendered.
+
+Decisions, each with the failure it prevents:
+
+- **Both thresholds are a CONJUNCTION** (`seen_count ≥ 2` AND `confidence ≥ 0.72`). Repetition alone
+  promotes a coincidence that happened twice; confidence alone promotes one strongly-felt observation.
+- **An ACCEPTED reaction after a FAILED turn is not reinforcement.** The user may have accepted a
+  partial answer and moved on; reading that as reinforcement is how a broken habit gets promoted.
+- **A correction outweighs an acceptance 2:1.** Being told you were wrong is stronger evidence than not
+  being told you were wrong, and a symmetric scale would let a habit that fails a third of the time
+  still promote.
+- **A NEUTRAL observation counts toward repetition but not confidence.** The pattern did recur;
+  pretending otherwise would let an unobservable outcome erase half the threshold.
+- **Four facets, not one bag.** They have different lifetimes and different AUTHORITY — collapsing them
+  would let a working theory inject with the weight of a rule.
+- **`lesson_batch` is reused rather than a new proposal kind minted.** §2.6 says an accepted principle
+  is "lessons-shaped", and the existing kind already carries the review UI, the fingerprint dedup, and
+  the decision store; a new kind would be a second review surface for one shape of thing. The
+  `observed-reinforcement` provenance marker is what distinguishes it at a glance.
+- **The fingerprint goes through the shared `proposals.content_fingerprint`.** A second hashing scheme
+  would make the self-model the one proposer able to re-file something the user already declined.
+- **Evidence on a proposal is bounded to 3 lines.** A proposal a reviewer will not read is not evidence.
+
+`learning.self_model_enabled` is wired through all four config points (dataclass + `_meta`, `load()`,
+`to_dict`, `_EDITABLE_CONFIG`) and is live-editable: it is the one learning path that acts on what
+WORKED, so a user who finds that presumptuous should be able to stop it without a restart.
+
+- **NOT DONE (by scope):** the observer CALL SITE (what records a turn's route/tools/outcome/reaction
+  into the staging log) and the memory read/write of live entries. Both belong to the capture cadence
+  and `MemoryService` respectively — this session owns the decisions those call sites will apply, which
+  is why every function here is pure. Declined promotions feeding §2.2's rejection exemplars with
+  escalating cooldowns needs the rejection-exemplar store from a later step.
+
+### S73 — The refiner's acceptance discipline: cluster → median-of-3 → GateOK (71 tests) — DONE
+
+The flagship spoke, and the one with the most ways to go wrong. §3.1's "acceptance discipline" section
+is longer than its mechanism section for a reason: an optimizer editing templates from run outcomes
+random-walks them under judge noise unless every gate is strict. This session is that discipline as
+pure decisions, so the pipeline that calls a model can be tested without one.
+
+**Measured first — every prerequisite was already in place.** `journal.LEDGER_KINDS` carries all the
+events the refiner reads INCLUDING `user_edited_mid_flight`, §3.1's "gold" signal (a repeated identical
+hand-fix is the user saying what the template should say). And `mutations.OpKind` is a CLOSED ten-op
+vocabulary, so a `template_diff` is expressed in the ENGINE'S OWN terms rather than in a second edit
+language that would need its own validator. `test_evidence_kinds_exist_in_the_real_ledger` keeps that
+true — a renamed event would starve the refiner silently, and zero failures is indistinguishable from a
+healthy template.
+
+The four gates, and the failure each prevents:
+
+- **Failure clustering first, LLM second.** A zero-cost pass groups failures by MECHANISM and ranks by
+  frequency × unresolvedness — the product, not the sum, because a frequent failure that self-heals is
+  not worth an edit and neither is a permanent one that happened once. Noise-stripping is what makes it
+  work: without it every failure carries its own run id, path and duration, so 100 instances of one bug
+  cluster into 100 clusters of one and the refiner proposes against a cluster of size 1.
+- **The power floor is enforced BEFORE the model tier**, and counts DISTINCT runs — three failures in
+  one run is one run's evidence. A proposal built from two runs would be rejected downstream anyway,
+  after paying for it.
+- **Median of 3 critic runs with an epsilon margin.** A single enthusiastic outlier cannot carry
+  acceptance (the whole reason for a median rather than a mean), a short critic pass REJECTS rather than
+  falling back to a mean, and a parse failure scores 0 — an LLM with no parseable score has endorsed
+  nothing.
+- **GateOK.** The target cluster must improve by ≥ 0.02 AND every other cluster may regress by at most
+  1%. Both halves are load-bearing: requiring target improvement stops a diff being accepted for a
+  coincidental gain elsewhere, and bounding the others stops an edit that fixes one failure by breaking
+  two. An UNMEASURED target FAILS rather than scoring 0 — "no evidence" must not read as "no
+  regression" — and a cluster the replay stopped scoring counts as a regression, because silence is not
+  a pass.
+- **The frozen region.** Prompts, retries and gates are editable; `id`/`triggers`/surfacing metadata
+  never are — they decide WHEN a template runs, and a self-editing system that can change its own
+  trigger conditions drifts without anyone approving the drift. Frozen fields are detected in every
+  container (`fields`/`config`/`set`/`patch`/`field`), the run-control ops
+  (`rewind`/`run_from`/`fork`/`skip`) are refused as CATEGORY ERRORS rather than risky edits (they act
+  on a live run, not a stored template), and an unrecognized op name is checked against the engine's
+  own vocabulary so a typo cannot become a silently-ignored no-op inside an accepted diff.
+
+Further decisions:
+
+- **One illegal op rejects the WHOLE diff.** A partially applied diff is a template nobody authored:
+  neither what the refiner proposed nor what the user reviewed.
+- **`evaluate_diff` runs the gates cheapest-and-most-decisive first**, so a frozen-region op never pays
+  for three critic runs. A dropped diff still RECORDS why for the log while staying invisible to the
+  user — a review queue full of rejected machine guesses trains people to stop reading it.
+- **Risk tier = the RISKIEST op in the diff**, not the average: a destructive delete bundled with four
+  parameter tweaks is a destructive diff. There is deliberately **no `AUTO` member** on the enum for a
+  caller to reach for — §3.1 says any auto tier is guardrail-violating and the human-installs invariant
+  is absolute.
+- **A manifest that cannot be checked is an assertion.** `falsifiable` requires run ids + metric +
+  `measured_at`; run ids are deduped and bounded to 20. `confidence` is DERIVED from the critic margin
+  that actually gated the diff, never self-reported — a self-reported confidence is the same ornamental
+  signal §2.5 rejects for helpfulness.
+- **`canary_verdict` returns PENDING under 3 runs.** Declaring a diff effective after one run is how a
+  lucky run becomes a permanent change. HARMFUL is reachable because §3.1 auto-FILES a revert proposal
+  for it — through the queue, never silently.
+
+- **NOT DONE (by scope):** the refiner AGENT itself (the trigger-fired workflow that calls a model over
+  the digest, with its `propose_*`-only tool set) and the version store. §3.1 puts the agent on the
+  `run-workflow` action provider per AUTOMATION-SUBSTRATE's doctrine, so it is a template plus a
+  trigger rather than Python — and it consumes exactly these decisions. Fencing run transcripts before
+  the refiner LLM sees them is that call site's responsibility (S69 built the screen it will use). The
+  teacher/student split, triad generation, and the experience directory are §3.1's explicit "optional
+  widening once the floor works".
+
+### S74 — Detectors (§3.2) + typed failure data (§3.3) (73 tests) — DONE
+
+Two spokes, one discipline: a DETERMINISTIC chain decides and a model is consulted only at the score
+boundary. §3.2 replaced "pure LLM-prompt branches" because a model asked "is this template-worthy" costs
+a call per candidate and answers unstably.
+
+**🔴 THE GUARDRAIL §3.3 DEPENDS ON WAS CATCHING 1 OF 4.** `is_environment_failure_claim` is the
+deny-filter that keeps a flaky network from becoming a durable lesson — and measured against real
+failure text it caught **1 of 4**: "connection refused", `ECONNRESET`, and rate-limit noise all passed
+straight through. §3.3 routes EVERY `step_failed` through it, so landing that spoke on the shipped
+filter would have turned transport noise into permanent lessons that teach the agent to refuse valid
+actions. Widened to **12/12** with the false-positive direction checked at **0/9** — a bare `429` had
+been filtering the legitimate lesson "the 429 rate limiter config lives in settings.py", so a status
+code now only counts with failure context, and `rate limited` (past tense) is a report while "rate
+limiter" is ordinary vocabulary. Both directions are pinned by parameterized tests.
+
+**§3.2 — the gate chain.** Free at both extremes, paid only in the middle:
+
+- **Hard pre-gates run first**, cheapest and most decisive: <2 steps (a command, not a procedure), a
+  template already surfaced (no library gap), >80% budget burn (§3.2's "near-death plans make bad
+  templates" — a run that flailed to its answer teaches the expensive path). A one-step plan never gets
+  scored at all.
+- **The structural score is deterministic and reproducible** — verb diversity measured against STEP
+  COUNT (three verbs across three steps is structure; three across twelve is repetition), back-reference
+  dependencies, slot density weighted highest (a plan with no parameterizable slot cannot be reused
+  however well-structured it is), −1 per hardcoded entity. Components stay visible because a scalar
+  cannot say WHICH signal was weak, and §3.2 tunes thresholds from data.
+- **A high score auto-FILES with zero model calls**; a low score is dropped free; only the band between
+  costs anything. Filing, not installing — the human-accept invariant is what makes a free auto-file
+  safe.
+- **Every negative decision names a TYPED skip reason.** §3.2: "the flywheel's negative space is how
+  thresholds get tuned". Prose reasons are unfilterable; the counts per reason are what say which gate
+  earns its place. `test_every_negative_decision_names_a_typed_reason` asserts the whole set.
+- **Plan similarity needs threshold AND window.** A below-threshold match is a different plan; an
+  out-of-window match is the same plan from a project that ended — and they get DIFFERENT skip reasons,
+  because counting either would propose a template for work nobody does any more.
+
+**§3.3 — typed failure data.**
+
+- **A closed `FailureMode` enum** (schema/constraint/spec-mismatch/timeout/environment + the RCA seed
+  code/config/data/infra/dependency/process) makes `failure_distribution()` computable. Prose failure
+  text cannot be counted, and a refiner that cannot count cannot choose a target.
+- **The environment check wins OUTRIGHT.** A traceback containing `ECONNRESET` classifies as
+  environment, not code — a message that is both is still the world's fault, and classifying it as code
+  would route it to a lesson.
+- **Unmatched text is `UNKNOWN`, never a guess.** Otherwise the distribution silently attributes it to
+  whichever mode the pattern list leans toward, and the refiner targets a dominant mode that does not
+  exist.
+- **`dominant_mode` EXCLUDES what a refiner cannot fix.** Measured on a corpus where environment is the
+  biggest bucket (8 of 20): the target is `schema_violation` (5), and an all-environment corpus returns
+  `""` rather than the raw top mode. A refiner cannot fix the network, and proposing against it would
+  be a diff that cannot work.
+- **Lessons are keyed `(template, failure_mode, signature)`** so §3.3b's re-injection can find them —
+  §3.3 calls a lesson "a persistent mutation hint", and a hint nobody can look up by template is a note
+  in a drawer. The dedupe signature REUSES the refiner's `failure_signature`: two schemes would make a
+  clustered failure and its lesson un-joinable, so the refiner would target a cluster whose lesson it
+  cannot find.
+
+- **NOT DONE (by scope):** the detector CALL SITES — the fifth `run_skill_ladder_review` branch, the
+  per-spec embedding + registry-miss logging, intent inversion, positive-path trace mining, and grill's
+  dormant `SaveFn`. Each is a hook in a module that owns its own signal, and all consume these
+  decisions. The `skipped(reason)` LEDGER WRITE is likewise the caller's: `Skip` is the vocabulary it
+  will use. §3.3's machine-checkable lesson form (`check_command`, failure capsules) needs the lesson
+  entity extension, which is a later step's schema change.
+
+### S75 — The Proposal Inbox and the accept gate (48 tests) — DONE
+
+§7's criterion 1 has two halves: one inbox across all six kinds with provenance, evidence manifests and
+risk-tier metadata — **and the model cannot accept its own proposals under any trust mode**. The second
+is load-bearing, and this session is where it became a control rather than a coincidence.
+
+**🔴 THE HARD INVARIANT WAS HOLDING BY ABSENCE.** `proposals.accept()` takes `(pid, installer=...)` and
+NOTHING in it knew who was accepting — no actor, no caller, no trust check. Grepped: no agent tool calls
+it today, which is the only reason the invariant held. **One new MCP tool would have removed it
+silently, with no test failing.** `require_human` is now called from inside the real `accept()` and
+`reject()`, and `test_the_real_accept_refuses_an_agent` drives the actual path rather than the decision
+in isolation.
+
+Gate decisions, each with the failure it prevents:
+
+- **The ENGINE is refused too**, not just the agent. S56 gives the engine authority to record a task
+  outcome because it OBSERVED the work — that is not authority to install autonomously-authored
+  behaviour, and an engine that could accept would make every gate upstream of it decorative.
+- **An UNKNOWN actor is denied, never assumed human.** The failure directions are not symmetric: denying
+  a human costs one click, while admitting an unrecognized caller is the hole this closes.
+- **There is deliberately NO trust parameter.** §7 says "under ANY trust mode", and a gate a mode could
+  relax is a gate whose invariant is a default. A test asserts the signature has no
+  `trust`/`yolo`/`force`/`override`.
+- **Reject is gated too**, for a subtler reason: an agent that could reject would clear its own bad
+  proposals from the queue before a human read them, and §2.2's rejection exemplars would silently stop
+  accumulating.
+- **Filing stays open to all three actors.** The whole design depends on non-human proposers; only the
+  DECISION is human-only, and separating `can_file` from `require_human` makes that asymmetry explicit
+  rather than implied.
+- **`actor` defaults to `user`**, so every existing human-facing caller is unaffected (746 existing tests
+  confirm) — a required parameter would have broken them all.
+- **A refused decision leaves the row PENDING** and writes a SEL `blocked` row. A blocked self-accept is
+  the signal that something calls the wrong path, and it would be invisible if only successes were
+  logged. The `Denial` enum keeps `self_accept` distinct from a generic permission denial: the first is
+  an incident, the second is a bug.
+- **The actor vocabulary is REUSED from S56's verified-done matrix**, which already carries the doctrine
+  ("the AGENT is a worker whose self-report is exactly what needs checking"). Two actor enums on one
+  machine would eventually disagree about who an `agent` is.
+
+Inbox decisions:
+
+- **`manual_only` sorts FIRST**, and an UNSCORED tier sorts above even that — burying destructive
+  proposals under a page of parameter tweaks is how one gets accepted by momentum, and an unrecognized
+  tier is the one case where nobody has judged the risk at all.
+- **Risk tier is metadata, never a lane** (§3.1: any auto tier is guardrail-violating). It orders,
+  filters, and bounds a bulk-accept CONTROL — every accept inside a bulk action still passes
+  `require_human` individually.
+- **A row needs provenance to be renderable.** A proposal whose source cannot be shown is one a reviewer
+  cannot weigh, and a queue of unweighable rows trains people to bulk-accept — defeating the invariant
+  while appearing to honour it. Unrenderable rows are REPORTED, not hidden: a missing provenance is a
+  proposer bug, and quietly dropping the row makes that bug invisible.
+- **`manifest_valid=false` still appears in the queue** (§3.1's lenient-but-recording), and
+  `flagged_only` is the filter that finds them — a flag nobody can filter to is a flag nobody sees.
+- **A defect found while probing:** a row with no provenance came back `bulk_acceptable=True` while
+  `renderable=False`, so a row the UI cannot honestly show was eligible for a control that accepts
+  without opening it. Bulk-accepting something a reviewer could not have read is the human-installs
+  invariant in name only. `renderable` is now a bulk precondition.
+- **A second defect:** the unknown-tier sort rank collided with a rank a known tier produces, so an
+  unscored proposal sorted BELOW `manual_only` instead of above it.
+
+- **NOT DONE (by scope):** the Learning page FE and the `/api/learning/proposals` routes. The unified
+  queue has no HTTP surface at all today (measured — only the older per-kind skills queue does), so the
+  API + page is its own session; this one owns the view model and the gate they will call. The
+  `risk_tier` field is passed into the projection rather than stored on `Proposal`, because only a
+  `template_diff` carries typed ops to derive one and stamping a meaningless tier on a lesson would make
+  the filter lie.
+
+### S76 — Staging-tier observability: the week-at-a-glance panel (17 tests) — DONE
+
+**Measured before writing, and most of the session's scope was already shipped.** `record_flush`
+already persists all four `FlushOutcome` members AND `proposal_ids`; `health()` already computes an
+`all_ok_streak` over a window. So the honest remaining gap was narrow and specific:
+
+**🔴 `health()` CANNOT SEE A SILENT DAY.** It aggregates over the whole window, and an absent day
+contributes nothing to either the outcome counts or the streak — so a day where capture never ran is
+indistinguishable from a healthy day. That is the exact failure the staging tier exists to expose
+("a pass that crashes looks exactly like a quiet day"), surviving in the view built to expose it.
+`test_health_alone_cannot_see_a_silent_day` asserts the contrast directly: two windows with identical
+totals, one continuous and one with a two-day hole, are the same to `health()` and different in the
+panel.
+
+`StagingStore.week()` is the panel:
+
+- **Every day in the window gets a bucket, INCLUDING the empty ones.** Pre-seeded, because a gap that
+  vanishes from the list is a gap nobody sees. `silent_days` names them, and it is the alarming number:
+  no passes at all on a machine that was in use means capture did not run.
+- **`error_days` isolates which day broke** — "which day" is the question a maintainer actually asks,
+  and the windowed view can only say "two errors, somewhere".
+- **Proposal ids ride each bucket**, turning "a pass produced something" into "produced WHAT" so the
+  panel links straight to the Proposal Inbox rows a day generated. `produced` counts IDS, not passes:
+  one pass that filed three proposals produced three.
+- **Staged entries are bucketed separately from flushes.** A day that STAGED but never flushed is a
+  different failure from one that never ran — the signal arrived and nothing consumed it.
+- **Days bucket by LOCAL date, not by 86400-second slices.** A user reading "Tuesday" means their
+  Tuesday; a UTC-slice panel drifts hours off every reader's calendar.
+- **A malformed `proposal_ids` cell cannot empty the week.** The column is JSON text, and a hand-edited
+  or truncated row must not take out the whole panel — the observability surface failing silently would
+  be the same class of bug it exists to catch.
+- **`days=0` clamps to 1.** A caller passing zero wants today, not an empty panel.
+
+- **NOT DONE (by scope):** the FE panel and its route. There is no learning HTTP handler at all (S75
+  recorded the same finding for the proposal queue), so the API + page is one session covering both
+  surfaces rather than two half-built ones. `week()` returns a fully-serialized shape with a
+  fields-exact test, so that session wires rather than designs.
+
+### S77 — Predict-then-verify attribution, auto-filed reverts, the incognito gate (32 tests) — DONE
+
+The last spoke, and the one that closes the loop: everything upstream FILES proposals, and this measures
+what happened after a human accepted one. §3.1's rule is predict-then-verify rather than measure-after —
+an accepted proposal DECLARED which failures it would fix, so the verdict compares prediction against
+outcome instead of looking at a delta and inventing a story.
+
+**Measured before writing.** `refiner.canary_verdict` (S73) already returns the five verdict names from
+a scalar before/after, so this reuses that vocabulary rather than forking it — two verdict scales would
+make one proposal's history unreadable when it passed through both paths. And `learning/gate.py`'s
+permission half is genuinely CLOSED: probed across all three cadences with both an idle turn and a busy
+one carrying a correction, a restricted (incognito) session is refused every time.
+
+**🔴 WHAT IS NOT CLOSED IS COVERAGE.** `Cadence.SESSION_END` and `Cadence.RUN_END` are declared with
+**zero live call sites** — only `PER_TURN` has any. A gate cannot suppress a path nobody routes through
+it, which is this program's recurring "present and inert" class applied to a privacy control.
+`assert_gate_covers_cadences` turns that into a checkable fact and `test_the_uncovered_cadences_are_pinned`
+pins the current gap set, so wiring one — or adding a fourth cadence — must be a deliberate edit rather
+than a silent hole.
+
+**🔴 AND THE CHECKER FOUND ITSELF.** Its first version matched its own docstring's `Cadence.SESSION_END`
+mention and reported ZERO gaps for two cadences that genuinely had no callers — a coverage checker
+certifying coverage by finding its own prose. Exactly the self-referential trap S67's fire-site scan fell
+into, one module over. `test_the_coverage_checker_does_not_find_ITSELF` is the regression.
+
+The verdict ladder, and why each rung sits where it does:
+
+- **PENDING** under 3 post-acceptance runs. Not a guess: one run is an anecdote, and a change declared
+  effective on one run is a lucky run made permanent.
+- **HARMFUL** only when something regressed AND nothing predicted was fixed. Damage with no upside is
+  the unambiguous case, and the only one that auto-files a revert.
+- **MIXED** when regressions coexist with real fixes — deliberately NOT harmful, because the change did
+  something the user wanted, so reverting is their call rather than an automatic rollback.
+- **INEFFECTIVE** when nothing moved: clutter, not damage. Keeping it distinct is what keeps the revert
+  queue readable.
+- **A change with NO predictions can never be EFFECTIVE.** Without a prediction there is nothing to have
+  been right about, and letting it reach EFFECTIVE would reward filing manifests with empty
+  `predicted_fixes` — the shortcut §3.1's lenient validation makes tempting.
+
+Further decisions:
+
+- **A cluster present only in `after` counts as a regression.** It is a failure the change INTRODUCED —
+  the most important kind, and the one a `before`-keyed loop misses entirely.
+- **`unattributed_regressions`** is §3.1's "scariest class, surfaced loudly": what broke that nobody
+  predicted. A change scored only on its own predictions looks fine while having broken something
+  adjacent.
+- **Rates, not counts.** Five failures in five hundred runs is not worse than five in ten, and a
+  count-based comparison would call a busier week a regression.
+- **Only HARMFUL owes a revert.** Auto-filing for everything that did not help would bury the queue —
+  which is how the one revert that mattered gets skipped. The revert body NAMES the regressed clusters,
+  because a proposal saying only "this made things worse" is un-reviewable.
+- **A revert is a PROPOSAL, never an application.** Asserted against the source (no `accept(`, no
+  installer, no writes): "mechanical" in §3.1 means the proposal appears without anyone noticing the
+  regression, not that the rollback happens on its own — and S75's gate refuses a non-human accept
+  regardless.
+- **`harm_rate` is over DECIDED verdicts, not total.** A proposer with many PENDING changes would
+  otherwise look safer than one whose changes have been measured, inverting the signal exactly when a
+  new proposer starts filing. Proposers sort worst-first, because the useful question is which one to
+  trust less.
+- **An unknown verdict is counted under its own name, not dropped.** A verdict this module does not
+  recognize is a drift signal, and discarding it hides the drift.
+
+- **NOT DONE (by scope):** wiring `SESSION_END`/`RUN_END` through the gate. Each needs the cadence's own
+  call site (a session-teardown hook and the run-end capture pass), which belongs with those subsystems
+  — and the pinned gap test is what makes the omission visible rather than assumed-done. The curator
+  tick that computes deltas from the Run Ledger and calls `attribute` is likewise a call site; this
+  session owns the decision it will apply.
+
+### S78 — The Learning HTTP surface: the Proposal Inbox page (24 + 15 tests) — DONE
+
+**This closes success criterion 1**, which was unmet for want of a route. The criterion says "One
+Proposal Inbox **SHOWS** all six proposal kinds with provenance, evidence manifests, and risk-tier
+metadata; accept installs, reject dismisses — and the model cannot accept its own proposals under any
+trust mode". Everything behind that sentence shipped in S75/S76 with **no HTTP surface and no page**:
+`inbox.build_view` and `StagingStore.week` both returned fully-serialized shapes, and grepping found no
+`/api/learning` route and no Learning page. Both prior sessions recorded the deferral; this is the
+session they deferred to.
+
+**DEVIATION — no queue row.** The queue was exhausted at 77/77 when this ran, and the previous cycles
+recorded `BLOCKED (E6)` on the grounds that adding a row is a scope decision. That was right about
+INVENTING scope and wrong about this: an unmet acceptance criterion of a plan already in the queue is
+declared work, not new direction. Recorded here rather than as a new numbered row, since the plan's own
+criterion is the authority.
+
+**🔴 THE ACTOR IS THE WHOLE POINT, and a route is where it would have been lost.** S75 put
+`require_human` inside `proposals.accept()` and defaulted `actor="user"` so existing callers kept
+working. A route that omitted the actor would therefore have handed EVERY caller — including an
+app-scoped token — the reviewer's authority, silently re-opening the hole S75 closed. So `_actor`
+DERIVES it from the request (`request["app"]` → `agent`, `request["user"]` → `user`, otherwise `""`),
+never from the body: a caller that could name itself `user` would make the gate decorative. Driven over
+real HTTP: an app token gets **403** on both accept and reject, an unidentified caller gets 403, and
+only the dashboard user succeeds.
+
+Further decisions:
+
+- **A missing row is 404 and a refused actor is 403.** Collapsing them would report a permission
+  decision as a typo and vice versa.
+- **The kill switch 404s rather than 403s.** With learning off there is no inbox, and "forbidden" would
+  imply one exists behind a permission wall. But `_enabled()` fails **OPEN** on an unreadable config:
+  a hidden queue looks like an empty one, and proposals would accumulate unseen.
+- **A corrupt proposal file cannot empty the queue.** Proposals are per-file, and one unreadable file
+  hiding the rest is how a backlog silently disappears — the listing degrades to `[]` rather than 500.
+- **Literal paths register before `/{id}`**, so `staging` is not captured as a proposal id. The
+  ordering landmine S67 and S70 each paid for once.
+- **Only a `template_diff` gets a risk tier.** Nothing else carries typed ops to derive one, so
+  fabricating `low` for a lesson would hand it bulk-accept eligibility nobody computed.
+- **The FE re-derives NO judgement.** Ordering, bulk eligibility and renderability all arrive decided;
+  `bulkBlockedReason` only EXPLAINS the backend's flag, and a test asserts it still refuses when every
+  visible field looks fine. Two implementations of "safe to bulk-accept" would eventually disagree, and
+  the FE would be the copy shipping the permissive answer.
+- **An unrenderable row still renders, labelled** ("untitled — proposer bug"). Hiding it would make a
+  proposer bug invisible, which is the same reasoning S75 used for reporting rather than dropping.
+- **`dayLabel` parses the bucket as LOCAL time.** `new Date('2024-01-01')` parses as UTC and would shift
+  the weekday a day west of the reader; the backend buckets by local date, so the label must agree.
+
+**Two defects found by driving rather than reading.** (1) `del()` in `api.ts` is NOT generic — it
+resolves void and throws on `!ok`; assuming symmetry with `get`/`post` failed typecheck. (2) A live
+`404` on every route looked like a defect in `_enabled()` and was a **stale gateway process** — backend
+changes never hot-reload, and the sibling route registered six lines away answered 200 the whole time,
+which is what isolated it.
+
+**Validated end to end** against a live gateway on an isolated dev home: all five routes 200, a seeded
+proposal renders with provenance + evidence + tier, `accept` over real HTTP installs it and clears the
+queue, and the week panel returns 7 buckets with `silent_days` populated.
+
+- **NOT DONE (by scope):** bulk-accept as a UI CONTROL. The backend computes eligibility per row and the
+  page explains it, but the multi-select affordance is its own interaction design — and §3.1 is explicit
+  that bulk is ergonomics, never a lane, so shipping the explanation before the control is the safe
+  order. Proposal DETAIL (the full change manifest rendered as a diff) also stays deferred: the route
+  serves the record, and the diff view belongs with the Versions tab that renders template diffs.
+
+### S79 — Criterion 4's adversarial refiner-path test, and the fencing it needed (41 tests) — DONE
+
+**This closes success criterion 4**, whose second clause was unmet: "Content inside `fence_untrusted`
+provably never becomes a lesson/skill/template — **and the adversarial test covers the REFINER path**:
+injection planted in a run transcript or `run_feedback` comment must not surface as a proposal (let
+alone an accepted diff)."
+
+**🔴 THE REFINER PATH HAD NO SCREEN AND NO FENCE.** Grepped `refiner.py` for `screen(`,
+`fence_untrusted` and `triggers.screen` — none present. Driven with an injection planted in a
+`step_failed` error, the text flowed straight into the cluster SIGNATURE, which is precisely what a
+refiner prompt carries as its evidence. §3.1's TRUST clause names the refiner as the fifth
+`fence_untrusted` call site and says fencing is the caller's responsibility; that call site had not been
+built. S69 built the screen this needed, at the trigger boundary, and nothing on this path called it.
+
+Two dispositions, deliberately different:
+
+- **BLOCKED** (the screen's hard groups) → the event is **DROPPED**, not fenced-and-passed. A fenced
+  event still influences cluster RANK, so an attacker could choose which failure the refiner targets
+  even without steering the prompt. `test_a_blocked_payload_never_reaches_a_PROMPT` covers the second
+  layer, so the criterion's "let alone an accepted diff" holds too.
+- **SUSPICIOUS or clean** → fenced at the model boundary and KEPT. An attacker who could make legitimate
+  text look borderline would suppress the refiner's evidence — an availability attack, and just as
+  effective as steering it. `test_borderline_text_survives_screening` pins that with "the retry
+  instructions in the runbook", which mentions instructions and is not an injection.
+
+**🔴 A DEFECT FOUND BY PROBING MY OWN FIRST VERSION.** Fencing at the CLUSTERING layer put the marker
+words into every failure signature — `untrusted_content source run ledger step_failed …` — so four
+tokens of boilerplate ate a third of the 12-token window that makes two mechanisms distinct, and
+unrelated failures began sharing tokens (measured: 4 shared, where they should share at most the
+`step_failed` prefix both messages literally contain). Clustering is pure statistics that no model
+reads, so fencing buys it nothing and costs precision. Split into two layers: `screen_evidence` produces
+clustering input (screened, unfenced) and `fenced_evidence` produces prompt input (screened AND fenced).
+
+Further decisions:
+
+- **`UNTRUSTED_EVIDENCE_FIELDS` is data, not inline checks.** A field absent from the set is one nobody
+  decided the trust level of, and a test walks every member so a new evidence field cannot quietly skip
+  the screen.
+- **Every surviving field is fenced, not only the flagged ones.** Fencing only suspicious text would
+  mean the screen's MISSES arrive as instructions — the composition rule S69 established at the trigger
+  boundary.
+- **`cluster_failures` stays public and unguarded.** It is a pure function, and a test proving the raw
+  path is unsafe needs to call it; the guard is that the PIPELINE entry point (`cluster_safely`) screens.
+  `test_the_raw_clustering_path_stays_callable_and_unscreened` asserts both halves.
+- **Screening never raises and never changes the power floor.** A screen that throws fails open under
+  exactly the input an attacker controls, and a floor that shifted under screening would silently change
+  when a refiner may propose.
+- **A non-string field is ignored rather than coerced** — coercing a dict would invent content to match
+  against.
+
+**Two of my own errors, corrected mid-session.** (1) An assertion of ZERO shared signature tokens fails
+on real text and says nothing about fencing; the honest property is that no fence-MARKER token leaks,
+with genuine shared vocabulary allowed. (2) The reflow tool split a string literal across lines,
+producing unparseable Python — caught by `black`, not by me, and repaired by shortening the literal.
+
+- **NOT DONE (by scope):** the refiner AGENT's own prompt assembly, which is where `fenced_evidence`
+  gets consumed. §3.1 puts that agent on the `run-workflow` provider as a trigger-fired template rather
+  than Python, so this session builds the contract it will call — the same split S73 recorded.
+
+### S80 — Criterion 5's one budget: the ambient render finally goes through the allocator (57 tests) — DONE
+
+**This closes success criterion 5**: "the lesson block, skill INDEX, template suggestion, voice/facet
+blocks, and self-model snapshot fit ONE per-turn slot-allocated token budget; lessons are never crowded
+out (sacrificial-slot truncation only); the authority preamble renders."
+
+S71 built the allocator and deliberately stopped short of owning the render, recording why: "replacing
+the whole render is behaviour-visible and needs §2.5's measurement floor to prove nothing stops
+surfacing." That floor landed in S71's own `measure.py`, so the deferral's condition was met.
+
+**🔴 THREE INERT CONTROLS, NOT ONE.** (1) `allocate()` and `AUTHORITY_PREAMBLE` had ZERO callers outside
+their own module and tests — the ranking algorithm existed and nothing ranked. (2)
+`learning.context_budget_tokens` is a fully round-tripped config knob (dataclass + `_meta` + `load()` +
+`to_dict()` + `_EDITABLE_CONFIG`) that NOTHING read; its help text promises "only retrieved context is
+ever trimmed", a promise no code kept. (3) The blocks were bounded by per-block CHARACTER caps summing
+to ~36,750 tokens against the declared 4,000 — 9x. Driven with 120 realistic lessons the render passed
+the budget by 1,576 tokens; at 400+ it reached 10,101 (2.5x). The allocator on the same input holds
+3,999 and keeps the query-relevant lesson.
+
+**Two measurements decided the design.**
+
+- **The budget scales with the model window**, on the same `window/200k` clamped to [1,5] that
+  `context._memory_caps` uses. A FLAT budget beside window-scaled memory sections would make the ambient
+  blocks the only part of the prompt that never benefits from a larger window — silently inverting the
+  plan's own adaptive-recall design. A test asserts the two constants are the SAME, not merely equal.
+- **The skill INDEX is a catalogue, not a candidate set.** Fed one candidate per entry, `MAX_PER_SOURCE
+  = 3` kept 3 of 12 skills while 3,539 tokens sat unused. Diversification stops a rich source crowding a
+  sparse one; applied to a catalogue it just deletes the catalogue. So the index is ONE candidate with
+  §2.4's three-step degradation (full → 80-char hints → names only), every skill named at every tier.
+
+**🔴 THE SKILLS BLOCK HOLDS TWO POPULATIONS, AND MY FIRST VERSION DROPPED ONE.** Caught by the EXISTING
+suite (`test_context.py::test_skills_injected`), not by any of the 52 tests written here — every fixture
+I wrote happened to contain an index. `skills/loader.get_context` emits always-loaded skills as
+`### Skill: <name>` with their full body AND on-demand skills as the `- **name**:` index; an index-only
+parser silently dropped every always-loaded skill, which are precisely the ones the user marked
+never-optional. `always_body` and `index_candidate` are now a pair, each carrying its own `[Skills:]`
+frame (either can be dropped independently, so one shared wrapper would sometimes frame nothing), with
+bodies ranked above the index because a pointer list should yield before content does.
+
+**Three more defects found by driving, each the same mistake — spending the budget on FRAMING before
+CONTENT.**
+
+1. `frame` restored the lesson header AFTER the allocator had spent the budget: at 600 tokens `used`
+   reported 596 while the framed text was 622. A budget a later step can add to is not a budget.
+2. Reserving the header then crowded out the last lesson — the header costs 29 tokens and one lesson 31,
+   so at a 60-token budget the reservation left nothing. Now the reservation is RELEASED when no lesson
+   survived.
+3. The 73-token preamble did the same thing: at a 120-token budget it fit, left 23, and ZERO lessons
+   survived, while at 60 tokens (preamble skipped as oversized) one did. The authority statement was
+   outranking the corrections it exists to speak for. Now the render retries without it.
+
+Then the affordability check itself had to be measured: comparing `used_tokens` double-counted the
+reserved header and dropped a header that plainly fit (574 + 29 + 2 > 600 on paper, well under in
+fact). It compares the rendered TEXT.
+
+**Clean break:** `_fit_lessons` and `_LESSONS_CAP` are deleted — a second policy for a block the budget
+now governs. Their five tests are MIGRATED rather than dropped: the properties (no partial lesson, the
+dropped ones are counted, an under-budget block keeps everything) are exactly what the budget must
+still guarantee, re-expressed against the near-miss catalogue.
+
+**Two of my own test errors, corrected by driving:** an assertion that the L0 catalogue always renders
+was wrong (it costs tokens from the same budget, and for lessons `l0 == l1`, so a greedy fill leaves no
+room — the right trade), and an assertion about index DEGRADATION at 500 tokens asserted nothing,
+because the full index fits there.
+
+- **NOT DONE (by scope):** `template` and `self_model` have no live producer — nothing on the chat path
+  matches a query to a workflow def, and nothing persists `user.selfmodel.*` (S72 built the decisions,
+  not the store). Both are mapped in `SLOT_KINDS` with tested seams so a future producer joins the
+  budget instead of appending a sixth independent block. The memory context keeps `_memory_caps`: a
+  different, already-window-scaled mechanism, and swapping a working recall render for an unproven one
+  is what S71 refused to do blind.

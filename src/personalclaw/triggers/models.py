@@ -324,6 +324,10 @@ GATE_KEYS: frozenset[str] = frozenset(
         "threshold",
         "condition",
         "max_runs_per_hour",
+        # AUTO-A2 (S70): the pluggable is-the-user-on-duty predicate. Shaped
+        # `{provider, config}` like an action, and classified FAIL-OPEN below —
+        # a broken calendar app must not silence every automation.
+        "duty_gate",
     }
 )
 
@@ -341,6 +345,10 @@ FAIL_OPEN_GATES: frozenset[str] = frozenset(
         "max_runs_per_hour",
         "rate_cap",
         "condition",
+        # AUTO-A2 (S70): the duty gate calls OUT to a provider (a calendar app), so §1.4 classifies
+        # it fail-open explicitly — uninstalling the app that supplied it must not silently stop
+        # every automation that referenced it. `evaluate_duty` is time-boxed for the same reason.
+        "duty_gate",
     }
 )
 

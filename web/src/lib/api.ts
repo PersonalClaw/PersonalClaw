@@ -761,6 +761,35 @@ export interface ActionProvider {
 // working hook is dead the moment the backend wires one.
 export interface LifecycleEventInfo { event: string; label: string; desc: string; vars: string[]; blocking: boolean; dormant?: boolean; dormant_reason?: string }
 export interface TriggerVariables { schedule: string[]; lifecycle: LifecycleEventInfo[] }
+// The Proposal Inbox row (GET /api/learning/proposals). `renderable` is the backend's own honesty
+// flag: a row missing provenance cannot be shown weighably, and `bulk_acceptable` already accounts
+// for it — the FE must not re-derive either, or the two will disagree about what is safe to accept.
+export interface LearningRow {
+  id: string; kind: string; title: string; provenance: string
+  source_cadence: string; source_excerpt: string
+  evidence_refs: string[]; reinforcements: number; confidence: number
+  manifest_valid: boolean; manifest_issues: string[]
+  risk_tier: string; status: string
+  renderable: boolean; bulk_acceptable: boolean
+}
+export interface LearningInbox {
+  rows: LearningRow[]; total: number
+  by_kind: Record<string, number>; by_tier: Record<string, number>
+  flagged: number; unrenderable: string[]; bulk_acceptable: number
+}
+// One day of the capture panel. An EMPTY bucket is the signal: `health()` cannot see a day where
+// capture never ran, which is the failure the staging tier exists to expose.
+export interface StagingDay {
+  day: string; passes: number; by_outcome: Record<string, number>
+  produced: number; errors: number; staged: number
+  cost_usd: number; proposal_ids: string[]
+}
+export interface StagingWeek {
+  days: number; buckets: StagingDay[]
+  silent_days: string[]; error_days: string[]
+  produced_total: number; cost_usd: number
+}
+
 // One manual event-trigger fire (POST /api/triggers/event:{id}/run|test). `ran` and `success` are
 // deliberately separate: `ran` is whether the trigger reached its action provider at all (false for
 // incident mode, an unregistered provider, or a denylist block — `reason` says which), while
@@ -2195,6 +2224,27 @@ export const api = {
   deleteSkill: (name: string) => del(`/api/skills/${encodeURIComponent(name)}`),
   verifySkill: (name: string) => post<SkillIntegrity>(`/api/skills/${encodeURIComponent(name)}/verify`),
   // Skill proposals inbox (skill-evolution-proposal-only) — propose-only review.
+  // ── Learning Flywheel §6.1: the Proposal Inbox + the staging week panel ──
+  // `accept`/`reject` carry NO actor: the backend derives it from the request, because a caller that
+  // could name itself `user` would make §7's human-installs gate decorative.
+  learningProposals: (opts?: { kind?: string; tier?: string; flagged?: boolean }) => {
+    const q = new URLSearchParams()
+    if (opts?.kind) q.set('kind', opts.kind)
+    if (opts?.tier) q.set('tier', opts.tier)
+    if (opts?.flagged) q.set('flagged', '1')
+    const qs = q.toString()
+    return get<LearningInbox>(`/api/learning/proposals${qs ? `?${qs}` : ''}`)
+  },
+  learningProposal: (id: string) =>
+    get<Record<string, unknown>>(`/api/learning/proposals/${encodeURIComponent(id)}`),
+  acceptLearningProposal: (id: string) =>
+    post<{ ok: boolean }>(`/api/learning/proposals/${encodeURIComponent(id)}/accept`, {}),
+  // `del` is non-generic (it resolves void and throws ApiError on !ok) — measured against its own
+  // signature rather than assumed symmetric with `get`/`post`.
+  rejectLearningProposal: (id: string) =>
+    del(`/api/learning/proposals/${encodeURIComponent(id)}`),
+  learningStagingWeek: (days = 7) =>
+    get<StagingWeek>(`/api/learning/staging/week?days=${days}`),
   skillProposals: () => get<{ proposals: SkillProposal[] }>('/api/skills/proposals').then((d) => d.proposals),
   skillProposalDetail: (id: string) => get<SkillProposalDetail>(`/api/skills/proposals/${encodeURIComponent(id)}`),
   acceptSkillProposal: (id: string, edits?: { description?: string; procedure_md?: string }) =>

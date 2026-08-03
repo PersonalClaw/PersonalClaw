@@ -63,7 +63,23 @@ _ENV_FAILURE_RE = re.compile(
     r"not allowed here|no permission|permission denied|can'?t access|cannot access|"
     r"failed to (?:connect|run|start)|times? out|timed out|not configured|"
     r"doesn'?t (?:work|exist)|tool .* (?:broken|unavailable|missing)|exit code|"
-    r"command (?:failed|not found))\b",
+    r"command (?:failed|not found)|"
+    # Transport + throttling vocabulary (S74). Measured against real failure text: the list above
+    # caught 1 of 4 environment failures, so "connection refused", ECONNRESET and rate-limit noise
+    # would all have become DURABLE LESSONS — the exact outcome this guardrail exists to prevent.
+    # LEARNING-FLYWHEEL §3.3 routes every `step_failed` through here, which makes the gap worse
+    # than it was: a flaky network would teach the agent to refuse a valid action later.
+    r"connection (?:refused|reset|aborted|closed)|"
+    r"econnrefused|econnreset|econnaborted|etimedout|ehostunreach|enetunreach|enotfound|"
+    # `rate limited` (past tense) is a failure REPORT; bare "rate limiter" is ordinary
+    # vocabulary, and a bare `429` filtered the legitimate lesson "the 429 rate limiter
+    # config lives in settings.py" — measured. A status code only counts with failure context.
+    r"rate ?limited|being rate ?limited|too many requests|"
+    r"429 (?:from|error|response|status)|status 429|"
+    r"(?:5[0-9]{2}) (?:from|error|response)|bad gateway|service unavailable|"
+    r"temporarily unavailable|network (?:error|unreachable|is unreachable)|"
+    r"ssl (?:error|handshake)|certificate (?:expired|verify failed)|"
+    r"quota exceeded|insufficient quota|no such host|dns (?:failure|error))\b",
     re.IGNORECASE,
 )
 

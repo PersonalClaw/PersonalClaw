@@ -163,20 +163,20 @@ mandatory.
 | 66 | Cron migration: lossless against a store the REAL service wrote (0 unaccounted fields); `every`≠`at` (a one-shot would kill every interval job); dry-run report | G33 | ✅ DONE (#220) |
 | 67 | Event-kind API parity (toggle/update/run/test/history: all 404'd or silently no-op'd) + dormancy surfaced for the **7** (not 8 — S60 wired TaskComplete) | G33 | ✅ DONE (#221) |
 | 68 | Autopause after 5 TRUE failures (found: 5 denylist BLOCKS disabled a trigger) + typed exits park + Runs-inbox surfacing | G34 | ✅ DONE (#222) |
-| 69 | Injection fencing + frozen capability set (adversarially verified); budget/triage typed ledger rows, zero silent drops | G34 | TODO |
-| 70 | Calendar-aware scheduling: quiet-hours semantics, duty-gate hook, week-grid view; `automation doctor` | G35 | TODO |
+| 69 | Injection screen 5/18→18/18 caught + 0 false positives, wired into the fire path (found: payloads reached providers UNFENCED) + deny-by-default capability fence + zero-silent-drop rows | G34 | ✅ DONE (#223) |
+| 70 | Quiet-hours semantics for a key RESERVED since S62 (wrap rule matched to the shipped matcher) + fail-open duty-gate provider seam (#47 rule) + week-grid endpoint + `automation doctor` (6 findings) | G35 | ✅ DONE (#224) |
 
 ## I. Learning Flywheel steps 5-8 (`-LEARNING-FLYWHEEL.md`) — needs the Run Ledger + everything above
 
 | # | Session | PR group | Status |
 |---|---|---|---|
-| 71 | Measure: per-arm surfaced-vs-used precision, tunable threshold profiles, trust posterior | G36 | TODO |
-| 72 | Self-model: capped, reinforcement-promoted, propose-don't-write | G36 | TODO |
-| 73 | Run outcomes → template refinement (the flagship): typed ledger evidence, median-of-3 critic, held-out replay gate | G37 | TODO |
-| 74 | Repeated ad-hoc work → suggested templates; failed stages → lessons + procedural priors | G37 | TODO |
-| 75 | Proposal Inbox: six kinds, provenance, evidence manifests, risk tiers; model cannot accept its own proposals | G38 | TODO |
-| 76 | Staging tier observability: FLUSH_OK/ERROR/proposal-id outcome records, week-at-a-glance panel | G38 | TODO |
-| 77 | Accountability: EFFECTIVE…HARMFUL verdicts from ledger outcomes, auto-filed revert proposals; incognito capture gate closed + regression-tested | G39 | TODO |
+| 71 | Measure: per-arm precision (found: `fuse` attributed by dict-insertion order) + data-driven threshold proposals + Beta-Binomial trust; reconciled a forked ARM_CONFIDENCE table | G36 | ✅ DONE (#227) |
+| 72 | Self-model: capped (full tier DISPLACES, never appends) + propose-never-install + compact snapshot; found `user.selfmodel.*` leaking into user-FACT blocks | G36 | ✅ DONE (#228) |
+| 73 | Refiner acceptance discipline: mechanism clustering (freq × unresolvedness) + power floor + median-of-3 critic + GateOK + frozen region, all as pure decisions | G37 | ✅ DONE (#229) |
+| 74 | Deterministic detector chain (free at both extremes, typed skip reasons) + closed FailureMode enum; FOUND the env-failure deny-filter catching 1 of 4 → now 12/12, 0 false positives | G37 | ✅ DONE (#230) |
+| 75 | Proposal Inbox view model + THE accept gate — found the "model cannot accept its own proposals" invariant holding only by ABSENCE of a caller; now enforced in the real accept()/reject() | G38 | ✅ DONE (#231) |
+| 76 | Week-at-a-glance panel — outcome records + proposal ids were already shipped; the real gap was that `health()` CANNOT SEE A SILENT DAY (absent day == healthy day) | G38 | ✅ DONE (#232) |
+| 77 | Predict-then-verify 5-way verdicts + HARMFUL-only auto-reverts + proposer trust; incognito gate is CLOSED but SESSION_END/RUN_END have zero callers (gap now pinned) | G39 | ✅ DONE (#233) |
 
 ---
 
@@ -1809,3 +1809,51 @@ registry threaded through the plan path, and T5 needs a `one_shot_completion` ca
 belong with session 41's grounding work where the model plumbing already lands. Hybrid COMPOSITION
 returns the names to compose but does not yet build the subworkflow spec. `presets` and
 `lighter_path` are surfaced in the match result and not yet acted on by the planner.
+
+---
+
+## QUEUE EXHAUSTED — 2026-08-03 (three criteria since closed; see below)
+
+All **77 of 77** rows are `✅ DONE` with real PR numbers (sections A–I). The autonomous nudge asks for
+"the first session whose status is not DONE"; there is no such row, so steps 1-7 have no subject. The
+five other `BLOCKED` strings in this file are prose — the protocol text at line ~27 and historical
+deviation notes — not live entries.
+
+**Why this is E6 and not something to work around.** Adding a queue row IS the scope decision. The
+workspace brief reserves it: "the roadmap is owner-maintained — propose changes via issue, not by
+editing `docs/roadmap/` in a PR." Choosing session 78 would be choosing the program's direction.
+
+**Deferred work already recorded in the plans, for whoever writes the next row:**
+
+1. **Unmet SUCCESS CRITERIA are declared work, not new scope — three closed since.** The BLOCKED
+   reasoning above was right to refuse INVENTING a session, but wrong as a stopping rule: an unmet
+   acceptance criterion of a plan already in the queue is work the plan itself declares. Filed under
+   the criterion rather than as new numbered rows, because the criterion is the authority.
+
+   | Crit | What was unmet | Closed by | PR |
+   |---|---|---|---|
+   | 1 | One Proposal Inbox showing all six kinds; the model cannot accept its own proposals | Learning page + five `/api/learning` routes + the actor-derived accept gate | #234 |
+   | 4 | The adversarial test must cover the REFINER path | `screen_evidence`/`fenced_evidence` — the refiner path had NO screen and NO fence | #235 |
+   | 5 | The named ambient blocks must fit ONE slot-allocated budget | `learning/ambient.py` — the allocator, the preamble and `context_budget_tokens` were all inert | #236 |
+
+   **Audited and genuinely met (verified by probing, not by reading):** crit 6 (`/api/lessons`
+   consumers — three live routes + the MCP client path), crit 7 (`measure.py` exports per-arm
+   precision, threshold tuning and the trust posterior), crit 8 (staging outcomes + the week panel
+   shipped in #234), crit 9 (`accountability.attribute` + `revert_proposal`), crit 10 (the PER_TURN
+   gate is called from `chat_runner` and refuses restricted sessions). Crit 2 and 3 were closed by
+   their own sessions.
+
+2. **`SESSION_END` / `RUN_END` gate coverage — NOT a gap-fill (corrected 2026-08-03).** S77 pinned
+   these two cadences as having zero live callers. Measured afterwards: there is no session-teardown
+   hook and no run-end capture pass anywhere in `src/personalclaw`, so this is not a gate someone
+   forgot to wire — the cadences were declared ahead of the subsystems that would use them. Building
+   the capture passes is NEW scope, and `Cadence.RUN_END` overlaps `triggers.models`' existing
+   `run_completed` event, which the next author should reconcile rather than duplicate.
+   `accountability.assert_gate_covers_cadences()` keeps the gap visible either way.
+
+3. **The 22-PR stack (#210 → #233) is unmerged.** `origin/main` is still at #196, so every row above
+   #196 is DONE-in-branch. GitHub merges each stacked PR into its own base, not `main` — see the
+   stacked-PR mechanics memory before merging.
+
+**State at block:** clean tree on `feature-wf2-accountability`; `make lint` green (665 files);
+`pytest -n 4 --dist worksteal` → 14939 passed, 29 skipped, 13 xfailed. Nothing half-finished.
