@@ -1,16 +1,33 @@
 import { useEffect, useState } from 'react'
-import { CalendarClock, Webhook, Bell, MessageSquare, ListPlus, Users, TerminalSquare, FileCode2, Zap, Anchor, Bot, Workflow } from 'lucide-react'
+import { CalendarClock, Webhook, Bell, MessageSquare, ListPlus, Users, TerminalSquare, FileCode2, Zap, Anchor, Bot, Workflow, FolderClock, Globe, Moon, FileText } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { api, type ScheduleJob, type HookItem, type LifecycleEventInfo, type TriggerVariables } from '../../lib/api'
+import { api, type ScheduleJob, type HookItem, type LifecycleEventInfo, type TriggerVariables, type Trigger as WireTrigger } from '../../lib/api'
 import { deriveKind, deriveMode, kindMeta as schedKindMeta, modeMeta as schedModeMeta } from '../schedule/scheduleMeta'
 
-// ── Trigger kind: schedule (a tick fires) vs lifecycle (an agent-loop event fires) ──
-export type TriggerKind = 'schedule' | 'lifecycle'
+// ── Trigger kind: schedule (a tick fires), lifecycle (an agent-loop event fires),
+//    or store (a unified TriggerStore kind with no legacy backend — file/web_watch/…) ──
+export type TriggerKind = 'schedule' | 'lifecycle' | 'store'
 export interface TriggerKindMeta { key: TriggerKind; label: string; icon: LucideIcon; tone: string; hint: string }
 export const TRIGGER_KINDS: TriggerKindMeta[] = [
   { key: 'schedule', label: 'Schedule', icon: CalendarClock, tone: 'var(--color-info)', hint: 'Fires on a clock — every N, on a cron, or once at a set time.' },
   { key: 'lifecycle', label: 'Lifecycle event', icon: Anchor, tone: 'var(--color-primary)', hint: 'Fires on an agent-loop event — a tool call, a prompt, session end, …' },
 ]
+
+// ── Store-kind presentation: the "when" label/icon per store_kind. These automations are
+//    created through the automation_* chat tools (e.g. "when a file in ~/notes changes"), so the
+//    UI describes what each watches rather than offering a create form (the chat is the create
+//    surface). An unknown store_kind falls back to a neutral label rather than rendering blank. ──
+const STORE_KIND_META: Record<string, { label: string; icon: LucideIcon }> = {
+  file: { label: 'On file change', icon: FolderClock },
+  web_watch: { label: 'On web page change', icon: Globe },
+  idle: { label: 'When idle', icon: Moon },
+  run_completed: { label: 'When a run finishes', icon: Workflow },
+  view: { label: 'View trigger', icon: FileText },
+  webhook: { label: 'On webhook', icon: Webhook },
+}
+function storeKindMeta(storeKind?: string): { label: string; icon: LucideIcon } {
+  return STORE_KIND_META[storeKind ?? ''] ?? { label: storeKind || 'Automation', icon: Zap }
+}
 // ── Trigger $variable catalog — server-sourced ──
 // The lifecycle events + the $variables each exposes to a templated action come
 // from the backend (GET /api/triggers/variables → hooks.LIFECYCLE_EVENT_CATALOG +
@@ -101,8 +118,11 @@ export interface Trigger {
   lastStatus: string | null
   runCount: number | null
   usedBy: string[]           // lifecycle only
+  storeKind?: string         // store only: file | web_watch | idle | …
+  broken?: string[]          // store only: parse errors (S87 lenient load) — shown, not hidden
   schedule?: ScheduleJob
   hook?: HookItem
+  store?: WireTrigger        // store only: the raw wire row for the inspector
 }
 
 export function scheduleToTrigger(j: ScheduleJob): Trigger {
@@ -141,6 +161,23 @@ export function hookToTrigger(h: HookItem): Trigger {
     actionLabel: actionLabel(h.provider), actionIcon: actionIcon(h.provider),
     lastRunTs: h.last_run || null, lastStatus: h.last_status || null, runCount: h.run_count, usedBy: h.used_by,
     schedule: undefined, hook: h,
+  }
+}
+
+/** Project a store-backed Trigger (file/web_watch/idle/…) onto the shared view-model. The wire
+ *  id is already `store:<kind>:<slug>`; `rawId` keeps the store's own `<kind>:<slug>` so the
+ *  toggle/run/delete helpers re-namespace it. A broken row (S87 lenient load) carries its parse
+ *  errors so the list can flag it rather than hiding an automation the user can't otherwise debug. */
+export function storeToTrigger(t: WireTrigger): Trigger {
+  const km = storeKindMeta(t.store_kind)
+  const provider = t.action?.provider
+  return {
+    kind: 'store', id: t.id, rawId: t.raw_id, name: t.name || t.raw_id, enabled: t.enabled,
+    whenLabel: km.label, whenIcon: km.icon, whenTone: 'var(--color-primary)',
+    actionLabel: provider ? actionLabel(provider) : 'Action',
+    actionIcon: provider ? actionIcon(provider) : Zap,
+    lastRunTs: null, lastStatus: t.health || null, runCount: t.run_count ?? null, usedBy: [],
+    storeKind: t.store_kind, broken: t.broken ?? [], store: t,
   }
 }
 

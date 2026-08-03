@@ -1842,3 +1842,40 @@ Gate: `make lint` clean.
 
 - **STILL deferred (class-B):** the §6 re-point of the schedule/event backends onto the store (the
   clock switch-over), and the `schedule_*` MCP-alias retirement (§4).
+
+### S95 — The Automations page shows store triggers (§5 FE / crit 2 — stacked on S94)
+
+**DONE. The FE half of S94, closing "implementation owns product too" for the S92-S95 arc.** S94
+made store-only triggers (file/web_watch/idle/…) listable through `/api/triggers?type=store`, but
+the Automations page (`TriggersListPage.tsx`) only knew the `schedule` and `lifecycle` tabs — so a
+chat-created file automation was reachable via the API and never in the UI. A user could create it
+(S92), it would fire (S93), and they still could not SEE, pause, or delete it on the page built for
+exactly that. This closes the loop: **create (chat) → fire (poll loop) → see + manage (page)**.
+
+- **`storeToTrigger` mapper + an "Automations" filter tab.** The list now fetches
+  `api.storeTriggers()` alongside schedules and hooks, projects each onto the shared `Trigger`
+  view-model, and filters/counts them under a new `store` tab. `store_kind` drives the "when" label
+  and icon (`On file change`, `On web page change`, …); an unknown kind degrades to a neutral label
+  rather than a blank row.
+- **`StoreTriggerDetail` is READ-ONLY by design.** These automations are AUTHORED in chat (the
+  `automation_*` tools — "when a file in ~/notes changes, summarize it…"), so the create/edit
+  surface is the conversation, not a form. What the page owns is MANAGEMENT — pause/resume, run,
+  dry-run, delete — which is precisely what a user cannot do from chat once the automation exists.
+  Every mutation routes through S94's `store:` API namespace, which reuses S92's `tools.py`, so the
+  panel and a chat command cannot answer differently.
+- **A broken row is flagged, not hidden.** S87's lenient load keeps an unparseable row; the list
+  shows a "needs attention" marker and the inspector surfaces the parse error in a danger banner —
+  a broken automation invisible on its own page is undebuggable. The Enabled toggle surfaces the
+  API's refusal to enable a broken row (S87) as an error rather than flipping a switch that did
+  nothing.
+- **🔴 TWO GUESSED TOKENS corrected by measuring the real design system, not assuming:** there is no
+  `bg-danger-container`/`text-on-danger-container` token — the app's danger-banner pattern is an
+  inline `color-mix(in srgb, var(--color-danger) 12%, transparent)` (as in ChatPage/FeedbackPanel).
+  Button variants are `primary|tonal|secondary|ghost|danger` — verified before use.
+
+5 new mapper tests (16 total in `triggerMeta.test.ts`). Gate (web changed): `npm run typecheck`
+clean, **570 FE tests pass** (incl. the design-consistency audit — no token drift), `npm run build`
+succeeds. FE-only session — no Python changed.
+
+- **STILL deferred (class-B):** the §6 re-point of the schedule/event backends onto the store (the
+  clock switch-over), and the `schedule_*` MCP-alias retirement (§4).
