@@ -130,6 +130,12 @@ class TriggerStore:
     # ── paths ──
 
     @property
+    def base_dir(self) -> Path:
+        """The directory this store lives in. Sidecars (claims, watch state) derive their root from
+        it, so a store rooted at a temp dir never writes runtime state into the real home."""
+        return self._dir
+
+    @property
     def path(self) -> Path:
         return self._path
 

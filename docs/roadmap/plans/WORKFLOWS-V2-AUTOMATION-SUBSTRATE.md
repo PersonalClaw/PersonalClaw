@@ -1932,3 +1932,47 @@ risk the queue described. Measured before writing a line, against a REAL migrate
   loop; re-point `/api/triggers`' schedule + event backends at the store (§6); retire the
   `schedule_*` MCP aliases (§4). `ScheduleRunStore` survives all three unchanged — it is keyed by a
   plain id string, so any trigger id can use it (measured).
+
+### S97 — The claim store: `overlap` was decorative (§3.1 — stacked on S96)
+
+**DONE. Three defects in one chain, all measured by driving rather than reading.**
+`scheduling.claim_fire` decides overlap from an `existing` claim the caller supplies, and
+`firepath.evaluate` returns the claim it granted with the note "the caller must release it". Nobody
+did either.
+
+- **🔴 1. `overlap: skip` was INERT.** `tick()` never passed `existing_claim`, so every fire was
+  evaluated against `existing=None` and the claim gate ALWAYS granted. Driven: a trigger with
+  `overlap: skip` fired a second time while its first run was still in flight — the precise failure
+  the setting exists to prevent. Present, reviewed, enforcing nothing.
+- **🔴 2. `is_running` was unanswerable from the store.** `ScheduleService` answers it from
+  `self._executing`, a PROCESS-LOCAL dict — wrong after a restart (an in-flight run reads as idle)
+  and invisible to the MCP process writing the same store. The API facade needs this to re-point off
+  `ScheduleService`, and a process-local set cannot serve it. Now a sidecar
+  (`<store dir>/trigger-claims/<safe-id>.json`, atomic tmp→rename), the same convention as
+  `trigger-watch/` (S93) and `task_leases/` (S61d).
+- **🔴 3. The executor never RELEASED one — and fixing (1)+(2) without this would have been WORSE
+  than the original bug.** Every `overlap: skip` trigger would block ITSELF after one run until the
+  1h expiry, turning the overlap guard into a one-shot. Released in a `finally`, because a run that
+  RAISED still finished occupying the trigger; releasing only on success would strand it on every
+  failure — the worst case, since a failing automation is the one a user retries. Caught by driving
+  the whole cycle (fire → claim → run → release → next slot fires), not by reading.
+- **🔴 A DEFECT I INTRODUCED AND CAUGHT BY RUNNING THE SUITE.** The first version defaulted the claim
+  root to the active home, so a tick over a `tmp_path` store wrote claims into the REAL
+  `~/.personalclaw/trigger-claims` — **7 files landed there** and leftovers then blocked unrelated
+  tests' fires (4 reds in `test_triggers_service`/`test_triggers_arm`). Fixed structurally rather
+  than by patching tests: the claim root is DERIVED FROM THE STORE (new `TriggerStore.base_dir`), and
+  `run_one`'s release is a **no-op without an explicit root** — the caller that persisted the claim
+  knows where it lives. Two regression tests pin both directions.
+- **Expiry is read-time, not swept:** a claim older than `max_duration_secs` reads as absent, so a
+  crashed run cannot hold its trigger hostage until a janitor notices (the same fail-open direction
+  `pool`'s leases take). A malformed claim also reads as idle — one that blocked every future fire
+  would be worse than one ignored, and the file is on disk for a human either way.
+- **`parallel` still allows concurrency** (asserted): over-blocking would be the same class of bug in
+  reverse. `skip`/`queue` block, and a blocked fire writes a typed `skipped_overlap` ledger row —
+  §7 crit 8's zero-silent-drops.
+
+25 tests. Gate: `make lint` clean, **15611 passed**, and the suite leaves the real home untouched.
+
+- **NEXT in the cutover:** with `is_running`/`running_since` now answerable from the store, re-point
+  `/api/triggers`' schedule backend (23 of the 46 `state.crons.*` call sites live in that one file),
+  then retire `ScheduleService`, then the `schedule_*` aliases. `ScheduleRunStore` survives unchanged.

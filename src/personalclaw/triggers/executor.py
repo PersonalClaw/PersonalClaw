@@ -83,6 +83,22 @@ STATUS_TO_OUTCOME: dict[str, str] = {
 MAX_DRAIN = 50
 
 
+def _release_claim(trigger_id: str, *, base_dir: Any = None) -> bool:
+    """Default claim release — the real store, rooted at `base_dir`.
+
+    🔴 A release is a NO-OP without an explicit `base_dir`. Measured the alternative: defaulting to
+    the active home made `run_one` (called by every executor test) touch the REAL
+    `~/.personalclaw/trigger-claims`. The caller that persisted the claim knows its root — the tick
+    derives it from the store — so requiring it here keeps a claim and its release in one place and
+    makes it impossible for a run over a temp store to reach into the user's home.
+    """
+    if base_dir is None:
+        return False
+    from personalclaw.triggers.claims import release_claim
+
+    return release_claim(trigger_id, base_dir=base_dir)
+
+
 @dataclass
 class RunOutcome:
     """What running one queued payload produced."""
@@ -216,6 +232,8 @@ async def run_one(
     *,
     session_key: str = "",
     now: float = 0.0,
+    release_claim: Any = _release_claim,
+    base_dir: Any = None,
 ) -> RunOutcome:
     """Run one queued payload through `runner`, classify, and time it. NEVER raises.
 
@@ -230,6 +248,11 @@ async def run_one(
     A runner may report its verdict two ways, and both are honoured: by RETURNING a dict with
     a `status`
     (or a `.last_status` attribute, matching the shipped `ScheduleJob` shape) or by RAISING.
+
+    The trigger's CLAIM is released in a `finally` (S97). The tick persists a claim so `overlap`
+    can enforce; without the release every `overlap: skip` trigger would block itself after one
+    run until the 1h expiry. `release_claim` is injected (default: the real claim store) so a test
+    needs no home directory, and passing `None` disables it for a caller that owns the claim itself.
     """
     started = now or time.time()
     trigger_id = str(payload.get("trigger_id") or "")
@@ -248,6 +271,17 @@ async def run_one(
         Exception
     ) as exc:  # noqa: BLE001 - the outcome IS the error; re-raising would lose the row
         exception = exc
+    finally:
+        # 🔴 RELEASE THE CLAIM. `firepath` grants it and notes "the caller must release it", and the
+        # tick now persists it so `overlap` enforces — without a release here, every `overlap: skip`
+        # trigger would block ITSELF after one run until the 1h expiry, turning the overlap guard
+        # into a one-shot. In a `finally` because a run that RAISED still finished occupying the
+        # trigger; releasing only on success would strand it on every failure.
+        if trigger_id and release_claim is not None:
+            try:
+                release_claim(trigger_id, base_dir=base_dir)
+            except Exception:  # noqa: BLE001 - a failed release must not mask the run's outcome
+                logger.debug("could not release claim for %s", trigger_id, exc_info=True)
 
     outcome, reason = classify(reported, exception)
     return RunOutcome(

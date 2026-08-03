@@ -1839,6 +1839,7 @@ the queue** — declared work, not new scope (see the ruling in the exhausted re
 | S95 | **Automations page shows store triggers** — the FE half of S94: an "Automations" filter tab lists file/web_watch/idle/… triggers, with a `StoreTriggerDetail` inspector for pause/run/dry-run/delete. Closes "implementation owns product too" for S92-S94 — the automation is now visible AND manageable in the UI, not just in chat + the API | AUTOMATION-SUBSTRATE §5 (FE) + crit 2 | ✅ DONE (#257) |
 
 | S96 | **Arm the clock** — a spec→next-fire primitive for all four `CLOCK_KINDS`, wired into boot + the tick. Clears the REAL clock-cutover blocker: a migrated cron was permanently inert (`next_fire_at` empty ⇒ never due), and fixing that exposed a fire storm (a fired cron kept its ELAPSED slot and re-fired it every tick). One-shots now retire via `delete_after_run` instead of holding a past timestamp | AUTOMATION-SUBSTRATE §3.1 (clock cutover step 1) | ✅ DONE (#263) |
+| S97 | **The claim store** — `overlap` was decorative (the tick never supplied `existing_claim`, nothing persisted a grant, the executor never released). All three closed; `is_running`/`running_since` now answer from a cross-process sidecar, which is what the API facade needs to re-point off `ScheduleService` | AUTOMATION-SUBSTRATE §3.1 (clock cutover step 2) | ✅ DONE (#264) |
 
 **🔴 THE CLOCK CUTOVER'S REAL BLOCKER WAS NOT DOUBLE-FIRE — IT WAS THAT THE TICK COULD NOT ARM A
 CLOCK.** Measured on a real migrated store: `boot()` reported `rearmed: []`, `next_fire_at` stayed

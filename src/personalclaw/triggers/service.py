@@ -368,6 +368,7 @@ async def tick(
     now: float = 0.0,
     persist: bool = True,
     user_active: bool = False,
+    base_dir: Any = None,
 ) -> TickResult:
     """One tick: decide what fires, persist the reschedule, and return the dispatch list.
 
@@ -384,8 +385,20 @@ async def tick(
     `persist=False` makes the whole tick a dry run for the `automation doctor` and for tests —
     the fire
     path still runs, so a dry run reports exactly what a real one would do.
+
+    Claims are read before the gate walk and written after a grant, which is what makes `overlap`
+    enforce across ticks AND across processes — see `claims.py` for the defects that closed.
+
+    🔴 The claim root is DERIVED FROM THE STORE (`base_dir` only overrides it), so claims
+    always land beside the `triggers.json` they describe. Measured the alternative: defaulting
+    to the active home made a tick over a `tmp_path` store write claims into the REAL
+    `~/.personalclaw`, where leftovers then blocked unrelated tests' fires. A claim describing
+    one store must not live in another.
     """
+    from personalclaw.triggers import claims
+
     now = now or time.time()
+    base_dir = base_dir if base_dir is not None else getattr(store, "base_dir", None)
     result = TickResult()
 
     result.store_changed = bool(getattr(store, "changed_on_disk", lambda: False)())
@@ -437,6 +450,11 @@ async def tick(
             now=now,
             user_active=user_active,
             yield_to_user=bool(getattr(trigger, "yield_to_user", False)),
+            # 🔴 The EXISTING claim, read from the shared claim store. Measured: this was never
+            # supplied, so `claim_fire` always saw `existing=None` and always granted — a trigger
+            # whose previous run was still going fired again anyway, which is the precise failure
+            # `overlap` exists to prevent. The gate was present, reviewed, and enforcing nothing.
+            existing_claim=claims.read_claim(trigger.id, now=now, base_dir=base_dir),
         )
         decision = await fp.evaluate(ctx)
         row = fp.ledger_row(decision, ctx)
@@ -444,6 +462,11 @@ async def tick(
         result.ledger_rows.append(row)
 
         if decision.allowed:
+            # Persist the granted claim so the NEXT tick (and any other process — the MCP tools and
+            # the API read the same store) can see this run in flight. `firepath` already notes "the
+            # caller must release it"; the executor's drain releases on completion.
+            if persist and decision.claim is not None:
+                claims.write_claim(decision.claim, base_dir=base_dir)
             result.fires.append(
                 DueFire(
                     trigger=trigger,
