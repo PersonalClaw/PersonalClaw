@@ -1387,3 +1387,42 @@ scheduling, not code. On a shared xdist worker the spike can exceed the suite's 
 an unrelated job. It flaked CI on this stack twice. Worth an owner decision: either give that one test
 a longer `@pytest.mark.timeout`, or drop its real-`TestServer` round trip for a direct handler call
 like the rest of the file uses.
+
+### S61i — The confirmation-gate emission, and a real fd bug behind a "flaky" test (18 tests) — DONE
+
+S57 built the `ConfirmationRequest` record and its verbs; S61e gave the events a channel. Neither was
+emitted by a running gate, so a run could park on an approval and its own history would show
+`workflow_needs_input` and nothing typed — "how long did this gate wait" and "who answered it" had no
+answer in the ledger.
+
+**Placement is the design.** The PENDING half rides `_ensure_continuation`, which already dedups on
+`(path, epoch)` — the watchdog polls a waiting run repeatedly, and a second emission site would have
+had to re-derive that idempotency and would have got it wrong. Measured: a re-poll leaves the count at
+1. The RESOLVED half fires AFTER the claim is won and the epoch checked; emitting earlier would log an
+approval for a race the caller LOST, and the audit would show two people approving one gate. Measured:
+a lost race emits nothing, and the ledger holds exactly one resolution.
+
+**The id is derived from `(run, gate, epoch)` via the shipped `confirmation.request_id`, never from
+the resume token.** A token is single-use and rotates per poll, so a token-derived id would give the
+two halves different values and they would never pair up — a defect that stays invisible until someone
+asks how long a gate waited. Verified on real runs: both halves carry the same `cr-…` id, and the
+epoch is in the key so a rewind asks a new question.
+
+**Gate classification reads the AUTHOR's declaration** (`risk_category`, then `kind`), not the prompt
+text. §4 gives a destructive confirmation a different expiry policy (auto-reject) and forbids muting
+it, so misclassifying a deletion as a plain approval would make it auto-APPROVE on timeout — the worst
+behaviour available in this module. An unknown risk word falls back to APPROVAL, whose policy is HOLD.
+
+**A REAL bug behind the "environmental" flake.** `test_terminal_handler.py`'s `_make_session` fixture
+hardcoded `master_fd=99`, and `_kill_session` does `os.close(sess.master_fd)` for any fd >= 0. Fd 99 is
+not the test's fd — it is whatever the process happens to have there. In a bare interpreter it is
+closed (hence the intermittent `OSError: Bad file descriptor`); under xdist with aiohttp, coverage and
+a live `TestServer`, a process can hold fd 99, and then the test **closes someone else's socket**. That
+is the mechanism behind `test_rest_create_list_delete` swinging 0.25s → ~11s and blocking CI twice on
+this program. The fixture now defaults to `-1` (the value `_kill_session` itself writes back after
+closing, so the guard is exercised rather than bypassed) and offers `_owned_fd()` — one end of a pipe —
+for a test that genuinely needs a closable fd. Three consecutive full suites are clean at 14083 passed;
+the earlier owner note in #210 is superseded by this finding, and it was NOT environmental.
+
+- **NOT DONE:** DagView-in-run-detail composition (`WorkflowRunDetail` still renders no DAG — a view
+  composition change), checklist drag-reorder edit UX, config four-point wiring.

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -38,21 +39,46 @@ def _make_request(user="testuser", session_id="abc123", registry=None, cfg=None)
     return request
 
 
-def _make_session(session_id="s1", alive=True, ws=None, disconnect=None):
-    """Build a mock _TerminalSession."""
+def _make_session(session_id="s1", alive=True, ws=None, disconnect=None, master_fd=-1):
+    """Build a mock _TerminalSession.
+
+    `master_fd` defaults to **-1**, not a made-up number. `_kill_session` does
+    `os.close(sess.master_fd)` for any fd >= 0, and a hardcoded `99` is not this test's fd — it is
+    whatever the process happens to have there. Measured (S61i): in a bare interpreter fd 99 is
+    closed, so the delete path raised `OSError: Bad file descriptor`; under xdist with aiohttp,
+    coverage and a live `TestServer` a process can easily hold fd 99, and then this test CLOSES
+    SOMEONE ELSE'S SOCKET. That is the mechanism behind
+    `test_rest_create_list_delete` swinging between 0.25s and ~11s and intermittently erroring in
+    teardown — a symptom that looked environmental and was not.
+
+    `-1` is the value `_kill_session` already treats as "no fd to close" (it is what the function
+    itself writes back after closing), so the guard is exercised rather than bypassed. A test that
+    genuinely needs a closable fd passes one it OWNS — see `_owned_fd`.
+    """
     proc = MagicMock()
     proc.returncode = None if alive else 0
     proc.pid = 12345
     proc.wait = AsyncMock()
     sess = terminal._TerminalSession(
         session_id=session_id,
-        master_fd=99,
+        master_fd=master_fd,
         proc=proc,
         ws=ws,
     )
     sess.last_ws_disconnect = disconnect
     sess.reader_task = None
     return sess
+
+
+def _owned_fd() -> int:
+    """A real fd this test owns, safe for `_kill_session` to close.
+
+    One end of a pipe: closing it affects nothing but this pipe. The other end is deliberately left
+    to the garbage collector — leaking one fd per test that asks for this is cheaper than a fixture
+    that has to know whether the code under test already closed it.
+    """
+    read_fd, _write_fd = os.pipe()
+    return read_fd
 
 
 # ── _get_config ──

@@ -618,6 +618,20 @@ class RunController:
                 "expires_at": cont.expires_at,
             },
         )
+        # The typed CONFIRMATION record's pending half (TASKS-SOPS §4, S61i). Emitted HERE rather
+        # than at a second site so it inherits this method's `(path, epoch)` idempotency for free:
+        # the watchdog polls a waiting run repeatedly, and a per-poll emission would put one
+        # "awaiting approval" row per poll into the ledger for a single question.
+        #
+        # `confirmation_id` is derived from `(run, gate, epoch)` by `confirmation.request_id`, NOT
+        # from the resume token. The token is single-use and rotates on rewind; the ID has to stay
+        # stable so `confirmation_pending` and `confirmation_resolved` pair up in the ledger.
+        self.publish_confirmation_pending(
+            path,
+            cont.node_id,
+            confirmation_id=_confirmation_id(self.run.id, cont.node_id or path, inst.epoch),
+            kind=_confirmation_kind(node.config if node else {}),
+        )
         # …and DURABLY, to the inbox (WF2-R7). The SSE frame above only reaches a view that
         # happens to be open; a scheduled run parking at 3am would otherwise wait in silence
         # forever. Minted alongside the continuation so the two share the (path, epoch)
@@ -728,6 +742,19 @@ class RunController:
                 terminal_reason="denied",
             )
         inst.completed_at = _now()
+        # The resolution half. AFTER the claim is won and the epoch verified, so the ledger records
+        # answers that actually applied — emitting before the claim would log an approval for a race
+        # the caller lost, and the audit would show two people approving one gate.
+        self.publish_confirmation_resolved(
+            cont.instance_path,
+            cont.node_id,
+            confirmation_id=_confirmation_id(
+                self.run.id, cont.node_id or cont.instance_path, cont.epoch
+            ),
+            verb="approve" if approved else "reject",
+            approved=approved,
+            resolved_by=responder or channel or "dashboard",
+        )
         self.journal.write(
             journal_mod.GATE_RESOLVED,
             instance_path=cont.instance_path,
@@ -2882,6 +2909,43 @@ class RunController:
 
 
 # ── module helpers ───────────────────────────────────────────────────────────
+
+
+def _confirmation_id(run_id: str, gate_id: str, epoch: int) -> str:
+    """The stable confirmation id for one (run, gate, epoch).
+
+    Delegates to `confirmation.request_id` rather than composing a string here. Two id schemes for
+    one record is the failure mode where `confirmation_pending` and `confirmation_resolved` never
+    pair up in the ledger, and nobody notices until someone asks how long a gate waited.
+
+    The EPOCH is in the key because a rewind SHOULD produce a new confirmation — the question is
+    being asked about different work. Deriving from the resume token instead would break that: a
+    token is single-use and rotates per poll, so pending and resolved would carry different ids for
+    the same question.
+    """
+    from personalclaw.workflows.confirmation import request_id
+
+    return request_id(run_id, gate_id, epoch)
+
+
+def _confirmation_kind(node_config: dict[str, Any]) -> str:
+    """Which `ConfirmationType` this gate is, as its wire value.
+
+    A destructive gate is NOT the same record as an ordinary approval: §4 gives them different
+    expiry policies (auto-reject vs hold) and only the ordinary one may be muted. Reading the
+    node's own declared risk keeps that classification with the author who made it, rather than
+    inferring it from the prompt text at render time.
+    """
+    from personalclaw.workflows.confirmation import ConfirmationType
+
+    risk = str((node_config or {}).get("risk_category", "") or "").strip().lower()
+    if risk in {"destructive", "destructive_op", "irreversible"}:
+        return ConfirmationType.DESTRUCTIVE_CONFIRM.value
+    kind = str((node_config or {}).get("kind", "") or "").strip().lower()
+    if kind in {"input", "needs_input", "question"}:
+        return ConfirmationType.NEEDS_INPUT.value
+    return ConfirmationType.APPROVAL.value
+
 
 #: Max characters of a foreach item's label. A row shows one line, and a fan-out over long
 #: strings would otherwise put kilobytes of prose in the event stream for no gain.
