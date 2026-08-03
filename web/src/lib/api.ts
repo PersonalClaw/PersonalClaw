@@ -531,6 +531,27 @@ export interface WorkflowNode {
 export interface WorkflowDefSummary {
   name: string; description: string; source: string; version: number; tags: string[]; provider: string
 }
+/** A template WITH its surfacing state — the row `GET /api/workflows/surfacing` returns.
+ *  Separate from WorkflowDefSummary because the thin list is on the picker's hot path and
+ *  deliberately does not pay for a per-def run-history lookup; this is what the templates
+ *  list renders. */
+export interface WorkflowSurfacingRow {
+  name: string; provider: string
+  surface_mode: 'off' | 'passive' | 'suggest'
+  summary: string; when_to_use: string
+  cadence_days: number
+  escalation: 'manual' | 'auto'
+  packs: string[]
+  guided: boolean
+  freshness: 'never_run' | 'fresh' | 'due_soon' | 'overdue' | 'stale'
+  overdue: boolean
+  last_completed_at: number
+  hands_off_to: Array<{ target_def: string; condition: string; context_fields: string[]; requires_user_request: boolean }>
+}
+/** One reachability-doctor finding: a def no channel can produce. Typed CODE, not prose — the
+ *  backend learned that lesson when a message containing the word "secret" was matched as if it
+ *  were one. */
+export interface WorkflowSurfacingFinding { name: string; code: string; detail: string }
 // One declared input. Named (rather than inlined on WorkflowDef) because the run dialog builds
 // its fields from these, and a picker that could not reference the type would re-describe it.
 export interface WorkflowInputParam {
@@ -2641,9 +2662,16 @@ export const api = {
     const qs = new URLSearchParams(Object.entries(f ?? {}).filter(([, v]) => v) as [string, string][]).toString()
     return get<{ defs: WorkflowDefSummary[]; total: number }>(`/api/workflows${qs ? `?${qs}` : ''}`)
   },
+  /** Templates with freshness, scope, packs and doctor findings. A SEPARATE call from
+   *  `workflowDefs` on purpose: this one costs a run-history read per def, and the picker that
+   *  only needs names should not pay it. */
+  workflowSurfacing: () =>
+    get<{ defs: WorkflowSurfacingRow[]; total: number; findings: WorkflowSurfacingFinding[] }>(
+      '/api/workflows/surfacing',
+    ),
   workflowDef: (name: string) =>
     get<{ definition: WorkflowDef; provider: string }>(`/api/workflows/${encodeURIComponent(name)}`),
-  saveWorkflowDef: (body: { name: string; root: WorkflowNode; description?: string; inputs?: Record<string, unknown>; tags?: string[]; save?: boolean }) =>
+  saveWorkflowDef: (body: { name: string; root: WorkflowNode; description?: string; inputs?: Record<string, unknown>; tags?: string[]; metadata?: Record<string, unknown>; save?: boolean }) =>
     post<{ saved: boolean; definition?: WorkflowDef; valid: boolean; issues: Array<{ code: string; message: string; path?: string; severity?: string }>; levels?: string[][] }>('/api/workflows', body),
   deleteWorkflowDef: (name: string) => del(`/api/workflows/${encodeURIComponent(name)}`),
 

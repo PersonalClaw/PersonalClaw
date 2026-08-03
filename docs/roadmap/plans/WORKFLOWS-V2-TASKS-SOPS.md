@@ -1075,3 +1075,65 @@ returned None); a `sequence` with no children fails validation, so probe specs n
   driveable (`GET /api/workflows/surfacing` returns rows + doctor findings; metadata is writable
   through `POST /api/workflows`), so the FE session is unblocked. The lease write path and the
   confirmation resolve endpoints remain unwired.
+
+### S61c — The FE surfacing surfaces, validated as a user (34 FE tests) — DONE (PARTIAL)
+
+The frontend half of §7's surfacing UX, driven against a live gateway rather than asserted.
+
+- **`surfacingMeta.ts` mirrors `workflowMeta.ts`'s discipline:** one place decides the tone and label
+  for a freshness band or surfacing mode, because three components each choosing their own colour is
+  how "overdue" looks urgent in one place and calm in another. Every helper is pure and reads the
+  BACKEND's computed state — `overdue` comes from the response, never recomputed from
+  `cadence_days` + `last_completed_at`, because the thresholds (`DUE_SOON_AT`, `STALE_MULTIPLE`)
+  have an owner and a second comparison would drift the first time one moved.
+
+- **An `off` def gets NO composer chip.** The chip exists to show the user what the matcher injected
+  and let them switch it off; a def that injects nothing has nothing to show, so a chip would be an
+  affordance with no referent. Only `suggest` gets the run affordance — a passive def proposes
+  running nothing, which is the whole reason the two modes are separate.
+
+- **Deep-link params are an ALLOWLIST against the template's declared inputs**, and the rejected keys
+  are REPORTED. A URL is not a trust boundary: a shared or hand-edited link can carry anything, and a
+  denylist would silently pass whatever it had not been taught about. Reporting rejections is what
+  lets a stale card explain itself — one generated before an input was renamed should say which
+  parameter no longer exists rather than quietly starting the run without it. An empty value is
+  dropped rather than pre-filled: `''` makes a required input LOOK answered while the engine still
+  refuses, so the user sees a filled form and an inexplicable rejection. `missingRequired` re-derives
+  from the schema for the same reason the backend re-derives `all_filled`.
+
+- **The list degrades rather than blanking.** A failed surfacing read leaves the plain def list
+  intact — the templates are still startable without their freshness column. Surfacing rides
+  ALONGSIDE the thin list rather than replacing it, because that list is the picker's hot path.
+
+- **Freshness renders ONLY for a def that declares a cadence** (a band for an untracked def implies a
+  schedule it does not have), while the surfacing MODE renders always, including `off`: "this never
+  surfaces" is the fact a user most often wants to check, and hiding it makes an off def
+  indistinguishable from one whose chip they simply had not seen. A doctor finding WINS the subtitle
+  over the description — "no channel can reach this def" is more urgent, and showing both truncates
+  the part that matters.
+
+**Validated as a user** (live gateway on an isolated dev home, `AUTH_MODE=none`): authored three defs
+over HTTP — one with full surfacing metadata, one unreachable, one with a typo'd mode — then read
+them back through `GET /api/workflows/surfacing` and the def detail. Confirmed: the typo'd
+`surface_mode: vibes` + `cadence_days: -9` persisted as `off`/`0` (coercion on the WRITE);
+`ghost-sop` was the only doctor finding; the overdue def sorted first among 29 templates; the
+metadata round-tripped intact. Then drove the Definitions tab in a browser: attention-first order,
+the finding as ghost-sop's subtitle, "Every 7 days · files a task when overdue", the "Never run"
+band, the Guidance/Off mode chips and the `ci` pack chip all render — with **zero console
+messages**.
+
+**DISCOVERY (stale plan premise, E1-class — recorded, not blocking).** The plan's recon correction #4
+states "`WorkflowScope` already has FOUR tiers (`GLOBAL | WORKSPACE | AGENT | SESSION`,
+workflows/models.py) with an up-only promotion ladder (`workflows/registry.py::promote_workflow`)".
+Measured: there is no `WorkflowScope` in `workflows/models.py`, no `scope` field on `WorkflowDef`, and
+no `workflows/registry.py` module at all (ImportError). S59's `resolve_scopes`/`SCOPE_ORDER` therefore
+own the ladder outright rather than preserving an existing one, and the promotion ladder S45's
+`template_pipeline.SCOPE_LADDER` describes is the only one that exists. The plan's §2 R18 text should
+be corrected by the owner; nothing here was built against the absent API.
+
+- **NOT DONE:** checklist drag-reorder edit UX (needs the checklist def shape, which is S62+ content),
+  config four-point wiring, the FE stream-union registrations for `task_materialized`/
+  `confirmation_pending`/`confirmation_resolved`/`task_verified`/`cascade_blocked` (those events are
+  not emitted by the engine yet — registering a union member for an event nothing sends would be the
+  same present-and-inert control this program keeps finding), the lease write path, and the
+  confirmation resolve endpoints.

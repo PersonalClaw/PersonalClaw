@@ -142,7 +142,8 @@ mandatory.
 | 60 | Pool + templates: frontier/next projections, evented unblock, TTL'd leases, write-time acyclicity, lifecycle events, seed template library | G29 | ✅ DONE (#200) |
 | 61 | Def-side surfacing fields (`DefMetadata`: surface_mode, cadence_days, escalation, packs, hands_off_to, guided) + the def→record adapter — RE-SCOPED from UX, which was unbuildable: the fields S55-S60 read did not exist | G30 | ✅ DONE (#201) |
 | 61b | Backend wiring: `metadata` write path on `author_def`, `GET /api/workflows/surfacing` (freshness + scope + packs + doctor findings), `TaskComplete` emission from `update_task` | G30 | ✅ DONE (#202) |
-| 61c | FE surfaces + validation (deferred): composer chips, validated deep-links, checklist edit UX, templates-list rendering, config four-point wiring, FE stream unions, lease write path, confirmation resolve endpoints, end-to-end as-a-user sweep | G30 | TODO |
+| 61c | FE surfacing surfaces: `surfacingMeta` presentation layer, composer-chip rule, allowlisted deep-link params, templates-list freshness/mode/pack/doctor rendering, validated as-a-user against a live gateway | G30 | ✅ DONE (#203) |
+| 61d | Remaining wiring (deferred): checklist edit UX, config four-point wiring, FE stream unions (blocked — the engine does not emit those events yet), lease write path, confirmation resolve endpoints | G30 | TODO |
 
 ## H. Automation Substrate (`-AUTOMATION-SUBSTRATE.md`) — final step needs Loops Phase 4
 
