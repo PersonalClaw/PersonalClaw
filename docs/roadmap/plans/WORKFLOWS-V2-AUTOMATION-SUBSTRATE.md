@@ -2654,3 +2654,87 @@ route list drops the retired `/ack` entry.
 - **REMAINING on the `ScheduleService` retirement:** the read-only non-facade callers
   (`suggestions.py`, `messaging.py`, `discover.py`), then the class itself. `ScheduleRunStore`
   survives.
+
+### S111 — The last read-only callers re-point (§6)
+
+**DONE.** Four surfaces outside the facade were still reading `state.crons` — i.e. describing the
+legacy `crons.json`, a file **nothing has written since S108**. Each was a live user-visible defect,
+not a tidy-up:
+
+| surface | what the user saw |
+|---|---|
+| `legibility/discover.py` `_engaged_automation` | a user with live automations read as **NOT engaged with automation** — measured: store has 1, probe returns `False` |
+| `handlers/messaging.py` `_resolve_origin_session` | a cron's `session='origin'` reply resolved to `(None, None)`, so **the reply went nowhere** |
+| `suggestions.py` | no scheduled context in suggestions for a user whose automations all live in the store |
+| `investigate.py` (×3 reads) | the linked-job enrichment and the whole schedule-run snapshot came back blank |
+
+`investigate.py`'s run half goes to `ScheduleRunStore` directly — those `ScheduleService` methods were
+one-line passthroughs (S105) — and its metadata half to `TriggerStore`.
+
+**Driving it found three more defects in my own re-point, each invisible to a reading:**
+
+1. `job.provider` / `job.exec_mode` / `job.message` — legacy-only attributes. A `Trigger` raises
+   `AttributeError`, which surfaced the moment I ran it.
+2. `job.last_status` / `job.last_error` — the store's names are `health_status` /
+   `last_error_summary`, which `LEGACY_FIELD_MAP` declares. `consecutive_failures` has **no** store
+   field (the map assigns the autopause counter to fire records), so it is OMITTED rather than printed
+   as a fake `0` — a wrong number there reads as "healthy".
+3. `to_schedule_row()["provider"]` returned `None`: the provider is NESTED under `action`. The snapshot
+   printed `Action: ?` until I read the projection's actual output.
+
+`_cadence` now delegates to `schedule_view.describe_cadence` rather than re-reading three
+`ScheduleDefinition` shapes — a second formatter would drift from the one the rest of the UI renders.
+
+**DEVIATION — 4 tests in `test_dashboard_file_io.py` mocked `crons.list_jobs`** to return a job whose
+`session_key` pointed at the originating chat. They now seed a real store trigger through one shared
+helper. Two of them assert a different job name, which a bulk replacement flattened — caught by the
+targeted run, and fixed by parameterizing the helper.
+
+**Where `ScheduleService` stands now.** Only three lifecycle calls remain (`load_without_timer`,
+`stop`, and its construction), plus its ownership of `ScheduleRunStore`. Every CRUD, read, write,
+timer, reaper, status and dispatch consumer is gone. `schedule.py` itself still exports live helpers
+(`ScheduleJob`, `format_schedule`, `get_local_tz`, `validate_cron_expr`, `normalize_action`,
+`SCHEDULE_VARS`, `build_schedule_session_context`) that other modules import, so the MODULE stays
+while the SERVICE CLASS is what retires next.
+
+- **REMAINING:** delete the `ScheduleService` class (boot keeps only `rotate_all`, which
+  `ScheduleRunStore` owns directly) and the `_cron_callback` dispatcher it carries.
+  `ScheduleRunStore` survives.
+
+### S112 — Delete the `ScheduleService` class — **BLOCKED (E5: cross-repo dependency)**
+
+**Attempted and reverted; tree left clean.** The deletion itself is ready and was proven safe on the
+core side. What blocks it is a first-party app in ANOTHER repository.
+
+**Core-side readiness, measured:**
+
+- The class is the last 779 lines of `schedule.py`; every surviving helper precedes it, so the cut is
+  clean and the module keeps its live exports (`ScheduleJob`, `format_schedule`, `get_local_tz`,
+  `validate_cron_expr`, `normalize_action`, `SCHEDULE_VARS`, `build_schedule_session_context`).
+- Only two lifecycle calls remained (`load_without_timer`, `stop`), and `load_without_timer`'s only
+  load-bearing work is `ScheduleRunStore.rotate_all()` — which that store owns directly.
+- **The `state.py` legacy fold-in is now provably dead.** `SV.counts(store, legacy=svc)` and
+  `SV.counts(store)` return identical results, because S110 made the migration import even the rows
+  the conversion refuses. Driven against a home with one valid + one broken legacy job: both give
+  `{total: 2, enabled: 1, broken: 1}`.
+
+**🔴 THE BLOCKER.** `personalclaw/sdk/channel.py` re-exports `ScheduleService`, and
+`PersonalClawApps/slack-channel` consumes it — **12 references**, including a user-facing `/cron`
+command surface with full CRUD (`list_jobs`, `remove_job`, `enable_job`, and a remove-all path) plus a
+`cron_service: ScheduleService | None` parameter threaded through its handler, and its own test file
+constructing `ScheduleService(base_dir=tmp_path)`.
+
+Deleting the class would break a shipped first-party app. The SDK boundary is a published contract
+(`docs/architecture/provider-boundary.md`), and re-pointing the app's `/cron` commands at
+`automation_*`/`TriggerStore` is work in a **different repository** — outside this session's scope and
+the owner's call to sequence, since it changes an app's user-facing command behaviour.
+
+**What the owner needs to decide:** whether the slack app's `/cron` surface (a) re-points to the
+unified store in `PersonalClawApps`, (b) is retired in favour of the Automations UI + `automation_*`
+chat tools, or (c) keeps a compatibility shim. Options (a) and (b) both let the class go; (c) does
+not, and would reintroduce the dual path the clean-break tenet forbids.
+
+**Nothing is half-finished.** The class is untouched, `make lint` is green, and every S99–S111
+re-point stands on its own. The one thing S112 would have added beyond the deletion — dropping the
+dead `legacy=` fold-in — is left with the deletion it belongs to, so the two land together rather than
+leaving a half-cut seam.
