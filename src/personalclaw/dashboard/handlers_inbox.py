@@ -305,9 +305,12 @@ async def api_inbox_seen(request: web.Request) -> web.Response:
     if ids is not None and not isinstance(ids, list):
         return web.json_response({"error": "ids must be a list"}, status=400)
 
+    # Only string ids can match an item id, and a non-string element (a dict, say) is
+    # unhashable — it would crash the set() below rather than simply matching nothing.
+    id_set = {i for i in ids if isinstance(i, str)} if ids is not None else None
     targets = (
-        [i for i in inbox.items.values() if i.id in set(ids)]
-        if ids is not None
+        [i for i in inbox.items.values() if i.id in id_set]
+        if id_set is not None
         else list(inbox.items.values())
     )
     kind_filter = body.get("kind")
@@ -456,6 +459,14 @@ async def api_inbox_send(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be an object"}, status=400)
+    # A non-string id/text is a client bug, not a reply — say so instead of crashing on
+    # .strip(). Absent/null stays valid here and falls through to "id and text required".
+    for field in ("id", "text", "draft"):
+        value = body.get(field)
+        if value is not None and not isinstance(value, str):
+            return web.json_response({"error": f"{field} must be a string"}, status=400)
     item_id = (body.get("id") or "").strip()
     text = (body.get("text") or body.get("draft") or "").strip()
     if not item_id or not text:
@@ -515,6 +526,10 @@ async def api_inbox_favorite(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        # Same tolerance as an unparseable body above: favoriting has a sensible default,
+        # so a junk body means "favorite it" rather than an error.
         body = {}
     favorited = bool(body.get("favorited", True))
     item = inbox.items.get(item_id)

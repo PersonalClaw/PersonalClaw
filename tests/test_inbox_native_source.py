@@ -134,6 +134,47 @@ def test_send_captures_when_session_gone(state):
     assert state._inbox_store.items[item.id].draft == "do it"
 
 
+# ── malformed bodies are client errors, not crashes (#339) ──
+
+
+@pytest.mark.parametrize("body", [None, [], 5, "text"])
+def test_send_rejects_a_non_object_body(state, body):
+    """A body that isn't an object parses fine, then used to 500 on body.get()."""
+    resp = _run(H.api_inbox_send(_send_req(state, body)))
+    assert resp.status == 400
+    assert json.loads(resp.body)["error"] == "body must be an object"
+
+
+@pytest.mark.parametrize(
+    "body", [{"id": 123, "text": "x"}, {"id": "a", "text": ["x"]}, {"id": "a", "draft": {}}]
+)
+def test_send_rejects_a_non_string_id_or_text(state, body):
+    """`(body.get("id") or "").strip()` raised AttributeError on a number/list."""
+    resp = _run(H.api_inbox_send(_send_req(state, body)))
+    assert resp.status == 400
+    assert "must be a string" in json.loads(resp.body)["error"]
+
+
+def _favorite_req(state, item_id, body):
+    app = web.Application()
+    app["state"] = state
+    req = make_mocked_request(
+        "POST", f"/api/inbox/{item_id}/favorite", app=app, match_info={"id": item_id}
+    )
+    req.json = lambda: _coro(body)
+    return req
+
+
+@pytest.mark.parametrize("body", [None, [], 5, "text"])
+def test_favorite_tolerates_a_non_object_body(state, body):
+    """Favoriting has a sensible default, so junk means "favorite it" — never a 500."""
+    item = ns.post_to_inbox("look at this", kind="fyi")
+    resp = _run(H.api_inbox_favorite(_favorite_req(state, item.id, body)))
+    assert resp.status == 200
+    assert json.loads(resp.body)["favorited"] is True
+    assert state._inbox_store.items[item.id].favorited is True
+
+
 # ── /status per-source health ──
 
 
