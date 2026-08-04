@@ -904,6 +904,7 @@ function Shell({ title, titleNode, onBack, actions, scroll = true, panel, childr
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
       <TopBar
+        keepCornerPadding
         left={titleNode ?? <div className="flex items-center gap-2"><FolderKanban size={18} className="text-primary" /><span data-type="title-l" className="text-on-surface">{title}</span></div>}
         right={<div className="flex items-center gap-1.5">{actions}<HeaderActions><HeaderControl icon={ListChecks} label="All projects" onClick={onBack} priority="primary" /></HeaderActions></div>} />
       <div className="flex min-h-0 flex-1">
