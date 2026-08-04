@@ -966,16 +966,42 @@ class GatewayOrchestrator:
             # trigger-scoped key would accumulate across fires and make the second fire of a
             # healthy automation look over budget. Reset in a `finally` so a raising
             # provider cannot leak the scope into the next fire on this task.
+            #
+            # 🔴 S154 completes it: binding the KEY made spend attributable, and binding the
+            # CEILING beside it makes `max_cost_usd_per_run` enforceable. Both are ambient for
+            # the same reason — the guard is built from provider config and never sees the
+            # trigger. `run_budget_for` reads only `max_cost_usd_per_run`; `cost_cap` is a
+            # per-window promise with no durable per-window store, so it stays unmetered
+            # rather than being silently re-defined as per-run.
             from personalclaw.guardrails.budgets import (
+                get_meter,
+                reset_current_run_budget,
                 reset_current_run_key,
+                set_current_run_budget,
                 set_current_run_key,
             )
+            from personalclaw.triggers.calendar import run_budget_for
 
-            run_token = set_current_run_key(f"trigger:{trigger.id}:{int(time.time() * 1000)}")
+            run_key = f"trigger:{trigger.id}:{int(time.time() * 1000)}"
+            run_token = set_current_run_key(run_key)
+            # `getattr` rather than `trigger.gates`, matching this path's house style (`kind`,
+            # `id`, `delivery` are all read the same way): the fire path is driven with partial
+            # trigger shapes, and a ceiling lookup must never be what turns a fire into an error.
+            budget_token = set_current_run_budget(run_budget_for(getattr(trigger, "gates", None)))
             try:
                 result = await provider.execute(config, ctx, timeout=timeout)
             finally:
+                reset_current_run_budget(budget_token)
                 reset_current_run_key(run_token)
+                # 🔴 DROP the per-fire counter. `SpendMeter.end_run` shipped with the module and
+                # had NO caller, and S153's per-FIRE keying turned that into a real leak:
+                # measured 5000 distinct keys retained after 5000 fires, held for the life of a
+                # gateway process that is meant to run for months. The cap is enforced DURING
+                # the run, so the total has no reader once the fire is over.
+                try:
+                    get_meter().end_run(run_key)
+                except Exception:  # noqa: BLE001 - bookkeeping must not mask a fire's outcome
+                    logger.debug("end_run failed for %s", run_key, exc_info=True)
             await self._record_fire_outcome(trigger, result=result)
             self._deliver_fire_outcome(trigger, ok=bool(getattr(result, "success", True)))
         except Exception as exc:  # noqa: BLE001 - a failed fire is logged, never crashes the loop

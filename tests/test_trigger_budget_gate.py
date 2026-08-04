@@ -294,6 +294,11 @@ def test_the_unmetered_set_and_the_gate_vocabulary_stay_in_step():
         "rate_cap",
         "max_runs_per_hour",
         "max_actions_per_hour",
+        # `max_cost_usd_per_run` joined at S154: `ModelCallGuard` checks the ambient run scope
+        # against the ceiling `calendar.run_budget_for` derives from these gates. Enforced in the
+        # guard rather than on the fire path because run spend accrues DURING the run — a pre-fire
+        # gate reads $0.00 on a freshly bound per-fire key and is inert by construction.
+        "max_cost_usd_per_run",
     }
     unclassified = set(GATE_KEYS) - enforced - set(UNMETERED_CAPS)
     assert not unclassified, (
@@ -371,3 +376,26 @@ def test_a_one_shot_that_KEEPS_its_row_is_still_disabled(store, tmp_path):
     assert row is not None
     assert row.trigger.enabled is False
     assert row.trigger.next_fire_at == ""
+
+
+def test_the_run_cap_implementation_matches_its_declared_fail_direction():
+    """A control's behaviour must agree with the table describing it — S130 found the inert control
+    here was the *description of the controls*, so a newly enforced key gets checked both ways.
+
+    `max_cost_usd_per_run` is classified FAIL-OPEN (§1.4's per-trigger cap-key class), and
+    `run_budget_for` implements exactly that: a malformed value yields an unlimited Budget rather
+    than a $0 ceiling. The opposite reading is the dangerous one — a $0 ceiling refuses the
+    trigger's very first model call, which looks exactly like a dead automation.
+    """
+    from personalclaw.triggers.calendar import run_budget_for
+    from personalclaw.triggers.models import gate_failure_mode
+
+    assert gate_failure_mode("max_cost_usd_per_run") == "open"
+    for junk in ("ten", None, [], {}, "", -3):
+        assert run_budget_for(
+            {"max_cost_usd_per_run": junk}
+        ).is_unlimited, (
+            f"a malformed cap ({junk!r}) must fail OPEN — a $0 ceiling would silence the trigger"
+        )
+    # …and a well-formed one still binds, so failing open is not a blanket excuse.
+    assert run_budget_for({"max_cost_usd_per_run": 0.25}).max_dollars == 0.25

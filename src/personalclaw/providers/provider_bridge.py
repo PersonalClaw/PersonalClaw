@@ -1061,11 +1061,16 @@ def _resolve_from_config_registry(
     if guard_use_case:
         from personalclaw.guardrails import wrap_model_call_guard
         from personalclaw.guardrails.breaker import get_breaker
-        from personalclaw.guardrails.budgets import budget_from_config
+        from personalclaw.guardrails.budgets import budget_from_config, run_budget_from_config
 
         scan_mode = "warn"
         breaker = None
         budget = None
+        # `max_tokens_per_run` is a user-facing config field with a PATCH allowlist entry
+        # and a builder (`run_budget_from_config`) that had NO production caller — so the
+        # ceiling loaded and bound nothing. Read here beside the day budget because this is
+        # the one seam that already turns guardrails config into a guard (S154).
+        run_budget = None
         try:
             from personalclaw.config.loader import AppConfig
 
@@ -1077,6 +1082,7 @@ def _resolve_from_config_registry(
                 recovery_secs=gr.breaker.recovery_secs,
             )
             budget = budget_from_config()
+            run_budget = run_budget_from_config()
         except Exception:
             logger.debug("guardrails config read failed; using safe defaults", exc_info=True)
 
@@ -1086,6 +1092,7 @@ def _resolve_from_config_registry(
             provider_name=candidate.name,
             model=str(config.get("model") or candidate.model or ""),
             budget=budget,
+            run_budget=run_budget,
             scan_mode=scan_mode,
             breaker=breaker,
         )

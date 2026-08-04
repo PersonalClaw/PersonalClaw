@@ -58,12 +58,17 @@ DUTY_GATE_TIMEOUT_SECS = 2.0
 #:
 #: What each still needs, so this list shrinks for a reason rather than by guesswork:
 #:
-#: * `cost_cap` / `max_cost_usd_per_run` — **half-closed at S153.** The attribution gap is fixed:
-#:   `ModelCallGuard` now charges the ambient run scope (`budgets.current_run_key()`), and the
-#:   trigger fire path binds one per fire, so a fire's model spend accrues and `check_run` returns a
-#:   real verdict. Still missing is the ENFORCEMENT read: no gate on the fire path compares a
-#:   run's accrued dollars against the cap. They stay named here until it does — attribution without
-#:   enforcement is exactly the "believes their automation is bounded" failure this list exists for.
+#: * `max_cost_usd_per_run` — **WIRED S154**, so deliberately absent from this set. S153 made a
+#:   fire's spend attributable; S154 added the enforcement READ, in `ModelCallGuard` beside the day
+#:   check rather than as a fire-path gate. That placement is forced by the meter: run totals accrue
+#:   in-process AS the run spends, and the fire seam binds a FRESH per-fire key before the first
+#:   call, so a pre-fire gate would read $0.00 every time and be inert by construction.
+#: * `cost_cap` — still named here, and for a DIFFERENT reason than it used to be. §3.6 defines it
+#:   as a PRE-CLAIM check "against a persistent per-window budget table", and `ScheduleRun` carries
+#:   no cost column, so there is nothing durable to sum a window over: `SpendMeter`'s run scope is
+#:   in-memory and dies with the process. Enforcing it off the per-run meter would silently redefine
+#:   a per-window cap as a per-run one — a control that runs but answers a different question, which
+#:   is worse than one that admits it is unmetered.
 #: * `max_runs_per_hour` / `max_actions_per_hour` / `rate_cap` — **WIRED S152**, so deliberately
 #:   absent. They needed a windowed history query; `ScheduleRunStore.count_since` is it, and
 #:   `firepath`'s `rate` gate delegates the decision to `missed.within_rate_window`.
@@ -78,11 +83,41 @@ DUTY_GATE_TIMEOUT_SECS = 2.0
 UNMETERED_CAPS: frozenset[str] = frozenset(
     {
         "cost_cap",
-        "max_cost_usd_per_run",
         "idempotency",
         "threshold",
     }
 )
+
+
+def run_budget_for(gates: dict[str, Any] | None) -> Any:
+    """The RUN-scope ceiling a trigger's gates declare, or an unlimited Budget (S154).
+
+    Reads `max_cost_usd_per_run` only. `cost_cap` is deliberately NOT folded in: §3.6 defines it
+    per-WINDOW against a persistent table, and treating it as per-run would quietly enforce a
+    different promise than the one the user wrote down.
+
+    **Malformed values are ignored rather than defaulted** — the fail-OPEN direction §1.4 assigns
+    the per-trigger cap keys. A typo'd `max_cost_usd_per_run: "ten"` must not become a $0 ceiling
+    that refuses the trigger's first model call; a cap that silences an automation is the failure
+    mode that looks exactly like a broken scheduler. Zero/negative means unlimited, matching
+    `Budget`'s own convention.
+
+    **This is deliberately the OPPOSITE of `max_fires`**, whose malformed value fails CLOSED
+    (`service._budget_remaining` — S133). Not an inconsistency: `gate_failure_mode` classifies the
+    two keys differently, and each implementation follows its own entry. A bad `max_fires` costs one
+    visibly refused fire, recorded as a typed `skipped_budget` row a user can see; a bad
+    `max_cost_usd_per_run` would instead break every model call INSIDE a run that already started,
+    surfacing as a mid-run provider error rather than a legible refusal.
+    """
+    from personalclaw.guardrails.budgets import Budget
+
+    block = gates if isinstance(gates, dict) else {}
+    try:
+        dollars = float(block.get("max_cost_usd_per_run") or 0.0)
+    except (TypeError, ValueError):
+        return Budget()
+    return Budget(max_dollars=dollars) if dollars > 0 else Budget()
+
 
 #: Day-of-week tokens, Monday-first to match `datetime.weekday()`. Named rather than positional so a
 #: window reads as `{"days": ["sat", "sun"]}` — a list of integers in a config file is the kind of

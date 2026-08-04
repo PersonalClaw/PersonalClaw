@@ -4556,3 +4556,84 @@ Verified load-bearing: removing the `run_key=` argument turns a test red. Gate: 
 - **The enforcement read is now the only thing between these two caps and closure**, and it is a
   small session: the fire path already has the run key it bound, so a `cost` gate can ask
   `check_run(key, budget_from_gates(trigger))`. `idempotency`/`threshold` still need R12 semantics.
+
+### S154 — the run budget: a verdict computed every call and asked by nobody (§3.6)
+
+**🔴 THE DEFECT, measured before writing a line.** Drove a real `ModelCallGuard` under a 150-token
+run ceiling with the ambient run key S153 introduced:
+
+```
+call 1: ALLOWED  run_total=100 tok   check_run says: ok
+call 2: ALLOWED  run_total=200 tok   check_run says: exceeded (200/150)
+call 3: ALLOWED  run_total=300 tok   check_run says: exceeded (300/150)
+call 4: ALLOWED  run_total=400 tok   check_run says: exceeded (400/150)
+```
+
+Four calls, 400 tokens, cap 150, **nothing refused** — and the verdict was correct every single time.
+`SpendMeter.check_run` and `budgets.run_budget_from_config` both shipped with **zero production
+callers**; `BudgetExceededError` has always declared a `"run"` scope alongside `"day"`; and
+`max_tokens_per_run` is a user-facing config field with a `_EDITABLE_CONFIG` PATCH allowlist entry
+and a loader. Every piece present, nothing connected — the shape S142 named and this program keeps
+finding.
+
+**CORRECTION to my own S153 log.** It closed by predicting *"a `cost` gate can ask
+`check_run(key, budget_from_gates(trigger))`"* on the fire path. That design is **wrong, and wrong in
+the inert direction**: run totals accrue in-process *as the run spends*, and the fire seam binds a
+FRESH per-fire key immediately before the first call — so a pre-fire gate reads `$0.00` on every fire
+and can never refuse anything. Had I implemented the session as its own predecessor specified, the
+result would have been another live reader of a total that is zero by construction. The measurement
+is what caught it; reading the plan text would not have.
+
+**So enforcement lives in `ModelCallGuard`, beside the day check** — the one place that runs *between*
+a run's model calls, and the same chokepoint `check_day` already uses. Placement forced by the meter,
+not chosen for convenience.
+
+**The ceiling is AMBIENT, for the identical reason S153's run key is.** A per-trigger
+`max_cost_usd_per_run` is known at the fire seam; the guard is built by `provider_bridge` from
+provider config and never sees the trigger, and threading a budget down would touch the same 33 call
+sites S153 measured. So `budgets.set_current_run_budget` pairs with `set_current_run_key`, token-scoped
+so a nested run restores its parent's ceiling. **Ambient beats the config default** — otherwise a
+trigger's own cap is decoration next to the operator's global one.
+
+**🔴 MY OWN PROBE NEARLY HID THE BUG.** The first fake used `model="m"`, and `pricing.estimate_cost`
+returns `$0.00` for an unpriced model — so a correctly-wired cap looked completely inert because
+nothing was ever spent. Re-driven against a priced model (`gpt-4o`), the cap refuses at `$0.025/$0.02`.
+The test suite now carries an explicit **control case** asserting an *uncapped* run really does accrue
+(`$0.10` over 5 calls), so "refused at the cap" can never again be confused with "never spent
+anything". A cap test against zero spend passes for the wrong reason.
+
+**🔴 A SECOND LIVE DEFECT, created BY S153.** `SpendMeter.end_run` shipped with the module and had no
+caller; S153's per-FIRE keying turned that dormant gap into a real leak. Measured: **5000 distinct run
+counters retained after 5000 fires**, held for the life of a gateway process meant to run for months.
+Dropped at the fire seam now, in the same `finally` that resets the scope. Remediation's `"doctor"` key
+is deliberately **not** dropped per job — it is one fixed key that must accumulate across a sweep,
+because its cap is exactly "how much has this sweep spent so far".
+
+**`cost_cap` stays in `UNMETERED_CAPS`, for a NEW reason.** Not "no meter exists" any more: §3.6 defines
+it as a pre-claim check *"against a persistent per-window budget table"*, and `ScheduleRun` carries no
+cost column, so nothing durable exists to sum a window over (`SpendMeter`'s run scope is in-memory and
+dies with the process). Enforcing it off the per-run meter would silently redefine a per-window cap as
+a per-run one — a control that runs, answers confidently, and answers a **different question than the
+user asked**, which is worse than one that admits it is unmetered. `UNMETERED_CAPS` is 4 → 3.
+
+**Fails OPEN on a malformed value, deliberately opposite to `max_fires`.** `gate_failure_mode` already
+classifies `max_cost_usd_per_run` open and `max_fires` closed, and each implementation now follows its
+own entry (asserted by a test, since S130 found the inert control here was *the description of the
+controls*). The asymmetry is principled: a bad `max_fires` costs one visibly refused fire recorded as a
+typed `skipped_budget` row, while a bad cost cap would break every model call **inside a run that
+already started**, surfacing as a mid-run provider error rather than a legible refusal.
+
+**🔴 FOUND BY THE FULL SUITE, NOT BY MY OWN TESTS.** Reading `trigger.gates` directly broke **6 tests**
+across three files that drive the fire path with a `SimpleNamespace` stub carrying no `gates` — a
+*budget bookkeeping lookup* converting a working fire into an `AttributeError`. Wrong in both
+directions at once: the control is fail-open by classification, so the one thing it must never do is
+turn a fire into an error. Now `getattr(trigger, "gates", None)`, matching how this path already reads
+`kind`/`id`/`delivery`, with a regression test.
+
+**Gate:** `make lint` (black+isort+flake8+mypy, 691 files) green; full `pytest -n 4 --dist worksteal`
+green. No `web/` change. Each layer verified load-bearing by reverting it independently: neutering the
+enforcement read turns 2 red, reverting only the ambient precedence turns 1 red.
+
+- **Both cost keys are now closed or honestly named**, and the reason each sits where it does is
+  written down at `UNMETERED_CAPS`. `idempotency`/`threshold` remain the last two, still waiting on
+  R12 to pin their semantics rather than on any missing meter.
