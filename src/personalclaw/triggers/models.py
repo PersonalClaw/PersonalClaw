@@ -241,6 +241,67 @@ CLOCK_KINDS: frozenset[str] = frozenset({"cron", "at", "sequence", "interval"})
 MIN_CLOCK_INTERVAL_SECS = 900
 
 
+def _agent_scope_issues(spec: dict[str, Any] | None) -> list[Issue]:
+    """Structural issues in an `event` trigger's `agent_scope` (§1.4 decision 2 — S131).
+
+    🔴 MEASURED: `agent_scope` was declared in `SPEC_KEYS["event"]`, persisted, round-tripped —
+    and validated by nothing. Every one of these stored with `ok: True` and zero issues:
+
+        agent_scope="not-a-list"        # a bare string
+        agent_scope=[]                  # an empty list
+        agent_scope=[123]               # non-string entries
+        agent_scope=["nonexistent"]     # an agent that does not exist
+
+    Decision 2's recon note is explicit that the substrate "PRESERVES agent scoping as an optional
+    `spec.agent_scope` and does not silently introduce a global chat firing path". A field that
+    accepts any shape and is read by nothing does not preserve scoping — it *promises* it. That is
+    worse than its absence, because an author who sets it believes their trigger is scoped.
+
+    Structure only, matching `validate_spec`'s own contract: whether the named agent EXISTS is a
+    semantic question the config layer answers, and rejecting an agent id at author time would
+    refuse a trigger that becomes valid the moment the agent is installed. What is checked is the
+    shape a reader must be able to rely on.
+
+    An EMPTY list is an error rather than a warning, deliberately. In the legacy path an empty id
+    list means `fire_for_ids` fires NOTHING (its resolver returns `[]` on failure precisely so a
+    broken lookup cannot fall back to global firing). So `agent_scope: []` is an automation that can
+    never fire — silently, forever — which is exactly the inert row the never-throw validation
+    exists to make visible.
+    """
+    raw = (spec or {}).get("agent_scope")
+    if raw is None:
+        return []
+    if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
+        return [
+            Issue(
+                path="spec.agent_scope",
+                message="agent_scope must be a list of agent ids; a "
+                f"{type(raw).__name__} is refused rather than coerced, because a scope that "
+                "silently read as one agent would fence the wrong thing",
+                severity="error",
+            )
+        ]
+    if not raw:
+        return [
+            Issue(
+                path="spec.agent_scope",
+                message="agent_scope is empty, so this trigger can never fire for any agent — "
+                "remove the key to leave it unscoped, or name the agents it belongs to",
+                severity="error",
+            )
+        ]
+    bad = [entry for entry in raw if not isinstance(entry, str) or not entry.strip()]
+    if bad:
+        return [
+            Issue(
+                path="spec.agent_scope",
+                message=f"agent_scope entries must be non-empty agent ids; got {bad!r}",
+                severity="error",
+            )
+        ]
+    return []
+
+
 def validate_spec(kind: str, spec: dict[str, Any]) -> list[Issue]:
     """Structural issues in one kind's spec. NEVER raises.
 
@@ -330,6 +391,8 @@ def validate_spec(kind: str, spec: dict[str, Any]) -> list[Issue]:
         issues.append(
             Issue(path="spec.source", message="an event trigger needs a source", severity="error")
         )
+    if kind == "event":
+        issues.extend(_agent_scope_issues(spec))
     elif kind == "webhook" and not str((spec or {}).get("token_ref", "") or "").strip():
         # A webhook with no token is an unauthenticated fire endpoint. Refused at author time rather
         # than defaulted, because a generated default would be a secret nobody chose.

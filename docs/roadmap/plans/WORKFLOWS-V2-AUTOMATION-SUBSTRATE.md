@@ -3690,3 +3690,54 @@ stated direction, so a new gate added to the walk without one fails instead of s
 
 - **REMAINING in AUTOMATION-SUBSTRATE:** the E4-blocked webhook fire endpoint (queue S123), `idle`
   (Loops Phase 4), `web_watch`'s headless tier. §7/R4 and the decision-7 chain are complete.
+
+### S131 — `agent_scope`: declared, persisted, validated by nothing (§1.4 decision 2) — DONE
+
+**DISCOVERY.** Decision 2's recon note promises the substrate *"preserves agent scoping as an optional
+`spec.agent_scope` and does not silently introduce a global chat firing path"*. The key is in
+`SPEC_KEYS["event"]` and round-trips through the store. Measured — every one of these stored with
+`ok: True` and **zero issues**:
+
+```
+agent_scope="not-a-list"      # a bare string
+agent_scope=[]                # an empty list
+agent_scope=[123]             # non-string entries
+agent_scope=["nonexistent"]   # an agent that does not exist
+```
+
+And **no fire path reads it**. A field that accepts any shape and is read by nothing does not
+*preserve* scoping — it **promises** it, which is worse than its absence: an author who sets
+`agent_scope` believes their trigger is fenced to one agent, and nothing tells them otherwise. Fifth
+instance of the declared-but-inert shape in this stretch, and the most dangerous flavour of it: a
+security field whose only effect is on the author's confidence.
+
+**The legacy path is genuinely sound — verified, not assumed.** `chat_runner._fire` resolves the
+session agent's own trigger ids per fire (so an in-session agent switch is honoured) and calls
+`fire_for_ids`; its resolver returns `[]` on ANY failure precisely so a broken lookup fires nothing
+rather than falling back to global firing. The substrate has not introduced a global chat firing path
+either: the store-backed `event` kind's sources are `MemoryUpdate`/`MemoryKeyPattern`/`ContentMatch` —
+memory writes, not chat turns. Both facts are now pinned by tests, so a future chat-turn event source
+is forced to confront the scope rather than inherit a silent hole.
+
+**What this session did NOT do, deliberately.** It did not invent a scoping mechanism for chat-turn
+events that do not exist yet. That would be building a consumer for a source with no emitter — the
+inverted dependency S119 refused for the webhook token and S129 refused for rule (e). Instead: validate
+the field so a malformed scope is visible, and make the unenforced state legible.
+
+**An EMPTY list is an ERROR, not a warning**, and that is the interesting call. In the legacy path an
+empty id list means `fire_for_ids` fires NOTHING, so `agent_scope: []` is an automation that can never
+fire — silently, forever. That is precisely the inert row the never-throw validation exists to surface,
+so it earns an error rather than a shrug. A bare string is refused rather than coerced to a one-element
+list for the reason `capability_allows` already records: a fence that tolerates the wrong shape teaches
+people to write it that way.
+
+**Structure only, matching `validate_spec`'s own contract.** Whether the named agent EXISTS is a
+semantic question the config layer answers, and refusing an unknown id at author time would reject a
+trigger that becomes valid the moment the agent is installed.
+
+**A `unenforced_agent_scope` doctor finding** names the gap where a user goes to ask what is wrong. A
+validated-but-unenforced security field with no warning is the inert control wearing a clean shirt.
+
+- **REMAINING in AUTOMATION-SUBSTRATE:** the E4-blocked webhook fire endpoint (queue S123), `idle`
+  (Loops Phase 4), `web_watch`'s headless tier, and — new from this session — a chat-turn event source
+  would need to read `agent_scope` when it lands.
