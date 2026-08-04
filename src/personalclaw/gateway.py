@@ -1242,9 +1242,7 @@ class GatewayOrchestrator:
                             extra_env=job.env or None,
                         )
                         _acq = True
-                        full_message, _ = self.ctx_builder.build_message(
-                            msg, True, interactive=False, agent=agent
-                        )
+                        full_message, _ = self.ctx_builder.build_message(msg, True, agent=agent)
                         # Cron is UNATTENDED — assume no user is present, even if a
                         # HITL prompt COULD be surfaced. So never wait on interactive
                         # approval (it would hang until timeout-deny and fail tools);
@@ -1294,7 +1292,6 @@ class GatewayOrchestrator:
                 full_message, _ = self.ctx_builder.build_message(
                     msg,
                     True,
-                    interactive=False,
                     agent=job.agent_id or None,
                 )
 

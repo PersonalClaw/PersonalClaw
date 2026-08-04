@@ -2319,7 +2319,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                               onSwitchVariant={isLast ? switchVariant : undefined}
                               speaking={speakingTurn === i} onSpeak={() => speak(turnText(turn), i)} />
                           )}>
-                            <AssistantSegments segments={turn.segments} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onOption={(t) => send(t)} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} chatSessionKey={sessionRef.current ?? undefined} />
+                            <AssistantSegments segments={turn.segments} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} chatSessionKey={sessionRef.current ?? undefined} />
                           </MessageAssistant>
                         )}
                         {/* Follow-up chips (CHAT-CRAFT S3) under the last assistant turn only,
@@ -2970,22 +2970,20 @@ function SelectionQuote({ scrollRef, onQuote, attributionFor }: {
   )
 }
 
-/** Render an assistant turn's ordered segments. Text segments get OPTIONS
- *  stripped (→ suggestion chips, last turn only) and referenced file paths
- *  surfaced as clickable chips below the prose. */
-function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, onOption, onSwitchToAgent, onOpenFile, chatSessionKey }: {
+/** Render an assistant turn's ordered segments. Legacy `[OPTIONS: …]` markers in
+ *  historical messages get stripped from the prose (they are never rendered as
+ *  buttons — follow-up chips are the single suggestion surface) and referenced
+ *  file paths surface as clickable chips below the prose. */
+function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, onSwitchToAgent, onOpenFile, chatSessionKey }: {
   segments: Segment[]; isLast: boolean
   messageTs?: string
   streaming?: boolean
   onApprove: (id: string, action: ApproveAction) => void
-  onOption: (text: string) => void
   onSwitchToAgent: (continuation: string) => void
   onOpenFile: (path: string) => void
   chatSessionKey?: string
 }) {
-  // collect OPTIONS from the turn's text (chips shown only on the last turn)
   const fullText = segments.filter((s) => s.kind === 'text').map((s) => (s as { text: string }).text).join('\n')
-  const { options } = parseOptions(fullText)
   // A restricted-mode turn may OFFER a one-click escalation to Agent (TM8).
   const { switchTo } = parseSwitchToAgent(fullText)
 
@@ -3098,16 +3096,6 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
         </div>
       )}
 
-      {isLast && options.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {options.map((opt) => (
-            <button key={opt} type="button" onClick={() => onOption(opt)}
-              className="rounded-pill border border-outline-variant/50 bg-surface-low/40 px-3 h-8 text-on-surface-var text-[0.8125rem] transition-colors hover:border-primary/50 hover:bg-surface-high hover:text-on-surface">
-              {opt}
-            </button>
-          ))}
-        </div>
-      )}
     </>
   )
 }

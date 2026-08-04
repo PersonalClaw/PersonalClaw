@@ -161,12 +161,13 @@ class TestMemoryInjectionAllAgents:
         msg, hook = builder.build_message("check pipeline", is_new_session=False, agent="custom")
         assert "pipeline tool" in msg
 
-    def test_custom_agent_gets_options_reminder(self, tmp_path: Path) -> None:
+    def test_turn_prompt_never_asks_for_options_marker(self, tmp_path: Path) -> None:
+        """The legacy ``[OPTIONS: …]`` mechanism is retired — the per-turn prompt must
+        not reintroduce the reminder that produced a second set of suggestion buttons
+        alongside the `chat_followups` chips."""
         builder = _builder(tmp_path)
-        msg, _ = builder.build_message(
-            "hello", is_new_session=False, agent="custom", interactive=True
-        )
-        assert "OPTIONS" in msg
+        msg, _ = builder.build_message("hello", is_new_session=False, agent="custom")
+        assert "OPTIONS" not in msg
 
     def test_custom_agent_gets_hook_transform(self, tmp_path: Path) -> None:
         hooks_cfg = HooksConfig(transforms=[TransformHook(pattern="deploy", prefix="[DEPLOY]")])

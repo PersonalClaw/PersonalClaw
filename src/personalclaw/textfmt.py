@@ -23,6 +23,13 @@ def extract_options(text: str) -> tuple[str, list[str]]:
 
     Returns ``(cleaned_text, choices)``. If no OPTIONS tag is present, ``choices``
     is empty and ``text`` is returned unchanged.
+
+    The ``[OPTIONS: …]`` mechanism is RETIRED: nothing instructs the model to emit
+    the marker anymore, and the chat UI renders suggestions from the
+    ``chat_followups`` event instead. This stays as a TOLERANCE path — text
+    persisted before the retirement (and any model that emits the marker
+    unprompted) must not surface a raw tag to the user — so callers keep stripping
+    it. Expect ``choices`` to be empty for freshly generated text.
     """
     m = _OPTIONS_RE.search(text)
     if not m:

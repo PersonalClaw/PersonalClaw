@@ -164,7 +164,7 @@ class TestBuildCronSessionContext:
 
     def test_llm_run_prompt_carries_autonomous_framing(self):
         """Every LLM cron run (persistent + stateless) is framed as unattended so
-        the model doesn't ask questions / emit [OPTIONS:] menus to an absent user."""
+        the model doesn't ask questions / offer menus to an absent user."""
         from personalclaw.schedule import build_schedule_session_context
 
         persistent = ScheduleJob(
@@ -176,5 +176,5 @@ class TestBuildCronSessionContext:
         for job in (persistent, stateless):
             _key, prompt = build_schedule_session_context(job)
             assert "AUTONOMOUS RUN" in prompt
-            assert "[OPTIONS:" in prompt  # the instruction names the anti-pattern
+            assert "Do NOT offer interactive menus" in prompt  # names the anti-pattern
             assert "brief me" in prompt

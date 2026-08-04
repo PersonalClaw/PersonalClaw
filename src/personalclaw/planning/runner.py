@@ -130,11 +130,9 @@ async def run_planner_pass(
             state.push_sessions_update()
         except Exception:
             pass
-        # The planner runs UNATTENDED — but the base chat system prompt carries a
-        # "present choices as [OPTIONS: …]" CRITICAL rule (context.py) aimed at live
-        # chat. Without an explicit counter that leaks into the planner's investigation
-        # narration (the user saw [OPTIONS: Approve… | Merge… | Add…] menus). Prepend the
-        # shared autonomous-run framing so the planner never offers menus / waits for a
+        # The planner runs UNATTENDED — no one is present to answer a question or pick
+        # an option, and its output is read later as a plan. Prepend the shared
+        # autonomous-run framing so the planner never offers menus / waits for a
         # user. One choke point → fixes BOTH the Code and Goal Loop planners.
         from personalclaw.autonomous_framing import with_autonomous_framing
 

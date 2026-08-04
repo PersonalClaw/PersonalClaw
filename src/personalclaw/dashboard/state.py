@@ -159,6 +159,10 @@ CRON_NOTIFY_END = "[End of cron notification]"
 CRON_NOTIFY_RE = re.compile(rf'^{re.escape(CRON_NOTIFY_PREFIX)}"(.*)"\]')
 SUBAGENT_COMPLETION_PREFIX = "[Subagent completion event]"
 
+# The ``[OPTIONS: …]`` mechanism is retired as a SUGGESTION surface (chat renders
+# `chat_followups` chips instead), but sessions persisted before the retirement still
+# carry the marker. This pattern stays so the Board keeps stripping it out of
+# `prompt_preview` rather than showing a raw tag.
 _OPTIONS_RE = re.compile(r"\[OPTIONS:\s*([^\]]+)\]")
 
 
