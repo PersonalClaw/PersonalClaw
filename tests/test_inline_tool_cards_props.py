@@ -38,7 +38,6 @@ def _make_state_no_fixture(**kwargs):
     sessions.remove = AsyncMock()
     state = DashboardState(
         sessions=sessions,
-        crons=MagicMock(list_jobs=MagicMock(return_value=[]), status=MagicMock(return_value={})),
         lessons=MagicMock(load_all=MagicMock(return_value=[])),
         start_time=0.0,
         conversation_log=ConversationLog(base_dir=tmp),

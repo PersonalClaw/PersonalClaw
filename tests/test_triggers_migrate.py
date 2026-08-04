@@ -39,20 +39,70 @@ from personalclaw.triggers.migrate import (
 )
 from personalclaw.triggers.models import LEGACY_FIELD_MAP
 
+#: The EXACT key list `ScheduleService._save` wrote, copied from that method before S112 deleted the
+#: class. This is the on-disk `crons.json` format the boot migration still reads, so it is pinned as
+#: data here rather than reconstructed from belief — the original fixture's whole point was that "a
+#: hand-written dict encodes what I THINK the format is, and this program has repeatedly found that
+#: belief wrong". The keys come from the shipped writer; only their source moved.
+_SAVED_KEYS = (
+    "id",
+    "name",
+    "action",
+    "schedule",
+    "channel",
+    "thread_ts",
+    "enabled",
+    "last_run_ts",
+    "last_status",
+    "last_error",
+    "created_ts",
+    "delete_after_run",
+    "last_result",
+    "context_enabled",
+    "acked_items",
+    "created_by",
+    "silent",
+    "session_key",
+    "last_posted_hash",
+    "consecutive_dupes",
+    "last_posted_at",
+    "last_failure_hash",
+    "last_failure_at",
+    "consecutive_failures",
+    "skip_dates",
+    "timezone",
+    "persistent_session",
+    "agent_sequence",
+    "env",
+    "timeout_secs",
+    "strict_schedule",
+)
+
+#: `_STORE_VERSION` at the time the writer was deleted.
+_SAVED_VERSION = 2
+
+
+def _as_saved(jobs) -> dict:
+    """`ScheduleJob`s in the shape `_save` wrote them. `ScheduleJob` + `ScheduleDefinition` survive
+    S112 precisely because this file needs them: the migration reads that format."""
+    from dataclasses import asdict
+
+    return {
+        "version": _SAVED_VERSION,
+        "jobs": [
+            {k: (asdict(j.schedule) if k == "schedule" else getattr(j, k)) for k in _SAVED_KEYS}
+            for j in jobs
+        ],
+    }
+
 
 @pytest.fixture
 def real_store(tmp_path, monkeypatch):
-    """A `crons.json` written by the REAL shipped service.
-
-    The point of the fixture: a hand-written dict encodes what I think
-    the format is, and this program
-    has repeatedly found that belief wrong. `_save`'s own projection is the format.
-    """
+    """A `crons.json` in the shape the shipped writer produced (see `_as_saved`)."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    from personalclaw.schedule import ScheduleDefinition, ScheduleJob, ScheduleService
+    from personalclaw.schedule import ScheduleDefinition, ScheduleJob
 
-    service = ScheduleService()
-    service._jobs = [
+    jobs = [
         ScheduleJob(
             id="j-cron",
             name="nightly backup",
@@ -94,12 +144,11 @@ def real_store(tmp_path, monkeypatch):
             last_error="boom",
         ),
     ]
-    service._save()
-    # Read via the SERVICE's own path, not `tmp_path / "crons.json"`. On macOS the temp dir resolves
-    # through a symlink (`/var` → `/private/var`), so a hand-built path
-    # can miss the file the service
-    # just wrote — measured while writing this fixture.
-    return json.loads(service._path.read_text(encoding="utf-8"))
+    # Written to disk and read back, so the fixture still exercises a real JSON round-trip (the
+    # migration reads a FILE) rather than handing the migrator live Python objects.
+    path = tmp_path / "crons.json"
+    path.write_text(json.dumps(_as_saved(jobs), indent=2), encoding="utf-8")
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 # ── the losslessness bar ──
@@ -138,19 +187,20 @@ def test_the_NEVER_PERSISTED_fields_are_not_reported_as_lost():
 
 
 def test_the_measurement_behind_NEVER_PERSISTED_still_holds():
-    """Pinned against the real `_save`: if a future edit starts persisting these, this fails and the
-    exclusion should be revisited rather than silently becoming wrong."""
+    """A `ScheduleJob` field the writer never persisted cannot be migrated — so if a future edit
+    adds one to the dataclass, this fails and the exclusion is revisited rather than silently
+    becoming wrong.
+
+    Measured against `_SAVED_KEYS` (the writer's own key list, pinned at the top of this file when
+    S112 deleted the class) instead of parsing `_save`'s source. Same set, and it cannot silently
+    pass once the source it used to read no longer exists.
+    """
     import dataclasses as dc
-    import inspect
-    import re
 
-    from personalclaw.schedule import ScheduleJob, ScheduleService
+    from personalclaw.schedule import ScheduleJob
 
-    saved = set(re.findall(r'"(\w+)": j\.', inspect.getsource(ScheduleService._save))) | {
-        "schedule"
-    }
     fields = {f.name for f in dc.fields(ScheduleJob)}
-    assert fields - saved == NEVER_PERSISTED
+    assert fields - set(_SAVED_KEYS) == NEVER_PERSISTED
 
 
 # ── the clock spec: the three kinds do not line up ──

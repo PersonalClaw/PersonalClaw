@@ -28,7 +28,6 @@ class TestDashboard:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = DashboardState(
             sessions=MagicMock(count=3),
-            crons=MagicMock(),
             lessons=MagicMock(),
             start_time=0.0,
         )
@@ -39,7 +38,6 @@ class TestDashboard:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = DashboardState(
             sessions=MagicMock(count=0),
-            crons=MagicMock(),
             lessons=MagicMock(),
             start_time=0.0,
             owner_id="U123",
@@ -109,7 +107,6 @@ class TestNotificationPersistence:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = DashboardState(
             sessions=MagicMock(count=0),
-            crons=MagicMock(),
             lessons=MagicMock(),
             start_time=0.0,
         )
@@ -130,7 +127,6 @@ class TestNotificationPersistence:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = DashboardState(
             sessions=MagicMock(count=0),
-            crons=MagicMock(),
             lessons=MagicMock(),
             start_time=0.0,
         )
@@ -157,7 +153,6 @@ class TestNotificationPersistence:
 
         state = DashboardState(
             sessions=MagicMock(count=0),
-            crons=MagicMock(),
             lessons=MagicMock(),
             start_time=0.0,
         )
@@ -184,7 +179,6 @@ class TestUnreadDerived:
         monkeypatch.setattr("personalclaw.inbox.config_dir", lambda: tmp_path)
         return DashboardState(
             sessions=MagicMock(count=0),
-            crons=MagicMock(),
             lessons=MagicMock(),
             start_time=0.0,
         )
@@ -265,7 +259,6 @@ class TestUnreadDerived:
         self._add_item(tmp_path, "handled")
         state = DashboardState(
             sessions=MagicMock(count=0),
-            crons=MagicMock(),
             lessons=MagicMock(),
             start_time=0.0,
         )
@@ -302,7 +295,6 @@ class TestNotificationRemovalBroadcast:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = DashboardState(
             sessions=MagicMock(count=0),
-            crons=MagicMock(),
             lessons=MagicMock(),
             start_time=0.0,
         )

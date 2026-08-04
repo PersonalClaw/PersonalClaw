@@ -347,20 +347,11 @@ def test_the_deadline_matches_the_cron_and_subagent_reapers():
 
 
 def test_the_legacy_reaper_is_gone(home):
-    """🔴 The clean break, pinned. `ScheduleService` no longer carries a reaper at all — leaving the
-    inert one in place would mean two reapers, one of which reaps nothing and says so nowhere."""
-    from personalclaw.schedule import ScheduleService
-
-    for gone in (
-        "start_reaper",
-        "_reaper_loop",
-        "_force_reap",
-        "_sigkill_session",
-        "register_active_session_key",
-        "clear_active_session_key",
-        "get_active_session_key",
-    ):
-        assert not hasattr(ScheduleService, gone), f"{gone} survived the cutover"
+    """🔴 The clean break, completed. S106 deleted the inert reaper (two reapers, one of which reaped
+    nothing and said so nowhere); S112 deleted the class that carried it, which is a stronger
+    statement than any per-method check could make."""
+    with pytest.raises(ImportError):
+        from personalclaw.schedule import ScheduleService  # noqa: F401
 
 
 def test_boot_starts_the_new_reaper_and_not_the_old_one():

@@ -295,3 +295,111 @@ def test_needs_arming_selects_exactly_the_inert_population():
     assert A.needs_arming(live) is False
     assert A.needs_arming(_clock({"kind": "cron", "expr": "0 9 * * *"}, enabled=False)) is False
     assert A.needs_arming(Trigger(id="f", name="F", kind="file", enabled=True)) is False
+
+
+# ── skip dates (S112) ──
+
+
+def _iso_day(ts: float, tz_name: str = "UTC") -> str:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    return datetime.fromtimestamp(ts, tz=ZoneInfo(tz_name)).strftime("%Y-%m-%d")
+
+
+def test_a_skipped_date_is_advanced_past():
+    """🔴 THE DEFECT (S112). A trigger with `skip_dates` armed to a fire ON exactly that date.
+
+    The legacy `ScheduleService._is_due` checked skip dates on every fire. The substrate carried,
+    validated, migrated and even RENDERED the field (`calendar.py` draws "struck columns" for it)
+    while the fire path ignored it — so a user's explicit "not on this day" did nothing at all.
+    """
+    plain = A.next_fire(_clock({"kind": "cron", "expr": "0 9 * * *"}), now=NOW)
+    skipped_day = _iso_day(plain)
+
+    fire = A.next_fire(
+        _clock({"kind": "cron", "expr": "0 9 * * *", "skip_dates": [skipped_day]}), now=NOW
+    )
+    assert fire > plain
+    assert _iso_day(fire) != skipped_day
+
+
+def test_consecutive_skipped_dates_are_all_advanced_past():
+    """A holiday stretch, not just one day — the loop has to keep stepping."""
+    first = A.next_fire(_clock({"kind": "cron", "expr": "0 9 * * *"}), now=NOW)
+    day1, day2 = _iso_day(first), _iso_day(first + 86400)
+
+    fire = A.next_fire(
+        _clock({"kind": "cron", "expr": "0 9 * * *", "skip_dates": [day1, day2]}), now=NOW
+    )
+    assert _iso_day(fire) not in (day1, day2)
+
+
+def test_an_interval_keeps_its_grid_across_a_skip():
+    """Stepping past a skipped day must not re-phase the schedule to the skipped instant."""
+    plain = A.next_fire(_clock({"kind": "interval", "interval_secs": 86400}), now=NOW)
+    fire = A.next_fire(
+        _clock({"kind": "interval", "interval_secs": 86400, "skip_dates": [_iso_day(plain)]}),
+        now=NOW,
+    )
+    # Exactly one interval later, on the same grid — not "now + a day".
+    assert fire == plain + 86400
+
+
+def test_a_one_shot_on_a_skipped_day_never_fires():
+    """0.0, not the skipped instant: there is no later candidate for a one-shot, and arming it
+    anyway would fire on the day the user struck out."""
+    at = NOW + 86400
+    assert (
+        A.next_fire(_clock({"kind": "at", "at": at, "skip_dates": [_iso_day(at)]}), now=NOW) == 0.0
+    )
+
+
+def test_skip_dates_are_evaluated_in_the_triggers_own_timezone():
+    """🔴 A date is a LOCAL-calendar question. On a UTC host the same instant is a different
+    calendar date, so evaluating skips against server time would strike the wrong day — the same
+    reasoning `calendar.py` records for the week grid."""
+    tz = "Pacific/Kiritimati"  # UTC+14: its local date runs ahead of UTC
+    trigger = _clock({"kind": "cron", "expr": "0 9 * * *", "timezone": tz})
+    plain = A.next_fire(trigger, now=NOW)
+    local_day = _iso_day(plain, tz)
+    assert local_day != _iso_day(plain), "the fixture needs a tz whose date differs from UTC"
+
+    fire = A.next_fire(
+        _clock({"kind": "cron", "expr": "0 9 * * *", "timezone": tz, "skip_dates": [local_day]}),
+        now=NOW,
+    )
+    assert _iso_day(fire, tz) != local_day
+
+
+def test_a_gates_spelling_is_honoured_too():
+    """§1.1 reserves `skip_dates` on the GATE block and the migration writes it to the spec, so a
+    real store holds both spellings. `calendar.py`'s projection accepts either, and disagreeing
+    would put a skipped day on the week grid while the engine fired on it."""
+    plain = A.next_fire(_clock({"kind": "cron", "expr": "0 9 * * *"}), now=NOW)
+    trigger = _clock({"kind": "cron", "expr": "0 9 * * *"})
+    trigger.gates = {"skip_dates": [_iso_day(plain)]}
+    assert _iso_day(A.next_fire(trigger, now=NOW)) != _iso_day(plain)
+
+
+def test_an_empty_skip_list_changes_nothing():
+    plain = A.next_fire(_clock({"kind": "cron", "expr": "0 9 * * *"}), now=NOW)
+    assert A.next_fire(
+        _clock({"kind": "cron", "expr": "0 9 * * *", "skip_dates": []}), now=NOW
+    ) == (plain)
+
+
+def test_an_all_skipped_cadence_reports_unarmable_rather_than_firing():
+    """The advance loop is bounded. Exhausting it must read as "not armable" — never as a fire on a
+    day the user struck out."""
+    from datetime import datetime, timedelta
+    from datetime import timezone as _tz
+
+    base = datetime.fromtimestamp(NOW, tz=_tz.utc)
+    every_day = [
+        (base + timedelta(days=n)).strftime("%Y-%m-%d") for n in range(A.MAX_SKIP_ADVANCE + 2)
+    ]
+    assert (
+        A.next_fire(_clock({"kind": "cron", "expr": "0 9 * * *", "skip_dates": every_day}), now=NOW)
+        == 0.0
+    )
