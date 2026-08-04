@@ -422,26 +422,82 @@ def test_the_schedule_list_is_read_from_the_store(home, state, monkeypatch):
     assert rows[0]["next_run_ts"]  # armed by the boot migration
 
 
-def test_an_empty_store_falls_back_to_the_legacy_service(home, state):
-    """🔴 A home whose migration has not run yet must NOT show zero schedules. Reading the old file
-    for one more boot is strictly better than telling a user their automations are gone — and that
-    fallback is what retires when `ScheduleService` does."""
-    from personalclaw.schedule import ScheduleDefinition, ScheduleJob
+def test_a_legacy_job_is_visible_through_the_MIGRATION_not_a_fallback(home, state):
+    """🔴 SUPERSEDED CONTRACT (S110). This asserted the facade reads `crons.json` when the store is
+    empty — the fallback that retires with `ScheduleService`'s CRUD.
 
-    job = ScheduleJob(
-        id="legacy1",
-        name="Legacy",
-        enabled=True,
-        action={"provider": "bash", "config": {}},
-        schedule=ScheduleDefinition(kind="every", every_secs=3600),
+    The property it protected still holds, by a better mechanism: a home whose migration has not run
+    must not show zero schedules. Boot imports every legacy job unconditionally, and S110 made that
+    complete — a row the conversion REFUSES (an empty or unknown `schedule.kind`, which
+    `ScheduleService` loads happily) used to be `continue`d and so existed only in the legacy file.
+    It is now written disabled, so there is no job the fallback could have shown that the store
+    cannot.
+
+    So this drives the real migration and asserts the row surfaces through the ordinary store path.
+    """
+    import json
+
+    (home / "crons.json").write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "id": "legacy1",
+                        "name": "Legacy",
+                        "enabled": True,
+                        "message": "m",
+                        "schedule": {"kind": "cron", "cron_expr": "0 9 * * *"},
+                        "action": {"provider": "bash", "config": {"command": "x"}},
+                    }
+                ]
+            }
+        )
     )
-    state.crons.list_jobs.return_value = [job]
-    state.crons.is_running.return_value = False
-    state.crons.running_since.return_value = None
-    state.crons.last_run_status.return_value = ""
+    report = _store(home).migrate_from_crons()
+    assert report["written"] == 1, report
+
     resp = _run(T.api_triggers(_req("GET", "/api/triggers", state)))
     rows = [t for t in _body(resp)["triggers"] if t["kind"] == "schedule"]
     assert [r["raw_id"] for r in rows] == ["legacy1"]
+
+
+def test_a_legacy_job_the_conversion_REFUSES_is_still_imported(home, state):
+    """🔴 THE S110 FINDING. A `crons.json` row with an empty `schedule.kind` LOADS in
+    `ScheduleService` but the conversion refuses it — and it used to be dropped, so it lived only
+    in the legacy file. Deleting the fallbacks (the point of the cutover) would have made the
+    user's job vanish from the list with no error anywhere.
+
+    Imported DISABLED and visibly broken instead: `set_enabled` already refuses to enable a row
+    that fails validation, so it cannot become a live trigger by accident, and the UI shows why.
+    """
+    import json
+
+    (home / "crons.json").write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "id": "broken1",
+                        "name": "Hand-edited",
+                        "enabled": True,
+                        "message": "m",
+                        "schedule": {"kind": ""},
+                        "action": {"provider": "bash", "config": {"command": "x"}},
+                    }
+                ]
+            }
+        )
+    )
+    report = _store(home).migrate_from_crons()
+    assert report["unparseable"], "the refusal must still be REPORTED"
+
+    rows = _store(home).load()
+    assert [r.trigger.id for r in rows] == ["broken1"]
+    assert rows[0].ok is False, "it must be visibly broken"
+    assert rows[0].trigger.enabled is False, "and must never fire"
+    # And it reaches the UI rather than vanishing.
+    resp = _run(T.api_triggers(_req("GET", "/api/triggers", state)))
+    assert "broken1" in [t["raw_id"] for t in _body(resp)["triggers"] if t["kind"] == "schedule"]
 
 
 def test_a_store_backed_schedule_row_is_redacted(home, state):
@@ -932,19 +988,11 @@ def test_the_job_shim_serves_the_injection_from_the_store(home, state):
     assert shim.agent_id == ""  # present and empty, never absent
 
 
-def test_the_shim_falls_back_to_the_legacy_job(home, state):
-    """A home whose migration has not run yet still opens its crons as a chat."""
-    from personalclaw.schedule import ScheduleDefinition, ScheduleJob
-
-    state.crons.list_jobs.return_value = [
-        ScheduleJob(
-            id="legacy1",
-            name="Legacy",
-            action={"provider": "bash", "config": {}},
-            schedule=ScheduleDefinition(kind="every", every_secs=3600),
-        )
-    ]
-    assert T._job_shim_for(state, "legacy1").name == "Legacy"
+def test_the_shim_is_store_only(home, state):
+    """🔴 SUPERSEDED (S110): the shim read `crons.json` when the store missed. Store-only now, for
+    the reason the list test above records — the migration imports every legacy job, including the
+    refused ones. A legacy id the store does not have is genuinely unknown."""
+    assert T._job_shim_for(state, "legacy1") is None
 
 
 def test_the_shim_is_None_for_an_unknown_id(home, state):
@@ -1024,22 +1072,13 @@ def test_the_name_map_covers_EVERY_kind(home, state):
     assert names["file:notes"] == "Notes Watcher"
 
 
-def test_the_name_map_merges_legacy_jobs(home, state):
-    """A home mid-migration still labels its own rows."""
-    from personalclaw.schedule import ScheduleDefinition, ScheduleJob
-
-    state.crons.list_jobs.return_value = [
-        ScheduleJob(
-            id="legacy1",
-            name="Legacy",
-            action={},
-            schedule=ScheduleDefinition(kind="every", every_secs=60),
-        )
-    ]
+def test_the_name_map_is_store_only(home, state):
+    """🔴 SUPERSEDED (S110): the map merged legacy job names over the store's. Store-only now — and
+    a legacy job's name still appears, because the migration wrote it there."""
     _create_schedule(state, name="Nightly")
     names = T._trigger_names(state)
-    assert names["legacy1"] == "Legacy"
     assert names["clock:nightly"] == "Nightly"
+    assert "legacy1" not in names
 
 
 def test_the_name_map_survives_an_unreadable_legacy_service(home, state):

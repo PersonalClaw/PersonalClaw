@@ -99,36 +99,45 @@ class TestScheduleTriggerApprovalMode:
 
 class TestTriggerListFields:
     @pytest.mark.asyncio
-    async def test_schedule_trigger_serialization_includes_action_and_fields(self):
-        mock_job = MagicMock()
-        mock_job.id = "j1"
-        mock_job.name = "test"
-        mock_job.message = "msg"
-        mock_job.enabled = True
-        mock_job.last_status = "ok"
-        mock_job.agent_id = ""
-        mock_job.channel = "C123"
-        mock_job.approval_mode = "auto"
-        mock_job.silent = True
-        mock_job.strict_schedule = False
-        mock_job.schedule = ScheduleDefinition(kind="every", every_secs=300)
-        mock_job.last_run_ts = None
-        mock_job.last_result = None
-        mock_job.last_error = None
-        mock_job.created_ts = None
-        mock_job.model = ""
-        mock_job.timezone = ""
-        mock_job.skip_dates = []
-        mock_job.script = ""
-        mock_job.command = ""
-        mock_job.action = make_agent_action(message="msg", approval_mode="auto")
+    async def test_schedule_trigger_serialization_includes_action_and_fields(
+        self, tmp_path, monkeypatch
+    ):
+        """🔴 REWRITTEN FOR S110. This built a 20-attribute `MagicMock` job for
+        `crons.list_jobs` — the legacy fallback the facade's CRUD retirement deleted. A mock that
+        answers every attribute cannot tell you whether the projection reads the right ones; the
+        store row can, because a wrong address yields an empty field.
+
+        The wire contract is unchanged: the same keys, from the store's addresses (`delivery`
+        carries channel + silent; `approval_mode` rides inside `workflow.inline.config`).
+        """
+        import personalclaw.config.loader as loader
+        from personalclaw.dashboard.handlers import triggers as T
+        from personalclaw.triggers.models import Trigger
+        from personalclaw.triggers.store import TriggerStore
+
+        monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+        monkeypatch.setattr(T, "config_dir", lambda: tmp_path)
+        TriggerStore(base_dir=tmp_path).upsert(
+            Trigger(
+                id="j1",
+                name="test",
+                kind="clock",
+                enabled=True,
+                spec={"kind": "interval", "interval_secs": 300},
+                # `delivery: none` IS the legacy `silent=True`; a silent job delivers nowhere,
+                # so the channel is not carried alongside it (S98's mapping).
+                delivery="none",
+                workflow={
+                    "inline": {
+                        "provider": "invoke-agent",
+                        "config": {"task_template": "msg", "approval_mode": "auto"},
+                    }
+                },
+            )
+        )
 
         mock_state = MagicMock()
-        mock_state.crons.list_jobs.return_value = [mock_job]
-        mock_state.crons.is_running.return_value = False
-        mock_state.crons.running_since.return_value = None
         mock_state._sessions = {}
-
         request = MagicMock()
         request.app = {"state": mock_state}
         request.query = {"type": "schedule"}
@@ -140,6 +149,5 @@ class TestTriggerListFields:
         assert t["id"] == "schedule:j1"
         assert t["approval_mode"] == "auto"
         assert t["silent"] is True
-        assert t["channel"] == "C123"
-        # The action derives from the invoke-agent exec mode when unset.
+        # The action derives from the invoke-agent exec mode.
         assert t["action"]["provider"] == "invoke-agent"

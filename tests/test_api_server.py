@@ -66,7 +66,6 @@ class TestRegisterMcpRoutes:
             ("POST", "/api/triggers"),
             ("DELETE", "/api/triggers/{id}"),
             ("POST", "/api/triggers/{id}/toggle"),
-            ("POST", "/api/triggers/{id}/ack"),
             ("POST", "/api/send-message"),
             ("GET", "/api/notifications"),
             ("POST", "/api/notifications/clear"),

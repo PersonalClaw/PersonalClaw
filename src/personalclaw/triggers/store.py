@@ -370,6 +370,23 @@ class TriggerStore:
                 # between two shipped modules (that is how S87 found `interval`), and the user needs
                 # to see WHICH job did not make it rather than a count that silently disagrees.
                 refused_rows.append({"id": trigger.id, "errors": [i.message for i in errors]})
+                # 🔴 AND IT IS STILL WRITTEN, disabled (S110). Measured while retiring the facade's
+                # legacy fallbacks: a `crons.json` row with an empty or unknown `schedule.kind`
+                # LOADS in `ScheduleService` but was `continue`d here — so it existed only in the
+                # legacy file. The fallbacks were its only representation, and deleting them (which
+                # is the whole point of the cutover) would have made the user's job vanish from the
+                # list with no error anywhere.
+                #
+                # `enabled=False` because a row that fails validation must not fire — `set_enabled`
+                # already refuses to enable one (S87), so this cannot become a live trigger by
+                # accident. The store's own `ok=False` + `errors` are what the UI renders, which is
+                # strictly better than the old behaviour: the job is VISIBLE and says why it is
+                # broken, instead of being silently absent.
+                trigger.enabled = False
+                existing_refused = self.get(trigger.id)
+                if existing_refused is not None:
+                    _carry_runtime_state(existing_refused.trigger, trigger)
+                self.upsert(trigger)
                 continue
             # 🔴 PRESERVE RUNTIME STATE on a re-migration (S98). This docstring already
             # promised "running it twice is idempotent", and for CONFIG it was — but the

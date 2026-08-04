@@ -2591,3 +2591,66 @@ list. `test_validation_user_actions.py`'s interval-floor test moved to the store
 - **REMAINING on the `ScheduleService` retirement:** the facade's CRUD fallbacks (now safe to delete —
   nothing writes `crons.json`), then the read-only callers (`suggestions.py`, `messaging.py`,
   `discover.py`), then the class itself. `ScheduleRunStore` survives.
+
+### S110 — The facade's legacy CRUD fallbacks retire (§6)
+
+**DONE.** `state.crons.*` in `dashboard/handlers/triggers.py`: **15 → 0**. The facade is store-only,
+proven by driving every surface with `state.crons = object()` — a bare object with no methods at all:
+list, week, doctor, history, toggle, delete and the 404 path all answered correctly. 167 net lines
+gone.
+
+**🔴 THE FINDING, and why this session could not be a pure deletion.** Before removing anything I
+asked the only question that matters: is there a job the LEGACY service can load that the store does
+NOT have? Enumerated every clock shape a real `crons.json` can hold:
+
+| shape | legacy loads | migration writes | gap |
+|---|---|---|---|
+| `every` / `cron` / `at` / no-secs / bad-cron | 1 | 1 | no |
+| **empty `kind`** | **1** | **0** | **🔴 yes** |
+| **unknown `kind`** | **1** | **0** | **🔴 yes** |
+
+A `crons.json` row with an empty or unknown `schedule.kind` loads happily in `ScheduleService`, and
+`migrate_from_crons` **`continue`d** it — recorded in `unparseable`, never written. So it existed only
+in the legacy file, the fallbacks were its ONLY representation, and deleting them (the whole point of
+the cutover) would have made the user's job **vanish from the list with no error anywhere**. Reachable
+only from a hand-edited file — `add_job` writes only `cron`/`every`/`at` — but "narrow" is not "never",
+and silent disappearance is the worst possible failure for this surface.
+
+Fixed at the source rather than by keeping the fallbacks: a refused row is now **imported disabled**.
+`enabled=False` because `set_enabled` already refuses to enable a row that fails validation (S87), so
+it cannot become a live trigger by accident, and the store's own `ok=False` + `errors` are what the UI
+renders. That is strictly better than both alternatives: the job is VISIBLE and says why it is broken,
+instead of being invisible (post-deletion) or shown by a parallel code path (pre-deletion).
+
+**What came out:** the `_job_shim_for` fallback, the `_trigger_names` legacy merge, 48 lines of
+week-grid legacy translation, the list/update/toggle/delete/manual-run fallbacks, the 47-line
+`_serialize_schedule` projection (zero callers once they were gone), and the
+`POST /api/triggers/{id}/ack` route — verified dead: zero frontend callers, no MCP tool, and S98
+already recorded `acked_items` mapping to `None` with an empty real store. Two more handlers now read
+no `state` at all, which flake8's unused-local flags — the same signal S105 used.
+
+**A false alarm I chased and corrected.** Mid-probe I read "every migrated cron imports disabled" off
+the owner's real store (2 of 4 enabled jobs land disabled). That is **deliberate**: a row that gains a
+migration NOTE loads disabled so nothing fires on a schedule the conversion could not fully interpret,
+and both notes were legitimate (`legacy every → interval`, `agent_sequence needs authoring`). `enabled`
+round-trips correctly whenever there is no note. Recorded because the same reading would look like a
+bug to the next author.
+
+**DEVIATION — 16 tests across 5 files, all asserting the removed path.** Three in
+`test_triggers_facade_store.py` asserted the fallback contract directly (empty-store fallback, shim
+fallback, name-map merge) and are rewritten to assert the new one — the MIGRATION is what makes the
+store complete — plus a new test for the refused-row import. `test_triggers_facade.py`'s fixture built
+a `ScheduleJob` for `crons.list_jobs`; it now seeds a real store row, and `_every_job` became
+`_seed_interval`. That conversion found my own error: the doctor reads `workflow["def"]` and
+`gates["duty_gate"]`, not the `ref`/`duty` I first wrote — caught because a wrong address yields an
+empty finding rather than an exception.
+
+`test_dashboard_cron_update_agent.py` asserted `crons.update_job`'s CALL SHAPE on a MagicMock, and
+`test_dashboard_cron_approval.py` built a 20-attribute mock job. Both now drive the store and read the
+row back: a mock that answers every attribute cannot tell you whether the projection reads the right
+ones, and the store row can, because a wrong address yields an empty field. `test_api_server.py`'s
+route list drops the retired `/ack` entry.
+
+- **REMAINING on the `ScheduleService` retirement:** the read-only non-facade callers
+  (`suggestions.py`, `messaging.py`, `discover.py`), then the class itself. `ScheduleRunStore`
+  survives.
