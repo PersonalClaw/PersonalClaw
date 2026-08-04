@@ -4391,3 +4391,62 @@ Verified load-bearing: removing the five keys turns 2 tests red. Gate: `make lin
   `max_actions_per_hour` (`missed.within_rate_window` is the decision already waiting); threading a
   `run_key` through `SpendMeter.charge` unblocks `cost_cap` + `max_cost_usd_per_run`. `idempotency`
   and `threshold` need R12 to pin their semantics first.
+
+### S151 — the spacing gate: debounce + cooldown, and the third timestamp they needed (§7 / §3.6)
+
+**DONE.** S150 put `debounce_secs` and `cooldown_secs` into `UNMETERED_CAPS` because the meter they
+needed did not exist. This session builds the meter and the gate, so they leave that set.
+
+**Why a THIRD timestamp rather than reusing one.** Spacing asks "when did this last FIRE".
+`last_success_at` and `last_failure_at` both describe an **outcome** — and a fire suppressed by quiet
+hours, budget or overlap is neither. Debouncing off either one would count a *blocked* fire as a fire
+and let a debounced trigger straight through, which is worse than no debounce because it looks like
+one. The legacy `event_triggers.EventTrigger` carries exactly `last_fired_at`, which is precisely why
+debounce works on the legacy path and not the unified one (S150 measured that asymmetry).
+
+`Trigger.last_fired_at` is written **beside `run_count`, at the single fire-grant point**, for the
+same reason that counter is: this is the one place a fire is authorised. Stamping at completion would
+let a burst of in-flight fires all read the same stale value and every one pass a debounce; stamping
+on a suppressed fire would make a blocked fire space out the next real one.
+
+**Position in the walk.** After the security fences (`incident`, `screen`) and **before**
+`quiet`/`duty`/`budget`/`claim`. §7's order names debounce first, and the reason is cost: spacing is
+one float compare with no store read and no provider round-trip, so paying for a duty-gate provider
+call on a fire a debounce was going to drop anyway is backwards. A test asserts both halves of that
+position, so a future reorder that slipped it above `screen` fails rather than silently making a cheap
+guard skippable ahead of a fence.
+
+**Three fail-safe decisions, each measured:**
+
+* **FAIL-OPEN on a malformed value**, matching §1.4's storm-guard classification. A stuck-closed
+  spacing gate looks exactly like a dead trigger; a stuck-open one costs at most one duplicate run,
+  which the claim lock still bounds.
+* **`None` means never-fired and always allows.** Reading an absent timestamp as "0 seconds ago"
+  would block every trigger's *first* fire behind its own debounce — a first-run deadlock.
+* **A FUTURE timestamp clamps to 0.0** (a clock that moved backwards, a hand-edited row). A negative
+  "seconds since" compares as less than every window and would suppress forever; one skipped fire is
+  recoverable, a permanently dead trigger is not.
+
+**Kept as two keys, not collapsed to `max(a, b)`.** Debounce is burst suppression (an editor saving
+twice, a webhook sender retrying); cooldown is a cadence floor regardless of cause. They compute the
+same number today and would diverge the moment either grows its own semantics, and the ledger reason
+names *which* one refused.
+
+**DISCOVERY — two follow-ons my own change created, both caught by tests written in earlier sessions:**
+
+1. **S130's fail-mode classifier reported `spacing` as unclassified.** That session's entire defect was
+   a classifier that disagreed with the gates the engine walks; its completeness test now catches a new
+   gate immediately. Classified fail-OPEN, with both cap-key spellings.
+2. **S150's completeness test would have kept calling the two now-ENFORCED keys unmetered.** Reporting a
+   working gate as broken is the same class of lie as S150's silence, pointing the other way — so the
+   keys moved buckets and the test asserts they are in exactly one.
+
+Verified load-bearing: removing the writer turns 2 tests red. Gate: `make lint`
+(black+isort+flake8+mypy, 691 files) green; `pytest -n 4 --dist worksteal` **16156 passed, 29 skipped,
+13 xfailed**. No `web/` change.
+
+- **STILL UNMETERED after this** (each blocked on one named piece of machinery): `rate_cap` /
+  `max_runs_per_hour` / `max_actions_per_hour` need a `since=` windowed query on `ScheduleRunStore`
+  (`missed.within_rate_window` is the decision already waiting); `cost_cap` /
+  `max_cost_usd_per_run` need a `run_key` threaded through `SpendMeter.charge`; `idempotency` and
+  `threshold` need R12 to pin their semantics.
