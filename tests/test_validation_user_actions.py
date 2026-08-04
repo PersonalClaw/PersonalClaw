@@ -5,7 +5,7 @@ tools, plus the dashboard API patterns. Each test represents a real user action
 that input validation must accept.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 # ── MCP Core: simulate ACP agent calling tools via JSON-RPC ──
 
@@ -185,254 +185,6 @@ class TestMcpCoreUserActions:
 # ── MCP Schedule: simulate ACP agent calling schedule tools ──
 
 
-class TestMcpScheduleUserActions:
-    """Simulate the exact JSON-RPC calls ACP agent sends to personalclaw-schedule."""
-
-    def _simulate_tool_call(self, tool_name: str, arguments: dict) -> str:
-        from personalclaw.mcp_schedule import _call_tool
-
-        return _call_tool(tool_name, arguments)
-
-    # -- schedule_add: user says "check my pipeline every 5 minutes" --
-
-    def test_add_every_interval(self, tmp_path):
-        with patch("personalclaw.mcp_schedule.ScheduleService") as mock_svc:
-            svc = mock_svc.return_value
-            job = MagicMock()
-            job.id = "abc123"
-            job.name = "pipeline check"
-            job.schedule = MagicMock()
-            job.schedule.kind = "every"
-            job.schedule.every_secs = 300
-            job.schedule.cron_expr = None
-            job.schedule.at_ts = None
-            job.agent_id = ""
-            svc.add_job.return_value = job
-            result = self._simulate_tool_call(
-                "schedule_add",
-                {
-                    "name": "pipeline check",
-                    "message": "check the status of my deployment pipeline",
-                    "every": 300,
-                },
-            )
-        assert "abc123" in result
-        assert "pipeline check" in result
-
-    # -- schedule_add with cron expression: "weekdays at 9am" --
-
-    def test_add_cron_expression(self):
-        with patch("personalclaw.mcp_schedule.ScheduleService") as mock_svc:
-            svc = mock_svc.return_value
-            job = MagicMock()
-            job.id = "def456"
-            job.name = "standup"
-            job.schedule = MagicMock()
-            job.schedule.kind = "cron"
-            job.schedule.cron_expr = "0 9 * * 1-5"
-            job.schedule.every_secs = None
-            job.schedule.at_ts = None
-            job.agent_id = ""
-            svc.add_job.return_value = job
-            result = self._simulate_tool_call(
-                "schedule_add",
-                {
-                    "name": "standup",
-                    "message": "summarize yesterday's work",
-                    "cron_expr": "0 9 * * 1-5",
-                },
-            )
-        assert "def456" in result
-
-    # -- schedule_add with agent: "use a named code agent for this job" --
-
-    def test_add_with_agent(self):
-        with patch("personalclaw.mcp_schedule.ScheduleService") as mock_svc:
-            svc = mock_svc.return_value
-            job = MagicMock()
-            job.id = "ghi789"
-            job.name = "code-agent check"
-            job.schedule = MagicMock()
-            job.schedule.kind = "every"
-            job.schedule.every_secs = 600
-            job.schedule.cron_expr = None
-            job.schedule.at_ts = None
-            job.agent_id = ""
-            svc.add_job.return_value = job
-            result = self._simulate_tool_call(
-                "schedule_add",
-                {
-                    "name": "code-agent check",
-                    "message": "check the build pipeline",
-                    "every": 600,
-                    "agent": "my-code-agent",
-                },
-            )
-        assert "ghi789" in result
-        # Verify the agent was carried into the invoke-agent action passed to add_job
-        from personalclaw.schedule import make_agent_action
-
-        assert svc.add_job.call_args.kwargs["action"] == make_agent_action(
-            message="check the build pipeline", agent="my-code-agent"
-        )
-
-    # -- schedule_add with approval_mode: "auto-approve tools for this cron" --
-
-    def test_add_with_approval_mode_auto(self):
-        with patch("personalclaw.mcp_schedule.ScheduleService") as mock_svc:
-            svc = mock_svc.return_value
-            job = MagicMock()
-            job.id = "appr001"
-            job.name = "auto review"
-            job.schedule = MagicMock()
-            job.schedule.kind = "cron"
-            job.schedule.cron_expr = "0 16 * * 1-5"
-            job.schedule.every_secs = None
-            job.schedule.at_ts = None
-            job.agent_id = ""
-            job.approval_mode = ""
-            svc.add_job.return_value = job
-            result = self._simulate_tool_call(
-                "schedule_add",
-                {
-                    "name": "auto review",
-                    "message": "review CRs",
-                    "cron_expr": "0 16 * * 1-5",
-                    "agent": "gaia-cr-review",
-                    "approval_mode": "auto",
-                },
-            )
-        assert "appr001" in result
-        from personalclaw.schedule import make_agent_action
-
-        assert svc.add_job.call_args.kwargs["action"] == make_agent_action(
-            message="review CRs", agent="gaia-cr-review", approval_mode="auto"
-        )
-
-    def test_add_with_approval_mode_empty(self):
-        with patch("personalclaw.mcp_schedule.ScheduleService") as mock_svc:
-            svc = mock_svc.return_value
-            job = MagicMock()
-            job.id = "appr002"
-            job.name = "default approval"
-            job.schedule = MagicMock()
-            job.schedule.kind = "every"
-            job.schedule.every_secs = 300
-            job.schedule.cron_expr = None
-            job.schedule.at_ts = None
-            job.agent_id = ""
-            job.approval_mode = ""
-            svc.add_job.return_value = job
-            result = self._simulate_tool_call(
-                "schedule_add",
-                {
-                    "name": "default approval",
-                    "message": "check stuff",
-                    "every": 300,
-                },
-            )
-        assert "appr002" in result
-        # approval_mode should remain empty (not set)
-        assert job.approval_mode == ""
-
-    # -- schedule_add without agent (most common): should work fine --
-
-    def test_add_without_agent(self):
-        with patch("personalclaw.mcp_schedule.ScheduleService") as mock_svc:
-            svc = mock_svc.return_value
-            job = MagicMock()
-            job.id = "noagent1"
-            job.name = "basic"
-            job.schedule = MagicMock()
-            job.schedule.kind = "every"
-            job.schedule.every_secs = 120
-            job.schedule.cron_expr = None
-            job.schedule.at_ts = None
-            job.agent_id = ""
-            svc.add_job.return_value = job
-            result = self._simulate_tool_call(
-                "schedule_add",
-                {
-                    "name": "basic",
-                    "message": "hello",
-                    "every": 120,
-                },
-            )
-        assert "noagent1" in result
-        # agent_id should NOT have been set
-        assert job.agent_id == ""
-
-    # -- schedule_list: user says "what cron jobs do I have?" --
-
-    def test_list_jobs(self):
-        with patch("personalclaw.mcp_schedule.ScheduleService") as mock_svc:
-            svc = mock_svc.return_value
-            job = MagicMock()
-            job.id = "list1"
-            job.name = "my job"
-            job.message = "do stuff"
-            job.enabled = True
-            job.schedule = MagicMock()
-            job.schedule.kind = "every"
-            job.schedule.every_secs = 300
-            job.schedule.cron_expr = None
-            job.schedule.at_ts = None
-            svc.list_jobs.return_value = [job]
-            result = self._simulate_tool_call("schedule_list", {})
-        assert "my job" in result
-        assert "list1" in result
-
-    def test_list_empty(self):
-        with patch("personalclaw.mcp_schedule.ScheduleService") as mock_svc:
-            svc = mock_svc.return_value
-            svc.list_jobs.return_value = []
-            result = self._simulate_tool_call("schedule_list", {})
-        assert "No cron jobs" in result
-
-    # -- schedule_remove/pause/resume --
-
-    def test_remove_job(self):
-        with patch("personalclaw.mcp_schedule.ScheduleService") as mock_svc:
-            svc = mock_svc.return_value
-            svc.remove_job.return_value = True
-            result = self._simulate_tool_call("schedule_remove", {"job_id": "abc12345"})
-        assert "Removed" in result
-
-    def test_pause_job(self):
-        with patch("personalclaw.mcp_schedule.ScheduleService") as mock_svc:
-            svc = mock_svc.return_value
-            svc.enable_job.return_value = True
-            result = self._simulate_tool_call("schedule_pause", {"job_id": "abc12345"})
-        assert "Paused" in result
-
-    def test_resume_job(self):
-        with patch("personalclaw.mcp_schedule.ScheduleService") as mock_svc:
-            svc = mock_svc.return_value
-            svc.enable_job.return_value = True
-            result = self._simulate_tool_call("schedule_resume", {"job_id": "abc12345"})
-        assert "Resumed" in result
-
-    # -- schedule_remove_all --
-
-    def test_remove_all(self):
-        with (
-            patch("personalclaw.mcp_schedule.ScheduleService") as mock_svc,
-            patch.dict("os.environ", {"PERSONALCLAW_CLI": "1"}, clear=False) as env,
-        ):
-            env.pop("PERSONALCLAW_SESSION_KEY", None)
-            svc = mock_svc.return_value
-            job = MagicMock()
-            job.id = "x"
-            job.session_key = ""
-            svc.list_jobs.return_value = [job]
-            svc.remove_job.return_value = True
-            result = self._simulate_tool_call("schedule_remove_all", {})
-        assert "Removed 1" in result
-
-
-# ── JSON-RPC Envelope: simulate ACP agent protocol ──
-
-
 class TestJsonRpcProtocol:
     """Verify the JSON-RPC envelope handling matches ACP agent's expectations."""
 
@@ -496,11 +248,6 @@ class TestBadInputsCaught:
 
         return _aggregated_call_tool(name, args)
 
-    def _cron_call(self, name: str, args: dict) -> str:
-        from personalclaw.mcp_schedule import _call_tool
-
-        return _call_tool(name, args)
-
     def test_spawn_empty_task(self):
         result = self._core_call("subagent_run", {"task": ""})
         assert "Error" in result
@@ -534,17 +281,31 @@ class TestBadInputsCaught:
         assert "evil_category" in result
         assert "WHAT:" in result and "FIX:" in result
 
-    def test_cron_interval_too_small(self):
-        result = self._cron_call(
-            "schedule_add",
-            {
-                "name": "spam",
-                "message": "flood",
-                "every": 5,  # below 60s minimum
-            },
-        )
-        assert "Error" in result
-        assert ">= 60" in result
+    def test_a_sub_floor_interval_is_flagged(self):
+        """🔴 The floor moved, and S109 made it REAL for the first time.
+
+        This asserted `schedule_add`'s schema `min_val=60`. Retiring that alias would have left the
+        floor enforced by nothing: measured, `automation_create` with `interval_secs=5` persisted a
+        5-second LLM poll with `ok: True` and zero issues, because `MIN_CLOCK_INTERVAL_SECS` was
+        declared and read by no code at all.
+
+        A WARNING rather than an error, because R1 makes the floor overridable — the trigger still
+        runs, which is why the old `min_val=60` hard rejection was not the right shape to port.
+        """
+        from personalclaw.triggers.models import MIN_CLOCK_INTERVAL_SECS, validate_spec
+
+        issues = validate_spec("clock", {"kind": "interval", "interval_secs": 5})
+        flagged = [i for i in issues if i.path == "spec.interval_secs"]
+        assert flagged, "a 5-second LLM poll must not pass silently"
+        assert str(MIN_CLOCK_INTERVAL_SECS) in flagged[0].message
+        assert flagged[0].severity != "error", "R1 makes the floor overridable"
+        assert not [
+            i
+            for i in validate_spec(
+                "clock", {"kind": "interval", "interval_secs": MIN_CLOCK_INTERVAL_SECS}
+            )
+            if i.path == "spec.interval_secs"
+        ]
 
     def test_extra_fields_rejected(self):
         result = self._core_call(

@@ -30,7 +30,6 @@ class TestMemoryGraphNodeExtraction:
 
         state = DashboardState(
             sessions=MagicMock(count=0),
-            crons=MagicMock(),
             lessons=MagicMock(load_all=MagicMock(return_value=[])),
             start_time=0.0,
             context_builder=cb,
@@ -441,7 +440,6 @@ class TestMemoryGraphEdgeDetection:
 
         state = DashboardState(
             sessions=MagicMock(count=0),
-            crons=MagicMock(),
             lessons=MagicMock(load_all=MagicMock(return_value=[])),
             start_time=0.0,
             context_builder=cb,
@@ -503,7 +501,6 @@ class TestMemoryGraphResponseFormat:
         cb.memory = mem
         state = DashboardState(
             sessions=MagicMock(count=0),
-            crons=MagicMock(),
             lessons=MagicMock(load_all=MagicMock(return_value=[])),
             start_time=0.0,
             context_builder=cb,
@@ -539,7 +536,6 @@ class TestMemoryGraphResponseFormat:
         cb.memory = mem
         state = DashboardState(
             sessions=MagicMock(count=0),
-            crons=MagicMock(),
             lessons=MagicMock(load_all=MagicMock(return_value=[])),
             start_time=0.0,
             context_builder=cb,
@@ -565,7 +561,6 @@ class TestMemoryGraphResponseFormat:
         cb.memory = mem
         state = DashboardState(
             sessions=MagicMock(count=0),
-            crons=MagicMock(),
             lessons=MagicMock(load_all=MagicMock(return_value=[])),
             start_time=0.0,
             context_builder=cb,
@@ -592,7 +587,6 @@ class TestMemoryGraphResponseFormat:
         cb.memory = mem
         state = DashboardState(
             sessions=MagicMock(count=0),
-            crons=MagicMock(),
             lessons=MagicMock(load_all=MagicMock(return_value=[])),
             start_time=0.0,
             context_builder=cb,
@@ -625,7 +619,6 @@ class TestMemoryGraphErrorHandling:
         cb.memory = mem
         state = DashboardState(
             sessions=MagicMock(count=0),
-            crons=MagicMock(),
             lessons=MagicMock(load_all=MagicMock(return_value=[])),
             start_time=0.0,
             context_builder=cb,
@@ -657,7 +650,6 @@ class TestMemoryGraphErrorHandling:
         cb.memory = mem
         state = DashboardState(
             sessions=MagicMock(count=0),
-            crons=MagicMock(),
             lessons=MagicMock(
                 load_all=MagicMock(
                     return_value=[
@@ -698,7 +690,6 @@ class TestMemoryGraphHTTPIntegration:
         cb.memory = mem
         return DashboardState(
             sessions=MagicMock(count=0),
-            crons=MagicMock(),
             lessons=MagicMock(load_all=MagicMock(return_value=[])),
             start_time=0.0,
             context_builder=cb,

@@ -57,8 +57,38 @@ def _trigger_tz(trigger: Any) -> Any:
         return timezone.utc
 
 
+#: How many candidate fires to step past `skip_dates` before giving up. A user can legitimately skip
+#: a long holiday stretch, and a cron may fire many times a day — 400 covers "every hour for a
+#: fortnight" while keeping the loop bounded, and exhausting it reads as "not armable" rather than
+#: silently firing on a skipped day.
+MAX_SKIP_ADVANCE = 400
+
+
+def _skipped_dates(trigger: Any) -> set[str]:
+    """The ISO dates this trigger must not fire on.
+
+    Read from `spec.skip_dates` AND `gates.skip_dates`: §1.1 reserves the key on the gate block and
+    the migration writes it to the spec, so a real store holds both spellings. `calendar.py`'s
+    projection already accepts either, and disagreeing with it would put a skipped day on the week
+    grid while the engine fired on it.
+    """
+    spec = trigger.spec if isinstance(getattr(trigger, "spec", None), dict) else {}
+    gates = trigger.gates if isinstance(getattr(trigger, "gates", None), dict) else {}
+    raw = list(spec.get("skip_dates") or []) + list(gates.get("skip_dates") or [])
+    return {str(d).strip() for d in raw if str(d).strip()}
+
+
 def next_fire(trigger: Any, *, now: float = 0.0, last_fire: float = 0.0) -> float:
     """The next fire for a clock trigger as a UTC epoch, or 0.0 when it will never fire again.
+
+    🔴 SKIP DATES ARE HONOURED HERE (S112). Measured before fixing: a trigger with
+    `skip_dates: ["2026-08-04"]` armed to **09:00 on exactly that date**. The legacy
+    `ScheduleService._is_due` checked skip dates on every fire; the substrate carried, validated,
+    migrated and *displayed* the field (`calendar.py` even renders "struck columns" for it) while
+    the fire path ignored it — a user's explicit "not on this day" did nothing. So the raw cadence
+    is computed by `_raw_next_fire` and this wrapper advances past any skipped day, in the trigger's
+    OWN timezone (a date is a local-calendar question; on a UTC host the same instant is a
+    different date).
 
     0.0 means "not armable", and callers must treat it as "leave `next_fire_at` alone / do not
     schedule" — never as "fire now". The distinction matters for an elapsed one-shot: arming it to
@@ -66,6 +96,36 @@ def next_fire(trigger: Any, *, now: float = 0.0, last_fire: float = 0.0) -> floa
 
     `last_fire` anchors an interval so a recompute does not re-phase the schedule; it defaults to
     the trigger's `created_at` grid, matching `next_after_completion`'s §3.1 anchoring rule.
+    """
+    now = now or time.time()
+    skips = _skipped_dates(trigger)
+    fire = cadence_next_fire(trigger, now=now, last_fire=last_fire)
+    if not skips or fire <= 0:
+        return fire
+    tz = _trigger_tz(trigger)
+    for _ in range(MAX_SKIP_ADVANCE):
+        if datetime.fromtimestamp(fire, tz=tz).strftime("%Y-%m-%d") not in skips:
+            return fire
+        # Step from just after the skipped fire. `last_fire=fire` keeps an interval on its own grid
+        # rather than re-phasing it to the skipped instant.
+        nxt = cadence_next_fire(trigger, now=fire + 1.0, last_fire=fire)
+        if nxt <= fire:
+            return 0.0  # a one-shot on a skipped day never fires
+        fire = nxt
+    logger.warning(
+        "trigger %s: every candidate fire within %d steps is a skipped date",
+        getattr(trigger, "id", "?"),
+        MAX_SKIP_ADVANCE,
+    )
+    return 0.0
+
+
+def cadence_next_fire(trigger: Any, *, now: float = 0.0, last_fire: float = 0.0) -> float:
+    """The next fire from the CADENCE alone, ignoring skip dates (see `next_fire`).
+
+    Public because the WEEK GRID needs it: `calendar.project_occurrences` strikes a skipped column
+    itself (AUTO-A3), so stepping it with the skip-aware `next_fire` would hide exactly the slots
+    the grid exists to explain. Everything that decides when to FIRE uses `next_fire`.
     """
     now = now or time.time()
     if getattr(trigger, "kind", "") != "clock":

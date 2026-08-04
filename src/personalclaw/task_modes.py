@@ -290,7 +290,7 @@ def infer_risk_from_name(name: str) -> str:
 
     For dict-defined MCP tools (personalclaw-core/schedule/artifacts) and external
     MCP/OpenAI-adapter tools, the ToolDefinition would otherwise default SAFE —
-    understating a `*_delete`/`schedule_add`/`notify`. Classify by name verb:
+    understating a `*_delete`/`automation_create`/`notify`. Classify by name verb:
     destructive verb → 'destructive'; other mutating verb → 'caution'; else 'safe'.
     Conservative: only a positive mutating signal raises risk, so read tools
     (search/get/list/read) stay 'safe'. Used at ToolDefinition construction where
@@ -304,7 +304,7 @@ def infer_risk_from_name(name: str) -> str:
     if any(h in n for h in _DESTRUCTIVE_NAME_HINTS):
         return "destructive"
     # Read-verb short-circuit BEFORE mutating hints: a broad hint like "schedule"
-    # matches schedule_add (mutating) AND schedule_list (read). A tool whose verb
+    # matches automation_create (mutating) AND automation_list (read). A tool whose verb
     # is clearly a read (list/get/search/read/status/info/find/inspect) is safe,
     # so schedule_list / task_list / *_status don't get mislabeled caution.
     if any(v in n for v in _READ_VERB_HINTS):

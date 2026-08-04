@@ -225,8 +225,8 @@ def _build_nudge_message(strat, loop: Loop, d) -> str:
     SAME message shape."""
     msg = strat.cycle_nudge(loop, str(d) if d else "")
     if not loop.attended:
-        # Counter the base chat prompt's [OPTIONS: …] rule so it doesn't leak into
-        # the loop's narration. Attended loops keep their own ask path.
+        # An unattended loop has no one to answer a question or pick an option, so
+        # frame the turn as a report. Attended loops keep their own ask path.
         from personalclaw.autonomous_framing import with_autonomous_framing
 
         msg = with_autonomous_framing(msg)

@@ -1165,7 +1165,7 @@ BUNDLED_SNIPPETS: tuple[BundledSnippet, ...] = (
     BundledSnippet(
         name="critical-rules",
         filename="critical-rules.md",
-        description="The always-on critical rules injected every session: diff-after-change, absolute paths in backticks, [OPTIONS:] buttons.",  # noqa: E501
+        description="The always-on critical rules injected every session: diff-after-change, absolute paths in backticks.",  # noqa: E501
     ),
     BundledSnippet(
         name="workspace-identity",
@@ -1292,7 +1292,7 @@ BUNDLED_SNIPPETS: tuple[BundledSnippet, ...] = (
     BundledSnippet(
         name="subagent-system-prefix",
         filename="subagent-system-prefix.md",
-        description="System prefix prepended to a spawned sub-agent's task: focused, concise, no self-narration, no [OPTIONS:].",  # noqa: E501
+        description="System prefix prepended to a spawned sub-agent's task: focused, concise, no self-narration.",  # noqa: E501
     ),
     BundledSnippet(
         name="agent-voice-layer",

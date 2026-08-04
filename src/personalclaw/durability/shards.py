@@ -563,23 +563,33 @@ def dirty_entries(home: Path, state_path: Path) -> list[str]:
 def _fingerprint(path: Path) -> str:
     """A cheap change fingerprint: newest mtime + total size beneath ``path``.
 
-    For a SQLite file the ``-wal`` and ``-shm`` sidecars are folded in. Every store
-    here runs in WAL mode, where a committed write lands in the sidecar and may not
-    touch the main file for a long time — so fingerprinting the ``.db`` alone reports
-    "unchanged" through an entire session of writes, and the incremental export
-    silently backs up nothing. Found by writing a fact and watching the fingerprint
-    not move.
+    For a SQLite file the ``-wal`` sidecar is folded in. Every store here runs in WAL
+    mode, where a committed write lands in the sidecar and may not touch the main file
+    for a long time — so fingerprinting the ``.db`` alone reports "unchanged" through an
+    entire session of writes, and the incremental export silently backs up nothing.
+    Found by writing a fact and watching the fingerprint not move.
+
+    The ``-shm`` sidecar is deliberately NOT folded in. It is the WAL index: pure
+    ephemeral shared memory, rebuilt from the ``-wal`` on the next open, holding no
+    durable byte (proved by deleting it on a closed store and reading the fact back).
+    Including it made the fingerprint report change where no data had changed, because
+    SQLite mmaps it ``MAP_SHARED`` and its mtime advances at page-writeback time rather
+    than at store time — so it can move on its own, after the last database operation,
+    at a moment the writer does not control. That produced a genuine incremental-export
+    defect (an idle home re-exporting ``memory.db`` forever) and, downstream of it, a
+    load-dependent CI flake in the "dirty detection settles completely" test. A change
+    fingerprint must key on durable content only.
     """
     if path.is_file():
         stat = path.stat()
         newest = stat.st_mtime_ns
         total = stat.st_size
-        for suffix in ("-wal", "-shm"):
-            sidecar = path.with_name(path.name + suffix)
-            try:
-                side_stat = sidecar.stat()
-            except OSError:
-                continue
+        sidecar = path.with_name(path.name + "-wal")
+        try:
+            side_stat = sidecar.stat()
+        except OSError:
+            pass
+        else:
             newest = max(newest, side_stat.st_mtime_ns)
             total += side_stat.st_size
         return f"{newest}:{total}"

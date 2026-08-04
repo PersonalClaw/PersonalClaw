@@ -60,16 +60,57 @@ def test_not_found_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "not found" in msg
 
 
-def test_mcp_tool_registered() -> None:
-    from personalclaw.mcp_schedule import _list_tools
+def test_the_immediate_fire_tool_is_registered() -> None:
+    """`automation_run` is `schedule_trigger`'s successor (S109 retired the alias). Same shape: an
+    MCP process cannot own the LLM turn, so an immediate run posts to the gateway's HTTP `/run`."""
+    from personalclaw.mcp_automation import _list_tools
 
     names = {t["name"] for t in _list_tools()}
-    assert "schedule_trigger" in names
+    assert "automation_run" in names
+    assert not [n for n in names if n.startswith("schedule_")]
 
 
-def test_mcp_tool_invokes_trigger(monkeypatch: pytest.MonkeyPatch) -> None:
-    from personalclaw import mcp_schedule
+def test_the_immediate_fire_tool_posts_to_the_gateway(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """The HTTP hand-off is the contract worth pinning, not the tool's name. Driven through the real
+    dispatcher against a real store row, with only the poster stubbed."""
+    from personalclaw import mcp_automation
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
 
-    monkeypatch.setattr(st, "trigger_schedule_job", lambda jid: (True, f"triggered {jid}"))
-    out = mcp_schedule._call_tool_inner("schedule_trigger", {"job_id": "abc123"})
-    assert "triggered abc123" in out
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    TriggerStore(base_dir=tmp_path).upsert(
+        Trigger(
+            id="clock:abc123",
+            name="abc",
+            kind="clock",
+            spec={"kind": "interval", "interval_secs": 3600},
+            workflow={"inline": {"provider": "run-prompt", "config": {"message": "go"}}},
+        )
+    )
+    posted: list[str] = []
+    monkeypatch.setattr(
+        mcp_automation,
+        "_http_runner",
+        lambda payload: posted.append(str(payload.get("trigger_id") or "")) or {"status": "ok"},
+    )
+    mcp_automation._call_tool_inner("automation_run", {"id": "clock:abc123"})
+    assert posted == ["clock:abc123"]
+
+
+def test_an_unknown_id_is_refused_before_any_post(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A run that posted for an id the store does not have would fire whatever the gateway resolved
+    that id to — the wrong automation, or none, reported as success."""
+    from personalclaw import mcp_automation
+
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    posted: list[str] = []
+    monkeypatch.setattr(
+        mcp_automation, "_http_runner", lambda payload: posted.append("posted") or {"status": "ok"}
+    )
+    out = mcp_automation._call_tool_inner("automation_run", {"id": "clock:nope"})
+    assert "no automation with id" in out
+    assert posted == []

@@ -7,6 +7,7 @@ on a corrupt archive, and no job can take down the loop that runs it.
 """
 
 import json
+import os
 import sqlite3
 import tarfile
 from datetime import datetime, timedelta, timezone
@@ -159,6 +160,38 @@ class TestChangeDetection:
         path = tmp_path / "f.txt"
         path.write_text("stable")
         assert _fingerprint(path) == _fingerprint(path)
+
+    def test_the_shm_sidecar_does_NOT_dirty_a_store(self, tmp_path):
+        """🔴 The `-shm` used to be folded in, and it carries no durable byte.
+
+        It is the WAL *index*: pure shared memory, rebuilt from the `-wal` on the next
+        open, gone entirely once the last connection closes — and `INVENTORY`'s own
+        exclude list already calls it non-state. SQLite mmaps it `MAP_SHARED`, so its
+        mtime advances at page-writeback time rather than at store time and can move on
+        its own, after the last database operation, at a moment no writer controls.
+
+        Two things fell out of that: an idle home re-exported `memory.db` forever
+        (the incremental export's whole purpose defeated), and the sibling
+        "dirty detection settles completely" test failed on loaded CI while passing
+        locally. A change fingerprint must key on durable content only.
+        """
+        from personalclaw.durability.shards import _fingerprint
+
+        db_path = tmp_path / "store.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("CREATE TABLE t (x TEXT)")
+        conn.commit()
+        try:
+            shm = db_path.with_name(db_path.name + "-shm")
+            assert shm.exists(), "WAL mode must have produced the index sidecar"
+            before = _fingerprint(db_path)
+            stat = shm.stat()
+            bumped = stat.st_mtime_ns + 500_000_000
+            os.utime(shm, ns=(bumped, bumped))
+            assert _fingerprint(db_path) == before, "an -shm touch is not a data change"
+        finally:
+            conn.close()
 
 
 # ── Jobs ──

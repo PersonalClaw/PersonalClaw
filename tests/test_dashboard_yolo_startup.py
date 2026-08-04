@@ -10,7 +10,6 @@ from personalclaw.dashboard.state import DashboardState
 def _make_state() -> DashboardState:
     return DashboardState(
         sessions=MagicMock(),
-        crons=MagicMock(),
         lessons=MagicMock(),
         start_time=0.0,
     )

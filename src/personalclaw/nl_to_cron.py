@@ -6,7 +6,7 @@ ever used — so a hallucinated/garbled expression is rejected rather than sched
 
 Pure + LLM-injected: :func:`parse_cron_response` (extract + validate, no LLM) is
 unit-testable; :func:`nl_to_cron` wraps it around a one-shot completion. The schedule
-tool calls ``nl_to_cron`` then hands the validated expr to the existing ``schedule_add``.
+tool calls ``nl_to_cron`` then hands the validated expr to ``automation_create``'s spec.
 """
 
 from __future__ import annotations

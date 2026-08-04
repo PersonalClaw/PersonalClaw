@@ -52,15 +52,25 @@ NOW = 1_700_000_000.0
 # ── jitter parity: the migration-day property ──
 
 
-@pytest.mark.parametrize("trigger_id", ["job-1", "system:heartbeat:fts", "t-abc123", ""])
-def test_jitter_is_BIT_IDENTICAL_to_the_shipped_scheduler(trigger_id):
-    """A different algorithm would re-phase every migrated schedule into a
-    different sub-minute slot —
-    a silent change to when every automation on the machine runs."""
-    from personalclaw.schedule import ScheduleService
+#: The shipped `ScheduleService._jitter_offset(id, 120.0)` values, captured from that method before
+#: S112 deleted it and verified equal to `jitter_offset` at the time of capture. PINNED BY VALUE
+#: rather than compared against the old implementation, because a parity test whose reference no
+#: longer exists cannot fail — and the property it protects (never silently re-phasing a
+#: migrated schedule into a different slot) outlives the class it was measured against.
+_SHIPPED_JITTER_120 = {
+    "job-1": 0.8902834632714198,
+    "system:heartbeat:fts": 77.92671171411901,
+    "t-abc123": 65.7838982729724,
+    "": 107.18010193076866,
+}
 
+
+@pytest.mark.parametrize("trigger_id", sorted(_SHIPPED_JITTER_120))
+def test_jitter_matches_the_shipped_scheduler_BY_VALUE(trigger_id):
+    """A different algorithm would re-phase every migrated schedule into a different sub-minute
+    slot — a silent change to when every automation on the machine runs."""
     assert jitter_offset(trigger_id, 120.0) == pytest.approx(
-        ScheduleService._jitter_offset(trigger_id, 120.0), abs=1e-9
+        _SHIPPED_JITTER_120[trigger_id], abs=1e-9
     )
 
 

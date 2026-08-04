@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-08-03T11:18:09.324Z",
+  "generatedAt": "2026-08-04T04:01:45.294Z",
   "totals": {
     "driftHits": 7,
-    "filesScanned": 398,
+    "filesScanned": 401,
     "filesWithDrift": 6
   },
   "byCategory": {
@@ -20,8 +20,8 @@
     },
     {
       "file": "pages/ChatPage.tsx",
-      "score": 41,
-      "detail": "16 raw-button, 9 raw-input"
+      "score": 39,
+      "detail": "15 raw-button, 9 raw-input"
     },
     {
       "file": "pages/projects/ProjectsSection.tsx",
@@ -215,11 +215,11 @@
     }
   ],
   "a11y": {
-    "outlineNoneCount": 134,
-    "outlineNoneFiles": 58,
-    "localFocusVisibleFiles": 13,
+    "outlineNoneCount": 135,
+    "outlineNoneFiles": 59,
+    "localFocusVisibleFiles": 14,
     "reducedMotionFiles": 8,
-    "animatedFiles": 156,
+    "animatedFiles": 158,
     "hasGlobalReducedMotion": true,
     "hasGlobalFocusRing": true
   },
@@ -284,7 +284,7 @@
       "raw-dialog": 0
     },
     "pages/ChatPage.tsx": {
-      "raw-button": 16,
+      "raw-button": 15,
       "raw-input": 9,
       "raw-dialog": 0
     },
@@ -788,7 +788,7 @@
     },
     {
       "file": "pages/notifications/notificationMeta.ts",
-      "line": 35,
+      "line": 68,
       "category": "shadow",
       "snippet": "return acked ? undefined : { boxShadow: `inset 2px 0 0 0 ${tone}` }"
     },

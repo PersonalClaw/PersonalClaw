@@ -289,7 +289,7 @@ class TestNotificationResolver:
     def _state(self, note: dict):
         from types import SimpleNamespace
 
-        return SimpleNamespace(_notification_log=[note], crons=None)
+        return SimpleNamespace(_notification_log=[note])
 
     @pytest.mark.asyncio
     async def test_resolves_by_ts(self):

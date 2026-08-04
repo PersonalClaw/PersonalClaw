@@ -556,7 +556,6 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/triggers/week` — the week-grid projection, from `?start=` (AUTO-A1 — S70).
 - `DELETE /api/triggers/{id}` — DELETE /api/triggers/{id}.
 - `PUT /api/triggers/{id}` — DELETE /api/triggers/{id}.
-- `POST /api/triggers/{id}/ack` — acknowledge a schedule trigger notification.
 - `GET /api/triggers/{id}/history` — run records; other kinds answer `supported: false`.
 - `GET /api/triggers/{id}/history/{run_id}` — one full run record.
 - `POST /api/triggers/{id}/run` — fire now.

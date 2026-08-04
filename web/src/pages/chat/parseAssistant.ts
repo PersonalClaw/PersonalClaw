@@ -1,10 +1,18 @@
 /** Post-processing of assistant text for the chat UI:
- *  - trailing `[OPTIONS: A | B | C]` → one-click suggestion chips
+ *  - trailing `[OPTIONS: A | B | C]` → stripped from the prose (see below)
  *  - absolute file paths → clickable file references (open in a side panel)
  *  Kept pure + tested-shaped so the render layer stays simple. */
 
 /** Pull a trailing `[OPTIONS: a | b | c]` (case-insensitive) off the text.
- *  Returns the cleaned text + the option labels (empty if none). */
+ *  Returns the cleaned text + the option labels (empty if none).
+ *
+ *  This is a STRIPPER, not a suggestion source. The legacy `[OPTIONS: …]`
+ *  mechanism is retired — nothing instructs the model to emit the marker and the
+ *  chat UI never renders `options` as buttons (follow-up chips, driven by the
+ *  `chat_followups` event, are the single suggestion surface). Historical
+ *  messages persisted before the retirement still carry the marker, so the
+ *  render path keeps calling this to keep a raw `[OPTIONS: …]` string out of the
+ *  prose. `options` remains in the return shape for that parse. */
 export function parseOptions(text: string): { body: string; options: string[] } {
   // match a bracketed OPTIONS block, ideally near the end
   const re = /\[\s*OPTIONS?\s*:\s*([^\]]+)\]\s*$/i

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, fireEvent } from '@testing-library/react'
 import { Plus } from 'lucide-react'
-import { EmptyState } from './ListScaffold'
+import { EmptyState, ListRow } from './ListScaffold'
 
 // ── The primary-empty idiom, locked (design-system consistency S3/T3.1) ──────
 // `EmptyState` is the ONE home for a list page's "nothing exists yet" state. The
@@ -83,5 +83,59 @@ describe('EmptyState', () => {
     expect(onClick).toHaveBeenCalledTimes(1)
     // No action → no button.
     expect(render(<EmptyState title="t" />).container.querySelector('button')).toBeNull()
+  })
+})
+
+// ── ListRow keyboard operability, locked (#307) ───────────────────────────────
+// A clickable ListRow is a motion.div, and `whileTap` makes framer-motion mark it
+// focusable — so Tab landed on rows that Enter/Space could not fire, across all 11
+// list surfaces. These tests pin the button semantics on the interactive branch and,
+// just as importantly, pin that the STATIC branch stays inert: adding a role or a tab
+// stop to non-clickable rows would flood every list with phantom keyboard stops.
+
+describe('ListRow', () => {
+  it('an interactive row carries the button role and owns its tab stop', () => {
+    const { getByRole } = render(<ListRow onClick={() => {}}>Row</ListRow>)
+    expect(getByRole('button')).toHaveAttribute('tabindex', '0')
+  })
+
+  it('Enter activates an interactive row', () => {
+    const onClick = vi.fn()
+    const { getByRole } = render(<ListRow onClick={onClick}>Row</ListRow>)
+    fireEvent.keyDown(getByRole('button'), { key: 'Enter' })
+    expect(onClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('Space activates an interactive row', () => {
+    const onClick = vi.fn()
+    const { getByRole } = render(<ListRow onClick={onClick}>Row</ListRow>)
+    fireEvent.keyDown(getByRole('button'), { key: ' ' })
+    expect(onClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores other keys so list-level shortcuts still pass through', () => {
+    const onClick = vi.fn()
+    const { getByRole } = render(<ListRow onClick={onClick}>Row</ListRow>)
+    fireEvent.keyDown(getByRole('button'), { key: 'ArrowDown' })
+    fireEvent.keyDown(getByRole('button'), { key: 'Escape' })
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
+  it('interactive rows name their keyboard focus with the shared inset ring', () => {
+    const { getByRole } = render(<ListRow onClick={() => {}}>Row</ListRow>)
+    const have = classOf(getByRole('button'))
+    for (const t of ['focus-visible:ring-2', 'focus-visible:ring-inset',
+      'focus-visible:ring-primary/50']) {
+      expect(have, `missing "${t}"`).toContain(t)
+    }
+  })
+
+  it('a static row stays inert — no role, no tab stop, no focus ring', () => {
+    const { container } = render(<ListRow>Row</ListRow>)
+    const row = container.firstElementChild!
+    expect(row.getAttribute('role')).toBeNull()
+    expect(row.getAttribute('tabindex')).toBeNull()
+    expect(classOf(row)).not.toContain('focus-visible:ring-2')
+    expect(classOf(row)).not.toContain('cursor-pointer')
   })
 })

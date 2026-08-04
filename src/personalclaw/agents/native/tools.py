@@ -10,7 +10,7 @@ Two responsibilities:
 
 2. **In-process MCP tools.** :class:`InProcessMcpToolProvider` exposes an MCP
    tool module's surface (``_list_tools`` / ``_call_tool`` — e.g.
-   ``personalclaw-core`` via ``mcp_core``, ``personalclaw-schedule`` via
+   ``personalclaw-core`` via ``mcp_core``, ``personalclaw-automation`` via
    ``mcp_schedule``) directly in-process — *without* spawning the MCP server
    subprocess an external ACP CLI would. This is E2-P4's "option A"
    (fast, no subprocess); a real in-process MCP stdio *client* (option B,
@@ -61,7 +61,7 @@ class InProcessMcpToolProvider(ToolProvider):
     Wraps a module's ``_list_tools`` / ``_call_tool`` (the same handlers the MCP
     server would run as a subprocess) so a caller gets the full toolset with no
     subprocess and no JSON-RPC hop. Parameterized by the module path + provider
-    name so both ``personalclaw-core`` and ``personalclaw-schedule`` reuse it.
+    name so both ``personalclaw-core`` and ``personalclaw-automation`` reuse it.
     """
 
     def __init__(
@@ -108,7 +108,7 @@ class InProcessMcpToolProvider(ToolProvider):
             )
             name = str(tool.get("name", ""))
             # These dict-defined tools carry no risk_level, so classify by name
-            # (artifact_delete → destructive, schedule_add/notify → caution,
+            # (artifact_delete → destructive, automation_create/notify → caution,
             # *_list/*_get → safe). An explicit "risk_level" in the tool dict wins,
             # so a module can override the inference. Feeds both the approval gate
             # (via the runtime's risk map) and the Tools-page indicator.

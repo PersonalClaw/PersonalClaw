@@ -354,7 +354,7 @@ async def api_session_tool_policy(request: web.Request) -> web.Response:
     """GET /api/session-tool-policy — return managedToolPolicy for the
     calling session's agent.
 
-    Used by managed MCP servers (personalclaw-core, personalclaw-schedule) to filter
+    Used by the managed MCP server (personalclaw-core) to filter
     their tool lists per-agent.  Returns {"exclude": [...]} on success,
     or 400/404 when the session cannot be identified (deny-by-default:
     callers that cannot prove identity get an error, not an empty policy).

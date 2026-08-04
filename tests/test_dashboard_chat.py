@@ -5439,10 +5439,6 @@ class TestStopTurnSessionState:
         sessions.get_pid = MagicMock(return_value=None)
         return DashboardState(
             sessions=sessions,
-            crons=MagicMock(
-                list_jobs=MagicMock(return_value=[]),
-                status=MagicMock(return_value={}),
-            ),
             lessons=MagicMock(load_all=MagicMock(return_value=[])),
             start_time=0.0,
             conversation_log=ConversationLog(base_dir=tmp_path),

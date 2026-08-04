@@ -601,3 +601,22 @@ async def test_seen_rejects_a_malformed_body(store, bad):
     else:
         req, _ = _api_request(store, body=bad)
     assert (await h.api_inbox_seen(req)).status == 400
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("junk", [{}, [], 5, None, True])
+async def test_seen_ignores_an_id_that_cannot_be_an_item_id(store, junk):
+    """A non-string element is unhashable or unmatchable — it must match nothing, not 500.
+
+    `seen` is idempotent, so silently skipping junk is the honest behavior: a real id
+    alongside it still advances.
+    """
+    from personalclaw.dashboard import handlers_inbox as h
+
+    _seed(store)
+    target = next(i for i in store.items.values() if i.status == ItemStatus.PENDING.value)
+    req, _ = _api_request(store, body={"ids": [junk, target.id]})
+    resp = await h.api_inbox_seen(req)
+    assert resp.status == 200
+    assert (await _payload(resp))["seen"] == 1
+    assert store.items[target.id].status == ItemStatus.SEEN.value

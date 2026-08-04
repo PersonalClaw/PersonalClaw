@@ -300,6 +300,32 @@ def validate_spec(kind: str, spec: dict[str, Any]) -> list[Issue]:
             issues.append(
                 Issue(path="spec.at", message=f"an {clock_kind} clock needs `at`", severity="error")
             )
+        if clock_kind == "interval":
+            # 🔴 THE R1 FLOOR, finally enforced. `MIN_CLOCK_INTERVAL_SECS` was declared and
+            # read by NOTHING — measured: `create(spec={"kind":"interval","interval_secs":5})`
+            # persisted a 5-second LLM poll with `ok: True` and zero issues. The only live floor was
+            # the retired `schedule_add` schema's `min_val=60`, so retiring the alias would have
+            # removed the last check standing between a typo and an every-5-seconds model call.
+            #
+            # A WARNING, not an error, because R1 makes the floor overridable ("a 5-minute
+            # local-model poll is a legitimate choice — it just should not be the accident you get
+            # from typing `* * * * *`"). An error would refuse a trigger the plan says to allow; a
+            # silent pass is what let this go unnoticed. So: it fires, and it is visibly flagged.
+            try:
+                secs = int((spec or {}).get("interval_secs") or 0)
+            except (TypeError, ValueError):
+                secs = 0
+            if 0 < secs < MIN_CLOCK_INTERVAL_SECS:
+                issues.append(
+                    Issue(
+                        path="spec.interval_secs",
+                        message=(
+                            f"{secs}s is below the {MIN_CLOCK_INTERVAL_SECS}s floor for an "
+                            f"LLM-invoking trigger; it will still run, but confirm this is "
+                            f"intended"
+                        ),
+                    )
+                )
     elif kind == "event" and not str((spec or {}).get("source", "") or "").strip():
         issues.append(
             Issue(path="spec.source", message="an event trigger needs a source", severity="error")
@@ -499,6 +525,45 @@ def _known_fields() -> frozenset[str]:
     return frozenset(f.name for f in _dc.fields(Trigger))
 
 
+def _inline_credential_issues(workflow: Any) -> list[Issue]:
+    """WARN when a trigger's action carries a credential LITERALLY (§7 item 6 / R14 — S115).
+
+    🔴 Measured: the workflow lint flags `curl -H 'Authorization: Bearer sk-ant-api03-…'` as an
+    inline secret, and a TRIGGER stored the same string with `ok: True` and zero issues. The two
+    surfaces disagreed about the same mistake, so the guidance the workflow validator gives
+    ("reference credentials as {{secret:KEY}}") was unenforced for the automation half.
+
+    Reuses `workflows.secrets.find_inline_secrets` rather than re-deriving the credential shapes: a
+    second regex set would drift, and this one already skips the sanctioned `{{secret:...}}` form so
+    the fix for a finding never trips the finding again.
+
+    A WARNING, not an error. The trigger still fires — refusing would break every automation a user
+    already has with a token pasted in, which is exactly the population that most needs to keep
+    working while they migrate. The row is visibly flagged in the store, the doctor and the UI.
+    """
+    if not isinstance(workflow, dict):
+        return []
+    try:
+        from personalclaw.workflows.secrets import find_inline_secrets
+    except Exception:  # noqa: BLE001 - a lint that cannot import must not fail a parse
+        return []
+    try:
+        findings = find_inline_secrets(workflow)
+    except Exception:  # noqa: BLE001 - same; this module is pure validation and never logs
+        return []
+    return [
+        Issue(
+            path=f"workflow.{f.key}" if f.key else "workflow",
+            message=(
+                f"{f.key or 'the action'} looks like an inline credential ({f.hint}) — "
+                f"reference it as {{{{secret:KEY}}}} instead, which is resolved at dispatch and "
+                f"never stored"
+            ),
+        )
+        for f in findings
+    ]
+
+
 def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
     """Parse one authored trigger. Returns `(trigger, issues)` and NEVER raises.
 
@@ -537,6 +602,7 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
     gates: dict[str, Any] = dict(raw_gates) if isinstance(raw_gates, dict) else {}
     issues.extend(validate_spec(kind, spec))
     issues.extend(validate_gates(gates))
+    issues.extend(_inline_credential_issues(data.get("workflow")))
 
     if not str(data.get("id", "") or "").strip():
         issues.append(Issue(path="id", message="a trigger needs an id", severity="error"))

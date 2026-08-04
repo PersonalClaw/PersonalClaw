@@ -3,8 +3,8 @@
 A scheduled run, a goal loop cycle, and a space member's turn all execute with no
 human reachable to answer questions. Without an explicit signal the model falls
 back to conversational affordances — asking clarifying questions, offering
-``[OPTIONS: …]`` menus — which is wrong for an unattended run: the output is read
-later as a report, not answered live.
+option menus — which is wrong for an unattended run: the output is read later as
+a report, not answered live.
 
 This module is the single source of truth for that framing so every unattended
 runner (cron, goal loops, spaces) prepends the same instruction. Callers wrap
@@ -26,8 +26,8 @@ AUTONOMOUS_TURN_PREAMBLE = (
     "You are running unattended. Your output is read later as a report; no one "
     "can answer questions or pick options during this run. Therefore:\n"
     "- Do NOT ask the user questions or wait for input.\n"
-    '- Do NOT offer interactive menus or option lists (no "[OPTIONS: …]", no '
-    '"which would you like?").\n'
+    '- Do NOT offer interactive menus or option lists (no "which would you '
+    'like?").\n'
     "- Complete the task end-to-end with the tools available, then report what "
     "you did and found.\n"
     "- If a decision is genuinely blocked on missing input, state the blocker "
