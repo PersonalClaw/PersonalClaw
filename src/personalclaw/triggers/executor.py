@@ -65,9 +65,27 @@ STATUS_PENDING = "_pending"
 #: `launched` → `DEFERRED`, never `RAN`: the action started background work and nobody has seen the
 #: result. `engine.dispatch_action` maps the same status to DEGRADED for the same reason, and S84's
 #: history projection maps it to `deferred` too. Three surfaces, one meaning.
+#:
+#: 🔴 `skip`/`done`/`report` were ABSENT, and absence here means `unrecognized runner status` →
+#: **FAILED** (S155). `run_script_provider` explicitly returns `success=True` for all four of
+#: `ok`/`done`/`report`/`skip`, so three statuses a provider calls success were recorded as failures
+#: — and a failure is not cosmetic on this path: `autopause` spends a 5-failure budget off these
+#: rows, so a healthy weekly script reporting `skip` would pause its own automation.
+#:
+#: `skip` → `SKIPPED_NOOP`, which is the value §1.3 defines as "ran and mutated nothing durable" and
+#: which `INERT_OUTCOMES` already folds out of the default runs view. It had a live reader
+#: (`history.is_inert`) and no writer.
+#:
+#: `done`/`report` → `RAN`: both DID the work. `done` additionally means one-shot ("remove the job
+#: after this run"), but that is a LIFECYCLE decision belonging to the caller that owns the job, not
+#: a different account of what this fire did — conflating the two would make a completed final run
+#: indistinguishable from one that no-opped.
 STATUS_TO_OUTCOME: dict[str, str] = {
     "ok": Outcome.RAN.value,
     "success": Outcome.RAN.value,
+    "done": Outcome.RAN.value,
+    "report": Outcome.RAN.value,
+    "skip": Outcome.SKIPPED_NOOP.value,
     "launched": Outcome.DEFERRED.value,
     "error": Outcome.FAILED.value,
     "failure": Outcome.FAILED.value,
@@ -207,6 +225,11 @@ def classify(reported: str, exception: BaseException | None = None) -> tuple[str
         reason = "" if outcome == Outcome.RAN.value else f"runner reported {status}"
         if outcome == Outcome.DEFERRED.value:
             reason = "action launched background work; outcome not yet known"
+        elif outcome == Outcome.SKIPPED_NOOP.value:
+            # `FireRecord.reason` is MANDATORY for anything other than a clean run, and this row
+            # folds out of the default view — so the reason is the only thing that will ever explain
+            # why. "runner reported skip" restates the status; this says what it MEANS.
+            reason = "the action ran and had nothing to do; nothing durable changed"
         return outcome, reason
     return Outcome.FAILED.value, f"unrecognized runner status {status!r}"
 

@@ -480,3 +480,90 @@ def test_store_to_tick_to_dispatch_to_execute(tmp_path):
     # And every trigger's next fire was persisted by the tick, so a crash now cannot double-fire.
     for i in range(3):
         assert SVC.to_epoch(store.get(f"t{i}").trigger.next_fire_at) > NOW
+
+
+# ── 🔴 three success statuses were classified FAILED (S155) ──
+
+
+def test_SKIP_is_a_no_op_not_a_failure():
+    """🔴 THE DEFECT. `run_script_provider` returns `success=True` for `ok`/`done`/`report`/`skip`,
+    and `STATUS_TO_OUTCOME` carried only the first — so three statuses a provider calls success fell
+    through to `unrecognized runner status` → **FAILED**.
+
+    Not cosmetic: `autopause` spends a 5-failure budget off these rows, so a healthy weekly script
+    reporting `skip` would have paused its own automation after five quiet weeks.
+    """
+    outcome, reason = E.classify("skip")
+    assert outcome == Outcome.SKIPPED_NOOP.value, "a silent success is a no-op, not a failure"
+    assert outcome != Outcome.FAILED.value
+    # The reason must say what it MEANS, not restate the status: this row folds out of the default
+    # view, so its reason is the only thing that will ever explain it.
+    assert "nothing" in reason and "skip" not in reason
+
+
+def test_DONE_and_REPORT_are_plain_successes():
+    """Both DID the work. `done` additionally means one-shot, but that is a LIFECYCLE decision owned
+    by the caller that removes the job — not a different account of what this fire did. Conflating
+    them would make a completed final run indistinguishable from one that no-opped."""
+    assert E.classify("done")[0] == Outcome.RAN.value
+    assert E.classify("report")[0] == Outcome.RAN.value
+    assert E.classify("done")[1] == "" and E.classify("report")[1] == ""
+
+
+def test_the_noop_row_is_INERT_but_not_a_failure():
+    """Where the value has to land to be useful: `INERT_OUTCOMES` folds it out of the default runs
+    view (its live reader `history.is_inert` had no writer for this value), while
+    `TRUE_FAILURE_OUTCOMES` must NOT contain it or the autopause budget would spend on quiet runs.
+    """
+    from personalclaw.triggers.models import (
+        FIRE_OUTCOMES,
+        INERT_OUTCOMES,
+        TRUE_FAILURE_OUTCOMES,
+    )
+
+    noop = Outcome.SKIPPED_NOOP.value
+    assert noop in FIRE_OUTCOMES, "it must be a legal ledger row value"
+    assert noop in INERT_OUTCOMES, "it collapses to a row and archives out of the default view"
+    assert noop not in TRUE_FAILURE_OUTCOMES, "a quiet run must not spend the failure budget"
+
+
+def test_a_streak_of_noops_does_NOT_autopause():
+    """Driven rather than reasoned, because this is the failure that would actually hurt: five quiet
+    fires in a row must leave a healthy automation running."""
+    from personalclaw.triggers.autopause import consecutive_failures_from
+
+    rows = [{"outcome": Outcome.SKIPPED_NOOP.value, "status": "success"}] * 5
+    assert consecutive_failures_from(rows) == 0
+
+
+def test_a_noop_counts_as_NEITHER_success_nor_failure_in_the_rollup():
+    """The same call `deferred` gets: counting a no-op as a success would let a script that silently
+    stopped doing anything look healthy, and counting it as a failure would pause a working one."""
+    outs = [
+        E.RunOutcome(trigger_id="t", session_key="s", outcome=Outcome.SKIPPED_NOOP.value)
+        for _ in range(3)
+    ]
+    health = E.health_delta(E.DrainResult(session_key="s", outcomes=outs))
+    assert health["settled"] == 3, "it did settle — the run finished"
+    assert health["succeeded"] == 0 and health["failed"] == 0
+    assert health["consecutive_failures"] == 0
+
+
+def test_EVERY_provider_success_status_is_mapped():
+    """The completeness guard this pattern earned. `run_script_provider` names its success statuses
+    in one tuple; every one of them must classify to a non-FAILED outcome. A provider that grows a
+    fifth success status now fails here instead of silently recording a success as a failure."""
+    import inspect
+
+    from personalclaw.action_providers import run_script_provider
+
+    source = inspect.getsource(run_script_provider)
+    assert (
+        'status in ("ok", "done", "report", "skip")' in source
+    ), "the provider's success tuple moved; re-derive this test against it"
+    for status in ("ok", "done", "report", "skip"):
+        outcome, _reason = E.classify(status)
+        assert outcome != Outcome.FAILED.value, (
+            f"the provider calls {status!r} a success (success=True) and the fire path records it "
+            "as a FAILURE — the exact asymmetry S155 closed"
+        )
