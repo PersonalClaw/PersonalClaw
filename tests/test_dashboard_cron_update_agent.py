@@ -1,31 +1,56 @@
-"""Schedule-trigger PATCH forwards the canonical action to the update_job kwarg.
+"""Schedule-trigger PATCH persists the canonical action (agent + approval mode) to the STORE.
 
-A schedule trigger's agent now rides the canonical ``action`` (invoke-agent's
-``config.agent``), not a top-level ``agent`` key. ``_update_schedule`` forwards the
-whole ``action`` dict to the schedule service's ``action`` kwarg so an agent change
-persists. These tests lock that mapping.
+A schedule trigger's agent rides the canonical ``action`` (invoke-agent's ``config.agent``), not a
+top-level ``agent`` key, and a PATCH must persist that change rather than dropping it.
+
+🔴 REWRITTEN FOR S110. These tests asserted the `crons.update_job(...)` CALL SHAPE —
+`kwargs["action"]["config"]["agent"]` on a MagicMock — the legacy fallback the facade's CRUD
+retirement deleted. A call-shape assertion proves which function was invoked, never that anything
+was stored; the mock happily accepted `action=` for as long as that path existed. These drive the
+real store and read the row back, so they assert the mapping actually survives a write.
 """
 
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from personalclaw.dashboard.handlers import triggers as T
 from personalclaw.dashboard.handlers.triggers import api_trigger_detail
-from personalclaw.schedule import ScheduleDefinition, ScheduleJob, make_agent_action
+from personalclaw.triggers.models import Trigger
+from personalclaw.triggers.store import TriggerStore
+
+
+@pytest.fixture
+def home(tmp_path, monkeypatch):
+    """A tmp home the handler resolves its store through (its own module-level `config_dir`)."""
+    import personalclaw.config.loader as loader
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(T, "config_dir", lambda: tmp_path)
+    return tmp_path
+
+
+def _seed(home, raw_id="abc123", *, agent="", approval_mode=""):
+    config = {"task_template": "m"}
+    if agent:
+        config["agent"] = agent
+    if approval_mode:
+        config["approval_mode"] = approval_mode
+    TriggerStore(base_dir=home).upsert(
+        Trigger(
+            id=raw_id,
+            name="t",
+            kind="clock",
+            enabled=True,
+            spec={"kind": "interval", "interval_secs": 300},
+            workflow={"inline": {"provider": "invoke-agent", "config": config}},
+        )
+    )
 
 
 def _make_request(body: dict, raw_id: str = "abc123") -> MagicMock:
     mock_state = MagicMock()
-    mock_state.crons.update_job.return_value = ScheduleJob(
-        id=raw_id,
-        name="t",
-        action=make_agent_action(message="m"),
-        schedule=ScheduleDefinition(kind="every", every_secs=300),
-    )
-    mock_state.crons.is_running.return_value = False
-    mock_state.crons.running_since.return_value = None
     mock_state._sessions = {}
-
     request = MagicMock()
     request.app = {"state": mock_state}
     request.method = "PUT"
@@ -41,53 +66,56 @@ def _agent_action(agent: str, task: str = "m", approval_mode: str = "") -> dict:
     return {"action": {"provider": "invoke-agent", "config": config}}
 
 
+def _stored_config(home, raw_id="abc123") -> dict:
+    row = TriggerStore(base_dir=home).get(raw_id)
+    assert row is not None
+    inline = (row.trigger.workflow or {}).get("inline") or {}
+    return dict(inline.get("config") or {})
+
+
 class TestScheduleTriggerUpdateAgent:
     @pytest.mark.asyncio
-    async def test_action_agent_forwarded_in_action_kwarg(self):
-        request = _make_request(_agent_action("bxt-brain-leader"))
-        resp = await api_trigger_detail(request)
+    async def test_the_agent_is_persisted_inside_the_canonical_action(self, home):
+        _seed(home)
+        resp = await api_trigger_detail(_make_request(_agent_action("bxt-brain-leader")))
         assert resp.status == 200
-        update_job = request.app["state"].crons.update_job
-        update_job.assert_called_once()
-        _, kwargs = update_job.call_args
-        assert kwargs["action"]["config"]["agent"] == "bxt-brain-leader"
-        assert "agent_id" not in kwargs  # the canonical action carries the agent
+        assert _stored_config(home)["agent"] == "bxt-brain-leader"
 
     @pytest.mark.asyncio
-    async def test_action_persisted_on_job(self):
-        request = _make_request(_agent_action("worker"))
-        resp = await api_trigger_detail(request)
+    async def test_the_provider_is_preserved(self, home):
+        _seed(home)
+        resp = await api_trigger_detail(_make_request(_agent_action("worker")))
         assert resp.status == 200
-        # The canonical action is written back onto the job.
-        assert (
-            request.app["state"].crons.update_job.return_value.action["provider"] == "invoke-agent"
-        )
+        inline = (TriggerStore(base_dir=home).get("abc123").trigger.workflow or {})["inline"]
+        assert inline["provider"] == "invoke-agent"
 
     @pytest.mark.asyncio
-    async def test_other_fields_patched_alongside_action(self):
-        body = {"name": "renamed", "channel": "C0AP77JJSN6", "silent": True}
+    async def test_other_fields_are_patched_alongside_the_action(self, home):
+        _seed(home)
+        body = {"name": "renamed"}
         body.update(_agent_action("bxt-brain-leader", approval_mode="auto"))
-        request = _make_request(body)
-        resp = await api_trigger_detail(request)
+        resp = await api_trigger_detail(_make_request(body))
         assert resp.status == 200
-        _, kwargs = request.app["state"].crons.update_job.call_args
-        assert kwargs.get("name") == "renamed"
-        assert kwargs["action"]["config"]["agent"] == "bxt-brain-leader"
-        assert kwargs["action"]["config"]["approval_mode"] == "auto"
-        assert kwargs.get("channel") == "C0AP77JJSN6"
-        assert kwargs.get("silent") is True
+
+        assert TriggerStore(base_dir=home).get("abc123").trigger.name == "renamed"
+        config = _stored_config(home)
+        assert config["agent"] == "bxt-brain-leader"
+        assert config["approval_mode"] == "auto"
 
     @pytest.mark.asyncio
-    async def test_name_only_patch_does_not_touch_agent(self):
-        request = _make_request({"name": "renamed"})
-        resp = await api_trigger_detail(request)
+    async def test_a_name_only_patch_leaves_the_agent_alone(self, home):
+        """🔴 The regression this file exists for: a rename must not blank the agent the user set."""
+        _seed(home, agent="keepme", approval_mode="auto")
+        resp = await api_trigger_detail(_make_request({"name": "renamed"}))
         assert resp.status == 200
-        _, kwargs = request.app["state"].crons.update_job.call_args
-        assert "action" not in kwargs
+        config = _stored_config(home)
+        assert config["agent"] == "keepme"
+        assert config["approval_mode"] == "auto"
+        assert TriggerStore(base_dir=home).get("abc123").trigger.name == "renamed"
 
     @pytest.mark.asyncio
-    async def test_job_not_found_returns_404(self):
-        request = _make_request(_agent_action("bxt-brain-leader"), raw_id="missing")
-        request.app["state"].crons.update_job.return_value = None
-        resp = await api_trigger_detail(request)
+    async def test_an_unknown_id_returns_404(self, home):
+        resp = await api_trigger_detail(
+            _make_request(_agent_action("bxt-brain-leader"), raw_id="missing")
+        )
         assert resp.status == 404

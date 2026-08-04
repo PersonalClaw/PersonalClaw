@@ -17,26 +17,49 @@ from aiohttp.test_utils import make_mocked_request
 
 from personalclaw.dashboard.handlers import triggers as T
 from personalclaw.hooks import ScriptHookStore
-from personalclaw.schedule import ScheduleDefinition, ScheduleJob, make_agent_action
 
 
 @pytest.fixture
-def state(tmp_path):
+def state(tmp_path, monkeypatch):
+    """A fake state whose SCHEDULE half is a real trigger store (S110).
+
+    This used to mock `crons.list_jobs` and return a `ScheduleJob`. The facade's legacy fallbacks
+    retired with `ScheduleService`'s CRUD, so the schedule half is now the store — and the fixture
+    seeds the equivalent row rather than the mock. The lifecycle half stays a real
+    `ScriptHookStore`, which is what these tests were always about.
+    """
+    import personalclaw.config.loader as loader
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(T, "config_dir", lambda: tmp_path)
+
     hook_store = ScriptHookStore(config_dir=tmp_path)
     st = MagicMock()
     st._hook_store = hook_store
     st._sessions = {}
-    st.crons.is_running.return_value = False
-    st.crons.running_since.return_value = None
-    # one schedule job (invoke-agent exec mode → action derived on read)
-    job = ScheduleJob(
-        id="job1",
-        name="Nightly",
-        action=make_agent_action(message="do it", agent="coder"),
-        schedule=ScheduleDefinition(kind="every", every_secs=3600),
+    st._background_tasks = set()
+    # one schedule trigger (invoke-agent → action derived on read), the store-shaped equivalent of
+    # the `ScheduleJob` this fixture used to mock.
+    store = TriggerStore(base_dir=tmp_path)
+    store.upsert(
+        Trigger(
+            id="job1",
+            name="Nightly",
+            kind="clock",
+            enabled=True,
+            spec={"kind": "interval", "interval_secs": 3600},
+            workflow={
+                "inline": {
+                    "provider": "invoke-agent",
+                    "config": {"task_template": "do it", "agent": "coder"},
+                }
+            },
+        )
     )
-    st.crons.list_jobs.return_value = [job]
-    st._job = job
+    st._store = store
+    st._job = store.get("job1").trigger
     return st
 
 
@@ -223,7 +246,6 @@ def _ev(store, **kw):
 def test_event_toggle_no_longer_404s(state, event_store):
     """Measured: 404 "not found" from the schedule fallthrough, while the trigger kept firing."""
     _ev(event_store, enabled=True)
-    state.crons.list_jobs.return_value = []  # no cron job shares this id
     req = _req(
         "POST", "/api/triggers/event:ev1/toggle", state, body={}, match_info={"id": "event:ev1"}
     )
@@ -482,7 +504,6 @@ def test_the_facade_has_no_remaining_parity_gaps(state, event_store):
     from personalclaw.triggers.events import parity_report
 
     _ev(event_store)
-    state.crons.list_jobs.return_value = [state._job]
 
     # `crons` is a MagicMock, so `await crons.list_runs(...)` raises TypeError and the probe's
     # exception guard below would score schedule/history as UNSUPPORTED — a harness artifact
@@ -523,30 +544,53 @@ def test_the_facade_has_no_remaining_parity_gaps(state, event_store):
 # ── S70: the week grid + automation doctor (AUTO-A1, §7 criterion 12) ──
 
 
-def _every_job(job_id, name, *, interval=3600, gates=None, workflow=None, glob="", enabled=True):
-    from datetime import datetime
+def _seed_interval(
+    state,
+    trigger_id,
+    name,
+    *,
+    interval=3600,
+    gates=None,
+    workflow=None,
+    glob="",
+    enabled=True,
+    expr="",
+):
+    """Write an interval (or cron) trigger into the fixture's real store.
 
-    from personalclaw.schedule import ScheduleDefinition, ScheduleJob, make_agent_action
+    Replaces `_every_job`, which built a `ScheduleJob` for `crons.list_jobs` to return — the legacy
+    fallback S110 retired. The grid anchor comes from `next_fire_at`: the legacy shape carried it as
+    `created_ts`/`last_run_ts`, and the store carries an armed ISO fire, so the helper arms the row
+    the way every real write path does.
+    """
+    from datetime import datetime, timezone
 
-    job = ScheduleJob(
-        id=job_id,
-        name=name,
-        action=make_agent_action(message="x"),
-        schedule=ScheduleDefinition(kind="every", every_secs=interval),
-        created_ts=datetime(2024, 1, 1).timestamp(),
-        enabled=enabled,
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
+
+    spec = (
+        {"kind": "cron", "expr": expr} if expr else {"kind": "interval", "interval_secs": interval}
     )
-    job.gates = gates or {}
-    job.workflow = workflow or {}
-    job.watch_glob = glob
-    return job
+    trigger = Trigger(
+        id=trigger_id,
+        name=name,
+        kind="clock",
+        enabled=enabled,
+        spec=spec,
+        gates=gates or {},
+        workflow=workflow or {"inline": {"provider": "run-prompt", "config": {"message": "x"}}},
+        next_fire_at=datetime(2024, 1, 1, tzinfo=timezone.utc).isoformat(),
+    )
+    if glob:
+        trigger.spec = {**trigger.spec, "paths": [glob]}
+    TriggerStore(base_dir=state._store.base_dir).upsert(trigger)
+    return trigger
 
 
 def test_week_grid_annotates_suppressed_slots(state):
     """A grid that HID suppressed fires would show a schedule the user does not have."""
-    state.crons.list_jobs.return_value = [
-        _every_job("j1", "Hourly", gates={"quiet_hours": {"start": "22:00", "end": "08:00"}})
-    ]
+    state._store.delete("job1")
+    _seed_interval(state, "j1", "Hourly", gates={"quiet_hours": {"start": "22:00", "end": "08:00"}})
     req = _req("GET", "/api/triggers/week", state, query="start=2024-01-01&days=1")
     resp = _run(T.api_triggers_week(req))
     assert resp.status == 200
@@ -566,19 +610,10 @@ def test_week_grid_omits_disabled_but_now_PLOTS_a_cron(state):
 
     A DISABLED trigger is still omitted, and that half is unchanged: it has no fires, and drawing
     them would make the grid a wish list rather than a forecast."""
-    from personalclaw.schedule import ScheduleDefinition, ScheduleJob, make_agent_action
-
-    cron = ScheduleJob(
-        id="j2",
-        name="Cron",
-        action=make_agent_action(message="y"),
-        schedule=ScheduleDefinition(kind="cron", cron_expr="0 9 * * *"),
-    )
-    state.crons.list_jobs.return_value = [
-        _every_job("j1", "Hourly"),
-        _every_job("j3", "Off", enabled=False),
-        cron,
-    ]
+    state._store.delete("job1")
+    _seed_interval(state, "j1", "Hourly")
+    _seed_interval(state, "j3", "Off", enabled=False)
+    _seed_interval(state, "j2", "Cron", expr="0 9 * * *")
     body = _body(
         _run(T.api_triggers_week(_req("GET", "/api/triggers/week", state, query="days=1")))
     )
@@ -590,7 +625,8 @@ def test_week_grid_omits_disabled_but_now_PLOTS_a_cron(state):
 def test_week_grid_reports_which_triggers_were_capped(state):
     """Named, not a bare bool: "some trigger was capped" is not actionable, and a silently partial
     week reads as an accurate forecast."""
-    state.crons.list_jobs.return_value = [_every_job("j1", "Minutely", interval=60)]
+    state._store.delete("job1")
+    _seed_interval(state, "j1", "Minutely", interval=60)
     body = _body(
         _run(T.api_triggers_week(_req("GET", "/api/triggers/week", state, query="days=7")))
     )
@@ -598,14 +634,14 @@ def test_week_grid_reports_which_triggers_were_capped(state):
 
 
 def test_week_grid_rejects_a_bad_start(state):
-    state.crons.list_jobs.return_value = []
     resp = _run(T.api_triggers_week(_req("GET", "/api/triggers/week", state, query="start=nope")))
     assert resp.status == 400
 
 
 def test_week_grid_bounds_the_window(state):
     """31 days max: an unbounded `days` is a cheap way to make the endpoint slow."""
-    state.crons.list_jobs.return_value = [_every_job("j1", "Hourly")]
+    state._store.delete("job1")
+    _seed_interval(state, "j1", "Hourly")
     body = _body(
         _run(T.api_triggers_week(_req("GET", "/api/triggers/week", state, query="days=9999")))
     )
@@ -618,10 +654,9 @@ def test_week_grid_bounds_the_window(state):
 def test_doctor_reports_across_both_trigger_kinds(state, event_store):
     """The doctor walks schedule AND event triggers — a problem in either is equally silent."""
     _ev(event_store, key_glob="*")
-    state.crons.list_jobs.return_value = [
-        _every_job("j1", "Orphan", workflow={"def": "gone"}),
-        _every_job("j2", "Ungated", gates={"duty_gate": {"provider": "acme-calendar"}}),
-    ]
+    state._store.delete("job1")
+    _seed_interval(state, "j1", "Orphan", workflow={"def": "gone"})
+    _seed_interval(state, "j2", "Ungated", gates={"duty_gate": {"provider": "acme-calendar"}})
     resp = _run(T.api_triggers_doctor(_req("GET", "/api/triggers/doctor", state)))
     assert resp.status == 200
     body = _body(resp)
@@ -633,9 +668,8 @@ def test_doctor_reports_across_both_trigger_kinds(state, event_store):
 
 
 def test_doctor_reports_healthy_when_nothing_is_wrong(state, event_store):
-    state.crons.list_jobs.return_value = [
-        _every_job("j1", "Fine", gates={"quiet_hours": {"start": "22:00", "end": "08:00"}})
-    ]
+    state._store.delete("job1")
+    _seed_interval(state, "j1", "Fine", gates={"quiet_hours": {"start": "22:00", "end": "08:00"}})
     body = _body(_run(T.api_triggers_doctor(_req("GET", "/api/triggers/doctor", state))))
     assert body["healthy"] is True and body["count"] == 0
 
