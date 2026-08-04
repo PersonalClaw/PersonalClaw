@@ -565,7 +565,25 @@ def _create_event(body: dict) -> web.Response:
         max_fires=int(body.get("max_fires", 0) or 0),
     )
     _event_store().upsert(t)
-    return web.json_response(_serialize_event(t), status=201)
+    # A catastrophic `content_re` warns rather than refuses (§7/R4 rule d — S128). It runs on the
+    # MEMORY WRITE path, where `(a+)+` costs ~40s on a 30-char value; refusing would break triggers
+    # people already have, so the row is created and the risk is named where the author will see it.
+    payload = _serialize_event(t)
+    hint = _regex_hint(t.content_re)
+    if hint:
+        payload["warning"] = hint
+    return web.json_response(payload, status=201)
+
+
+def _regex_hint(pattern: str) -> str:
+    """The catastrophic-backtracking warning for a `content_re`, or "".
+
+    Thin wrapper so both the create and update handlers ask the same question of the same function —
+    a per-handler copy is how one of them ends up not warning.
+    """
+    from personalclaw.event_triggers import catastrophic_regex_hint
+
+    return catastrophic_regex_hint(pattern or "")
 
 
 async def _create_lifecycle(
@@ -823,7 +841,13 @@ def _update_event(raw: str, body: dict) -> web.Response:
             trigger.action_config = dict(action["config"] or {})
 
     store.upsert(trigger)
-    return web.json_response({"ok": True, "trigger": _serialize_event(trigger)})
+    # Same warn-not-refuse treatment as the create path: an edit that INTRODUCES a catastrophic
+    # pattern must say so, or the author only learns about it when their memory writes get slow.
+    result: dict[str, Any] = {"ok": True, "trigger": _serialize_event(trigger)}
+    hint = _regex_hint(trigger.content_re)
+    if hint:
+        result["warning"] = hint
+    return web.json_response(result)
 
 
 async def _update_lifecycle(state: DashboardState, raw: str, body: dict) -> web.Response:

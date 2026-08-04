@@ -92,8 +92,68 @@ class EventTrigger:
         )
 
 
+#: How much of a memory value `ContentMatch` will scan.
+#:
+#: §7/R4 rule (d) — "payload content never participates in event-pattern matching; only trigger spec
+#: patterns match, payload is data" — HOLDS here and was verified rather than assumed: the regex
+#: comes
+#: from `trigger.content_re` and the value is only ever matched against. Nothing lets payload text
+#: supply a pattern, and `render_template` does not re-expand a substituted value (checked in S126).
+#:
+#: 4 KB because a `ContentMatch` trigger asks "does this memory value mention X", and a mention that
+#: first appears past 4 KB is not what anyone is watching for. Applied to the SCAN only, never
+#: to what
+#: is stored or fired — truncating the value itself would silently change what the automation sees.
+#:
+#: 🔴 **THIS CAP DOES NOT FIX ReDoS, and saying so matters.** Measured on this very function: an
+#: author regex of `(a+)+$` — a shape people write by accident, not an attack — takes 0.66s at 24
+#: characters, 2.5s at 26, 10.2s at 28, 40.7s at 30. It is EXPONENTIAL in length, so a 4096-char cap
+#: bounds nothing useful; a cap that looked like a fix would be worse than none, because the next
+#: reader would stop looking. The cap's real value is bounding the LINEAR cost of a sane regex
+#: over a
+#: large value. Catastrophic patterns are addressed where they are authored — see
+#: `catastrophic_regex_hint`.
+CONTENT_MATCH_SCAN_LIMIT = 4096
+
+#: Regex constructs whose backtracking is exponential: a quantifier applied to a group that is
+#: itself
+#: quantified (`(a+)+`, `(a*)*`, `(a+)*`) or an alternation-in-a-quantified-group (`(a|a)+`). These
+#: are the two shapes behind essentially every real ReDoS, and both are almost always an accident —
+#: an author who wrote `(\w+)+` meant `\w+`.
+_CATASTROPHIC_RE = re.compile(r"\([^)]*[+*]\)[+*]|\((?=[^)]*\|)[^)]*\)[+*]")
+
+
+def catastrophic_regex_hint(pattern: str) -> str:
+    """A warning if `pattern` has exponential-backtracking shape, else "".
+
+    🔴 Detection at AUTHOR time rather than a timeout at match time — a deliberate trade with a
+    stated cost. Python's `re` has no timeout; the third-party `regex` module does but is only a
+    transitive dependency here, and adding a declared dependency to a security path is an owner
+    call, not a session one. Threading the match does not help either — a thread cannot be killed
+    mid-regex, so the CPU burns regardless of who stops waiting.
+
+    So the residual risk is stated plainly: a user who saves a catastrophic pattern **and dismisses
+    this warning** can still stall their own memory-write path. That is a self-inflicted local
+    slowdown on a single-user machine, not a remote DoS, and refusing the pattern outright would
+    break existing triggers — the same reasoning S119 recorded for a verbatim webhook token: warn,
+    keep working, and make the fix obvious.
+    """
+    if not pattern or not _CATASTROPHIC_RE.search(pattern):
+        return ""
+    return (
+        "this pattern nests a quantifier inside a quantified group (e.g. `(a+)+`), which "
+        "backtracks exponentially — a 30-char value can take ~40s, on the memory-write path. "
+        "Simplify it (`(\\w+)+` almost always means `\\w+`)"
+    )
+
+
 def matches(trigger: EventTrigger, *, event_type: str, key: str, value: str) -> bool:
-    """Pure: does *trigger* match this memory event?"""
+    """Pure: does *trigger* match this memory event?
+
+    §7/R4 rule (d): only the trigger SPEC supplies patterns. `key_glob` and `content_re` come from
+    the trigger; `key` and `value` are data and are only ever matched AGAINST. The value's scan
+    length is capped — see `CONTENT_MATCH_SCAN_LIMIT` for the measurement that made that necessary.
+    """
     if not trigger.enabled:
         return False
     if trigger.max_fires and trigger.fire_count >= trigger.max_fires:
@@ -105,10 +165,14 @@ def matches(trigger: EventTrigger, *, event_type: str, key: str, value: str) -> 
     if trigger.pattern == CONTENT_MATCH:
         if not trigger.content_re:
             return False
+        # Bounded BEFORE the regex sees it. The cap has to be here rather than at the emitter: this
+        # is the function every caller reaches, and a per-caller cap is a control that must be
+        # re-added correctly at each new call site.
+        scanned = (value or "")[:CONTENT_MATCH_SCAN_LIMIT]
         try:
-            return re.search(trigger.content_re, value or "") is not None
+            return re.search(trigger.content_re, scanned) is not None
         except re.error:
-            return trigger.content_re in (value or "")
+            return trigger.content_re in scanned
     return False
 
 
