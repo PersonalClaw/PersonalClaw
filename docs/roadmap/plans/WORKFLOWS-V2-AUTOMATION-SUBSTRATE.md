@@ -4284,3 +4284,58 @@ red (5, 4 and 4 failures respectively).
   (Loops Phase 4), `web_watch`'s headless tier, a chat-turn event source reading `agent_scope`, meters
   for the four unmetered caps, and §3.5's undeclared `skip_if_active` / `acting_on`. **Criterion 7 is
   now complete in all five clauses**, and criterion 3 in both.
+
+### S149 — `jitter_secs` and `strict` were declared and applied by nothing (AUTO-A1)
+
+**DONE.** Found by running S147's config-key sweep **one level out** — over the trigger store's
+`SPEC_KEYS`/`GATE_KEYS` vocabularies instead of the workflow templates' node configs. Three keys had at
+most one occurrence in `src/` (i.e. only their own declaration): `first_idle_secs` (the Phase-4-gated
+`idle` kind, correctly parked), `jitter_secs` and `strict`.
+
+Measured before writing a line, on the same interval trigger armed three ways:
+
+```
+no jitter declared           -> next_fire = now + 3600.0s
+jitter_secs: 300             -> next_fire = now + 3600.0s
+jitter_secs: 300 + strict    -> next_fire = now + 3600.0s
+```
+
+Identical. So **AUTO-A1's acceptance bar — "migrated cron fires in its old jitter slot" — was
+unmet**, and `models.py`'s own comment above `SPEC_KEYS` names this exact failure mode: *"the single
+most likely authoring mistake and the one with the quietest failure — the trigger loads, the service
+ignores the key, and the automation behaves in a way its author cannot explain."* It was describing
+two of its own keys.
+
+**Byte-compatibility is the point, not a nicety.** `apply_jitter` reuses
+`scheduling.jitter_offset` — the same BLAKE2b-over-trigger-id function the boot stagger uses and that
+`ScheduleService._jitter_offset` used — because AUTO-A1 requires the offset be "preserved
+byte-compatibly from schedule.py". A migrated cron must land in the slot the job it came from
+occupied; a fresh (or random) offset would re-phase every schedule on migration day, which is the one
+thing a migration must not do. Deterministic also means two triggers cannot collide on a later fire
+and a restart cannot reshuffle them.
+
+`strict: true` is the documented opt-out — `schedule.py`'s field says it plainly, "when True, skip
+jitter and fire exactly on schedule" — so an exact wall-clock fire stays available. An absent or
+invalid `jitter_secs` changes nothing, which is every clock trigger shipped before this.
+
+**DISCOVERY — my own fix pushed a fire onto a skipped day.** A `59 23 * * *` cron with
+`jitter_secs: 600` and `2026-08-05` in `skip_dates` armed to **2026-08-05T00:02**: the offset crossed
+midnight ONTO the excluded day, *after* the skip check had already passed on the honest 23:59 slot. My
+first docstring claimed the ordering prevented this; driving it proved otherwise. A skip date is a
+promise about a calendar day, so the jittered instant is now re-checked and a conflicting fire keeps
+its grid slot — losing the jitter is a scheduling nicety, landing on a skipped day is a broken
+guarantee.
+
+**The week grid is deliberately unaffected.** `cadence_next_fire` stays public and un-jittered
+precisely so `calendar.project_occurrences` can plot honest slots; showing a user 09:04:37 for a job
+they wrote as `0 9 * * *` would make the grid harder to read than no grid.
+
+Verified load-bearing: neutralising the window turns 4 of the 45 arm tests red. Gate: `make lint`
+(black+isort+flake8+mypy, 691 files) green; `pytest -n 4 --dist worksteal` **16134 passed, 29 skipped,
+13 xfailed**. No `web/` change.
+
+- **REMAINING from this sweep:** `gates.cooldown_secs` is declared in `GATE_KEYS` and read by nothing.
+  It is NOT a rename of the existing `cooldown_hours`/`cooldown_until` (those are the autopause and
+  routing-suppression clocks), so giving it meaning is a gate-semantics decision — per-trigger minimum
+  spacing between fires, and how it interacts with `max_runs_per_hour` — rather than a wiring. Recorded
+  rather than guessed. `first_idle_secs` stays parked with the `idle` runtime.
