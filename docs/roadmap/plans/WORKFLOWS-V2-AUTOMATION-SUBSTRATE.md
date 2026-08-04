@@ -4070,3 +4070,60 @@ worse than the leak — these are what a user reads to find out what their machi
   (queue S123), `idle` (Loops Phase 4), `web_watch`'s headless tier, a chat-turn event source reading
   `agent_scope`, meters for the four unmetered caps, and §3.5's undeclared `skip_if_active` /
   `acting_on`.
+
+### S139 — criterion 3 was dead in three layers (§3.7) — DONE
+
+**DISCOVERY, and the deepest dead chain this program has found.** Criterion 3: *"A failing automation
+autopauses after 5 **true** failures (typed exits — auth/transport outages **park** instead) and
+surfaces in the Runs inbox."* Three independent layers were missing, each sufficient on its own to
+prevent it:
+
+1. **`triggers/autopause.py` was imported by NO production module.** Thirteen functions — the typed
+   exit taxonomy, the 5-failure budget, parking for transport outages, immediate pause for config
+   errors, the attention card, the inbox fingerprint — reachable only from its own tests. `firepath`
+   and `service` *name* it in their docstrings; neither calls it.
+2. **The fire path DISCARDED the provider's result.** `await provider.execute(config, ctx, ...)` threw
+   its return value away, so nothing downstream knew whether a fire had succeeded.
+3. **No ledger row was written per fire.** `_record_run` died with `ScheduleService` (S112) and nothing
+   replaced it on the store-backed path, so even a correctly wired counter would have counted zero
+   forever.
+
+Driven before writing a line: six consecutive failing provider runs left the trigger `enabled: True`,
+`health_status: 'ok'`, `last_failure_at: ''`, `run_count: 0`. A complete decision engine, unreachable.
+
+**The counter is DERIVED from the run ledger, not stored**, because `LEGACY_FIELD_MAP` says exactly
+that: the legacy `consecutive_failures` column maps to *"failure_policy (autopause counter is derived
+from fire records)"*. I briefly added a field, then reverted it on finding that note — a copy on the
+trigger row would be a second truth that can disagree with the ledger it summarises, the same reason
+`last_result` is deliberately dropped there.
+
+**🔴 TWO BUGS FOUND BY DRIVING THE FIX, both instructive:**
+
+* **Parking worked before the budget did**, which is the tell that pointed at layer 3. Parking is
+  STATELESS — derived from the exception type alone — while the budget is STATEFUL. So the missing
+  ledger row broke only the half that needed history, and a partial success looked like a working
+  feature.
+* **The first working version paused after FOUR failures.** `evaluate` adds its own unit
+  (`count = consecutive_failures + 1`, then pauses at the threshold), so the count passed in must be
+  the streak BEFORE this fire — not including the row just written. Caught by driving the
+  4-then-success-then-1 sequence and watching it pause on the fourth.
+* **A third, caught by my own test:** the derived counter first counted any `status: "failure"` row —
+  but the store records a transport OUTAGE as `status: "failure"` too, so counting by status would pause
+  a trigger for a network blip, exactly what criterion 3 forbids. The typed exit field decides now, with
+  the status vocabulary as a fallback for legacy rows.
+
+**Verified end to end**, each case driven through the real dispatch: 5 true failures → `autopaused`,
+disabled · 4 failures → still active · 6 transport outages → `parked` and **still enabled** · 6 outages
+then 4 failures → still active (outages spend no budget) · 4 failures, a success, 1 failure → active
+(the streak reset) · then 5 more → paused.
+
+**One pre-existing test legitimately tightened.** S136's "a benign payload writes no blocked row"
+counted ALL ledger rows, which was over-broad the moment every fire writes one. It now counts
+`blocked_injection` rows specifically — the assertion it always meant.
+
+- **REMAINING in AUTOMATION-SUBSTRATE:** the E4-blocked webhook fire endpoint (queue S123), `idle`
+  (Loops Phase 4), `web_watch`'s headless tier, a chat-turn event source reading `agent_scope`, meters
+  for the four unmetered caps, and §3.5's undeclared `skip_if_active` / `acting_on`. Criterion 3's
+  "surfaces in the Runs inbox" half is now possible — `attention_card` and `inbox_fingerprint` exist and
+  the state is recorded — but wiring the CARD into the inbox is an INBOX-UNIFICATION surface, not a
+  substrate one.

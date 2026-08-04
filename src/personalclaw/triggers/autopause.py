@@ -312,6 +312,54 @@ def evaluate(
     )
 
 
+def consecutive_failures_from(runs: list[dict[str, Any]]) -> int:
+    """Consecutive TRUE failures in a newest-first run list (§3.7 — S139).
+
+    🔴 DERIVED, not stored, because `LEGACY_FIELD_MAP` says so outright: the legacy
+    `consecutive_failures` column maps to *"failure_policy (autopause counter is derived from fire
+    records)"*. A second copy on the trigger row would be a truth that can disagree with the ledger
+    it summarises — the same reason `last_result` is deliberately dropped there.
+
+    "Consecutive" means consecutive: the walk STOPS at the first clean exit, so four failures then a
+    success then one failure counts as one. A counter that only ever climbed would eventually pause
+    every long-lived automation that once had a bad week.
+
+    Outcomes that neither fail nor succeed — a skipped or deferred fire — are SKIPPED rather than
+    treated as either. A quiet-hours window is not a recovery (it would silently forgive a real
+    failure streak) and not a failure (it would pause a healthy trigger for being configured).
+    """
+    from personalclaw.triggers.models import Outcome
+
+    count = 0
+    for run in runs:
+        # `status == "failure"` check gets wrong: an outage is stored as a failure too, so
+        # `status` is the run store's older vocabulary ("success"/"failure"/"timeout"/"launched").
+        # The typed field wins when present, because it distinguishes a true failure from an outage.
+        exit_type = str(run.get("trigger") or run.get("outcome") or "")
+        status = str(run.get("status") or "")
+
+        if exit_type in {ExitType.OK.value, Outcome.RAN.value, Outcome.RAN_LATE.value}:
+            break
+        if not exit_type and status in {"success", "ok"}:
+            break
+
+        # 🔴 A PARKING exit does NOT spend the budget, and this is the half a naive
+        # `status == "failure"` check gets wrong: an outage is stored as `status: "failure"` too, so
+        # counting by status would pause a trigger for a network blip — exactly what criterion 3's
+        # "auth/transport outages park instead" forbids. Caught by driving six outages followed by
+        # four real failures and watching it pause early.
+        if exit_type in PARKING_EXITS:
+            continue
+        if exit_type:
+            if counts_toward_autopause(exit_type) or exit_type == ExitType.FAILED.value:
+                count += 1
+            continue
+        # No typed exit (a legacy row): fall back to the status vocabulary.
+        if status in {"failure", "timeout", "error"}:
+            count += 1
+    return count
+
+
 def unpark_due(*, retry_after: float, now: float) -> bool:
     """Whether a parked trigger's cooldown has elapsed.
 
