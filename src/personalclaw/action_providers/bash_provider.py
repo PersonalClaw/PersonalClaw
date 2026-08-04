@@ -78,14 +78,83 @@ def _scrub_env(env: dict[str, str]) -> dict[str, str]:
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
+#: Env vars a PAYLOAD KEY may never set (§7/R4 rule e — S129).
+#:
+#: 🔴 MEASURED. `_payload_env` merges AFTER `os.environ`, so a payload key shadows the
+#: real variable. Driven end to end: a payload of ``{"PATH": "<dir with a fake `date`>"}``
+#: made the command ``date`` print ``HIJACKED``. The whole point of passing the payload as
+#: ENV rather than string-templating the command is that a payload value cannot become
+#: code — but a payload *key* could change which binary the code resolves to, which is the
+#: same outcome by a different route.
+#:
+#: These are the variables that decide WHAT RUNS or WHERE IT LOOKS: the loader hijacks
+#: (`LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`), the resolution paths (`PATH`, `PYTHONPATH`),
+#: the interpreter's own entry points (`BASH_ENV`, `PYTHONSTARTUP`), and the home/config
+#: roots the harness itself reads back (`PERSONALCLAW_HOME`). A payload naming any of them
+#: is either a mistake or an attack, and neither should win over the process environment.
+#:
+#: A DENYLIST rather than an allowlist here, deliberately and unlike S126's payload keys:
+#: `$variables` are the trigger's documented user-facing surface (`$now`, `$job_id`,
+#: `$last_result`, plus every key a kind's payload carries), so an allowlist would have to
+#: enumerate them all and would silently drop a new kind's variables. The dangerous set,
+#: by contrast, is small, well-known and stable.
+PROTECTED_ENV_NAMES: frozenset[str] = frozenset(
+    {
+        # resolution + loader
+        "PATH",
+        "LD_PRELOAD",
+        "LD_LIBRARY_PATH",
+        "LD_AUDIT",
+        "DYLD_INSERT_LIBRARIES",
+        "DYLD_LIBRARY_PATH",
+        "DYLD_FRAMEWORK_PATH",
+        # interpreter entry points
+        "BASH_ENV",
+        "ENV",
+        "SHELL",
+        "IFS",
+        "PYTHONPATH",
+        "PYTHONSTARTUP",
+        "PYTHONHOME",
+        "PERL5LIB",
+        "NODE_OPTIONS",
+        "NODE_PATH",
+        "RUBYOPT",
+        "RUBYLIB",
+        "GIT_SSH",
+        "GIT_SSH_COMMAND",
+        "GIT_EXTERNAL_DIFF",
+        # roots the harness reads back
+        "HOME",
+        "TMPDIR",
+        "PERSONALCLAW_HOME",
+        "PERSONALCLAW_WORKSPACE",
+        "PERSONALCLAW_HOOK_EVENT",
+        "PERSONALCLAW_HOOK_CONTEXT",
+    }
+)
+
+
 def _payload_env(ctx: ActionContext) -> dict[str, str]:
     """The trigger ``$variables`` (``$now``, ``$job_id``, ``$EVENT``…) as env
     vars, so a shell command resolves them natively. Env (not string-templating
     the command) on purpose: a payload value like ``last_result`` can hold
     arbitrary text — substituting it into the command line would be a shell
-    injection vector. Keys that aren't valid shell identifiers are skipped."""
+    injection vector. Keys that aren't valid shell identifiers are skipped.
+
+    A key in ``PROTECTED_ENV_NAMES`` is skipped too, and that is the other half of the
+    same defence: passing the payload as env stops a payload VALUE becoming code, and this
+    stops a payload KEY changing which code runs. See that constant for the measurement.
+    """
     out = {"EVENT": ctx.event, "CONTEXT": ctx.context}
     for k, v in (ctx.payload or {}).items():
+        if k in PROTECTED_ENV_NAMES:
+            logger.warning(
+                "trigger payload key %r would override a protected environment "
+                "variable; ignoring it",
+                k,
+            )
+            continue
         if _ENV_NAME.match(k):
             out[k] = str(v)
     return out
