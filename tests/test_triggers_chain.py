@@ -249,7 +249,7 @@ KIND_RUNTIMES: dict[str, str] = {
     "run_completed": "personalclaw.triggers.chain.next_fires (S122)",
     "event": "personalclaw.event_triggers.execute_event_action (the data-event engine)",
     "manual": "the Run button / automation_run — fires on demand, needs no runtime",
-    "view": "pull-on-view: fires from a surface RENDER, not a poll (§3's view kind)",
+    "view": "personalclaw.triggers.pull_on_view.on_render (S123 — render-driven, not polled)",
     "idle": "DEFERRED: autonudge absorbs it, gated on LOOPS-EVOLUTION Phase 4 (§7 item 9)",
     "webhook": "DEFERRED: needs POST /api/triggers/{id}/fire, which does not exist yet (see S119)",
 }

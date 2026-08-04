@@ -3339,3 +3339,45 @@ nobody can author.
 - **REMAINING in §7 item 8:** `idle` (deferred to Loops Phase 4 by §7 item 9) and `webhook` (needs the
   fire endpoint — see S119). `view` is pull-on-view and fires from a render, not a poll. Plus
   `web_watch`'s headless tier and knowledge-store digest from S121.
+
+### S124 — the `view` kind: pull-on-view refresh (R10 / §7 item 8) — DONE
+
+**DISCOVERY: the FOURTH declared kind with no runtime.** After `file` (S93), `web_watch` (S121) and
+`run_completed` (S122). `view` is in `KINDS`, `SPEC_KEYS` accepts `{surface_binding, ttl_secs}`, the
+store persists it, `/api/triggers` lists it and the Automations page renders it. Measured:
+`surface_binding` was referenced by **exactly one line in the entire tree** — its own declaration in
+`SPEC_KEYS`. Nothing read it, so nothing could ever fire a `view` trigger.
+
+**Deliberately NOT a poll, and that is the whole design.** §3: *"Pull-on-view (R10): fires when a bound
+surface (dashboard tile, artifact open) renders past TTL; within TTL serve cache … Sidesteps the
+1440-run-dirs critique by never firing unviewed."* A minutely clock trigger produces 1440 run
+directories a day whether or not anyone looks. So the runtime is `on_render(trigger, now=…)` — a
+function a surface calls as it renders — and a test asserts the gateway does **not** import it, because
+adding a background loop here would reintroduce precisely the cost this kind exists to avoid. This is
+the one kind in the table whose correct implementation is "no loop".
+
+**The TTL is the control:** two renders inside the window serve cache and cost nothing; the first past
+it refreshes. The trigger's expense becomes proportional to attention rather than to wall-clock time.
+
+**`MIN_REFRESH_INTERVAL_SECS` floors any author-supplied TTL.** A dashboard re-renders on every
+websocket nudge, so a TTL of 1 would mean an LLM turn per keystroke elsewhere in the UI. Floored rather
+than refused, matching `web_poll.poll_interval_for`. Third session in a row applying S109's lesson: a
+declared floor that no code reads is not a floor.
+
+**`persist=False` is the subtle one.** Without it, a freshness column that merely REPORTED staleness
+would refresh the tile *by asking* — the observer changing what it observes. So a caller can ask
+without consuming the window, and the two use cases (render vs report) stay distinguishable.
+
+**Both lists returned from `renders()`** — refreshes and cache hits — because §7 criterion 8's
+zero-silent-drops rule applies to a skipped refresh exactly as to a skipped fire. One bad binding never
+blanks a render: a render is a user looking at a page.
+
+**The completeness table now names a real runtime for `view`** rather than a prose exemption. That
+matters: `KIND_RUNTIMES` asserts each named runtime EXISTS, so the entry is checkable where the old
+"fires from a render, not a poll" note was only a claim.
+
+- **REMAINING in §7 item 8:** `idle` (deferred to Loops Phase 4 by §7 item 9) and `webhook` (S123's E4
+  blocker — the fire endpoint's auth model and exposure posture are an owner decision, and the threat
+  model assigns the inbound surface to MCP-READONLY-INBOUND + EXTERNAL-ACCESS). Plus `web_watch`'s
+  headless tier and knowledge-store digest from S121. **Every kind with an unblocked runtime now has
+  one.**
