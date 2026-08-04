@@ -64,12 +64,22 @@ def _isolate_trigger_store(tmp_path_factory, monkeypatch):
     were harmless only because that path never wrote before. Observed: a full-suite run migrated the
     USER's real crons into `~/.personalclaw/triggers.json`.
 
-    Scoped to `boot_migrate.config_dir`, not a global `Path.home` patch, for the reason the fixture
-    above gives: a blanket patch breaks the tests that assert real-home safety rails. A test that
-    patches this itself still overrides it (last wins), and every test that passes an explicit
-    `base_dir` is unaffected."""
+    Scoped to the two seams that build a store from the ACTIVE HOME rather than a global `Path.home`
+    patch, for the reason the fixture above gives: a blanket patch breaks the tests that assert
+    real-home safety rails. A test that patches either itself still overrides it (last wins), and
+    every test that passes an explicit `base_dir` is unaffected.
+
+    🔴 The second seam was added in S101: re-pointing the `/api/triggers` WRITES means the
+    handler's `_trigger_store()` now persists a created/updated row, and four pre-existing
+    dashboard tests call that handler with no home isolation. Observed on a full-suite run:
+    `clock:t`, `clock:t-2`, `clock:t-3` and `clock:test` landed in the USER's real
+    `~/.personalclaw/triggers.json`. Any new path that WRITES a store built from `config_dir()`
+    has to be redirected here too."""
     store_home = tmp_path_factory.mktemp("pclaw-triggers")
     monkeypatch.setattr("personalclaw.triggers.boot_migrate.config_dir", lambda: store_home)
+    monkeypatch.setattr(
+        "personalclaw.dashboard.handlers.triggers.config_dir", lambda: store_home, raising=False
+    )
 
 
 @pytest.fixture(autouse=True)
