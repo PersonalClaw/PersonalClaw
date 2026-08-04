@@ -821,6 +821,29 @@ def diagnose(
                     )
                 )
 
+        # 🔴 A webhook token stored VERBATIM (decision 12 — S119). The store warns on the row, but
+        # `describe_store` only aggregates a warning COUNT and no surface names the offending
+        # trigger — so a warning nobody can act on is itself an inert control. Named here, where a
+        # user goes to ask what is wrong.
+        spec_block = entry.get("spec")
+        if isinstance(spec_block, dict):
+            from personalclaw.triggers.models import _token_ref_issues
+
+            # The lint decides IF; the doctor phrases its own detail and fix, because a doctor
+            # finding is read by a user asking "what is wrong with my automations" rather than by
+            # an author looking at one field.
+            if _token_ref_issues(spec_block):
+                report.findings.append(
+                    Finding(
+                        trigger_id=tid,
+                        code="verbatim_webhook_token",
+                        detail="stores its webhook bearer token verbatim in triggers.json, which "
+                        "is snapshotted, echoed into run records and rendered in the UI",
+                        fix="store it with `personalclaw auth` and set token_ref to "
+                        "{{secret:KEY}}, then rotate the exposed token",
+                    )
+                )
+
         # A `paths` fence that cannot bound anything (S118). The user believes they scoped the
         # automation; `*` covers the whole filesystem and a relative entry resolves against the
         # GATEWAY's cwd, so it silently means something different depending on how it was started.

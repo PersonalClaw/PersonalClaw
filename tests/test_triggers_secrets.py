@@ -338,3 +338,87 @@ def test_a_non_dict_workflow_is_ignored(tmp_path):
 
     assert M._inline_credential_issues(None) == []
     assert M._inline_credential_issues("not a dict") == []
+
+
+# ── the webhook token_ref lint (decision 12 — S119) ──
+
+
+def _webhook(tmp_path, token_ref, *, tid="webhook:deploy"):
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
+
+    store = TriggerStore(base_dir=tmp_path)
+    store.upsert(
+        Trigger(
+            id=tid,
+            name=tid,
+            kind="webhook",
+            spec={"token_ref": token_ref},
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
+    )
+    return store.get(tid)
+
+
+def test_a_VERBATIM_webhook_token_is_flagged(tmp_path):
+    """🔴 MEASURED. Decision 12 says webhook bearer tokens are "SHA-256-hashed at rest" and R14 says
+    "never verbatim in triggers.json". The store wrote `sk-LITERAL-SECRET-abc123` straight to disk
+    with `ok: True` and ZERO warnings.
+
+    S115's lint would have caught that string — but it scans the `workflow` only, and a webhook's
+    token lives in `spec`. So the one field on the one kind whose entire purpose is authentication
+    was the field with no credential lint.
+    """
+    row = _webhook(tmp_path, "sk-LITERAL-SECRET-abc123")
+    assert [i.message for i in row.warnings], "a pasted token must be visible on the row"
+    assert "{{secret:KEY}}" in row.warnings[0].message, "and must name the fix"
+
+
+def test_the_token_is_still_ON_DISK_so_the_fix_says_ROTATE(tmp_path):
+    """The lint cannot un-leak it. A warning that only says "use a reference next time" would leave
+    the user believing the exposure was handled, so the doctor's fix says to rotate."""
+    from personalclaw.triggers.calendar import diagnose
+
+    _webhook(tmp_path, "sk-LITERAL-SECRET-abc123")
+    rows = [{"id": "schedule:webhook:deploy", "spec": {"token_ref": "sk-LITERAL-SECRET-abc123"}}]
+    finding = next(
+        f
+        for f in diagnose(rows, known_workflows=None).findings
+        if f.code == "verbatim_webhook_token"
+    )
+    assert "rotate" in finding.fix
+
+
+def test_the_SANCTIONED_reference_is_not_flagged(tmp_path):
+    """The fix for a finding must never trip the finding again."""
+    assert not _webhook(tmp_path, "{{secret:DEPLOY_TOKEN}}").warnings
+
+
+def test_a_padded_reference_is_not_flagged(tmp_path):
+    """`{{ secret:X }}` means the same thing — matching `resolve()`'s own tolerance, or the lint
+    would send someone back to pasting the token."""
+    assert not _webhook(tmp_path, "{{ secret:DEPLOY_TOKEN }}").warnings
+
+
+def test_the_flag_is_a_WARNING_so_the_webhook_still_LOADS(tmp_path):
+    """Refusing would break every webhook a user has already authored — the population that most
+    needs to keep working while they migrate."""
+    row = _webhook(tmp_path, "sk-LITERAL-SECRET-abc123")
+    assert row.ok is True
+    assert not row.errors
+
+
+def test_a_MISSING_token_ref_is_still_an_ERROR_not_a_warning(tmp_path):
+    """The pre-existing control must survive: an unauthenticated fire endpoint is a different and
+    worse thing than a badly-stored token, so it errors rather than warns."""
+    row = _webhook(tmp_path, "", tid="webhook:open")
+    assert [i.path for i in row.errors] == ["spec.token_ref"]
+
+
+def test_a_non_webhook_kind_is_untouched(tmp_path):
+    """`token_ref` is only meaningful on `webhook`; scanning every spec would flag unrelated fields
+    named like secrets on kinds that have no token at all."""
+    from personalclaw.triggers.models import _token_ref_issues
+
+    assert _token_ref_issues({"kind": "interval", "interval_secs": 60}) == []
+    assert _token_ref_issues(None) == []
