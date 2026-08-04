@@ -844,6 +844,24 @@ def diagnose(
                     )
                 )
 
+        # 🔴 An `agent_scope` that ENFORCES NOTHING (§1.4 decision 2 — S131). The key is declared,
+        # validated (as of this session) and persisted — but no fire path reads it, because the
+        # store-backed `event` kind fires on MEMORY events while agent scoping lives on the
+        # chat-turn hook path (`fire_for_ids`). An author who set it believes their trigger is
+        # fenced to one agent. Named here because that belief is the whole risk.
+        spec_scope = entry.get("spec")
+        if isinstance(spec_scope, dict) and spec_scope.get("agent_scope"):
+            report.findings.append(
+                Finding(
+                    trigger_id=tid,
+                    code="unenforced_agent_scope",
+                    detail="declares agent_scope, but no fire path reads it — this trigger is "
+                    "NOT limited to those agents",
+                    fix="remove agent_scope until the chat-turn event source lands, or use a "
+                    "lifecycle trigger referenced from the agent's own bindings",
+                )
+            )
+
         # A `paths` fence that cannot bound anything (S118). The user believes they scoped the
         # automation; `*` covers the whole filesystem and a relative entry resolves against the
         # GATEWAY's cwd, so it silently means something different depending on how it was started.
