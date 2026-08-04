@@ -234,7 +234,9 @@ def test_the_passed_list_records_how_far_a_suppressed_fire_got():
     # order is "debounce/quiet/cooldown/condition", and spacing is the cheapest check on the path
     # (one float compare, no store read, no provider round-trip), so paying for a duty-gate provider
     # call on a fire a debounce was going to drop anyway would be backwards.
-    assert late.passed == ["incident", "screen", "spacing", "quiet", "duty"]
+    # `rate` joined at S152, beside `spacing` — same question ("has this fired too much
+    # lately"), same cheap inputs, same position ahead of the provider-calling gates.
+    assert late.passed == ["incident", "screen", "spacing", "rate", "quiet", "duty"]
 
 
 def test_suppressed_at_names_the_gate_or_nothing():
@@ -398,4 +400,61 @@ class TestSpacingGate:
         assert "spacing" in FAIL_OPEN_GATES
         assert "spacing" not in FAIL_CLOSED_GATES
         for key in ("debounce_secs", "cooldown_secs"):
+            assert key in FAIL_OPEN_GATES, key
+
+
+class TestRateGate:
+    """🔴 `rate_cap`, `max_runs_per_hour` and `max_actions_per_hour` were validated, carried, and
+    enforced by NOTHING — S133 named them, S150 put them in `UNMETERED_CAPS`, and the reason was
+    always the same: no windowed history query existed. `ScheduleRunStore.count_since` (S152) is
+    that query, and `missed.within_rate_window` has been the decision waiting for the number
+    since S65.
+    """
+
+    def test_a_trigger_at_its_cap_is_suppressed(self) -> None:
+        decision, _ = _evaluate(gates={"max_runs_per_hour": 3}, fires_in_window=3)
+        assert not decision.allowed
+        assert decision.gate == "rate"
+        assert "reaches the cap of 3" in decision.reason
+
+    def test_a_trigger_under_its_cap_fires(self) -> None:
+        decision, _ = _evaluate(gates={"max_runs_per_hour": 3}, fires_in_window=2)
+        assert decision.allowed
+
+    def test_the_LOWEST_configured_cap_wins(self) -> None:
+        """Three spellings a person may use; taking the strictest is the only reading that cannot
+        surprise — a user who set both 10/hour and 5/hour meant at most 5."""
+        decision, _ = _evaluate(gates={"max_runs_per_hour": 10, "rate_cap": 5}, fires_in_window=5)
+        assert not decision.allowed
+        assert "cap of 5" in decision.reason
+
+    def test_an_UNREADABLE_ledger_fails_open(self) -> None:
+        """§1.4's storm-guard class, and the same call `slot` makes about an unreadable claim store:
+        suppressing every capped trigger over a filesystem hiccup would silence real automations."""
+        decision, _ = _evaluate(gates={"max_runs_per_hour": 1}, fires_in_window=None)
+        assert decision.allowed
+
+    def test_no_cap_declared_skips_the_gate(self) -> None:
+        decision, _ = _evaluate(gates={}, fires_in_window=9999)
+        assert decision.allowed
+
+    @pytest.mark.parametrize("bad", ["ten", None, "", [], -4, 0])
+    def test_a_malformed_or_zero_cap_is_no_cap(self, bad) -> None:
+        decision, _ = _evaluate(gates={"max_runs_per_hour": bad}, fires_in_window=9999)
+        assert decision.allowed
+
+    def test_the_outcome_is_skipped_gate(self) -> None:
+        decision, _ = _evaluate(gates={"rate_cap": 1}, fires_in_window=1)
+        assert decision.outcome == Outcome.SKIPPED_GATE.value
+
+    def test_rate_runs_with_the_cheap_guards_not_the_expensive_ones(self) -> None:
+        assert F.GATE_ORDER.index("rate") < F.GATE_ORDER.index("duty")
+        assert F.GATE_ORDER.index("rate") < F.GATE_ORDER.index("claim")
+        assert F.GATE_ORDER.index("rate") > F.GATE_ORDER.index("screen")
+
+    def test_rate_is_classified_FAIL_OPEN(self) -> None:
+        from personalclaw.triggers.models import FAIL_CLOSED_GATES, FAIL_OPEN_GATES
+
+        assert "rate" in FAIL_OPEN_GATES and "rate" not in FAIL_CLOSED_GATES
+        for key in ("rate_cap", "max_runs_per_hour", "max_actions_per_hour"):
             assert key in FAIL_OPEN_GATES, key

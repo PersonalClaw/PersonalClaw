@@ -4450,3 +4450,54 @@ Verified load-bearing: removing the writer turns 2 tests red. Gate: `make lint`
   (`missed.within_rate_window` is the decision already waiting); `cost_cap` /
   `max_cost_usd_per_run` need a `run_key` threaded through `SpendMeter.charge`; `idempotency` and
   `threshold` need R12 to pin their semantics.
+
+### S152 — the hourly rate caps, and the windowed query they waited on since S65 (§3.6)
+
+**DONE.** `rate_cap`, `max_runs_per_hour` and `max_actions_per_hour` were validated, carried, and
+enforced by nothing. S133 named them; S150 put them in `UNMETERED_CAPS`. The reason never changed:
+`ScheduleRunStore.list_for_job` is offset/limit only, so a caller could **page** rows but never ask
+*"how many in the last hour"*.
+
+`ScheduleRunStore.count_since(job_id, since, *, manual=False)` is that query. Everything else it
+needed already existed — S139 writes a per-fire ledger row carrying `started_at`, per-job JSONL — so
+this is a read, not a new store.
+
+**The gate DELEGATES the decision.** `missed.within_rate_window` has owned the manual-bypass
+asymmetry and the no-cap-configured case since S65, waiting for a number. `_rate_refusal` supplies
+the number and calls it; a second copy of a threshold comparison is how two surfaces start
+disagreeing about whether a trigger is capped.
+
+**Counts rather than pages.** The answer is one integer, and `list_for_job(0, 1000)` would allocate a
+thousand dicts to compute it — on a path that runs on every fire.
+
+**Four decisions, each with the failure it prevents:**
+
+* **Manual fires are excluded.** §3.6 is explicit that they bypass the cap: it exists to stop the
+  *machine* running away, and a person clicking Run is not the machine running away. Counting their
+  clicks would let a user lock themselves out of their own automation.
+* **The lowest configured cap wins.** Three spellings a person may use; taking the strictest is the
+  only reading that cannot surprise — someone who set both 10/hour and 5/hour meant at most 5.
+* **A malformed row is SKIPPED, not counted.** Counting it would let one bad line push a trigger over
+  its cap and suppress real work. Skipping can only under-count, and the cap's purpose still holds:
+  a runaway writes many well-formed rows.
+* **An unreadable ledger is None, deliberately not 0.** Zero fires would hand a runaway trigger a
+  fresh hourly allowance every time the ledger hiccuped. Both currently fail open (§1.4's storm-guard
+  class, the same call `slot` makes about an unreadable claim store), but the distinction is kept so a
+  later session can tighten it without re-deriving why the two cases differ.
+
+The ledger read is skipped entirely when a trigger declares no hourly cap — it is a file read on the
+fire path, and paying for it to answer a question nobody asked would tax every automation.
+
+**Two follow-ons, both caught by earlier sessions' tests** (the third time this has happened in this
+run, which is the completeness tests earning their keep): S130's classifier demanded the new `rate`
+gate be classified fail-open, and S150's honest-gap list had to stop reporting the three now-enforced
+keys — reporting a working gate as broken is the same lie as silence, pointing the other way.
+
+Verified load-bearing: removing the gate call turns 3 tests red. Gate: `make lint`
+(black+isort+flake8+mypy, 691 files) green; `pytest -n 4 --dist worksteal` **16174 passed, 29 skipped,
+13 xfailed**. No `web/` change.
+
+- **`UNMETERED_CAPS` is now 4 keys, down from 9 at S150.** Remaining: `cost_cap` /
+  `max_cost_usd_per_run` need a `run_key` threaded through `SpendMeter.charge` (the machinery exists;
+  its one production caller never passes one), and `idempotency` / `threshold` need R12 to pin their
+  semantics before anything can enforce them.
