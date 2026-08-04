@@ -301,3 +301,130 @@ def test_gateway_unlimited_budget_never_gates(tmp_path, monkeypatch):
     gw.dashboard_state = None
     gw._budget_notified = False
     assert gw._day_budget_exceeded(context="cron 'x'") is False
+
+
+# ── the ambient run scope: attribution that never happened (S153) ──
+
+
+def test_an_unbound_call_charges_only_the_day_scope():
+    """The pre-S153 behaviour, preserved: a model call outside any tracked run must not invent a
+    run scope to charge."""
+    from personalclaw.guardrails.budgets import SpendMeter, current_run_key
+
+    assert current_run_key() == ""
+    meter = SpendMeter()
+    meter.charge(100, 0.50, run_key=current_run_key() or None)
+    assert meter.run_totals("anything").dollars == 0.0
+
+
+def test_a_bound_run_scope_accrues_spend():
+    """🔴 THE DEFECT. `SpendMeter.charge` has accepted `run_key=` since guardrails landed and its ONE
+    production caller (`ModelCallGuard`) never passed one — so `run_totals` was permanently empty
+    and every run-scoped cap read zero. That is why `cost_cap`/`max_cost_usd_per_run` sat in
+    `UNMETERED_CAPS` for twenty sessions."""
+    from personalclaw.guardrails.budgets import (
+        SpendMeter,
+        current_run_key,
+        reset_current_run_key,
+        set_current_run_key,
+    )
+
+    meter = SpendMeter()
+    # The DELTA, not the absolute: the day scope is PERSISTED to the home, so it carries whatever
+    # earlier tests in this process already charged. Asserting 0.50 absolute passed only by accident
+    # of test order — measured, it read 8.0 here.
+    before = meter.day_totals().dollars
+    token = set_current_run_key("trigger:t1:999")
+    try:
+        meter.charge(100, 0.50, run_key=current_run_key() or None)
+    finally:
+        reset_current_run_key(token)
+    assert meter.run_totals("trigger:t1:999").dollars == 0.50
+    assert meter.day_totals().dollars - before == pytest.approx(
+        0.50
+    ), "the day scope is charged too, always"
+
+
+def test_the_run_scope_VERDICT_now_binds():
+    """The point of the attribution: `check_run` could always compute a verdict, against a total
+    that was structurally always zero."""
+    from personalclaw.guardrails.budgets import (
+        Budget,
+        BudgetVerdict,
+        SpendMeter,
+        current_run_key,
+        reset_current_run_key,
+        set_current_run_key,
+    )
+
+    meter = SpendMeter()
+    token = set_current_run_key("doctor")
+    try:
+        meter.charge(1000, 2.75, run_key=current_run_key() or None)
+    finally:
+        reset_current_run_key(token)
+    verdict, why = meter.check_run("doctor", Budget(max_dollars=1.0))
+    assert verdict == BudgetVerdict.EXCEEDED
+    assert "$2.75/$1" in why
+    assert meter.check_run("doctor", Budget(max_dollars=10.0))[0] == BudgetVerdict.OK
+
+
+def test_a_nested_scope_restores_its_parent():
+    """A trigger fire that spawns a subagent must not lose the outer scope — the same token contract
+    `mcp_core.set_current_session_key` uses."""
+    from personalclaw.guardrails.budgets import (
+        current_run_key,
+        reset_current_run_key,
+        set_current_run_key,
+    )
+
+    outer = set_current_run_key("outer")
+    inner = set_current_run_key("inner")
+    assert current_run_key() == "inner"
+    reset_current_run_key(inner)
+    assert current_run_key() == "outer", "the parent scope must come back"
+    reset_current_run_key(outer)
+    assert current_run_key() == ""
+
+
+def test_reset_never_raises_on_a_stale_token():
+    """A failed reset must not break a run's teardown — it clears rather than propagating."""
+    from personalclaw.guardrails.budgets import (
+        current_run_key,
+        reset_current_run_key,
+        set_current_run_key,
+    )
+
+    token = set_current_run_key("x")
+    reset_current_run_key(token)
+    reset_current_run_key(token)  # stale — must be a no-op, not a raise
+    assert current_run_key() == ""
+
+
+def test_the_guard_charges_the_ambient_scope():
+    """The wiring itself: `ModelCallGuard` must read the ContextVar. Asserted on the source rather
+    than by driving a provider, because the alternative is a full streaming fake — and the defect
+    being guarded is precisely a missing ARGUMENT, which source inspection sees exactly."""
+    import inspect
+
+    from personalclaw.guardrails import model_call
+
+    source = inspect.getsource(model_call)
+    assert "run_key=current_run_key() or None" in source, (
+        "the guard must pass the ambient run scope to charge(); without it run_totals is "
+        "permanently empty and every run-scoped cap reads zero"
+    )
+
+
+def test_remediation_binds_the_doctor_scope_its_own_cap_reads():
+    """🔴 A live reader of an unwritten key. `run_remediation`'s docstring always said it "charges
+    the guardrails SpendMeter under run_key `doctor`", and its judgment-lane cap reads
+    `run_totals("doctor").dollars >= max_cost_usd` — while nothing ever charged that key, so the cap
+    never bound."""
+    import inspect
+
+    from personalclaw.resilience import remediation
+
+    source = inspect.getsource(remediation)
+    assert 'set_current_run_key("doctor")' in source
+    assert "reset_current_run_key(token)" in source, "and it must not leak the scope"

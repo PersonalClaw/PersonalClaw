@@ -33,7 +33,13 @@ from pathlib import Path
 
 from personalclaw.guardrails.audit import AttemptRecord, now_ms, record_attempt
 from personalclaw.guardrails.breaker import CircuitBreaker, get_breaker
-from personalclaw.guardrails.budgets import Budget, BudgetVerdict, SpendMeter, get_meter
+from personalclaw.guardrails.budgets import (
+    Budget,
+    BudgetVerdict,
+    SpendMeter,
+    current_run_key,
+    get_meter,
+)
 from personalclaw.guardrails.failure import (
     BudgetExceededError,
     CircuitOpenError,
@@ -215,7 +221,16 @@ class ModelCallGuard(ModelProvider):
                     tokens_out = int(getattr(event, "output_tokens", 0) or 0)
                     dollars = self._estimate_dollars(event, tokens_in, tokens_out)
                     self._breaker.record_success()
-                    self._meter.charge(tokens_in + tokens_out, dollars)
+                    # Charge the DAY scope always, and the ambient RUN scope when one is
+                    # bound (S153). `charge` has accepted `run_key=` since guardrails landed
+                    # and this — its only production caller — never passed one, so
+                    # `run_totals` was permanently empty and every run-scoped cap read zero.
+                    # Read from a ContextVar rather than a parameter because the guard is
+                    # built by `provider_bridge` from provider config and has no run identity;
+                    # threading one in would touch all 33 call sites reaching the bridge.
+                    self._meter.charge(
+                        tokens_in + tokens_out, dollars, run_key=current_run_key() or None
+                    )
                     self._audit(
                         audit_id,
                         1,
