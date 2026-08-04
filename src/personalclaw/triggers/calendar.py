@@ -821,6 +821,23 @@ def diagnose(
                     )
                 )
 
+        # A `paths` fence that cannot bound anything (S118). The user believes they scoped the
+        # automation; `*` covers the whole filesystem and a relative entry resolves against the
+        # GATEWAY's cwd, so it silently means something different depending on how it was started.
+        if caps.get("paths"):
+            from personalclaw.triggers.pathguard import unsafe_entries
+
+            for bad_path, why_unsafe in unsafe_entries(caps.get("paths")):
+                report.findings.append(
+                    Finding(
+                        trigger_id=tid,
+                        code="unbounded_path_fence",
+                        detail=f"allowlists the path {bad_path!r}, which {why_unsafe}",
+                        fix="replace it with an absolute directory (e.g. "
+                        "`/Users/you/notes/*`) so the fence bounds a real location",
+                    )
+                )
+
         duty = gates.get("duty_gate")
         if isinstance(duty, dict):
             name = str(duty.get("provider", "") or "")
