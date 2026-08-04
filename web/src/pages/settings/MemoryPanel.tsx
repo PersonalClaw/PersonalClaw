@@ -960,7 +960,7 @@ function EntityGraphSection({ onChanged }: { onChanged: () => void }) {
             </Button>
           </div>
           <div className="mt-2">
-            <ChipInput values={aliases} onChange={setAliases} placeholder="Alias, then Enter" max={10} />
+            <ChipInput values={aliases} onChange={setAliases} placeholder="Alias, then Enter" max={10} ariaLabel="Add an alias" />
           </div>
         </Field>
       </div>

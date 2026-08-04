@@ -139,10 +139,12 @@ const docs: UiDoc[] = [
       { name: 'placeholder', description: 'Placeholder shown only while there are no chips yet.' },
       { name: 'max', description: 'Optional cap on the number of chips; adding stops once reached.' },
       { name: 'suggestions', description: 'Optional autocomplete pool; only entries not already in `values` are offered (avoids near-duplicate fragments like "Kubernetes" vs "kubernetes").' },
+      { name: 'ariaLabel', description: "Explicit accessible name for the draft field, for call-sites whose chips are not tags (aliases, keywords). This ui/forms Field's published label (aria-labelledby) wins when present; with neither, the field falls back to 'Add a tag'. Note settings' own Field (pages/settings/settingsUI) publishes NO label context, so a ChipInput inside one is effectively bare and needs ariaLabel." },
     ],
     bestPractices: [
       { guidance: true, description: 'Reach for ChipInput for any free-form multi-value tag entry rather than hand-rolling chips — add/remove keys, the cap, dedupe, and datalist suggestions come built in.' },
       { guidance: true, description: 'Pass `suggestions` to steer users onto existing values and `max` to cap the set; it dedupes and skips already-added entries for you.' },
+      { guidance: true, description: "Pass ariaLabel whenever the chips are not tags and no ui/forms Field wraps them — the fallback announces 'Add a tag', which misnames an alias/keyword field to a screen reader. A settings Field looks labelled on screen but publishes no label context, so it does not rescue you." },
       { guidance: false, description: 'Do not hardcode colors or px — the chip pills, surface, and focus-within ring route through design tokens (the token-lint ratchet fails the build otherwise).' },
     ],
     anatomy: ['flex-wrap container (focus-within ring)', 'chip pills (label + × remove)', 'draft <input> (Enter/comma to add, Backspace to pop)', 'optional <datalist> suggestions'],
