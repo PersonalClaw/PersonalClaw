@@ -886,6 +886,27 @@ class DashboardState:
 
         self.sessions.set_compact_callback(_on_compacted)
 
+    def trigger_counts(self) -> dict[str, int]:
+        """`{total, enabled, broken}` across the unified store (S107).
+
+        One helper, because TWO status surfaces were counting automations off the legacy service and
+        both went blind at the S100/S101 cutover — `GET /api/status`'s `cron` block and the
+        `cron_jobs` metric the dashboard's SystemHealth widget renders as "triggers". Measured
+        against a home with three valid store triggers (two enabled): both reported 0.
+
+        The legacy service is folded in by id so a home mid-migration counts each automation once.
+        Never raises: a status surface that 500s because a store row is malformed is worse than one
+        reporting zeros, and `broken` is what makes a malformed row visible anyway.
+        """
+        from personalclaw.triggers import schedule_view as SV
+        from personalclaw.triggers.store import TriggerStore
+
+        try:
+            return SV.counts(TriggerStore(base_dir=config_dir()), legacy=self.crons)
+        except Exception:  # noqa: BLE001 - status must render even with an unusable store
+            logger.debug("trigger counts unavailable", exc_info=True)
+            return {"total": 0, "enabled": 0, "broken": 0}
+
     def status_snapshot(self, *, update_available: bool = False) -> dict[str, Any]:
         """Core status fields served by GET /api/status."""
         uptime = int(time.time() - self.start_time)
@@ -894,7 +915,9 @@ class DashboardState:
             "start_time": self.start_time,
             "sessions": self.sessions.count,
             "messages": self.messages_received,
-            "cron_jobs": len(self.crons.list_jobs()),
+            # The STORE's count (S107). This fed the SPA's "triggers" metric from
+            # `crons.list_jobs()`, which the cutover left holding nothing.
+            "cron_jobs": self.trigger_counts()["total"],
             "lessons": len(self.lessons.load_all()),
             "subagents": self.subagents.count if self.subagents else 0,
             "update_available": update_available,

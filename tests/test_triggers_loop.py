@@ -313,3 +313,99 @@ def test_the_shared_dispatch_reads_both_action_shapes(tmp_path):
 
     src = inspect.getsource(GatewayOrchestrator._fire_store_trigger)
     assert "inline" in src
+
+
+# ── the live refresh a scheduled fire pushes (S107) ──
+
+
+def _orch_with_state(state):
+    """A bare orchestrator carrying just the dashboard state — enough to drive the fire path."""
+    from personalclaw.gateway import GatewayOrchestrator
+
+    orch = object.__new__(GatewayOrchestrator)
+    orch.dashboard_state = state
+    return orch
+
+
+class _RecordingState:
+    def __init__(self):
+        self.pushed = []
+
+    def push_refresh(self, *kinds):
+        self.pushed.append(kinds)
+
+
+def test_a_store_backed_fire_pushes_a_live_refresh():
+    """🔴 The defect (S107): since the cutover, a SCHEDULED fire updated no open view.
+
+    `ScheduleService._record_run` pushed `cron_history`, and `_record_run` is reachable only from
+    `run_job` (manual) and `_run_job_isolated` (the retired timer) — so a user watching Executions
+    saw a stale page until they navigated. Both kinds are pushed: `cron_history` for the run feed,
+    `crons` for the list's status dots and next-fire times.
+    """
+    state = _RecordingState()
+    _orch_with_state(state)._push_trigger_refresh()
+    assert state.pushed == [("crons", "cron_history")]
+
+
+def test_a_failing_fire_still_pushes_the_refresh():
+    """In a `finally`, because a failed run is exactly the one someone is watching for."""
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    class BadProvider:
+        async def execute(self, cfg, ctx, timeout=30):
+            raise RuntimeError("action blew up")
+
+    state = _RecordingState()
+    orch = _orch_with_state(state)
+    trigger = SimpleNamespace(
+        id="clock:x", workflow={"provider": "bash", "config": {"command": "true"}}
+    )
+    with patch("personalclaw.action_providers.get_action_provider", lambda name: BadProvider()):
+        asyncio.run(orch._fire_store_trigger(trigger, {"trigger_id": "clock:x"}))
+
+    assert state.pushed == [("crons", "cron_history")]
+
+
+def test_a_dashboardless_gateway_does_not_fail_on_the_refresh():
+    """`--no-dashboard` has nothing to notify."""
+    _orch_with_state(None)._push_trigger_refresh()  # must not raise
+
+
+def test_an_orchestrator_with_no_dashboard_attribute_at_all_survives():
+    """🔴 Found by the suite: `dashboard_state` may not EXIST yet.
+
+    An orchestrator that has not reached `_init_dashboard` (or a bare one, which is how
+    `test_gateway_file_watch.py` drives the fire path) has no such attribute — and an AttributeError
+    raised from the fire path's `finally` would REPLACE the fire's own outcome. Hence `getattr`.
+    """
+    from personalclaw.gateway import GatewayOrchestrator
+
+    bare = GatewayOrchestrator.__new__(GatewayOrchestrator)
+    assert not hasattr(bare, "dashboard_state")
+    bare._push_trigger_refresh()  # must not raise
+
+
+def test_a_broken_broadcast_never_fails_a_fire():
+    class Boom:
+        def push_refresh(self, *kinds):
+            raise RuntimeError("websocket closed")
+
+    _orch_with_state(Boom())._push_trigger_refresh()  # must not raise
+
+
+def test_the_legacy_refresh_callback_is_gone():
+    """🔴 The clean break. The callback fired only from `_record_run`, and the manual-run HANDLER
+    already pushes both kinds in its own `finally` — so keeping the seam would have meant a
+    configurable hook that nothing configures and a duplicate broadcast on the one path it reached.
+    """
+    import inspect
+
+    from personalclaw.gateway import GatewayOrchestrator
+    from personalclaw.schedule import ScheduleService
+
+    assert not hasattr(ScheduleService, "set_refresh_callback")
+    src = inspect.getsource(GatewayOrchestrator)
+    assert "set_refresh_callback" not in src

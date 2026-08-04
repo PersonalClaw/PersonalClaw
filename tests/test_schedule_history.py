@@ -167,14 +167,26 @@ async def test_double_fire_guard(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_refresh_callback_fires_on_record(tmp_path: Path) -> None:
-    hints: list[str] = []
+async def test_recording_a_run_no_longer_pushes_through_a_service_callback(tmp_path: Path) -> None:
+    """🔴 SUPERSEDED CONTRACT (S107). This asserted the service's `set_refresh_callback` hint.
+
+    That callback fired only from `_record_run`, reachable only from `run_job` (manual) and
+    `_run_job_isolated` (the timer S100 retired) — so a SCHEDULED fire pushed nothing and open views
+    went stale until the user navigated. The push moved to the store-backed fire path
+    (`_fire_store_trigger`'s `finally`, both `crons` and `cron_history`), and the manual path's own
+    HANDLER already pushed both kinds, so the seam retires rather than becoming a second push.
+
+    The RUN RECORD itself is unaffected, which is the half this file exists to protect — asserted
+    below so this test still guards something real.
+    """
     svc = ScheduleService(base_dir=tmp_path, on_job=lambda job: _coro("ok"))
     svc._load()
-    svc.set_refresh_callback(lambda kind: hints.append(kind))
+    assert not hasattr(svc, "set_refresh_callback")
     job = svc.add_job(name="r", action=make_agent_action(message="hi"), every_secs=300)
     await svc.run_job(job.id)
-    assert "cron_history" in hints
+    rows, total = await svc.list_runs(job.id, 0, 10)
+    assert total == 1
+    assert rows[0]["job_id"] == job.id
 
 
 async def _coro(v: str) -> str:

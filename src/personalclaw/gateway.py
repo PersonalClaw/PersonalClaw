@@ -1032,6 +1032,26 @@ class GatewayOrchestrator:
             base_dir=store.base_dir,
         )
 
+    def _push_trigger_refresh(self) -> None:
+        """Hint open dashboard views to refresh after a store-backed fire (S107).
+
+        Both kinds, matching what the legacy `_record_run` pushed plus the list the fire may have
+        changed: `cron_history` for the run feed, `crons` for the trigger list's status dots and
+        next-fire times. Best-effort — a broadcast failure must never affect the fire's outcome, and
+        a dashboard-less gateway (`--no-dashboard`) simply has nothing to notify.
+        """
+        # `getattr`, not attribute access: this runs in the fire path's `finally`, and an
+        # orchestrator that has not reached `_init_dashboard` yet (or a partially-built one) has
+        # no `dashboard_state` attribute at all. An AttributeError from a `finally` would REPLACE
+        # the fire's own outcome — a refresh hint must never be able to do that.
+        state = getattr(self, "dashboard_state", None)
+        if state is None:
+            return
+        try:
+            state.push_refresh("crons", "cron_history")
+        except Exception:  # noqa: BLE001 - a refresh hint is never worth failing a fire over
+            logger.debug("could not push a trigger refresh", exc_info=True)
+
     async def _trigger_reaper_loop(self) -> None:
         """Bound every store-backed run: sweep for blown deadlines and free the claim (§3.1 — S106).
 
@@ -1085,6 +1105,13 @@ class GatewayOrchestrator:
             await provider.execute(config, ctx, timeout=timeout)
         except Exception:  # noqa: BLE001 - a failed fire is logged, never crashes the loop
             logger.warning("trigger %s: action failed", trigger.id, exc_info=True)
+        finally:
+            # 🔴 THE LIVE REFRESH (S107). `ScheduleService._record_run` pushed `cron_history` so
+            # the Executions/Logs views update without polling — and `_record_run` is reachable only
+            # from `run_job` (manual) and `_run_job_isolated` (the retired timer). So since the
+            # cutover a SCHEDULED fire updated no open view: the user watched a stale page until
+            # navigating. In a `finally` because a FAILED fire is the one someone is watching for.
+            self._push_trigger_refresh()
 
     async def _file_watch_poll_loop(self) -> None:
         """Poll `file` triggers and fire the ones whose watched paths changed (§3 / crit 2 — S93).
@@ -3058,10 +3085,11 @@ class GatewayOrchestrator:
                 self._dashboard_port = addresses[0][1]
         if self.dashboard_state:
             self.dashboard_state.no_crons = self._no_crons  # dashboard mode
-            # Let the scheduler hint dashboard clients to refresh views when a
-            # run records (Executions/Logs live-update without polling).
-            _state = self.dashboard_state
-            self.cron_svc.set_refresh_callback(lambda *kinds: _state.push_refresh(*kinds))
+            # (S107) The scheduler's refresh callback is gone. It fired only from
+            # `_record_run`, reachable only from the retired timer and the manual-run path —
+            # and that path's HANDLER already pushes both kinds in its own `finally`. Scheduled
+            # fires now push through `_push_trigger_refresh` on the store-backed fire path,
+            # which is the one that actually runs.
             # Attach the inbox service (built in _init_inbox, which runs before the
             # dashboard state exists) so the Inbox handlers reach draft/classify/digest.
             self.dashboard_state._inbox_svc = self.inbox_svc

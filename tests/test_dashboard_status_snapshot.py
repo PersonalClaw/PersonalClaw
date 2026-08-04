@@ -24,11 +24,35 @@ def state(monkeypatch, tmp_path):
     )
 
 
+def _store_trigger(tmp_path, trigger_id, *, enabled=True, valid=True):
+    """Write a real store trigger under the state's home, the way the runtime does."""
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
+
+    spec = {"kind": "interval", "every_secs": 3600} if valid else {}
+    TriggerStore(base_dir=tmp_path).upsert(
+        Trigger(id=trigger_id, name=trigger_id, kind="clock", enabled=enabled, spec=spec)
+    )
+
+
 class TestStatusSnapshot:
+    def test_the_trigger_count_comes_from_the_store(self, state: DashboardState, tmp_path) -> None:
+        """🔴 SUPERSEDED CONTRACT (S107). This asserted `cron_jobs == 2` off a `crons.list_jobs()`
+        mock. The S100/S101 cutover left `ScheduleService` holding nothing, so the metric the
+        dashboard renders as "triggers" reported 0 on a machine with automations — measured on a
+        home with three valid store triggers, two enabled. The count now reads the unified store.
+
+        (The fixture's mock returns dict-shaped jobs, which have no `.id`, so the legacy fold-in
+        contributes nothing here — which is exactly why the old assertion could not have caught the
+        regression it was supposed to guard.)
+        """
+        _store_trigger(tmp_path, "clock:a")
+        _store_trigger(tmp_path, "clock:b", enabled=False)
+        assert state.status_snapshot()["cron_jobs"] == 2
+
     def test_contains_core_fields(self, state: DashboardState) -> None:
         snap = state.status_snapshot()
         assert snap["sessions"] == 3
-        assert snap["cron_jobs"] == 2
         assert snap["lessons"] == 1
         assert snap["subagents"] == 1
         assert snap["no_crons"] is False
@@ -91,3 +115,73 @@ class TestAllStatusSnapshotCallersPassUpdateAvailable:
 
         source = inspect.getsource(handlers_system)
         assert "update_available=" in source
+
+
+class TestTriggerCounts:
+    """`DashboardState.trigger_counts()` — the one source both status surfaces share (S107)."""
+
+    def test_an_empty_home_counts_zero(self, state: DashboardState) -> None:
+        assert state.trigger_counts() == {"total": 0, "enabled": 0, "broken": 0}
+
+    def test_enabled_is_counted_separately_from_total(
+        self, state: DashboardState, tmp_path
+    ) -> None:
+        _store_trigger(tmp_path, "clock:on")
+        _store_trigger(tmp_path, "clock:off", enabled=False)
+        counts = state.trigger_counts()
+        assert counts["total"] == 2
+        assert counts["enabled"] == 1
+
+    def test_a_broken_row_is_counted_and_never_enabled(
+        self, state: DashboardState, tmp_path
+    ) -> None:
+        """The store refuses to enable a row that fails validation, so a broken trigger must show up
+        as broken rather than merely vanish from the enabled count with no explanation."""
+        _store_trigger(tmp_path, "clock:bad", valid=False)
+        counts = state.trigger_counts()
+        assert counts["total"] == 1
+        assert counts["enabled"] == 0
+        assert counts["broken"] == 1
+
+    def test_a_legacy_job_sharing_an_id_is_not_double_counted(
+        self, state: DashboardState, tmp_path
+    ) -> None:
+        """A home mid-migration holds the same automation in both places. Counting it twice would
+        make the status card report more automations than the user has."""
+        from types import SimpleNamespace
+
+        _store_trigger(tmp_path, "clock:shared")
+        state.crons.list_jobs.return_value = [
+            SimpleNamespace(id="clock:shared", enabled=True),
+            SimpleNamespace(id="legacy-only", enabled=True),
+        ]
+        counts = state.trigger_counts()
+        assert counts["total"] == 2
+        assert counts["enabled"] == 2
+
+    def test_a_raising_legacy_service_does_not_break_the_status_read(
+        self, state: DashboardState, tmp_path
+    ) -> None:
+        _store_trigger(tmp_path, "clock:a")
+        state.crons.list_jobs.side_effect = OSError("crons.json is gibberish")
+        assert state.trigger_counts()["total"] == 1
+
+    def test_an_unusable_store_reports_zeros_rather_than_500ing(
+        self, state: DashboardState, monkeypatch
+    ) -> None:
+        """`GET /api/status` is what a user opens when something is already wrong."""
+        monkeypatch.setattr(
+            "personalclaw.triggers.store.TriggerStore",
+            MagicMock(side_effect=OSError("home is gone")),
+        )
+        assert state.trigger_counts() == {"total": 0, "enabled": 0, "broken": 0}
+
+    def test_the_legacy_status_method_is_gone(self) -> None:
+        """🔴 The clean break. `ScheduleService.status()` reported `{"running": false, "jobs": 0,
+        "enabled": 0}` on a healthy machine — the counts came from a service the cutover emptied,
+        and `running` was False BY DESIGN because `load_without_timer` never sets it. Leaving it
+        in place would mean a second, wrong answer to the same question."""
+        from personalclaw.schedule import ScheduleService
+
+        assert not hasattr(ScheduleService, "status")
+        assert not hasattr(ScheduleService, "set_refresh_callback")

@@ -52,6 +52,44 @@ _CHANNEL_PREFIX = "channel:"
 _PINNED_PREFIX = "pinned:"
 
 
+def counts(store: Any, *, legacy: Any = None) -> dict[str, int]:
+    """`{total, enabled, broken}` across the unified store — the numbers a status surface reports.
+
+    🔴 THE DEFECT (S107). Two separate surfaces counted automations by asking the legacy service,
+    which after the S100/S101 cutover holds nothing: `GET /api/status` reported
+    `cron: {"running": false, "jobs": 0, "enabled": 0}` and the dashboard's SystemHealth widget
+    rendered `triggers 0` — driven against a home with three valid store triggers, two enabled and
+    firing. Both were honest readings of the wrong source, and `running: false` was doubly
+    misleading: `load_without_timer` leaves `_running` False BY DESIGN, so the field said "the
+    scheduler is down" on a perfectly healthy machine.
+
+    `broken` is reported because the store knows it and the legacy service could not: a row that
+    fails validation refuses to enable, and a user whose trigger silently stopped counting deserves
+    to see the reason on the status surface rather than wonder where it went.
+
+    `legacy` is an optional `ScheduleService` whose jobs are FOLDED IN by id, so a home
+    mid-migration counts each automation exactly once rather than double-counting the imported
+    ones. It retires with the class.
+    """
+    total: dict[str, bool] = {}
+    broken: set[str] = set()
+    for row in store.load():
+        total[row.trigger.id] = bool(row.trigger.enabled)
+        if not row.ok:
+            broken.add(row.trigger.id)
+    if legacy is not None:
+        try:
+            for job in legacy.list_jobs(include_disabled=True):
+                total.setdefault(job.id, bool(job.enabled))
+        except Exception:  # noqa: BLE001 - a status read must never fail on the legacy half
+            logger.debug("legacy job counts unavailable", exc_info=True)
+    return {
+        "total": len(total),
+        "enabled": sum(1 for on in total.values() if on),
+        "broken": len(broken),
+    }
+
+
 def _inline_action(trigger: Any) -> dict[str, Any]:
     """The trigger's action as `{provider, config}`.
 
