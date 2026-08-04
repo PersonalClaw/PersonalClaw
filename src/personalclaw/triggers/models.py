@@ -525,6 +525,45 @@ def _known_fields() -> frozenset[str]:
     return frozenset(f.name for f in _dc.fields(Trigger))
 
 
+def _inline_credential_issues(workflow: Any) -> list[Issue]:
+    """WARN when a trigger's action carries a credential LITERALLY (§7 item 6 / R14 — S115).
+
+    🔴 Measured: the workflow lint flags `curl -H 'Authorization: Bearer sk-ant-api03-…'` as an
+    inline secret, and a TRIGGER stored the same string with `ok: True` and zero issues. The two
+    surfaces disagreed about the same mistake, so the guidance the workflow validator gives
+    ("reference credentials as {{secret:KEY}}") was unenforced for the automation half.
+
+    Reuses `workflows.secrets.find_inline_secrets` rather than re-deriving the credential shapes: a
+    second regex set would drift, and this one already skips the sanctioned `{{secret:...}}` form so
+    the fix for a finding never trips the finding again.
+
+    A WARNING, not an error. The trigger still fires — refusing would break every automation a user
+    already has with a token pasted in, which is exactly the population that most needs to keep
+    working while they migrate. The row is visibly flagged in the store, the doctor and the UI.
+    """
+    if not isinstance(workflow, dict):
+        return []
+    try:
+        from personalclaw.workflows.secrets import find_inline_secrets
+    except Exception:  # noqa: BLE001 - a lint that cannot import must not fail a parse
+        return []
+    try:
+        findings = find_inline_secrets(workflow)
+    except Exception:  # noqa: BLE001 - same; this module is pure validation and never logs
+        return []
+    return [
+        Issue(
+            path=f"workflow.{f.key}" if f.key else "workflow",
+            message=(
+                f"{f.key or 'the action'} looks like an inline credential ({f.hint}) — "
+                f"reference it as {{{{secret:KEY}}}} instead, which is resolved at dispatch and "
+                f"never stored"
+            ),
+        )
+        for f in findings
+    ]
+
+
 def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
     """Parse one authored trigger. Returns `(trigger, issues)` and NEVER raises.
 
@@ -563,6 +602,7 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
     gates: dict[str, Any] = dict(raw_gates) if isinstance(raw_gates, dict) else {}
     issues.extend(validate_spec(kind, spec))
     issues.extend(validate_gates(gates))
+    issues.extend(_inline_credential_issues(data.get("workflow")))
 
     if not str(data.get("id", "") or "").strip():
         issues.append(Issue(path="id", message="a trigger needs an id", severity="error"))
