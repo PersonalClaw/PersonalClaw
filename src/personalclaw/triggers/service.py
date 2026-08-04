@@ -444,6 +444,15 @@ async def tick(
         ctx = fp.FireContext(
             trigger_id=trigger.id,
             gates=trigger.gates or {},
+            # 🔴 `payload_text` is deliberately LEFT EMPTY here (§7/R4 rule a — S134), and that is
+            # correct rather than the omission it looks like. A clock trigger carries no external
+            # content: at tick time there is a schedule and no payload. The screen's real input
+            # arrives with a POLLED payload — web_watch items, file changes — which is dispatched
+            # through `gateway._fire_store_trigger`, NOT through this walk. S134 screens there.
+            #
+            # Written down because the DEFAULT is what hid the gap: `payload_text=""` made
+            # `if ctx.payload_text:` false, so every clock fire's ledger row listed `screen` among
+            # the gates PASSED while the screen had never run on a single real fire.
             capabilities=trigger.capabilities,
             holder=f"tick:{int(now)}",
             overlap=str(getattr(trigger, "overlap", "skip") or "skip"),
