@@ -869,6 +869,7 @@ class GatewayOrchestrator:
         """
         from personalclaw.action_providers import ActionContext, get_action_provider
         from personalclaw.action_providers.registry import _ensure_default_providers_registered
+        from personalclaw.triggers import secrets as _trigger_secrets
 
         workflow = trigger.workflow or {}
         inline = workflow.get("inline") if isinstance(workflow.get("inline"), dict) else None
@@ -882,6 +883,23 @@ class GatewayOrchestrator:
         if provider is None:
             logger.warning("trigger %s: unknown action provider %r", trigger.id, provider_name)
             return
+        # 🔴 RESOLVE `{{secret:KEY}}` HERE, at dispatch (§7 item 6 / decision 11 — S115). Workflows
+        # have carried this form since WF2-R14 and three surfaces tell the author to use it, but a
+        # TRIGGER action passed the literal placeholder to the provider — measured: a bash command
+        # `echo tok={{secret:MY_KEY}}` printed `tok={{secret:MY_KEY}}`. So the only way to make a
+        # trigger authenticate was to paste the credential into `triggers.json`, a file that is
+        # snapshotted (S113), echoed into run records, and rendered in the UI.
+        #
+        # At DISPATCH, never at save: the stored config keeps the placeholder, so the secret is not
+        # on disk. An unresolved key REFUSES rather than substituting "" — an empty Authorization
+        # header produces a remote 401 nobody can trace back to a missing credential.
+        try:
+            config = _trigger_secrets.resolve(config)
+        except _trigger_secrets.UnresolvedSecret as exc:
+            logger.warning("trigger %s: %s", trigger.id, exc)
+            self._push_trigger_refresh()
+            return
+
         try:
             ctx = ActionContext(event=event, context="", payload=payload)
             # 🔴 The MODE DEFAULT the legacy dispatcher applied (gateway.py:820 — 300s for a command,
