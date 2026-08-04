@@ -64,11 +64,10 @@ DUTY_GATE_TIMEOUT_SECS = 2.0
 #: * `max_runs_per_hour` / `max_actions_per_hour` / `rate_cap` — a WINDOWED history query.
 #:   `ScheduleRunStore.list_for_job` is offset/limit only, with no `since`;
 #:   `missed.within_rate_window` is the pure decision already waiting for that meter.
-#: * `debounce_secs` / `cooldown_secs` — a LAST-FIRE timestamp. The unified `Trigger` carries
-#:   `last_success_at`/`last_failure_at` but no `last_fired_at`, and a fire that was SUPPRESSED is
-#:   neither — so neither existing field can space fires without counting a blocked fire as a fire.
-#:   (The legacy `event_triggers.EventTrigger` DOES carry `last_fired_at`, which is why debounce
-#:   works there and not here.)
+#: * `debounce_secs` / `cooldown_secs` — **WIRED S151**, so deliberately absent from this set. They
+#:   needed a last-FIRE timestamp (`last_success_at`/`last_failure_at` describe an OUTCOME, and a
+#:   SUPPRESSED fire is neither); `Trigger.last_fired_at` now supplies it, written beside
+#:   `run_count` at the single fire-grant point, and `firepath`'s `spacing` gate reads it.
 #: * `idempotency` / `threshold` — R12 bundles them without pinning semantics; naming them keeps the
 #:   gap visible instead of letting a `threshold: 3` read as enforced.
 #:
@@ -79,8 +78,6 @@ UNMETERED_CAPS: frozenset[str] = frozenset(
         "max_cost_usd_per_run",
         "max_runs_per_hour",
         "max_actions_per_hour",
-        "debounce_secs",
-        "cooldown_secs",
         "rate_cap",
         "idempotency",
         "threshold",

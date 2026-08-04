@@ -485,6 +485,14 @@ FAIL_OPEN_GATES: frozenset[str] = frozenset(
         # hiccup. The asymmetry against the fences below is the point — a stuck-closed kill switch
         # silently stops work the user depends on and looks exactly like a broken scheduler.
         "incident",
+        # `spacing` (S151) is debounce + cooldown, and it belongs with the storm guards for the same
+        # reason `rate_cap` does: a malformed `debounce_secs` must not SILENCE an automation. The
+        # asymmetry is the point — a stuck-closed spacing gate looks exactly like a dead trigger,
+        # while a stuck-open one costs at most one duplicate run that the claim lock still bounds.
+        "spacing",
+        # …and both cap keys under the spelling a person edits.
+        "debounce_secs",
+        "cooldown_secs",
     }
 )
 
@@ -575,6 +583,20 @@ class Trigger:
     run_count: int = 0
     last_success_at: str = ""
     last_failure_at: str = ""
+    #: When this trigger last FIRED — set on a granted fire, beside `run_count` (S151).
+    #:
+    #: 🔴 A THIRD timestamp, deliberately, and the reason is the whole point of the field. Spacing a
+    #: fire needs "when did this last fire", and neither existing timestamp answers it:
+    #: `last_success_at` and `last_failure_at` both describe an OUTCOME, and a fire that was
+    #: SUPPRESSED (quiet hours, budget, overlap) is neither — so debouncing off either one would
+    #: count a blocked fire as a fire and let a debounced trigger straight through. The legacy
+    #: `event_triggers.EventTrigger` carries exactly this field, which is why debounce works there
+    #: and not here (S150 measured that gap and named it).
+    #:
+    #: ISO, like every other timestamp on this entity. Absent on every row written before S151,
+    #: which reads as "never fired" — the right answer for spacing: a trigger with no recorded
+    #: fire has nothing to space against, so its first fire is allowed.
+    last_fired_at: str = ""
     health_status: str = TriggerHealth.OK.value
     last_error_summary: str = ""
     state: str = TriggerState.ACTIVE.value
@@ -606,6 +628,7 @@ class Trigger:
             "run_count": self.run_count,
             "last_success_at": self.last_success_at,
             "last_failure_at": self.last_failure_at,
+            "last_fired_at": self.last_fired_at,
             "health_status": self.health_status,
             "last_error_summary": self.last_error_summary,
             "state": self.state,
@@ -818,6 +841,7 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
         run_count=_int(data.get("run_count"), 0),
         last_success_at=str(data.get("last_success_at", "") or ""),
         last_failure_at=str(data.get("last_failure_at", "") or ""),
+        last_fired_at=str(data.get("last_fired_at", "") or ""),
         health_status=str(data.get("health_status", TriggerHealth.OK.value) or "ok"),
         last_error_summary=str(data.get("last_error_summary", "") or ""),
         state=state,
