@@ -170,6 +170,82 @@ def enumerate_missed(
     return rows, summary, shown
 
 
+def missed_inputs(entry: dict[str, Any], *, now: float = 0.0) -> dict[str, Any]:
+    """Derive this module's four inputs from a row `Trigger.to_dict()` actually emits (S142).
+
+    🔴 THE KEY CONTRACT, and why it needed writing down. This module reads `last_fire_at`,
+    `interval_secs`, `missed_last_slot` and `fires_automatically` off the dicts it is handed.
+    `Trigger.to_dict()` emits **NONE OF THE FOUR** — measured, all four `in d` are False. So the
+    guard `if interval_secs <= 0 or last_fire_at <= 0` saw `0.0` and `0.0` for every trigger on
+    every machine, and `review_at_boot` returned an EMPTY review no matter how long the lid was
+    shut. `catch_up_plan` failed the same way one clause further on: `missed_last_slot` was absent,
+    so every trigger got `"nothing was missed"` including ones overdue by hours.
+
+    A prose spec read by nothing is inert; a spec read with the WRONG KEYS is worse, because it
+    reports a confident, wrong answer. Same shape as S130's classifier disagreeing with the gate
+    names the engine walks — the logic was right and the vocabulary was not.
+
+    Derived rather than added as four persisted fields, deliberately:
+
+    * `interval_secs` lives in `spec` (the store's shape for an interval clock) — copying it to a
+      top-level column would give one value two homes and one of them would go stale.
+    * `last_fire_at` has NO persisted equivalent, and inventing one would be a second write on the
+      fire path. `next_fire_at - interval_secs` is the last slot the schedule OWNS, which is exactly
+      the grid anchor `enumerate_missed` walks from. `last_success_at` would be wrong: a trigger
+      that failed at 03:00 still missed the 04:00 slot.
+    * `missed_last_slot` is a QUESTION about the row (is the armed fire in the past?), not a state
+      to persist and keep in sync.
+    * `fires_automatically` is already a `Trigger` property, so it is read, not recomputed.
+    """
+    spec = entry.get("spec") or {}
+    interval_secs = 0.0
+    for source in (entry, spec):
+        try:
+            interval_secs = float(source.get("interval_secs") or 0.0)
+        except (TypeError, ValueError):
+            interval_secs = 0.0
+        if interval_secs > 0:
+            break
+
+    last_fire_at = 0.0
+    if "last_fire_at" in entry:
+        try:
+            last_fire_at = float(entry.get("last_fire_at") or 0.0)
+        except (TypeError, ValueError):
+            last_fire_at = 0.0
+    if last_fire_at <= 0 and interval_secs > 0:
+        from personalclaw.triggers.service import to_epoch
+
+        armed = to_epoch(str(entry.get("next_fire_at", "") or ""))
+        if armed > 0:
+            last_fire_at = armed - interval_secs
+
+    if "missed_last_slot" in entry:
+        missed_last_slot = bool(entry.get("missed_last_slot"))
+    else:
+        from personalclaw.triggers.service import to_epoch
+
+        armed = to_epoch(str(entry.get("next_fire_at", "") or ""))
+        # `now <= 0` means the caller did not supply an instant, so the question is unanswerable —
+        # answer FALSE (no catch-up) rather than guessing from wall-clock. A catch-up fired on a
+        # wrong premise runs unattended work the user did not ask for; a missed one is reviewable.
+        missed_last_slot = now > 0 and armed > 0 and armed < now
+
+    if "fires_automatically" in entry:
+        fires_automatically = bool(entry.get("fires_automatically"))
+    else:
+        fires_automatically = bool(entry.get("enabled")) and str(
+            entry.get("state", "active") or "active"
+        ) in ("active", "")
+
+    return {
+        "interval_secs": interval_secs,
+        "last_fire_at": last_fire_at,
+        "missed_last_slot": missed_last_slot,
+        "fires_automatically": fires_automatically,
+    }
+
+
 def review_at_boot(
     triggers: list[dict[str, Any]],
     *,
@@ -192,6 +268,9 @@ def review_at_boot(
     unstable order would give different
     triggers the remaining budget on different restarts, and "why did my backup get a review card
     yesterday but not today" is unanswerable.
+
+    Inputs come through `missed_inputs`, which is what makes this read the keys the store actually
+    writes — see that function for the measured mismatch it closes.
     """
     review = MissedReview()
     remaining = max(0, budget)
@@ -199,10 +278,11 @@ def review_at_boot(
         if remaining <= 0:
             review.truncated = True
             break
+        derived = missed_inputs(entry, now=now)
         rows, summary, spent = enumerate_missed(
             trigger_id=str(entry.get("id", "") or ""),
-            last_fire_at=float(entry.get("last_fire_at", 0.0) or 0.0),
-            interval_secs=float(entry.get("interval_secs", 0.0) or 0.0),
+            last_fire_at=derived["last_fire_at"],
+            interval_secs=derived["interval_secs"],
             now=now,
             budget=remaining,
         )
@@ -253,13 +333,17 @@ def catch_up_plan(triggers: list[dict[str, Any]], *, now: float) -> list[tuple[s
     plan: list[tuple[str, float, str]] = []
     for entry in sorted(triggers, key=lambda t: str(t.get("id", ""))):
         tid = str(entry.get("id", "") or "")
+        # Through `missed_inputs` for the same reason `review_at_boot` is: `missed_last_slot` and
+        # `fires_automatically` are not keys `Trigger.to_dict()` emits, so reading them raw made
+        # EVERY trigger answer "nothing was missed" — including one overdue by hours. Measured.
+        derived = missed_inputs(entry, now=now)
         if not entry.get("catch_up"):
             plan.append((tid, 0.0, "catch_up is off: a missed slot is reviewed, not re-run"))
             continue
-        if not entry.get("missed_last_slot"):
+        if not derived["missed_last_slot"]:
             plan.append((tid, 0.0, "nothing was missed"))
             continue
-        if not entry.get("fires_automatically", True):
+        if not derived["fires_automatically"]:
             plan.append((tid, 0.0, "disabled or paused: a catch-up must not restart it"))
             continue
         fire_at = now + BOOT_STAGGER_BASE_SECS + jitter_offset(tid, BOOT_STAGGER_WINDOW_SECS)

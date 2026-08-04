@@ -4205,3 +4205,82 @@ afterwards.
   (Loops Phase 4), `web_watch`'s headless tier, a chat-turn event source reading `agent_scope`, meters
   for the four unmetered caps, and §3.5's undeclared `skip_if_active` / `acting_on`. **Criterion 3 is
   now complete in both clauses.**
+
+### S142 — criterion 7: the boot sweep, the spool and the resume queue (crit 7 / §3.1 / §3.2 / §3.4)
+
+**DONE.** Criterion 7 — *"Kill the gateway mid-fire and restart: no double-fire, no lost fire, missed
+slots appear in the review card, pending approvals re-arm, `catch_up` triggers fire exactly once,
+staggered"* — was **dead in five layers**, the deepest inert chain this program has found. Found by
+generalising S141's dead-seam sweep to the criterion's whole chain rather than one function.
+
+1. **`service.boot` had ZERO callers.** Boot ran `migrate_and_arm`, which arms only rows with NO
+   `next_fire_at` (`arm.needs_arming` is explicit that an armed row is left alone). So a trigger that
+   WAS armed and went overdue while the lid was shut kept its stale past fire, and the first tick
+   found it due. Measured on ten minutely triggers overdue by an hour: **10 of 10 due in the same
+   instant**. `boot_recovery`'s deterministic per-id stagger — which would have spread them 108-179s
+   apart — was never reached, so §3.1's "boot stagger" existed only as a function.
+2. **`review_at_boot` and `catch_up_plan` read four keys nothing produces.** They take
+   `last_fire_at`, `interval_secs`, `missed_last_slot` and `fires_automatically` off the dicts they
+   are handed; `Trigger.to_dict()` emits **none of the four**. So the enumeration guard
+   (`if interval_secs <= 0 or last_fire_at <= 0`) saw `0.0` and `0.0` for every trigger on every
+   machine, and the review was empty however long the lid had been shut; `catch_up_plan` failed one
+   clause later, answering `"nothing was missed"` for a trigger overdue by hours. Closed with
+   `missed.missed_inputs`, which DERIVES all four from what the store actually writes rather than
+   adding four persisted columns — `interval_secs` already lives in `spec`, `last_fire_at` is
+   `next_fire_at - interval` (the grid anchor, and `last_success_at` would be wrong: a trigger that
+   FAILED at 03:00 still missed 04:00), and `missed_last_slot` is a question about the row rather
+   than a state to keep in sync. An explicit key still wins, so an event-sourced caller can correct it.
+3. **`drain_spooled_fires` had no caller.** `dispatch.spool_fire`'s own docstring calls it "THE fix
+   for the measured bug" — `event_triggers._schedule_fire` records the fire, asks for a running loop,
+   and `return`s when there is none, so a sync CLI memory write increments `fire_count` and drops the
+   action. It was dead at **both** ends: nothing wrote the spool and nothing drained it, so the bug
+   its docstring names was still live. Both wired; a spooled fire re-enters through
+   `emit_memory_event`, the SAME seam a live write uses, so it cannot skip a gate a live fire walks
+   (the `web_watch` shape from S134).
+4. **`wakeup.retry_queue` had no caller.** A resume whose session was not ready was built, classified
+   `REQUEUED`, and thrown away — and §3.2 is explicit that a resume is never dropped, because it
+   carries a gate answer and eating it strands the parked run forever. Now held across ticks in a
+   queue owned by `run_forever` (not `tick_once`, which is deliberately stateless — a queue inside
+   one iteration is discarded on every return, which is the same silent drop). Bounded at
+   `MAX_PENDING_RESUMES = 200`, dropping the OLDEST and saying so: §3.2's rule cannot mean an
+   unbounded queue, because an OOM takes down every automation rather than one.
+5. **The loop's own drop check read a key its producer does not emit.** `summary.get("dropped")` —
+   `wakeup.summary()` returns `{total, delivered, by_disposition, retry}`. So a `no_session` delivery
+   (a fire that reached nobody) was logged nowhere, and the check could never fire.
+
+**Three of the five are the same shape**, and it is worth naming: a live reader asking for a key its
+producer never writes. That is *worse* than an unread constant — an unread constant is inert, while
+this reports a confident wrong answer, and the silence reads as "nothing wrong". Same class as S130's
+classifier disagreeing with the gate names the engine walks.
+
+**DISCOVERY — two bugs the wiring itself exposed**, both latent only because nothing called `plan_boot`:
+
+* **The review was snapshot AFTER recovery had overwritten the evidence.** `plan_boot` pushes an
+  overdue `next_fire_at` forward IN PLACE on the same `Trigger` objects, and the missed anchor is
+  derived from `next_fire_at`. Measured: a trigger overdue by an hour (61 missed slots) reported **0
+  review rows**. Re-arming destroys the only evidence that anything was missed, so the review and the
+  catch-up plan are now both taken before it.
+* **`missed_dropped` re-armed a 03:00 daily backup to 09:02.** `boot_recovery` returns
+  `now + stagger` for both outcomes, which is right for a catch-up (a fire is genuinely happening
+  now) and wrong for a drop — so the slot the function had just decided to DROP fired six hours late
+  anyway, off-schedule, ignoring the trigger's own cron expression. The drop path now resumes from
+  `arm.next_fire` (the trigger's own next real slot) and keeps the jitter on top: driven, six
+  co-phased hourly triggers all resume to exactly `now + 3600` without it, so removing the jitter
+  would merely move the stampede one interval later instead of preventing it. §3.1 requires both
+  halves; the anchor is what changed, not the spread.
+
+**DEVIATION — two test fixtures were completed, not weakened.** Three tests hand-built
+`catch_up_plan` dicts with no `enabled` key. Since `fires_automatically` cannot be derived without
+it, an underspecified row now fails safe (no catch-up: a catch-up fired on a guessed premise runs
+unattended work the user did not ask for, while a missed one stays reviewable). Verified against real
+rows first — `to_dict()` always carries `enabled`, and disabled/autopaused rows both correctly refuse.
+The fixtures were describing a row the store cannot produce, which is what hid defect 2 for 77
+sessions: the tests supplied the keys, so they passed while production could not.
+
+Each of the five fixes was verified load-bearing by reverting it and confirming the matching tests go
+red (5, 4 and 4 failures respectively).
+
+- **REMAINING in AUTOMATION-SUBSTRATE:** the E4-blocked webhook fire endpoint (queue S123), `idle`
+  (Loops Phase 4), `web_watch`'s headless tier, a chat-turn event source reading `agent_scope`, meters
+  for the four unmetered caps, and §3.5's undeclared `skip_if_active` / `acting_on`. **Criterion 7 is
+  now complete in all five clauses**, and criterion 3 in both.

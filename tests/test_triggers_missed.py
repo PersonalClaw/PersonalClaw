@@ -210,7 +210,9 @@ def test_catch_up_is_OPT_IN():
     """RunAtLoad semantics are a deliberate choice, not a default: most
     missed slots should be reviewed,
     not re-run."""
-    plan = catch_up_plan([{"id": "t", "catch_up": False, "missed_last_slot": True}], now=NOW)
+    plan = catch_up_plan(
+        [{"id": "t", "catch_up": False, "missed_last_slot": True, "enabled": True}], now=NOW
+    )
     tid, fire_at, why = plan[0]
     assert fire_at == 0.0
     assert "reviewed, not re-run" in why
@@ -218,7 +220,9 @@ def test_catch_up_is_OPT_IN():
 
 def test_a_catch_up_trigger_fires_ONCE_and_LATER():
     """Not inline: a catch-up during recovery runs before the gateway finished starting."""
-    plan = catch_up_plan([{"id": "t", "catch_up": True, "missed_last_slot": True}], now=NOW)
+    plan = catch_up_plan(
+        [{"id": "t", "catch_up": True, "missed_last_slot": True, "enabled": True}], now=NOW
+    )
     tid, fire_at, why = plan[0]
     assert fire_at > NOW
     assert why == CATCHUP_ORIGIN
@@ -235,9 +239,9 @@ def test_catch_ups_are_STAGGERED_across_triggers():
     """A laptop opening after a weekend must not run every automation it owns in the same second."""
     plan = catch_up_plan(
         [
-            {"id": "alpha", "catch_up": True, "missed_last_slot": True},
-            {"id": "beta", "catch_up": True, "missed_last_slot": True},
-            {"id": "gamma", "catch_up": True, "missed_last_slot": True},
+            {"id": "alpha", "catch_up": True, "missed_last_slot": True, "enabled": True},
+            {"id": "beta", "catch_up": True, "missed_last_slot": True, "enabled": True},
+            {"id": "gamma", "catch_up": True, "missed_last_slot": True, "enabled": True},
         ],
         now=NOW,
     )
@@ -247,13 +251,13 @@ def test_catch_ups_are_STAGGERED_across_triggers():
 
 def test_the_stagger_is_DETERMINISTIC_across_restarts():
     """A crash-loop must not reshuffle when every automation catches up."""
-    args = [{"id": "alpha", "catch_up": True, "missed_last_slot": True}]
+    args = [{"id": "alpha", "catch_up": True, "missed_last_slot": True, "enabled": True}]
     assert catch_up_plan(args, now=NOW) == catch_up_plan(args, now=NOW)
 
 
 def test_a_trigger_that_MISSED_NOTHING_gets_no_catch_up():
     _tid, fire_at, why = catch_up_plan(
-        [{"id": "t", "catch_up": True, "missed_last_slot": False}], now=NOW
+        [{"id": "t", "catch_up": True, "missed_last_slot": False, "enabled": True}], now=NOW
     )[0]
     assert fire_at == 0.0
     assert why == "nothing was missed"
@@ -283,9 +287,9 @@ def test_every_candidate_gets_an_EXPLANATION_including_the_refusals():
     explanation as much as one that did."""
     plan = catch_up_plan(
         [
-            {"id": "a", "catch_up": True, "missed_last_slot": True},
-            {"id": "b", "catch_up": False, "missed_last_slot": True},
-            {"id": "c", "catch_up": True, "missed_last_slot": False},
+            {"id": "a", "catch_up": True, "missed_last_slot": True, "enabled": True},
+            {"id": "b", "catch_up": False, "missed_last_slot": True, "enabled": True},
+            {"id": "c", "catch_up": True, "missed_last_slot": False, "enabled": True},
         ],
         now=NOW,
     )
@@ -349,3 +353,93 @@ def test_an_UNARMED_trigger_stays_unarmed():
 def test_a_trigger_with_no_interval_is_untouched():
     """A one-shot has nothing to roll to."""
     assert roll_forward(next_fire_at=NOW - 100, interval_secs=0.0, now=NOW) == NOW - 100
+
+
+# ── S142: the key contract, and the four inputs nothing produced ──
+
+
+def _real_row(**over):
+    """A row exactly as `Trigger.to_dict()` writes it — the only shape production hands in."""
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.service import to_iso
+
+    base = dict(
+        id="t",
+        name="T",
+        kind="clock",
+        enabled=True,
+        spec={"kind": "interval", "interval_secs": 60},
+    )
+    base.update({k: v for k, v in over.items() if k != "next_at"})
+    trigger = Trigger(**base)
+    if "next_at" in over:
+        trigger.next_fire_at = to_iso(over["next_at"])
+    return trigger.to_dict()
+
+
+def test_the_review_reads_the_keys_the_STORE_ACTUALLY_WRITES():
+    """🔴 THE DEFECT S142 FOUND. This module reads `last_fire_at` / `interval_secs` /
+    `missed_last_slot` / `fires_automatically`, and `Trigger.to_dict()` emits **none of the four**.
+    So the enumeration guard saw `0.0` and `0.0` for every trigger on every machine and the review
+    was EMPTY however long the lid had been shut — a confident, wrong answer.
+
+    Asserted against a real `to_dict()` row rather than a hand-built dict, because a hand-built dict
+    is what hid this: the fixtures supplied the keys, so the tests passed while production
+    could not.
+    """
+    row = _real_row(next_at=NOW - HOUR)
+    assert not {"last_fire_at", "interval_secs", "missed_last_slot"} & set(row), (
+        "if to_dict() starts emitting these, `missed_inputs` should prefer them — it already does, "
+        "but this assertion is what will say so"
+    )
+    review = review_at_boot([row], now=NOW)
+    total = len(review.rows) + sum(s.count for s in review.summaries)
+    assert total == 61, total  # an hour of minutely slots, off the armed-fire anchor
+    assert review.rows, "the newest slots must be reviewable, not only counted"
+
+
+def test_catch_up_reads_them_too():
+    """`catch_up_plan` failed one clause further on: `missed_last_slot` was absent, so EVERY
+    trigger answered "nothing was missed" — including one overdue by hours."""
+    _tid, fire_at, why = catch_up_plan([_real_row(catch_up=True, next_at=NOW - HOUR)], now=NOW)[0]
+    assert fire_at > NOW
+    assert why == CATCHUP_ORIGIN
+
+
+def test_a_row_with_NO_enabled_key_never_catches_up():
+    """Fail-SAFE on an underspecified row. `fires_automatically` cannot be derived without
+    `enabled`, and a catch-up fired on a guessed premise runs unattended work the user did not ask
+    for — while a missed one stays reviewable. Every real row carries the key; this is the guard for
+    anything that does not."""
+    _tid, fire_at, why = catch_up_plan(
+        [{"id": "t", "catch_up": True, "missed_last_slot": True}], now=NOW
+    )[0]
+    assert fire_at == 0.0
+    assert "disabled or paused" in why
+
+
+def test_missed_last_slot_is_UNANSWERABLE_without_an_instant():
+    """`now <= 0` means the caller supplied no instant, so the question is answered FALSE rather
+    than guessed from wall-clock — same reasoning as the missing-`enabled` guard."""
+    from personalclaw.triggers.missed import missed_inputs
+
+    assert missed_inputs(_real_row(next_at=NOW - HOUR), now=0.0)["missed_last_slot"] is False
+    assert missed_inputs(_real_row(next_at=NOW - HOUR), now=NOW)["missed_last_slot"] is True
+
+
+def test_an_AUTOPAUSED_trigger_never_catches_up():
+    """S139 pauses a failing automation; a catch-up that restarted it would undo that."""
+    row = _real_row(catch_up=True, state="autopaused", next_at=NOW - HOUR)
+    _tid, fire_at, why = catch_up_plan([row], now=NOW)[0]
+    assert fire_at == 0.0
+    assert "disabled or paused" in why
+
+
+def test_an_explicit_key_still_WINS_over_the_derivation():
+    """The derivation is a fallback, not an override: a caller that knows the real last fire must be
+    able to say so, or an event-sourced caller could never correct it."""
+    from personalclaw.triggers.missed import missed_inputs
+
+    row = _real_row(next_at=NOW - HOUR)
+    row["last_fire_at"] = NOW - 120
+    assert missed_inputs(row, now=NOW)["last_fire_at"] == NOW - 120
