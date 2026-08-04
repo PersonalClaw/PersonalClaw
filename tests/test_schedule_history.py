@@ -1,11 +1,14 @@
-"""Unit tests for the Schedule run history (ScheduleRun + ScheduleRunStore)
-and ScheduleService run recording.
+"""Unit tests for the schedule run history (`ScheduleRun` + `ScheduleRunStore`).
 
-Covers: the run store round-trips records (per-job file + cross-job index),
-rotation caps, path-traversal rejection, lock-free partial-line tolerance, the
-TaskProvider-shaped (rows, total) read API, and that ScheduleService.run_job
-records a ScheduleRun tagged trigger="manual", refuses to double-fire, and
-exposes is_running/running_since.
+Covers: the store round-trips records (per-job file + cross-job index), rotation caps,
+path-traversal rejection, lock-free partial-line tolerance, and the TaskProvider-shaped
+`(rows, total)` read API.
+
+🔴 The `ScheduleService` recording + `_record_run` status-mapping sections retired with the class
+(S112). The T7 contract they pinned — an honest `launched` that does NOT claim success — lives in
+the substrate now: `test_triggers_executor.py` covers `classify()` and
+`test_triggers_facade_store.py` covers the badge. `ScheduleRunStore` is unchanged, which is what
+remains here.
 """
 
 from __future__ import annotations
@@ -14,7 +17,6 @@ from pathlib import Path
 
 import pytest
 
-from personalclaw.schedule import ScheduleJob, ScheduleService, make_agent_action
 from personalclaw.schedule_history import (
     _MAX_RECORDS_PER_JOB,
     ScheduleRun,
@@ -114,205 +116,8 @@ async def test_delete_for_job(tmp_path: Path) -> None:
     assert all(r["job_id"] != "d1" for r in all_rows)
 
 
-# ── ScheduleService recording ─────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_run_job_records_manual_run(tmp_path: Path) -> None:
-    seen: list[str] = []
-
-    async def on_job(job):
-        seen.append(job.id)
-        return "did the thing"
-
-    svc = ScheduleService(base_dir=tmp_path, on_job=on_job)
-    svc._load()
-    job = svc.add_job(name="t", action=make_agent_action(message="hi"), every_secs=300)
-
-    ok = await svc.run_job(job.id)
-    assert ok is True
-    assert seen == [job.id]
-
-    rows, total = await svc.list_runs(job.id)
-    assert total == 1
-    assert rows[0]["trigger"] == "manual"
-    assert rows[0]["status"] == "success"
-    assert rows[0]["duration_ms"] >= 0
-
-
-@pytest.mark.asyncio
-async def test_run_job_records_failure(tmp_path: Path) -> None:
-    async def on_job(job):
-        raise RuntimeError("boom")
-
-    svc = ScheduleService(base_dir=tmp_path, on_job=on_job)
-    svc._load()
-    job = svc.add_job(name="f", action=make_agent_action(message="hi"), every_secs=300)
-    await svc.run_job(job.id)
-    rows, _ = await svc.list_runs(job.id)
-    assert rows[0]["status"] == "failure"
-    assert "boom" in (rows[0]["summary"] or rows[0].get("error", ""))
-
-
-@pytest.mark.asyncio
-async def test_double_fire_guard(tmp_path: Path) -> None:
-    svc = ScheduleService(base_dir=tmp_path)
-    svc._load()
-    job = svc.add_job(name="g", action=make_agent_action(message="hi"), every_secs=300)
-    # Mark as executing → run_job must refuse.
-    svc._executing.add(job.id)
-    assert svc.is_running(job.id) is True
-    ok = await svc.run_job(job.id)
-    assert ok is False
-
-
-@pytest.mark.asyncio
-async def test_recording_a_run_no_longer_pushes_through_a_service_callback(tmp_path: Path) -> None:
-    """🔴 SUPERSEDED CONTRACT (S107). This asserted the service's `set_refresh_callback` hint.
-
-    That callback fired only from `_record_run`, reachable only from `run_job` (manual) and
-    `_run_job_isolated` (the timer S100 retired) — so a SCHEDULED fire pushed nothing and open views
-    went stale until the user navigated. The push moved to the store-backed fire path
-    (`_fire_store_trigger`'s `finally`, both `crons` and `cron_history`), and the manual path's own
-    HANDLER already pushed both kinds, so the seam retires rather than becoming a second push.
-
-    The RUN RECORD itself is unaffected, which is the half this file exists to protect — asserted
-    below so this test still guards something real.
-    """
-    svc = ScheduleService(base_dir=tmp_path, on_job=lambda job: _coro("ok"))
-    svc._load()
-    assert not hasattr(svc, "set_refresh_callback")
-    job = svc.add_job(name="r", action=make_agent_action(message="hi"), every_secs=300)
-    await svc.run_job(job.id)
-    rows, total = await svc.list_runs(job.id, 0, 10)
-    assert total == 1
-    assert rows[0]["job_id"] == job.id
-
-
-async def _coro(v: str) -> str:
-    return v
-
-
-# ── _record_run status mapping (T7 honest "started ≠ succeeded") ──
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "last_status,last_error,last_outcome,expected",
-    [
-        ("ok", None, "", "success"),
-        ("error", "boom", "", "failure"),
-        ("error", "Timed out after 30s", "", "timeout"),
-        # A fire-and-forget action only LAUNCHED a background turn — honest status.
-        ("ok", None, "launched", "launched"),
-    ],
-)
-async def test_record_run_status_mapping(
-    tmp_path: Path, last_status, last_error, last_outcome, expected
-) -> None:
-    svc = ScheduleService(base_dir=tmp_path)
-    svc._load()
-    job = svc.add_job(name="m", action=make_agent_action(message="hi"), every_secs=300)
-    job.last_status = last_status
-    job.last_error = last_error
-    job.last_outcome = last_outcome
-    await svc._record_run(job, started_at=0.0, trigger="scheduled")
-    rows, _ = await svc.list_runs(job.id)
-    assert rows[0]["status"] == expected
-
-
-@pytest.mark.asyncio
-async def test_last_run_status_reads_newest_record(tmp_path: Path) -> None:
-    """last_run_status() returns the newest run record's status (persistent,
-    honest) — the source for the UI badge, surviving restart unlike last_outcome.
-    A launched run must report 'launched', not the job's 'ok' last_status."""
-
-    async def _launch(job: ScheduleJob) -> str:
-        job.last_status = "ok"
-        job.last_outcome = "launched"  # fire-and-forget
-        return "ok"
-
-    svc = ScheduleService(base_dir=tmp_path, on_job=_launch)
-    svc._load()
-    job = svc.add_job(name="L", action=make_agent_action(message="hi"), every_secs=300)
-    assert svc.last_run_status(job.id) == ""  # no runs yet
-    await svc.run_job(job.id)
-    assert svc.last_run_status(job.id) == "launched"  # honest, not "ok"
-    # Survives a fresh service (persistent run record, not runtime last_outcome).
-    svc2 = ScheduleService(base_dir=tmp_path)
-    svc2._load()
-    assert svc2.last_run_status(job.id) == "launched"
-
-
-@pytest.mark.asyncio
-async def test_failed_action_status_not_clobbered_to_ok(tmp_path: Path) -> None:
-    """A callback that self-reports last_status='error' (the action path on a
-    failed action) must NOT be overwritten with 'ok' by _execute — else a failed
-    run records as success (the honest-status bug T7 fixes)."""
-
-    async def _failing_action(job: ScheduleJob) -> str | None:
-        job.last_status = "error"
-        job.last_error = "rendered empty"
-        return None
-
-    svc = ScheduleService(base_dir=tmp_path, on_job=_failing_action)
-    svc._load()
-    job = svc.add_job(name="f", action=make_agent_action(message="hi"), every_secs=300)
-    await svc.run_job(job.id)
-    rows, _ = await svc.list_runs(job.id)
-    assert rows[0]["status"] == "failure"  # NOT "success"
-
-
-@pytest.mark.asyncio
-async def test_agent_path_defaults_to_ok(tmp_path: Path) -> None:
-    """A callback that does NOT self-report status (the agent path) still defaults
-    to 'ok' on a clean return."""
-
-    async def _agent(job: ScheduleJob) -> str:
-        return "did the thing"  # never touches last_status
-
-    svc = ScheduleService(base_dir=tmp_path, on_job=_agent)
-    svc._load()
-    job = svc.add_job(name="a", action=make_agent_action(message="hi"), every_secs=300)
-    await svc.run_job(job.id)
-    rows, _ = await svc.list_runs(job.id)
-    assert rows[0]["status"] == "success"
-
-
-@pytest.mark.asyncio
-async def test_replay_run_tags_replay_and_does_not_merge(tmp_path: Path) -> None:
-    """A dry-run replay records a run tagged trigger='replay', sets job.dry_run
-    during the callback, and does NOT merge job state to disk."""
-    saw_dry_run: list[bool] = []
-
-    async def _cb(job: ScheduleJob) -> str:
-        saw_dry_run.append(job.dry_run)
-        job.last_result = "REPLAYED"
-        return "ok"
-
-    svc = ScheduleService(base_dir=tmp_path, on_job=_cb)
-    svc._load()
-    job = svc.add_job(name="r", action=make_agent_action(message="hi"), every_secs=300)
-    ok = await svc.replay_run(job.id)
-    assert ok is True
-    assert saw_dry_run == [True]  # the callback ran in dry-run mode
-    assert job.dry_run is False  # cleared after the run
-    rows, _ = await svc.list_runs(job.id)
-    assert rows[0]["trigger"] == "replay"  # tagged distinctly from manual/scheduled
-    # Dry run changed no real state: the on-disk job has no last_result merged.
-    svc2 = ScheduleService(base_dir=tmp_path)
-    svc2._load()
-    persisted = next(j for j in svc2._jobs if j.id == job.id)
-    assert (persisted.last_result or "") == ""
-
-
-@pytest.mark.asyncio
-async def test_launched_status_not_leaked_to_next_run(tmp_path: Path) -> None:
-    """_execute resets last_outcome so a prior 'launched' can't make a later
-    synchronous success report as 'launched'."""
-    svc = ScheduleService(base_dir=tmp_path, on_job=lambda job: _coro("ok"))
-    svc._load()
-    job = svc.add_job(name="r", action=make_agent_action(message="hi"), every_secs=300)
-    job.last_outcome = "launched"  # stale from a prior run
-    await svc._execute(job)
-    assert job.last_outcome == ""  # reset before the callback ran
+# 🔴 The `ScheduleService` recording + `_record_run` status-mapping sections retired with the
+# class (S112). The T7 contract they pinned — an honest `launched` that does NOT claim success —
+# lives in the substrate now and is covered by `test_triggers_executor.py`'s `classify()` tests
+# and `test_triggers_facade_store.py`'s badge assertions. `ScheduleRunStore` itself is unchanged,
+# which is what the section above exercises.

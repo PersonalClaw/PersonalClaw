@@ -34,7 +34,6 @@ if TYPE_CHECKING:
         ConversationLog,
         HistoryConsolidator,
         LessonStore,
-        ScheduleService,
         SessionManager,
         SubagentManager,
     )
@@ -728,7 +727,6 @@ class DashboardState:
     def __init__(
         self,
         sessions: "SessionManager",
-        crons: "ScheduleService",
         lessons: "LessonStore",
         start_time: float,
         subagents: "SubagentManager | None" = None,
@@ -738,7 +736,6 @@ class DashboardState:
         owner_id: str = "",
     ):
         self.sessions = sessions
-        self.crons = crons
         self.lessons = lessons
         self.start_time = start_time
         self.subagents = subagents
@@ -906,7 +903,10 @@ class DashboardState:
         from personalclaw.triggers.store import TriggerStore
 
         try:
-            return SV.counts(TriggerStore(base_dir=config_dir()), legacy=self.crons)
+            # No `legacy=` fold-in any more (S112). Proven redundant: since S110 the boot migration
+            # imports EVERY legacy row — including the ones the conversion refuses, written disabled
+            # — so `counts(store)` and `counts(store, legacy=svc)` returned identical results.
+            return SV.counts(TriggerStore(base_dir=config_dir()))
         except Exception:  # noqa: BLE001 - status must render even with an unusable store
             logger.debug("trigger counts unavailable", exc_info=True)
             return {"total": 0, "enabled": 0, "broken": 0}
@@ -919,8 +919,8 @@ class DashboardState:
             "start_time": self.start_time,
             "sessions": self.sessions.count,
             "messages": self.messages_received,
-            # The STORE's count (S107). This fed the SPA's "triggers" metric from
-            # `crons.list_jobs()`, which the cutover left holding nothing.
+            # The STORE's count (S107). This fed the SPA's "triggers" metric from the legacy
+            # service, which the cutover left holding nothing.
             "cron_jobs": self.trigger_counts()["total"],
             "lessons": len(self.lessons.load_all()),
             "subagents": self.subagents.count if self.subagents else 0,

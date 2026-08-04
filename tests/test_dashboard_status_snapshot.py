@@ -17,7 +17,6 @@ def state(monkeypatch, tmp_path):
     lessons.load_all.return_value = [{"rule": "r1"}]
     return DashboardState(
         sessions=MagicMock(count=3),
-        crons=crons,
         lessons=lessons,
         start_time=time.time() - 120,
         subagents=MagicMock(count=1),
@@ -118,7 +117,13 @@ class TestAllStatusSnapshotCallersPassUpdateAvailable:
 
 
 class TestTriggerCounts:
-    """`DashboardState.trigger_counts()` — the one source both status surfaces share (S107)."""
+    """`DashboardState.trigger_counts()` — the one source both status surfaces share (S107).
+
+    🔴 The two legacy fold-in tests retired in S112. `counts(store, legacy=svc)` was proven to return
+    results IDENTICAL to `counts(store)`, because since S110 the boot migration imports every legacy
+    row — including the ones the conversion refuses, written disabled. So the `legacy=` parameter,
+    the `crons` attribute it read, and these two tests all went together.
+    """
 
     def test_an_empty_home_counts_zero(self, state: DashboardState) -> None:
         assert state.trigger_counts() == {"total": 0, "enabled": 0, "broken": 0}
@@ -143,29 +148,6 @@ class TestTriggerCounts:
         assert counts["enabled"] == 0
         assert counts["broken"] == 1
 
-    def test_a_legacy_job_sharing_an_id_is_not_double_counted(
-        self, state: DashboardState, tmp_path
-    ) -> None:
-        """A home mid-migration holds the same automation in both places. Counting it twice would
-        make the status card report more automations than the user has."""
-        from types import SimpleNamespace
-
-        _store_trigger(tmp_path, "clock:shared")
-        state.crons.list_jobs.return_value = [
-            SimpleNamespace(id="clock:shared", enabled=True),
-            SimpleNamespace(id="legacy-only", enabled=True),
-        ]
-        counts = state.trigger_counts()
-        assert counts["total"] == 2
-        assert counts["enabled"] == 2
-
-    def test_a_raising_legacy_service_does_not_break_the_status_read(
-        self, state: DashboardState, tmp_path
-    ) -> None:
-        _store_trigger(tmp_path, "clock:a")
-        state.crons.list_jobs.side_effect = OSError("crons.json is gibberish")
-        assert state.trigger_counts()["total"] == 1
-
     def test_an_unusable_store_reports_zeros_rather_than_500ing(
         self, state: DashboardState, monkeypatch
     ) -> None:
@@ -177,11 +159,11 @@ class TestTriggerCounts:
         assert state.trigger_counts() == {"total": 0, "enabled": 0, "broken": 0}
 
     def test_the_legacy_status_method_is_gone(self) -> None:
-        """🔴 The clean break. `ScheduleService.status()` reported `{"running": false, "jobs": 0,
-        "enabled": 0}` on a healthy machine — the counts came from a service the cutover emptied,
-        and `running` was False BY DESIGN because `load_without_timer` never sets it. Leaving it
-        in place would mean a second, wrong answer to the same question."""
-        from personalclaw.schedule import ScheduleService
-
-        assert not hasattr(ScheduleService, "status")
-        assert not hasattr(ScheduleService, "set_refresh_callback")
+        """🔴 The clean break, completed. `ScheduleService.status()` reported
+        `{"running": false, "jobs": 0, "enabled": 0}` on a healthy machine — counts from a service
+        the cutover emptied, and `running` False BY DESIGN because `load_without_timer` never set
+        it.
+        S107 deleted the method; S112 deleted the class it lived on."""
+        # S112 deleted the whole class — a stronger statement than "those two methods are gone".
+        with pytest.raises(ImportError):
+            from personalclaw.schedule import ScheduleService  # noqa: F401

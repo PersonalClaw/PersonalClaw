@@ -388,95 +388,13 @@ def test_an_unknown_exit_type_still_fails_closed():
     assert decision.state == TriggerState.AUTOPAUSED.value
 
 
-# ── the shipped gateway path, driven directly ──
-
-
-def _job():
-    from personalclaw.schedule import ScheduleDefinition, ScheduleJob, make_agent_action
-
-    return ScheduleJob(
-        id="j",
-        name="J",
-        action=make_agent_action(message="x"),
-        schedule=ScheduleDefinition(kind="every", every_secs=60),
-    )
-
-
-def _autopauser():
-    """The real `GatewayOrchestrator._maybe_autopause`, unbound from a booted gateway.
-
-    Driving the actual method rather than a copy: this session exists because the shipped one
-    behaved differently than its docstring implied, and a test against a reimplementation would have
-    missed that entirely.
-    """
-    from personalclaw.gateway import GatewayOrchestrator
-
-    class _Bare:
-        _maybe_autopause = GatewayOrchestrator._maybe_autopause
-
-    return _Bare()
-
-
-def test_gateway_config_error_pauses_on_the_first_fire():
-    gw, job = _autopauser(), _job()
-    gw._maybe_autopause(job, exit_type=ExitType.CONFIG_ERROR.value)
-    assert job.enabled is False
-    assert job.consecutive_failures == 1
-
-
-def test_gateway_plain_failure_still_takes_five():
-    """The preserved behaviour — a job tuned against the old tolerance sees no change."""
-    gw, job = _autopauser(), _job()
-    for _ in range(FAILURE_BUDGET - 1):
-        gw._maybe_autopause(job)
-        assert job.enabled is True
-    gw._maybe_autopause(job)
-    assert job.enabled is False
-    assert job.consecutive_failures == FAILURE_BUDGET
-
-
-def test_gateway_never_disables_on_an_outage_however_long():
-    """A park must not reach `enabled` on the legacy path.
-
-    `ScheduleJob` has no `retry_after` and the legacy scheduler has no unpark sweep, so setting
-    `enabled = False` here would strand the trigger PERMANENTLY — strictly worse than the
-    over-counting this session fixes. The fire is simply not counted.
-    """
-    gw, job = _autopauser(), _job()
-    for exit_type in sorted(PARKING_EXITS):
-        for _ in range(FAILURE_BUDGET * 2):
-            gw._maybe_autopause(job, exit_type=exit_type)
-        assert job.enabled is True, exit_type
-        assert job.consecutive_failures == 0, exit_type
-
-
-def test_gateway_outage_does_not_consume_a_real_failure_streak():
-    """Four real failures, then an outage, must not reset OR advance the streak."""
-    gw, job = _autopauser(), _job()
-    for _ in range(FAILURE_BUDGET - 1):
-        gw._maybe_autopause(job)
-    assert job.consecutive_failures == FAILURE_BUDGET - 1
-    gw._maybe_autopause(job, exit_type=ExitType.TRANSPORT_UNAVAILABLE.value)
-    assert job.consecutive_failures == FAILURE_BUDGET - 1
-    assert job.enabled is True
-    gw._maybe_autopause(job)
-    assert job.enabled is False
-
-
-def test_the_denylist_call_site_no_longer_autopauses():
-    """The measured bug, asserted against the SOURCE.
-
-    A behavioural test cannot see this: the fix is the ABSENCE of a call. Reading the source is the
-    only way to assert that five denylist blocks can no longer disable a trigger.
-    """
-    import inspect
-
-    from personalclaw.gateway import GatewayOrchestrator
-
-    src = inspect.getsource(GatewayOrchestrator._run_action_job)
-    marker = "blocked by guardrails denylist"
-    assert marker in src, "the denylist branch moved — re-verify this assertion"
-    branch = src.split(marker, 1)[1].split("return None", 1)[0]
-    assert (
-        "_maybe_autopause" not in branch
-    ), "the denylist branch calls autopause again — five policy blocks would disable the trigger"
+# 🔴 The legacy-parity block retired with `ScheduleService` (S112). It drove
+# `GatewayOrchestrator._maybe_autopause` directly, as a reference the substrate had to match —
+# and both that method and the dispatcher that called it are gone. Every contract it pinned is
+# covered above against `autopause.evaluate`: the 5-failure budget
+# (`test_the_shipped_budget_is_preserved_exactly`), config-error-on-first-fire
+# (`test_a_config_error_pauses_on_the_first_fire`), outage parking that never touches `enabled`
+# (`test_parking_never_autopauses_no_matter_how_long_the_outage`), and a policy refusal never
+# spending the budget (`test_a_policy_refusal_never_spends_the_budget`) — which is the DEFECT the
+# legacy pair carried: one counter incremented at four call sites with no way to tell a policy
+# block from a real failure.

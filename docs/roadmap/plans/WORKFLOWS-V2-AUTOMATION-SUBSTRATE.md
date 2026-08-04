@@ -2738,3 +2738,65 @@ not, and would reintroduce the dual path the clean-break tenet forbids.
 re-point stands on its own. The one thing S112 would have added beyond the deletion — dropping the
 dead `legacy=` fold-in — is left with the deletion it belongs to, so the two land together rather than
 leaving a half-cut seam.
+
+### S112 — `ScheduleService` is deleted (§6) — **the E5 "blocker" was a re-scope**
+
+**DONE.** The class, its dispatcher, its orphaned helpers and the `cron_svc` thread through boot,
+shutdown and `DashboardState` are gone. `schedule.py` goes 1267 → 478 lines and keeps only the legacy
+MODEL (`ScheduleJob`/`ScheduleDefinition`, which the boot migration still reads) plus the shared
+formatters and cron helpers.
+
+**🔴 I WAS WRONG TO RECORD THIS AS BLOCKED.** The previous session escalated E5 because
+`sdk/channel.py` re-exported the class and `PersonalClawApps/slack-channel` used it in 12 places. Per
+the owner-authority ruling, that is a **re-scope, not an escalation**: the CAPABILITY was never
+impossible — the app's `/cron` surface re-points to the store, which is one repo over in the same
+workspace. The escalation shifted a decision onto the owner that I was in a position to make.
+
+**And the app's commands were ALREADY BROKEN.** Measured before touching them: `ScheduleService` read
+`crons.json`, a file nothing has written since S108 — so `cron list` showed an empty list to a user
+with live automations, and `remove`/`pause`/`resume` answered "not found" for every real id. The
+"blocker" was protecting a surface that did not work.
+
+- **The SDK gained the trigger surface it should have had.** `sdk/channel.py` now re-exports
+  `TriggerStore`, `Trigger`, `describe_cadence`, `to_schedule_row` and the three tool functions. Its
+  own docstring already stated the principle ("every symbol it needs is re-exported here… core can
+  move the underlying modules without breaking apps") — the channel just had no automation entry.
+- **🔴 A REAL FIX in the app, not a port.** `cron remove all` removed EVERY job the scheduler held,
+  **including the automations the user built by hand**, from a chat message with no confirmation. It
+  is now scoped to `created_by="agent"`, matching what `automation_delete_all` enforces. Two more
+  honest improvements fall out of the store: a BROKEN automation lists with its parse error instead of
+  vanishing, and every kind is visible (a file watch was invisible there — the legacy scheduler only
+  held clocks).
+- The `cron_service` parameter is gone from the handler and its six call sites: the store is built
+  from the active home, so a caller can no longer decide which scheduler that surface reads.
+- `_handle_cron_ack`'s `ack_job(...)` call went too — dead weight since S98 mapped `acked_items` to
+  `None` and S110 deleted the route. The load-bearing half (acknowledging the dashboard notification)
+  stays, exactly as the sibling `_handle_subagent_ack` does it.
+
+**🔴 THE DEFECT THIS SESSION FOUND: `skip_dates` was enforced NOWHERE.** Driven while deciding whether
+`test_cron_skip_dates.py` could retire — a trigger with `skip_dates: ["2026-08-04"]` armed to
+**09:00 on exactly that date**. The legacy `_is_due` checked skip dates on every fire; the substrate
+carried the field, validated it, migrated it, and even RENDERED it (`calendar.py` draws AUTO-A3's
+"struck columns") while the fire path ignored it. A user's explicit "not on this day" did nothing.
+
+`arm.next_fire` now advances past skipped days in the trigger's OWN timezone (a date is a
+local-calendar question), with a bounded 400-step advance so a long holiday works while an
+all-skipped cadence reports unarmable rather than firing. `cadence_next_fire` is the raw stepper, made
+public for ONE caller: the week grid, which strikes skipped columns itself — stepping it with the
+skip-aware version would hide exactly the slots the grid exists to explain. Nine tests, including the
+tz case and a skipped one-shot that never fires.
+
+**DEVIATION — 11 test files deleted, 9 re-pointed.** `test_cron{,_dedup,_ephemeral_session,_jitter,
+_resilience,_skip_dates,_acp_retry,_thread_routing,_action_dispatch,_channel_delivery,_approval_mode}`
+tested the deleted service and dispatcher; their live contracts are covered by the substrate's own
+suites, and where they were not, they landed here first (skip_dates). Two captures were needed before
+the reference disappeared: the **jitter values** are now pinned BY VALUE (a parity test whose
+reference no longer exists cannot fail), and `_save`'s **key list** is pinned as `_SAVED_KEYS` so
+`test_triggers_migrate` still builds its fixture from the real on-disk format rather than from belief.
+
+A mechanical sweep removed `crons=` from 21 test files (36 sites) — one root cause behind 613 of the
+first run's 630 failures, which is why the number looked alarming and was not.
+
+- **What survives on purpose:** `ScheduleRunStore` (unchanged), `ScheduleJob`/`ScheduleDefinition`
+  (the format the migration reads), and `crons.json` on disk read-only per §6 so
+  `automation verify-migration` can still diff both sides.

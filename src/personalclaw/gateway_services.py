@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from personalclaw.context import ContextBuilder
     from personalclaw.dashboard.state import DashboardState
     from personalclaw.history import ConversationLog, HistoryConsolidator
-    from personalclaw.schedule import ScheduleService
     from personalclaw.session import SessionManager
     from personalclaw.subagent import SubagentManager
 
@@ -44,7 +43,6 @@ class GatewayServices(Protocol):
     ctx_builder: "ContextBuilder | None"
     conv_log: "ConversationLog | None"
     consolidator: "HistoryConsolidator | None"
-    cron_svc: "ScheduleService | None"
     subagent_mgr: "SubagentManager | None"
     channel_history: "ChannelHistory | None"
     dashboard_state: "DashboardState | None"

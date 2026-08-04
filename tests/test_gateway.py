@@ -154,7 +154,6 @@ class TestGatewayOrchestratorInit:
     def test_services_initially_none(self):
         orch = _make_orchestrator()
         assert orch.sessions is None
-        assert orch.cron_svc is None
         assert orch.heartbeat_svc is None
         assert orch.subagent_mgr is None
         assert orch.dashboard_state is None
@@ -579,10 +578,8 @@ class TestShutdown:
         await orch._shutdown()  # should not raise
 
     @pytest.mark.asyncio
-    async def test_shutdown_stops_cron(self):
+    async def test_shutdown_stops_the_background_services(self):
         orch = _make_orchestrator()
-        orch.cron_svc = MagicMock()
-        orch.cron_svc.stop = AsyncMock()
         orch.heartbeat_svc = MagicMock()
         orch.heartbeat_svc.stop = MagicMock()
         orch.inbox_svc = None
@@ -593,7 +590,8 @@ class TestShutdown:
         orch._dashboard_runner = MagicMock()
         orch._dashboard_runner.cleanup = AsyncMock()
         await orch._shutdown()
-        orch.cron_svc.stop.assert_awaited_once()
+        # No `cron_svc.stop()` any more (S112): the class is gone, and the loops it used to sit
+        # beside (clock, reaper, file-watch) are cancelled through `_task.cancel()` below.
         orch.heartbeat_svc.stop.assert_called_once()
 
     @pytest.mark.asyncio
@@ -601,7 +599,6 @@ class TestShutdown:
         orch = _make_orchestrator()
         task = asyncio.create_task(asyncio.sleep(100))
         orch._handler_tasks.add(task)
-        orch.cron_svc = None
         orch.heartbeat_svc = None
         orch.inbox_svc = None
         orch.subagent_mgr = None
@@ -748,55 +745,48 @@ class TestInitCron:
     """Cron service initialization and callback."""
 
     @pytest.mark.asyncio
-    async def test_init_cron_no_crons_flag(self):
-        orch = _make_orchestrator(no_crons=True)
-        orch.sessions = _mock_sessions()
-        orch.ctx_builder = MagicMock()
-        orch.subagent_mgr = MagicMock()
-        orch.subagent_mgr.running = []
-        with patch("personalclaw.gateway.ScheduleService") as mock_cs:
-            mock_cs_inst = MagicMock()
-            mock_cs_inst.start = AsyncMock()
-            mock_cs_inst.load_without_timer = AsyncMock()
-            mock_cs_inst.start_reaper = MagicMock()
-            mock_cs.return_value = mock_cs_inst
-            await orch._init_cron()
-        assert orch.cron_svc is not None
-        mock_cs_inst.start.assert_not_awaited()
+    async def test_init_cron_arms_the_store_engine_and_no_legacy_one(self):
+        """🔴 The cutover's boot contract, in its final form. Rewritten three times as the substrate
+        replaced the legacy scheduler, and each rewrite recorded a real measurement:
+
+        * S100 — it asserted `start()`, which ARMS the legacy firing timer. Measured: after the boot
+          migration BOTH engines hold the same crons, so arming both double-fires `j-at`/`j-cron` on
+          the owner's real store. The unified tick became the sole clock engine.
+        * S106 — it asserted `start_reaper.assert_called_once()` and claimed "the reaper still
+          starts". Driven, that reaper could reap NOTHING: its sweep read a dict whose only writer
+          was the retired timer. Boot arms `_trigger_reaper_loop` instead.
+        * S112 — the class is DELETED, so no legacy engine, reaper or dispatcher is left to arm by
+          accident. Asserted on the boot path's code rather than on a mock, because a MagicMock
+          answers any attribute and would pass vacuously.
+        """
+        import inspect
+
+        from personalclaw.gateway import GatewayOrchestrator
+
+        src = inspect.getsource(GatewayOrchestrator._init_cron)
+        code = "\n".join(ln for ln in src.split("\n") if not ln.strip().startswith("#"))
+        # No legacy engine to construct or drive.
+        assert "ScheduleService" not in code
+        assert "cron_svc" not in code
+        assert "load_without_timer" not in code
+        # The store engine, its reaper, and the boot migration ARE armed.
+        assert "self._clock_task = asyncio.create_task(self._clock_loop())" in code
+        assert "self._reaper_task = asyncio.create_task(self._trigger_reaper_loop())" in code
+        assert "migrate_and_arm()" in code
+        # And run-history rotation, the one thing the retired boot call still did.
+        assert "ScheduleRunStore(config_dir()).rotate_all()" in code
 
     @pytest.mark.asyncio
-    async def test_init_cron_loads_without_arming_the_legacy_timer(self):
-        """🔴 SUPERSEDED CONTRACT (S100 clock cutover). This asserted `start()`, which ARMS the
-        legacy firing timer. The unified tick loop is now the sole clock engine — measured: after
-        the boot migration both engines hold the same crons, so arming both would double-fire
-        `j-at` and `j-cron` on the owner's real store. Boot calls `load_without_timer()` instead,
-        which still loads the jobs and rotates run history (the CRUD surface + run store the API
-        reads) while leaving `_running` False.
+    async def test_init_cron_respects_no_crons(self):
+        """`--no-crons` must gate the whole automation runtime, not just the legacy half."""
+        import inspect
 
-        🔴 S106 CORRECTS THIS DOCSTRING'S LAST CLAIM. It used to end "the reaper still starts: it
-        reaps stuck sessions, not fires" — and asserted `start_reaper.assert_called_once()`. Driven,
-        that reaper could reap NOTHING: its sweep read `_job_start_times`, whose only writer is the
-        retired timer's `_run_job_isolated`. It has been inert since the cutover. Boot now arms
-        `_trigger_reaper_loop` instead (S97 claims, cross-process), and `ScheduleService` has no
-        reaper to arm — asserted here so a re-added call to a dead reaper reddens this test."""
-        orch = _make_orchestrator(no_crons=False)
-        orch.sessions = _mock_sessions()
-        orch.ctx_builder = MagicMock()
-        orch.subagent_mgr = MagicMock()
-        orch.subagent_mgr.running = []
-        with patch("personalclaw.gateway.ScheduleService") as mock_cs:
-            mock_cs_inst = MagicMock()
-            mock_cs_inst.start = AsyncMock()
-            mock_cs_inst.load_without_timer = AsyncMock()
-            mock_cs.return_value = mock_cs_inst
-            await orch._init_cron()
-        mock_cs_inst.load_without_timer.assert_awaited_once()
-        mock_cs_inst.start.assert_not_awaited()
-        # A MagicMock answers ANY attribute, so asserting "not called" on the mock would pass
-        # vacuously. Assert against the real class instead: the method is gone.
-        from personalclaw.schedule import ScheduleService
+        from personalclaw.gateway import GatewayOrchestrator
 
-        assert not hasattr(ScheduleService, "start_reaper")
+        src = inspect.getsource(GatewayOrchestrator._init_cron)
+        guard = src.index("if self._no_crons:")
+        for armed in ("_clock_task", "_reaper_task", "_file_watch_task", "migrate_and_arm()"):
+            assert src.index(armed) > guard, f"{armed} must sit inside the --no-crons else-branch"
 
     @pytest.mark.xfail(reason="pre-existing cron-callback red — #7", strict=False)
     @pytest.mark.asyncio
@@ -3151,7 +3141,6 @@ class TestShutdownReapsAppBackends:
         orch.dashboard_state = None  # skip the history-save branch
         orch._handler_tasks = []
         orch.loop_watchdog = None
-        orch.cron_svc = None
         orch.heartbeat_svc = None
         orch._dashboard_runner = None
         orch._socket_client = None
@@ -3190,7 +3179,6 @@ class TestShutdownReapsAppBackends:
         orch.dashboard_state = None
         orch._handler_tasks = []
         orch.loop_watchdog = None
-        orch.cron_svc = None
         orch.heartbeat_svc = None
         orch._dashboard_runner = None
         orch._socket_client = None
