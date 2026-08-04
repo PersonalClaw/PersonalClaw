@@ -2320,3 +2320,79 @@ unused local is the clearest possible evidence the surface is decoupled.
   `remove_job`/`update_job`/`run_job`/`is_running`/`running_since`, all legacy-fallback branches), and
   the two non-facade callers (`suggestions.py`, `messaging.py`). Then the class, then the `schedule_*`
   MCP aliases.
+
+### S106 — The reaper cutover: a 30-minute deadline that had been enforcing nothing (§3.1 / §8)
+
+**DONE.** Two independent defects, both found by driving rather than reading, both in the
+"present and inert" class this program keeps hitting.
+
+**🔴 DEFECT 1 — the cron reaper has been INERT SINCE S100, and said so nowhere.**
+`ScheduleService._reaper_loop` sweeps `self._job_start_times`. That dict has exactly ONE writer in
+the codebase: `_run_job_isolated`, reachable only from `_on_timer` — i.e. only from the legacy timer
+the S100 clock cutover deliberately stopped arming. Driven directly (a service holding a genuinely
+hung task in `_executing` + `_running_tasks`, interval cut to 50ms, eight sweeps):
+
+    job still in _executing : True     task still running : True
+    sessions.reset called   : []       reaped_jobs        : set()
+
+Nothing reaped; nothing *could* be. `start_reaper()` returned successfully and logged nothing wrong
+the whole time. So the 30-minute deadline the plan calls "defense-in-depth over ALL trigger-fired
+runs" (§ Unattended-LLM-turns; risk table "hung run") was a control that was present, reviewed, and
+enforcing nothing — for six sessions.
+
+Replaced by `triggers/reaper.py`, which reaps off S97's **claim** store instead of a process-local
+dict. That is what makes it correct rather than merely present: a claim is on disk, carries
+`claimed_at`, is written by the tick when a fire is granted and released by the executor's `finally`,
+so "which runs are in flight, and since when" survives a restart and is visible from every process.
+`overdue()` / `reap_one()` / `sweep_once()` / `run_forever()`, wired at boot as `_trigger_reaper_loop`
+and cancelled in `_shutdown` alongside the clock loop.
+
+- **Scope is narrower than the old reaper CLAIMED and strictly wider than it DID.** This one owns the
+  CLAIM (a stuck claim wedges `overlap: skip` until the 1h self-expiry, so releasing it is what lets
+  the trigger fire again); the *process* stays owned by `SubagentManager`'s reaper, which is live,
+  started unconditionally at boot, and uses identical 30min/60s/SIGKILL parameters over `_agents`
+  (verified: `spawn` registers the entry). Killing sessions from here too would mean two reapers
+  racing over one process. A test pins the three deadlines equal so they cannot drift apart.
+- Health is recorded as **DEGRADED** on `health_status`/`last_error_summary` — the fields a `Trigger`
+  actually has. `last_status`/`last_error` are the LEGACY names `LEGACY_FIELD_MAP` translates FROM;
+  writing those would have set two attributes nothing reads and left the dot green on a reaped run.
+  The SEL row keeps the old `reaper_force_kill`/`reaped` shape so an operator's existing query works.
+- **Clean break:** `start_reaper`, `_reaper_loop`, `_force_reap`, `_sigkill_session` and the
+  `register/clear/get_active_session_key` trio are DELETED (~180 lines), with their exclusive state
+  (`_active_session_keys`, `_reaped_jobs`, `_sessions`, `_reaper_task`), their constants
+  (`_REAPER_INTERVAL`, `_REAPER_RESET_TIMEOUT`), the four gateway dispatcher registration sites, and
+  the now-orphaned `os`/`signal`/`SessionManager`/`TYPE_CHECKING` imports. `_JOB_TIMEOUT_SECS` STAYS
+   — it is still `timeout_secs`' default and `_execute_with_timeout`'s clamp.
+
+**🔴 DEFECT 2 — every store-backed bash fire was silently capped at 30s.**
+`_fire_store_trigger` called `provider.execute(config, ctx)` with no `timeout=`, so it took the 30s
+SIGNATURE DEFAULT. The legacy dispatcher gave a command **300s** and honoured `zt_timeout` on top
+(gateway.py:820). Measured on a real migration: a `zt_timeout: 600` cron converts losslessly to
+`{"command": ..., "timeout": 600}` — and then `bash_provider` **never read `action_config["timeout"]`
+at all**, unlike `run-script`, which has always preferred it. Driven both ways: `sleep 3` under
+`{"timeout": 1}` ran the full 3s (user's bound ignored), and a 600s allowance was cut to 30.
+Fixed on both sides — the provider prefers its action's own bound (`run-script`'s exact idiom) and
+the fire path passes the legacy mode default as the floor.
+
+- **The parity meta-test earned its keep.** Teaching the executor to read `timeout` immediately
+  reddened `test_executor_reads_are_declared_in_schema[bash]`: a key an executor reads must be
+  declared in `settingsSchema` or the UI cannot configure it. Added to `bash-action/app.json`.
+
+**DEVIATION — 23 tests deleted, not ported one-for-one.** `test_cron_reaper.py` +
+`test_cron_reaper_ephemeral.py` pinned the deleted mechanism, and every one of them passed against
+the inert reaper for six sessions **because each wrote the input dict by hand before sweeping**. A
+test that constructs the state its subject is meant to observe cannot tell you whether anything real
+produces it. Replaced by `test_trigger_reaper.py` (24 tests) driving the runtime seam; every
+meaningful contract is ported (deadline honoured, in-deadline runs untouched, boundary second,
+health + reason, SEL audit, missing/unreadable/absent store, idempotent re-sweep, cancellation
+propagates, loop outlives a failing sweep) and the ones describing deleted internals are gone with
+them. One S100 docstring is corrected in place: `test_init_cron_...`'s "the reaper still starts: it
+reaps stuck sessions, not fires" was the assumption this session disproved — and its
+`start_reaper.assert_called_once()` is replaced with a check against the real class, because a
+MagicMock answers any attribute and would have passed vacuously either way.
+
+- **REMAINING on the `ScheduleService` retirement:** `status`/`set_refresh_callback`, the residual
+  CRUD fallbacks (`list_jobs` ×7 + `ack_job`/`enable_job`/`remove_job`/`update_job`/`run_job`/
+  `is_running`/`running_since`), and the non-facade callers (`suggestions.py`, `messaging.py`,
+  `discover.py`, `app_crons.py`, `digest_provider.py`, `state.py`, `handlers_system.py`). Then the
+  class, then the `schedule_*` MCP aliases. `ScheduleRunStore` survives.

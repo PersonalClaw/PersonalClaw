@@ -49,6 +49,69 @@ def test_bash_payload_vars_resolve_via_env():
     assert res.stdout == "e=schedule:j1 id=j1 at=2026-07-11T00:00:00"
 
 
+def test_bash_honours_the_timeout_in_its_own_action_config():
+    """🔴 Measured defect (S106): the config bound was ignored, so a user's timeout did nothing.
+
+    `run-script` has always read `action_config["timeout"]` and preferred it, but `bash` read ONLY
+    the `timeout=` parameter. That mattered the moment the fire path stopped passing one: driven
+    before the fix, `{"command": "sleep 3", "timeout": 1}` ran the full 3 seconds.
+    """
+    from personalclaw.action_providers.bash_provider import BashActionProvider
+
+    res = asyncio.run(BashActionProvider().execute({"command": "sleep 3", "timeout": 1}, _ctx()))
+    assert not res.success
+    assert "Timed out after 1s" == res.error
+
+
+def test_bash_config_timeout_wins_over_the_callers_default():
+    """The caller's value is a FLOOR for actions that declare nothing; an action that declares its
+    own bound is the more specific instruction. Same precedence as `run-script`'s
+    `zt_timeout or timeout`."""
+    from personalclaw.action_providers.bash_provider import BashActionProvider
+
+    res = asyncio.run(
+        BashActionProvider().execute({"command": "sleep 3", "timeout": 1}, _ctx(), timeout=600)
+    )
+    assert "Timed out after 1s" == res.error
+
+
+def test_bash_falls_back_to_the_callers_timeout_when_the_action_declares_none():
+    from personalclaw.action_providers.bash_provider import BashActionProvider
+
+    res = asyncio.run(BashActionProvider().execute({"command": "sleep 3"}, _ctx(), timeout=1))
+    assert "Timed out after 1s" == res.error
+
+
+def test_bash_ignores_a_junk_config_timeout_rather_than_raising():
+    """The Triggers UI persists empty optional fields as "", so a non-numeric value is a normal
+    input, not a misconfiguration to crash on."""
+    from personalclaw.action_providers.bash_provider import BashActionProvider
+
+    res = asyncio.run(
+        BashActionProvider().execute({"command": "echo hi", "timeout": "nope"}, _ctx(), timeout=30)
+    )
+    assert res.success
+    assert res.stdout == "hi"
+
+
+def test_the_store_fire_path_gives_a_command_the_legacy_mode_default():
+    """🔴 The other half of the same defect. `_fire_store_trigger` called `execute(config, ctx)`
+    with no `timeout=`, so every store-backed bash fire took the 30s SIGNATURE default where the
+    legacy dispatcher (gateway.py's `zt_timeout`/mode-default block) allowed a command 300s.
+
+    Source-level because the alternative is booting a gateway to time a subprocess; the value is the
+    contract, and the two providers' own precedence is asserted directly above.
+    """
+    import pathlib
+
+    import personalclaw.gateway as G
+
+    src = pathlib.Path(G.__file__).read_text()
+    assert 'timeout = 300 if provider_name == "bash" else 30' in src
+    assert "await provider.execute(config, ctx, timeout=timeout)" in src
+    assert "await provider.execute(config, ctx)\n" not in src
+
+
 # ── renderer ──────────────────────────────────────────────────────────────
 
 

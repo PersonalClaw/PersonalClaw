@@ -29,6 +29,16 @@
             "label": "Command",
             "help": "Shell command run via /bin/sh -c. Receives PERSONALCLAW_HOOK_EVENT + PERSONALCLAW_HOOK_CONTEXT env vars and the event JSON on STDIN. Exit code 2 blocks a PreToolUse call."
           }
+        },
+        "timeout": {
+          "type": "integer",
+          "x-meta": {
+            "label": "Timeout (s)",
+            "help": "Optional timeout in seconds (0 = the caller's default: 300s for a scheduled command, 30s elsewhere). The command is killed when it expires.",
+            "tags": [
+              "advanced"
+            ]
+          }
         }
       }
     }

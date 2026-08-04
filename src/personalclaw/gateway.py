@@ -313,6 +313,7 @@ class GatewayOrchestrator:
         self.cron_svc: ScheduleService | None = None
         self._file_watch_task: "asyncio.Task[None] | None" = None  # S93 file-watch poll loop
         self._clock_task: "asyncio.Task[None] | None" = None  # S100 unified clock loop
+        self._reaper_task: "asyncio.Task[None] | None" = None  # S106 trigger reaper
         self._running_script_ids: set[str] = set()  # zero-token jobs in flight
         self.heartbeat_svc: HeartbeatService | None = None
         self.loop_watchdog: "LoopWatchdog | None" = None
@@ -1031,6 +1032,21 @@ class GatewayOrchestrator:
             base_dir=store.base_dir,
         )
 
+    async def _trigger_reaper_loop(self) -> None:
+        """Bound every store-backed run: sweep for blown deadlines and free the claim (§3.1 — S106).
+
+        Replaces `ScheduleService.start_reaper`, whose sweep read a dict that only the retired
+        legacy timer ever wrote — inert since the S100 cutover, and silently so. Like `_clock_loop`,
+        this method supplies only the two things the gateway knows (the store and its home) and
+        leaves the cadence and resilience to the module.
+        """
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers import reaper
+        from personalclaw.triggers.store import TriggerStore
+
+        store = TriggerStore(base_dir=config_dir())
+        await reaper.run_forever(store=store, base_dir=store.base_dir)
+
     async def _fire_store_trigger(
         self, trigger: Any, payload: dict[str, Any], *, event: str = "trigger.fired"
     ) -> None:
@@ -1059,7 +1075,14 @@ class GatewayOrchestrator:
             return
         try:
             ctx = ActionContext(event=event, context="", payload=payload)
-            await provider.execute(config, ctx)
+            # 🔴 The MODE DEFAULT the legacy dispatcher applied (gateway.py:820 — 300s for a command,
+            # 30s otherwise), because a `bash` fire is a real subprocess and 30s is not a command's
+            # budget. Measured: this call passed nothing, so every store-backed bash fire took the
+            # 30s SIGNATURE default and a migrated `zt_timeout: 600` cron was cut to 30. The
+            # per-action override lives in the config and is honoured by the provider itself (both
+            # `bash` and `run-script` prefer `action_config["timeout"]`), so this is only the floor.
+            timeout = 300 if provider_name == "bash" else 30
+            await provider.execute(config, ctx, timeout=timeout)
         except Exception:  # noqa: BLE001 - a failed fire is logged, never crashes the loop
             logger.warning("trigger %s: action failed", trigger.id, exc_info=True)
 
@@ -1182,8 +1205,6 @@ class GatewayOrchestrator:
                 result_text = "_No response._"
                 for agent in agents:
                     agent_session_key = f"cron:{job.id}:{agent}"
-                    if self.cron_svc is not None:
-                        self.cron_svc.register_active_session_key(job.id, agent_session_key)
                     _acq = False
                     try:
                         client, is_new, _resumed = await self.sessions.get_or_create(
@@ -1220,15 +1241,10 @@ class GatewayOrchestrator:
                         if _acq:
                             self.sessions.release(agent_session_key)
                             await self.sessions.reset(agent_session_key)
-                            if self.cron_svc is not None:
-                                self.cron_svc.clear_active_session_key(job.id)
                 job.last_result = result_text
                 return result_text
 
             # ── Single-agent path ──
-            # Tell the reaper which key to target if this run hangs.
-            if self.cron_svc is not None:
-                self.cron_svc.register_active_session_key(job.id, session_key)
 
             _acquired = False
             try:
@@ -1573,9 +1589,6 @@ class GatewayOrchestrator:
                         # reset hangs. _subagent_done will clear it after the real reset.
                     else:
                         await self.sessions.reset(session_key)
-                        # reset done → reaper no longer needs this key.
-                        if self.cron_svc is not None:
-                            self.cron_svc.clear_active_session_key(job.id)
                 # Restore per-job env vars (single-agent path) — now handled via extra_env passthrough  # noqa: E501
 
         self.cron_svc = ScheduleService(base_dir=config_dir(), on_job=_cron_callback)
@@ -1589,10 +1602,6 @@ class GatewayOrchestrator:
             # rest of `ScheduleService` remains the CRUD surface + run store the API reads until the
             # writes re-point.
             await self.cron_svc.load_without_timer()
-            if self.sessions:
-                self.cron_svc.start_reaper(self.sessions)
-            else:
-                logger.warning("Cron reaper not started: sessions not available")
             # Reconcile app-declared crons (untrusted-app sandbox P3): register the
             # scheduled jobs enabled apps declare + are permitted (can_use_cron), and
             # prune stale app:* jobs. Idempotent; apps loaded before this via the
@@ -1639,6 +1648,13 @@ class GatewayOrchestrator:
             # The unified CLOCK LOOP (S100) — now the only thing that fires a clock trigger. The
             # legacy timer above is deliberately not armed; see `load_without_timer`.
             self._clock_task = asyncio.create_task(self._clock_loop())
+            # The trigger REAPER (S106), replacing `ScheduleService.start_reaper`. That one swept a
+            # dict written only by the retired timer's `_run_job_isolated`, so it has been provably
+            # inert since S100 — driven with a genuinely hung task, eight sweeps reaped nothing.
+            # This one reads S97's cross-process claims, so it bounds every store-backed run and
+            # survives a restart. It needs no `sessions`: the subagent manager's own live reaper
+            # owns the spawned PROCESS, and this owns the CLAIM (see `triggers/reaper.py`).
+            self._reaper_task = asyncio.create_task(self._trigger_reaper_loop())
 
     async def _init_heartbeat(self) -> None:
         """Initialize and start the heartbeat service."""
@@ -2884,18 +2900,6 @@ class GatewayOrchestrator:
                         logger.info(
                             "Cron session %s: last subagent done, session reset", parent_key
                         )
-                        # reset succeeded → reaper no longer needs the
-                        # registered ephemeral key. Clear inside try so a failed
-                        # reset leaves the key registered (ephemeral session may
-                        # still be alive — reaper must be able to target it).
-                        # parent_key is "cron:{job_id}" (persistent) or
-                        # "cron:{job_id}:{run_id}" (ephemeral); job_id is the
-                        # second colon-separated segment in both cases.
-                        cron_svc = getattr(self, "cron_svc", None)
-                        if cron_svc is not None:
-                            parts = parent_key.split(":", 2)
-                            if len(parts) >= 2:
-                                cron_svc.clear_active_session_key(parts[1])
                     except Exception:
                         logger.exception(
                             "Cron session %s: reset failed after last subagent", parent_key
@@ -3138,7 +3142,7 @@ class GatewayOrchestrator:
             await self.workflow_watchdog.stop()
         if self.cron_svc:
             await self.cron_svc.stop()
-        for _task in (self._file_watch_task, self._clock_task):
+        for _task in (self._file_watch_task, self._clock_task, self._reaper_task):
             if _task is None:
                 continue
             _task.cancel()
