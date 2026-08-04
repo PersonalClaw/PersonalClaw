@@ -240,6 +240,60 @@ def _judge_pretier_screen(cfg: dict[str, Any]) -> NodeResult | None:
     )
 
 
+#: Ceiling on `judge_samples`. Each sample is a full reasoning-tier completion, so an author typo
+#: (`judge_samples: 30`) would quietly cost 30× on a gate that runs every loop iteration. Five is
+#: past any real use — the shipped template asks for 3 — so hitting this bound means a mistake.
+MAX_JUDGE_SAMPLES = 5
+
+
+def _judge_sample_count(cfg: dict[str, Any]) -> int:
+    """How many independent samples this judge gate takes. Always ≥ 1.
+
+    Absent/invalid → 1, which is the pre-S145 behaviour: a gate that never asked for sampling must
+    not start paying for it. Clamped at `MAX_JUDGE_SAMPLES` — see that constant for why a typo
+    here is expensive rather than merely wrong.
+    """
+    raw = cfg.get("judge_samples", 1)
+    try:
+        count = int(raw)
+    except (TypeError, ValueError):
+        return 1
+    if count < 1:
+        return 1
+    return min(count, MAX_JUDGE_SAMPLES)
+
+
+def _aggregate_gate_verdicts(verdicts: list[Verdict]) -> Verdict | None:
+    """Median-aggregate N sampled verdicts for this gate's vocabulary.
+
+    The RULE is `judge_contract.aggregate_samples`'; the TYPE deliberately is not. See the call
+    site for why sharing one function across two different `Verdict` enums would be S130's bug.
+
+    Ordered exactly as the contract documents it:
+
+    1. **Any ESCALATE wins.** An escalation names a contradiction the other samples did not see, and
+       a contradiction is a fact rather than an opinion — outvoting it would discard the one sample
+       that noticed.
+    2. **A PASS needs the majority**, strictly (`2 of 3`, not `1 of 2`). This is the whole point: a
+       terminal accept on a single sample was measured to be indistinguishable from noise.
+    3. **Otherwise the majority rejection stands**, preferring REJECT over RETRY when the samples
+       split — a REJECT is terminal and a RETRY spins, so the safe reading of a split is the
+       one that stops and asks rather than the one that loops.
+    """
+    if not verdicts:
+        return None
+    if len(verdicts) == 1:
+        return verdicts[0]
+    if any(v is Verdict.ESCALATE for v in verdicts):
+        return Verdict.ESCALATE
+    passes = sum(1 for v in verdicts if v is Verdict.PASS)
+    if passes * 2 > len(verdicts):
+        return Verdict.PASS
+    if any(v is Verdict.REJECT for v in verdicts):
+        return Verdict.REJECT
+    return Verdict.RETRY
+
+
 # ── dispatchers ──────────────────────────────────────────────────────────────
 
 
@@ -1040,17 +1094,51 @@ async def dispatch_gate(
             f"{prompt}\n\nRespond with EXACTLY ONE word, one of: "
             "PASS, RETRY, ESCALATE, REJECT. No other text."
         )
-        try:
-            text = await fn(instruction, use_case=use_case, output_type=None)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            return NodeResult(
-                state=InstanceState.FAILED,
-                failure=_classify_exception(exc),
-                resolved_prompt=instruction,
-            )
-        verdict = parse_verdict(text)
+        # 🔴 `judge_samples` was DECLARED by a shipped template and READ BY NOTHING (S145).
+        # `goal-pursuit-open-ended`'s terminal `accept` gate carries `judge_samples: 3`, and its own
+        # prompt tells the model why: "three independent samples of you are being asked — a single
+        # judgement on a terminal accept was measured to be indistinguishable from noise." Measured
+        # against the live gate: **one** sample was taken, and a model returning PASS,REJECT,REJECT
+        # ACCEPTED the run on the first word. The majority verdict never happened.
+        #
+        # The aggregation rule is `judge_contract.aggregate_samples`', restated here rather than
+        # imported, because that function types on `judge_contract.Verdict`
+        # (PASS/REJECT/REPLAN/ESCALATE/NEEDS_INPUT) while this gate speaks `verify.Verdict`
+        # (PASS/RETRY/ESCALATE/REJECT). Feeding one vocabulary's values to the other's aggregator is
+        # exactly the cross-vocabulary defect S130 found in the fail-mode classifier — so the
+        # RULE is shared and the TYPE is not.
+        samples = _judge_sample_count(cfg)
+        verdicts: list[Verdict] = []
+        texts: list[str] = []
+        for _ in range(samples):
+            try:
+                text = await fn(instruction, use_case=use_case, output_type=None)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                return NodeResult(
+                    state=InstanceState.FAILED,
+                    failure=_classify_exception(exc),
+                    resolved_prompt=instruction,
+                )
+            texts.append(str(text))
+            parsed = parse_verdict(text)
+            if parsed is None:
+                # Unparseable is PROTOCOL, and it fails the whole gate even mid-sample: a terminal
+                # accept decided from 2 of 3 samples is a quieter version of the single-sample bug
+                # this session exists to fix.
+                verdict = None
+                break
+            verdicts.append(parsed)
+        else:
+            verdict = _aggregate_gate_verdicts(verdicts)
+        text = texts[-1] if texts else ""
+        # 🔴 Tokens are summed over EVERY sample, not just the last. Measured on my own first
+        # draft: a `judge_samples: 3` gate reported 22 tokens where it had really spent ~66 —
+        # so the loop breaker's `max_tokens` and the run's cost cap would under-count 3×
+        # exactly where sampling makes a gate most expensive. A meter that reads low on the
+        # expensive path is worse than no meter, because the cap silently stops binding.
+        sampled_tokens = sum(_estimate_tokens(instruction, body) for body in texts)
         if verdict is None:
             # An unparseable verdict is a PROTOCOL failure, never a silent pass: guessing
             # would make a control-flow decision out of noise.
@@ -1063,7 +1151,7 @@ async def dispatch_gate(
                     "deterministic check",
                 ),
                 resolved_prompt=instruction,
-                tokens=_estimate_tokens(instruction, str(text)),
+                tokens=sampled_tokens,
             )
         state = {
             Verdict.PASS: InstanceState.DONE,
@@ -1090,7 +1178,7 @@ async def dispatch_gate(
             output={"verdict": verdict.value},
             failure=failure,
             resolved_prompt=instruction,
-            tokens=_estimate_tokens(instruction, str(text)),
+            tokens=sampled_tokens,
         )
 
     # approval / event: park for a human or an external signal. The deadline is
