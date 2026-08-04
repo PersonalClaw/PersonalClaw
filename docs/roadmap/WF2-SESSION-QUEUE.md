@@ -1879,6 +1879,7 @@ the queue** — declared work, not new scope (see the ruling in the exhausted re
 | S134 | **🔴 THE INJECTION SCREEN HAD NEVER RUN ON A REAL FIRE** (§7/R4 rule a). Found by applying S133's own lesson — auditing ALL of `FireContext` at once instead of one field per session. `payload_text` defaulted to `""` and `tick` never set it, so `if ctx.payload_text:` was permanently false **while every ledger row listed `screen` among the gates PASSED**. The screen works (fed a real injection it returns `blocked: override, token_smuggling`); nothing fed it. Worse: the kinds that DO carry third-party prose never reach that walk at all — measured, `_fire_store_trigger`/`_web_watch_poll_loop`/`_file_watch_poll_loop` walk NO gates. Screened at the dispatch seam; driven, a hostile `web_watch` item no longer reaches the provider while benign and clock fires are unaffected. FOURTH defaulted-and-unsupplied `FireContext` field | AUTOMATION-SUBSTRATE §7/R4 rule a | ✅ DONE (#469) |
 | S135 | **`resource_slots` — the last declared-but-unread field, now serializing** (§3.5 / AUTO-R9). Found by GENERALISING S134's container audit across all 41 dataclasses in `triggers/`: of every field with a default, `Trigger.resource_slots` was the only one with **zero non-declaration readers**. So three triggers declaring `["local-llm"]` all ran a local model at once — the contention §3.5 exists to prevent on a machine shared with the interactive user. Now a `slot` gate after `claim`, derived from the CLAIM STORE (inheriting read-time expiry, so a crashed run cannot hold `gpu` hostage) with a typed `deferred` row naming the HOLDER. Two bugs found by my own tests: a broken row contributed a phantom holder that would block real fires forever, and S130's completeness test caught the new gate as unclassified | AUTOMATION-SUBSTRATE §3.5 | ✅ DONE (#473) |
 | S136 | **The `blocked_injection` ledger row S134 left owed** (§7 crit 8). S134 wired the screen at the dispatch seam and recorded the row as still owed — that path is not a `tick` fire, so nothing wrote one. A refusal only a LOG knows about is a silent drop by criterion 8's own definition, and since `blocked_injection` never auto-retries that row is the ONLY record that will ever exist for the fire. The screened TEXT is deliberately not stored (criterion 11's discipline generalises: storing it moves an injection attempt out of a refused fire and into a surface a human reads); the matched GROUPS are, because a false positive here is permanent. mypy caught my first version as an unused coroutine — the fix for an unwritten row was itself an unwritten row | AUTOMATION-SUBSTRATE §7 crit 8 | ✅ DONE (#482) |
+| S137 | **The typed outcome vocabulary rendered as "never run"** (§1.3 — the FE half). The backend's vocabulary grew — `blocked_injection` (S134/S136), `skipped_*` (S132), `deferred` (S135), `refused` (S117) — and `statusMeta` knew NONE of them, so every one fell through to the default branch. Worst for a blocked attack: the user reads **"this automation has never run"** when it in fact refused a hostile payload, and `blocked_injection` never auto-retries so that row is the only record there will ever be. §1.3 exists so surfaces can switch on a typed vocabulary instead of matching prose — a backend vocabulary the frontend does not know is that contract half kept. Suppressions render NEUTRAL (the automation is working as configured; a red badge sends the user hunting a fault that is not there) | AUTOMATION-SUBSTRATE §1.3 + §5 | ✅ DONE (#486) |
 
 **🔴 THE CLOCK CUTOVER'S REAL BLOCKER WAS NOT DOUBLE-FIRE — IT WAS THAT THE TICK COULD NOT ARM A
 CLOCK.** Measured on a real migrated store: `boot()` reported `rearmed: []`, `next_fire_at` stayed
@@ -1973,6 +1974,37 @@ was NOT force-pushed; the recovery lands as an ordinary fast-forward.
 
 **The check that would have caught it** is `git merge-base --is-ancestor <branch> origin/main`, not the
 PR's merged flag or `mergeStateStatus: CLEAN`. Branch cleanup is now gated on the former.
+
+## DECLARED WORK EXHAUSTED — 2026-08-04 (S116-S137, PRs #366-#486)
+
+Twenty-two sessions since the 2026-08-03 record below, shipped as one 21-deep stacked chain off
+`main`. Every one closed a **declared** item — a plan clause, a decision, or a named criterion — and
+every one found at least one defect by MEASURING rather than reading. Nothing was invented.
+
+**What remains is not startable by an implementation session, item by item:**
+
+| item | why |
+|---|---|
+| webhook fire endpoint (`POST /api/triggers/{id}/fire`) | **E4 — owner decision.** `docs/security/threat-model.md` §3 assigns the inbound surface to MCP-READONLY-INBOUND + EXTERNAL-ACCESS (ASI07), neither landed; the workspace brief orders MCP-Read-Only-Inbound first. Auth model + bind/exposure posture is an owner call. Blocks decision 12's token VERIFICATION half. |
+| `idle` runtime | Gated on LOOPS-EVOLUTION **Phase 4** by §7 item 9 — a real 90-day dependency in that plan, not a wording conflict. |
+| `web_watch` headless tier | §3 asks for "plain fetch → optional headless tier". No browser runtime exists in this repo; a stub would be the inert control this program keeps finding. |
+| chat-turn event source | New EMITTER. `agent_scope` (S131) validates and warns today; it gains a reader when the source lands. Building the consumer first inverts the dependency. |
+| meters for the 4 unmetered caps | `cost_cap`/`max_cost_usd_per_run` need per-run spend attribution; `max_runs_per_hour`/`max_actions_per_hour` need a windowed history query. New machinery; S133's doctor finding names them meanwhile. |
+| §3.5 `skip_if_active` / `acting_on` | **Not declared anywhere** — absent from `GATE_KEYS` and every `SPEC_KEYS`. New entity scope, not a gap-fill. |
+| did/suppressed FOLD affordance | §5 Automations-page work. S132 shipped the API split; S137 shipped the rendering vocabulary. |
+
+**The technique that produced most of this run, for the next author.** Six of the twenty-two findings
+were *declared-but-unread* data: a constant, spec key or context field that no production code reads,
+silently drifting from the code it described. The check is mechanical — `grep -rn SYMBOL src/ | grep -v
+<own module>`; if only tests read it, it is prose. S134 generalised it to whole dataclasses (14 fields
+in one pass, which surfaced the dead injection screen), and S135 to a whole package (41 dataclasses,
+which surfaced the last unread field). **After that sweep the trigger substrate has no unread declared
+field left** — a finish line the one-at-a-time approach never reaches. See the
+`defaulted-field-is-an-unsupplied-input` and `declared-kind-without-a-runtime` memories.
+
+Three sessions (S120, S128, S129) found their control **already correct** and shipped only the guard.
+Saying "already holds" plainly is the right output; manufacturing a fix adds risk for the appearance of
+progress.
 
 ## QUEUE EXHAUSTED — 2026-08-03 (three criteria since closed; see below)
 

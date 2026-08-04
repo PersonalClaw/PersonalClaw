@@ -3984,3 +3984,45 @@ not worth the risk; per-hunk fixes are.
   the FE affordance for S132's archive split, meters for S133's four unmetered caps, and §3.5's
   `skip_if_active` / `acting_on` guards — the last of which are NOT declared anywhere in the entity
   (not in `GATE_KEYS`, not in any `SPEC_KEYS`), so they are new entity scope rather than a gap-fill.
+
+### S137 — the typed outcome vocabulary rendered as "never run" (§1.3, FE half) — DONE
+
+**DISCOVERY: the frontend knew none of the outcomes this stretch added.** The backend vocabulary grew
+across five sessions — `blocked_injection` (S134 refusal, S136 ledger row), `skipped_*` (S132's archive
+split), `deferred` (S135's resource slots), `refused` (S117's kill switch) — and `scheduleMeta.statusMeta`
+handled only `ok`/`success`/`error`/`failure`/`timeout`/`launched`. Everything else fell through to the
+default branch and rendered as **"never run"**.
+
+That is the wrong label for every one of them, and actively dangerous for one: a user reads *"this
+automation has never run"* when it in fact **refused a hostile payload** — and since `blocked_injection`
+never auto-retries, that row is the only record there will ever be. The one row that must not be
+scrolled past was displayed as the most ignorable state in the list.
+
+**This is the FE half of §1.3's own argument.** The typed vocabulary exists so a surface can switch on
+outcomes instead of matching prose (S54 already paid for prose-matched reasons). A backend vocabulary
+the frontend does not know is that contract half-kept — the enum is honest and the screen still lies.
+It is also the "implementation owns product too" tenet in miniature: five sessions shipped correct
+backend semantics that a user could not see.
+
+**Tones chosen by what the user should DO, not by severity:**
+
+* `blocked_injection` → **danger** + shield. The row that must not be missed.
+* `skipped_*` → **neutral** + pause. The automation is working exactly as configured (quiet hours held
+  it, a slot was busy); a red badge would send someone hunting a fault that is not there.
+* `deferred` → **info**. A resource slot frees on its own; this fire is waiting, not broken.
+* `refused` → **warning**, deliberately NOT danger. A policy decision (kill switch, capability fence,
+  unresolved secret) is not a failure, and colouring it identically would erase the distinction S132
+  spent a session establishing.
+
+**Guarded against the obvious over-match:** `startsWith('skipped_')` must not swallow a future outcome
+that merely contains the word, so `was_skipped` still reads "never run" (tested). The six pre-existing
+labels are asserted unchanged, because the shipped UI renders them.
+
+**Gate:** `npm run typecheck:web` clean, **610 FE tests** pass (10 new), `npm run build` succeeds, and
+the full backend gate stays green at 15979. No `web/dist` churn committed.
+
+- **REMAINING in AUTOMATION-SUBSTRATE:** the E4-blocked webhook fire endpoint (queue S123), `idle`
+  (Loops Phase 4), `web_watch`'s headless tier, a chat-turn event source reading `agent_scope` (S131),
+  meters for S133's four unmetered caps, and §3.5's `skip_if_active` / `acting_on` — undeclared in the
+  entity, so new scope rather than a gap-fill. S132's archive split now has a rendering vocabulary; the
+  did/suppressed FOLD affordance itself is still a §5 Automations-page task.
