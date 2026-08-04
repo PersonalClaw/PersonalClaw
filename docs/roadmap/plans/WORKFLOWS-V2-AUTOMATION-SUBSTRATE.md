@@ -3946,3 +3946,41 @@ appended to rather than constructed.
   the FE affordance for S132's archive split, meters for S133's four unmetered caps, and a
   `blocked_injection` ledger row for S134's dispatch-seam refusals. §3.5's `skip_if_active` /
   `acting_on` guards are also still unbuilt.
+
+### S136 — the `blocked_injection` ledger row S134 left owed (§7 criterion 8) — DONE
+
+S134 wired the injection screen at the dispatch seam and recorded in this log that the ledger row was
+**still owed**, because that path is not a `tick` fire and nothing wrote one. This closes it.
+
+**Why the gap mattered.** Criterion 8: *"Every suppressed fire … appears as a typed ledger row with a
+reason — zero silent drops."* A refusal only a log file knows about **is** a silent drop by that
+definition: the user sees an automation that stopped and has nowhere to look. And because
+`blocked_injection` never auto-retries (rule (a): "no-retry prevents trigger loops brute-forcing the
+guard"), that row is the **only record that will ever exist** for the fire — there is no later attempt
+to explain it.
+
+**The screened TEXT is deliberately NOT stored, and that is the interesting decision.** Criterion 11's
+discipline — "`{{secret:KEY}}` never appears resolved in … `automation_history` output" — generalises: a
+blocked payload is hostile third-party content, and copying it into a store the UI renders would move an
+injection attempt **out of a refused fire and into a surface a human reads**. What the row carries is
+the matched GROUPS, naming the pattern class, which is exactly what distinguishes a real attack from a
+false positive — and a false positive here is permanent.
+
+**Best-effort in the SAFE direction.** The payload is refused *before* the row is written, so a broken
+store yields a refusal with no row — never a fire. Asserted with a store that raises.
+
+**🔴 mypy caught my first version as an unused coroutine.** `ScheduleRunStore.append` is async; the sync
+call meant the row **would never have been written at all**. The fix for an unwritten row was itself an
+unwritten row — which is a neater illustration of this stretch's theme than anything I could have
+contrived, and the reason `test_the_helper_is_ASYNC` now pins it.
+
+**A note on process.** A blanket comment-rewrap script I used for line-length fixes silently split a
+string literal and a function signature elsewhere in `gateway.py`, producing a syntax error away from
+my change. Reverted the file and reapplied the edit surgically. Bulk reflow across a 2000-line file is
+not worth the risk; per-hunk fixes are.
+
+- **REMAINING in AUTOMATION-SUBSTRATE:** the E4-blocked webhook fire endpoint (queue S123), `idle`
+  (Loops Phase 4), `web_watch`'s headless tier, a chat-turn event source reading `agent_scope` (S131),
+  the FE affordance for S132's archive split, meters for S133's four unmetered caps, and §3.5's
+  `skip_if_active` / `acting_on` guards — the last of which are NOT declared anywhere in the entity
+  (not in `GATE_KEYS`, not in any `SPEC_KEYS`), so they are new entity scope rather than a gap-fill.
