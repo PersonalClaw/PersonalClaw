@@ -216,6 +216,7 @@ def _queue_fire(manager, key, trigger_id="schedule:j1"):
         kind="clock",
         spec={"kind": "interval", "interval_secs": 3600},
         workflow={"provider": "run-prompt", "config": {}},
+        capabilities={"providers": ["run-prompt"]},
     )
 
     class _Fire:
@@ -450,6 +451,7 @@ def test_store_to_tick_to_dispatch_to_execute(tmp_path):
                 enabled=True,
                 spec={"kind": "interval", "interval_secs": 3600},
                 workflow={"provider": "run-prompt", "config": {}},
+                capabilities={"providers": ["run-prompt"]},
                 next_fire_at=SVC.to_iso(NOW - 5),
             )
             for i in range(3)

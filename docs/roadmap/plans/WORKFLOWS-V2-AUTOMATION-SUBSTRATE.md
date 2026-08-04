@@ -2948,3 +2948,130 @@ covered — a credential-shaped literal anywhere, and a secret-NAMED field holdi
   switch, provider chokepoint tests) and scoped webhook tokens (decision 12). PathGuard does not exist
   in the tree at all, and the `webhook` kind's `token_ref` is validated but has no fire endpoint yet —
   both are larger than a templating session and belong with the webhook runtime.
+
+### S116 — decision 7's frozen-capability fence, actually enforced (§1.4 / R3) — DONE
+
+**DISCOVERY (the defect): the fence had never run on a single real fire.** `FireContext.requested`
+defaults to `{}`, and **nothing in production ever populated it**. The only real construction —
+`service.tick` — omitted the field, so `evaluate`'s `if ctx.requested:` was permanently false and
+decision 7's entire enforcement point was dead code on the live path. It passed its own unit tests
+the whole time, because those hand-supply `requested`.
+
+This is exactly the shape S97 found for `existing_claim`, **in the gate directly below it**: a
+control that is present, reviewed, tested, and enforcing nothing because its input has no writer.
+Found by tracing the WRITERS of the state the gate reads rather than by reading the gate — the
+recipe that has now produced a finding in every session of this cutover.
+
+**DISCOVERY (why enforcement alone would have been an outage).** Measured before choosing a design:
+**no writer sets `capabilities`** — not `tools.create`, not the app-cron reconciler, not the digest
+reconciler, not the CLI, not the API — and **every one of them creates a write-capable action**
+(`invoke-agent`, `run-prompt`, `notification-digest`). The fence denies on an empty block. So
+simply populating `requested` would have refused 100% of real automations: a total outage of the
+feature, shipped as a security fix, and one that would have looked correct in review.
+
+So the fence lands as three parts, not one:
+
+1. **Decision 7's read-only default, as written.** "Auto-fired triggers default to read-only action
+   providers; write-capable actions require explicit opt-in." Providers are classified into
+   `READ_ONLY_PROVIDERS` and `WRITE_CAPABLE_PROVIDERS`, and a read-only action fires with no
+   `capabilities` block at all. `provider_is_read_only` **fails closed** — an unclassified provider
+   reads as write-capable, so deny-by-default stays where it matters. A completeness test asserts
+   every provider the registry actually ships is classified, and it earned its keep immediately by
+   catching three unclassified knowledge providers.
+2. **A save-time freeze on all four writers.** `capabilities_for_action` derives the block from the
+   action, so a new automation is born grantable rather than born refusing. A read-only action is
+   deliberately left with an EMPTY block: writing `{"providers": ["notify"]}` would imply an opt-in
+   the user never made, which matters the day someone edits that action to something write-capable
+   and a stale block grants it.
+3. **An idempotent boot backfill** (`boot_migrate.backfill_capabilities`) for the population already
+   on disk. Modelled on `arm_unarmed`: it grants each pre-S116 row exactly what its CURRENT action
+   already does — a faithful grandfather, not a widening — never touches a row that already carries
+   a block (so a deliberately tighter fence survives), skips broken rows, and logs at INFO because
+   granting write capabilities to existing automations is a security-relevant state change the owner
+   should be able to find afterwards.
+
+**DEVIATION:** the plan's row implies enforcement is the whole task. It is the smallest part. The
+read-only default and the backfill are what make it landable, and both are decision 7's own text
+rather than new scope.
+
+**Validated by driving, not by reading.** A real `tick()` over four triggers: read-only fires with
+no block; write-capable with no grant is `refused` with the provider named in the ledger reason; the
+same trigger with its grant fires; an unclassified provider is refused. Then the backfill over a
+pre-S116 store, followed by a real tick — all four grandfathered rows fire.
+
+**Test-fixture finding, worth recording as a rule.** 23 tests across 7 files broke, all one cause:
+their helpers hand-built triggers with a write-capable action and **no** capability block — state no
+real writer produces. That is the same "distrust tests that hand-build the state" hazard, from the
+other direction: the fixtures were not testing the fence, they were *bypassing a contract every
+writer satisfies*. Fixed by having the helpers freeze the way real writers do (the facade's helper
+docstring already claimed it "arms the row the way every real write path does"), not by relaxing the
+fence.
+
+- **REMAINING in the decision-7 chain:** PathGuard (absent from the tree entirely), the kill switch,
+  and scoped webhook tokens (decision 12, no fire endpoint yet). Unchanged by this session.
+
+### S117 — the global kill switch, on the unified trigger path (decision 7) — DONE
+
+**DISCOVERY: `personalclaw incident on` did not stop a clock trigger.** The CLI describes it as
+"Suspend/resume all unattended work (the kill switch)", `guardrails/incident.py` is SEL-audited, and
+three subsystems already honour it — script hooks, subagent spawns, and the legacy `event_triggers`
+fire path, whose own docstring says "a `/test` that ignored incident mode would run unattended work
+during the incident the kill switch was thrown for". The unified engine — **the sole path that fires
+clock triggers since S100** — never read the flag. Driven before writing a line:
+
+```
+incident active: True
+tick() -> fires: ['clock:nightly']   outcome=ran
+```
+
+So the one control an operator reaches for *during* an incident was the one thing that kept running
+unattended work, while reporting itself active. That is worse than a missing feature: a switch that
+lies is a control the operator will stop trusting after the first incident.
+
+**Wired as GATE 0 in `firepath.evaluate`, ahead of the injection screen**, for two reasons. Ordering:
+an incident halts everything unconditionally, so a gate placed after `screen` would make "is this
+payload clean" a precondition for honouring a kill switch. Location: there are three unattended entry
+points (the clock loop, the file-watch poll, the reaper's re-dispatch) and **only the file-watch one
+checked the flag** — a per-loop check is a control that must be re-added correctly at every future
+call site, which is exactly how this gap opened. One chokepoint, with a declared typed outcome.
+
+Typed `REFUSED`, not `SKIPPED_GATE`: a policy refusal, not a cadence skip. Filing the kill switch
+alongside quiet hours would make the runs inbox unable to distinguish "the operator suspended
+everything" from "it was 3am". The reason names the resume command, because an operator reading a
+refused row should not have to grep for it.
+
+**DISCOVERY (the second defect, found while wiring the first): the manual path's gate plan was
+pure description.** `tools.run` printed `gates enforced: incident, screen, budget, claim, yield,
+capability` and enforced **none** of them. Measured with the switch thrown: `ok: True`, runner
+invoked. A plan that describes a control nobody applies is worse than no plan — it tells the user the
+boundary held. Enforcement now lives in `manual_refusal()`, called from both manual paths
+(`tools.run` **and** the API's `_run_store`, which dispatches directly rather than through the tool,
+so enforcing in one place would have left the UI's Run button firing during an incident).
+
+**DEVIATION / scope call:** `manual_refusal` checks `incident` only, deliberately rather than
+partially. It is the one gate in `MANUAL_NEVER_BYPASSES` that is a global operator-thrown state a
+manual caller can trip without knowing. The other three have no evaluable input on that path —
+`screen` needs payload text a manual run does not carry, `capability` is checked at dispatch against
+the frozen block, and `budget`/`claim` are explicitly not spent by a manual fire (`record_fire` is
+never called). Listing gates with no input is precisely what produced the inert plan, so the reason
+is documented on the function rather than left to be re-derived.
+
+**Deliberately fail-OPEN, and the one place that is correct.** `incident_active()` treats an
+unreadable flag as inactive by design — halting every automation on a filesystem hiccup would be a
+self-inflicted outage. This gate inherits that rather than second-guessing it. The asymmetry against
+S116's deny-by-default fence is intentional and tested: a stuck-open capability fence grants power
+nobody asked for, while a stuck-closed kill switch silently stops everything the user depends on and
+looks identical to a broken scheduler.
+
+**Validated by mutation, not just by passing.** Disabling the new gate turns **8 of the 18** new
+tests red, so they are load-bearing rather than decorative. A dry run still reports its plan during
+an incident (it executes nothing — telling an operator what *would* happen is the opposite of running
+unattended work).
+
+One pre-existing test legitimately shifted: `test_the_passed_list_records_how_far_a_suppressed_fire_got`
+hardcodes the gate sequence, which is its job. Updated to the new order rather than sliced from
+`GATE_ORDER`, so it still fails when the sequence changes.
+
+- **REMAINING in the decision-7 chain:** PathGuard (absent from the tree entirely) and scoped webhook
+  tokens (decision 12 — the `webhook` kind has no fire endpoint yet). Both belong with the webhook
+  runtime, unchanged by this session.

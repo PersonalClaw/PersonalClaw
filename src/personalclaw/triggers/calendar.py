@@ -795,6 +795,32 @@ def diagnose(
                 )
             )
 
+        # 🔴 An UNFENCED write-capable action (decision 7 — S116). The fence is wired as of S116 and
+        # denies on an empty block, so a trigger authored before that ships carries
+        # `capabilities: {}`, requests a write-capable provider, and REFUSES on its next fire. The
+        # refusal is in the ledger, but the user's question is "why did my automation stop", and
+        # the doctor is where that gets answered. Re-saving the trigger freezes the grant.
+        raw_caps = entry.get("capabilities")
+        caps: dict[str, Any] = dict(raw_caps) if isinstance(raw_caps, dict) else {}
+        wf = entry.get("workflow")
+        if isinstance(wf, dict):
+            from personalclaw.triggers.screen import provider_is_read_only
+
+            inline = wf.get("inline") if isinstance(wf.get("inline"), dict) else None
+            action = str((inline or wf).get("provider") or "").strip()
+            granted = caps.get("providers") or []
+            if action and not provider_is_read_only(action) and action not in granted:
+                report.findings.append(
+                    Finding(
+                        trigger_id=tid,
+                        code="unfenced_write_action",
+                        detail=f"runs the write-capable action {action!r} with no capability "
+                        f"grant, so the frozen-capability fence refuses it",
+                        fix="re-save the automation to freeze its capability set, or switch it "
+                        "to a read-only action",
+                    )
+                )
+
         duty = gates.get("duty_gate")
         if isinstance(duty, dict):
             name = str(duty.get("provider", "") or "")

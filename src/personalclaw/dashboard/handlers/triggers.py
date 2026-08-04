@@ -1116,6 +1116,13 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
             {"error": f"{raw} has a parse error and cannot run ({row.errors[0].message})"},
             status=400,
         )
+    # 🔴 The kill switch, on the API's manual path too. This handler dispatches directly rather than
+    # through `tools.run`, so enforcing it only there would leave the Run button in the UI firing
+    # during an incident — the exact surface an operator is most likely to hit. 200, not 4xx: a
+    # guardrail decision is not a malformed request (the rule the event-trigger `/test` follows).
+    refusal = T.manual_refusal()
+    if refusal:
+        return web.json_response({"ok": False, "name": row.trigger.name, "refused": refusal})
     note = await _dispatch_store_action(row.trigger, {"trigger_id": raw, "manual": True})
     paused_note = "" if row.trigger.enabled else " (paused — this run does not re-enable it)"
     return web.json_response({"ok": True, "name": row.trigger.name, "result": note + paused_note})
@@ -1430,6 +1437,11 @@ async def api_triggers_doctor(request: web.Request) -> web.Response:
                     "gates": row.trigger.gates or {},
                     "workflow": row.trigger.workflow or {},
                     "spec": dict(row.trigger.spec or {}),
+                    # 🔴 Required by the `unfenced_write_action` check (S116). Omitting it made the
+                    # doctor read every trigger as ungranted — a finding on every row, or on none,
+                    # depending on which way the check defaulted. The payload has to carry what the
+                    # check reads.
+                    "capabilities": dict(row.trigger.capabilities or {}),
                 }
             )
     for trigger in _event_store().load():

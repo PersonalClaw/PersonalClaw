@@ -151,6 +151,7 @@ def create(
     function is testable without a model — the same seam `ScheduleService` uses for `_on_job` and
     the executor uses for its runner.
     """
+    from personalclaw.triggers import screen as _screen
     from personalclaw.triggers.models import Trigger
     from personalclaw.triggers.nl_kind import route
 
@@ -201,6 +202,15 @@ def create(
         created_by=created_by,
         spec=resolved_spec,
         workflow=dict(workflow),
+        # 🔴 FREEZE THE CAPABILITY SET AT SAVE (decision 7 / R3 — S116). Authoring a trigger IS the
+        # opt-in: the user picked this action. Without it, every trigger this function creates
+        # (`run-prompt` from chat, `invoke-agent` from the CLI) carries an EMPTY block, and the
+        # now-wired fence denies on empty — so 100% of real automations would refuse on their next
+        # fire. A read-only action still gets an empty block: the fence permits those without one,
+        # and a written-out grant would imply an opt-in the user never had to make.
+        capabilities=_screen.capabilities_for_action(
+            Trigger(id="", name="", kind=resolved_kind, workflow=dict(workflow))
+        ),
     )
     # 🔴 ARM A CLOCK TRIGGER ON CREATION (S101). Measured: `create` persisted `next_fire_at=""`, and
     # `service.due_ids` only surfaces rows that HAVE one — so every cron created through this
@@ -432,7 +442,15 @@ MANUAL_BYPASSES: frozenset[str] = frozenset({"quiet", "duty"})
 #: set — a "the user asked for it" bypass on either would make the trust boundary optional, which
 #: is precisely the escalation route criterion 6 is written against. `budget` stays because §4 says
 #: "never rate floors": a manual fire that could spend past the cap would make the cap advisory.
-MANUAL_NEVER_BYPASSES: frozenset[str] = frozenset({"screen", "capability", "budget", "claim"})
+#:
+#: `incident` is listed for the reason the LEGACY path already recorded, verbatim: "a `/test` that
+#: ignored incident mode would run unattended work during the incident the kill switch was thrown
+#: for". The kill switch is the one control an operator reaches for when something is actively going
+#: wrong, so a UI button that still fires through it would make it advisory at the worst moment. Two
+#: fire paths disagreeing about the same switch is also how an operator learns not to trust it.
+MANUAL_NEVER_BYPASSES: frozenset[str] = frozenset(
+    {"incident", "screen", "capability", "budget", "claim"}
+)
 
 
 def manual_gate_plan(dry_run: bool = False) -> dict[str, Any]:
@@ -441,6 +459,11 @@ def manual_gate_plan(dry_run: bool = False) -> dict[str, Any]:
     Returned as data (and asserted in tests against `firepath.GATE_ORDER`) so the bypass set can
     never silently grow to include `screen` or `capability`. A bypass list that drifted into the
     trust boundary is the kind of change that reads as a small convenience in a diff.
+
+    🔴 THIS IS A DESCRIPTION, NOT AN ENFORCEMENT. It reports intent for a surface to render; the
+    refusal lives in `manual_refusal` below. Measured: `run()` printed "gates enforced: incident,
+    screen, budget, claim, yield, capability" and enforced **none** of them — a plan describing a
+    control nobody applies is worse than no plan, because it tells the user the boundary held.
     """
     from personalclaw.triggers.firepath import GATE_ORDER
 
@@ -453,6 +476,30 @@ def manual_gate_plan(dry_run: bool = False) -> dict[str, Any]:
         # "dry run" that silently ran would be the worst possible surprise.
         "executes": not dry_run,
     }
+
+
+def manual_refusal() -> str:
+    """The reason a manual fire must be refused right now, or "" to proceed.
+
+    🔴 The enforcement `manual_gate_plan` only ever DESCRIBED. Measured with the kill switch thrown:
+    `run()` reported `incident` under "gates enforced", returned `ok: True`, and invoked the runner.
+
+    Only `incident` is checked here, and that is deliberate rather than partial. It is the one gate
+    in `MANUAL_NEVER_BYPASSES` that is a GLOBAL, operator-thrown state a manual caller can trip
+    without knowing; the other three are properties of the fire itself and are enforced where they
+    can be evaluated — `screen` needs payload text a manual run does not carry, `capability` is
+    checked at dispatch against the frozen block, and `budget`/`claim` are explicitly not spent by a
+    manual fire (`record_fire` is not called, so there is no allowance to breach and no claim to
+    take). Listing them here without an evaluable input is what produced the inert plan.
+    """
+    from personalclaw.guardrails.incident import incident_active
+
+    if incident_active():
+        return (
+            "incident mode is active: unattended fires are suspended "
+            "(resume with `personalclaw incident off`)"
+        )
+    return ""
 
 
 def run(
@@ -492,6 +539,13 @@ def run(
     if dry_run:
         lines.append("  nothing was executed.")
         return ToolResult(True, "\n".join(lines), {"plan": plan, "trigger": trigger.to_dict()})
+    # 🔴 The gates the plan claims to enforce, actually enforced. Below the dry-run return so a dry
+    # run still REPORTS the plan during an incident (that is a read, and telling an operator what
+    # would happen is the opposite of running unattended work).
+    refusal = manual_refusal()
+    if refusal:
+        lines.append(f"  refused: {refusal}")
+        return ToolResult(False, "\n".join(lines), {"plan": plan, "refused": refusal})
     if runner is None:
         # Honest refusal rather than a fabricated success. "Launched" with nothing behind it is the
         # fire-and-forget lie S90's executor was written to keep out of this codebase.

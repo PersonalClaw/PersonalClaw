@@ -107,6 +107,7 @@ def reconcile_app_crons(store: Any) -> None:
     Idempotent: safe to call on every startup. Best-effort — a single bad entry is logged and
     skipped, never blocking the others or startup.
     """
+    from personalclaw.triggers import screen as _screen
     from personalclaw.triggers.arm import arm as _arm
     from personalclaw.triggers.models import Trigger
 
@@ -165,6 +166,11 @@ def reconcile_app_crons(store: Any) -> None:
                 workflow=dict(params["workflow"]),
                 delivery=params["delivery"],
             )
+            # 🔴 FREEZE THE CAPABILITY SET (decision 7 — S116). An app cron runs `invoke-agent`,
+            # which is write-capable, and the now-wired fence denies on an empty block — so without
+            # this every app-declared cron would refuse on its next fire. The app's own manifest
+            # permission (`can_use_cron`) is the opt-in; this records what that grant covers.
+            trigger.capabilities = _screen.capabilities_for_action(trigger)
             # ARM IT NOW, for the reason `tools.create` records: `service.due_ids` only surfaces
             # rows that HAVE a `next_fire_at`, so an unarmed trigger never fires. Arming here rather
             # than leaving it to the next boot sweep is the difference between an app's cron running

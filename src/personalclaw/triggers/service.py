@@ -395,7 +395,7 @@ async def tick(
     `~/.personalclaw`, where leftovers then blocked unrelated tests' fires. A claim describing
     one store must not live in another.
     """
-    from personalclaw.triggers import claims
+    from personalclaw.triggers import claims, screen
 
     now = now or time.time()
     base_dir = base_dir if base_dir is not None else getattr(store, "base_dir", None)
@@ -455,6 +455,11 @@ async def tick(
             # whose previous run was still going fired again anyway, which is the precise failure
             # `overlap` exists to prevent. The gate was present, reviewed, and enforcing nothing.
             existing_claim=claims.read_claim(trigger.id, now=now, base_dir=base_dir),
+            # 🔴 WHAT THE TRIGGER ACTUALLY ASKS FOR (S116). This was omitted, so `evaluate`'s
+            # `if ctx.requested:` was always false and the frozen-capability fence — decision 7's
+            # enforcement point — had never run on a single real fire. Exactly the `existing_claim`
+            # defect one line up, in the gate directly below it.
+            requested=screen.requested_capabilities(trigger),
         )
         decision = await fp.evaluate(ctx)
         row = fp.ledger_row(decision, ctx)
