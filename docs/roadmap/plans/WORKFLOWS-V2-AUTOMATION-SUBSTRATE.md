@@ -3525,3 +3525,62 @@ inherits the marker and the origin rather than having to know that `new_items` i
 - **REMAINING in §7/R4:** rule (d) payload-never-participates-in-pattern-matching and rule (e)
   schema-constrained extraction. Rules (a) `triggers/screen.py`, (b) S125 + S126's sink, and (c) this
   session are done.
+
+### S128 — rule (d) audited (it holds), and the ReDoS the audit exposed (§7/R4 rule d) — DONE
+
+**FINDING: rule (d) already HOLDS, and that is the honest headline.** *"Payload content never
+participates in event-pattern/template matching — only trigger spec patterns match; payload is data."*
+Verified by driving rather than by reading:
+
+* the regex in `matches` comes from `trigger.content_re` and the glob from `trigger.key_glob`; a memory
+  value of `.*` is matched as literal data and fires nothing extra;
+* `render_template` performs ONE substitution pass, so a payload value containing `$SECRET_KEY` stays
+  literal and cannot pull in another payload key's contents (the second-order version of the rule);
+* a value shaped like a glob does not affect `MemoryKeyPattern`.
+
+No fix was needed, and **none was invented** — this session ships the guard tests instead. Recording
+"already correct" plainly is part of the job; a session that manufactured a fix here would have added
+risk for the appearance of progress. (Second time in this stretch: S120 found the chokepoint invariant
+already holding.)
+
+**🔴 DISCOVERY: what the audit exposed instead — a ReDoS on the memory-write path.** `matches` is
+called for every memory write (`vector_memory` → `emit_memory_event` → `on_memory_event`) and the value
+was **not length-bounded**. Measured on the function itself, with an author regex of `(a+)+$` — a shape
+people write by accident, not an attack:
+
+```
+value len 22: 0.165s
+value len 24: 0.649s
+value len 26: 2.539s
+value len 28: 10.122s
+value len 30: 40.7s
+```
+
+**A length cap does NOT fix this, and the code says so.** My first instinct was a 4 KB scan cap; the
+probe then showed the cost is *exponential in length*, so 4096 characters bounds nothing useful. The
+cap stayed — it genuinely bounds the LINEAR cost of a sane regex over a multi-megabyte value — but
+`CONTENT_MATCH_SCAN_LIMIT`'s docstring states outright that it is not a ReDoS fix, because **a cap that
+looked like a fix would be worse than none**: the next reader would stop looking.
+
+So catastrophic patterns are caught where they are AUTHORED. `catastrophic_regex_hint` detects the two
+shapes behind essentially every real ReDoS — a quantifier on a quantified group (`(a+)+`, `(\w+)+`) and
+an alternation inside a quantified group (`(a|a)+`) — with zero false positives across eight real
+patterns (`(alpha|beta)`, `a+b+`, `(?:x)+`, `[a-z]+@[a-z]+\.com`, …). False positives matter more than
+usual here: the warning appears while someone is authoring, and one that cried wolf on `(alpha|beta)`
+would train people to ignore it.
+
+**DEVIATION, with the residual risk stated:** detection at author time rather than a timeout at match
+time. Python's `re` has no timeout; the third-party `regex` module does but is only a *transitive*
+dependency, and adding a declared dependency on a security path is an owner call. Threading does not
+help either — a thread cannot be killed mid-regex, so the CPU burns regardless of who stops waiting.
+A user who saves a catastrophic pattern **and dismisses the warning** can still stall their own
+memory-write path: a self-inflicted local slowdown on a single-user machine, not a remote DoS. Warned
+rather than refused, matching S119's reasoning for a verbatim webhook token — refusing would break
+triggers people already have.
+
+**Wired on BOTH handlers.** Create and update each surface the hint through one shared `_regex_hint`
+helper; a per-handler copy is how one of them ends up not warning, and tests assert both.
+
+- **REMAINING in §7/R4: rule (e) only** — schema-constrained extraction at the boundary
+  (`jsonschema`, `additionalProperties: false`, length caps) plus the typed-bus-event gating for
+  cross-run trigger events. Rules (a)-(d) are now done or verified.
