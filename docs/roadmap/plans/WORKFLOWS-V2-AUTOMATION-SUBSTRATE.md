@@ -2251,3 +2251,33 @@ defect that the re-point exposes rather than merely relocating.
   (the last two facade `list_jobs` reads), the run-record methods (a re-point onto `ScheduleRunStore`,
   which survives), the session reaper trio, `status`/`set_refresh_callback`, and the two non-facade
   callers (`suggestions.py`, `messaging.py`). One surface per session.
+
+### S104 — Chat-injection + history re-point (§6 — stacked on S103)
+
+**DONE.** The last two live facade `list_jobs` reads. `state.crons.list_jobs` in this file drops from
+9 sites to 7, and all 7 remaining are legacy fallbacks rather than live reads.
+
+- **The chat injection needs a THREE-FIELD surface, measured not assumed.**
+  `inject_schedule_result_to_session` reads exactly `job.id`, `job.name` and `job.agent_id` — nothing
+  else. So `_job_shim_for` projects a store row onto that tiny surface rather than reconstructing the
+  whole legacy entity. It returns None for an unknown id so the caller keeps its history-only
+  fallback: a user with conversation history for a deleted trigger should still be able to open it.
+- **The last RESULT comes from `ScheduleRunStore`, not a trigger field.** `LEGACY_FIELD_MAP` maps
+  `last_result` to None deliberately — the run record owns a run's output, and a copy on the trigger
+  was a second truth that could disagree with it. The run store is keyed by a plain id string, so it
+  serves a store-backed trigger and a legacy job identically (which is also why it survives the whole
+  cutover unchanged). A failed run's error stands in for a missing summary, because a failure that
+  rendered as "" would read as a silent run.
+- **🔴 The history name map now covers EVERY KIND.** A run row carries only a `job_id`, so the name is
+  a join — and joining against the legacy service alone would label a run of a store-created trigger
+  with a BLANK, which reads in the UI as a run of a deleted automation. The unified feed carries
+  file/web_watch/event runs too, so the map is built over the whole store and merged over the legacy
+  jobs (a home mid-migration still labels its own rows). An unreadable legacy service degrades to
+  store-only names rather than losing every label.
+
+10 tests (60 in the store-facade file). Gate: `make lint` clean, **15694 passed**, real home untouched.
+
+- **REMAINING on the `ScheduleService` retirement:** the run-record methods (a re-point onto
+  `ScheduleRunStore`, which survives), the session-reaper trio, `status`/`set_refresh_callback`, and
+  the two non-facade callers (`suggestions.py`, `messaging.py`). Then the class itself, then the
+  `schedule_*` MCP aliases.
