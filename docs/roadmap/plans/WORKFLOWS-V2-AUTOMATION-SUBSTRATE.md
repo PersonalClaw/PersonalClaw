@@ -3644,3 +3644,49 @@ way to tell this control from a bug.
   (audited-holds + ReDoS bound) · (e) this session (audited-inapplicable + the hijack). The remaining
   AUTOMATION-SUBSTRATE items are the E4-blocked webhook fire endpoint (queue S123), `idle` (Loops Phase
   4), and `web_watch`'s headless tier.
+
+### S130 — the fail-open/fail-closed classifier spoke the wrong vocabulary (§1.4 decision 1) — DONE
+
+**DISCOVERY: the classification and the engine had no words in common.** §1.4 decision 1 (R3 am.) says
+*"fail-open vs fail-closed is classified per gate"*, and the classification existed as data —
+`FAIL_OPEN_GATES` + `gate_failure_mode`. Measured:
+
+```
+set(firepath.GATE_ORDER) & FAIL_OPEN_GATES  ==  set()
+```
+
+**Empty.** The set listed the per-trigger CAP KEYS a person edits (`cost_cap`, `rate_cap`,
+`max_runs_per_hour`, `duty_gate` — the `GATE_KEYS` vocabulary), while the fire path walks GATE names
+(`incident`, `screen`, `quiet`, `duty`, `budget`, `claim`, `yield`, `capability`). Two vocabularies for
+two real surfaces, and the classifier only answered for one — so **every gate the engine actually runs
+resolved to "closed"**, including `duty` and `incident`, both of which are required to fail OPEN.
+
+**The gates were right; the classifier was wrong.** Driven to be sure, rather than assuming the code
+had the bug: an unregistered duty provider allows the fire (*"duty gate 'no-such-calendar-app' is not
+registered; the fire proceeds"*), an unreadable incident flag allows it, and an unreadable budget
+refuses it. All three correct. The table describing that behaviour disagreed in two of three cases, and
+**nothing outside tests read the table**, so nothing caught the drift. A fourth instance of this
+program's signature defect, in its most self-referential form: the inert control here was the
+*description of the controls*.
+
+**Both spellings resolve now**, rather than renaming one side. A person's trigger config says
+`duty_gate` and the fire path's gate is `duty`; both are correct in their own surface, and a classifier
+that answered for only one is what produced this. Added a `FAIL_CLOSED_GATES` set so the security
+fences are explicit rather than implied by absence, with a test that the two sets never overlap (a gate
+in both would resolve by lookup order — the ambiguity S71 found in `fuse`).
+
+**DEVIATION, and a genuine conflict in the plan, resolved explicitly.** §1.4 groups "budget/storm-guard
+checks" as fail-open, but §3.6 says *"the budget check is fail-closed — an unreadable budget is not an
+unlimited one"*, and the code follows §3.6. Those are two different questions wearing one word: the
+per-trigger CAP keys (`cost_cap`, `rate_cap`) fail OPEN because a hung probe must not stop every
+automation, while the fire path's pre-claim budget READ fails CLOSED because an error is not an
+allowance. Both are now written down as such, so the next reader does not have to re-derive which
+clause wins.
+
+**The tests assert the classification against WHAT THE GATES DO**, not against a hardcoded list — a
+table-vs-table test would have passed before this fix. Reverting the change turns 4 red, including the
+two behaviour-verified ones. A completeness test also requires every `GATE_ORDER` entry to carry a
+stated direction, so a new gate added to the walk without one fails instead of silently reading closed.
+
+- **REMAINING in AUTOMATION-SUBSTRATE:** the E4-blocked webhook fire endpoint (queue S123), `idle`
+  (Loops Phase 4), `web_watch`'s headless tier. §7/R4 and the decision-7 chain are complete.
