@@ -401,3 +401,204 @@ def test_the_legacy_refresh_callback_is_gone():
         from personalclaw.schedule import ScheduleService  # noqa: F401
     src = inspect.getsource(GatewayOrchestrator)
     assert "set_refresh_callback" not in src
+
+
+# ── S142: criterion 7's two SEPARATE wake sources, both of which had no caller ──
+
+
+def _spool_one(home, *, key="notes/x"):
+    from personalclaw.triggers.dispatch import Envelope, spool_fire
+
+    return spool_fire(
+        Envelope(
+            seq=0,
+            source="event:e-1",
+            kind="memory.memory_write",
+            payload={"trigger_id": "e-1", "key": key, "value": "hi"},
+            emitted_at=NOW,
+        )
+    )
+
+
+def test_an_IDLE_tick_still_drains_the_spool(tmp_path, monkeypatch):
+    """🔴 `drain_spooled_fires` had NO caller, so a fire parked by a sync CLI memory write sat on
+    disk forever — the silent drop the spool was written to fix, one layer up.
+
+    Driven on an EMPTY due-set on purpose: the drain sits above `if not result.fires` because
+    its own
+    docstring says the spool is a separate wake source and "a tick with no due clock trigger must
+    still drain it". An idle machine is exactly when a spooled fire is waiting.
+    """
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    from personalclaw.config import loader
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    from personalclaw.triggers.dispatch import drain_spool
+
+    store = TriggerStore(base_dir=tmp_path)  # no triggers at all -> zero fires
+    assert _spool_one(tmp_path)
+    assert len(drain_spool()[0]) == 1
+
+    result = asyncio.run(L.tick_once(store, runner=_ok, sessions=None, base_dir=tmp_path, now=NOW))
+    assert result.fires == []
+    assert drain_spool()[0] == [], "an idle tick must still consume the spool"
+
+
+def test_the_spool_drains_EXACTLY_ONCE(tmp_path, monkeypatch):
+    """Criterion 7's "no double-fire". `clear_spool` acks only what was handled, so a second tick
+    finds nothing — and a fire that arrives DURING a drain survives it."""
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    from personalclaw.config import loader
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    from personalclaw.triggers.dispatch import drain_spool
+
+    store = TriggerStore(base_dir=tmp_path)
+    _spool_one(tmp_path)
+    fired: list[str] = []
+    import personalclaw.event_triggers as et
+
+    monkeypatch.setattr(et, "emit_memory_event", lambda **kw: fired.append(kw["key"]))
+    asyncio.run(L.tick_once(store, runner=_ok, sessions=None, base_dir=tmp_path, now=NOW))
+    assert fired == ["notes/x"]
+    asyncio.run(L.tick_once(store, runner=_ok, sessions=None, base_dir=tmp_path, now=NOW + 1))
+    assert fired == ["notes/x"], "the second tick must not re-fire an acked spool entry"
+    assert drain_spool()[0] == []
+
+
+def test_a_spooled_fire_re_enters_through_the_SAME_seam(tmp_path, monkeypatch):
+    """Not a second dispatch path. A spooled fire goes back through `emit_memory_event`, the seam a
+    LIVE memory write uses, so it cannot skip a gate a live fire walks — which is exactly how the
+    `web_watch` screen gap (S134) opened."""
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    from personalclaw.config import loader
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    seen: list[dict] = []
+    import personalclaw.event_triggers as et
+
+    monkeypatch.setattr(et, "emit_memory_event", lambda **kw: seen.append(kw))
+    _spool_one(tmp_path)
+    asyncio.run(
+        L.tick_once(
+            TriggerStore(base_dir=tmp_path), runner=_ok, sessions=None, base_dir=tmp_path, now=NOW
+        )
+    )
+    assert seen and seen[0]["event_type"] == "memory_write", seen
+    assert seen[0]["key"] == "notes/x"
+
+
+def test_a_DAMAGED_spool_line_does_not_hide_the_rest(tmp_path, monkeypatch):
+    """A partial write at power-loss damages one line. Append-only JSONL is chosen so the others
+    survive; the skipped line is logged, because it is a fire nobody will ever run."""
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    from personalclaw.config import loader
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    from personalclaw.triggers.dispatch import spool_path
+
+    _spool_one(tmp_path, key="good")
+    with spool_path().open("a", encoding="utf-8") as handle:
+        handle.write('{"seq": 1, "truncated\n')
+    fired: list[str] = []
+    import personalclaw.event_triggers as et
+
+    monkeypatch.setattr(et, "emit_memory_event", lambda **kw: fired.append(kw["key"]))
+    asyncio.run(
+        L.tick_once(
+            TriggerStore(base_dir=tmp_path), runner=_ok, sessions=None, base_dir=tmp_path, now=NOW
+        )
+    )
+    assert fired == ["good"]
+
+
+# ── S142: pending approvals re-arm (`retry_queue` had no caller either) ──
+
+
+class _Unready:
+    """A session manager whose enqueue fails until `ready` is set."""
+
+    _sessions: dict = {}
+
+    def __init__(self):
+        self.ready = False
+        self.queued: list[str] = []
+
+    def enqueue(self, key, ts, text, force=False, wakeup=None):
+        if not self.ready:
+            return False
+        self.queued.append(key)
+        return True
+
+
+def _resume(tid="t-0"):
+    return WK.Wakeup(kind="resume", trigger_id=tid, session_key=f"s-{tid}", seq=1, emitted_at=NOW)
+
+
+def test_an_undeliverable_RESUME_is_held_and_re_armed():
+    """🔴 `wakeup.retry_queue` had NO caller, so criterion 7's "pending approvals re-arm" was
+    implemented and unreachable: a resume whose session was not ready was built, classified
+    REQUEUED, and thrown away. §3.2 refuses to let anyone drop one — it carries a gate answer, and
+    eating it strands the parked run forever waiting for a reply the user already gave."""
+    sessions = _Unready()
+    delivery = WK.deliver(sessions, _resume())
+    assert delivery.needs_retry, delivery.disposition
+
+    pending: list = []
+    L._hold_resumes(WK, [delivery], pending)
+    assert len(pending) == 1
+
+    assert L._retry_pending_resumes(sessions, pending) == 0
+    assert len(pending) == 1, "a still-unready session must KEEP the resume, not drop it"
+
+    sessions.ready = True
+    assert L._retry_pending_resumes(sessions, pending) == 1
+    assert pending == [], "a delivered resume leaves the queue"
+
+
+def test_a_droppable_WAKE_is_never_held():
+    """Only a resume is un-droppable. Holding wakes too would re-fire a scheduled trigger whose
+    session was merely busy — which `overlap: skip` exists to prevent."""
+    sessions = _Unready()
+    wake = WK.Wakeup(kind="wake", trigger_id="t-1", session_key="s-1", seq=1, emitted_at=NOW)
+    delivery = WK.deliver(sessions, wake)
+    pending: list = []
+    L._hold_resumes(WK, [delivery], pending)
+    assert pending == []
+
+
+def test_the_resume_queue_is_BOUNDED_and_drops_the_OLDEST():
+    """§3.2 says a resume is never dropped; this is the bounded exception. A session that stays
+    unready forever would grow the queue without limit, and an OOM takes down every automation
+    rather than one. The OLDEST goes: the run that asked longest ago is likeliest to be gone, and
+    the newest answer is the one a user is still waiting on."""
+    pending = [
+        WK.Wakeup(kind="resume", trigger_id=f"old-{i}", session_key=f"s{i}")
+        for i in range(L.MAX_PENDING_RESUMES + 5)
+    ]
+    newest = WK.Delivery(
+        WK.Disposition.REQUEUED.value,
+        WK.Wakeup(kind="resume", trigger_id="newest", session_key="s-new"),
+    )
+    L._hold_resumes(WK, [newest], pending)
+    assert len(pending) == L.MAX_PENDING_RESUMES
+    assert pending[-1].trigger_id == "newest"
+
+
+def test_the_retry_queue_SURVIVES_a_tick(tmp_path):
+    """The queue is owned by `run_forever`, not by `tick_once`: a list held inside one iteration
+    would be discarded on every return, which is the same silent drop §3.2 refuses."""
+    store = TriggerStore(base_dir=tmp_path)
+    store.upsert(_clock())
+    pending: list = [_resume()]
+    asyncio.run(
+        L.tick_once(
+            store,
+            runner=_ok,
+            sessions=_Unready(),
+            base_dir=tmp_path,
+            now=NOW,
+            pending_resumes=pending,
+        )
+    )
+    assert len(pending) == 1, "an unready session must leave the held resume in place across a tick"

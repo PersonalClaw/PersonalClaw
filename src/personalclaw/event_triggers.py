@@ -436,8 +436,43 @@ class EventTriggerEngine:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            return  # no loop (e.g. a sync CLI write) — the fire is recorded, action skipped
+            # 🔴 SPOOL IT rather than dropping it (§3.2 / crit 7 — S142). `dispatch.spool_fire` was
+            # written for EXACTLY this path — its docstring calls it "THE fix for the measured bug:
+            # `event_triggers._schedule_fire` records the fire, asks for a running loop, and
+            # `return`s when there is none — so a sync CLI memory write increments `fire_count` and
+            # drops the action with nothing recording that it did not run."
+            #
+            # It had no caller, so the bug it names was still live: `record_fire` had
+            # already counted this fire against `max_fires`, and the action simply never
+            # ran. Spooling parks the envelope on disk for the next tick to drain —
+            # criterion 7's "no lost fire" across a restart, and why the spool is
+            # append-only JSONL (one torn write loses one line, not the file).
+            self._spool(t, event_type=event_type, key=key, value=value, now=now)
+            return
         loop.create_task(self._fire(t, event_type=event_type, key=key, value=value))
+
+    def _spool(
+        self, t: "EventTrigger", *, event_type: str, key: str, value: str, now: float
+    ) -> None:
+        """Park a fire with no loop to run on, so the next tick picks it up (crit 7 — S142).
+
+        Never raises. A spool failure must not break the memory WRITE that triggered it:
+        that write is the user's actual work, and this is bookkeeping on top of it.
+        """
+        try:
+            from personalclaw.triggers.dispatch import Envelope, spool_fire
+
+            spool_fire(
+                Envelope(
+                    seq=0,
+                    source=f"event:{t.id}",
+                    kind=f"memory.{event_type}",
+                    payload={"trigger_id": t.id, "key": key, "value": value},
+                    emitted_at=now,
+                )
+            )
+        except Exception:  # noqa: BLE001 - see the docstring
+            logger.debug("could not spool the event fire for %s", t.id, exc_info=True)
 
     async def _fire(self, t: EventTrigger, *, event_type: str, key: str, value: str) -> None:
         try:

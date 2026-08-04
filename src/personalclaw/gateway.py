@@ -980,6 +980,61 @@ class GatewayOrchestrator:
             # happened. After the refresh, so a slow chain never delays the view update.
             await self._fire_chained_triggers(trigger, payload)
 
+    def _surface_missed_review(self, report: dict[str, Any]) -> None:
+        """Put the boot's missed-fire review in front of the user (§3.4 / crit 7 — S142).
+
+        Criterion 7 says "missed slots appear in the review card". §3.4's rule is REVIEW, don't lie
+        and don't storm: a boot that silently caught everything up is the storm, and one that says
+        nothing is the lie. So the review becomes ONE notification naming the count, not one per
+        missed slot — a laptop opened after a weekend would otherwise deliver hundreds.
+
+        Silent when nothing was missed, deliberately: "0 automations missed a run" on every restart
+        trains the user to dismiss the notification that matters. Goes through `state.notify` like
+        every other substrate notification (R18 — no second path), so a muted channel stays muted.
+        Never raises: the sweep already re-armed the schedule, and failing to announce it must not
+        undo that.
+        """
+        try:
+            state = getattr(self, "dashboard_state", None)
+            if state is None:
+                return
+            review = report.get("review") or {}
+            rows = review.get("rows") or []
+            summaries = review.get("summaries") or []
+            total = len(rows) + sum(int(s.get("count", 0) or 0) for s in summaries)
+            if total <= 0:
+                return
+            affected = len(
+                {str(r.get("trigger_id", "")) for r in rows}
+                | {str(s.get("trigger_id", "")) for s in summaries}
+            )
+            caught_up = [c for c in (report.get("catch_up") or []) if c.get("catching_up")]
+            body = (
+                f"{total} scheduled run{'s' if total != 1 else ''} were missed across "
+                f"{affected} automation{'s' if affected != 1 else ''} while PersonalClaw was not "
+                "running. Review them and choose what to run now."
+            )
+            if caught_up:
+                body += (
+                    f" {len(caught_up)} with catch-up enabled will fire once, staggered, "
+                    "on their own."
+                )
+            state.notify(
+                kind="info",
+                title="Missed scheduled runs",
+                body=body,
+                meta={
+                    "event": "automation.missed_review",
+                    "statusUrl": "#/triggers",
+                    "missed": total,
+                    "triggers": affected,
+                    "caught_up": len(caught_up),
+                    "truncated": bool(review.get("truncated")),
+                },
+            )
+        except Exception:  # noqa: BLE001 - see the docstring
+            logger.debug("could not surface the missed-fire review", exc_info=True)
+
     def _surface_attention_card(self, trigger: Any, decision: Any) -> None:
         """Put an autopaused/quarantined trigger in front of the user (crit 3 — S141).
 
@@ -1412,6 +1467,30 @@ class GatewayOrchestrator:
                 reconcile_digest_cron(_trigger_store)
             except Exception:
                 logger.warning("digest-cron reconcile failed", exc_info=True)
+            # 🔴 THE BOOT SWEEP (§3.1/§3.4, criterion 7 — S142). `service.boot` is what recovers
+            # the exactly-one-upcoming invariant, STAGGERS an overdue population, and produces the
+            # missed-fire review. It had **zero callers**: boot ran `migrate_and_arm`, which only
+            # arms rows with NO `next_fire_at` (`needs_arming`), so a trigger that WAS armed and
+            # went overdue while the lid was shut was left with its stale past fire — and the first
+            # tick found it due. Measured on ten minutely triggers overdue by an hour: **10 of 10
+            # due in the same instant at boot**, the restart stampede `boot_recovery`'s
+            # deterministic per-id stagger exists to prevent (108-179s apart, when called).
+            #
+            # AFTER the reconcilers so an app-declared or digest cron written moments ago is swept
+            # too, and BEFORE the clock loop starts so no tick sees an unrecovered row.
+            try:
+                from personalclaw.triggers import service as _svc
+
+                boot_report = _svc.boot(_trigger_store)
+                logger.info(
+                    "trigger boot sweep: re-armed %d of %d, %d missed slots to review",
+                    len(boot_report.get("rearmed") or []),
+                    int(boot_report.get("total", 0) or 0),
+                    len((boot_report.get("review") or {}).get("rows") or []),
+                )
+                self._surface_missed_review(boot_report)
+            except Exception:
+                logger.warning("trigger boot sweep failed", exc_info=True)
             # The unified CLOCK LOOP (S100) — now the only thing that fires a clock trigger. The
             # legacy timer is gone entirely as of S112, along with the class that owned it.
             self._clock_task = asyncio.create_task(self._clock_loop())

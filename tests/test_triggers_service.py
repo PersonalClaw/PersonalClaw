@@ -415,3 +415,109 @@ def test_the_result_serializes_for_a_surface(store):
     assert payload["fires"][0]["trigger_id"] == "t1"
     assert payload["next_sleep"] > 0
     assert "suppressed" in payload
+
+
+# ── S142: the boot sweep, which had zero callers ──
+
+
+def test_the_review_is_snapshot_BEFORE_re_arming(store):
+    """🔴 THE ORDERING BUG, found by wiring the sweep. `plan_boot`'s recovery pushes an overdue
+    `next_fire_at` forward IN PLACE on the same `Trigger` objects, and the missed anchor is derived
+    from `next_fire_at`. With the review taken afterwards, a trigger overdue by an hour reported
+    **0 review rows** — re-arming destroys the only evidence that anything was missed, so the
+    evidence has to be read first."""
+    store.save_all([_trigger("t1", next_at=NOW - 3600, interval=60)])
+    report = SVC.boot(store, now=NOW)
+    total = len(report["review"]["rows"]) + sum(s["count"] for s in report["review"]["summaries"])
+    # 61, not 60: the anchor is the ARMED slot minus one interval, so the count spans the armed fire
+    # itself through now. That is the honest reading — the armed fire is the first one missed.
+    assert total == 61, total
+    assert report["rearmed"], "and it still re-armed"
+
+
+def test_a_SECOND_boot_does_not_re_enumerate_the_same_misses(store):
+    """`next_fire_at` rolls forward as part of recovery, so re-opening the lid does not show the
+    same missed slots twice."""
+    store.save_all([_trigger("t1", next_at=NOW - 3600, interval=60)])
+    SVC.boot(store, now=NOW)
+    second = SVC.boot(store, now=NOW + 1)
+    assert second["review"]["rows"] == []
+
+
+def test_boot_reports_the_catch_up_plan_INCLUDING_the_refusals(store):
+    """§3.4: a `catch_up: true` trigger that did NOT catch up needs an explanation as much as one
+    that did. A list of only the winners cannot answer "why not mine"."""
+    store.save_all(
+        [
+            _trigger("yes", next_at=NOW - 3600, interval=60, catch_up=True),
+            _trigger("no", next_at=NOW - 3600, interval=60, catch_up=False),
+        ]
+    )
+    plan = {row["id"]: row for row in SVC.boot(store, now=NOW)["catch_up"]}
+    assert plan["yes"]["catching_up"] is True
+    assert plan["yes"]["fire_at"] > NOW, "not inline — the gateway is still starting"
+    assert plan["no"]["catching_up"] is False
+    assert "reviewed, not re-run" in plan["no"]["reason"]
+
+
+def test_a_DROPPED_missed_slot_resumes_ON_ITS_OWN_GRID(store):
+    """🔴 Found by driving the newly-wired sweep. A `catch_up: false` 03:00 daily backup, overdue
+    because the laptop was shut, was re-armed by `boot_recovery` to **09:02** — so the slot the
+    function had just decided to DROP fired six hours late anyway, off-schedule, ignoring the
+    trigger's own cron expression. `missed_dropped` means nothing fires now; the schedule resumes.
+    """
+    import datetime as dt
+
+    now = dt.datetime(2023, 11, 15, 9, 0, tzinfo=dt.timezone.utc).timestamp()
+    missed = dt.datetime(2023, 11, 15, 3, 0, tzinfo=dt.timezone.utc).timestamp()
+    store.save_all([_trigger("backup", spec={"kind": "cron", "expr": "0 3 * * *"}, next_at=missed)])
+    SVC.boot(store, now=now)
+    landed = SVC.to_epoch(store.get("backup").trigger.next_fire_at)
+    when = dt.datetime.fromtimestamp(landed, dt.timezone.utc)
+    assert (when.hour, when.day) == (3, 16), when.isoformat()
+    assert landed > now + 3600, "and nothing fires in the boot window"
+
+
+def test_the_grid_resume_KEEPS_the_stagger(store):
+    """§3.1 requires both halves: recovered on boot AND spread so a restart does not fire everything
+    in one second. Driven — six co-phased hourly triggers all resume to exactly `now + 3600` without
+    the jitter, so the stampede returns one interval later instead of being prevented."""
+    store.save_all([_trigger(f"t{i}", next_at=NOW - 7200, interval=3600) for i in range(6)])
+    report = SVC.boot(store, now=NOW)
+    stamps = {row["next_fire_at"] for row in report["rearmed"]}
+    assert len(stamps) == 6, stamps
+    # …and still within the jitter window of the real grid slot, not re-phased to boot time.
+    assert all(NOW + 3600 <= s < NOW + 3600 + 121 for s in stamps), stamps
+
+
+def test_the_stagger_is_DETERMINISTIC_across_restarts(store):
+    """A crash-loop must not reshuffle every schedule."""
+    store.save_all([_trigger("t1", next_at=NOW - 7200, interval=3600)])
+    first = SVC.boot(store, now=NOW, persist=False)["rearmed"][0]["next_fire_at"]
+    second = SVC.boot(store, now=NOW, persist=False)["rearmed"][0]["next_fire_at"]
+    assert first == second
+
+
+def test_a_boot_sweep_leaves_NOTHING_immediately_due(store):
+    """The restart stampede, stated as the property that matters. Measured before the sweep was
+    wired: ten minutely triggers overdue by an hour were **10 of 10 due in the same instant**,
+    because boot only ran `migrate_and_arm` (which arms rows with NO `next_fire_at`) and left an
+    already-armed overdue row with its stale past fire."""
+    store.save_all([_trigger(f"t{i}", next_at=NOW - 3600, interval=60) for i in range(10)])
+    assert len(SVC.due_ids([r.trigger for r in store.load()], now=NOW)) == 10
+    SVC.boot(store, now=NOW)
+    assert SVC.due_ids([r.trigger for r in store.load()], now=NOW) == []
+
+
+def test_drain_spooled_fires_returns_what_the_spool_holds(tmp_path, monkeypatch):
+    """The service-level accessor criterion 7's crash-safety hangs off."""
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    from personalclaw.config import loader
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    from personalclaw.triggers.dispatch import Envelope, spool_fire
+
+    spool_fire(Envelope(seq=0, source="event:e", kind="memory.memory_write", payload={"key": "k"}))
+    envelopes, bad = SVC.drain_spooled_fires()
+    assert [e.source for e in envelopes] == ["event:e"]
+    assert bad == 0

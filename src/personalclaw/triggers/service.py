@@ -253,7 +253,11 @@ def plan_boot(triggers: list[Trigger], *, now: float) -> list[tuple[str, float, 
     the store is present-and-inert, which is why the cutover could not proceed.
     """
     from personalclaw.triggers.arm import next_fire
-    from personalclaw.triggers.scheduling import boot_recovery
+    from personalclaw.triggers.scheduling import (
+        BOOT_STAGGER_WINDOW_SECS,
+        boot_recovery,
+        jitter_offset,
+    )
 
     out: list[tuple[str, float, str]] = []
     for trigger in triggers:
@@ -269,12 +273,33 @@ def plan_boot(triggers: list[Trigger], *, now: float) -> list[tuple[str, float, 
                 continue
             out.append((trigger.id, armed, "armed from spec"))
             continue
+        catch_up = bool(getattr(trigger, "catch_up", False))
         new_at, reason = boot_recovery(
             next_fire_at=current,
             now=now,
             trigger_id=trigger.id,
-            catch_up=bool(getattr(trigger, "catch_up", False)),
+            catch_up=catch_up,
         )
+        # 🔴 `missed_dropped` RETURNS TO THE GRID when the grid is far enough away (S142). Measured
+        # once the sweep was actually wired: a `catch_up: false` 03:00 daily backup, overdue because
+        # the laptop was shut, was re-armed by `boot_recovery` to **09:02** — so the slot the
+        # function had just decided to DROP fired six hours late anyway, off-schedule, and the
+        # trigger's own cron expression was ignored. Latent until now because nothing called
+        # `plan_boot`, so a wrong `next_fire_at` was never written; wiring the sweep would ship it.
+        #
+        # What changes is the ANCHOR, not the jitter: the drop path resumes from the trigger's own
+        # next real slot (`arm.next_fire`) instead of from `now`, and keeps the same deterministic
+        # per-id spread on top of it. §3.1 requires both — "recovered/re-armed on gateway boot" AND
+        # a stagger so a restart does not fire everything in one second — and dropping the jitter
+        # satisfies only the first. Driven: six co-phased hourly triggers all resume to exactly
+        # `now + 3600` without it, so the stampede returns one interval later instead of being
+        # prevented. The jitter window (120s) is small against any real schedule, which is why
+        # spreading inside it is not the same thing as re-phasing.
+        if reason == "missed_dropped":
+            on_grid = next_fire(trigger, now=now)
+            if on_grid > 0:
+                new_at = on_grid + jitter_offset(trigger.id, BOOT_STAGGER_WINDOW_SECS)
+                reason = "missed_dropped_resumed_on_grid"
         out.append((trigger.id, new_at, reason))
     return out
 
@@ -570,12 +595,23 @@ def boot(store: Any, *, now: float = 0.0, persist: bool = True) -> dict[str, Any
     Also returns the missed-fire REVIEW rather than acting on it: §3.4 is "review, don't lie
     and don't
     storm", and a boot that silently caught up would be the storm. The caller surfaces the review.
+
+    🔴 THE REVIEW IS SNAPSHOT BEFORE RE-ARMING (S142), and that ordering is the whole function.
+    `plan_boot`'s recovery pushes an overdue `next_fire_at` into the stagger window, IN PLACE on the
+    same `Trigger` objects. Measured with the review taken afterwards: a trigger overdue by an hour
+    (61 missed minutely slots) reported **0 review rows** — because the missed anchor is derived
+    from `next_fire_at`, and by then that pointed into the FUTURE. Re-arming destroys the only
+    evidence that anything was missed, so the evidence has to be read first.
     """
     from personalclaw.triggers.missed import review_at_boot
 
     now = now or time.time()
     rows = store.load()
     triggers = [row.trigger for row in rows if getattr(row, "ok", True)]
+
+    # Snapshot BEFORE `plan_boot` re-arms — see the docstring.
+    review = review_at_boot([t.to_dict() for t in triggers], now=now)
+    caught_up = catch_up_at_boot(triggers, now=now)
 
     rearmed: list[dict[str, Any]] = []
     for trigger_id, new_at, reason in plan_boot(triggers, now=now):
@@ -588,13 +624,39 @@ def boot(store: Any, *, now: float = 0.0, persist: bool = True) -> dict[str, Any
                 store.upsert(trigger)
             rearmed.append({"id": trigger_id, "next_fire_at": new_at, "reason": reason})
 
-    review = review_at_boot([t.to_dict() for t in triggers], now=now)
     return {
         "rearmed": rearmed,
         "total": len(triggers),
         "review": review.to_dict() if hasattr(review, "to_dict") else {},
+        "catch_up": caught_up,
         "next_sleep": sleep_for(triggers, now=now),
     }
+
+
+def catch_up_at_boot(triggers: list[Trigger], *, now: float) -> list[dict[str, Any]]:
+    """Which triggers get an automatic catch-up fire at this boot, and why the rest do not.
+
+    A thin adapter over `missed.catch_up_plan` so `boot` reports one shape and the storm guards
+    live in exactly one place. Returns EVERY candidate including the refused ones: §3.4's rule is
+    that a `catch_up: true` trigger which did NOT catch up needs an explanation as much as one that
+    did, and a list of only the winners cannot answer "why not mine".
+
+    Snapshot before re-arming for the same reason the review is — `missed_last_slot` is "is the
+    armed fire in the past", which recovery makes false by design.
+    """
+    from personalclaw.triggers.missed import catch_up_plan
+
+    out: list[dict[str, Any]] = []
+    for trigger_id, fire_at, reason in catch_up_plan([t.to_dict() for t in triggers], now=now):
+        out.append(
+            {
+                "id": trigger_id,
+                "fire_at": fire_at,
+                "reason": reason,
+                "catching_up": fire_at > 0,
+            }
+        )
+    return out
 
 
 def drain_spooled_fires(*, limit: int = 500) -> tuple[list[Any], int]:
