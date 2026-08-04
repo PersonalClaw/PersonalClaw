@@ -1,4 +1,4 @@
-import { Repeat, CalendarClock, Calendar, Bot, FileCode2, TerminalSquare, CheckCircle2, XCircle, Circle, Rocket, Clock } from 'lucide-react'
+import { Repeat, CalendarClock, Calendar, Bot, FileCode2, TerminalSquare, CheckCircle2, XCircle, Circle, Rocket, Clock, ShieldAlert, PauseCircle } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { ScheduleJob, ScheduleKind, ScheduleExecMode } from '../../lib/api'
 
@@ -45,6 +45,17 @@ export function statusMeta(s?: string | null): StatusMeta {
   // "launched": started a background turn — honest "started ≠ succeeded" (T7).
   // Neutral tone, NOT ok-green: a green tick would imply the work succeeded.
   if (s === 'launched') return { label: 'launched', tone: 'var(--color-info)', icon: Rocket }
+  // 🔴 A SCREENED payload (S134/S136). The backend writes `blocked_injection` rows now, and without
+  // this branch they fell through to "never run" — the worst possible label for a blocked attack:
+  // the user reads "this automation has never run" when it in fact refused a hostile payload, and
+  // `blocked_injection` never auto-retries, so that row is the only record there will ever be.
+  if (s === 'blocked_injection') return { label: 'blocked', tone: 'var(--color-danger)', icon: ShieldAlert }
+  // A suppressed fire (S132's archive split). Neutral, not an error: the automation is working as
+  // configured — quiet hours held it, or a slot was busy — and a red badge would send the user
+  // looking for a fault that is not there.
+  if (s && s.startsWith('skipped_')) return { label: s.slice(8).replace(/_/g, ' '), tone: 'var(--color-on-surface-low)', icon: PauseCircle }
+  if (s === 'deferred') return { label: 'deferred', tone: 'var(--color-info)', icon: PauseCircle }
+  if (s === 'refused') return { label: 'refused', tone: 'var(--color-warning)', icon: ShieldAlert }
   return { label: 'never run', tone: 'var(--color-on-surface-low)', icon: Circle }
 }
 
