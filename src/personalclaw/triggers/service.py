@@ -408,6 +408,11 @@ async def tick(
 
     from personalclaw.triggers import firepath as fp
 
+    # Named resource slots, read ONCE per tick (§3.5 — S135). Per-trigger would re-scan every claim
+    # for every due trigger; once per tick also makes the answer consistent within a tick, so two
+    # triggers wanting `local-llm` in the same wake cannot both be told it is free.
+    slot_map = claims.slot_holders(store, now=now, base_dir=base_dir)
+
     for trigger_id in due_ids(triggers, now=now):
         trigger = by_id.get(trigger_id)
         if trigger is None:
@@ -459,6 +464,11 @@ async def tick(
             now=now,
             user_active=user_active,
             yield_to_user=bool(getattr(trigger, "yield_to_user", False)),
+            # 🔴 THE RESOURCE SLOT (§3.5 — S135). `resource_slots` was declared, persisted and
+            # round-tripped, and read by NOTHING — the only field in 41 trigger dataclasses with
+            # zero non-declaration readers. Supplied here from the claim store, so a fire that
+            # needs `local-llm` while another trigger holds it defers instead of contending.
+            busy_slot=claims.busy_slot(trigger, holders=slot_map),
             # 🔴 The EXISTING claim, read from the shared claim store. Measured: this was never
             # supplied, so `claim_fire` always saw `existing=None` and always granted — a trigger
             # whose previous run was still going fired again anyway, which is the precise failure
