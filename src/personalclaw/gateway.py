@@ -311,6 +311,7 @@ class GatewayOrchestrator:
         self.conv_log: ConversationLog | None = None
         self.consolidator: HistoryConsolidator | None = None
         self._file_watch_task: "asyncio.Task[None] | None" = None  # S93 file-watch poll loop
+        self._web_watch_task: "asyncio.Task[None] | None" = None  # S121 web_watch poll loop
         self._clock_task: "asyncio.Task[None] | None" = None  # S100 unified clock loop
         self._reaper_task: "asyncio.Task[None] | None" = None  # S106 trigger reaper
         self._running_script_ids: set[str] = set()  # zero-token jobs in flight
@@ -954,6 +955,48 @@ class GatewayOrchestrator:
             except Exception:  # noqa: BLE001 - the loop must outlive any single poll's failure
                 logger.warning("file-watch poll loop iteration failed", exc_info=True)
 
+    async def _web_watch_poll_loop(self) -> None:
+        """Poll every `web_watch` trigger and fire the ones with NEW items (§7 item 8 — S121).
+
+        🔴 Measured before this existed: `web_watch` was a fully declared kind — creatable in chat
+        (`nl_kind` routes any URL to it), persisted, listed by `/api/triggers` and rendered on the
+        Automations page — and **nothing polled it**. The clock tick skips it (it has no
+        `next_fire_at`) and the file poller only reads `file`. So a user could ask for exactly what
+        the plan advertises, be told it worked, and never get a fire.
+
+        Deliberately mirrors `_file_watch_poll_loop` rather than inventing a second shape: same
+        incident-mode suspension (an unattended fire is an unattended fire), same per-trigger
+        isolation inside `poll_all`, and the same never-die contract — a loop that threw once and
+        stopped would silently retire every web watch the user has.
+
+        The skipped rows are LOGGED rather than dropped. §7 criterion 8 bans silent drops, and
+        "the daily request budget is spent" is exactly the kind of decision a user needs to find
+        when they ask why a watch went quiet.
+        """
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers import web_poll
+        from personalclaw.triggers.store import TriggerStore
+
+        store = TriggerStore(base_dir=config_dir())
+        while True:
+            try:
+                await asyncio.sleep(web_poll.POLL_INTERVAL_SECS)
+                from personalclaw.guardrails.incident import incident_active
+
+                if incident_active():
+                    continue
+                payloads, skipped = await asyncio.to_thread(
+                    web_poll.poll_all, store, now=time.time()
+                )
+                for row in skipped:
+                    logger.info("web_watch %s did not fire: %s", row["trigger_id"], row["reason"])
+                for payload in payloads:
+                    await self._fire_file_trigger(payload)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - the loop must outlive any single poll's failure
+                logger.warning("web_watch poll loop iteration failed", exc_info=True)
+
     async def _fire_file_trigger(self, payload: dict[str, Any]) -> None:
         """Run one file trigger's declared action (S93), through the shared store dispatch.
 
@@ -994,6 +1037,13 @@ class GatewayOrchestrator:
             # else-branch so --no-crons disables it too (a file watch is unattended background work
             # like a cron). Disjoint from ScheduleService, so no double-fire.
             self._file_watch_task = asyncio.create_task(self._file_watch_poll_loop())
+            # The web_watch poll loop (S121). Same placement and the same reasoning as the file
+            # watch above: unattended background work, so `--no-crons` disables it too, and it is
+            # disjoint from every other firing path so it cannot double-fire. Measured before
+            # wiring: `web_watch` was creatable in chat, listed by the API and rendered in the UI,
+            # and NOTHING polled it — the clock tick skips it (no `next_fire_at`) and the file
+            # poller only reads `file`.
+            self._web_watch_task = asyncio.create_task(self._web_watch_poll_loop())
             # Import `crons.json` into the unified trigger store and arm the imported clocks (S98).
             # Measured: `migrate_from_crons` was called by NOTHING outside tests, so `triggers.json`
             # was empty on a real machine — every cron lived only in the legacy file, which blocks
@@ -2533,7 +2583,12 @@ class GatewayOrchestrator:
             await self.loop_watchdog.stop()
         if self.workflow_watchdog:
             await self.workflow_watchdog.stop()
-        for _task in (self._file_watch_task, self._clock_task, self._reaper_task):
+        for _task in (
+            self._file_watch_task,
+            self._web_watch_task,
+            self._clock_task,
+            self._reaper_task,
+        ):
             if _task is None:
                 continue
             _task.cancel()
