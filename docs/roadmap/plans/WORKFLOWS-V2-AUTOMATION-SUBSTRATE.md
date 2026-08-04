@@ -3584,3 +3584,63 @@ helper; a per-handler copy is how one of them ends up not warning, and tests ass
 - **REMAINING in §7/R4: rule (e) only** — schema-constrained extraction at the boundary
   (`jsonschema`, `additionalProperties: false`, length caps) plus the typed-bus-event gating for
   cross-run trigger events. Rules (a)-(d) are now done or verified.
+
+### S129 — rule (e) audited, and the payload→env PATH hijack it found (§7/R4 rule e) — DONE
+
+**FINDING: rule (e)'s two clauses are inapplicable by construction today.** Stated plainly rather than
+padded into work that does not exist:
+
+1. *"payloads becoming structured workflow input are parsed via schema-constrained extraction"* — a
+   trigger payload **does not become workflow input**. Driven: `run-workflow` builds `inputs` from
+   `action_config["inputs"]` and never reads `ctx.payload`; there is no `render_template` call on the
+   inputs either. So there is no boundary to schema-constrain. Building a jsonschema gate over a path
+   that carries nothing would be the inert-control defect, deliberately.
+2. *"cross-run/workflow-minted trigger events are typed bus events gated by a per-source
+   target-template allowlist, never parsed from run prose (the forged-handoff attack)"* — **no
+   workflow or trigger module emits a bus event at all**; `emit_memory_event` has exactly one caller
+   (`vector_memory`). A run cannot mint a trigger event, so the forged-handoff attack has no path to
+   gate. This is the same finding S77 recorded for `SESSION_END`/`RUN_END`: the mechanism was declared
+   ahead of the subsystem that would use it.
+
+Third session in this stretch to report a control already sound (S120, S128, this) — and the value of
+saying so is that the next author does not re-audit it.
+
+**🔴 DISCOVERY: a payload key can hijack binary resolution.** `bash_provider` deliberately passes the
+payload as ENV rather than string-templating it into the command, and its docstring gives the reason:
+*"a payload value like `last_result` can hold arbitrary text — substituting it into the command line
+would be a shell injection vector."* That defence works — verified with `'"; rm -rf /tmp/pwned; echo "'`,
+which arrives as text and does not execute.
+
+But `_payload_env` merges **after** `os.environ`, so a payload KEY shadows the real variable. Driven
+end to end through a real subprocess:
+
+```
+payload {"PATH": "<dir containing a fake `date`>"},  command "date"
+  → stdout: HIJACKED
+```
+
+So a payload value could not become code, but a payload key could change **which code runs** — the same
+outcome by a different route, one layer below where the existing defence looks. That is the third
+instance in this stretch of the "guard is one level away from the thing worth guarding" shape (S119's
+`token_ref`, S126's template sink, this).
+
+**Latent, not live — which is exactly when it is cheapest to close.** Every shipped payload key is a
+hardcoded literal (verified for `web_poll`, `chain`, `pull_on_view`), so nothing external controls a key
+today. A test now asserts no poller assigns a dynamic payload key, so the kind that would have made this
+live fails a test instead.
+
+**A DENYLIST here, deliberately unlike S126's allowlist**, and the asymmetry is reasoned rather than
+inconsistent: `$variables` are the trigger's documented user-facing surface (`$now`, `$job_id`,
+`$last_result`, plus every key a kind carries), so an allowlist would have to enumerate them all and
+would silently drop a new kind's variables. The dangerous set — loader hijacks (`LD_PRELOAD`,
+`DYLD_INSERT_LIBRARIES`), resolution paths (`PATH`, `PYTHONPATH`), interpreter entry points (`BASH_ENV`,
+`NODE_OPTIONS`, `GIT_SSH_COMMAND`) and the harness roots it reads back (`PERSONALCLAW_HOME`) — is small,
+well-known and stable.
+
+**Ignoring a key is LOGGED, not silent.** A user whose `$PATH` variable silently vanished would have no
+way to tell this control from a bug.
+
+- **§7/R4 IS NOW COMPLETE.** (a) `triggers/screen.py` · (b) S125 + S126 · (c) S127 · (d) S128
+  (audited-holds + ReDoS bound) · (e) this session (audited-inapplicable + the hijack). The remaining
+  AUTOMATION-SUBSTRATE items are the E4-blocked webhook fire endpoint (queue S123), `idle` (Loops Phase
+  4), and `web_watch`'s headless tier.
