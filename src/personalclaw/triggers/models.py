@@ -525,6 +525,51 @@ def _known_fields() -> frozenset[str]:
     return frozenset(f.name for f in _dc.fields(Trigger))
 
 
+def _token_ref_issues(spec: Any) -> list[Issue]:
+    """WARN when a `webhook` trigger's `token_ref` holds the token itself (decision 12 — S119).
+
+    🔴 MEASURED. Decision 12 says webhook bearer tokens are "SHA-256-hashed at rest" and R14 says
+    "never verbatim in triggers.json". Driven against the real store:
+
+        spec: {"token_ref": "sk-LITERAL-SECRET-abc123"}
+          → the token appears VERBATIM in triggers.json, `ok: True`, zero warnings
+
+    S115's `_inline_credential_issues` would have caught that string — but it scans the WORKFLOW
+    only, and a webhook's token lives in `spec`. So the one field on the one kind whose entire
+    purpose is authentication was the field with no credential lint, and `triggers.json` is
+    snapshotted (S113), echoed into run records and rendered in the UI.
+
+    The name is the tell: `token_ref` is a REFERENCE. A value that is not a `{{secret:KEY}}`
+    reference is the token itself, which is what this flags.
+
+    A WARNING, not an error, for the reason S115 recorded: refusing would break every webhook a
+    user has already authored, which is exactly the population that most needs to keep working
+    while they migrate. `parse_trigger` already REFUSES a webhook with no `token_ref` at all — an
+    unauthenticated fire endpoint is a different and worse thing than a badly-stored token.
+    """
+    if not isinstance(spec, dict):
+        return []
+    raw = spec.get("token_ref")
+    if not isinstance(raw, str) or not raw.strip():
+        # Absent is handled by the kind's own required-field check, which errors rather than warns.
+        return []
+    from personalclaw.triggers.secrets import SECRET_REF_RE
+
+    if SECRET_REF_RE.fullmatch(raw.strip()):
+        return []
+    return [
+        Issue(
+            path="spec.token_ref",
+            message=(
+                "token_ref holds the token itself rather than a reference — store it with "
+                "`personalclaw auth` and reference it as {{secret:KEY}}, which is resolved at "
+                "dispatch and never written to triggers.json (which is snapshotted and rendered "
+                "in the UI)"
+            ),
+        )
+    ]
+
+
 def _inline_credential_issues(workflow: Any) -> list[Issue]:
     """WARN when a trigger's action carries a credential LITERALLY (§7 item 6 / R14 — S115).
 
@@ -603,6 +648,7 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
     issues.extend(validate_spec(kind, spec))
     issues.extend(validate_gates(gates))
     issues.extend(_inline_credential_issues(data.get("workflow")))
+    issues.extend(_token_ref_issues(data.get("spec")))
 
     if not str(data.get("id", "") or "").strip():
         issues.append(Issue(path="id", message="a trigger needs an id", severity="error"))
