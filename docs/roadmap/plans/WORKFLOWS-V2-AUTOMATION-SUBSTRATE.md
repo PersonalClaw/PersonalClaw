@@ -2858,3 +2858,40 @@ so every snapshot test passed while the component backed up an empty relic. The 
 real `TriggerStore` row plus an event trigger — which is what made the assertions meaningful. Same
 shape as the mock-vs-store lesson from S108/S110: a fixture that only contains what the code already
 handles cannot tell you what the code misses.
+
+### S114 — The inventory ⇄ snapshot drift guard (§7 step 9, completing S113)
+
+**DONE.** S113 closed the automation domain's snapshot gap by hand. This session asked the obvious
+follow-up — *is the inventory the authority, and does the snapshot match it?* — by cross-checking
+`durability.inventory.INVENTORY` (57 declared state entries) against both snapshot paths.
+
+**🔴 25 of 57 declared state files travelled in NEITHER path.** Far larger than §7 item 9's recon note
+suggested. Beyond the automations S113 fixed: the knowledge store and its files, the lexicon, the loop
+DB, chat `sessions`, `subagents`, every `active_*.json` model/prompt/search binding, `mcp.json`,
+`tool_prefs.json`, the FAISS sidecar, and `security_events.jsonl`.
+
+**Scope call: guard it, do not silently fix it.** The 22 non-automation gaps belong to
+DURABILITY-AND-SYNC — that plan owns the inventory, its §1 promises "every byte of state is enumerated
+in one inventory", and its export-shard sessions own the merge strategy each entry already declares
+(`sqlite_attach_ignore`, `append_dedup`, `union_by_id`). Hand-listing 22 files across two snapshot
+paths from an automation-substrate session would have been an unreviewed scope grab into another
+plan's design, and several need a merge story rather than a copy (the audit log needs S2's dedup, the
+FAISS sidecar is rebuildable).
+
+So the gap is now **pinned and enforced** instead of latent:
+
+- `test_every_automation_state_file_is_in_a_snapshot` — the automation domain must be COMPLETE, with
+  no exemption. That is this program's own scope and it is now closed.
+- `test_the_snapshot_coverage_gap_list_can_only_shrink` — every other uncovered entry is listed with
+  its reason, and the list can only shrink. A new state file declared without snapshot coverage FAILS
+  rather than joining a backlog nobody re-measures, and a gap that gets closed must be REMOVED from
+  the list (stale entries fail too).
+
+**Verified the guard actually bites**, in both directions — because a guard that cannot fail is the
+defect class this program keeps finding. Injecting a fake inventory entry produced *"state declared in
+the inventory but carried by NO snapshot path: ['brand_new_thing']"*, and removing a listed entry
+produced *"these gaps are closed or gone — remove them"*.
+
+**`autonudge.json` is deliberately left uncovered.** §7 item 9 retires it INTO the trigger store after
+LOOPS-EVOLUTION Phase 4, so backing up its current format now would preserve a shape that is about to
+be replaced — the reason is recorded on its entry in the list.
