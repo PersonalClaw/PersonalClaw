@@ -155,6 +155,73 @@ def test_every_judge_is_isolated_and_read_only(name):
         assert cfg.get("isolation") == "fresh", f"{name}:{judge.get('id')}"
 
 
+def test_an_unenforceable_cross_model_isolation_is_flagged():
+    """🔴 `isolation: cross_model` is NOT enforceable today, and the gap was invisible (S146).
+
+    `judge_contract.Isolation` offers two levels and they are not equally real: `fresh` is satisfied
+    by construction (a judge runs through `one_shot_completion`, which builds a temporary instance
+    rather than reusing the worker's session), while `cross_model` has no seam — measured, the
+    gate is never told the worker's model and `one_shot_completion` resolves by use-case, not by
+    model family.
+    `judge_actors.plan_judge_session`/`validate_judge_model` implement the check and have no caller.
+
+    This matters BEFORE it ships: the plan specifies `judge_isolation: cross_model` for the
+    deep-research and code-project templates (both unbuilt), so without this rule the strongest
+    independence claim in the contract would have shipped meaning the weaker thing. A WARNING rather
+    than an error — the declaration is aspirational, not wrong, and the plumbing may yet land.
+    """
+    spec = {
+        "name": "t",
+        "version": "1.0.0",
+        "root": {
+            "kind": "sequence",
+            "id": "r",
+            "children": [
+                {
+                    "kind": "gate",
+                    "id": "accept",
+                    "config": {"kind": "judge", "prompt": "p", "isolation": "cross_model"},
+                }
+            ],
+        },
+    }
+    result = lint_template(spec)
+    codes = [f.code for f in result.findings]
+    assert "WFL_UNENFORCEABLE_ISOLATION" in codes
+    finding = next(f for f in result.findings if f.code == "WFL_UNENFORCEABLE_ISOLATION")
+    assert finding.severity == "warning", "aspirational, so it must not block a template"
+    assert finding.path == "accept", "a finding must name the node it addresses"
+    assert result.ok, "a warning does not fail the lint"
+
+
+@pytest.mark.parametrize("declared", ["fresh", None, ""])
+def test_an_enforceable_isolation_is_NOT_flagged(declared):
+    """`fresh` is real, so saying it must stay silent — a rule that warned on the honest value
+    would train an author to ignore it."""
+    cfg = {"kind": "judge", "prompt": "p"}
+    if declared is not None:
+        cfg["isolation"] = declared
+    spec = {
+        "name": "t",
+        "version": "1.0.0",
+        "root": {
+            "kind": "sequence",
+            "id": "r",
+            "children": [{"kind": "gate", "id": "accept", "config": cfg}],
+        },
+    }
+    codes = [f.code for f in lint_template(spec).findings]
+    assert "WFL_UNENFORCEABLE_ISOLATION" not in codes
+
+
+@pytest.mark.parametrize("name", LOOP_TEMPLATES)
+def test_no_shipped_template_declares_an_unenforceable_isolation(name):
+    """The shipped library must not make a claim the engine cannot keep. Paired with
+    `test_every_judge_is_isolated_and_read_only`, which asserts the positive (`fresh`)."""
+    codes = [f.code for f in lint_template(_spec(name), bundled=True).findings]
+    assert "WFL_UNENFORCEABLE_ISOLATION" not in codes, name
+
+
 @pytest.mark.parametrize("name", LOOP_TEMPLATES)
 def test_no_judge_can_write(name):
     """A judge with write tools can fix what it was meant to report."""

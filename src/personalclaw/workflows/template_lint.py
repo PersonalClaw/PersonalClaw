@@ -358,6 +358,41 @@ def _check_anti_patterns(res: LintResult, spec: dict[str, Any]) -> None:
                 )
             )
 
+    # 🔴 UNENFORCEABLE ISOLATION — a judge declaring an independence the engine cannot deliver
+    # (S146). `judge_contract.Isolation` offers two levels and they are NOT equally real:
+    #
+    # * `fresh` is satisfied BY CONSTRUCTION — the judge runs through `one_shot_completion`, which
+    #   builds a temporary instance rather than reusing the worker's session, so there is no worker
+    #   reasoning trace in its context. Nothing to enforce; nothing to warn about.
+    # * `cross_model` is NOT enforceable today, and that gap is invisible. Measured: the gate has no
+    #   worker model to avoid (`dispatch_gate` receives node + ctx + tiers, never the producing
+    #   stage's model), and `one_shot_completion` accepts a `use_case`, not a model — so there is no
+    #   seam through which a different FAMILY could be demanded. `judge_actors.plan_judge_session`
+    #   and `validate_judge_model` implement the check and have no caller.
+    #
+    # So a template asking for cross-model independence silently gets fresh-session independence.
+    # That is the shape this program keeps finding: a declared control that reads as satisfied. The
+    # lint is the honest fix available WITHOUT the worker-model plumbing — it makes the gap loud at
+    # authoring time instead of letting the strongest independence claim in the contract mean the
+    # weaker thing. A WARNING, not an error: the declaration is aspirational rather than wrong, and
+    # `plan_judge_session` is ready for the day the plumbing lands.
+    for judge in judges:
+        cfg = judge.get("config") or {}
+        if str(cfg.get("isolation", "") or "").strip().lower() == "cross_model":
+            res.findings.append(
+                LintFinding(
+                    "WFL_UNENFORCEABLE_ISOLATION",
+                    f"judge {judge.get('id')!r} declares `isolation: cross_model`, which the "
+                    "engine cannot enforce: the gate is never told the worker's model and a "
+                    "one-shot "
+                    "completion resolves by use-case, not by model family. It runs with "
+                    "fresh-session isolation only — use `isolation: fresh` to say what actually "
+                    "happens, or leave this and track the gap",
+                    path=str(judge.get("id") or ""),
+                    severity=SEVERITY_WARNING,
+                )
+            )
+
     # SELF-JUDGED — a work stage that decides its own completion. A warning rather than an
     # error because a template author may genuinely want it, but it is the platform's
     # oldest rule and an opt-out should be visible.
