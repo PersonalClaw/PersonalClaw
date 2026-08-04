@@ -4339,3 +4339,55 @@ Verified load-bearing: neutralising the window turns 4 of the 45 arm tests red. 
   routing-suppression clocks), so giving it meaning is a gate-semantics decision — per-trigger minimum
   spacing between fires, and how it interacts with `max_runs_per_hour` — rather than a wiring. Recorded
   rather than guessed. `first_idle_secs` stays parked with the `idle` runtime.
+
+### S150 — the five storm-spacing gates were declared, unread, and silent about it (§3.6)
+
+**DONE.** A `GATE_KEYS` sweep (S149's technique, applied to the gate vocabulary instead of the spec
+one) found five declared keys with **no reader on the fire path**: `debounce_secs`, `cooldown_secs`,
+`rate_cap`, `idempotency`, `threshold`.
+
+**The asymmetry is what made it a session.** A user setting `cost_cap` was already told honestly that
+no meter reads it (S133's `unmetered_cap` finding). A user setting `debounce_secs: 300` got
+**silence** — and reasonably believed their automation was spacing its fires. Measured: the five-key
+trigger produced zero findings; a `cost_cap` produced one.
+
+Worse, `firepath`'s own module docstring names the order as *"debounce/quiet/cooldown/condition"*.
+Against the real `GATE_ORDER` — `(incident, screen, quiet, duty, budget, claim, slot, yield,
+capability)` — **three of the four gates it advertises do not exist.** The docstring was describing an
+order the module does not walk.
+
+**🔴 CORRECTION to S149's own execution log.** I recorded there that `cooldown_secs` "is a
+gate-semantics decision rather than a wiring" and needed an owner call. **That was wrong**, and
+re-reading the plan is what corrected it: §7's fire-path order (line 222) lists cooldown among the
+gates, and §1.3's outcome table maps *"quiet-hours / debounce / cooldown / condition-false"* to
+`skipped_gate`. It is declared work with specified semantics.
+
+What it actually needs is a **last-fire timestamp**, and the unified `Trigger` does not have one. It
+carries `last_success_at` and `last_failure_at` — and a **suppressed** fire is neither, so spacing
+fires off either field would count a blocked fire as a fire and let a debounced trigger through. The
+legacy `event_triggers.EventTrigger` *does* carry `last_fired_at`, which is precisely why debounce
+works on the legacy path and not the unified one. Adding that field is a store-shape change with a
+backfill, not something to bolt onto this session.
+
+**So this ships the honest half**, matching what S133 did for the cost caps: all five keys join
+`UNMETERED_CAPS`, and the constant now names the specific missing meter per key — per-run spend
+attribution, a windowed history query, a last-fire timestamp, or unpinned R12 semantics — so the list
+shrinks for a reason rather than by guesswork.
+
+**Plus a completeness test**, which is the durable part: every key in `GATE_KEYS` must be either
+ENFORCED on the fire path or named in `UNMETERED_CAPS`. A key in neither bucket is exactly the defect
+this session found, and the test fails with instructions ("wire them, or add them to
+`UNMETERED_CAPS`"). It also asserts the two sets are disjoint, so a gate cannot be claimed both ways.
+The four genuinely-enforced gates (`max_fires`, `quiet_hours`, `skip_dates`, `condition`) are asserted
+to stay silent — a doctor that flagged a working gate would train the user to ignore it.
+
+Verified load-bearing: removing the five keys turns 2 tests red. Gate: `make lint`
+(black+isort+flake8+mypy, 691 files) green; `pytest -n 4 --dist worksteal` **16137 passed, 29 skipped,
+13 xfailed**. No `web/` change.
+
+- **REMAINING, now precisely scoped** (each blocked on ONE named piece of machinery, not a decision):
+  a `last_fired_at` on the unified `Trigger` unblocks `debounce_secs` + `cooldown_secs`; a `since=`
+  windowed query on `ScheduleRunStore` unblocks `rate_cap` + `max_runs_per_hour` +
+  `max_actions_per_hour` (`missed.within_rate_window` is the decision already waiting); threading a
+  `run_key` through `SpendMeter.charge` unblocks `cost_cap` + `max_cost_usd_per_run`. `idempotency`
+  and `threshold` need R12 to pin their semantics first.

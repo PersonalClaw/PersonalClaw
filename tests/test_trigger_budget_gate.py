@@ -215,6 +215,73 @@ def test_MAX_FIRES_is_not_in_the_unmetered_set():
     assert "max_fires" not in UNMETERED_CAPS
 
 
+def test_the_STORM_SPACING_gates_are_named_too():
+    """🔴 S150. A `GATE_KEYS` sweep found five declared gate keys with no reader on the fire path,
+    and the asymmetry made it worth a session: a user setting `cost_cap` was honestly told it is
+    unmetered, while one setting `debounce_secs: 300` got SILENCE — and believed their automation
+    was spacing its fires.
+
+    `firepath`'s own module docstring names the order as "debounce/quiet/cooldown/condition", so
+    three of the four gates it advertises are absent from `GATE_ORDER`.
+    """
+    from personalclaw.triggers.calendar import diagnose
+
+    rows = [
+        {
+            "id": "schedule:clock:storm",
+            "gates": {
+                "debounce_secs": 300,
+                "cooldown_secs": 600,
+                "rate_cap": 5,
+                "idempotency": True,
+                "threshold": 3,
+            },
+        }
+    ]
+    finding = next(
+        f for f in diagnose(rows, known_workflows=None).findings if f.code == "unmetered_cap"
+    )
+    for key in ("debounce_secs", "cooldown_secs", "rate_cap", "idempotency", "threshold"):
+        assert key in finding.detail, key
+    assert "NOT bounded" in finding.detail
+
+
+def test_every_ENFORCED_gate_stays_silent():
+    """A rule that flagged a working gate would be worse than the gap it closes — it would train the
+    user to ignore the doctor. These four are genuinely enforced on the fire path."""
+    from personalclaw.triggers.calendar import diagnose
+
+    enforced = {
+        "max_fires": 5,
+        "quiet_hours": [{"days": ["sat"], "start": "22:00", "end": "23:00"}],
+        "skip_dates": ["2026-08-05"],
+        "condition": {"checkType": "always"},
+    }
+    for key, value in enforced.items():
+        rows = [{"id": "schedule:clock:ok", "gates": {key: value}}]
+        assert not [
+            f for f in diagnose(rows, known_workflows=None).findings if f.code == "unmetered_cap"
+        ], key
+
+
+def test_the_unmetered_set_and_the_gate_vocabulary_stay_in_step():
+    """The completeness guard, so this list shrinks for a REASON rather than by guesswork.
+
+    Every declared gate key must be either ENFORCED on the fire path or named as unmetered. A key
+    in neither bucket is the defect this session closed: declared, unread, and silent about it.
+    """
+    from personalclaw.triggers.calendar import UNMETERED_CAPS
+    from personalclaw.triggers.models import GATE_KEYS
+
+    enforced = {"max_fires", "quiet_hours", "skip_dates", "duty_gate", "condition"}
+    unclassified = set(GATE_KEYS) - enforced - set(UNMETERED_CAPS)
+    assert not unclassified, (
+        f"gate key(s) {sorted(unclassified)} are neither enforced nor named unmetered — wire "
+        "them, or add them to UNMETERED_CAPS so a user is not told a cap works when it does not"
+    )
+    assert not (enforced & set(UNMETERED_CAPS)), "a gate cannot be both enforced and unmetered"
+
+
 # ── the 24h storm (criterion 8) ──
 
 
