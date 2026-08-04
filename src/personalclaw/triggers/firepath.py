@@ -62,6 +62,7 @@ logger = logging.getLogger(__name__)
 GATE_ORDER: tuple[str, ...] = (
     "incident",
     "screen",
+    "spacing",
     "quiet",
     "duty",
     "budget",
@@ -79,6 +80,9 @@ GATE_ORDER: tuple[str, ...] = (
 GATE_OUTCOMES: dict[str, str] = {
     "incident": Outcome.REFUSED.value,
     "screen": Outcome.BLOCKED_INJECTION.value,
+    # §1.3 maps "quiet-hours / debounce / cooldown / condition-false" to ONE outcome, so a
+    # debounced fire is filterable beside a quiet-hours one rather than needing its own chip.
+    "spacing": Outcome.SKIPPED_GATE.value,
     "quiet": Outcome.SKIPPED_GATE.value,
     "duty": Outcome.SKIPPED_GATE.value,
     "budget": Outcome.SKIPPED_BUDGET.value,
@@ -128,6 +132,11 @@ class FireContext:
     #: module only honours it.
     user_active: bool = False
     yield_to_user: bool = False
+    #: Seconds since this trigger last FIRED, or None when it has never fired (S151). Supplied by
+    #: `service.tick` from `Trigger.last_fired_at` — a THIRD timestamp, because `last_success_at`
+    #: and `last_failure_at` describe an OUTCOME and a SUPPRESSED fire is neither, so spacing off
+    #: either would count a blocked fire as a fire.
+    since_last_fire: float | None = None
     #: `(slot, holder_trigger_id)` when a named resource slot this fire needs is held by
     #: ANOTHER running trigger (§3.5). Supplied by `service.tick` from the claim store.
     busy_slot: tuple[str, str] = ("", "")
@@ -171,6 +180,43 @@ def _refuse(gate: str, reason: str, passed: list[str], **extra: Any) -> FireDeci
         passed=list(passed),
         **extra,
     )
+
+
+def _spacing_refusal(ctx: FireContext) -> str:
+    """The debounce/cooldown refusal reason, or "" to allow. Never raises (S151).
+
+    Both keys mean "do not fire again too soon", and they are DELIBERATELY kept as two rather than
+    collapsed into one, because they answer different questions and a user sets them for different
+    reasons:
+
+    * `debounce_secs` — burst suppression. An event source that fires five times for one logical
+      change (an editor saving twice, a webhook sender retrying) should produce one run.
+    * `cooldown_secs` — a floor on cadence regardless of cause. "Never more than once an hour, even
+      if something legitimately happens twice."
+
+    Collapsing them to `max(a, b)` would compute the same number today and lose the author's intent
+    the moment either grows its own semantics (a debounce that coalesces rather than drops). The
+    reason names WHICH one refused, so the ledger row explains itself.
+
+    **FAIL-OPEN on anything unreadable**, matching §1.4's storm-guard classification: an unparseable
+    `debounce_secs` must not silence an automation. A trigger that has never fired
+    (`since_last_fire is None`) is always allowed — it has nothing to space against, and treating an
+    absent timestamp as "0 seconds ago" would block every trigger's first fire forever, which is the
+    failure an S147-style default would have produced.
+    """
+    since = ctx.since_last_fire
+    if since is None:
+        return ""
+    gates = ctx.gates if isinstance(ctx.gates, dict) else {}
+    for key, label in (("debounce_secs", "debounce"), ("cooldown_secs", "cooldown")):
+        try:
+            window = float(gates.get(key) or 0)
+        except (TypeError, ValueError):
+            continue  # fail-open: a malformed guard is not a reason to suppress
+        if window > 0 and since < window:
+            left = int(window - since)
+            return f"{label} of {int(window)}s has {left}s left " f"(last fired {int(since)}s ago)"
+    return ""
 
 
 async def evaluate(ctx: FireContext) -> FireDecision:
@@ -231,7 +277,26 @@ async def evaluate(ctx: FireContext) -> FireDecision:
 
     moment = ctx.moment or datetime.now()
 
-    # ── 2. quiet windows ──
+    # ── 2. spacing: debounce + cooldown (§7's order is "debounce/quiet/cooldown/condition") ──
+    #
+    # 🔴 Both keys were declared in `GATE_KEYS` and read by NOTHING until S151 — S150 measured that
+    # and put them in `UNMETERED_CAPS` because the meter they needed did not exist. It does now:
+    # `Trigger.last_fired_at`, written beside `run_count` at the single fire-grant point.
+    #
+    # BEFORE the quiet/duty/budget gates, deliberately: spacing is the cheapest check on the path (a
+    # float compare, no store read, no provider call), and §7 lists debounce first for that reason.
+    # Paying for a duty-gate provider round-trip on a fire a debounce was going to drop anyway is
+    # backwards.
+    #
+    # FAIL-OPEN on a malformed value, matching the storm-guard classification in §1.4: an
+    # unparseable `debounce_secs` must not silence an automation. `_spacing_refusal` returns the
+    # refusal reason, or "" to allow.
+    spacing = _spacing_refusal(ctx)
+    if spacing:
+        return _refuse("spacing", spacing, passed)
+    passed.append("spacing")
+
+    # ── 3. quiet windows ──
     from personalclaw.triggers.calendar import evaluate_quiet
 
     quiet, _issues = evaluate_quiet(ctx.gates, moment)
@@ -239,7 +304,7 @@ async def evaluate(ctx: FireContext) -> FireDecision:
         return _refuse("quiet", quiet.reason or "inside a quiet window", passed)
     passed.append("quiet")
 
-    # ── 3. the duty gate ──
+    # ── 4. the duty gate ──
     from personalclaw.triggers.calendar import evaluate_duty
 
     duty = await evaluate_duty(ctx.gates, moment)
@@ -247,7 +312,7 @@ async def evaluate(ctx: FireContext) -> FireDecision:
         return _refuse("duty", duty.reason or "the duty gate refused", passed)
     passed.append("duty")
 
-    # ── 4. budget, BEFORE the claim, FAIL-CLOSED (§3.6) ──
+    # ── 5. budget, BEFORE the claim, FAIL-CLOSED (§3.6) ──
     if not ctx.budget_readable:
         # §3.6 is explicit that the budget check is fail-closed. An unreadable budget is not an
         # unlimited one: treating an error as "allowed" is how a runaway trigger gets its allowance
@@ -257,7 +322,7 @@ async def evaluate(ctx: FireContext) -> FireDecision:
         return _refuse("budget", "budget exhausted for this window", passed)
     passed.append("budget")
 
-    # ── 5. the overlap claim lock (single-flight) ──
+    # ── 6. the overlap claim lock (single-flight) ──
     from personalclaw.triggers.scheduling import claim_fire
 
     claim, claim_reason = claim_fire(

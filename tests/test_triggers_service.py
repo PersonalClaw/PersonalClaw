@@ -32,6 +32,8 @@ from personalclaw.triggers import service as SVC
 from personalclaw.triggers.models import Outcome, Trigger
 from personalclaw.triggers.store import TriggerStore
 
+_ALL_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
 NOW = 1_800_000_000.0
 
 
@@ -521,3 +523,77 @@ def test_drain_spooled_fires_returns_what_the_spool_holds(tmp_path, monkeypatch)
     envelopes, bad = SVC.drain_spooled_fires()
     assert [e.source for e in envelopes] == ["event:e"]
     assert bad == 0
+
+
+# ── the spacing meter: last_fired_at (S151) ──
+
+
+def test_a_granted_fire_writes_last_fired_at(store):
+    """The meter the spacing gate reads. Written beside `run_count` at the single fire-grant point,
+    for the same reason: this is the one place a fire is AUTHORISED."""
+    store.save_all([_trigger("t1", next_at=NOW - 1, interval=60)])
+    assert store.get("t1").trigger.last_fired_at == "", "nothing fired yet"
+    result = _tick(store, now=NOW)
+    assert [f.trigger.id for f in result.fires] == ["t1"]
+    assert SVC.to_epoch(store.get("t1").trigger.last_fired_at) == pytest.approx(NOW)
+
+
+def test_a_SUPPRESSED_fire_does_NOT_write_it(store):
+    """🔴 The reason this is a third timestamp rather than reusing `last_success_at`. A fire blocked
+    by quiet hours is neither a success nor a failure — and if a suppressed fire stamped the meter,
+    a debounce would space the next REAL fire against a fire that never happened."""
+    trigger = _trigger("t1", next_at=NOW - 1, interval=60)
+    trigger.gates = {
+        "quiet_hours": [{"days": list(_ALL_DAYS), "start": "00:00", "end": "23:59"}],
+    }
+    store.save_all([trigger])
+    result = _tick(store, now=NOW)
+    assert not result.fires, "quiet hours must suppress it"
+    assert store.get("t1").trigger.last_fired_at == "", "a suppressed fire is not a fire"
+
+
+def test_debounce_suppresses_the_next_tick_end_to_end(store):
+    """The whole chain on a real store: fire → stamp → suppress → allow again past the window."""
+    from personalclaw.triggers import claims as C
+
+    trigger = _trigger("deb", next_at=NOW - 1, interval=60)
+    trigger.gates = {"debounce_secs": 300}
+    store.save_all([trigger])
+
+    first = _tick(store, now=NOW)
+    assert [f.trigger.id for f in first.fires] == ["deb"]
+
+    # Release the claim so the OVERLAP gate cannot mask the spacing gate — the S133 lesson: a second
+    # gate refusing first makes the gate under test look like it works.
+    C.release_claim("deb", base_dir=store.base_dir)
+    live = store.get("deb").trigger
+    live.next_fire_at = SVC.to_iso(NOW + 30)
+    store.upsert(live)
+
+    second = _tick(store, now=NOW + 60)
+    assert not second.fires
+    row = next(r for r in second.ledger_rows if r.get("trigger_id") == "deb")
+    assert row["outcome"] == "skipped_gate"
+    assert row["gate"] == "spacing"
+    assert "debounce" in row["reason"]
+
+    C.release_claim("deb", base_dir=store.base_dir)
+    live = store.get("deb").trigger
+    live.next_fire_at = SVC.to_iso(NOW + 350)
+    store.upsert(live)
+    third = _tick(store, now=NOW + 400)
+    assert [f.trigger.id for f in third.fires] == ["deb"], "past the window it fires again"
+
+
+def test_a_future_last_fired_at_clamps_rather_than_going_negative(store):
+    """A clock that moved backwards, or a hand-edited row. Negative "seconds since" would compare as
+    less than every window and suppress FOREVER — one skipped fire is recoverable, a permanently
+    dead trigger is not."""
+    trigger = _trigger("t1", next_at=NOW - 1, interval=60)
+    trigger.gates = {"debounce_secs": 300}
+    trigger.last_fired_at = SVC.to_iso(NOW + 10_000)
+    store.save_all([trigger])
+    result = _tick(store, now=NOW)
+    assert not result.fires, "clamped to 0s ago, so the debounce still applies"
+    row = next(r for r in result.ledger_rows if r.get("trigger_id") == "t1")
+    assert row["gate"] == "spacing"

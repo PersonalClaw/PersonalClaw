@@ -241,8 +241,13 @@ def test_the_STORM_SPACING_gates_are_named_too():
     finding = next(
         f for f in diagnose(rows, known_workflows=None).findings if f.code == "unmetered_cap"
     )
-    for key in ("debounce_secs", "cooldown_secs", "rate_cap", "idempotency", "threshold"):
+    # `debounce_secs`/`cooldown_secs` were in this list at S150 and were WIRED at S151, so they must
+    # no longer be reported as unmetered — reporting a working gate as broken is the same class of
+    # lie as the silence S150 fixed, pointing the other way.
+    for key in ("rate_cap", "idempotency", "threshold"):
         assert key in finding.detail, key
+    for wired in ("debounce_secs", "cooldown_secs"):
+        assert wired not in finding.detail, f"{wired} is enforced as of S151"
     assert "NOT bounded" in finding.detail
 
 
@@ -273,7 +278,17 @@ def test_the_unmetered_set_and_the_gate_vocabulary_stay_in_step():
     from personalclaw.triggers.calendar import UNMETERED_CAPS
     from personalclaw.triggers.models import GATE_KEYS
 
-    enforced = {"max_fires", "quiet_hours", "skip_dates", "duty_gate", "condition"}
+    # `debounce_secs`/`cooldown_secs` joined the enforced set at S151 (the `spacing` gate), which is
+    # why they are no longer in UNMETERED_CAPS — a key must move buckets, never sit in both.
+    enforced = {
+        "max_fires",
+        "quiet_hours",
+        "skip_dates",
+        "duty_gate",
+        "condition",
+        "debounce_secs",
+        "cooldown_secs",
+    }
     unclassified = set(GATE_KEYS) - enforced - set(UNMETERED_CAPS)
     assert not unclassified, (
         f"gate key(s) {sorted(unclassified)} are neither enforced nor named unmetered — wire "

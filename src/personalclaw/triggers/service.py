@@ -493,6 +493,12 @@ async def tick(
             # round-tripped, and read by NOTHING — the only field in 41 trigger dataclasses with
             # zero non-declaration readers. Supplied here from the claim store, so a fire that
             # needs `local-llm` while another trigger holds it defers instead of contending.
+            # 🔴 The SPACING meter (S151). `debounce_secs`/`cooldown_secs` were declared in
+            # `GATE_KEYS` and read by nothing because no last-FIRE timestamp existed —
+            # `last_success_at`/`last_failure_at` describe an outcome, and a suppressed fire is
+            # neither. `_since_last_fire` returns None for a trigger that has never fired, which
+            # the gate reads as "nothing to space against" rather than "0 seconds ago".
+            since_last_fire=_since_last_fire(trigger, now=now),
             busy_slot=claims.busy_slot(trigger, holders=slot_map),
             # 🔴 The EXISTING claim, read from the shared claim store. Measured: this was never
             # supplied, so `claim_fire` always saw `existing=None` and always granted — a trigger
@@ -534,6 +540,12 @@ async def tick(
             # one-shot back into a live trigger holding an elapsed slot, which is the storm S112's
             # retirement exists to prevent. The in-memory count still rides along on the DueFire.
             trigger.run_count = int(getattr(trigger, "run_count", 0) or 0) + 1
+            # The meter the SPACING gate reads (S151). Written here and nowhere else, for the
+            # same reason `run_count` is: this is the one point a fire is GRANTED. Writing it
+            # at completion would let a burst of in-flight fires all see the same stale
+            # timestamp and every one pass a debounce; writing it on a SUPPRESSED fire would
+            # make a blocked fire space out the next real one.
+            trigger.last_fired_at = to_iso(now)
             if persist and trigger.id not in result.retired:
                 store.upsert(trigger)
             result.fires.append(
@@ -547,6 +559,25 @@ async def tick(
 
     result.next_sleep = sleep_for(list(by_id.values()), now=now)
     return result
+
+
+def _since_last_fire(trigger: Any, *, now: float) -> float | None:
+    """Seconds since this trigger last fired, or None when it never has (S151).
+
+    None rather than 0.0, and rather than a large number: "never fired" is a different
+    fact from "fired long ago", and only None lets the spacing gate tell "nothing to
+    space against" from a real interval. Reading an absent timestamp as 0.0 would block
+    every trigger's FIRST fire behind its own debounce — a first-run deadlock.
+
+    A timestamp in the FUTURE (a clock that moved backwards, a hand-edited row) clamps to
+    0.0 rather than going negative. A negative "seconds since" compares as less than
+    every window and would suppress forever, so the safe reading is "it just fired":
+    one skipped fire, not a permanently dead trigger.
+    """
+    stamp = to_epoch(str(getattr(trigger, "last_fired_at", "") or ""))
+    if stamp <= 0:
+        return None
+    return max(0.0, now - stamp)
 
 
 def _budget_remaining(trigger: Any) -> float | None:
