@@ -3894,3 +3894,55 @@ unable to tell a real injection from a false positive.
   the FE affordance for S132's archive split, and meters for S133's four unmetered caps. A
   `blocked_injection` LEDGER ROW for a screened payload is also still owed — the dispatch seam logs and
   refuses, but writes no typed row, because that path has no ledger writer (it is not a `tick` fire).
+
+### S135 — named resource slots: the last declared-but-unread field (§3.5 / AUTO-R9) — DONE
+
+**DISCOVERY, found by generalising the previous session's technique.** S134 audited one dataclass;
+this session ran the same diff across **all 41 dataclasses in `triggers/`** — every field with a
+default, against every production constructor's kwargs. Of all of them, `Trigger.resource_slots` was
+the only one with **zero non-declaration readers**: declared in the entity, persisted, round-tripped by
+`to_dict`/`from_dict`, and read by nothing.
+
+§3.5 is explicit: *"Named resource slots — triggers/runs declare needs (`gpu`, `local-llm`); the
+substrate **serializes conflicting runs per slot** and refuses over-capacity starts with a typed
+`RESOURCE_BUSY` + holder identity (a `deferred` ledger row)."* So a user could declare
+`resource_slots: ["local-llm"]` on three triggers and have all three run a local model simultaneously —
+precisely the contention this exists to prevent on a machine PClaw shares with the interactive user.
+
+**Derived from the CLAIM STORE, not a second sidecar.** A slot is held exactly as long as its trigger's
+run is, so claims already answer the question — and riding on them inherits **read-time expiry** (a
+crashed run does not hold `gpu` hostage until a janitor notices) plus cross-process visibility for free.
+A separate slot file would need its own reaper and could disagree with the claims about who is running.
+
+**Gated AFTER `claim`, deliberately.** A slot is only contended by a fire that would otherwise proceed;
+checking earlier would refuse a fire the overlap gate was about to skip anyway — two reasons for one
+suppression, with the less useful one reported.
+
+**`deferred`, not a skip** — §3.5's own choice, and the right one: the slot frees on its own, so the
+fire is postponed by contention rather than dropped by policy. The reason **names the holder**, because
+§3.5 asks for "holder identity": *"the gpu is busy"* sends a user through every automation they own,
+while *"held by clock:nightly-index"* is actionable. Read once per tick, so two triggers wanting
+`local-llm` in the same wake cannot both be told it is free.
+
+**TWO BUGS FOUND BY MY OWN TESTS, both worth recording:**
+
+1. **A broken row contributed a phantom holder.** `slot_holders` filtered on `resource_slots` and on a
+   live claim but not on `row.ok` — so an unparseable trigger declaring `gpu` would block every real
+   `gpu` fire *forever*, because it can never run and therefore never releases. A phantom holder is
+   strictly worse than an unserialized slot.
+2. **S130's completeness test caught the new gate as unclassified**, on its first encounter with a gate
+   added after it was written — exactly what that test exists for. `slot` is classified fail-OPEN, with
+   the storm guards rather than the fences: an unreadable claim store means "I cannot tell who holds the
+   gpu", and refusing every slotted trigger over a filesystem hiccup would silence real automations.
+   Contention costs a slow run; a stuck-closed slot gate costs the automation.
+
+**The audit's other hits were checked and are correct**, not padded into work: `expires_at` and
+`catch_up` are enforced (driven — an automation expired in 2020 does not fire), `yield_to_user` is wired
+through `firepath`, and the result accumulators (`TickResult.fires`, `DoctorReport.findings`, …) are
+appended to rather than constructed.
+
+- **REMAINING in AUTOMATION-SUBSTRATE:** the E4-blocked webhook fire endpoint (queue S123), `idle`
+  (Loops Phase 4), `web_watch`'s headless tier, a chat-turn event source reading `agent_scope` (S131),
+  the FE affordance for S132's archive split, meters for S133's four unmetered caps, and a
+  `blocked_injection` ledger row for S134's dispatch-seam refusals. §3.5's `skip_if_active` /
+  `acting_on` guards are also still unbuilt.

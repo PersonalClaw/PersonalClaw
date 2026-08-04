@@ -474,6 +474,12 @@ FAIL_OPEN_GATES: frozenset[str] = frozenset(
         # ── fire-path gate names (`firepath.GATE_ORDER` vocabulary — what the engine walks) ──
         # `duty` is the same control as `duty_gate` above, under the name the walk uses.
         "duty",
+        # `slot` (§3.5 — S135) belongs with the storm guards, not the fences: an unreadable
+        # claim store means "I cannot tell who holds the gpu", and refusing every slotted
+        # trigger over a filesystem hiccup would silence real automations. Contention costs
+        # a slow run; a stuck-closed slot gate costs the automation. It inherits
+        # `read_claim`'s own unreadable-reads-as-idle contract.
+        "slot",
         # `incident` is the kill switch (S117). It inherits `incident_active()`'s own deliberate
         # fail-open contract: an unreadable flag file must not halt every automation on a filesystem
         # hiccup. The asymmetry against the fences below is the point — a stuck-closed kill switch
