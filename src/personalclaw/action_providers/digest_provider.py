@@ -78,6 +78,7 @@ def reconcile_digest_cron(store: Any) -> None:
     every restart would add another digest instead of recognizing its own.
     """
     from personalclaw import notification_rules
+    from personalclaw.triggers import screen as _screen
     from personalclaw.triggers.arm import arm as _arm
     from personalclaw.triggers.models import Trigger
 
@@ -108,6 +109,10 @@ def reconcile_digest_cron(store: Any) -> None:
                 # notification about your notifications.
                 delivery="none",
             )
+            # The digest writes an inbox item, so `notification-digest` is write-capable and the
+            # fence needs the frozen grant (decision 7 — S116). A system-created trigger's opt-in is
+            # the code path that created it.
+            trigger.capabilities = _screen.capabilities_for_action(trigger)
             armed = _arm(trigger)
             if armed:
                 trigger.next_fire_at = armed

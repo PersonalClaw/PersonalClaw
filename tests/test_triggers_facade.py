@@ -562,9 +562,15 @@ def _seed_interval(
     fallback S110 retired. The grid anchor comes from `next_fire_at`: the legacy shape carried it as
     `created_ts`/`last_run_ts`, and the store carries an armed ISO fire, so the helper arms the row
     the way every real write path does.
+
+    It also FREEZES the capability block, for the same reason (S116): every real write path derives
+    one from the action at save time, so a fixture that skipped it would be building a row no writer
+    produces — and would then fail the doctor's `unfenced_write_action` check on a store the test
+    calls healthy.
     """
     from datetime import datetime, timezone
 
+    from personalclaw.triggers import screen
     from personalclaw.triggers.models import Trigger
     from personalclaw.triggers.store import TriggerStore
 
@@ -583,6 +589,7 @@ def _seed_interval(
     )
     if glob:
         trigger.spec = {**trigger.spec, "paths": [glob]}
+    trigger.capabilities = screen.capabilities_for_action(trigger)
     TriggerStore(base_dir=state._store.base_dir).upsert(trigger)
     return trigger
 

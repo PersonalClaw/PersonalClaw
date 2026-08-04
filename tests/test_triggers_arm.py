@@ -45,6 +45,7 @@ def _clock(spec, *, enabled=True, tid="t"):
         enabled=enabled,
         spec=spec,
         workflow={"provider": "run-prompt", "config": {}},
+        capabilities={"providers": ["run-prompt"]},
     )
 
 

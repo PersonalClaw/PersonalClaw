@@ -60,6 +60,7 @@ logger = logging.getLogger(__name__)
 #: fails a test
 #: instead of silently moving the budget check to the wrong side of the claim lock.
 GATE_ORDER: tuple[str, ...] = (
+    "incident",
     "screen",
     "quiet",
     "duty",
@@ -75,6 +76,7 @@ GATE_ORDER: tuple[str, ...] = (
 #: §1.3's typed
 #: outcomes exist to prevent.
 GATE_OUTCOMES: dict[str, str] = {
+    "incident": Outcome.REFUSED.value,
     "screen": Outcome.BLOCKED_INJECTION.value,
     "quiet": Outcome.SKIPPED_GATE.value,
     "duty": Outcome.SKIPPED_GATE.value,
@@ -179,6 +181,36 @@ async def evaluate(ctx: FireContext) -> FireDecision:
     """
     passed: list[str] = []
 
+    # ── 0. THE KILL SWITCH (decision 7's "global manual kill switch") ──
+    #
+    # 🔴 MEASURED: `personalclaw incident on` did NOT stop a clock trigger. The CLI calls it
+    # "Suspend/resume all unattended work" and the legacy `event_triggers` path refuses on it, but
+    # the unified engine — the sole path that fires clock triggers since S100 — never read the flag.
+    # Driven before writing this: switch thrown, `tick()` still returned `fires: ['clock:nightly']`
+    # with `outcome=ran`. So the one control an operator reaches for DURING an incident was the one
+    # that kept running unattended work, while reporting itself active.
+    #
+    # FIRST, ahead of the injection screen, because an incident halts everything unconditionally:
+    # a gate ordered after `screen` would make "is the payload clean" a precondition for honouring
+    # a kill switch. And here rather than in each loop, because there are three unattended entry
+    # points (the clock loop, the file-watch poll, the reaper's re-dispatch) and only the file-watch
+    # one checked — a per-loop check is a control that must be re-added correctly at every future
+    # call site, which is precisely how this gap opened.
+    #
+    # `incident_active()` is itself fail-OPEN by deliberate design (see `guardrails/incident.py`:
+    # an unreadable flag file must not halt all automation on a filesystem hiccup), so this gate
+    # inherits that and does not second-guess it.
+    from personalclaw.guardrails.incident import incident_active
+
+    if incident_active():
+        return _refuse(
+            "incident",
+            "incident mode is active: unattended fires are suspended "
+            "(resume with `personalclaw incident off`)",
+            passed,
+        )
+    passed.append("incident")
+
     # ── 1. injection screen, on CONTENT, before anything about timing ──
     if ctx.payload_text:
         from personalclaw.triggers.screen import screen
@@ -245,10 +277,32 @@ async def evaluate(ctx: FireContext) -> FireDecision:
     passed.append("yield")
 
     # ── 7. capability filter, against the FROZEN set, before any def resolves ──
+    #
+    # 🔴 `ctx.requested` was NEVER POPULATED in production (S116). The only real construction
+    # (`service.tick`) omitted it, so this branch was always false and the frozen-capability fence
+    # had never run on a real fire — it passed its own unit tests, which supply `requested` by hand.
+    # Same shape as S97's `existing_claim`: a gate whose input nobody supplied.
     if ctx.requested:
-        from personalclaw.triggers.screen import unfenced_actions
+        from personalclaw.triggers.screen import provider_is_read_only, unfenced_actions
 
-        violations = unfenced_actions(ctx.capabilities, requested=ctx.requested)
+        # DECISION 7's READ-ONLY DEFAULT. "Auto-fired triggers default to read-only action
+        # providers; write-capable actions require explicit opt-in." So a request for a read-only
+        # provider is permitted with no `capabilities` block at all, and only write-capable actions
+        # are held to the frozen set.
+        #
+        # This is what makes the fence landable: NO writer sets `capabilities` (measured across
+        # `tools.py`, `app_crons`, the digest reconciler, the CLI and the API), and the fence denies
+        # on an empty set — so enforcing it without the default would refuse every automation in
+        # existence. Deny-by-default stays where it matters: an unclassified provider reads as
+        # write-capable, so a new action still needs the opt-in.
+        needs_fence = {
+            key: [v for v in values if not (key == "providers" and provider_is_read_only(v))]
+            for key, values in ctx.requested.items()
+        }
+        needs_fence = {k: v for k, v in needs_fence.items() if v}
+        violations = (
+            unfenced_actions(ctx.capabilities, requested=needs_fence) if needs_fence else []
+        )
         if violations:
             named = ", ".join(f"{k}={v}" for k, v, _ in violations[:3])
             return _refuse(
