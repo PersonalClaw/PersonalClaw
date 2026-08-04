@@ -27,6 +27,7 @@ from personalclaw.dashboard.handlers import triggers as T
 from personalclaw.event_triggers import EventTrigger, EventTriggerStore
 from personalclaw.hooks import ScriptHook, ScriptHookStore
 from personalclaw.schedule import ScheduleDefinition, ScheduleJob, make_agent_action
+from personalclaw.schedule_history import ScheduleRun, ScheduleRunStore
 from personalclaw.triggers.history import (
     HOOK_STATUS_TO_OUTCOME,
     SCHEDULE_STATUS_TO_OUTCOME,
@@ -303,19 +304,21 @@ def test_outcome_counts_omits_zero_rows():
 
 @pytest.fixture
 def app_with_all_kinds(tmp_path, monkeypatch):
-    """A real app with a real hook store, a real event store, and a fake cron service.
+    """A real app with a real hook store, a real event store, and REAL run records.
 
-    The cron service is faked because `ScheduleService.list_all_runs` reads a run store this test
-    does not need to populate; the OTHER two are real, because their projections read fields whose
-    names
-    this session got wrong once already (`list_hooks` vs `list_all`).
+    All three projections read real state. The schedule half used to fake
+    `ScheduleService.list_all_runs`, but S105 re-pointed the history endpoint at `ScheduleRunStore`
+    directly — so that fake became unreachable and every schedule assertion silently saw zero rows.
+    Writing the rows the store's own `append()` writes is strictly stronger: it also pins the
+    on-disk shape, which a hand-built dict does not.
 
-    `PERSONALCLAW_HOME` is redirected because the handler's `_event_store()` resolves through
-    `config_dir()`, NOT anything the fixture passes in — measured: without this the event rows
-    silently vanished while every other assertion passed, because the fixture wrote to `tmp_path`
-    and the handler read the real home.
+    Both home seams are redirected. `PERSONALCLAW_HOME` covers `_event_store()`; the explicit
+    `T.config_dir` patch covers the run store, because conftest's autouse `_isolate_trigger_store`
+    has already pointed that at a DIFFERENT tmp dir (last-wins is the documented way to override
+    it). Measured: with only the env var, `schedule_total` was 0 while every other assertion passed.
     """
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    monkeypatch.setattr(T, "config_dir", lambda: pathlib.Path(tmp_path))
     cfg = pathlib.Path(tmp_path)
     hooks = ScriptHookStore(config_dir=cfg)
     ran = hooks.create({"name": "fmt", "event": "PostToolUse", "provider": "run-prompt"})
@@ -351,10 +354,11 @@ def app_with_all_kinds(tmp_path, monkeypatch):
                 )
             ]
 
-        async def list_all_runs(self, offset=0, limit=20, job_id=None):
-            rows = [_run(run_id="r2", started_at=NOW - 30, status="failure", error="boom"), _run()]
-            rows = [r for r in rows if not job_id or r["job_id"] == job_id]
-            return rows[offset : offset + limit], len(rows)
+    # Real run records, written the way the runtime writes them (oldest first — the store returns
+    # newest-first, so this yields the r2-then-r1 order the assertions below expect).
+    runs = ScheduleRunStore(cfg)
+    for row in (_run(), _run(run_id="r2", started_at=NOW - 30, status="failure", error="boom")):
+        asyncio.run(runs.append(ScheduleRun.from_dict(row)))
 
     app = web.Application()
 
@@ -405,11 +409,27 @@ def test_the_endpoint_reports_the_schedule_total_separately(app_with_all_kinds):
 
 
 def test_the_legacy_shape_is_still_available(app_with_all_kinds):
-    """The cron-history UI renders `trace`/`summary`, which the typed row does not carry."""
+    """The cron-history UI renders the raw `ScheduleRun` fields the typed row does not carry.
+
+    Asserts `summary`, NOT `trace`: the store's cross-job INDEX is written without a trace on
+    purpose (`_append_sync` writes `include_trace=False` there), and the FE lazy-loads the full
+    record from `/api/triggers/{id}/history/{run_id}` on expand — `api.ts` says so in as many words
+    ("no trace" from /history). Before S105 this asserted `trace`, and it passed only because the
+    fixture's fake service returned a hand-built dict that the real store never writes. Pinning a
+    fake's shape is exactly the defect this program keeps finding.
+    """
     app, _hook_id = app_with_all_kinds
     _status, body = _get(app, "/api/triggers/history?shape=legacy")
-    assert "trace" in body["runs"][0]
+    assert "summary" in body["runs"][0]
     assert "kinds" not in body
+
+
+def test_the_full_trace_is_available_from_the_detail_route(app_with_all_kinds):
+    """The other half of the contract above: the trace the list omits IS reachable per-run, so the
+    expand-a-run UI has something to render."""
+    app, _hook_id = app_with_all_kinds
+    _status, body = _get(app, "/api/triggers/schedule:j1/history/r1")
+    assert body["run"]["trace"] == "t"
 
 
 def test_filtering_to_one_hook_does_not_pull_in_other_kinds(app_with_all_kinds):

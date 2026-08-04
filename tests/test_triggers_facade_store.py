@@ -25,10 +25,17 @@ from personalclaw.triggers.store import TriggerStore
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
-    """A tmp home whose store the handler reads — patch both the loader and the handler helper."""
+    """A tmp home the handler reads for BOTH stores.
+
+    The handler resolves its trigger store AND (since S105) its run store through its own
+    module-level `config_dir`, which is the single redirect point `conftest._isolate_trigger_store`
+    also patches. Patching only the loader left `_runs_store()` pointing at the fixture's own tmp
+    home — measured: every run-record read returned 0 rows.
+    """
     import personalclaw.config.loader as loader
 
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(T, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(T, "_trigger_store", lambda: TriggerStore(base_dir=tmp_path))
     return tmp_path
 
@@ -684,16 +691,16 @@ def test_delete_removes_the_store_row(home, state):
 def test_delete_still_drops_the_run_history(home, state):
     """Run history lives in `ScheduleRunStore` (keyed by a plain id, so it survives the cutover), so
     a delete has two halves: drop the trigger AND drop its runs."""
-    from unittest.mock import AsyncMock
-
-    state.crons.delete_runs = AsyncMock()
+    _append_run(home)
     _create_schedule(state)
     _run(
         T.api_trigger_detail(
             _req("DELETE", "/x", state, match_info={"id": "schedule:clock:nightly"})
         )
     )
-    state.crons.delete_runs.assert_awaited_once()
+    # S105: the run half goes through the STORE now, so assert the rows are actually gone rather
+    # than that a service mock was awaited — a mock assertion would pass without the delete.
+    assert _run(T._runs_store().list_for_job("clock:nightly", 0, 10)) == ([], 0)
 
 
 # ── 🔴 §6's manual-run re-point (S102) ──
@@ -950,38 +957,48 @@ def test_the_shim_is_None_for_an_unknown_id(home, state):
 def test_the_last_result_comes_from_the_RUN_STORE(home, state):
     """🔴 `LEGACY_FIELD_MAP` maps `last_result` to None deliberately — the RUN RECORD owns a run's
     output, and a copy on the trigger was a second truth that could disagree with it. The run store
-    is keyed by a plain id, so it serves a store-backed trigger and a legacy job identically."""
-    from unittest.mock import AsyncMock
+    is keyed by a plain id, so it serves a store-backed trigger and a legacy job identically.
 
-    state.crons.list_runs = AsyncMock(
-        return_value=([{"job_id": "clock:nightly", "summary": "backup done"}], 1)
-    )
+    S105 note: this reads the REAL store rather than a mocked service method — the mock would have
+    kept passing after the re-point without the read happening at all."""
+    _append_run(home, summary="backup done")
     assert _run(T._last_result_for(state, "clock:nightly")) == "backup done"
 
 
 def test_the_last_result_prefers_an_error_when_there_is_no_summary(home, state):
     """A failed run's output IS its error; returning "" would make a failure look like a silent
     run."""
-    from unittest.mock import AsyncMock
+    from personalclaw.schedule_history import ScheduleRun, ScheduleRunStore
 
-    state.crons.list_runs = AsyncMock(
-        return_value=([{"job_id": "x", "summary": "", "error": "boom"}], 1)
+    _run(
+        ScheduleRunStore(home).append(
+            ScheduleRun(
+                run_id="r1",
+                job_id="x",
+                trigger="schedule",
+                started_at=1.0,
+                finished_at=2.0,
+                duration_ms=1,
+                status="failure",
+                summary="",
+                error="boom",
+            )
+        )
     )
     assert _run(T._last_result_for(state, "x")) == "boom"
 
 
 def test_no_runs_yields_an_empty_result_not_an_error(home, state):
-    from unittest.mock import AsyncMock
-
-    state.crons.list_runs = AsyncMock(return_value=([], 0))
-    assert _run(T._last_result_for(state, "x")) == ""
+    assert _run(T._last_result_for(state, "never-ran")) == ""
 
 
-def test_an_unreadable_run_store_does_not_break_the_injection(home, state):
+def test_an_unreadable_run_store_does_not_break_the_injection(home, state, monkeypatch):
     """A history problem is not a reason to refuse opening the chat."""
-    from unittest.mock import AsyncMock
 
-    state.crons.list_runs = AsyncMock(side_effect=OSError("disk gone"))
+    def boom():
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(T, "_runs_store", boom)
     assert _run(T._last_result_for(state, "x")) == ""
 
 
@@ -1029,3 +1046,141 @@ def test_the_name_map_survives_an_unreadable_legacy_service(home, state):
     state.crons.list_jobs.side_effect = RuntimeError("no service")
     _create_schedule(state, name="Nightly")
     assert T._trigger_names(state)["clock:nightly"] == "Nightly"
+
+
+# ── 🔴 §6's run-record re-point (S105) ──
+
+
+def _append_run(home, *, job_id="clock:nightly", run_id="r1", status="ok", summary="s"):
+    from personalclaw.schedule_history import ScheduleRun, ScheduleRunStore
+
+    store = ScheduleRunStore(home)
+    _run(
+        store.append(
+            ScheduleRun(
+                run_id=run_id,
+                job_id=job_id,
+                trigger="schedule",
+                started_at=100.0,
+                finished_at=101.0,
+                duration_ms=1000,
+                status=status,
+                summary=summary,
+            )
+        )
+    )
+    return store
+
+
+def test_the_run_store_is_held_directly_not_through_the_service(home, state):
+    """🔴 All four run-record methods on `ScheduleService` are one-line passthroughs to
+    `ScheduleRunStore`, and the store answers standalone from a bare `base_dir` — so the facade's
+    dependency on the legacy service for run HISTORY was pure indirection. Proven by DELETING the
+    service's run methods: the reads still work."""
+    _append_run(home)
+    del state.crons.list_runs  # the legacy service can no longer serve this
+    runs, total = _run(T._runs_store().list_for_job("clock:nightly", 0, 10))
+    assert total == 1
+    assert runs[0]["run_id"] == "r1"
+
+
+def test_the_helper_is_named_runs_store_to_avoid_shadowing():
+    """🔴 A REAL BUG this session hit: the module already has `async def _run_store(raw, request)`
+    (S94's manual-fire path), so defining a second `_run_store()` silently SHADOWED it — driven, the
+    history endpoint raised "missing 2 required positional arguments". Python reports a same-name
+    redefinition only at the call site, which in a 1400-line handler module is a real hazard."""
+    import inspect
+
+    assert callable(T._runs_store)
+    # The S94 handler still takes its two arguments.
+    assert list(inspect.signature(T._run_store).parameters) == ["raw", "request"]
+
+
+def test_the_last_run_status_is_read_from_the_store(home, state):
+    """T7's honest badge: the PERSISTENT status survives restarts and keeps `launched` distinct from
+    `ok`, where a trigger's own field would report a fire-and-forget run as a success."""
+    _append_run(home, status="launched")
+    del state.crons.last_run_status  # no legacy service involvement
+    assert T._last_run_status(state, "clock:nightly") == "launched"
+
+
+def test_no_runs_yields_None_for_the_badge(home, state):
+    """None, not "" — the serializer treats it as "no badge" rather than an empty status."""
+    assert T._last_run_status(state, "never-ran") is None
+
+
+def test_a_broken_run_store_does_not_break_the_serializer(home, state, monkeypatch):
+    """The list must render even when history is unreadable; a badge is not worth a 500."""
+
+    def boom():
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(T, "_runs_store", boom)
+    assert T._last_run_status(state, "clock:nightly") is None
+
+
+def test_per_trigger_history_reads_the_store(home, state):
+    _append_run(home)
+    del state.crons.list_runs
+    resp = _run(
+        T.api_trigger_history(
+            _req("GET", "/x/history", state, match_info={"id": "schedule:clock:nightly"})
+        )
+    )
+    data = _body(resp)
+    assert data["total"] == 1
+    assert data["runs"][0]["run_id"] == "r1"
+
+
+def test_one_full_run_reads_the_store(home, state):
+    _append_run(home)
+    del state.crons.get_run
+    resp = _run(
+        T.api_trigger_history_detail(
+            _req(
+                "GET",
+                "/x/history/r1",
+                state,
+                match_info={"id": "schedule:clock:nightly", "run_id": "r1"},
+            )
+        )
+    )
+    assert _body(resp)["run"]["run_id"] == "r1"
+
+
+def test_the_cross_trigger_feed_reads_the_store_and_joins_names(home, state):
+    """A run row carries only a `job_id`, so the name is a join (S104's map) over store rows."""
+    _append_run(home)
+    _create_schedule(state, name="Nightly")
+    del state.crons.list_all_runs
+    resp = _run(
+        T.api_trigger_history_all(_req("GET", "/api/triggers/history", state, query="shape=legacy"))
+    )
+    rows = _body(resp)["runs"]
+    assert rows[0]["run_id"] == "r1"
+    assert rows[0]["job_name"] == "Nightly"
+
+
+def test_deleting_a_trigger_drops_its_runs_through_the_store(home, state):
+    """A delete has two halves; the run half no longer needs the legacy service."""
+    _append_run(home)
+    _create_schedule(state, name="Nightly")
+    del state.crons.delete_runs
+    _run(
+        T.api_trigger_detail(
+            _req("DELETE", "/x", state, match_info={"id": "schedule:clock:nightly"})
+        )
+    )
+    runs, total = _run(T._runs_store().list_for_job("clock:nightly", 0, 10))
+    assert (runs, total) == ([], 0)
+
+
+def test_the_facade_no_longer_calls_any_run_method_on_the_service():
+    """🔴 The property this session establishes, asserted on the SOURCE: a call that came back would
+    re-couple the facade to a class the cutover is retiring, and no behavioural test would notice.
+    """
+    import inspect
+
+    src = inspect.getsource(T)
+    for method in ("crons.list_runs", "crons.list_all_runs", "crons.get_run", "crons.delete_runs"):
+        assert method not in src, method
