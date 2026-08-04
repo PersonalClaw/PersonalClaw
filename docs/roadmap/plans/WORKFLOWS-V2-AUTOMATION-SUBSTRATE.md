@@ -3075,3 +3075,64 @@ hardcodes the gate sequence, which is its job. Updated to the new order rather t
 - **REMAINING in the decision-7 chain:** PathGuard (absent from the tree entirely) and scoped webhook
   tokens (decision 12 — the `webhook` kind has no fire endpoint yet). Both belong with the webhook
   runtime, unchanged by this session.
+
+### S118 — PathGuard: the `paths` capability, compared as paths (decision 7) — DONE
+
+**DISCOVERY: the `paths` fence was measuring the wrong thing.** `paths` has been a first-class,
+fail-closed member of `CAPABILITY_KEYS` since S69, and it is rendered as a fence in the UI. But
+`capability_allows` compared it with `_matches_entry` — prefix matching designed for tool names like
+`mcp__github__*`. Driven against the real function before a line was written:
+
+```
+allowlist: ["/Users/me/notes/*"]
+  ALLOW  /Users/me/notes/today.md              # correct
+  deny   /Users/me/secrets.txt                 # correct
+  ALLOW  /Users/me/notes/../../.ssh/id_rsa     # 🔴 TRAVERSAL — permitted
+  ALLOW  /Users/me/notes/../.aws/credentials   # 🔴 TRAVERSAL — permitted
+```
+
+So a trigger fenced to a notes directory could reach an SSH key, and the ledger would record the fire
+as **permitted**. This is a different failure from the inert controls the rest of this program found:
+the fence ran on every check and returned an answer. It was simply the wrong answer, because paths are
+not strings for security purposes. A control that is *wired and confidently wrong* is harder to spot
+than one that never runs, which is why this needed measuring rather than reading.
+
+**`triggers/pathguard.py`, four parts, each closing one measured hole:**
+
+* **Canonicalization** (`expanduser` → `expandvars` → `realpath`) resolves `..` and symlinks, so a
+  path is compared as what it REACHES rather than as the text its author typed.
+* **`commonpath` containment, not `startswith`.** The prefix test reads `/x/notesEVIL` as inside
+  `/x/notes` — the classic sibling-directory bypass, which survives review precisely because the code
+  looks obviously correct.
+* **Symlink-target matching on BOTH sides.** Canonicalizing only the candidate misses a watched root
+  that is itself a link; `realpath` on both is what makes the two consistent. Verified with real
+  symlinks on disk, in both directions (a link escaping the scope refuses; a linked root matches at
+  its target).
+* **`bypass_immune`** — a sensitive path is refused even when the allowlist names it, checked BEFORE
+  the allowlist so a matching entry cannot short-circuit it. Decision 7's own text reserves checks
+  "no allowlist may silence", and an entry naming `~/.ssh` is far likelier to be a mistake, or an
+  edit nobody intended, than a genuine grant.
+
+**Deliberately fail-CLOSED, the opposite of S117's kill switch, and the asymmetry is tested.** An
+unresolvable path denies. A stuck-open path fence hands out filesystem access nobody granted; a
+stuck-closed kill switch merely halts work and looks like a broken scheduler. When in doubt about
+*reach*, refuse; when in doubt about *permission to run at all*, proceed and stay visible.
+
+**Routed by key, so nothing else changed.** Only `paths` goes through PathGuard; `tools`, `providers`,
+`env` and `network` keep `_matches_entry`'s prefix globs. Asserted explicitly, because applying path
+semantics to `tools` would break every `mcp__github__*` fence in existence.
+
+**A doctor finding for fences that bound nothing** (`unbounded_path_fence`): a bare `*` covers the
+whole filesystem, and a relative entry resolves against the GATEWAY's working directory — so it means
+different things depending on how the gateway was started, which is indistinguishable from a broken
+fence when it eventually denies something it used to allow.
+
+**Mutation-checked honestly.** Reverting the routing turns only **2 of the 27** new tests red — and
+those two are exactly the traversal cases, i.e. the defect. The other 25 exercise PathGuard's own
+logic directly rather than through the fence, so they are not expected to move; recording the real
+number here rather than implying broader coverage.
+
+- **REMAINING in the decision-7 chain: scoped webhook tokens only** (decision 12). The `webhook`
+  kind's `token_ref` is validated but has no fire endpoint yet, so the token has nothing to scope —
+  it belongs with the webhook runtime. With PathGuard landed, the frozen action sets (S116), the kill
+  switch (S117) and the provider chokepoint tests are all in place.

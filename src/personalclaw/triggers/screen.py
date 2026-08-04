@@ -563,6 +563,17 @@ def capability_allows(
             reason=f"the {key} allowlist must be a list; a {type(entries).__name__} is refused "
             "rather than coerced, so a malformed fence cannot silently grant access",
         )
+    # 🔴 PATHS ARE NOT STRINGS (S118). `_matches_entry` is prefix matching built for tool names, and
+    # it let a traversal through: with `paths: ["/Users/me/notes/*"]` it ALLOWED
+    # `/Users/me/notes/../../.ssh/id_rsa`. Measured against this very function before PathGuard
+    # existed. So the `paths` key is decided by canonicalized containment instead — same fail-closed
+    # discipline, correct comparison.
+    if key == "paths":
+        from personalclaw.triggers.pathguard import path_allowed
+
+        allowed, reason = path_allowed(entries, value)
+        return CapabilityDecision(allowed=allowed, key=key, reason=reason)
+
     for entry in entries:
         if isinstance(entry, str) and _matches_entry(value, entry):
             return CapabilityDecision(allowed=True, key=key)
