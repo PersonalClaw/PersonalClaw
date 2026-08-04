@@ -101,11 +101,11 @@ def next_fire(trigger: Any, *, now: float = 0.0, last_fire: float = 0.0) -> floa
     skips = _skipped_dates(trigger)
     fire = cadence_next_fire(trigger, now=now, last_fire=last_fire)
     if not skips or fire <= 0:
-        return fire
+        return apply_jitter(trigger, fire)
     tz = _trigger_tz(trigger)
     for _ in range(MAX_SKIP_ADVANCE):
         if datetime.fromtimestamp(fire, tz=tz).strftime("%Y-%m-%d") not in skips:
-            return fire
+            return apply_jitter(trigger, fire)
         # Step from just after the skipped fire. `last_fire=fire` keeps an interval on its own grid
         # rather than re-phasing it to the skipped instant.
         nxt = cadence_next_fire(trigger, now=fire + 1.0, last_fire=fire)
@@ -118,6 +118,54 @@ def next_fire(trigger: Any, *, now: float = 0.0, last_fire: float = 0.0) -> floa
         MAX_SKIP_ADVANCE,
     )
     return 0.0
+
+
+def apply_jitter(trigger: Any, fire: float) -> float:
+    """Offset a computed fire by the trigger's declared `jitter_secs`. Deterministic per id.
+
+    🔴 `jitter_secs` AND `strict` WERE DECLARED IN `SPEC_KEYS["clock"]` AND APPLIED BY NOTHING
+    (S149). Measured: an interval trigger armed identically with `jitter_secs: 300`, with
+    `jitter_secs: 300` plus `strict: true`, and with neither — all three produced `now + 3600.0`.
+    So AUTO-A1's acceptance bar ("migrated cron fires in its old jitter slot") was unmet, and the
+    models module's own comment names this exact failure: "the trigger loads, the service ignores
+    the key, and the automation behaves in a way its author cannot explain."
+
+    Uses `scheduling.jitter_offset` — the SAME BLAKE2b-over-trigger-id algorithm the boot stagger
+    uses and that `ScheduleService._jitter_offset` used, because AUTO-A1 requires the offset be
+    "preserved byte-compatibly from schedule.py": a migrated cron must land in the slot the job it
+    came from occupied. A fresh random offset would re-phase every schedule on migration day, which
+    is the one thing a migration must not do.
+
+    `strict: true` is the documented opt-OUT (`schedule.py`'s field says it plainly: "when True,
+    skip jitter and fire exactly on schedule"), so an exact wall-clock fire stays available.
+
+    Applied AFTER skip-date advancement, then RE-CHECKED against the skip set — because jitter can
+    push a late fire across midnight INTO a skipped day. Measured: a `59 23 * * *` cron with
+    `jitter_secs: 600` and `2026-08-05` skipped armed to **2026-08-05T00:02** — onto the very day
+    the user excluded. A skip date is a promise about a calendar day, so when the offset would break
+    it, the fire keeps its honest grid slot rather than the spread — losing the jitter is a
+    nicety; landing on a skipped day is a broken guarantee.
+
+    The offset is always FORWARD — pulling a fire earlier could fire it before the instant its own
+    cadence chose, which for a cron is simply wrong.
+    """
+    if fire <= 0:
+        return fire
+    spec = trigger.spec if isinstance(getattr(trigger, "spec", None), dict) else {}
+    if bool(spec.get("strict")):
+        return fire
+    window = _positive(spec.get("jitter_secs"))
+    if window <= 0:
+        return fire
+    from personalclaw.triggers.scheduling import jitter_offset
+
+    jittered = fire + jitter_offset(str(getattr(trigger, "id", "") or ""), window)
+    skips = _skipped_dates(trigger)
+    if skips:
+        tz = _trigger_tz(trigger)
+        if datetime.fromtimestamp(jittered, tz=tz).strftime("%Y-%m-%d") in skips:
+            return fire
+    return jittered
 
 
 def cadence_next_fire(trigger: Any, *, now: float = 0.0, last_fire: float = 0.0) -> float:

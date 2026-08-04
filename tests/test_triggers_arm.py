@@ -404,3 +404,115 @@ def test_an_all_skipped_cadence_reports_unarmable_rather_than_firing():
         A.next_fire(_clock({"kind": "cron", "expr": "0 9 * * *", "skip_dates": every_day}), now=NOW)
         == 0.0
     )
+
+
+# ── jitter_secs / strict: declared in SPEC_KEYS, applied by nothing (S149) ──
+
+
+def test_jitter_secs_is_applied_and_deterministic_per_id():
+    """🔴 THE DEFECT. Measured before the fix: an interval trigger armed identically with
+    `jitter_secs: 300`, with `jitter_secs: 300` + `strict: true`, and with neither — all three
+    produced `now + 3600.0`. `jitter_secs` and `strict` were declared in `SPEC_KEYS["clock"]` and
+    applied by NOTHING, so AUTO-A1's bar ("migrated cron fires in its old jitter slot") was unmet.
+
+    Deterministic per id, not random: a random offset re-rolls every fire, so two triggers can still
+    collide on any given fire and a restart reshuffles everything.
+    """
+    from personalclaw.triggers.scheduling import jitter_offset
+
+    spec = {"kind": "interval", "interval_secs": 3600, "created_at": NOW - 3600}
+    offsets = {}
+    for tid in ("j-1", "j-2", "j-3"):
+        trigger = _clock({**spec, "jitter_secs": 300}, tid=tid)
+        offset = A.next_fire(trigger, now=NOW) - (NOW + 3600.0)
+        assert offset == pytest.approx(jitter_offset(tid, 300)), tid
+        assert A.next_fire(trigger, now=NOW) == A.next_fire(trigger, now=NOW), "must be stable"
+        offsets[tid] = offset
+    assert len(set(offsets.values())) == 3, "different ids must land in different slots"
+
+
+def test_the_offset_is_byte_compatible_with_the_boot_stagger():
+    """AUTO-A1 requires the offset be "preserved byte-compatibly from schedule.py" — a migrated cron
+    must land in the slot the job it came from occupied. So this reuses `scheduling.jitter_offset`,
+    the same BLAKE2b-over-id algorithm the boot stagger and the legacy `ScheduleService` used. A
+    fresh algorithm would re-phase every schedule on migration day."""
+    from personalclaw.triggers.scheduling import jitter_offset
+
+    trigger = _clock(
+        {"kind": "interval", "interval_secs": 60, "created_at": NOW, "jitter_secs": 900},
+        tid="migrated-job",
+    )
+    assert A.next_fire(trigger, now=NOW) - (NOW + 60.0) == pytest.approx(
+        jitter_offset("migrated-job", 900)
+    )
+
+
+def test_strict_opts_OUT_of_jitter():
+    """`schedule.py`'s field says it plainly: "when True, skip jitter and fire exactly on schedule".
+    A user who needs an exact wall-clock fire must be able to have one."""
+    spec = {"kind": "interval", "interval_secs": 3600, "created_at": NOW - 3600}
+    assert (
+        A.next_fire(_clock({**spec, "jitter_secs": 300, "strict": True}), now=NOW) == NOW + 3600.0
+    )
+
+
+@pytest.mark.parametrize("declared", [None, 0, -5, "x", ""])
+def test_an_absent_or_invalid_jitter_changes_nothing(declared):
+    """No declaration must mean no behaviour change — every clock trigger shipped before this."""
+    spec = {"kind": "interval", "interval_secs": 3600, "created_at": NOW - 3600}
+    if declared is not None:
+        spec["jitter_secs"] = declared
+    assert A.next_fire(_clock(spec), now=NOW) == NOW + 3600.0
+
+
+def test_jitter_is_always_FORWARD():
+    """Pulling a fire earlier could fire it before the instant its own cadence chose, which for a
+    cron is simply wrong."""
+    for tid in ("a", "b", "c", "d", "e", "f"):
+        trigger = _clock(
+            {
+                "kind": "interval",
+                "interval_secs": 3600,
+                "created_at": NOW - 3600,
+                "jitter_secs": 600,
+            },
+            tid=tid,
+        )
+        assert A.next_fire(trigger, now=NOW) >= A.cadence_next_fire(trigger, now=NOW), tid
+
+
+def test_jitter_never_pushes_a_fire_onto_a_SKIPPED_day():
+    """🔴 Found by driving my own fix. A `59 23 * * *` cron with `jitter_secs: 600` and 2026-08-05
+    skipped armed to **2026-08-05T00:02** — onto the very day the user excluded, because the offset
+    crossed midnight AFTER the skip check had passed.
+
+    A skip date is a promise about a calendar day, so when the offset would break it the fire keeps
+    its honest grid slot instead. Losing the jitter is a scheduling nicety; landing on a skipped day
+    is a broken guarantee.
+    """
+    base = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc).timestamp()
+    spec = {
+        "kind": "cron",
+        "expr": "59 23 * * *",
+        "timezone": "UTC",
+        "jitter_secs": 600,
+        "skip_dates": ["2026-08-05"],
+    }
+    fire = A.next_fire(_clock(spec, tid="edge"), now=base)
+    assert datetime.fromtimestamp(fire, timezone.utc).strftime("%Y-%m-%d") == "2026-08-04"
+    assert fire == A.cadence_next_fire(_clock(spec, tid="edge"), now=base)
+
+    # …and with no skip declared, the same trigger DOES take its jitter.
+    open_spec = {k: v for k, v in spec.items() if k != "skip_dates"}
+    assert A.next_fire(_clock(open_spec, tid="edge"), now=base) > A.cadence_next_fire(
+        _clock(open_spec, tid="edge"), now=base
+    )
+
+
+def test_the_week_grid_still_plots_UNJITTERED_slots():
+    """`cadence_next_fire` is public so the grid can step the honest cadence; jittering the grid
+    would show a user 09:04:37 for a job they wrote as 09:00."""
+    trigger = _clock(
+        {"kind": "cron", "expr": "0 9 * * *", "timezone": "UTC", "jitter_secs": 600}, tid="grid"
+    )
+    assert A.cadence_next_fire(trigger, now=NOW) < A.next_fire(trigger, now=NOW)
