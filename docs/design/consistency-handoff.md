@@ -10,7 +10,7 @@
 - **S1 audit** — `docs/design/consistency-audit.md` (ranked drift map) + a live reporter (`web/src/design/consistencyAudit.report.ts`, run via `npm test` → `consistency-audit.json`). Key finding: token layer near-clean; the real drift is **primitive adoption** (420 raw `<button>`, 206 raw form elements) concentrated in the two mega-pages. a11y is **globally clean** (global reduced-motion + `:focus-visible` rules).
 - **Harness (infra)** — `web/e2e/` + `web/playwright.config.ts` (`toHaveScreenshot`, platform-qualified baselines, axe wcag2aa). Parses to 64 tests; chromium installs; deps locked in `package-lock.json`.
 - **Primitive + patterns** — `web/src/ui/TextField.tsx` (`TextField`/`TextArea`, the audit's one genuine gap) + the full `docs/design/patterns.md` gallery (TextField, Button, Modal, the two empty-states, confirm/prompt/alert, skeleton family, ListRow, fvs()/.fw-*).
-- **CI ratchets (3 live in the `web` vitest job)** — token-lint-strict (`tokenLint.test.ts`), primitive-adoption + inline-font-weight (`primitiveAdoption.test.ts`). New drift turns CI red.
+- **CI ratchets (4 live in the `web` vitest job)** — token-lint-strict (`tokenLint.test.ts`), primitive-adoption + inline-font-weight (`primitiveAdoption.test.ts`), and the inert-utility rail (`inertUtilities.test.ts` + `inertUtilities.allowlist.json`, issue #556: a `text-*`/`bg-*`/`border-*` class naming a token that doesn't exist emits NO CSS, so the style is silently absent — Tailwind itself is the oracle). New drift turns CI red.
 - **Zero-pixel conformance** — notification unread-rail/tone-chip consolidation; ~22 inline font-weights migrated to `fvs()`; empty-state name disambiguation.
 
 ## The ONE blocker → the unblock (≈5 min)

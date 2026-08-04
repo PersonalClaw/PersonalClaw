@@ -1,0 +1,11 @@
+{
+  "_comment": "Inert-utility allowlist (issue #556). Each entry is a file mapped to the text-*/bg-*/border-* utilities in it that Tailwind compiles to NOTHING — they emit no CSS, so the styling is silently absent. These predate the guard in inertUtilities.test.ts and are recorded here so the rail can be enforced at zero for everything NEW without a flag day. They are BUGS, not exemptions: each one is a near-miss of a real token, so fixing them is a behaviour change (text appears where it was previously unstyled) and belongs in its own change, not in the one that introduced the guard. The list may only SHRINK — a new inert utility, even in an already-listed file, turns CI red, and the companion test fails on a stale entry so a fixed class cannot linger here. Suspected intent, for whoever picks these up: border-outline-var -> border-outline-variant; text-on-surface-variant -> text-on-surface-var; text-negative -> text-danger; text-positive -> text-ok; bg-surface-2 / bg-surface-container-high -> the surface ramp (surface-low/high/highest).",
+  "allow": {
+    "pages/apps/AppsSection.tsx": ["text-negative", "text-positive"],
+    "pages/loops/LoopCockpitPage.tsx": ["bg-surface-2"],
+    "pages/settings/AppsPanel.tsx": ["text-negative"],
+    "pages/settings/ChatPanel.tsx": ["text-on-surface-variant"],
+    "pages/settings/DurabilityPanel.tsx": ["border-outline-var"],
+    "pages/settings/OllamaModelManager.tsx": ["bg-surface-container-high"]
+  }
+}
