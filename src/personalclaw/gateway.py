@@ -948,9 +948,17 @@ class GatewayOrchestrator:
             # per-action override lives in the config and is honoured by the provider itself (both
             # `bash` and `run-script` prefer `action_config["timeout"]`), so this is only the floor.
             timeout = 300 if provider_name == "bash" else 30
-            await provider.execute(config, ctx, timeout=timeout)
-        except Exception:  # noqa: BLE001 - a failed fire is logged, never crashes the loop
+            # 🔴 THE RESULT WAS DISCARDED (§3.7 / crit 3 — S139). `await provider.execute(...)` threw
+            # its return value away, so nothing on this path knew if a fire SUCCEEDED. Measured:
+            # six consecutive failing provider runs left `health_status: 'ok'` with an empty
+            # `last_failure_at` and `enabled: True` — criterion 3's "autopause after 5" could not
+            # possibly hold, because the whole `autopause` module (13 functions) was imported by NO
+            # production code and the counter it spends had no writer.
+            result = await provider.execute(config, ctx, timeout=timeout)
+            await self._record_fire_outcome(trigger, result=result)
+        except Exception as exc:  # noqa: BLE001 - a failed fire is logged, never crashes the loop
             logger.warning("trigger %s: action failed", trigger.id, exc_info=True)
+            await self._record_fire_outcome(trigger, exc=exc)
         finally:
             # 🔴 THE LIVE REFRESH (S107). `ScheduleService._record_run` pushed `cron_history` so
             # the Executions/Logs views update without polling — and `_record_run` is reachable only
@@ -969,6 +977,106 @@ class GatewayOrchestrator:
             # place for those controls to be forgotten, which is exactly how the `web_watch` gap
             # happened. After the refresh, so a slow chain never delays the view update.
             await self._fire_chained_triggers(trigger, payload)
+
+    async def _record_fire_outcome(
+        self, trigger: Any, *, result: Any = None, exc: BaseException | None = None
+    ) -> None:
+        """Record a fire's outcome and autopause a failing trigger (§3.7 / crit 3 — S139).
+
+        🔴 WHY THIS EXISTS. `triggers/autopause.py` ships 13 functions implementing criterion 3 —
+        typed exits, a 5-failure budget, parking for transport outages, immediate pause for config
+        errors, the attention card — and **not one production module imported it**. Driven before
+        writing: six failing provider runs left the trigger `enabled`, `health_status: 'ok'`, and
+        an empty `last_failure_at`. The decision engine was complete and unreachable.
+
+        The counter is DERIVED from the run ledger, not stored on the row, because
+        `LEGACY_FIELD_MAP` says exactly that: *"autopause counter is derived from fire records"*. A
+        copy on the trigger would be a second truth that can disagree with the ledger it summarises.
+
+        Never raises. A bookkeeping failure must not turn a completed fire into a crashed one — the
+        outcome already happened, and losing the record is strictly better than losing the loop.
+        """
+        try:
+            from personalclaw.config.loader import config_dir
+            from personalclaw.schedule_history import ScheduleRun
+            from personalclaw.triggers import autopause
+            from personalclaw.triggers.models import TriggerState
+            from personalclaw.triggers.store import TriggerStore
+
+            trigger_id = str(getattr(trigger, "id", "") or "")
+            if not trigger_id:
+                return
+
+            if exc is not None:
+                # A RAISING provider is classified by exception type: auth → transport → config →
+                # failed, so a credential outage PARKS rather than spending the failure budget.
+                exit_type = autopause.classify_exception(exc)
+            elif result is not None and not bool(getattr(result, "success", True)):
+                # A provider that returned `success=False` without raising carries no exception to
+                # classify, so it reads as a plain FAILED — the fail-safe direction the module's own
+                # `classify_exception(None)` takes for an unrecognised error.
+                exit_type = autopause.ExitType.FAILED.value
+            else:
+                exit_type = autopause.ExitType.OK.value
+
+            # 🔴 WRITE THE ROW FIRST, then count. Found by driving: the counter reads the run
+            # ledger, and the store-backed fire path wrote NO row per fire — so the count was
+            # permanently 0 and a trigger could fail forever. `_record_run` died with
+            # `ScheduleService` (S112) and nothing replaced it on this path, which is why parking
+            # (stateless, from the exception type) worked while the BUDGET (stateful) did not.
+            store_runs = ScheduleRunStore(config_dir())
+            now = time.time()
+            await store_runs.append(
+                ScheduleRun(
+                    run_id=f"fire-{int(now * 1000)}",
+                    job_id=trigger_id,
+                    trigger=exit_type,
+                    started_at=now,
+                    finished_at=now,
+                    status="success" if exit_type == autopause.ExitType.OK.value else "failure",
+                    error="" if exc is None else f"{type(exc).__name__}: {exc}"[:200],
+                )
+            )
+            # 🔴 The count must be the streak BEFORE this fire: `evaluate` adds its own unit
+            # (`count = consecutive_failures + 1`, then pauses at the threshold). Counting the row
+            # just written would double-count and pause after FOUR failures — caught by driving the
+            # 4-then-success-then-1 sequence, which paused on the fourth.
+            runs, _total = await store_runs.list_for_job(trigger_id, 0, 20)
+            prior = max(0, autopause.consecutive_failures_from(runs) - 1)
+
+            decision = autopause.evaluate(
+                exit_type=exit_type,
+                consecutive_failures=prior,
+                now=time.time(),
+                quarantined=str(getattr(trigger, "state", "")) == TriggerState.QUARANTINED.value,
+            )
+
+            store = TriggerStore(base_dir=config_dir())
+            row = store.get(trigger_id)
+            if row is None:
+                return
+            live = row.trigger
+            live.health_status = decision.health
+            live.state = decision.state
+            from datetime import datetime, timezone
+
+            stamp = datetime.now(timezone.utc).isoformat()
+            if exit_type == autopause.ExitType.OK.value:
+                live.last_success_at = stamp
+            else:
+                live.last_failure_at = stamp
+                live.last_error_summary = decision.reason[:200]
+            # 🔴 The PAUSE itself, which is the whole point: a state the module classifies as
+            # needing attention must stop firing. Leaving `enabled` True while labelling the row
+            # "autopaused" would be the inert control this program keeps finding.
+            if autopause.needs_attention(decision.state):
+                live.enabled = False
+                logger.warning(
+                    "trigger %s autopaused: %s", trigger_id, decision.reason or decision.state
+                )
+            store.upsert(live)
+        except Exception:  # noqa: BLE001 - see the docstring
+            logger.debug("could not record the fire outcome for %s", trigger, exc_info=True)
 
     async def _record_blocked_fire(self, trigger: Any, groups: str) -> None:
         """Write the `blocked_injection` ledger row for a screened payload (§7 crit 8 — S136).

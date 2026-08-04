@@ -131,19 +131,25 @@ def test_a_LEDGER_FAILURE_does_not_let_the_fire_through(monkeypatch, tmp_path):
 
 
 def test_a_BENIGN_payload_writes_NO_blocked_row(monkeypatch, tmp_path):
-    """A blocked-fire row on a normal fire would make the feed report attacks that never
-    happened."""
+    """A blocked-fire row on a normal fire would make the feed report attacks that never happened.
+
+    Counts BLOCKED rows specifically, not all rows: S139 writes an outcome row for every
+    fire (which is what feeds autopause's failure counter), so a benign fire legitimately
+    leaves a `success` row. The original `total == 0` asserted more than it meant and went
+    red the moment S139 landed — a good catch by an over-broad assertion.
+    """
     rec = _fire(monkeypatch, tmp_path, {"kind": "web_watch", "new_items": ["Release 2.1 is out"]})
     assert rec.seen is not None
-    _runs, total = _rows(tmp_path)
-    assert total == 0
+    runs, _total = _rows(tmp_path)
+    assert [r for r in runs if r["status"] == "blocked_injection"] == []
 
 
 def test_a_CLOCK_fire_writes_NO_blocked_row(monkeypatch, tmp_path):
+    """Same tightening: a clock fire writes its own outcome row (S139), never a blocked one."""
     rec = _fire(monkeypatch, tmp_path, {"kind": "clock"}, kind="clock")
     assert rec.seen is not None
-    _runs, total = _rows(tmp_path, "clock:w")
-    assert total == 0
+    runs, _total = _rows(tmp_path, "clock:w")
+    assert [r for r in runs if r["status"] == "blocked_injection"] == []
 
 
 def test_the_helper_is_ASYNC():
