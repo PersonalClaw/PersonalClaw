@@ -121,3 +121,53 @@ async def test_delete_for_job(tmp_path: Path) -> None:
 # lives in the substrate now and is covered by `test_triggers_executor.py`'s `classify()` tests
 # and `test_triggers_facade_store.py`'s badge assertions. `ScheduleRunStore` itself is unchanged,
 # which is what the section above exercises.
+
+
+# ── count_since: the windowed query three rate caps waited on (S152) ──
+
+
+@pytest.mark.asyncio
+async def test_count_since_counts_only_the_window(tmp_path: Path) -> None:
+    """🔴 `rate_cap`, `max_runs_per_hour` and `max_actions_per_hour` were all validated, carried and
+    enforced by NOTHING because this read did not exist — `list_for_job` is offset/limit only, so a
+    caller could page rows but not ask "how many in the last hour"."""
+    store = ScheduleRunStore(tmp_path)
+    now = 1_700_000_000.0
+    for offset in (-10, -100, -3000, -7200):
+        await store.append(ScheduleRun(job_id="j", trigger="scheduled", started_at=now + offset))
+    assert await store.count_since("j", now - 3600.0) == 3
+    assert await store.count_since("j", 0) == 4
+    assert await store.count_since("j", now + 1) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_MANUAL_fire_is_excluded_by_default(tmp_path: Path) -> None:
+    """§3.6: "manual fires bypass the hourly cap". The cap exists to stop the MACHINE running away,
+    and a person clicking Run is not the machine running away — counting their clicks would let a
+    user lock themselves out of their own automation."""
+    store = ScheduleRunStore(tmp_path)
+    now = 1_700_000_000.0
+    await store.append(ScheduleRun(job_id="j", trigger="scheduled", started_at=now - 10))
+    await store.append(ScheduleRun(job_id="j", trigger="manual", started_at=now - 20))
+    assert await store.count_since("j", now - 3600.0) == 1
+    assert await store.count_since("j", now - 3600.0, manual=True) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_row_is_skipped_not_counted(tmp_path: Path) -> None:
+    """Counting it would let ONE bad line push a trigger over its cap and suppress real work.
+    Skipping can only under-count, and the cap's purpose still holds: a runaway writes many
+    well-formed rows."""
+    store = ScheduleRunStore(tmp_path)
+    now = 1_700_000_000.0
+    await store.append(ScheduleRun(job_id="j", trigger="scheduled", started_at=now - 10))
+    (tmp_path / "cron-history" / "j.jsonl").open("a", encoding="utf-8").write(
+        '{"job_id": "j", "started_at": "soon"}\n'
+    )
+    assert await store.count_since("j", now - 3600.0) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_job_counts_zero_rather_than_raising(tmp_path: Path) -> None:
+    """A trigger that has never fired has no history file; that is normal, not an error."""
+    assert await ScheduleRunStore(tmp_path).count_since("never-ran", 0) == 0

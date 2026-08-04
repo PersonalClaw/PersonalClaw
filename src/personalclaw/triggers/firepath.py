@@ -63,6 +63,7 @@ GATE_ORDER: tuple[str, ...] = (
     "incident",
     "screen",
     "spacing",
+    "rate",
     "quiet",
     "duty",
     "budget",
@@ -83,6 +84,9 @@ GATE_OUTCOMES: dict[str, str] = {
     # §1.3 maps "quiet-hours / debounce / cooldown / condition-false" to ONE outcome, so a
     # debounced fire is filterable beside a quiet-hours one rather than needing its own chip.
     "spacing": Outcome.SKIPPED_GATE.value,
+    # §3.6 groups the hourly caps with the storm guards, and §1.3 gives a rate refusal the
+    # same `skipped_gate` outcome as the other "should this fire at all" answers.
+    "rate": Outcome.SKIPPED_GATE.value,
     "quiet": Outcome.SKIPPED_GATE.value,
     "duty": Outcome.SKIPPED_GATE.value,
     "budget": Outcome.SKIPPED_BUDGET.value,
@@ -132,6 +136,11 @@ class FireContext:
     #: module only honours it.
     user_active: bool = False
     yield_to_user: bool = False
+    #: Fires this trigger recorded in the last hour, or None when the ledger could not be read
+    #: (S152). Supplied by `service.tick` from `ScheduleRunStore.count_since`. None is NOT zero: an
+    #: unreadable ledger must not read as "no fires yet" and hand a runaway trigger a fresh
+    #: allowance — the rate gate fails OPEN on None (storm-guard class) but says so in the reason.
+    fires_in_window: int | None = None
     #: Seconds since this trigger last FIRED, or None when it has never fired (S151). Supplied by
     #: `service.tick` from `Trigger.last_fired_at` — a THIRD timestamp, because `last_success_at`
     #: and `last_failure_at` describe an OUTCOME and a SUPPRESSED fire is neither, so spacing off
@@ -180,6 +189,44 @@ def _refuse(gate: str, reason: str, passed: list[str], **extra: Any) -> FireDeci
         passed=list(passed),
         **extra,
     )
+
+
+def _rate_refusal(ctx: FireContext) -> str:
+    """The hourly-cap refusal reason, or "" to allow. Never raises (S152).
+
+    Delegates the DECISION to `missed.within_rate_window` rather than re-deriving it: that function
+    already owns the manual-bypass asymmetry and the "no cap configured" case, and a second copy
+    of a threshold comparison is how two surfaces start disagreeing about whether a trigger is
+    capped.
+
+    The lowest configured cap wins. `rate_cap`, `max_runs_per_hour` and `max_actions_per_hour` are
+    three spellings a person may use, and taking the strictest is the only reading that cannot
+    surprise: a user who set both 10/hour and 5/hour meant at most 5.
+
+    **FAIL-OPEN when the ledger is unreadable** (`fires_in_window is None`) — §1.4's storm-guard
+    class, and the same call `slot` makes about an unreadable claim store. But None is deliberately
+    not folded into 0: zero fires would hand a runaway trigger a fresh allowance every time the
+    ledger hiccuped, so the distinction is kept even though both currently allow.
+    """
+    gates = ctx.gates if isinstance(ctx.gates, dict) else {}
+    caps: list[int] = []
+    for key in ("rate_cap", "max_runs_per_hour", "max_actions_per_hour"):
+        try:
+            cap = int(gates.get(key) or 0)
+        except (TypeError, ValueError):
+            continue  # fail-open: a malformed cap is not a reason to suppress
+        if cap > 0:
+            caps.append(cap)
+    if not caps:
+        return ""
+    if ctx.fires_in_window is None:
+        return ""
+    from personalclaw.triggers.missed import within_rate_window
+
+    allowed, reason = within_rate_window(
+        fires_in_window=int(ctx.fires_in_window), max_per_hour=min(caps)
+    )
+    return "" if allowed else reason
 
 
 def _spacing_refusal(ctx: FireContext) -> str:
@@ -296,7 +343,22 @@ async def evaluate(ctx: FireContext) -> FireDecision:
         return _refuse("spacing", spacing, passed)
     passed.append("spacing")
 
-    # ── 3. quiet windows ──
+    # ── 3. the hourly rate caps (§3.6) ──
+    #
+    # 🔴 `rate_cap`, `max_runs_per_hour` and `max_actions_per_hour` were validated, carried, and
+    # enforced by NOTHING — S133 named them, S150 put them in `UNMETERED_CAPS`, and the reason was
+    # always the same: no windowed history query existed. `ScheduleRunStore.count_since` (S152) is
+    # that query, and `missed.within_rate_window` has been the pure decision waiting for the number
+    # since S65.
+    #
+    # Beside `spacing` because it answers the same question ("has this fired too much lately") over
+    # the same cheap inputs, and before the provider-calling gates for the same cost reason.
+    rate = _rate_refusal(ctx)
+    if rate:
+        return _refuse("rate", rate, passed)
+    passed.append("rate")
+
+    # ── 4. quiet windows ──
     from personalclaw.triggers.calendar import evaluate_quiet
 
     quiet, _issues = evaluate_quiet(ctx.gates, moment)
@@ -304,7 +366,7 @@ async def evaluate(ctx: FireContext) -> FireDecision:
         return _refuse("quiet", quiet.reason or "inside a quiet window", passed)
     passed.append("quiet")
 
-    # ── 4. the duty gate ──
+    # ── 5. the duty gate ──
     from personalclaw.triggers.calendar import evaluate_duty
 
     duty = await evaluate_duty(ctx.gates, moment)
@@ -312,7 +374,7 @@ async def evaluate(ctx: FireContext) -> FireDecision:
         return _refuse("duty", duty.reason or "the duty gate refused", passed)
     passed.append("duty")
 
-    # ── 5. budget, BEFORE the claim, FAIL-CLOSED (§3.6) ──
+    # ── 6. budget, BEFORE the claim, FAIL-CLOSED (§3.6) ──
     if not ctx.budget_readable:
         # §3.6 is explicit that the budget check is fail-closed. An unreadable budget is not an
         # unlimited one: treating an error as "allowed" is how a runaway trigger gets its allowance
@@ -322,7 +384,7 @@ async def evaluate(ctx: FireContext) -> FireDecision:
         return _refuse("budget", "budget exhausted for this window", passed)
     passed.append("budget")
 
-    # ── 6. the overlap claim lock (single-flight) ──
+    # ── 7. the overlap claim lock (single-flight) ──
     from personalclaw.triggers.scheduling import claim_fire
 
     claim, claim_reason = claim_fire(

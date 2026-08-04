@@ -61,9 +61,9 @@ DUTY_GATE_TIMEOUT_SECS = 2.0
 #: * `cost_cap` / `max_cost_usd_per_run` — per-run spend attribution. `guardrails.SpendMeter` has
 #:   the machinery (`charge(..., run_key=)`, `run_totals`) but its one production caller never
 #:   passes a `run_key`, so run-scope totals are permanently empty.
-#: * `max_runs_per_hour` / `max_actions_per_hour` / `rate_cap` — a WINDOWED history query.
-#:   `ScheduleRunStore.list_for_job` is offset/limit only, with no `since`;
-#:   `missed.within_rate_window` is the pure decision already waiting for that meter.
+#: * `max_runs_per_hour` / `max_actions_per_hour` / `rate_cap` — **WIRED S152**, so deliberately
+#:   absent. They needed a windowed history query; `ScheduleRunStore.count_since` is it, and
+#:   `firepath`'s `rate` gate delegates the decision to `missed.within_rate_window`.
 #: * `debounce_secs` / `cooldown_secs` — **WIRED S151**, so deliberately absent from this set. They
 #:   needed a last-FIRE timestamp (`last_success_at`/`last_failure_at` describe an OUTCOME, and a
 #:   SUPPRESSED fire is neither); `Trigger.last_fired_at` now supplies it, written beside
@@ -76,9 +76,6 @@ UNMETERED_CAPS: frozenset[str] = frozenset(
     {
         "cost_cap",
         "max_cost_usd_per_run",
-        "max_runs_per_hour",
-        "max_actions_per_hour",
-        "rate_cap",
         "idempotency",
         "threshold",
     }

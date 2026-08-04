@@ -498,6 +498,11 @@ async def tick(
             # `last_success_at`/`last_failure_at` describe an outcome, and a suppressed fire is
             # neither. `_since_last_fire` returns None for a trigger that has never fired, which
             # the gate reads as "nothing to space against" rather than "0 seconds ago".
+            # 🔴 The RATE meter (S152). Three cap keys waited on a windowed history query that
+            # did not exist; `ScheduleRunStore.count_since` is it. Read per DUE trigger rather
+            # than once per tick because it is per-job JSONL — a tick with one due trigger must
+            # not scan every trigger's history. None (unreadable) is NOT zero: see the gate.
+            fires_in_window=await _fires_in_window(trigger, now=now),
             since_last_fire=_since_last_fire(trigger, now=now),
             busy_slot=claims.busy_slot(trigger, holders=slot_map),
             # 🔴 The EXISTING claim, read from the shared claim store. Measured: this was never
@@ -559,6 +564,31 @@ async def tick(
 
     result.next_sleep = sleep_for(list(by_id.values()), now=now)
     return result
+
+
+async def _fires_in_window(trigger: Any, *, now: float) -> int | None:
+    """Fires recorded in the last hour, or None when the ledger could not be read (S152).
+
+    Returns None — not 0 — on ANY failure. Zero would hand a runaway trigger a fresh allowance
+    every time the ledger hiccuped, which is the opposite of what a rate cap is for. The gate treats
+    None as fail-open (§1.4's storm-guard class) but the distinction is kept so a future session can
+    tighten it without first re-deriving why the two cases differ.
+
+    Skipped entirely when the trigger declares no hourly cap: this is a file read on the fire path,
+    and paying for it to answer a question nobody asked would tax every automation on the machine.
+    """
+    gates = getattr(trigger, "gates", None)
+    gates = gates if isinstance(gates, dict) else {}
+    if not any(gates.get(k) for k in ("rate_cap", "max_runs_per_hour", "max_actions_per_hour")):
+        return None
+    try:
+        from personalclaw.config.loader import config_dir
+        from personalclaw.schedule_history import ScheduleRunStore
+
+        return await ScheduleRunStore(config_dir()).count_since(trigger.id, now - 3600.0)
+    except Exception:  # noqa: BLE001 - an unreadable ledger must not break the tick
+        logger.debug("could not read the rate window for %s", getattr(trigger, "id", "?"))
+        return None
 
 
 def _since_last_fire(trigger: Any, *, now: float) -> float | None:
