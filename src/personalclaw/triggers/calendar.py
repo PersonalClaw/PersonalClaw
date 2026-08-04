@@ -45,6 +45,14 @@ from typing import Any, Awaitable, Callable
 #: surface, and the fail-open default means a timeout costs nothing but an unfiltered fire.
 DUTY_GATE_TIMEOUT_SECS = 2.0
 
+#: Cap keys that are validated and carried but have NO METER reading them (§3.6 — S133). `max_fires`
+#: is deliberately absent: S133 wired it against `run_count`. These four need per-run spend
+#: attribution or a windowed history query, neither of which exists on the fire path — so the doctor
+#: names them rather than letting a user believe a cost cap bounds their automation.
+UNMETERED_CAPS: frozenset[str] = frozenset(
+    {"cost_cap", "max_cost_usd_per_run", "max_runs_per_hour", "max_actions_per_hour"}
+)
+
 #: Day-of-week tokens, Monday-first to match `datetime.weekday()`. Named rather than positional so a
 #: window reads as `{"days": ["sat", "sun"]}` — a list of integers in a config file is the kind of
 #: thing someone gets off by one.
@@ -841,6 +849,26 @@ def diagnose(
                         "is snapshotted, echoed into run records and rendered in the UI",
                         fix="store it with `personalclaw auth` and set token_ref to "
                         "{{secret:KEY}}, then rotate the exposed token",
+                    )
+                )
+
+        # 🔴 CAP KEYS that still enforce nothing (§3.6 — S133). `max_fires` is wired as of S133,
+        # but `cost_cap`/`max_cost_usd_per_run` need per-run spend attribution and
+        # `max_runs_per_hour`/`max_actions_per_hour` need a windowed history query — neither meter
+        # exists on this path. Naming them beats implying they work: a user who set a cost cap
+        # believes their automation is bounded.
+        gate_block = entry.get("gates")
+        if isinstance(gate_block, dict):
+            unmetered = sorted(k for k in UNMETERED_CAPS if gate_block.get(k))
+            if unmetered:
+                report.findings.append(
+                    Finding(
+                        trigger_id=tid,
+                        code="unmetered_cap",
+                        detail=f"sets {', '.join(unmetered)}, which no meter reads yet — this "
+                        "automation is NOT bounded by that cap",
+                        fix="use gates.max_fires (enforced) to bound total fires, or remove the "
+                        "cap until its meter lands",
                     )
                 )
 

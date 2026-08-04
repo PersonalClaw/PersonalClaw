@@ -3785,3 +3785,57 @@ from the split, and a health rollup that under-counted skips could not explain w
   (Loops Phase 4), `web_watch`'s headless tier, a chat-turn event source reading `agent_scope` (S131),
   and the FE affordance that renders this split (the API half is done; §5's Automations page owns the
   UI).
+
+### S133 — the budget gate, actually supplied; `max_fires` enforced (§3.6 / crit 8) — DONE
+
+**DISCOVERY: the budget gate had never refused a real fire.** `firepath` reads `ctx.budget_remaining`,
+and `service.tick` never set either budget field — so `if ctx.budget_remaining is not None` was
+permanently False. **Third instance of this exact shape**, after S97's `existing_claim` and S116's
+`requested`, in the same function. That recurrence is the finding worth carrying forward: a
+`FireContext` field with a default is an input nobody is forced to supply, and three of its eight gates
+were dead for exactly that reason.
+
+The user-visible cost was `gates.max_fires` — declared in `GATE_KEYS`, validated, carried by
+`LEGACY_FIELD_MAP`, and bounding nothing. Measured with the claim RELEASED each tick, so the overlap
+gate could not mask the question (it had been masking it — an unreleased claim refuses every slot after
+the first, which makes a broken cap look like a working one):
+
+```
+max_fires=2   →  8 fires over 8 slots
+no gates      →  8 fires over 8 slots      # identical; the cap did nothing
+```
+
+**A second inert layer underneath: nothing incremented `run_count` on this path.** So even a correctly
+wired budget would have compared against a permanent zero. A cap needs a meter, and neither existed —
+which is why fixing one without the other would have produced a gate that still never fired.
+
+The counter increments on a **granted** fire, before dispatch, deliberately: `max_fires` bounds
+attempts the substrate authorised, and deferring to completion would let a storm of in-flight fires all
+pass a cap of one.
+
+**A malformed cap fails CLOSED.** `max_fires: "lots"` yields zero allowance, not unlimited: "I asked
+for a limit and typed it wrong" must not read as "no limit". `validate_gates` reports the shape
+separately, so the user gets both the refusal and the reason.
+
+**🔴 FOUND BY A RED TEST, not by reading — and worth recording.** The counter's `store.upsert`
+**resurrected a retired one-shot**: the retirement branch a few lines above `store.delete()`s a
+`delete_after_run` trigger, and an unconditional upsert re-created the row it had just removed, turning
+a retired one-shot back into a live trigger holding an elapsed slot — precisely the storm S112's
+retirement exists to prevent. Two writes to the same store in one iteration make their ORDER a
+contract; the fix is conditioned on `result.retired`, and two regression tests now pin both retirement
+paths.
+
+**Criterion 8's named bar shipped: the 24h storm test, which did not exist.** 1440 slots of a
+per-minute trigger suppressed by quiet hours → **1440 typed ledger rows, zero fires, zero silent
+drops**, driven through the real `tick` against a real store.
+
+**DEVIATION: only `max_fires` is metered.** `cost_cap` and `max_cost_usd_per_run` need per-run spend
+attribution; `max_runs_per_hour` and `max_actions_per_hour` need a windowed history query. Neither
+meter exists on the fire path, and inventing one to satisfy a cap is the inverted dependency this
+program has now refused three times (S119's webhook token, S129's rule (e), here). So a new
+`unmetered_cap` doctor finding NAMES those four and points at the cap that does work — a user who set a
+cost cap believes their automation is bounded, and that belief is the risk.
+
+- **REMAINING in AUTOMATION-SUBSTRATE:** the E4-blocked webhook fire endpoint (queue S123), `idle`
+  (Loops Phase 4), `web_watch`'s headless tier, a chat-turn event source reading `agent_scope` (S131),
+  the FE affordance for S132's archive split, and meters for the four unmetered caps above.
