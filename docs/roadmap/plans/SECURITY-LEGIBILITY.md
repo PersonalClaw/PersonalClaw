@@ -1,10 +1,16 @@
 # Plan: Security Legibility — Make the Strongest Story Checkable
 
-**Status:** DESIGNED — deepened 2026-07-18 (initial PROPOSED 2026-07-18 from the pre-launch investigation & owner alignment review)
-**Created:** 2026-07-18
-**Wave:** 0 — launch-gating trust surface. Deep security *features* are explicitly out of scope (SECURITY-HARDENING, Wave 4 by owner decision).
-**Depends on:** nothing. DISCOVERABILITY-LAUNCH republishes these artifacts on the website; OSS-OPERATIONS links SECURITY.md from the hygiene set.
-**Scope:** make the existing security architecture externally legible and verifiable — disclosure surface, public threat model mapped to the OWASP Agentic Top 10 (2026), honest-limitations statements. **Soul guardrail:** documentation and disclosure only — no new enforcement mechanisms, no control changes, no rewording of in-product security copy (protocol rule: security surfaces are copy-sensitive). A control gap discovered while writing goes to SECURITY-HARDENING's candidate list via a DISCOVERY ledger entry — never fixed inline here.
+**Status:** DONE 2026-07-22 (S1 disclosure surface + S2 public threat model) — deepened 2026-07-18
+(initial PROPOSED 2026-07-18 from the pre-launch investigation & owner alignment review). Shipped:
+core `SECURITY.md` (GitHub private vulnerability reporting, ack/fix-or-plan stated as expectations
+not SLAs) and an app-bundle-scoped apps-repo `SECURITY.md`; `docs/security/limitations.md`,
+owner-signed 2026-07-22; `docs/security/threat-model.md` (five trust boundaries, a 10-row
+OWASP-Agentic-Top-10 table with per-row status, a "what we deliberately don't defend against"
+section, and a verified-against-`main`@commit line); README Security section expanded. PVR is enabled
+on BOTH repos. The soul guardrail held: **zero** code or in-product-copy changes — every
+citation-drift finding was routed to SECURITY-HARDENING as a DISCOVERY. Owner task 3 (the threat
+model renders on the site) is satisfied now that the website's `/docs` sync autogenerates a Security
+section from `docs/security/`. Status corrected 2026-08-04 by code audit.
 
 ---
 

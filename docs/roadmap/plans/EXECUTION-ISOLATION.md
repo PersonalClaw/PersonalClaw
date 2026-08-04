@@ -1,10 +1,14 @@
 # Plan: Execution Isolation & Runner Substrate — Where and Through What Agents Execute
 
-**Status:** PROPOSED (created 2026-07-13 from research synthesis, promoted from backlog)
-**Created:** 2026-07-13
-**Wave:** 2 (engine-adjacent) — consumes WORKFLOWS-V2 Slice 0-1 primitives (`__wf_depth`, run workspace block) and WORK-CONTAINERS §4 (workspace provisioning, leases, keychain secrets); everything unattended in Waves 3+ inherits its isolation floor. The SandboxProvider registry (§1) and runner catalog (§3) have no engine dependency and can front-run.
-**Depends on:** WORKFLOWS-V2-WORK-CONTAINERS §4.1/§4.3 (workspace block + WORK-R19 secrets store — this plan builds the pluggable substrate *under* the workspace block and the UX *over* the secrets store). AUTONOMY-GUARDRAILS §3/§4.2 (safety profiles + egress tiers — sandbox providers carry a profile, they don't invent one).
-**Scope:** one pluggable execution-isolation seam (SandboxProvider registry, two-kind taxonomy, none/docker built-ins, Lima tier) + one BYO agent-runner substrate (runner catalog, capability matrix, health evidence, second-opinion handoff, durable sessions) + the interactive safety tier (turn-bound file checkpointing, sandbox-internal tool gateway, reviewer-comment triage) + the standalone secrets-vault UX remainder of NEW-27.
+**Status:** PROPOSED (created 2026-07-13 from research synthesis, promoted from backlog). Not started —
+verified 2026-08-04: no `SandboxProvider`/`AgentRunner` seam, no `sandbox/` package (only the
+pre-existing single-file `sandbox.py`, unchanged since v0.1.0), no lima/docker tier.
+⚠️ **The rev-14 amendment's D0 row was marked "land first" and has NOT landed.** It is docs-only and
+dependency-free, and the amendment's own words are that "an inaccurate security claim is a live
+defect": `docs/architecture/security.md` still lacks the what-the-sandbox-does-and-does-not-do
+section, and `personalclaw.dev`'s security page still says "Bounded capabilities" with no
+credential-hiding-vs-confinement qualification. D1/D2/D3 (app env inheritance, the declaration-only
+`network` permission's advisory marking, the shared-venv pip install) are also untouched.
 
 ---
 

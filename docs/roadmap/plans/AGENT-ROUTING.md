@@ -1,10 +1,15 @@
 # Plan: Agent Routing — Suggest the Right Specialist, Never Route Silently
 
-**Status:** DESIGNED — created 2026-07-26 (roadmap rev 12; owner ask: sibling-platform gap analysis greenlight — "automatic routing to the right specialist," owner-decided **suggest-first**)
-**Created:** 2026-07-26
-**Wave:** 2
-**Depends on:** nothing hard (builds on the shipped agent marketplace + session-agent binding + the UnifiedEmbedder). Coordinates with INBOX-NOTIFICATIONS-UNIFICATION (42 — this plan deliberately does NOT emit inbox items; the chip is ephemeral chat chrome, so there is no attention-contract dependency), AUTONOMY-GUARDRAILS (any future *auto*-routing graduation would ride its earned-autonomy machinery — forward hook only, out of scope here), WORKFLOWS-V2 (the SOP surfacing engine in `workflows/surfacing.py` is the calibration precedent this plan mirrors, not a dependency).
-**Scope:** ~2 sessions. When the user sends a message in a **default-agent** chat and an installed specialist agent is a clearly better fit, a small **non-blocking chip** appears above the composer: "Route to \<agent\>?" — one click re-targets the session to that agent (via the existing `POST /api/chat/sessions/{session}/agent` switch path); dismissing it is remembered per agent so it never nags. Classification is **deterministic-first** (keyword/phrase overlap against per-agent routing metadata), **embedding-similarity second** (cosine via the active embedding binding when one is bound), **LLM never in the hot path**. No suggestion when confidence is low, when the user explicitly picked an agent for the session, or in temporary/incognito sessions. **Silent auto-routing is explicitly OUT of scope** — a future earned-autonomy mechanism (post AUTONOMY-GUARDRAILS trust accrual) may graduate a high-precision pair to auto; this plan only leaves the SEL breadcrumbs such a mechanism would need. **Soul guardrail:** routing metadata lives on the provider-agnostic `AgentDefinition`/`AgentProfile` layer — never on a vendor runtime; the classifier is pure functions over that metadata + the one unified embedding path (`embedding_providers.registry.get_active_embed_fn()`), with zero per-provider logic. The suggestion is a *proposal* (propose-don't-write): nothing about the session changes until the user clicks. Class **B** note: the dismissal-suppression counters are new persisted state (`entity_settings/agent_routing.json`) — pre-LIFECYCLE-DOCTRINE this ships as a plain clean break under the pre-1.0 banner (no gate, no migration; additive file, tolerant reads).
+**Status:** DONE — S1+S2 shipped 2026-07-27 on `feature-agent-routing` (see `## Execution log`):
+`specialty`/`route_hints` on `AgentProfile`+`AgentDefinition`, the pure `agents/routing.py` classifier
+(keyword-first, embedding-second, LLM never in the hot path) hooked into the real chat path via
+`suggest_for_send` (`dashboard/chat_handlers.py`), the suppression store, `agents_routing` config, the
+three routing routes, and the `RoutingChip` mounted in `ChatPage.tsx` with the Feedback-Signal
+`routing_pair` double-write.
+**One logged DEVIATION:** T2.2's muted-state row + Unmute affordance on the agent detail page is
+deferred (the `routingUnmute`/`routingStatus` API and the cooldown/mute logic ship and are tested).
+Status corrected 2026-08-04 by code audit (this line had read DESIGNED). Created 2026-07-26 (roadmap
+rev 12; owner-decided **suggest-first**)
 
 ---
 

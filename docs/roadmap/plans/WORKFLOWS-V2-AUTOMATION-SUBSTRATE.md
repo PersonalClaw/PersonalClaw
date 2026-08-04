@@ -1,9 +1,21 @@
 # Plan: One Automation Substrate — Triggers Fire (or Resume) Workflow Runs
 
-**Status:** PROPOSED (rev 2 — research-integrated 2026-07-12)  
-**Created:** 2026-07-11  
-**Depends on:** WORKFLOWS-V2.md Slices 0-2 (run engine + retention); final step blocked on WORKFLOWS-V2-LOOPS-EVOLUTION Phase 4  
-**Scope:** Unify crons, lifecycle hooks, event triggers, autonudge, heartbeat tasks, and inbox alerts onto one substrate
+**Status:** DONE — sessions 62-70 + S81-S143 shipped (PRs #216-#543): the unified `triggers.json`
+store, the tick as the SOLE clock engine, `ScheduleService` DELETED (S112), the full gate chain
+(incident/screen/capability/PathGuard/budget/claim/slot/duty/quiet-hours), autopause, the delivery
+contract, the boot sweep, the system-scheduler handoff, and the Automations page + Week tab.
+**All 12 success criteria are closed.**
+🛑 **REMAINING:** the webhook fire endpoint is BLOCKED (E4 — owner decision; the threat model assigns
+the inbound surface to MCP-READONLY-INBOUND + EXTERNAL-ACCESS); `idle`'s loop-ticker absorption waits
+on LOOPS-EVOLUTION Phase 4 (note §3/§7 say `kind:idle` itself may ship EARLY for user automations —
+only the autonudge deletion is gated); AUTO-A4's `trigger_source` seam is unbuilt; §3.5's
+`skip_if_active`/`acting_on` are undeclared anywhere; the §5 did/suppressed fold affordance has no FE
+consumer; and 🔴 the `view` kind's runtime (`triggers/pull_on_view.py`) has **ZERO production
+callers** — declared, listed by the API, rendered on the Automations page, and unreachable.
+**`web_watch`'s headless tier is NEWLY STARTABLE** — `src/personalclaw/web/render.py` ships an
+egress-guarded headless-Chromium runtime (the `js-render` Playwright extra), so `web_poll.py`'s
+docstring claim that this repo has no browser runtime is false. Status corrected 2026-08-04 by code
+audit. (rev 2 — research-integrated 2026-07-12)
 
 ---
 

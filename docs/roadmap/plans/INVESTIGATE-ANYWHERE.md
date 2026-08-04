@@ -1,10 +1,13 @@
 # Plan: Investigate Anywhere — One Chat-With-Context Primitive for Every Entity Row
 
-**Status:** DESIGNED — created 2026-07-26 (roadmap rev 13; owner ask: sibling-platform gap analysis round 2)
-**Created:** 2026-07-26
-**Wave:** 2 (S1: the primitive; S2: the adoption sweep)
-**Depends on:** nothing hard (builds on the shipped `launchChat`/seed path, `fence_untrusted`, task modes, and the chat runner's turn-time injection pattern). Coordinates with INBOX-NOTIFICATIONS-UNIFICATION (42 — investigate is a **read-side consumer** of attention items, it adds no kinds/rules to the attention contracts 42 owns; if 42 lands first its typed kinds become the inbox resolver's input), AGENT-ROUTING (56 — the suggested-agent field uses the same suggest-first posture; share the "suggest, never silently auto" tenet, share no code yet), CHAT-CRAFT (55 — both touch ChatPage; sequence commits, don't fork the composer), ARTIFACTS-EVOLUTION (61 — its S3 "iterate with agent" panel consumes this primitive instead of building its own), DESIGN-SYSTEM-CONSISTENCY (51, shipped — the button/chip use the primitives).
-**Scope:** the sibling ecosystem's signature interaction (independently invented by 4+ apps): every entity row gets an **investigate** affordance that opens a chat pre-loaded with that entity's full context. Owner greenlit as ONE shared core primitive plus an adoption sweep across core surfaces. **S1 — the primitive:** `investigate(kind, id)` composes a **fenced context envelope** server-side (kind, id, title, snapshot, deep-link back to the source surface), selects a suggested agent + task mode (default `ask` — read-only investigation), creates a chat session with the envelope staged, and opens it; the envelope is injected at turn time as fenced DATA-not-instructions (mirroring `_inject_knowledge_content`), never concatenated into the user's message; SDK export (`useInvestigate`) so app bundles get it. **S2 — the adoption sweep** (owner-confirmed surface list): inbox items, notifications (esp. cron/loop/subagent failures), tasks (board/list/DAG), schedule + trigger run-history rows, loop cockpit findings/cycles, knowledge items, memory records + lessons ("why do you believe this?"), Doctor findings + crash reports, security/audit events. **Soul guardrails:** (1) **propose-don't-write** — investigating never mutates the entity; resolvers are pure reads and the session opens in `ask` mode (the user may escalate the mode themselves — that's their existing control, not ours); (2) **fenced, server-composed context** — the envelope is composed by core from the owning store (a client can't forge a snapshot) and always passes `fence_untrusted` before reaching a prompt; (3) **one primitive** — no surface grows its own bespoke "chat about this" wiring; the sweep replaces any ad-hoc variant it finds. Class **A** (no persisted-store change; the envelope is per-session transient state) — no gate/migration needed.
+**Status:** DONE — S1 (the primitive: envelope + resolver registry + route + turn-time fenced
+injection + the FE button/chip) shipped 2026-07-27; S2 (the adoption sweep — 13 kinds, 9 FE mounts,
+async-capable registry, two dead-back-link bugs caught by as-a-user validation) shipped 2026-07-28.
+The plan's own S2 log says "Plan COMPLETE". Verified on `main`: 14 registered kinds (the 13 here plus
+`artifact` from ARTIFACTS-EVOLUTION T3.1, i.e. the registry has an external consumer),
+`_inject_investigate_context` defined AND called in `chat_runner.py`, and 11 FE mount files.
+Status corrected 2026-08-04 by code audit (this line had read DESIGNED). Created 2026-07-26 (roadmap
+rev 13; owner ask: sibling-platform gap analysis round 2)
 
 ---
 

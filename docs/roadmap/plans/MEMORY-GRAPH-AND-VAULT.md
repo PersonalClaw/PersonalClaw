@@ -1,12 +1,13 @@
 # Plan: Memory Graph & Readable Vault — Typed Entity Linking, Push-Context, Slots
 
 **Status:** IN PROGRESS — Session 1 (graph data model + write-time linker) shipped 2026-07-28;
-Session 2 COMPLETE (recall arm 2026-07-28 + push reflex 2026-07-30); Sessions 3-5 (formation,
-two-way vault, slots + FE) not started. The §1.3 knowledge-side alias pre-pass remains open.
-rev 2 — research-integrated 2026-07-12  
-**Created:** 2026-07-12  
-**Depends on:** nothing hard. Pairs with WORKFLOWS-V2-LEARNING-FLYWHEEL (which owns lesson/skill lifecycle — this plan owns the *store structure* under it) and with the git-snapshot work (NEW-4) for vault versioning  
-**Scope:** memory.db data-model change (typed entity graph, zero-LLM write-time linking, graph recall arm, Extract→Decide formation, holder attribution) + memory UX primitives (editable Markdown vault, memory citations, memory slots incl. a self-model slot). Knowledge.db is *enriched* (denser mentions, shared alias resolution), never restructured — it already has the graph tables this plan gives memory.
+Session 2 COMPLETE (recall arm 2026-07-28 + push reflex 2026-07-30); **the §1.3 knowledge-side alias
+pre-pass LANDED 2026-07-30** (`knowledge/alias_prepass.py::link_known_entities`, called from
+`knowledge/pipeline/runner.py`, PR #118) — this line previously claimed it was still open, contradicting
+the plan's own log.
+Sessions 3-5 (formation, two-way vault, slots + FE) not started: the vault is still the one-way
+mirror, and `vault_mode` / the `slot.*` family do not exist. Status corrected 2026-08-04 by code audit.
+(rev 2 — research-integrated 2026-07-12)
 
 ---
 

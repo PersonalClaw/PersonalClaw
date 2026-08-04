@@ -1,9 +1,12 @@
 # Plan: Ambient Surfaces — Composable Home, Live Artifacts, Generative UI, Tray Presence
 
-**Status:** PROPOSED (rev 2 — research-integrated 2026-07-12)  
-**Created:** 2026-07-12  
-**Depends on:** WORKFLOWS-V2.md Slices 0-2 (run engine, for workflow-bound tile refresh); WORKFLOWS-V2-AUTOMATION-SUBSTRATE.md §1.2 `view` trigger kind + ledger-only fires (tiles degrade gracefully to client-TTL refresh until it lands)  
-**Scope:** Open the hardcoded dashboard into a user-composable home of live artifact tiles; give artifacts existence outside chat threads (chatless refresh, tweakable parameters, click-annotation); build the generative-UI layer (typed component registry, streaming renderer, agency-free visualize, action feedback into execution); ship a macOS menu-bar companion for runs and approvals
+**Status:** PROPOSED (rev 2 — research-integrated 2026-07-12; amended 2026-07-26 twice). Not started —
+verified 2026-08-04: no tile registry, no `dashboard_views.json`/`/api/dashboard/views`, no
+`AmbientConfig`, no `visualize(` primitive, no annotate mode, no menu-bar/tray code.
+**INHERIT, do not rebuild:** §2.2's `artifact-update` action provider already landed under
+WORKFLOWS-V2 Slice 9b (`action_providers/artifact_update_provider.py`, registered and hook-allowlisted),
+and the widget action bridge exists un-extracted (`WidgetFrame.tsx` → `ne:widget-action` →
+`ChatPage.tsx`), which is what the round-1 amendment predicted.
 
 ---
 
