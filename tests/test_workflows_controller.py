@@ -32,6 +32,7 @@ from personalclaw.workflows.models import (
     Failure,
     FailureClass,
     InstanceState,
+    Node,
     NodeInstance,
     RunBudget,
     RunStatus,
@@ -376,6 +377,102 @@ class TestTimeouts:
             services=EngineServices(completion=slow, node_timeout_total=30, node_timeout_stall=20),
         )
         assert await c.run_to_completion(timeout=25) == RunStatus.COMPLETE
+
+
+class TestPerNodeStallWindow:
+    """🔴 `timeout_stall_secs` was DECLARED BY FOUR SHIPPED TEMPLATES AND READ BY NOTHING (S147).
+
+    `design-project.refine` asks 600s, `general-project.project` 900s,
+    `goal-pursuit-open-ended.work` 900s and `goal-pursuit-verifiable.work` 1200s. But
+    `_enforce_stall_timeouts` consulted only `services.node_timeout_stall`, so every one silently
+    got the 300s default. That fails in the WRONG DIRECTION: `timeout_stall` is meant to catch a
+    SILENT node, not a slow one, and a node whose author measured it needing 20 minutes was
+    cancelled at 5.
+    """
+
+    def _window(self, cfg: dict, *, run_default: int = 300) -> int:
+        from personalclaw.workflows.controller import RunController
+
+        class _Svc:
+            node_timeout_stall = run_default
+
+        class _Fake:
+            services = _Svc()
+
+            def __init__(self, root):
+                self.root = root
+
+        _Fake._node_stall_window = RunController._node_stall_window
+        root = Node.from_dict(
+            {
+                "kind": "sequence",
+                "id": "r",
+                "children": [{"kind": "stage", "id": "work", "config": cfg}],
+            }
+        )
+        return _Fake(root)._node_stall_window("root.children[0]")
+
+    def test_a_node_can_RAISE_its_own_window(self) -> None:
+        assert self._window({"timeout_stall_secs": 1200}) == 1200
+        assert self._window({"timeout_stall_secs": 600}) == 600
+
+    def test_a_node_can_NOT_lower_it_below_the_run_default(self) -> None:
+        """The run-level value is the operator's floor for how long a silent node may sit; letting a
+        bundled template shorten it would let a spec tighten an operator's policy."""
+        assert self._window({"timeout_stall_secs": 60}) == 300
+
+    @pytest.mark.parametrize("raw", [0, -5, "x", None, ""])
+    def test_an_absent_or_invalid_value_falls_back_to_the_default(self, raw) -> None:
+        """Never DISABLES the check — a malformed knob must not switch a safety timeout off."""
+        cfg = {} if raw is None else {"timeout_stall_secs": raw}
+        assert self._window(cfg) == 300
+
+    def test_an_unknown_path_falls_back_rather_than_raising(self) -> None:
+        from personalclaw.workflows.controller import RunController
+
+        class _Svc:
+            node_timeout_stall = 300
+
+        class _Fake:
+            services = _Svc()
+
+            def __init__(self, root):
+                self.root = root
+
+        _Fake._node_stall_window = RunController._node_stall_window
+        root = Node.from_dict({"kind": "sequence", "id": "r", "children": []})
+        assert _Fake(root)._node_stall_window("root.children[9]") == 300
+
+    def test_every_shipped_template_override_is_now_honoured(self) -> None:
+        """The four real declarations, read from the bundled library rather than restated — a
+        hand-copied list would stop tracking the templates it is meant to protect."""
+        import json
+        import pathlib
+
+        declared: list[tuple[str, int]] = []
+        for path in sorted(
+            pathlib.Path("src/personalclaw/workflows/bundled").glob("*/workflow.json")
+        ):
+            spec = json.loads(path.read_text())
+
+            def walk(node: object) -> None:
+                if isinstance(node, dict):
+                    cfg = node.get("config")
+                    if isinstance(cfg, dict) and "timeout_stall_secs" in cfg:
+                        declared.append((path.parent.name, int(cfg["timeout_stall_secs"])))
+                    for value in node.values():
+                        walk(value)
+                elif isinstance(node, list):
+                    for value in node:
+                        walk(value)
+
+            walk(spec)
+
+        assert (
+            declared
+        ), "no bundled template declares timeout_stall_secs — did the key get renamed?"
+        for name, want in declared:
+            assert self._window({"timeout_stall_secs": want}) == want, name
 
 
 class TestWaitAndGates:
