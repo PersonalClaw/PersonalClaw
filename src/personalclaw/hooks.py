@@ -372,6 +372,15 @@ class HookManager:
             reason = is_sensitive_bash_command(normalized)
             if reason:
                 return ToolHookResult.deny(reason)
+            # A SYSTEM-SCHEDULER write is offered the substrate instead (§7 crit 12 — S143). The
+            # ACP path gets the same gate as the native bash tool: a control on one of two dispatch
+            # seams is a control the other silently skips, which is how the `web_watch` screen gap
+            # (S134) opened. Reads pass — see `triggers/handoff.py` for the read/write split.
+            from personalclaw.triggers.handoff import detect as _scheduler_handoff
+
+            offer = _scheduler_handoff(normalized)
+            if offer is not None:
+                return ToolHookResult.deny(offer.observation)
 
         # Built-in security deny list (always enforced)
         reason = is_denied(normalized, self._config.auto_deny_tools) or is_denied(
