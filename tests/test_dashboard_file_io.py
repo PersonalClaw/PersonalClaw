@@ -270,6 +270,39 @@ def _mock_state(channel_delivery=None, owner_id=""):
     return state
 
 
+def _seed_cron_trigger(
+    tmp_path,
+    monkeypatch,
+    *,
+    trigger_id="abc12345",
+    name="check pipeline",
+    session_key="dashboard:chat-1-1712793600",
+):
+    """Write the trigger `_resolve_origin_session` reads (S111).
+
+    These tests mocked `crons.list_jobs` to return a job whose `session_key` pointed at the
+    originating chat. That read is the unified store now — `crons` described only the legacy file,
+    which nothing has written since S108, so every `session='origin'` reply resolved to
+    `(None, None)` and went nowhere. `session_key_of` strips the store's `pinned:` prefix, so the
+    stored value keeps the legacy spelling this contract was written against.
+    """
+    from personalclaw.config import loader
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    TriggerStore(base_dir=tmp_path).upsert(
+        Trigger(
+            id=trigger_id,
+            name=name,
+            kind="clock",
+            enabled=True,
+            spec={"kind": "interval", "interval_secs": 3600},
+            session=f"pinned:{session_key}",
+        )
+    )
+
+
 class TestSendMessage:
     @pytest.mark.asyncio
     async def test_send_message_missing_text(self):
@@ -418,7 +451,7 @@ class TestSendMessage:
             assert sent_blocks[0]["text"]["text"] == "safe text"
 
     @pytest.mark.asyncio
-    async def test_send_message_session_origin(self):
+    async def test_send_message_session_origin(self, tmp_path, monkeypatch):
         """session='origin' injects into the cron's originating session and triggers a turn."""
         state = _mock_state()
         # Mock a session that the cron originated from
@@ -429,12 +462,7 @@ class TestSendMessage:
         state.get_session = MagicMock(return_value=mock_session)
         state._background_tasks = set()
         state.push_sessions_update = MagicMock()
-        # Mock cron job with session_key pointing to the origin session
-        mock_job = MagicMock()
-        mock_job.id = "abc12345"
-        mock_job.name = "check pipeline"
-        mock_job.session_key = "dashboard:chat-1-1712793600"
-        state.crons.list_jobs = MagicMock(return_value=[mock_job])
+        _seed_cron_trigger(tmp_path, monkeypatch)
         app = _make_send_app(state)
         with (
             patch(
@@ -478,7 +506,7 @@ class TestSendMessage:
                 state.notify.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_send_message_session_origin_queued(self):
+    async def test_send_message_session_origin_queued(self, tmp_path, monkeypatch):
         """Queues the message when the target session is already running."""
         state = _mock_state()
         mock_session = MagicMock()
@@ -488,11 +516,7 @@ class TestSendMessage:
             mock_session._queue.append({"id": "test", "content": content}) or "test"
         )
         state.get_session = MagicMock(return_value=mock_session)
-        mock_job = MagicMock()
-        mock_job.id = "abc12345"
-        mock_job.name = "monitor build"
-        mock_job.session_key = "dashboard:chat-1-1712793600"
-        state.crons.list_jobs = MagicMock(return_value=[mock_job])
+        _seed_cron_trigger(tmp_path, monkeypatch)
         app = _make_send_app(state)
         with patch(
             "personalclaw.dashboard.handlers.messaging._rehydrate_session_from_history"
@@ -519,7 +543,7 @@ class TestSendMessage:
                 state.notify.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_send_message_session_origin_revives_missing_session(self):
+    async def test_send_message_session_origin_revives_missing_session(self, tmp_path, monkeypatch):
         """When session isn't in memory (e.g. after gateway restart), rehydrate via
         _rehydrate_session_from_history and still trigger an agent turn on the revived
         session. Regression test for silent-fail bug where cron→origin injection fell
@@ -544,11 +568,7 @@ class TestSendMessage:
         mock_session.key = "chat-1-1712793600"
         state._background_tasks = set()
         state.push_sessions_update = MagicMock()
-        mock_job = MagicMock()
-        mock_job.id = "abc12345"
-        mock_job.name = "test-cron"
-        mock_job.session_key = "dashboard:chat-1-1712793600"
-        state.crons.list_jobs = MagicMock(return_value=[mock_job])
+        _seed_cron_trigger(tmp_path, monkeypatch, name="test-cron")
         app = _make_send_app(state)
         with (
             patch(
@@ -585,18 +605,16 @@ class TestSendMessage:
                 state.notify.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_send_message_session_origin_rehydrate_returns_none_falls_back(self):
+    async def test_send_message_session_origin_rehydrate_returns_none_falls_back(
+        self, tmp_path, monkeypatch
+    ):
         """When get_session returns None AND rehydrate returns None (no persisted
         session on disk), fall back to normal delivery (notification + optional
         Slack DM). Prevents phantom-session creation when the origin session was
         never persisted or was explicitly closed."""
         state = _mock_state()
         state.get_session = MagicMock(return_value=None)
-        mock_job = MagicMock()
-        mock_job.id = "abc12345"
-        mock_job.name = "test-cron"
-        mock_job.session_key = "dashboard:chat-1-1712793600"
-        state.crons.list_jobs = MagicMock(return_value=[mock_job])
+        _seed_cron_trigger(tmp_path, monkeypatch, name="test-cron")
         app = _make_send_app(state)
         with patch(
             "personalclaw.dashboard.handlers.messaging._rehydrate_session_from_history",
@@ -659,7 +677,7 @@ class TestSendMessage:
                 state.notify.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_send_message_session_channel_bypasses_origin(self):
+    async def test_send_message_session_channel_bypasses_origin(self, tmp_path, monkeypatch):
         """session='channel' is the explicit opt-out: skip origin routing
         entirely and fall through to the channel-delivery path (+ dashboard
         notification). Even if the cron has a valid originating session that
@@ -671,11 +689,7 @@ class TestSendMessage:
         state.get_session = MagicMock(return_value=mock_session)
         # Cron has an origin that WOULD be resolvable — proves session='channel'
         # suppresses resolution regardless.
-        mock_job = MagicMock()
-        mock_job.id = "abc12345"
-        mock_job.name = "notify-channel-cron"
-        mock_job.session_key = "dashboard:chat-1-1712793600"
-        state.crons.list_jobs = MagicMock(return_value=[mock_job])
+        _seed_cron_trigger(tmp_path, monkeypatch)
         app = _make_send_app(state)
         with patch(
             "personalclaw.dashboard.handlers.messaging._rehydrate_session_from_history"
