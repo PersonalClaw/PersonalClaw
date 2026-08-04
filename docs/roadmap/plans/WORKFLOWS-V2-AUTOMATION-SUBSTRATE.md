@@ -3009,3 +3009,69 @@ fence.
 
 - **REMAINING in the decision-7 chain:** PathGuard (absent from the tree entirely), the kill switch,
   and scoped webhook tokens (decision 12, no fire endpoint yet). Unchanged by this session.
+
+### S117 — the global kill switch, on the unified trigger path (decision 7) — DONE
+
+**DISCOVERY: `personalclaw incident on` did not stop a clock trigger.** The CLI describes it as
+"Suspend/resume all unattended work (the kill switch)", `guardrails/incident.py` is SEL-audited, and
+three subsystems already honour it — script hooks, subagent spawns, and the legacy `event_triggers`
+fire path, whose own docstring says "a `/test` that ignored incident mode would run unattended work
+during the incident the kill switch was thrown for". The unified engine — **the sole path that fires
+clock triggers since S100** — never read the flag. Driven before writing a line:
+
+```
+incident active: True
+tick() -> fires: ['clock:nightly']   outcome=ran
+```
+
+So the one control an operator reaches for *during* an incident was the one thing that kept running
+unattended work, while reporting itself active. That is worse than a missing feature: a switch that
+lies is a control the operator will stop trusting after the first incident.
+
+**Wired as GATE 0 in `firepath.evaluate`, ahead of the injection screen**, for two reasons. Ordering:
+an incident halts everything unconditionally, so a gate placed after `screen` would make "is this
+payload clean" a precondition for honouring a kill switch. Location: there are three unattended entry
+points (the clock loop, the file-watch poll, the reaper's re-dispatch) and **only the file-watch one
+checked the flag** — a per-loop check is a control that must be re-added correctly at every future
+call site, which is exactly how this gap opened. One chokepoint, with a declared typed outcome.
+
+Typed `REFUSED`, not `SKIPPED_GATE`: a policy refusal, not a cadence skip. Filing the kill switch
+alongside quiet hours would make the runs inbox unable to distinguish "the operator suspended
+everything" from "it was 3am". The reason names the resume command, because an operator reading a
+refused row should not have to grep for it.
+
+**DISCOVERY (the second defect, found while wiring the first): the manual path's gate plan was
+pure description.** `tools.run` printed `gates enforced: incident, screen, budget, claim, yield,
+capability` and enforced **none** of them. Measured with the switch thrown: `ok: True`, runner
+invoked. A plan that describes a control nobody applies is worse than no plan — it tells the user the
+boundary held. Enforcement now lives in `manual_refusal()`, called from both manual paths
+(`tools.run` **and** the API's `_run_store`, which dispatches directly rather than through the tool,
+so enforcing in one place would have left the UI's Run button firing during an incident).
+
+**DEVIATION / scope call:** `manual_refusal` checks `incident` only, deliberately rather than
+partially. It is the one gate in `MANUAL_NEVER_BYPASSES` that is a global operator-thrown state a
+manual caller can trip without knowing. The other three have no evaluable input on that path —
+`screen` needs payload text a manual run does not carry, `capability` is checked at dispatch against
+the frozen block, and `budget`/`claim` are explicitly not spent by a manual fire (`record_fire` is
+never called). Listing gates with no input is precisely what produced the inert plan, so the reason
+is documented on the function rather than left to be re-derived.
+
+**Deliberately fail-OPEN, and the one place that is correct.** `incident_active()` treats an
+unreadable flag as inactive by design — halting every automation on a filesystem hiccup would be a
+self-inflicted outage. This gate inherits that rather than second-guessing it. The asymmetry against
+S116's deny-by-default fence is intentional and tested: a stuck-open capability fence grants power
+nobody asked for, while a stuck-closed kill switch silently stops everything the user depends on and
+looks identical to a broken scheduler.
+
+**Validated by mutation, not just by passing.** Disabling the new gate turns **8 of the 18** new
+tests red, so they are load-bearing rather than decorative. A dry run still reports its plan during
+an incident (it executes nothing — telling an operator what *would* happen is the opposite of running
+unattended work).
+
+One pre-existing test legitimately shifted: `test_the_passed_list_records_how_far_a_suppressed_fire_got`
+hardcodes the gate sequence, which is its job. Updated to the new order rather than sliced from
+`GATE_ORDER`, so it still fails when the sequence changes.
+
+- **REMAINING in the decision-7 chain:** PathGuard (absent from the tree entirely) and scoped webhook
+  tokens (decision 12 — the `webhook` kind has no fire endpoint yet). Both belong with the webhook
+  runtime, unchanged by this session.

@@ -60,6 +60,7 @@ logger = logging.getLogger(__name__)
 #: fails a test
 #: instead of silently moving the budget check to the wrong side of the claim lock.
 GATE_ORDER: tuple[str, ...] = (
+    "incident",
     "screen",
     "quiet",
     "duty",
@@ -75,6 +76,7 @@ GATE_ORDER: tuple[str, ...] = (
 #: §1.3's typed
 #: outcomes exist to prevent.
 GATE_OUTCOMES: dict[str, str] = {
+    "incident": Outcome.REFUSED.value,
     "screen": Outcome.BLOCKED_INJECTION.value,
     "quiet": Outcome.SKIPPED_GATE.value,
     "duty": Outcome.SKIPPED_GATE.value,
@@ -178,6 +180,36 @@ async def evaluate(ctx: FireContext) -> FireDecision:
     useful.
     """
     passed: list[str] = []
+
+    # ── 0. THE KILL SWITCH (decision 7's "global manual kill switch") ──
+    #
+    # 🔴 MEASURED: `personalclaw incident on` did NOT stop a clock trigger. The CLI calls it
+    # "Suspend/resume all unattended work" and the legacy `event_triggers` path refuses on it, but
+    # the unified engine — the sole path that fires clock triggers since S100 — never read the flag.
+    # Driven before writing this: switch thrown, `tick()` still returned `fires: ['clock:nightly']`
+    # with `outcome=ran`. So the one control an operator reaches for DURING an incident was the one
+    # that kept running unattended work, while reporting itself active.
+    #
+    # FIRST, ahead of the injection screen, because an incident halts everything unconditionally:
+    # a gate ordered after `screen` would make "is the payload clean" a precondition for honouring
+    # a kill switch. And here rather than in each loop, because there are three unattended entry
+    # points (the clock loop, the file-watch poll, the reaper's re-dispatch) and only the file-watch
+    # one checked — a per-loop check is a control that must be re-added correctly at every future
+    # call site, which is precisely how this gap opened.
+    #
+    # `incident_active()` is itself fail-OPEN by deliberate design (see `guardrails/incident.py`:
+    # an unreadable flag file must not halt all automation on a filesystem hiccup), so this gate
+    # inherits that and does not second-guess it.
+    from personalclaw.guardrails.incident import incident_active
+
+    if incident_active():
+        return _refuse(
+            "incident",
+            "incident mode is active: unattended fires are suspended "
+            "(resume with `personalclaw incident off`)",
+            passed,
+        )
+    passed.append("incident")
 
     # ── 1. injection screen, on CONTENT, before anything about timing ──
     if ctx.payload_text:
