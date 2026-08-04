@@ -29,8 +29,10 @@ from personalclaw.snapshot import (
     _copy_tree_no_overwrite,
     _do_replace,
     _merge_crons,
+    _merge_event_triggers,
     _merge_memory,
     _merge_notifications,
+    _merge_triggers,
 )
 
 logger = logging.getLogger(__name__)
@@ -66,6 +68,12 @@ EXPORT_EXCLUDE = frozenset(
         # Process-local runtime files (not "state", so not inventory entries).
         "session_pids.txt",
         "agent_pids.txt",
+        # Advisory `flock` files. They carry no state, and a restored one is a lock held by a
+        # process that does not exist on this machine — measured: the run-history tree exported
+        # `cron-history/.history.lock` before this entry.
+        ".history.lock",
+        ".triggers.lock",
+        ".crons.lock",
     }
 )
 
@@ -144,7 +152,17 @@ def create_export_zip() -> tuple[bytes, dict]:
         for fname in (
             "config.json",
             "hooks.json",
+            # 🔴 `triggers.json` — the SOLE source of automations since S101, and the only one
+            # since S112 deleted `ScheduleService`. Driven before adding it: a snapshot of a home
+            # with two automations, an event trigger and run history captured `config.json` ALONE,
+            # so `personalclaw snapshot` silently lost every automation the user had. The release
+            # notes advise taking one before a breaking upgrade — it must not lose anything.
+            "triggers.json",
+            # `crons.json` still travels: it is read-only per §6 and `automation verify-migration`
+            # diffs both sides, so a snapshot that dropped it would break that command after a move.
             "crons.json",
+            # Named in the plan's own recon note as missing alongside the trigger store.
+            "event_triggers.json",
             "notifications.jsonl",
             "feedback.jsonl",
             "project_dir",
@@ -171,7 +189,12 @@ def create_export_zip() -> tuple[bytes, dict]:
 
         # Directory trees: workspace, plan_memory, skills
         dir_counts: dict[str, int] = {}
-        for dirname in ("workspace", "plan_memory", "skills"):
+        # `cron-history` is the run ledger `ScheduleRunStore` owns (JSONL per job + a cross-job
+        # index). Carried with the automations: a restored home whose triggers exist but whose run
+        # history is empty reports "never ran" for automations that have run for months, which is
+        # indistinguishable from a broken fire path — the same ambiguity the learning staging log
+        # travels to avoid (see the note above).
+        for dirname in ("workspace", "plan_memory", "skills", "cron-history"):
             src_dir = pc / dirname
             count = 0
             if src_dir.is_dir():
@@ -192,6 +215,7 @@ def create_export_zip() -> tuple[bytes, dict]:
         contents_summary["workspace_files"] = dir_counts.get("workspace", 0)
         contents_summary["plan_memory_files"] = dir_counts.get("plan_memory", 0)
         contents_summary["skill_count"] = dir_counts.get("skills", 0)
+        contents_summary["run_history_files"] = dir_counts.get("cron-history", 0)
 
         # Manifest
         manifest = {
@@ -301,6 +325,22 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                 shutil.copy2(str(snap / "learning.db"), str(pc / "learning.db"))
                 summary["items"].append("learning staging (copied)")
 
+            if (snap / "triggers.json").is_file():
+                if (pc / "triggers.json").is_file():
+                    _merge_triggers(snap / "triggers.json", pc / "triggers.json")
+                    summary["items"].append("automations (merged)")
+                else:
+                    shutil.copy2(str(snap / "triggers.json"), str(pc / "triggers.json"))
+                    summary["items"].append("automations (copied)")
+
+            if (snap / "event_triggers.json").is_file():
+                if (pc / "event_triggers.json").is_file():
+                    _merge_event_triggers(snap / "event_triggers.json", pc / "event_triggers.json")
+                    summary["items"].append("event triggers (merged)")
+                else:
+                    shutil.copy2(str(snap / "event_triggers.json"), str(pc / "event_triggers.json"))
+                    summary["items"].append("event triggers (copied)")
+
             if (snap / "crons.json").is_file():
                 if (pc / "crons.json").is_file():
                     _merge_crons(snap / "crons.json", pc / "crons.json")
@@ -335,7 +375,16 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                 shutil.copy2(str(snap / "feedback.jsonl"), str(pc / "feedback.jsonl"))
                 summary["items"].append("feedback (restored)")
 
-            for dirname in ("workspace", "plan_memory"):
+            # `cron-history` joins the merged trees (S113). Export carried it and import ignored it
+            # — driven on a round trip, so a restored home showed its automations with an EMPTY
+            # run history: "never ran" for automations that have run for months, which is
+            # indistinguishable from a broken fire path.
+            #
+            # NO-OVERWRITE is the right merge for this ledger, not append: each file is one job's
+            # JSONL, and concatenating two homes' rows would double-count runs that
+            # `_last_run_status` and the autopause counters read. A job this home already has keeps
+            # its own history; a job arriving from the snapshot brings its own.
+            for dirname in ("workspace", "plan_memory", "cron-history"):
                 sd = snap / dirname
                 if sd.is_dir():
                     dd = pc / dirname

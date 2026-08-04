@@ -723,3 +723,216 @@ class TestRoundTrip:
         conn.close()
         assert len(rows) == 1
         assert "deployment" in rows[0][1]
+
+
+# ── automations travel with a snapshot (S113) ──
+
+
+def _seed_automations(pc, *, names=("Nightly backup",), armed=True):
+    """Write the trigger store + an event trigger + a run record the way the runtime does."""
+    import asyncio
+
+    from personalclaw.schedule_history import ScheduleRun, ScheduleRunStore
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
+
+    store = TriggerStore(base_dir=pc)
+    for n, name in enumerate(names):
+        store.upsert(
+            Trigger(
+                id=f"clock:auto-{n}",
+                name=name,
+                kind="clock",
+                enabled=True,
+                spec={"kind": "cron", "expr": "0 3 * * *"},
+                workflow={"inline": {"provider": "bash", "config": {"command": "backup"}}},
+                next_fire_at="2026-01-01T03:00:00+00:00" if armed else "",
+                run_count=42,
+            )
+        )
+    (pc / "event_triggers.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "e1",
+                    "pattern": "memory",
+                    "action_provider": "run-prompt",
+                    "action_config": {},
+                }
+            ]
+        )
+    )
+    asyncio.run(
+        ScheduleRunStore(pc).append(
+            ScheduleRun(
+                run_id="r1",
+                job_id="clock:auto-0",
+                trigger="schedule",
+                started_at=1.0,
+                finished_at=2.0,
+                duration_ms=1,
+                status="success",
+            )
+        )
+    )
+    return store
+
+
+class TestAutomationsInASnapshot:
+    """🔴 THE DEFECT (S113). `create_export_zip` carried `crons.json` and `hooks.json` and NOT
+    `triggers.json` — the store that has been the sole source of automations since S101, and the
+    only one since S112 deleted `ScheduleService`.
+
+    Driven before the fix, against a home holding two automations, an event trigger and run history:
+    the snapshot captured **`config.json` alone**. So `personalclaw snapshot` silently lost every
+    automation the user had, and the release notes advise taking one before a breaking upgrade — the
+    one moment it must not lose anything.
+    """
+
+    def test_the_trigger_store_is_captured(self, fake_personalclaw_home):
+        _seed_automations(fake_personalclaw_home)
+        with patch("personalclaw.portability.config_dir", return_value=fake_personalclaw_home):
+            zip_bytes, manifest = create_export_zip()
+        names = zipfile.ZipFile(io.BytesIO(zip_bytes)).namelist()
+        assert any(n.endswith("/triggers.json") for n in names), names
+        assert "triggers.json" in manifest["contents"]
+
+    def test_event_triggers_are_captured(self, fake_personalclaw_home):
+        """Named in the plan's own recon note as missing alongside the trigger store."""
+        _seed_automations(fake_personalclaw_home)
+        with patch("personalclaw.portability.config_dir", return_value=fake_personalclaw_home):
+            zip_bytes, _ = create_export_zip()
+        names = zipfile.ZipFile(io.BytesIO(zip_bytes)).namelist()
+        assert any(n.endswith("/event_triggers.json") for n in names)
+
+    def test_the_run_ledger_is_captured(self, fake_personalclaw_home):
+        """A restored home whose triggers exist but whose history is empty reports "never ran" for
+        automations that have run for months — indistinguishable from a broken fire path."""
+        _seed_automations(fake_personalclaw_home)
+        with patch("personalclaw.portability.config_dir", return_value=fake_personalclaw_home):
+            zip_bytes, manifest = create_export_zip()
+        names = zipfile.ZipFile(io.BytesIO(zip_bytes)).namelist()
+        assert any("cron-history/" in n and n.endswith(".jsonl") for n in names), names
+        assert manifest["contents"]["run_history_files"] >= 1
+
+    def test_advisory_lock_files_do_not_travel(self, fake_personalclaw_home):
+        """🔴 Found by driving: the run-history tree exported `cron-history/.history.lock`. A
+        restored lock is one held by a process that does not exist on this machine."""
+        _seed_automations(fake_personalclaw_home)
+        with patch("personalclaw.portability.config_dir", return_value=fake_personalclaw_home):
+            zip_bytes, _ = create_export_zip()
+        names = zipfile.ZipFile(io.BytesIO(zip_bytes)).namelist()
+        assert not [n for n in names if n.endswith(".lock")], names
+
+    def test_a_round_trip_into_an_empty_home_restores_the_automations(
+        self, fake_personalclaw_home, tmp_path
+    ):
+        from personalclaw.triggers.store import TriggerStore
+
+        _seed_automations(fake_personalclaw_home, names=("Nightly backup", "Weekly report"))
+        with patch("personalclaw.portability.config_dir", return_value=fake_personalclaw_home):
+            zip_bytes, _ = create_export_zip()
+        zip_path = tmp_path / "snap.zip"
+        zip_path.write_bytes(zip_bytes)
+
+        target = tmp_path / "target"
+        target.mkdir()
+        with patch("personalclaw.portability.config_dir", return_value=target):
+            with patch.dict(os.environ, {"PERSONALCLAW_HOME": str(target)}):
+                apply_import_zip(zip_path, mode="merge")
+
+        rows = TriggerStore(base_dir=target).load()
+        assert {r.trigger.name for r in rows} == {"Nightly backup", "Weekly report"}
+        assert (target / "event_triggers.json").is_file()
+        assert (target / "cron-history" / "clock:auto-0.jsonl").is_file()
+
+    def test_a_merge_skips_a_name_the_home_already_has(self, fake_personalclaw_home, tmp_path):
+        """Skip-by-NAME, mirroring `_merge_crons`: an id collision between two homes is meaningless
+        (ids are slugs), while a name collision means a second copy would fire the same work twice.
+        """
+        from personalclaw.triggers.store import TriggerStore
+
+        _seed_automations(fake_personalclaw_home, names=("Nightly backup", "Weekly report"))
+        with patch("personalclaw.portability.config_dir", return_value=fake_personalclaw_home):
+            zip_bytes, _ = create_export_zip()
+        zip_path = tmp_path / "snap.zip"
+        zip_path.write_bytes(zip_bytes)
+
+        target = tmp_path / "target"
+        target.mkdir()
+        (target / "config.json").write_text("{}")
+        _seed_automations(target, names=("Nightly backup",))  # the collision
+
+        with patch("personalclaw.portability.config_dir", return_value=target):
+            with patch.dict(os.environ, {"PERSONALCLAW_HOME": str(target)}):
+                apply_import_zip(zip_path, mode="merge")
+
+        rows = TriggerStore(base_dir=target).load()
+        names = sorted(r.trigger.name for r in rows)
+        assert names == ["Nightly backup", "Weekly report"], names
+        assert len(rows) == 2, "the duplicate must not be imported twice"
+
+    def test_an_imported_automation_arrives_PAUSED_and_unarmed(
+        self, fake_personalclaw_home, tmp_path
+    ):
+        """🔴 Runtime state is dropped on purpose. `next_fire_at` from another machine is a fire
+        already scheduled elsewhere, and `run_count`/health describe runs this home never performed.
+        An imported row arrives paused so the user chooses when it starts firing here."""
+        from personalclaw.triggers.store import TriggerStore
+
+        _seed_automations(fake_personalclaw_home, names=("Weekly report",))
+        with patch("personalclaw.portability.config_dir", return_value=fake_personalclaw_home):
+            zip_bytes, _ = create_export_zip()
+        zip_path = tmp_path / "snap.zip"
+        zip_path.write_bytes(zip_bytes)
+
+        target = tmp_path / "target"
+        target.mkdir()
+        (target / "config.json").write_text("{}")
+        _seed_automations(target, names=("Something else",))
+
+        with patch("personalclaw.portability.config_dir", return_value=target):
+            with patch.dict(os.environ, {"PERSONALCLAW_HOME": str(target)}):
+                apply_import_zip(zip_path, mode="merge")
+
+        imported = next(
+            r.trigger
+            for r in TriggerStore(base_dir=target).load()
+            if r.trigger.name == "Weekly report"
+        )
+        assert imported.enabled is False
+        assert imported.next_fire_at == ""
+        assert imported.run_count == 0
+
+    def test_the_home_s_own_automations_are_never_touched(self, fake_personalclaw_home, tmp_path):
+        from personalclaw.triggers.store import TriggerStore
+
+        _seed_automations(fake_personalclaw_home, names=("Weekly report",))
+        with patch("personalclaw.portability.config_dir", return_value=fake_personalclaw_home):
+            zip_bytes, _ = create_export_zip()
+        zip_path = tmp_path / "snap.zip"
+        zip_path.write_bytes(zip_bytes)
+
+        target = tmp_path / "target"
+        target.mkdir()
+        (target / "config.json").write_text("{}")
+        _seed_automations(target, names=("Mine",))
+
+        with patch("personalclaw.portability.config_dir", return_value=target):
+            with patch.dict(os.environ, {"PERSONALCLAW_HOME": str(target)}):
+                apply_import_zip(zip_path, mode="merge")
+
+        mine = next(
+            r.trigger for r in TriggerStore(base_dir=target).load() if r.trigger.name == "Mine"
+        )
+        assert mine.enabled is True, "an existing automation must keep firing"
+        assert mine.next_fire_at, "and must keep its armed fire"
+
+    def test_the_legacy_cron_file_still_travels(self, fake_personalclaw_home):
+        """§6 keeps `crons.json` read-only on disk so `automation verify-migration` can diff both
+        sides — a snapshot that dropped it would break that command after a move."""
+        _seed_automations(fake_personalclaw_home)
+        with patch("personalclaw.portability.config_dir", return_value=fake_personalclaw_home):
+            zip_bytes, _ = create_export_zip()
+        names = zipfile.ZipFile(io.BytesIO(zip_bytes)).namelist()
+        assert any(n.endswith("/crons.json") for n in names)
