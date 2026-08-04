@@ -189,21 +189,20 @@ def _resolve_loop_finding(entity_id: str, state) -> InvestigateContext | None:
     )
 
 
-def _cadence(job) -> str:
-    """A job's cadence in words. ``ScheduleDefinition`` is a plain dataclass (no
-    renderer), so read its three shapes directly."""
-    sched = getattr(job, "schedule", None)
-    kind = str(getattr(sched, "kind", "") or "?")
-    every = getattr(sched, "every_secs", None)
-    cron = getattr(sched, "cron_expr", None)
-    at_ts = getattr(sched, "at_ts", None)
-    if kind == "every" and every:
-        return f"every {every}s"
-    if kind == "cron" and cron:
-        return f"cron {cron}"
-    if kind == "at" and at_ts:
-        return f"once at {at_ts}"
-    return kind
+def _cadence(trigger) -> str:
+    """A trigger's cadence in words, via the SHARED describer (S111).
+
+    Delegates to `schedule_view.describe_cadence` rather than reading a `ScheduleDefinition`'s three
+    shapes: that was the legacy job's spelling, and this now receives a store `Trigger`. A second
+    formatter here would drift from the one the rest of the UI renders — the exact reason
+    `describe_cadence` exists.
+    """
+    from personalclaw.triggers import schedule_view as _sv
+
+    try:
+        return _sv.describe_cadence(trigger)
+    except Exception:  # noqa: BLE001 - enrichment text must never fail a snapshot
+        return "?"
 
 
 # ── The attention path: notifications ────────────────────────────────────────
@@ -235,23 +234,26 @@ def _resolve_notification(entity_id: str, state) -> InvestigateContext | None:
     if job_id:
         lines.append(f"\nLinked schedule job: {job_id}")
         try:
-            svc = getattr(state, "crons", None)
-            job = next(
-                (
-                    j
-                    for j in (svc.list_jobs(include_disabled=True) if svc else [])
-                    if j.id == job_id
-                ),
-                None,
-            )
+            # The unified store (S111). `state.crons` described only the legacy file, which nothing
+            # has written since S108 — so this enrichment was blank for every real automation.
+            from personalclaw.config.loader import config_dir
+            from personalclaw.triggers.store import TriggerStore
+
+            row = TriggerStore(base_dir=config_dir()).get(job_id)
+            job = row.trigger if row is not None else None
             if job is not None:
                 lines.append(f"  Name: {job.name}")
                 lines.append(f"  Cadence: {_cadence(job)}")
                 lines.append(f"  Enabled: {job.enabled}")
-                lines.append(f"  Last status: {job.last_status or '?'}")
-                if job.last_error:
-                    lines.append(f"  Last error: {job.last_error}")
-                lines.append(f"  Consecutive failures: {job.consecutive_failures}")
+                # `health_status` / `last_error_summary` are the store's names for the legacy
+                # `last_status` / `last_error` — `LEGACY_FIELD_MAP` declares both. Reading the old
+                # spellings off a `Trigger` raises AttributeError; driving this is how I found it.
+                lines.append(f"  Health: {job.health_status or '?'}")
+                if job.last_error_summary:
+                    lines.append(f"  Last error: {job.last_error_summary}")
+                # `consecutive_failures` has NO store field: the map says the autopause counter is
+                # derived from fire records, so the run history is where that lives now. Omitted
+                # rather than printed as a fake 0 — a wrong number here reads as "healthy".
         except Exception:  # noqa: BLE001 — enrichment only
             logger.debug("notification job enrichment failed", exc_info=True)
 
@@ -374,21 +376,29 @@ async def _resolve_schedule_run(entity_id: str, state) -> InvestigateContext | N
     through its job's history file, so the id must carry both — same composite
     shape as ``loop_finding``). A bare job id resolves its most recent run."""
     job_id, _, run_id = entity_id.partition(":")
-    svc = getattr(state, "crons", None)
-    if svc is None or not job_id:
+    if not job_id:
         return None
+    # `ScheduleRunStore` directly + the unified store for the job's metadata (S111). The run half
+    # was always this store — `ScheduleService`'s methods were one-line passthroughs (S105) — and
+    # the metadata half came from a legacy file nothing has written since S108.
+    from personalclaw.config.loader import config_dir
+    from personalclaw.schedule_history import ScheduleRunStore
+    from personalclaw.triggers.store import TriggerStore
+
+    runs = ScheduleRunStore(config_dir())
     try:
         if run_id:
-            run = await svc.get_run(job_id, run_id)
+            run = await runs.get_run(job_id, run_id)
         else:
-            rows, _total = await svc.list_runs(job_id, offset=0, limit=1)
+            rows, _total = await runs.list_for_job(job_id, offset=0, limit=1)
             run = rows[0] if rows else None
     except Exception:  # noqa: BLE001 — a bad/unsafe job id is an entity miss
         logger.debug("schedule-run read failed for %s", entity_id, exc_info=True)
         return None
     if not run:
         return None
-    job = next((j for j in svc.list_jobs(include_disabled=True) if j.id == job_id), None)
+    _row = TriggerStore(base_dir=config_dir()).get(job_id)
+    job = _row.trigger if _row is not None else None
     lines = [
         f"Schedule run {run.get('run_id') or '?'} of job {job_id}",
         f"Job: {job.name if job else '(deleted)'}",
@@ -398,9 +408,18 @@ async def _resolve_schedule_run(entity_id: str, state) -> InvestigateContext | N
     ]
     if job is not None:
         lines.append(f"Cadence: {_cadence(job)}")
-        lines.append(f"Action: {job.provider or '?'} ({job.exec_mode or '?'})")
-        if job.message:
-            lines.append(f"Prompt/message: {job.message}")
+        # The action lives in `workflow`, and its message key differs per provider
+        # (`task_template` for invoke-agent, `message` for run-prompt) — the shared projection is
+        # what resolves that, which is why it is used here rather than a hand-read.
+        from personalclaw.triggers import schedule_view as _sv
+
+        _row_view = _sv.to_schedule_row(job)
+        # `provider` is NESTED under `action` in the wire shape — read it there. Driving this
+        # printed "Action: ?" from a top-level lookup that silently returned None.
+        _provider = str((_row_view.get("action") or {}).get("provider") or "")
+        lines.append(f"Action: {_provider or '?'}")
+        if _row_view.get("message"):
+            lines.append(f"Prompt/message: {_row_view['message']}")
     if run.get("summary"):
         lines.append(f"\nSummary: {run['summary']}")
     if run.get("error"):

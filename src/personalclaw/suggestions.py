@@ -96,14 +96,19 @@ def _build_context(state: "DashboardState") -> str:
     except Exception:
         logger.debug("Failed to read sessions for suggestions", exc_info=True)
 
-    # Cron jobs (what's scheduled)
+    # Automations (what's scheduled) — from the unified store (S111). Reading `state.crons` here
+    # described only the legacy file, which nothing has written since S108: a user whose automations
+    # all live in `triggers.json` got NO scheduled context in their suggestions.
     try:
-        cron_jobs = state.crons.list_jobs()
-        if cron_jobs:
-            cron_names = [f"- {j.name}" for j in cron_jobs[:5]]
-            parts.append("## Active Cron Jobs\n" + "\n".join(cron_names))
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers.store import TriggerStore
+
+        rows = [r for r in TriggerStore(base_dir=config_dir()).load() if r.trigger.enabled]
+        if rows:
+            names = [f"- {r.trigger.name}" for r in rows[:5]]
+            parts.append("## Active Automations\n" + "\n".join(names))
     except Exception:
-        logger.debug("Failed to read crons for suggestions", exc_info=True)
+        logger.debug("Failed to read automations for suggestions", exc_info=True)
 
     # Time context
     now = datetime.now()
