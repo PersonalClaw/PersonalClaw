@@ -48,6 +48,7 @@ def _trigger(tid="t1", *, next_at=0.0, interval=3600, enabled=True, **over):
         enabled=enabled,
         spec={"kind": "interval", "interval_secs": interval},
         workflow={"provider": "run-prompt", "config": {"message": "go"}},
+        capabilities={"providers": ["run-prompt"]},
         next_fire_at=SVC.to_iso(next_at) if next_at else "",
     )
     base.update(over)

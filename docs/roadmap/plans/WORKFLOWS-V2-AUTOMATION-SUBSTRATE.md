@@ -2948,3 +2948,64 @@ covered — a credential-shaped literal anywhere, and a secret-NAMED field holdi
   switch, provider chokepoint tests) and scoped webhook tokens (decision 12). PathGuard does not exist
   in the tree at all, and the `webhook` kind's `token_ref` is validated but has no fire endpoint yet —
   both are larger than a templating session and belong with the webhook runtime.
+
+### S116 — decision 7's frozen-capability fence, actually enforced (§1.4 / R3) — DONE
+
+**DISCOVERY (the defect): the fence had never run on a single real fire.** `FireContext.requested`
+defaults to `{}`, and **nothing in production ever populated it**. The only real construction —
+`service.tick` — omitted the field, so `evaluate`'s `if ctx.requested:` was permanently false and
+decision 7's entire enforcement point was dead code on the live path. It passed its own unit tests
+the whole time, because those hand-supply `requested`.
+
+This is exactly the shape S97 found for `existing_claim`, **in the gate directly below it**: a
+control that is present, reviewed, tested, and enforcing nothing because its input has no writer.
+Found by tracing the WRITERS of the state the gate reads rather than by reading the gate — the
+recipe that has now produced a finding in every session of this cutover.
+
+**DISCOVERY (why enforcement alone would have been an outage).** Measured before choosing a design:
+**no writer sets `capabilities`** — not `tools.create`, not the app-cron reconciler, not the digest
+reconciler, not the CLI, not the API — and **every one of them creates a write-capable action**
+(`invoke-agent`, `run-prompt`, `notification-digest`). The fence denies on an empty block. So
+simply populating `requested` would have refused 100% of real automations: a total outage of the
+feature, shipped as a security fix, and one that would have looked correct in review.
+
+So the fence lands as three parts, not one:
+
+1. **Decision 7's read-only default, as written.** "Auto-fired triggers default to read-only action
+   providers; write-capable actions require explicit opt-in." Providers are classified into
+   `READ_ONLY_PROVIDERS` and `WRITE_CAPABLE_PROVIDERS`, and a read-only action fires with no
+   `capabilities` block at all. `provider_is_read_only` **fails closed** — an unclassified provider
+   reads as write-capable, so deny-by-default stays where it matters. A completeness test asserts
+   every provider the registry actually ships is classified, and it earned its keep immediately by
+   catching three unclassified knowledge providers.
+2. **A save-time freeze on all four writers.** `capabilities_for_action` derives the block from the
+   action, so a new automation is born grantable rather than born refusing. A read-only action is
+   deliberately left with an EMPTY block: writing `{"providers": ["notify"]}` would imply an opt-in
+   the user never made, which matters the day someone edits that action to something write-capable
+   and a stale block grants it.
+3. **An idempotent boot backfill** (`boot_migrate.backfill_capabilities`) for the population already
+   on disk. Modelled on `arm_unarmed`: it grants each pre-S116 row exactly what its CURRENT action
+   already does — a faithful grandfather, not a widening — never touches a row that already carries
+   a block (so a deliberately tighter fence survives), skips broken rows, and logs at INFO because
+   granting write capabilities to existing automations is a security-relevant state change the owner
+   should be able to find afterwards.
+
+**DEVIATION:** the plan's row implies enforcement is the whole task. It is the smallest part. The
+read-only default and the backfill are what make it landable, and both are decision 7's own text
+rather than new scope.
+
+**Validated by driving, not by reading.** A real `tick()` over four triggers: read-only fires with
+no block; write-capable with no grant is `refused` with the provider named in the ledger reason; the
+same trigger with its grant fires; an unclassified provider is refused. Then the backfill over a
+pre-S116 store, followed by a real tick — all four grandfathered rows fire.
+
+**Test-fixture finding, worth recording as a rule.** 23 tests across 7 files broke, all one cause:
+their helpers hand-built triggers with a write-capable action and **no** capability block — state no
+real writer produces. That is the same "distrust tests that hand-build the state" hazard, from the
+other direction: the fixtures were not testing the fence, they were *bypassing a contract every
+writer satisfies*. Fixed by having the helpers freeze the way real writers do (the facade's helper
+docstring already claimed it "arms the row the way every real write path does"), not by relaxing the
+fence.
+
+- **REMAINING in the decision-7 chain:** PathGuard (absent from the tree entirely), the kill switch,
+  and scoped webhook tokens (decision 12, no fire endpoint yet). Unchanged by this session.

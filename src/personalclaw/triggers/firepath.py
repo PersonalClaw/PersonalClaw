@@ -245,10 +245,32 @@ async def evaluate(ctx: FireContext) -> FireDecision:
     passed.append("yield")
 
     # ── 7. capability filter, against the FROZEN set, before any def resolves ──
+    #
+    # 🔴 `ctx.requested` was NEVER POPULATED in production (S116). The only real construction
+    # (`service.tick`) omitted it, so this branch was always false and the frozen-capability fence
+    # had never run on a real fire — it passed its own unit tests, which supply `requested` by hand.
+    # Same shape as S97's `existing_claim`: a gate whose input nobody supplied.
     if ctx.requested:
-        from personalclaw.triggers.screen import unfenced_actions
+        from personalclaw.triggers.screen import provider_is_read_only, unfenced_actions
 
-        violations = unfenced_actions(ctx.capabilities, requested=ctx.requested)
+        # DECISION 7's READ-ONLY DEFAULT. "Auto-fired triggers default to read-only action
+        # providers; write-capable actions require explicit opt-in." So a request for a read-only
+        # provider is permitted with no `capabilities` block at all, and only write-capable actions
+        # are held to the frozen set.
+        #
+        # This is what makes the fence landable: NO writer sets `capabilities` (measured across
+        # `tools.py`, `app_crons`, the digest reconciler, the CLI and the API), and the fence denies
+        # on an empty set — so enforcing it without the default would refuse every automation in
+        # existence. Deny-by-default stays where it matters: an unclassified provider reads as
+        # write-capable, so a new action still needs the opt-in.
+        needs_fence = {
+            key: [v for v in values if not (key == "providers" and provider_is_read_only(v))]
+            for key, values in ctx.requested.items()
+        }
+        needs_fence = {k: v for k, v in needs_fence.items() if v}
+        violations = (
+            unfenced_actions(ctx.capabilities, requested=needs_fence) if needs_fence else []
+        )
         if violations:
             named = ", ".join(f"{k}={v}" for k, v, _ in violations[:3])
             return _refuse(

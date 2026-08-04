@@ -68,6 +68,8 @@ def migrate_and_arm(base_dir: Path | str | None = None, *, now: float = 0.0) -> 
         return {"ok": False, "reason": "migration raised", "converted": 0, "armed": []}
 
     armed = arm_unarmed(store, now=now)
+    # Before the first tick, so no pre-S116 row meets the fence unfrozen (see the docstring below).
+    frozen = backfill_capabilities(store)
 
     out: dict[str, Any] = {
         "ok": bool(report.get("lossless", False)) and not report.get("reason"),
@@ -77,6 +79,7 @@ def migrate_and_arm(base_dir: Path | str | None = None, *, now: float = 0.0) -> 
         "lossless": bool(report.get("lossless", False)),
         "reason": str(report.get("reason", "") or ""),
         "armed": armed,
+        "frozen": frozen,
     }
     _log_report(out)
     return out
@@ -107,6 +110,43 @@ def arm_unarmed(store: Any, *, now: float = 0.0) -> list[str]:
     return armed
 
 
+def backfill_capabilities(store: Any) -> list[str]:
+    """Freeze a capability block onto every row authored before the fence was wired (S116).
+
+    🔴 WHY THIS EXISTS. The frozen-capability fence (decision 7) denies a write-capable action whose
+    `capabilities` block does not name its provider. Every writer now freezes that block at save
+    time — but no writer EVER did before S116, and the fence's input (`FireContext.requested`) was
+    never populated, so the gate had never run on a real fire. Wiring it without this backfill would
+    have refused every automation already on disk: measured across `tools.create`, the app-cron
+    reconciler, the digest reconciler, the CLI and the API, not one set `capabilities`, and each
+    creates a write-capable action (`invoke-agent`, `run-prompt`, `notification-digest`).
+
+    So the population that predates the freeze is granted exactly what its CURRENT action already
+    does — no more. This is a faithful grandfather, not a widening: the block names the provider the
+    row is already configured to run, so re-pointing that action at something else still requires a
+    fresh opt-in.
+
+    Idempotent and narrow, modelled on `arm_unarmed`: a row that already carries a block is left
+    alone (never widened), a read-only action gets no block (decision 7's default covers it, and
+    writing one would imply an opt-in the user never made), and a broken row is skipped because
+    granting capabilities to something that does not parse is how a fence becomes decorative.
+    """
+    from personalclaw.triggers import screen
+
+    frozen: list[str] = []
+    for row in store.load():
+        trigger = row.trigger
+        if not getattr(row, "ok", True) or trigger.capabilities:
+            continue
+        granted = screen.capabilities_for_action(trigger)
+        if not granted:
+            continue
+        trigger.capabilities = granted
+        store.upsert(trigger)
+        frozen.append(trigger.id)
+    return frozen
+
+
 def verify_report(base_dir: Path | str | None = None) -> dict[str, Any]:
     """S91's `verify-migration` diff, as data, so boot can log whether the import is trustworthy.
 
@@ -132,6 +172,16 @@ def _log_report(report: dict[str, Any]) -> None:
     A migration that imported nothing (no `crons.json`, or every row already present) logs at DEBUG:
     an INFO line on every boot saying "converted 0" trains people to ignore the line that matters.
     """
+    frozen = report.get("frozen") or []
+    if frozen:
+        # INFO, not DEBUG, and logged even when there was no `crons.json` to migrate: this granted
+        # write capabilities to existing automations, which is a security-relevant state change the
+        # owner of the machine should be able to find in the log afterwards.
+        logger.info(
+            "trigger capability backfill: froze %d automation(s) to their current action (%s)",
+            len(frozen),
+            ", ".join(frozen[:5]) + ("…" if len(frozen) > 5 else ""),
+        )
     if report.get("reason") == "no crons.json":
         logger.debug("no crons.json to migrate")
         return

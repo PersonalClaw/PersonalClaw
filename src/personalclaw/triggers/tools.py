@@ -151,6 +151,7 @@ def create(
     function is testable without a model — the same seam `ScheduleService` uses for `_on_job` and
     the executor uses for its runner.
     """
+    from personalclaw.triggers import screen as _screen
     from personalclaw.triggers.models import Trigger
     from personalclaw.triggers.nl_kind import route
 
@@ -201,6 +202,15 @@ def create(
         created_by=created_by,
         spec=resolved_spec,
         workflow=dict(workflow),
+        # 🔴 FREEZE THE CAPABILITY SET AT SAVE (decision 7 / R3 — S116). Authoring a trigger IS the
+        # opt-in: the user picked this action. Without it, every trigger this function creates
+        # (`run-prompt` from chat, `invoke-agent` from the CLI) carries an EMPTY block, and the
+        # now-wired fence denies on empty — so 100% of real automations would refuse on their next
+        # fire. A read-only action still gets an empty block: the fence permits those without one,
+        # and a written-out grant would imply an opt-in the user never had to make.
+        capabilities=_screen.capabilities_for_action(
+            Trigger(id="", name="", kind=resolved_kind, workflow=dict(workflow))
+        ),
     )
     # 🔴 ARM A CLOCK TRIGGER ON CREATION (S101). Measured: `create` persisted `next_fire_at=""`, and
     # `service.due_ids` only surfaces rows that HAVE one — so every cron created through this

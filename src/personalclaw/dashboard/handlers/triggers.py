@@ -1430,6 +1430,11 @@ async def api_triggers_doctor(request: web.Request) -> web.Response:
                     "gates": row.trigger.gates or {},
                     "workflow": row.trigger.workflow or {},
                     "spec": dict(row.trigger.spec or {}),
+                    # 🔴 Required by the `unfenced_write_action` check (S116). Omitting it made the
+                    # doctor read every trigger as ungranted — a finding on every row, or on none,
+                    # depending on which way the check defaulted. The payload has to carry what the
+                    # check reads.
+                    "capabilities": dict(row.trigger.capabilities or {}),
                 }
             )
     for trigger in _event_store().load():

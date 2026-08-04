@@ -58,6 +58,7 @@ def _clock(tid="j", *, overlap="skip", secs=60, enabled=True):
         overlap=overlap,
         spec={"kind": "interval", "interval_secs": secs},
         workflow={"provider": "run-prompt", "config": {"message": "go"}},
+        capabilities={"providers": ["run-prompt"]},
         next_fire_at=SVC.to_iso(NOW - 1),
     )
 

@@ -402,6 +402,120 @@ def _matches_entry(value: str, entry: str) -> bool:
     return value == entry
 
 
+#: 🔴 Decision 7's READ-ONLY DEFAULT, as data (S116). "Auto-fired triggers (clock/event/file/webhook/
+#: view/web_watch) default to read-only action providers; write-capable actions require explicit
+#: opt-in rendered as a badge on the Automations row."
+#:
+#: Classified by what each provider DOES, read from its own module — not by grepping for
+#: write-shaped calls, which mis-sorted two on the first pass (`run-script` runs a sandboxed Python
+#: script and IS write-capable; `knowledge-retrieve` only queries).
+#:
+#: A provider absent from BOTH sets is treated as write-capable by `provider_is_read_only`. An
+#: unclassified action must not become a hole — the same direction `EMPTY_MEANS` takes, and the same
+#: reason: a new provider added without a line here fails visibly rather than running unbounded.
+READ_ONLY_PROVIDERS: frozenset[str] = frozenset(
+    {
+        "notify",  # raises a dashboard notification
+        "send-message",  # delivers to a channel the user already configured
+        "create-task",  # files a task row — the user's own inbox, no external effect
+        "call-app-route",  # drives a declared app route; the APP's own perms bound it
+        "knowledge-retrieve",  # queries the knowledge store
+        "knowledge-health",  # deterministic store health report, zero tokens
+        "knowledge-gaps",  # finds referenced-but-unwritten entities, zero tokens
+    }
+)
+
+#: Providers that need explicit opt-in. Spelled out rather than derived as "everything else" so the
+#: security-relevant list is greppable and reviewable in one place — and so a diff that moves a
+#: provider between the two sets is visible as exactly that.
+WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
+    {
+        "bash",  # arbitrary shell
+        "run-script",  # sandboxed Python, but still executes author-supplied code
+        "run-prompt",  # spawns an LLM turn with the unattended toolset
+        "invoke-agent",  # same, with an agent persona
+        "run-workflow",  # a whole workflow run
+        "knowledge-persist",  # writes the knowledge store
+        "knowledge-maintain",  # rewrites/merges knowledge items
+        "knowledge-consolidate",  # `apply: true` writes the consolidation
+        "artifact-update",  # mutates an artifact
+        "notification-digest",  # writes an inbox item
+    }
+)
+
+
+def provider_is_read_only(provider: str) -> bool:
+    """Whether `provider` is safe to auto-fire without an explicit capability opt-in.
+
+    Fails CLOSED for an unknown name: an action nobody classified is treated as write-capable, so a
+    provider added without a line in the tables above needs an opt-in rather than inheriting the
+    permissive default. That is the same choice `EMPTY_MEANS` makes one level up.
+    """
+    name = (provider or "").strip()
+    if not name:
+        return False
+    return name in READ_ONLY_PROVIDERS
+
+
+def requested_capabilities(trigger: Any) -> dict[str, list[str]]:
+    """What a trigger's own declared action asks for, in the fence's vocabulary.
+
+    🔴 THE GAP THIS FILLS (S116). `FireContext.requested` defaulted to `{}` and **nothing in
+    production ever populated it** — the only real construction (`service.tick`) omitted it, so
+    `if ctx.requested:` was always false and the frozen-capability fence had never run on a real
+    fire. It passed its own unit tests, which supplied `requested` by hand. Same shape as S97's
+    `existing_claim`: a gate whose input nobody supplied.
+
+    Reads both action shapes, because a real store holds both — `workflow.inline` for a migrated
+    cron, a flat `{provider, config}` for one the chat tools created (S92).
+
+    A workflow REF (`workflow.ref`) requests nothing here: the def's own nodes are fenced by the
+    workflow engine's capability layer, and naming the ref as a "provider" would refuse every
+    workflow-backed trigger against a set that never lists def names.
+    """
+    workflow = getattr(trigger, "workflow", None)
+    if not isinstance(workflow, dict):
+        return {}
+    inline = workflow.get("inline") if isinstance(workflow.get("inline"), dict) else None
+    provider = str((inline or workflow).get("provider") or "").strip()
+    if not provider:
+        return {}
+    return {"providers": [provider]}
+
+
+def capabilities_for_action(trigger: Any) -> dict[str, Any]:
+    """The `capabilities` block a trigger's declared ACTION implies (decision 7 — S116).
+
+    Distinct from `freeze_capabilities` below, which NORMALIZES a block the author supplied. This
+    one DERIVES the block from the action the trigger already carries, so a writer can freeze the
+    right set without asking the user to restate a choice they made by picking the action.
+
+    Decision 7: "Every non-manual trigger carries a `capabilities` block frozen at save time …
+    write-capable actions require explicit opt-in." Authoring a trigger IS the opt-in — the user
+    chose that action — so this records the choice rather than asking twice. The badge on the
+    Automations row is what makes it visible afterwards, and `provider_is_read_only` is what decides
+    whether the row needs one.
+
+    🔴 WHY THIS EXISTS (S116). Measured: NO writer set `capabilities` — not `tools.create`, not the
+    app-cron reconciler, not the digest reconciler, not the CLI, not the API. And every one of them
+    creates a WRITE-CAPABLE action (`invoke-agent`, `run-prompt`, `notification-digest`), so wiring
+    the fence without freezing at save would refuse 100% of real automations on their next fire.
+
+    Read-only actions get an EMPTY block deliberately: the fence permits them without one, and
+    writing `{"providers": ["notify"]}` would imply an opt-in the user never had to make — which
+    matters the day someone edits that trigger's action to something write-capable and the stale
+    block silently grants it.
+
+    Existing rows are never rewritten here. A trigger authored before this shipped keeps an empty
+    block and refuses on its next fire, which is visible and fixable — the direction that cannot
+    silently lose the property. `automation doctor` reports it (S116) and re-saving the trigger
+    freezes it correctly.
+    """
+    requested = requested_capabilities(trigger)
+    providers = [p for p in requested.get("providers", []) if not provider_is_read_only(p)]
+    return {"providers": providers} if providers else {}
+
+
 def capability_allows(
     capabilities: dict[str, Any] | None,
     *,
