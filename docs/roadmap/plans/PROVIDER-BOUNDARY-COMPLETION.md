@@ -1,10 +1,16 @@
 # Plan: Provider-Boundary Completion — Retire the Slack Residue in Core
 
-**Status:** DESIGNED — deepened 2026-07-18 with code recon (initial PROPOSED 2026-07-18; owner-confirmed: core entities are *channels*; anything Slack-specific belongs to the slack-channel app)
-**Created:** 2026-07-18
-**Wave:** 0 — standalone cleanup of a verified residue list; no dependencies.
-**Depends on:** nothing hard. Coordinates with DISTRIBUTION (dependency-set change ships in the same release that fixes `doctor`'s probe) and CI-RELEASE-ENGINEERING (the residue-sweep CI check lands in its workflow set). Honors the deliberate-keeps table in `docs/architecture/provider-boundary.md`.
-**Scope:** finish the Slack extraction. The seams are already vendor-blind (verified: core ships only `reference_echo` + `webui` transports; all 14 Slack modules live in `apps/slack-channel/slack_runtime/`; thread deep-links come from the app behind `build_thread_link`). What remains is enumerated residue in packaging, the CLI, and constants — plus the two *generic seams* whose absence caused the residue (app-contributed CLI setup, app-registered logger roots). **Soul guardrail:** the documented deliberate keeps are NOT in scope — `xox[bpas]-` secret-detection patterns, `sandbox.py` `SLACK_*` env denylist, and `CRED_SLACK_*` key names in `config/loader.py` re-exported via `sdk/channel.py`. Touching those is drift, not cleanup. And the new seams are *thin*: a setup step and a doctor probe are functions an app registers — not a plugin framework.
+**Status:** DONE 2026-07-20 (S1 seams + slack migration, S2 packaging + rails) — deepened 2026-07-18
+with code recon (initial PROPOSED 2026-07-18; owner-confirmed: core entities are *channels*; anything
+Slack-specific belongs to the slack-channel app). All six residue sites cleared: `slack-sdk` demoted
+from core `dependencies` to the `[slack]` extra, both `cli_doctor.py` dep probes and the hardcoded
+Slack doctor section removed, and the two generic seams built — app-contributed CLI setup/doctor
+(`sdk/cli.py` + `app_cli.py`, consumed by `cli_setup.py`/`cli_doctor.py`) and app-registered logger
+roots (`catalog.installed_logger_roots()`, `constants.APP_LOGGER_ROOTS` deleted). Rails:
+`tests/test_provider_boundary_residue.py` + `docs/architecture/provider-boundary-keeps.txt`, mounted
+in `ci.yml`. Two DEVIATIONS in the Execution log: `--slack-only` DELETED outright rather than
+warn-one-release (owner clean-break call), and the residue sweep scoped to actionable residue.
+Status corrected 2026-08-04 by code audit.
 
 ---
 

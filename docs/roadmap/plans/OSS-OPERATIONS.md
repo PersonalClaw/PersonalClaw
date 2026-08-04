@@ -1,10 +1,24 @@
 # Plan: Open-Source Operations — Contribution Model, Hygiene, Governance
 
-**Status:** DESIGNED — deepened 2026-07-18 (initial PROPOSED 2026-07-18 from the pre-launch investigation & owner alignment review)
-**Created:** 2026-07-18
-**Wave:** 0 — the model must be stated before the first external contributor arrives.
-**Depends on:** CI-RELEASE-ENGINEERING S1 (green main precedes inviting others to keep it green). Coordinates with ECOSYSTEM-TOOLING (front-door tooling) and DISCOVERABILITY-LAUNCH (community links).
-**Scope:** state and implement the contribution model, ship the hygiene set in both repos, put minimum-viable governance in place. **Development-model decision (owner, 2026-07-18):** public repos are the working trees; worktrees locally, feature branches remotely, merged to `main`; real history from v0.1.0. A feature/bugfix/improvement branch carries **one conceptual commit**, amended and force-pushed **with lease** as it iterates; **`main` is never force-pushed** — the self-updater's `git pull` depends on its linear history. **Soul guardrail:** governance sized for a solo maintainer growing first contributors — no committees, no RFC process, no CLA. The core doctrine bar is NOT lowered; the newcomer ramp is the apps repo, not a softer core.
+**Status:** DONE — S1 (stated model + hygiene set + DCO + AGENTS.md) 2026-07-22; S2-S3 (contribution
+ramps + governance floor) 2026-07-31. Deepened 2026-07-18 (initial PROPOSED 2026-07-18).
+**Shipped:** `CONTRIBUTING.md` + roadmap intake + DCO explainer; issue/PR templates and
+`scripts/setup_labels.sh` in both repos; `CODEOWNERS` + `CODE_OF_CONDUCT.md`; a pure-git `dco` job in
+both `ci.yml`s; `AGENTS.md` + a `CLAUDE.md` pointer in both repos; `docs/reference/skill-format.md` +
+`tests/test_skill_format_compat.py`; 12 labelled good-first-issues with the taxonomy actually applied
+(`setup_labels.sh` had never been run before T2.2); GitHub Discussions ENABLED on both repos with
+README routing; `docs/maintainers/release-runbook.md` (walked against the shipped v0.1.3) +
+`discussions-welcome-draft.md`; and roadmap.md's "Proposing roadmap changes" intake policy.
+**DEVIATION (owner-authorized):** T2.1's skill-format audit found real bugs and fixed them — five
+duplicate frontmatter parsers collapsed onto one, four silent field-loss defects (BOM, leading blank
+line, YAML block-list `triggers`, hoisted nested keys) closed, and a raw-YAML-into-prompt leak sealed.
+🔴 **DESCOPED 2026-07-31 by owner — do NOT re-surface as open items:** T2.4 the chat/Discord community
+server, and T3.2 the continuity floor (org recovery, credential inventory, second org owner,
+apps-repo co-maintainer path); SECURITY-HARDENING now owns its own signing-key recovery note.
+**Remaining OWNER items:** GitHub Sponsors enrollment (`FUNDING.yml` deliberately omitted, not
+stubbed), the optional "App Dev" discussion category (web-UI only — no GraphQL mutation exists),
+posting the welcome message, and the USPTO/EUIPO name screen. Status corrected 2026-08-04 by code
+audit.
 
 ---
 

@@ -1,17 +1,20 @@
 # Publication — GitHub Release of Core + Apps Repos
 
-**Status:** READY — all engineering prerequisites complete (pre-publication campaign,
-2026-07-14). What remains is the manual release sequence plus the small set of
-post-publication follow-ups that could not be built before remotes existed.
-**Amended 2026-07-18 (roadmap rev 9):** naming decided — **PersonalClaw everywhere**;
-repos land under the **`PersonalClaw` GitHub org** (verified free 2026-07-18; private
-repos currently live under `keyurgolani/` and transfer in); primary domain
-**personalclaw.dev** (verified unregistered; personalclaw.com/.ai are third-party-held).
-The SOURCE_REV force-push provenance step is **retired**: the squash/force-push model was
-a one-time initial-history cleanup only — development proceeds via local worktrees +
-remote feature branches merged to `main`, real history from v0.1.0 forward, **no force
-pushes** (the `git pull`-based self-updater depends on this; see DISTRIBUTION S4 for the
-tag-tracking + artifact-update generalization).
+**Status:** DONE (2026-07-19 → 2026-07-22) — the release sequence executed. The `PersonalClaw` org
+holds public `PersonalClaw/PersonalClaw` + `PersonalClaw/PersonalClawApps` (+ `personalclaw.dev`);
+descriptions/topics/homepage set per S1.5; the hardcoded release URL reconciled
+(`dashboard/handlers/core.py:118`); `CHANGELOG.md` created and now carrying v0.1.0-v0.1.3;
+**v0.1.0 tagged and released 2026-07-22**, with v0.1.1/v0.1.2/v0.1.3 following (PyPI core + client,
+GHCR images, GitHub Releases). S1.6's `docs/assets/screenshot-dashboard.png` placeholder is
+superseded rather than open — real captures ship as `docs/screenshots/{light,dark}/*` +
+`SHOWCASE.md` + a reproducible `docs/screenshots/CAPTURE.md`.
+**Remaining are OWNER real-world steps only:** the S2 fresh-clone / self-update / Store-git-source
+walkthroughs on a clean machine, and S1.9's publicize-when-the-DISCOVERABILITY-gate-is-green call.
+Status corrected 2026-08-04 (this line had read READY since 2026-07-14).
+**Amended 2026-07-18 (roadmap rev 9):** naming decided — **PersonalClaw everywhere**; repos under the
+**`PersonalClaw` GitHub org**; primary domain **personalclaw.dev**. The SOURCE_REV force-push
+provenance step is retired: development proceeds via feature branches merged to `main`, real history
+from v0.1.0 forward, **no force pushes** (the `git pull`-based self-updater depends on this).
 
 ## Context
 

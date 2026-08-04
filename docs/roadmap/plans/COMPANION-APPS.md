@@ -1,34 +1,15 @@
 # Plan: Companion Apps — Native Clients Over a Local or Remote Gateway
 
-**Status:** PROPOSED — created 2026-07-26 from owner request (companion apps for different
-platforms that connect to a PersonalClaw gateway on the local network **or** a remote instance
-using whatever auth we land on).
-**Created:** 2026-07-26
-**Wave:** 2 — after REMOTE-USER-AUTH S1 (the durable session store) lands. This is a **thin
-connectivity-contract plan**, not a new UI surface: it owns the ONE thing no existing plan
-owns — how a native client **discovers, pairs with, and switches between a local-network and a
-remote gateway** using the new auth — and the existing per-platform plans consume it.
-**Depends on:** REMOTE-USER-AUTH (the durable session store + the remote enrollment-code path
-§C3/C4 — device sessions ARE its `sessions.json` rows with `device` set; this plan does not
-re-invent tokens). **Consumed by / coordinates with:** MOBILE-COMPANION (its `#/companion`
-PWA + Capacitor wrapper + QR pairing become clients of this contract — its C1 device-token
-and C4 QR pairing are **superseded by** this plan's unified pairing so there is one pairing
-mechanism, not two), DESKTOP-CAPABILITIES (the Electron shell already connects to a *spawned
-local* gateway; this plan adds the "connect to a **different**/remote gateway" mode without
-forking it), PLATFORM-REACH (per-OS reach for any native wrapper is gated on its rungs, never
-led by this plan).
-**Scope:** define and implement the **connectivity contract** a native companion client uses
-to reach a gateway — (1) **discovery** of a gateway on the local network, (2) **pairing** to
-obtain a durable device session, (3) **endpoint switching** between a saved local URL and a
-remote URL with graceful reconnection, (4) **auth** via the REMOTE-USER-AUTH session/device
-store — plus a **Devices** management surface on the gateway. **Soul guardrail:** a companion
-client is a **thin client of the owner's own gateway** — same served SPA, same API, **no cloud
-middle tier ever holds state, credentials, or content** (identical to MOBILE-COMPANION's
-guardrail; the only permissible hosted component is a content-free push relay, owned by
-MOBILE-COMPANION, not this plan). This plan adds **no new backend product surface** beyond
-discovery + pairing + the Devices registry; every companion renders the **same served UI**
-(no forked frontend, no second API). Local-network use requires **no internet and no account**
-— discovery + a LAN pairing code is enough; remote use rides REMOTE-USER-AUTH.
+**Status:** PROPOSED — created 2026-07-26 from owner request (companion apps for different platforms
+that connect to a PersonalClaw gateway on the local network **or** a remote instance using whatever
+auth we land on). Nothing built yet: no `dashboard/handlers/devices.py`, no `DevicesPanel.tsx`, no
+`companion/` package, no mDNS dependency, no `companion` config section.
+**Its S1 prerequisite is now satisfied (verified 2026-08-04)** — REMOTE-USER-AUTH shipped all four
+sessions 2026-07-30, so the durable session store this plan's device sessions ride exists and the LAN
+half (S1-S2) is startable; S3/S4's remote path is also unblocked by that plan's S4 (`Secure`/`wss`).
+The rev-13 hub veto killed a MECHANISM, not this plan: "no multi-instance hub ever" designates
+multi-gateway pairing + switching here as the sanctioned alternative, and the same amendment ADDS
+T3.3 and T4.4. Also never formally inserted into the execution order (workspace `ROADMAP.md` §5).
 
 ---
 

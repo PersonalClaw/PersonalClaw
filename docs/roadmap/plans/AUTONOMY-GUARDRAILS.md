@@ -1,12 +1,20 @@
 # Plan: Autonomy Guardrails — Safety Floor + Model-Call Chokepoint
 
-**Status:** DONE — all four sessions landed 2026-07-25 (see `## Execution log`). A handful of
-seams are deferred to their consumers (apps repo / AUTOMATION-SUBSTRATE / WORKFLOWS-V2), each
-logged. (created 2026-07-12 from research synthesis)
-**Created:** 2026-07-12
-**Wave:** 0/1 front-runner — this plan FRONT-RUNS unattended work. It must land before AUTOMATION-SUBSTRATE's unattended waves (Wave 3+); the engine, planner, judges, and flywheel all inherit reliability from the §2 seam.
-**Depends on:** nothing (Wave-0-compatible). AUTOMATION-SUBSTRATE and WORKFLOWS-V2 later *consume* the substrate (trigger gates absorb budget fields; run engine consumes typed outputs).
-**Scope:** one cross-cutting safety floor consulted before anything runs unattended (budgets, denylist, kill switch, safety profiles) + one gateway seam wrapping every background/tool LLM call (metering, circuit breakers, scan, typed structured output).
+**Status:** IN PROGRESS — Sessions 1-4 landed 2026-07-25 (see `## Execution log`): the §2 model-call
+chokepoint, §1.1 budgets, §2.2 scan, §1.2 denylist, §1.3 incident kill switch, §1.4
+DISABLE_LIVE_WRITES and §2.5 provider health are all wired to real callers and surfaced in
+Settings → Guardrails.
+**REMAINING:** the rev-13 amendment's S5-S6 earned-autonomy rung ladder is not started (no
+`guardrails/autonomy.py`, no `resolve_rung`, no `autonomy_rungs.json`).
+🔴 **Also open, found by audit 2026-08-04: §3's `SafetyProfile` family and §4.2's
+`egress_policy_for_tier`/`REGISTRY` shipped with ZERO non-test callers** — repo-wide, only
+`guardrails/policy.py`, `net/policy.py` and their own tests reference them. So Success Criterion #7
+("an unattended trigger-fired run resolves through `headless` by construction") holds only in
+`tests/test_guardrails_profiles.py`: no dispatch or spawn seam consults a profile, and
+`SafetyProfile.tool_grants`/`denylist_extra`/`egress_tier` have no reader. Wiring
+`profile_for_session` into the three dispatch seams + spawn belongs to S5.2. A handful of further
+seams are deferred to their consumers (apps repo / AUTOMATION-SUBSTRATE / WORKFLOWS-V2), each logged.
+(created 2026-07-12 from research synthesis)
 
 ---
 

@@ -1,9 +1,18 @@
 # Plan: Local Model Manager v2 — Sidecar Isolation, Download UX, Token Cascade, Catalog Contract
 
-**Status:** PROPOSED (rev 2 — research-integrated 2026-07-12)
-**Created:** 2026-07-12
-**Depends on:** nothing in the Workflows-v2 program (v2-independent, Wave 0). Extends the ✅-complete local-model-provider contract campaign (unified `LocalModel`/`LocalModelProvider` across all 6 locals).
-**Scope:** the structural layer the contract campaign lacked — process isolation for crash-prone native libs, honest download/install UX, token handling, real-inference selftests, a declarative catalog contract, and runtime observability with unload controls.
+**Status:** IN PROGRESS — one slice landed 2026-07-30 (§4.4 the shared multi-layout probe
+`local_models/layouts.py` + §4.2 cleanup-candidate detection, PR #120; DEVIATION recorded in the
+Execution log).
+🔴 **The landed slice is HALF-INERT** (audit 2026-08-04): only `is_downloaded` is wired
+(`dashboard/model_downloads.py:196`). `delete_all_layouts`, `cleanup_candidates`,
+`reclaimable_bytes`, `downloaded_layouts`, `candidate_paths` and `hf_repo_dirname` have **zero
+production callers** — the delete route still drives `provider.delete_model`, so the "disk never
+frees" bug the log claims to fix is still live; §4.2's `cleanup-candidates`/`cleanup` endpoints and
+the "Reclaim N GB" affordance were never built, leaving Success Criterion 2 unmet; and
+`resilience/doctor.py:419` still calls the module "unbuilt".
+Sidecar isolation, the capability matrix, the catalog contract, the HF-token cascade, selftests and
+the memory-pressure widget are unstarted. Status corrected 2026-08-04.
+(rev 2 — research-integrated 2026-07-12)
 
 ---
 

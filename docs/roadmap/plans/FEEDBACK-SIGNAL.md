@@ -1,10 +1,17 @@
 # Plan: Feedback Signal — The Thumbs That Actually Teach
 
-**Status:** DESIGNED — created 2026-07-26 (roadmap rev 13; owner ask: sibling-platform gap analysis round 2 — the feedback button that actually teaches)
-**Created:** 2026-07-26
-**Pillar:** C (Intelligence & Memory) · **Wave:** 2
-**Depends on:** nothing hard (builds on the shipped inbox service, prompt use-case bindings, skills/workflow surfacing, and the loop judge). Coordinates with WORKFLOWS-V2-LEARNING-FLYWHEEL (8 — the *interpretive* learning arm is a forward hook there, NOT built here; see §Design Layer 3), LEARNING-VISIBILITY (46 — owns the rich quality *surfaces*; this plan exposes only the raw accuracy API + a minimal table), EVALUATION-SUBSTRATE (26 — its field metrics are a read-only consumer of the feedback store), INBOX-NOTIFICATIONS-UNIFICATION (42 — retire-proposals graduate to `emit_attention_item(kind="proposal")` when it lands; pre-42 they ride `notify()`), AGENT-ROUTING (56 — its chip's Route/dismiss actions double-write feedback records, giving routing-pair accuracy for free).
-**Scope:** ~3 sessions. A small 👍/👎 pair on the platform's **AI judgment outputs** — inbox classifications, drafted replies, digest items, loop findings, routing suggestions, proposal contents — that feeds three layers: **capture** (a deterministic append-only `FeedbackRecord` store + one `record_feedback` SDK call used identically by core surfaces and apps), **attribution** (per-producer rolling accuracy — a pure GROUP BY over records, keyed to the *producing artifact*: bound prompt, skill, workflow, routing pair, judge), and the **deterministic learning arm** (threshold policies over per-producer accuracy: a persistently-wrong producer stops surfacing and gets a "retire this rule?" proposal — pure counting, no model call). **Owner decision: 👍 is SILENT-POSITIVE ONLY** — recorded for the accuracy denominator, it never generates lessons or proposals; only 👎 (with an optional short "why") ever feeds learning, and the *interpretive* half of that (an LLM reading 👎 reasons and drafting lesson/prompt-amendment proposals) belongs to LEARNING-FLYWHEEL, not here. **Soul guardrail:** every layer in this plan is deterministic — no LLM anywhere in capture, attribution, or thresholds; feedback never leaves the instance (zero telemetry); retire actions are propose-don't-write. Class **B** note: `feedback.jsonl` + `feedback_state.json` are new persisted state — pre-LIFECYCLE-DOCTRINE this ships as a plain clean break under the pre-1.0 banner (no gate, no migration; additive files, tolerant reads).
+**Status:** DONE — S1 (store + routes + SDK + config + producer meta), S2 (thumbs on inbox/loops) and
+S3 (thresholds + retire proposals + Settings → AI feedback) all shipped 2026-07-27 and verified on
+`main`: `feedback.py` + 5 routes + `sdk/feedback.py` + `FeedbackThumbs.tsx`, with
+`check_retire_candidates` called from `inbox_service.py`'s maintenance tick and `FeedbackPanel`
+registered in both `SettingsPage` and the bento grid.
+🔴 **REMAINING — a shipped control lost its only consumer.** WORKFLOWS-V2 Phase 1 deleted
+`workflows.surfacing.eligible_workflows`, which was T3.1's one gated consumer of
+`suppressed_producers()`. Verified 2026-08-04: **no runtime path withholds a suppressed producer
+today** — the set is captured, thresholded, proposed and displayed, but never enforced. Re-add a gated
+consumer at a WF2 slice or in the flywheel skill work. T2.4 (the app-path fixture) and T3.4 (the
+plan-56 double-write, which shipped inside AGENT-ROUTING instead) remain unwired by design.
+Status corrected 2026-08-04 by code audit. Created 2026-07-26 (roadmap rev 13)
 
 ---
 

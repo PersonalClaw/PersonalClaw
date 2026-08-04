@@ -1,10 +1,12 @@
 # Plan: Tasks & SOPs as Workflow Primitives
 
-**Status:** PROPOSED (rev 2 — research-integrated 2026-07-12)  
-**Created:** 2026-07-11  
-**Revised:** 2026-07-12 — 19 approved research recommendations folded in; recon-corrected against code  
-**Depends on:** WORKFLOWS-V2.md (Slices 0-4)  
-**Scope:** Task tracking integration, SOP migration, checklist patterns, surfacing discipline, approval/needs-input records
+**Status:** DONE — sessions 55-61k shipped (PRs #195-#215, on `main`): the task projection with its
+engine call site (`controller.py` → `should_materialize` → `plan_materialization`), verified-done,
+`ConfirmationRequest` + the `/confirm` verb, surfacing core + channels, the pool, the DagView
+composition, and the config four points plus the fifth (`workflows/settings.py` resolvers, so the
+knobs are not inert). **Every module has a live caller** — verified by AST import audit 2026-08-04,
+the cleanest plan in Pillar A. One DEVIATION: `match_threshold` deliberately not re-added (it would
+have been an inert control). Status corrected 2026-08-04. (rev 2 — research-integrated 2026-07-12)
 
 ---
 

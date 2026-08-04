@@ -1,10 +1,21 @@
 # Plan: Distribution & Packaging — One Command to a Talking Agent
 
-**Status:** DESIGNED — deepened 2026-07-18 with code recon (initial PROPOSED 2026-07-18; owner target: one-command install + easy download-and-launch per user preference)
-**Created:** 2026-07-18
-**Wave:** 0 — launch-gating. Consumes CI-RELEASE-ENGINEERING's release pipeline; feeds PUBLICATION, PLATFORM-REACH, DISCOVERABILITY-LAUNCH (the `/install` script).
-**Depends on:** CI-RELEASE-ENGINEERING S3 (pipeline automation). Coordinates with PROVIDER-BOUNDARY-COMPLETION (dependency-set changes ship together) and LIFECYCLE-DOCTRINE (self-update behavior change is class B, gated).
-**Scope:** every supported install path becomes one command with no toolchain surprises, and self-update works for every path — not just git checkouts. **Soul guardrail:** all channels are projections of ONE release artifact set (wheel + images) built by the release pipeline — no per-channel special builds. A channel ships only with a per-release smoke check (automated or checklisted); anything less is documented as community-maintained.
+**Status:** DONE — S1-S4 complete (2026-07-21 → 2026-07-24); S5 (Homebrew/Nix convenience channels)
+out of scope per the executing brief. Deepened 2026-07-18 with code recon (initial PROPOSED
+2026-07-18; owner target: one-command install + easy download-and-launch).
+Shipped: **S1** `[project.urls]`, single-sourced `__version__` + `test_version_consistency.py`,
+openai/anthropic demoted to extras behind `_sdk_deps.require_sdk`, `scripts/verify_wheel.py` wired
+into `release.yml`. **S2** `personalclaw-client` packaging + a `client` CI job; the uv-first install
+matrix; `deploy/website/install.sh`. **S3** container install-kind env in both Dockerfiles +
+`docs/guides/containers.md` + the compose snippet. **S4** install-kind-aware self-update
+(`dashboard/handlers/updates_kind.py`, consumed by `updates.py`, with per-kind apply and the Updates
+panel). **DEVIATION:** S4 shipped as a plain clean break with NO `update_kind_aware` gate —
+LIFECYCLE-DOCTRINE is deferred and no `lifecycle/` package exists; the CHANGELOG advises
+`personalclaw snapshot`. **Two latent packaging defects caught:** a `[project.urls]` TOML nesting bug
+that had zeroed the wheel's `Requires-Dist`, and a missing `MANIFEST.in` that made the release job
+ship an SPA-less wheel (now guarded by `tests/test_sdist_bundles_spa.py`). Published live: PyPI
+carries core + client through 0.1.3. **Remaining are OWNER steps:** the clean-VM walkthroughs and the
+S5 Homebrew-tap-vs-core decision. Status corrected 2026-08-04 by code audit.
 
 ---
 

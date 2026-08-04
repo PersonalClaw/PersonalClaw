@@ -1,15 +1,16 @@
 # Plan: Self-Verification — Spec-Driven Dev Harness + Event-Trace Replay + Self-QA Companion
 
-**Status:** IN PROGRESS — §1 (spec harness + scanner + diff-aware run) and §2 (event-trace
-replay substrate + baselines + MCP record/replay + loop resume-audit) landed 2026-07-26
-(Sessions 1-4, non-WF2 scope); see the Execution log. Remaining: the WF2-gated replay
-scenarios + workflow-run resume + §3 Self-QA Companion, all deferred until the Workflows-v2
-engine exists (BLOCKED note in the log). Original: PROPOSED (created 2026-07-13 from
-research synthesis, promoted from backlog)
-**Created:** 2026-07-13
-**Wave:** SPLIT — §1/§2 (spec harness + replay) are **Wave 1**, deliberately alongside WORKFLOWS-V2 Slices 0-2: the replay harness must gate the v2 journal/event format **before** any migration consumes it (building it in Slice 11 / Wave 4, after the format is load-bearing, is too late). §3 (Self-QA Companion) is **Wave 2** — it is a flagship *consumer* of the engine (a bundled template + trigger) and cannot land before the engine can host it. §1 Sessions 1-2 are Wave-0-compatible (zero v2 dependency) and can start today.
-**Depends on:** nothing for §1-§2 (repo dev-process infrastructure; the replay harness *feeds* WORKFLOWS-V2 acceptance, it does not consume the engine). §3 depends on WORKFLOWS-V2 Slices 0-5 (template hosting, Run Ledger, `required_artifacts`) and benefits from WORK-CONTAINERS §2.3 (evidence-bundle Artifact + Proof section) when it lands.
-**Scope:** convert the manual campaign/LEDGER validation culture into machine-checked institutional knowledge (rule/scenario/task specs + validate/explain/run CLI + boundary scanner + same-PR rule), a generalized event-trace record/replay regression substrate (chat stream, workflow journal, channel ingestion, MCP traffic, fresh-session resumability), and the commit-triggered Self-QA Companion that dogfoods steipete's QA loop on PersonalClaw itself with evidence bundles.
+**Status:** IN PROGRESS — §1 (spec harness + scanner + diff-aware run) and §2 (event-trace replay
+substrate + baselines + MCP record/replay + loop resume-audit) landed 2026-07-26 (Sessions 1-4,
+non-WF2 scope); see the Execution log.
+🔴 **The S4 BLOCKED gate has CLEARED (verified 2026-08-04): WORKFLOWS-V2 Slices 0-11b are DONE and
+`workflows/{engine,journal,store}.py` exist, so the WF2-gated remainder is now STARTABLE, not
+blocked** — the two replay scenarios (`workflow-journal-projection`, `rewind-during-stream`), the
+workflow-run half of resume-audit (`resume_audit.py` still exports `audit_loop` only), the
+`harness/exemplars/` backfill (README-only today), and §3's Self-QA Companion (zero footprint).
+Also open: `python -m harness validate|scan` is not yet a CI gate — `ci.yml` lints the harness but
+never runs its scanner. Original: PROPOSED (created 2026-07-13 from research synthesis, promoted from
+backlog)
 
 ---
 

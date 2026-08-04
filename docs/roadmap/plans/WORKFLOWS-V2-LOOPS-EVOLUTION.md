@@ -1,9 +1,13 @@
 # Plan: Loop Kinds Evolution — Loops as Workflow Templates
 
-**Status:** PROPOSED (rev 2 — research-integrated 2026-07-12)
-**Created:** 2026-07-11
-**Depends on:** WORKFLOWS-V2.md (Slices 0-2 minimum)
-**Supersedes:** Loop engine as standalone execution primitive (long-term; coexists during transition)
+**Status:** IN PROGRESS — sessions 29-33 shipped (PRs #168-#172, on `main`): judge contract,
+pre-tier, actors, loop middleware, calibration, aliases, and 5 of 8 templates.
+🔴 **BUT THE RUN-PATH INTEGRATION IS INERT** — `workflows/{loop_middleware,judge_calibration,
+judge_pretier,judge_actors}.py` have **ZERO production importers** (AST audit 2026-08-04); the
+cluster is self-referential, nothing emits `judge_verdict`/`judge_divergence`, and the steering queue
+is stored but never consumed. The plan's own log admits this four times. Criteria 2/3/8/9/11 are
+unmet until one wiring session lands. The legacy `src/personalclaw/loop/` remains the live engine.
+Status corrected 2026-08-04 by code audit. (rev 2 — research-integrated 2026-07-12)
 
 ---
 

@@ -1,32 +1,18 @@
 # Plan: Remote User Authentication — Log In From the Internet Without Being Home
 
-**Status:** PROPOSED — created 2026-07-25 from owner request (self-hosting exposed via the
-owner's own tunnel — cloudflared / Tailscale / Traefik — wanting to reach the dashboard
-from the internet without being on the home network to mint a token).
-**Created:** 2026-07-25
-**Wave:** 1 — a completable floor with no hard dependency; **it is the prerequisite for the
-remote half of COMPANION-APPS + MOBILE-COMPANION** (their device tokens and pairing ride the
-durable session store this plan builds). Land the S1 foundation before those consume it.
-**Depends on:** nothing hard. **Coordinates with:** EXTERNAL-ACCESS (shares the "the public
-URL is a security boundary" doctrine + the `public_url`/`allow_remote` boundary — this plan
-owns the **human dashboard** login; EXTERNAL-ACCESS owns **inbound API/agent** bearers — one
-"this instance is internet-exposed" signal, two surfaces); TEAM-SHARED-ENTITIES (its
-`dashboard.username` owner-identity string is reused as the login identity when present — an
-attribution string that graduates into a credential subject here, exactly its "eventually
-provisioned by SSO/enterprise login" note); MOBILE-COMPANION + COMPANION-APPS (both consume
-the session/device store, §C3).
-**Scope:** add a real **user login** as an *additional front door that mints the existing
-session token* — settable at deploy / via CLI / via the WebUI on the local network — so a
-browser reaching an internet-exposed gateway logs in for a fresh cookie-borne token, and on
-expiry logs in again. Underneath it: persist the signing key + a durable session store so
-tokens survive a restart (they don't today). **Soul guardrail:** this adds *authentication*,
-not multi-tenancy — **one owner, one credential set**. The zero-account local flow stays the
-**default and is never removed**: the `?token=` link, `personalclaw token`, the desktop
-sidecar (`PERSONALCLAW_DEV_NO_AUTH` on loopback), and CLI/MCP machine auth are all untouched.
-Login is **opt-in**, layered on `local_token` — it is one more *issuer* of the one session
-token, never a parallel token system and never a replacement (Option C, not Option D). No
-cloud middle tier ever holds the credential. A broken login config must **never brick the
-box** — the loopback token path always remains as the local escape hatch.
+**Status:** DONE — all four sessions shipped 2026-07-30 (created 2026-07-25 from owner request:
+self-hosting exposed via the owner's own tunnel — cloudflared / Tailscale / Traefik — wanting to reach
+the dashboard from the internet without being on the home network to mint a token). S1 durable session
+foundation (persisted signing key + `sessions.json`, so a restart no longer logs you out), S2 owner
+credential (argon2id) + the `auth` config section + the `personalclaw auth` CLI + deploy seed, S3 the
+login front door (`POST /api/auth/login`, lockout, `/login`, Settings → Account), S4 public-exposure
+hardening (`Secure` cookie, trusted-proxy forwarded headers) + TOTP at login + device enrollment +
+`docs/guides/remote-access.md`.
+**Recorded tail** (see the Execution log): the TOTP **QR image** in Settings (the secret and
+`otpauth://` URI are surfaced, so paste enrollment works today) and passkey/WebAuthn, which this plan
+already scoped as future extensions rather than v1. Status corrected 2026-08-04 by code audit (this
+line had read PROPOSED). Note: this plan was executed although workspace `ROADMAP.md` §5 records it as
+"not auto-inserted" into the execution order — a sequencing discrepancy, not a scope one.
 
 ---
 

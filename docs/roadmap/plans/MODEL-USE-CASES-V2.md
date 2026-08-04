@@ -1,10 +1,14 @@
 # Plan: Model Use-Cases v2 — Sovereign Vocabulary + Ordered Fallback Chains
 
-**Status:** DESIGNED — created 2026-07-26 (roadmap rev 13; owner ask: sibling-platform gap analysis round 2 — model sovereignty with sophisticated use-case routing)
-**Created:** 2026-07-26
-**Wave:** 2
-**Depends on:** AUTONOMY-GUARDRAILS (shipped — the per-provider circuit breaker `guardrails/breaker.py` + `/api/models/health` this plan's chain-skipping and health dots read). Coordinates with MODEL-ROUTING-TELEMETRY (17 — it later *learns* within this vocabulary and proposes reorderings as proposals; **this plan owns the vocabulary + manual chains and never auto-reorders**), LOCAL-MODEL-MANAGER-V2 (local providers contribute chain entries through the same catalog), PLATFORM-RESILIENCE (mid-turn failure of an *interactive* stream stays its concern — chain advance here is resolution-time + call-start for the non-interactive axis), DESIGN-SYSTEM-CONSISTENCY (51 — the chain editor uses the shipped primitives/tokens).
-**Scope:** ~3 sessions. Three moves: (1) **grow the chat sub-category vocabulary** with `background`, `orchestration`, and `loops` — each shipped WITH its runtime consumer actually resolving through it (the hard doctrine `providers/use_cases.py` encodes: `summarization`/`planning` were removed precisely because they were selectable with no resolver); (2) **every use-case binding becomes an ordered fallback chain** — `[default, fallback1, …]`, unlimited length, user-ordered; resolution walks the chain, skipping an entry whose provider's circuit breaker is OPEN and advancing past an entry whose call fails; (3) **expose the whole vocabulary in Settings → Models** — today the panel renders only the 11 capabilities (`USE_CASE_ORDER` in `ModelsPanel.tsx` omits `code_tools`/`reasoning` entirely), so two backend-real sub-categories are invisible; after this plan every chat sub-category is a bindable chain row with per-entry health dots and drag reordering. The **composer per-session override sits one level above the chain** (owner-decided semantics): the override is ONE model — never itself a chain — prepended to the resolved chain for that session's calls; override fails → chain default → fallback1 → …. Sub-category → parent `chat` fallback stays (an unbound sub-category resolves to the chat chain). **Soul guardrail:** one store (`active_models.json`), pure-function resolution at the one existing seam (`resolve_provider_for_use_case`) — no routing service, no scoring, no learned behavior (that is plan 17's job, gated on proposals); chains are the *user's* declared order and nothing silently reorders them. Class **B** note: the binding store's value shape gains chain semantics — pre-LIFECYCLE-DOCTRINE this ships as a plain clean break under the pre-1.0 banner (no gate, no migration machinery; tolerant reads of the old shape — a bare string ref or single-entry list reads as a one-entry chain).
+**Status:** DONE — S1 (vocabulary + chain resolver + storage), S2 (consumer wiring + call-failure
+advance + the inner-model axis E1 fix) and S3 (the Settings chain editor + health dots + composer
+explainer) all shipped 2026-07-27. Verified on `main`: `CHAT_SUBCATEGORIES` with all five axes,
+`resolution_chain()` called from `llm_helpers.py`, the chain WALK live in `provider_bridge.py`
+(breaker-OPEN skip → `_log_chain_skip`, unbuildable skip, exhausted → `ProviderResolutionError`), and
+every consumer axis wired — `subagent.py` (orchestration), `session.py` (background),
+`chat_runner.py` (loops). The flagged E1 risk (native inner recursion hardcoding `"chat"`) is fixed.
+**Remaining:** live multi-provider dogfood, Owner task 1. Status corrected 2026-08-04 by code audit.
+Created 2026-07-26 (roadmap rev 13; owner ask: model sovereignty with sophisticated use-case routing)
 
 ---
 

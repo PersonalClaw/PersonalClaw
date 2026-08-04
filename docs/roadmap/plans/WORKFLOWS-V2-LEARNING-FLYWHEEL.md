@@ -1,10 +1,14 @@
 # Plan: Learning Flywheel — One Lifecycle for Lessons, Skills, Memory, and Templates
 
-**Status:** PROPOSED (rev 2 — research-integrated 2026-07-12)
-**Created:** 2026-07-11
-**Revised:** 2026-07-12 — 21 approved research recommendations folded in; every load-bearing claim re-verified against code (recon 2026-07-12)
-**Depends on:** Steps 1-4 are v2-INDEPENDENT (can front-run everything); steps 5-8 need WORKFLOWS-V2 Slices 0-3 (Run Ledger events are an engine acceptance criterion there)
-**Companions:** WORKFLOWS-V2-TASKS-SOPS (SOP→template migration is the landing zone), WORKFLOWS-V2-LOOPS-EVOLUTION (judge sequencing), WORKFLOWS-V2-UNIVERSAL-PLANNING (maturity-gated autonomy modes)
+**Status:** DONE — steps 1-8 shipped (PRs #163-#166, #227-#233) plus criteria 1/4/5 closed by
+S78-S80 (#234-#236); the S69-S80 stacked-merge recovery landed as #239. Capture/propose/curate/
+inject/measure/self-model/refiner/inbox are live-wired through `context.py`, `after_turn_review.py`,
+`chat_runner.py`, `history.py`, the five `/api/learning/*` routes and the Learning page.
+🔴 **REMAINING:** `learning/accountability.py` and `learning/detectors.py` have **ZERO production
+importers** (AST audit 2026-08-04), so criterion 9's EFFECTIVE/HARMFUL verdict + auto-filed revert
+never runs; and `Cadence.SESSION_END`/`RUN_END` still have no live call sites (pinned by
+`assert_gate_covers_cadences()`, which is itself uncalled outside tests). Status corrected
+2026-08-04. (rev 2 — research-integrated 2026-07-12)
 
 ---
 

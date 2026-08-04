@@ -1,10 +1,18 @@
 # Plan: CI & Release Engineering — Verifiable Quality + a Real Release Pipeline
 
-**Status:** DESIGNED — deepened 2026-07-18 with code recon (initial PROPOSED 2026-07-18 from the pre-launch investigation & owner alignment review)
-**Created:** 2026-07-18
-**Wave:** 0 — precondition for PUBLICATION credibility and for every plan that ships artifacts (DISTRIBUTION, PLATFORM-REACH, DESKTOP-CAPABILITIES).
-**Depends on:** nothing hard. DISTRIBUTION consumes the release pipeline; PROVIDER-BOUNDARY-COMPLETION and LIFECYCLE-DOCTRINE contribute checks that mount in this plan's workflows.
-**Scope:** CI for both repos + a tag-triggered release pipeline + supply-chain hygiene matching the product's own install-gate preaching. **Owner design constraint: efficient but not rigid** — coverage and confidence without becoming the development bottleneck. **Soul guardrail:** CI is a verification substrate, not bureaucracy — no mandatory-review gates on a solo repo, no flaky-test tolerance ("green by default, exceptions annotated in code"), and no acceleration machinery (path filters, test selection) until a *measured* PR wall-time exceeds the budget (measured-bottleneck-gated, the HARNESS-CRAFT discipline).
+**Status:** DONE 2026-07-20 (S1 red-test triage + core CI · S2 apps CI + rails · S3 release pipeline
+· S4 supply chain) — deepened 2026-07-18 with code recon (initial PROPOSED 2026-07-18 from the
+pre-launch investigation & owner alignment review). Shipped: the committed `setup.cfg` flake8 standard
+(100-char) + whole-tree reformat with `make lint` green (mypy 152→0); `.github/workflows/ci.yml`
+(feature branches) + `full.yml` (main + nightly matrix, audit, coverage, SBOM) + `release.yml`
+(build/pypi/pypi-client/images/notes/website-follow/attest); the apps-repo `ci.yml`; `uv.lock` +
+`dependabot.yml` in both repos. **The pipeline is proven live, not just contract-checked** —
+successful release runs for v0.1.0, v0.1.2 and v0.1.3. Its E1 premise correction and four real
+product bugs the gate surfaced (the `sandbox.py::_probe_unshare` atomic-vs-sequential mismatch, `ps`
+column truncation no-opping orphan reaping, and two more) are recorded in the Execution log; the S1
+amendment root-caused test isolation at the source rather than shipping reruns.
+**Remaining are OWNER items only:** coverage-badge home, GHCR packages→public confirmation, optional
+`main` branch protection. Status corrected 2026-08-04 by code audit.
 
 ---
 
