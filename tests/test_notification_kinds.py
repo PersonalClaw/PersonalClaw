@@ -329,24 +329,96 @@ def test_notify_action_provider_allowed_kinds_are_registered():
         assert kind.lower() in nk._LEGACY_FLAT, f"notify hook allows {kind!r}"
 
 
-def test_frontend_display_map_kinds_all_resolve():
-    """The SPA's display map is the other end of this wire; keep them reconciled.
+def _frontend_kind_keys():
+    """The SPA display map's keys, or None when `web/` is absent from this checkout.
 
-    `schedule` and `loop` have rows there but NO backend emitter — pre-existing drift
-    found by the T1.1 inventory. They're mapped to their nearest real registration so a
-    notification persisted by an older build still resolves, and this test pins that.
+    Quotes are stripped because a dotted key must be quoted in TS (`'app.route.drift'`), and the
+    original parser's `isidentifier()` filter silently DROPPED exactly those — so the one key most
+    likely to drift was the one key never checked.
     """
     meta = SRC.parent.parent / "web" / "src" / "pages" / "notifications" / "notificationMeta.ts"
     if not meta.exists():
-        pytest.skip("web/ not present in this checkout")
+        return None
     text = meta.read_text(encoding="utf-8")
     block = text.split("const KINDS", 1)[1].split("}\n", 1)[0]
-    keys = {
-        line.split(":", 1)[0].strip()
-        for line in block.splitlines()
-        if ":" in line and "{" in line and not line.strip().startswith("//")
-    }
-    keys = {k for k in keys if k and k.isidentifier()}
+    keys = set()
+    for line in block.splitlines():
+        stripped = line.strip()
+        if ":" not in line or "{" not in line or stripped.startswith("//"):
+            continue
+        key = line.split(":", 1)[0].strip().strip("'\"")
+        if key and (key.isidentifier() or "." in key):
+            keys.add(key)
+    return keys
+
+
+def _wire_vocabulary():
+    """Every flat string a registered kind can actually put on the wire.
+
+    🔴 This is the map to reconcile against, and it is NOT `_LEGACY_FLAT`.
+    `kind_for_legacy_pair` is the ONE function every emitter routes through, and it returns the
+    legacy flat string when one maps to the pair and **the bare `kind`** when none does. So the
+    ATTENTION kinds (`proposal`, `needs_input`, `agent_request`, `digest`) travel as bare strings —
+    verified against a real machine's `notifications.jsonl`, which holds 115 rows of `proposal`.
+    Checking `_LEGACY_FLAT` alone declared those unresolvable even though they are the ones actually
+    on disk.
+    """
+    return {nk.kind_for_legacy_pair(k.source, k.kind) for k in nk.all_kinds()}
+
+
+def test_every_emittable_kind_has_a_frontend_row():
+    """A kind the backend can emit but the SPA cannot label falls through to the raw wire string —
+    so the filter row reads "Info", "Subagent", beside a bare "proposal". This is the direction that
+    matters: a MISSING row is a visible defect for the user."""
+    keys = _frontend_kind_keys()
+    if keys is None:
+        pytest.skip("web/ not present in this checkout")
     assert keys, "failed to parse the frontend kind map"
-    unresolvable = sorted(k for k in keys if k not in nk._LEGACY_FLAT)
+    missing = sorted(_wire_vocabulary() - keys)
+    assert not missing, f"the backend emits kinds the frontend cannot label: {missing}"
+
+
+def test_frontend_display_map_kinds_all_resolve():
+    """The other direction: a row for a string nothing can emit.
+
+    Tolerated rather than forbidden, and the list is PINNED so it can only shrink. Each entry is a
+    bare `kind` whose pair also owns a legacy flat string, so `kind_for_legacy_pair` prefers the
+    legacy one and the bare form never reaches the wire from THIS build — but a notification
+    persisted by an older build still carries it, and the log is append-only. Deleting those rows
+    would make old history render as raw strings. `schedule` is the same case from the other end:
+    pre-existing drift the T1.1 inventory found, kept so an older `schedule` row still resolves.
+    """
+    keys = _frontend_kind_keys()
+    if keys is None:
+        pytest.skip("web/ not present in this checkout")
+    tolerated = {
+        "schedule",  # pre-existing drift (T1.1 inventory); no emitter, kept for old rows
+        # Bare kinds whose pair emits a legacy flat string instead. Kept for persisted history.
+        "alert",  # inbox/alert     → emits `inbox_alert`
+        "result",  # cron/result     → emits `cron`
+        "failed",  # cron|loop/failed → emits `cron` / `failed`
+        "fired",  # hook/fired      → emits `hook`
+        "message",  # agent/message   → emits `agent`
+        "status",  # heartbeat/status → emits `heartbeat`
+        "progress",  # loop/progress   → emits `loop`
+        "complete",  # loop/complete   → emits `loop`
+        "stalled",  # loop/stalled    → emits `loop`
+        "retire",  # learning/retire → emits `feedback_retire`
+        "route_drift",  # system/route_drift → emits `app.route.drift`
+    }
+    unresolvable = sorted(k for k in keys - _wire_vocabulary() if k not in tolerated)
     assert not unresolvable, f"frontend shows kinds the registry can't resolve: {unresolvable}"
+
+
+def test_the_tolerated_list_does_not_outlive_its_reason():
+    """Every tolerated key must still be a REGISTERED bare kind (or the known `schedule` drift).
+
+    Without this, the tolerance list becomes a place to hide a genuine typo: a misspelled row would
+    be waved through forever by adding it above.
+    """
+    keys = _frontend_kind_keys()
+    if keys is None:
+        pytest.skip("web/ not present in this checkout")
+    bare = {k.kind for k in nk.all_kinds()}
+    for key in keys - _wire_vocabulary():
+        assert key in bare or key == "schedule", f"{key!r} is not a registered kind at all"
