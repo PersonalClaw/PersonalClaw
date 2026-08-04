@@ -3381,3 +3381,57 @@ matters: `KIND_RUNTIMES` asserts each named runtime EXISTS, so the entry is chec
   model assigns the inbound surface to MCP-READONLY-INBOUND + EXTERNAL-ACCESS). Plus `web_watch`'s
   headless tier and knowledge-store digest from S121. **Every kind with an unblocked runtime now has
   one.**
+
+### S125 — fencing strips chat-template role tokens (§7/R4 rule b) — DONE
+
+**DISCOVERY: rule (b) was declared and unimplemented.** §7's fencing-hardening list says it outright:
+*"fencing **strips chat-template special/role tokens** so untrusted text can't forge role boundaries —
+essential with local model providers."* Driven against the real `fence_untrusted` before writing a
+line:
+
+```
+ChatML         leaked: ['<|im_start|>', '<|im_end|>']
+Llama-3        leaked: ['<|eot_id|>', '<|start_header_id|>']
+Llama-2        leaked: ['[/INST]', '<<SYS>>']
+Mistral        leaked: ['[/INST]', '</s>']
+end-of-text    leaked: ['<|endoftext|>']
+```
+
+Every family passed straight through. The fence defended its OWN marker — a fence-break, which it does
+well — and nothing else.
+
+**Why the XML fence cannot cover this, which is the whole point.** `<untrusted_content>` is a
+*convention the model is asked to respect*. A role token is part of the wire format the runtime uses to
+mark who is speaking, so it operates one layer BELOW the fence's argument: no amount of "treat this as
+data" instruction helps if the text can close the current turn and open a system one. Local providers
+are where it bites hardest — a hosted API rejects or escapes stray control tokens, while a local
+runtime applying its own chat template will honour them. That is exactly why the rule says "essential
+with local model providers", and this repo ships a local model manager.
+
+**Tokens are BROKEN, not deleted, and that was a deliberate call.** Deleting the span would silently
+change what the user's automation reads: a summarizer would report on text the sender did not write.
+Breaking `<|im_end|>` into `<∣im_end∣>` keeps the payload legible and honest — a reader seeing the
+broken form learns something true about the input. The substitution characters (U+2223 DIVIDES,
+U+2044 FRACTION SLASH) are visible glyphs, **not** zero-width: `fence_untrusted`'s own docstring makes
+that point about its bracket escaping, because fenced text is sometimes persisted and the memory-write
+scanner flags invisible characters. A guard that smuggled in a zero-width char would trip that scanner
+on innocent input.
+
+**False positives were the real risk, so they are tested.** This runs on every fenced payload, and a
+rule that ate `a/b`, `</div>`, `|x|`, `[1]` or `s3://bucket/key` would corrupt real webhook bodies and
+watched-file content. Seven prose cases assert byte-identical output. The token list is matched
+case-insensitively, because `<|IM_START|>` is the same wire token to a tokenizer that lowercases and a
+guard catching only canonical casing is trivially bypassed.
+
+**`ROLE_TOKENS` is grouped by the family that defines it**, so a reader can tell *why* each entry is
+there and adding a provider is an obvious edit rather than an append to an anonymous list. A
+parametrized completeness test asserts every declared entry is actually neutralised — a declared list
+is not a control until something reads it, which is this program's most-repeated lesson.
+
+**Pre-existing guarantees re-asserted rather than assumed:** the fence-break defence, the `source=`
+label, unfenced empty input, and a payload that is ONLY a forged boundary still getting fenced.
+
+- **REMAINING in §7/R4:** rules (a) the InputGuard regex screen (shipped in S69 as `triggers/screen.py`
+  and wired in S86), (c) provenance attributes on the fence tag, (d) payload-never-matches-patterns,
+  (e) schema-constrained extraction. (c)/(d)/(e) are unaudited by this session and are the natural next
+  measurement.
