@@ -3181,3 +3181,46 @@ not a gap-fill, and building an endpoint to justify a token would invert the dep
 - **REMAINING in decision 12:** the webhook fire endpoint + scoped token verification, as above. With
   this, decision 7's enforcement chain (frozen action sets S116, kill switch S117, PathGuard S118)
   and decision 12's at-rest discipline are complete.
+
+### S120 — the provider-registration invariant (§7 item 6 / R3 am.5) — DONE
+
+The plan asks for "a provider-registration invariant (every action provider declares its enforcement
+chokepoint, with a test asserting no execution without a policy check)". Measured all five
+`get_action_provider(` call sites in `src/` before writing anything:
+
+| site | policy check |
+|---|---|
+| `hooks._run_provider` (lifecycle) | `incident_active` |
+| `gateway._fire_store_trigger` (clock/file/event) | `incident_active` |
+| `event_triggers.execute_event_action` | `incident_active` |
+| `handlers/triggers._dispatch_store_action` (manual) | `manual_refusal` |
+| `handlers/hooks` | — reads `display_name`/`supports_blocking` for the catalog; **never executes** |
+
+**FINDING: the invariant already HOLDS.** This is the first session in this stretch that did not find
+a defect, and saying so plainly matters — three of the four checks arrived in S117, so the honest
+account is that S117 closed this hole and this session pins it. Reporting a fix here would be
+inventing one.
+
+**A SOURCE-level test, deliberately.** The property is structural: *every site that reaches a provider
+passes a policy check first*. A behavioural test can only exercise the sites it already knows about,
+so it cannot fail when someone adds a fifth — which is the exact regression this invariant exists to
+catch. The failure mode being prevented is not "the check is wrong", it is "a new call path skipped
+the check entirely", and that is a property of the call graph, not of any one execution.
+
+**The staleness guard is the load-bearing part.** A hardcoded list of call sites rots the moment
+someone adds one, and a rotted list reads as "all sites are checked" while covering fewer — the same
+false-assurance shape as the inert plan S117 found. So `test_the_site_list_is_not_STALE` greps the
+tree for `get_action_provider(` callers and asserts every one is either a listed execution site or the
+documented catalog exemption. Verified by mutation: deleting `gateway` from the list turns it red.
+
+**DEVIATION: the per-provider `chokepoint` ATTRIBUTE is deliberately NOT added.** Measured: none of the
+16 shipped providers declares one. Adding an attribute with no consumer would be the precise
+inert-control defect this program keeps finding — and a security-shaped inert control is worse than
+none, because it reads as protection. Enforcement lives at the call sites; the test guards the call
+sites. A test pins the attribute's ABSENCE, so if a future author adds one they must also wire
+something that reads it, or drop it.
+
+- **§7 item 6 is now COMPLETE** apart from the webhook fire endpoint + scoped token verification
+  (decision 12's verification half, genuinely unbuilt — see S119). Frozen action sets (S116), the kill
+  switch (S117), PathGuard (S118), the at-rest token discipline (S119) and the chokepoint invariant
+  (S120) are all in place.
