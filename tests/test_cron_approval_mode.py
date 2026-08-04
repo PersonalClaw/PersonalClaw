@@ -115,63 +115,6 @@ class TestCronApprovalModeGateway:
         assert captured["on_tool_approval"] is None
 
 
-class TestCronApprovalModeValidation:
-    """Validation schema accepts valid values, rejects invalid."""
-
-    def _simulate_tool_call(self, tool_name: str, arguments: dict) -> str:
-        from personalclaw.mcp_schedule import _call_tool
-
-        return _call_tool(tool_name, arguments)
-
-    def test_valid_auto(self) -> None:
-        with patch("personalclaw.mcp_schedule.ScheduleService") as mock_svc:
-            job = MagicMock()
-            job.id = "v1"
-            job.name = "test"
-            job.schedule = MagicMock()
-            job.schedule.kind = "every"
-            job.schedule.every_secs = 300
-            job.schedule.cron_expr = None
-            job.schedule.at_ts = None
-            job.agent_id = ""
-            job.approval_mode = ""
-            mock_svc.return_value.add_job.return_value = job
-            result = self._simulate_tool_call(
-                "schedule_add",
-                {"name": "test", "message": "go", "every": 300, "approval_mode": "auto"},
-            )
-            # The approval_mode now rides the canonical action passed to add_job.
-            call = mock_svc.return_value.add_job.call_args
-            assert call.kwargs["action"]["config"]["approval_mode"] == "auto"
-        assert "v1" in result
-
-    def test_valid_empty(self) -> None:
-        with patch("personalclaw.mcp_schedule.ScheduleService") as mock_svc:
-            job = MagicMock()
-            job.id = "v2"
-            job.name = "test"
-            job.schedule = MagicMock()
-            job.schedule.kind = "every"
-            job.schedule.every_secs = 300
-            job.schedule.cron_expr = None
-            job.schedule.at_ts = None
-            job.agent_id = ""
-            job.approval_mode = ""
-            mock_svc.return_value.add_job.return_value = job
-            result = self._simulate_tool_call(
-                "schedule_add",
-                {"name": "test", "message": "go", "every": 300, "approval_mode": ""},
-            )
-        assert "v2" in result
-
-    def test_invalid_value_rejected(self) -> None:
-        result = self._simulate_tool_call(
-            "schedule_add",
-            {"name": "test", "message": "go", "every": 300, "approval_mode": "yolo"},
-        )
-        assert "Error" in result
-
-
 class TestSessionApprovalPolicy:
     """Session-level approval policy storage and retrieval."""
 

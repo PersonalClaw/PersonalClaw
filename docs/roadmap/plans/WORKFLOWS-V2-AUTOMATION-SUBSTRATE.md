@@ -2518,3 +2518,76 @@ an anchor that moves when unrelated code is reordered tests the layout rather th
   writer — `automation_*` already covers all nine of them), then the facade's CRUD fallbacks, which
   are only safe to delete once those are gone. Then `suggestions.py` / `messaging.py` / `discover.py`
   (reads), then the class. `ScheduleRunStore` survives.
+
+### S109 — The `schedule_*` MCP aliases retire (§4)
+
+**DONE.** Nine aliases gone, and with them the last legacy writer. Measured coverage before deleting
+anything: every `schedule_*` capability exists in `automation_*` **except one**, and that exception
+turned out to be an access control rather than a convenience.
+
+**🔴 `schedule_remove_all` was enforcing an access control nothing else had.** Its handler filtered
+`jobs = [j for j in jobs if j.session_key == session_key]` and REFUSED outright when no session key
+was set, so an agent could only mass-delete automations it had created. Retiring the alias without
+carrying that forward would have either lost the bulk operation or left a future author to re-add it
+unscoped. So `automation_delete_all` lands with it.
+
+**The scope had to CHANGE to stay real.** `mcp_schedule` set `job.session_key` on add, but a row
+created through `tools.create` carries `session="fresh"` (the default) and `created_by="agent"` —
+measured. A session-keyed filter would therefore have matched **nothing** for exactly the rows an
+agent can create: identical in a diff, enforcing nothing. `created_by` is the ownership the store
+records, and the MCP dispatcher **hard-codes** it rather than reading it from args (an agent that
+could pass `created_by="user"` would be able to delete every automation the human built). The
+validation schema deliberately has no field for it, and a test asserts that absence.
+
+**🔴 A SECOND control was about to disappear silently: the R1 interval floor.**
+`MIN_CLOCK_INTERVAL_SECS = 900` has existed since S87 and was read by **no code at all** — its only
+test asserted the constant equals 900. The one live floor was the retired `schedule_add` schema's
+`min_val=60`. Driven: `automation_create(spec={"kind":"interval","interval_secs":5})` persisted a
+**5-second LLM poll** with `ok: True` and zero issues. So retiring the alias would have removed the
+last thing standing between a typo and an every-5-seconds model call. `validate_spec` now enforces it
+as a WARNING (not an error) because R1 makes the floor overridable — "a 5-minute local-model poll is a
+legitimate choice, it just should not be the accident you get from typing `* * * * *`". It fires, and
+it is visibly flagged.
+
+**Retirement was safe because `@personalclaw-core` already carries the namespace.** Verified on both
+paths before cutting: the aggregated ACP surface (`mcp_core._aggregated_list_tools`) and the native
+in-process provider both offer all nine `automation_*` tools, and `defaults.json` grants
+`@personalclaw-core`. So dropping `@personalclaw-schedule` removes only the aliases.
+
+**What came out** — the surface was much wider than the module: `mcp_schedule.py` (716 lines), the
+`personalclaw-schedule-tools` bundled app, four validation schemas + `MCP_SCHEDULE_SCHEMAS`, nine
+`TOOL_META` entries, `create_schedule_provider`, the `mcp-schedule` CLI subcommand, the
+`_MANAGED_MCP_SERVERS` + `_MANAGED_SERVER_NAMES` entries, the `defaults.json` grant, the doctor's
+repair loop, the dashboard's always-enabled builtin list, and the `tool_groups` mapping row.
+
+- **🔴 The highest-impact reference was the shipped PROMPTS.** `chat.md` and `background.md` both told
+  the model to call `schedule_add`/`schedule_list`/`schedule_remove`/`schedule_pause`/
+  `schedule_resume`. A prompt naming a retired tool teaches the model to invoke something that does
+  not exist, and the failure surfaces as the assistant apologizing rather than as anything a
+  developer would see. Both now name `automation_*`, and a test asserts no shipped prompt mentions
+  `schedule_add`.
+
+**DEVIATION — 6 test files deleted, 6 re-pointed.** `test_mcp_cron.py`,
+`test_mcp_cron_channel.py`, `test_mcp_cron_persistent_session.py`, `test_mcp_cron_thread_ts.py`,
+`test_cron_session_scope.py` and `test_parse_time_string_tz.py` existed only to drive the aliases.
+`test_cron_session_scope.py`'s security contracts are ported to `test_automation_delete_all.py`
+(10 tests) — deleted-scope, confirm-gate, empty-scope, idempotence, partial-failure reporting, plus
+the hard-coded-scope assertion. `_parse_time_string` retires with its only caller; its real contract
+(human times resolve in the CONFIG timezone) is enforced by `arm._trigger_tz` from S96, verified
+against both Pacific and Eastern before deleting the tests.
+
+Re-pointed rather than deleted: `test_validation.py`'s generic-validator cases (the alias schema was
+only the vehicle), `test_nl_to_cron.py`'s dispatch tests (the NL→cron bridge moved to `tools.create`'s
+injected `cadence_to_cron` seam), `test_schedule_trigger.py`'s two MCP tests (`automation_run` is the
+successor; strengthened to assert an unknown id is refused BEFORE any HTTP post, which the originals
+never checked), `test_mcp_discovery.py`'s two samples (they used `personalclaw-schedule` as a managed
+name, so after retirement they asserted against a no-op), and `test_agent_reference.py`'s provider
+list. `test_validation_user_actions.py`'s interval-floor test moved to the store-level floor above.
+
+- **The four-registration-point landmine held again.** `TOOL_NAMES`, the handler mirror-list in
+  `test_triggers_tools.py`, and the §4-table count all had to gain `automation_delete_all` — and the
+  handler mirror caught the omission on the first run, which is exactly what S92 built it for.
+
+- **REMAINING on the `ScheduleService` retirement:** the facade's CRUD fallbacks (now safe to delete —
+  nothing writes `crons.json`), then the read-only callers (`suggestions.py`, `messaging.py`,
+  `discover.py`), then the class itself. `ScheduleRunStore` survives.

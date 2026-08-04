@@ -187,83 +187,6 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
-    # ── personalclaw-schedule ────────────────────────────────────────────────
-    "schedule_list": {
-        "response_type": "schedule.list",
-        "error_codes": [],
-        "examples": [{"summary": "List all scheduled jobs", "args": {}}],
-    },
-    "schedule_add": {
-        "response_type": "schedule.job",
-        "error_codes": [],
-        "examples": [
-            {
-                "summary": "Schedule a recurring daily message",
-                "args": {
-                    "name": "morning-brief",
-                    "message": "Summarize my calendar and unread inbox",
-                    "cron_expr": "0 8 * * *",
-                },
-            },
-            {
-                "summary": "Schedule a one-off reminder after a delay",
-                "args": {"name": "stretch", "message": "Take a break", "delay": 3600},
-            },
-        ],
-    },
-    "schedule_update": {
-        "response_type": "schedule.job",
-        "error_codes": [],
-        "examples": [
-            {
-                "summary": "Change a job's schedule",
-                "args": {"job_id": "morning-brief", "cron_expr": "0 9 * * *"},
-            },
-        ],
-    },
-    "schedule_remove": {
-        "response_type": "schedule.remove.result",
-        "error_codes": [],
-        "examples": [{"summary": "Delete a scheduled job", "args": {"job_id": "morning-brief"}}],
-    },
-    "schedule_remove_all": {
-        "response_type": "schedule.remove.result",
-        "error_codes": [],
-        "examples": [{"summary": "Delete every scheduled job", "args": {}}],
-    },
-    "schedule_pause": {
-        "response_type": "schedule.job",
-        "error_codes": [],
-        "examples": [
-            {"summary": "Pause a job without deleting it", "args": {"job_id": "morning-brief"}}
-        ],
-    },
-    "schedule_resume": {
-        "response_type": "schedule.job",
-        "error_codes": [],
-        "examples": [{"summary": "Resume a paused job", "args": {"job_id": "morning-brief"}}],
-    },
-    "schedule_trigger": {
-        "response_type": "schedule.trigger.result",
-        "error_codes": [],
-        "examples": [
-            {"summary": "Fire a scheduled job right now", "args": {"job_id": "morning-brief"}}
-        ],
-    },
-    "schedule_natural": {
-        "response_type": "schedule.job",
-        "error_codes": [],
-        "examples": [
-            {
-                "summary": "Schedule from a natural-language cadence",
-                "args": {
-                    "name": "standup",
-                    "message": "Post my standup update",
-                    "cadence": "every weekday at 9am",
-                },
-            },
-        ],
-    },
     # ── personalclaw-artifacts ───────────────────────────────────────────────
     "artifact_save": {
         "response_type": "artifact.detail",
@@ -914,6 +837,19 @@ TOOL_META: dict[str, dict[str, Any]] = {
             {
                 "summary": "Delete an automation permanently",
                 "args": {"id": "file:summarize-notes", "confirm": True},
+            },
+        ],
+    },
+    "automation_delete_all": {
+        "response_type": "automation.delete_all.result",
+        "error_codes": [],
+        "examples": [
+            {
+                # No `created_by` in the example because there is no such PARAMETER (S109): the
+                # scope is the caller's identity, so an example showing one would advertise an
+                # argument that would let an agent delete the user's own automations.
+                "summary": "Delete every automation you created",
+                "args": {"confirm": True},
             },
         ],
     },

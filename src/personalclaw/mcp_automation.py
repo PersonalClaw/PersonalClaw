@@ -164,6 +164,18 @@ def _list_tools() -> list[dict[str, Any]]:
                 "required": ["id", "confirm"],
             },
         },
+        {
+            "name": "automation_delete_all",
+            # Scoped in the DESCRIPTION as well as the code: a bulk-delete tool whose blast radius
+            # is only discoverable by reading the implementation is one an agent will misuse.
+            "description": "Delete every automation YOU created (created_by=agent), in one call. "
+            "Requires confirm: true. Never touches automations the user made.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"confirm": {"type": "boolean"}},
+                "required": ["confirm"],
+            },
+        },
     ]
 
 
@@ -225,6 +237,11 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         result = T.delete(
             store, trigger_id=str(args.get("id") or ""), confirm=bool(args.get("confirm"))
         )
+    elif name == "automation_delete_all":
+        # `created_by` is NOT taken from the args. The scope is the caller's identity, and an agent
+        # able to pass `created_by="user"` could mass-delete the automations the human built — which
+        # is precisely the access control the retired `schedule_remove_all` enforced.
+        result = T.delete_all(store, created_by="agent", confirm=bool(args.get("confirm")))
     else:
         return f"Error: unknown automation tool {name!r}."
 

@@ -301,7 +301,7 @@ def _server_from_spec(name: str, spec: dict, source: str) -> McpServerInfo:
     )
 
 
-_MANAGED_SERVER_NAMES = {"personalclaw-core", "personalclaw-schedule"}
+_MANAGED_SERVER_NAMES = {"personalclaw-core"}
 
 # Cached resolved binary path — avoids subprocess.run on every list_servers() call.
 _resolved_managed_bin: str | None = None

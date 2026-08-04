@@ -18,8 +18,10 @@ non-cadence request never reaches the cadence converter. Two further defects the
 before any test existed are recorded in `nl_kind` (a URL mis-routing to `file`, and a change verb
 that reached the dedup hint but not the routing check).
 
-**What this owns, and the boundary.** Eight tools over `TriggerStore`: create/list/update/pause/
-resume/run/history/delete. It does NOT own the fire path (S86), the tick (S88), dispatch (S89), or
+**What this owns, and the boundary.** Nine tools over `TriggerStore`: create/list/update/pause/
+resume/run/history/delete, plus `delete_all` (S109 — the scoped bulk delete carried over when the
+`schedule_*` aliases retired; it is the only capability those aliases had that this namespace did
+not). It does NOT own the fire path (S86), the tick (S88), dispatch (S89), or
 execution (S90) — `automation_run` hands off to the shipped executor rather than re-deriving a
 turn. Keeping those injected is what let the whole chain be driven end to end without a model.
 
@@ -54,6 +56,7 @@ TOOL_NAMES: tuple[str, ...] = (
     "automation_run",
     "automation_history",
     "automation_delete",
+    "automation_delete_all",
 )
 
 #: Fields an `automation_update` patch may set. An allowlist because a patch is agent-supplied:
@@ -367,6 +370,55 @@ def delete(store: Any, *, trigger_id: str, confirm: bool = False) -> ToolResult:
     name = row.trigger.name
     store.delete(trigger_id)
     return ToolResult(True, f"Deleted {trigger_id} ({name}).", {"deleted": trigger_id})
+
+
+def delete_all(store: Any, *, created_by: str = "agent", confirm: bool = False) -> ToolResult:
+    """`automation_delete_all` — bulk delete, SCOPED to one creator (S109).
+
+    Carries forward the one capability `schedule_remove_all` had that no `automation_*` tool did.
+    That matters because the alias was not just a convenience: it enforced a real access control —
+    `jobs = [j for j in jobs if j.session_key == session_key]`, so an agent could only mass-delete
+    automations it had created, and it REFUSED outright when no session key was set. Retiring the
+    alias without carrying that scope forward would either lose the bulk operation or (worse) leave
+    a future author to re-add it unscoped.
+
+    The scope is `created_by` rather than the legacy `session_key`, because that is the ownership
+    the store records. Measured: `mcp_schedule` set `job.session_key` on add, but a row created
+    through `tools.create` carries `session="fresh"` (the default) and `created_by="agent"` — so a
+    session-keyed filter would match NOTHING for exactly the rows an agent can create, making the
+    control vacuous in the new world while looking identical in a diff.
+
+    `confirm` is required for the reason single `delete` requires it, only more so: this is the most
+    destructive tool in the namespace. An empty scope reports that it deleted nothing rather than
+    reporting success — "Removed 0 job(s)" beside an untouched list is how a caller learns its scope
+    was wrong instead of assuming the work is done.
+    """
+    if not confirm:
+        return ToolResult(
+            False,
+            f"Error: deleting every {created_by}-created automation needs confirm: true. "
+            "Pause them instead if you might want them back.",
+        )
+    owned = [row.trigger for row in store.load() if row.trigger.created_by == created_by]
+    if not owned:
+        return ToolResult(
+            True,
+            f"No {created_by}-created automations to delete.",
+            {"deleted": [], "created_by": created_by},
+        )
+    deleted: list[str] = []
+    for trigger in owned:
+        try:
+            store.delete(trigger.id)
+            deleted.append(trigger.id)
+        except Exception:  # noqa: BLE001 - one undeletable row must not strand the rest
+            logger.debug("could not delete %s", trigger.id, exc_info=True)
+    text = f"Deleted {len(deleted)} {created_by}-created automation(s): {', '.join(deleted)}."
+    if len(deleted) != len(owned):
+        # Reported, not swallowed: a partial bulk delete that claimed full success would leave the
+        # caller believing the list is empty when rows it cannot see are still firing.
+        text += f"\n  ⚠️ {len(owned) - len(deleted)} could not be deleted."
+    return ToolResult(True, text, {"deleted": deleted, "created_by": created_by})
 
 
 #: Gates a MANUAL fire may skip, per §4: "bypasses min-interval + max_runs_per_hour, never rate

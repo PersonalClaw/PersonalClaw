@@ -669,9 +669,6 @@ Examples:
     incident_sub.add_parser("off", help="Resume — re-enable unattended work")
     incident_sub.add_parser("status", help="Show incident state")
 
-    # mcp-schedule (MCP server — spawned by ACP agent, not user-facing)
-    sub.add_parser("mcp-schedule", help=argparse.SUPPRESS)
-
     # mcp-core (MCP server — spawned by ACP agent, not user-facing)
     sub.add_parser("mcp-core", help=argparse.SUPPRESS)
 
@@ -905,10 +902,6 @@ Examples:
         _learn(args)
     elif args.command == "memory":
         _memory_cmd(args)
-    elif args.command == "mcp-schedule":
-        from personalclaw.mcp_schedule import run_mcp_server as run_mcp_schedule_server
-
-        run_mcp_schedule_server()
     elif args.command == "mcp-core":
         from personalclaw.mcp_core import run_mcp_core_server
 

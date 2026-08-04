@@ -300,6 +300,32 @@ def validate_spec(kind: str, spec: dict[str, Any]) -> list[Issue]:
             issues.append(
                 Issue(path="spec.at", message=f"an {clock_kind} clock needs `at`", severity="error")
             )
+        if clock_kind == "interval":
+            # 🔴 THE R1 FLOOR, finally enforced (S109). `MIN_CLOCK_INTERVAL_SECS` was declared and
+            # read by NOTHING — measured: `create(spec={"kind":"interval","interval_secs":5})`
+            # persisted a 5-second LLM poll with `ok: True` and zero issues. The only live floor was
+            # the retired `schedule_add` schema's `min_val=60`, so retiring the alias would have
+            # removed the last check standing between a typo and an every-5-seconds model call.
+            #
+            # A WARNING, not an error, because R1 makes the floor overridable ("a 5-minute
+            # local-model poll is a legitimate choice — it just should not be the accident you get
+            # from typing `* * * * *`"). An error would refuse a trigger the plan says to allow; a
+            # silent pass is what let this go unnoticed. So: it fires, and it is visibly flagged.
+            try:
+                secs = int((spec or {}).get("interval_secs") or 0)
+            except (TypeError, ValueError):
+                secs = 0
+            if 0 < secs < MIN_CLOCK_INTERVAL_SECS:
+                issues.append(
+                    Issue(
+                        path="spec.interval_secs",
+                        message=(
+                            f"{secs}s is below the {MIN_CLOCK_INTERVAL_SECS}s floor for an "
+                            f"LLM-invoking trigger; it will still run, but confirm this is "
+                            f"intended"
+                        ),
+                    )
+                )
     elif kind == "event" and not str((spec or {}).get("source", "") or "").strip():
         issues.append(
             Issue(path="spec.source", message="an event trigger needs a source", severity="error")

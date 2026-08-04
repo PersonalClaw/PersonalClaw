@@ -529,14 +529,16 @@ def test_every_declared_tool_name_has_a_handler():
         "automation_run": T.run,
         "automation_history": T.history,
         "automation_delete": T.delete,
+        "automation_delete_all": T.delete_all,
     }
     assert set(T.TOOL_NAMES) == set(handlers)
     assert all(callable(h) for h in handlers.values())
 
 
 def test_the_namespace_covers_section_4s_table():
-    """§4 declares eight tools; a missing one is scope quietly dropped."""
-    assert len(T.TOOL_NAMES) == 8
+    """§4 declares eight tools, plus S109's `delete_all` (the scoped bulk delete carried over from
+    the retired `schedule_remove_all`). A missing one is scope quietly dropped."""
+    assert len(T.TOOL_NAMES) == 9
     for name in T.TOOL_NAMES:
         assert name.startswith("automation_")
 

@@ -5,7 +5,7 @@ import pytest
 from personalclaw.validation import (
     CHANNEL_ID_RE,
     LEARN_ADD_SCHEMA,
-    SCHEDULE_ADD_SCHEMA,
+    MCP_AUTOMATION_SCHEMAS,
     SEND_MESSAGE_SCHEMA,
     SPAWN_RUN_SCHEMA,
     FieldSpec,
@@ -221,33 +221,31 @@ class TestValidateToolArgs:
         assert ei.value.agent_error is not None
         assert ei.value.agent_error.code == "ERR_TOOL_ARG_INVALID"
 
-    def test_cron_add_valid(self):
+    # These exercise the generic validator; `schedule_add`'s schema was only the vehicle, and it
+    # retired with the alias (S109). Re-pointed at `automation_create`, the live equivalent. The
+    # interval-floor case moved with the floor itself — it is now a store-level WARNING rather than
+    # a schema rejection (R1 makes it overridable), asserted in
+    # `test_validation_user_actions.py::test_a_sub_floor_interval_is_flagged`.
+    def test_automation_create_valid(self):
         result = validate_tool_args(
-            {"name": "check", "message": "check pipeline", "every": 300},
-            SCHEDULE_ADD_SCHEMA,
+            {"name": "check", "message": "check pipeline", "when": "every 5 minutes"},
+            MCP_AUTOMATION_SCHEMAS["automation_create"],
         )
         assert result["name"] == "check"
-        assert result["every"] == 300
+        assert result["when"] == "every 5 minutes"
 
-    def test_cron_add_interval_too_low(self):
-        with pytest.raises(ValidationError, match=">= 60"):
-            validate_tool_args(
-                {"name": "x", "message": "y", "every": 10},
-                SCHEDULE_ADD_SCHEMA,
-            )
-
-    def test_cron_add_with_channel(self):
-        result = validate_tool_args(
-            {"name": "ops", "message": "check", "every": 300, "channel": "C0AP77JJSN6"},
-            SCHEDULE_ADD_SCHEMA,
-        )
-        assert result["channel"] == "C0AP77JJSN6"
-
-    def test_cron_add_invalid_channel(self):
+    def test_automation_create_rejects_a_bad_kind(self):
         with pytest.raises(ValidationError, match="invalid format"):
             validate_tool_args(
-                {"name": "ops", "message": "check", "every": 300, "channel": "not-a-channel"},
-                SCHEDULE_ADD_SCHEMA,
+                {"name": "x", "kind": "NotAKind"},
+                MCP_AUTOMATION_SCHEMAS["automation_create"],
+            )
+
+    def test_automation_create_requires_a_name(self):
+        with pytest.raises(ValidationError, match="name"):
+            validate_tool_args(
+                {"message": "no name given"},
+                MCP_AUTOMATION_SCHEMAS["automation_create"],
             )
 
     def test_unknown_field_rejected(self):

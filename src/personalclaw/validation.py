@@ -682,59 +682,6 @@ ARTIFACT_DELETE_SCHEMA = ToolSchema(
 
 # ── Tool Schemas (MCP Cron) ──
 
-SCHEDULE_ADD_SCHEMA = ToolSchema(
-    tool_name="schedule_add",
-    fields=[
-        FieldSpec("name", str, required=True, max_len=MAX_SHORT_STRING),
-        FieldSpec("message", str, required=True, max_len=MAX_MEDIUM_STRING),
-        FieldSpec("every", int, min_val=60, max_val=86400 * 30),
-        FieldSpec("cron_expr", str, max_len=100),
-        FieldSpec("at", (int, float), min_val=0, max_val=4102444800),  # up to 2100
-        FieldSpec("delay", (int, float), min_val=1, max_val=86400 * 30),  # 1s to 30 days
-        FieldSpec("at_time", str, max_len=100),
-        FieldSpec("agent", str, max_len=MAX_SHORT_STRING, pattern=_AGENT_NAME_RE),
-        FieldSpec("silent", bool),
-        FieldSpec("channel", str, max_len=CHANNEL_MAX_LEN, pattern=CHANNEL_ID_RE),
-        FieldSpec("thread_ts", str, max_len=30, pattern=_MESSAGE_TS_RE),
-        FieldSpec("approval_mode", str, max_len=10, pattern=re.compile(r"^(auto)?$")),
-        FieldSpec(
-            "skip_dates",
-            list,
-            item_type=str,
-            item_max_len=10,
-            max_items=366,
-            item_pattern=re.compile(r"^\d{4}-\d{2}-\d{2}$"),
-        ),
-        FieldSpec("timezone", str, max_len=50, pattern=re.compile(r"^[A-Za-z0-9_/+-]+$")),
-        FieldSpec("persistent_session", bool),
-        FieldSpec("strict_schedule", bool),
-        # Zero-token execution modes (mutually exclusive with each other).
-        FieldSpec("script", str, max_len=MAX_SHORT_STRING),
-        FieldSpec("command", str, max_len=MAX_MEDIUM_STRING),
-        FieldSpec("zt_timeout", int, min_val=0, max_val=86400),
-    ],
-)
-
-CRON_REMOVE_SCHEMA = ToolSchema(
-    tool_name="schedule_remove",
-    fields=[
-        FieldSpec("job_id", str, required=True, max_len=16, pattern=_JOB_ID_RE),
-    ],
-)
-
-CRON_PAUSE_SCHEMA = ToolSchema(
-    tool_name="schedule_pause",
-    fields=[
-        FieldSpec("job_id", str, required=True, max_len=16, pattern=_JOB_ID_RE),
-    ],
-)
-
-CRON_RESUME_SCHEMA = ToolSchema(
-    tool_name="schedule_resume",
-    fields=[
-        FieldSpec("job_id", str, required=True, max_len=16, pattern=_JOB_ID_RE),
-    ],
-)
 
 # ── Tool Schemas (Hooks) ──
 
@@ -924,50 +871,6 @@ MCP_CORE_SCHEMAS: dict[str, ToolSchema] = {
 # Keyed by the live MCP tool names (schedule_*). The schema objects already
 # carry tool_name="schedule_*"; the dict keys must match so _validate_args'
 # MCP_SCHEDULE_SCHEMAS.get(name) lookup actually finds them.
-MCP_SCHEDULE_SCHEMAS: dict[str, ToolSchema] = {
-    "schedule_add": SCHEDULE_ADD_SCHEMA,
-    "schedule_update": ToolSchema(
-        tool_name="schedule_update",
-        fields=[
-            FieldSpec("job_id", str, required=True, max_len=16, pattern=_JOB_ID_RE),
-            FieldSpec("name", str, max_len=MAX_SHORT_STRING),
-            FieldSpec("message", str, max_len=MAX_MEDIUM_STRING),
-            FieldSpec("cron_expr", str, max_len=100),
-            FieldSpec("every", int, min_val=60, max_val=86400 * 30),
-            FieldSpec("agent", str, max_len=MAX_SHORT_STRING, pattern=_AGENT_NAME_RE),
-            FieldSpec("channel", str, max_len=CHANNEL_MAX_LEN, pattern=CHANNEL_ID_RE),
-            FieldSpec("thread_ts", str, max_len=30, pattern=_MESSAGE_TS_RE),
-            FieldSpec("approval_mode", str, max_len=10, pattern=re.compile(r"^(auto)?$")),
-            FieldSpec("silent", bool),
-            FieldSpec("strict_schedule", bool),
-            FieldSpec(
-                "skip_dates",
-                list,
-                item_type=str,
-                item_max_len=10,
-                max_items=366,
-                item_pattern=re.compile(r"^\d{4}-\d{2}-\d{2}$"),
-            ),
-            FieldSpec("timezone", str, max_len=50, pattern=re.compile(r"^[A-Za-z0-9_/+-]+$")),
-            FieldSpec("script", str, max_len=MAX_SHORT_STRING),
-            FieldSpec("command", str, max_len=MAX_MEDIUM_STRING),
-            FieldSpec("zt_timeout", int, min_val=0, max_val=86400),
-        ],
-    ),
-    "schedule_remove": CRON_REMOVE_SCHEMA,
-    "schedule_pause": CRON_PAUSE_SCHEMA,
-    "schedule_resume": CRON_RESUME_SCHEMA,
-    "schedule_natural": ToolSchema(
-        tool_name="schedule_natural",
-        fields=[
-            FieldSpec("name", str, required=True, max_len=MAX_SHORT_STRING),
-            FieldSpec("message", str, required=True, max_len=MAX_MEDIUM_STRING),
-            FieldSpec("cadence", str, required=True, max_len=MAX_SHORT_STRING),
-            FieldSpec("channel", str, max_len=CHANNEL_MAX_LEN, pattern=CHANNEL_ID_RE),
-            FieldSpec("silent", bool),
-        ],
-    ),
-}
 
 MCP_HUB_SCHEMAS: dict[str, ToolSchema] = {}
 
@@ -1029,6 +932,13 @@ MCP_AUTOMATION_SCHEMAS: dict[str, ToolSchema] = {
             FieldSpec("id", str, required=True, max_len=96),
             FieldSpec("confirm", bool),
         ],
+    ),
+    # No `created_by` field ON PURPOSE (S109): the scope is the caller's identity, not an argument.
+    # A schema that accepted it would let an agent mass-delete the user's own automations, which is
+    # the access control the retired `schedule_remove_all` existed to enforce.
+    "automation_delete_all": ToolSchema(
+        tool_name="automation_delete_all",
+        fields=[FieldSpec("confirm", bool)],
     ),
 }
 

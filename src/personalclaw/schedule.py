@@ -12,7 +12,7 @@ detects external file changes
 before every mutation.  Job execution releases the lock so long-running jobs
 don't block the CLI.
 
-Jobs are created via MCP tools (``schedule_add``) or the CLI (``personalclaw cron add``).
+Jobs are legacy-only now: every writer creates store triggers instead (S108/S109).
 
 Supports three schedule types:
 - ``every`` — recurring interval (min 60s)

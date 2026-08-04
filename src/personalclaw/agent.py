@@ -19,7 +19,6 @@ Configuration files (edit these, then ``personalclaw setup --agent-only``):
 
 Dynamic fields resolved at install time:
   - ``prompt`` — ``file://`` URI pointing to the prompt file
-  - ``mcpServers.personalclaw-schedule.command`` — absolute path to ``personalclaw`` binary
 """
 
 import json
@@ -170,7 +169,7 @@ def _resolve_personalclaw_bin() -> str:
        one when the venv lives OUTSIDE the source tree (e.g. a repo-root ``.venv``
        with the package under ``PersonalClaw/src/``: the step-1 walk from
        ``src/personalclaw`` never crosses the sibling ``.venv/bin``). This gap
-       dropped the ``personalclaw-schedule``/``-core`` MCP servers on every boot.
+       dropped the ``personalclaw-core`` MCP server on every boot.
     3. ``shutil.which('personalclaw')`` — respects PATH order (when the venv bin
        IS on PATH).
     4. Bare ``"personalclaw"`` — last resort, may fail but surfaces the problem
@@ -252,7 +251,6 @@ def _resolve_personalclaw_bin() -> str:
 # one entry here.
 # ---------------------------------------------------------------------------
 _MANAGED_MCP_SERVERS: dict[str, dict] = {
-    "personalclaw-schedule": {"command_fn": _resolve_personalclaw_bin, "args": ["mcp-schedule"]},
     "personalclaw-core": {"command_fn": _resolve_personalclaw_bin, "args": ["mcp-core"]},
 }
 
