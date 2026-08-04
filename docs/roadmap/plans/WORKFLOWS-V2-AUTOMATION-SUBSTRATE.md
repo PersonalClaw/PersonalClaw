@@ -3741,3 +3741,47 @@ validated-but-unenforced security field with no warning is the inert control wea
 - **REMAINING in AUTOMATION-SUBSTRATE:** the E4-blocked webhook fire endpoint (queue S123), `idle`
   (Loops Phase 4), `web_watch`'s headless tier, and — new from this session — a chat-turn event source
   would need to read `agent_scope` when it lands.
+
+### S132 — `INERT_OUTCOMES` declared and unread; §1.3's archive split (decision 3) — DONE
+
+**AUDITED FIRST: decision 3's two record weights are sound.** §1.3 warns that "giving everything the
+heavy shape is what produces 1440 run dirs a day from a minutely trigger". Measured: `RunWeight` is
+assigned honestly at all three writers (a schedule run with a real record → `FULL`; a `DEFERRED` launch
+→ `LEDGER` until its turn reports; an event store's counter row → `LEDGER`), and **nothing branches on
+it** — because it does not need to. Driven: a suppressed fire through `service.tick` creates **zero**
+directories. The trigger path writes ledger ROWS, never run directories, so the cost claim holds by
+construction and `weight` is correctly a reporting label. No defect; no fix invented.
+
+**🔴 DISCOVERY: `INERT_OUTCOMES` was declared in `models.py` and read by NOTHING.** The sixth
+declared-but-unread table in this stretch. §1.3 is explicit: inert outcomes *"collapse to ledger rows
+and archive out of the default inbox view — the runs inbox is for what the machine DID."* Measured:
+`feed_response` returned every row undifferentiated, so the feed a user opens to answer "what did my
+machine do" answers "mostly nothing, 1440 times" — a minutely trigger held by quiet hours buries the
+one fire that mattered under 1439 `skipped_gate` rows.
+
+**Shipped as a PARTITION, not a filter, and that distinction is the design.** The suppressed rows are
+the answer to "why did my automation not run", so dropping them would replace one bad default with a
+worse one. §7 criterion 8 bans silent drops, and **a row filtered out of the only surface that shows it
+is a silent drop with extra steps.** So `runs` still carries every row, `did_ids`/`suppressed_ids` let a
+default view show work and fold the rest away, and a client that ignores the new keys behaves exactly
+as before (asserted — this is additive).
+
+**What stays VISIBLE is the load-bearing part, and each is asserted:**
+
+* `REFUSED` — a policy decision the machine made (the kill switch, a capability fence, an unresolved
+  secret). "Your automation was refused" is not "it was not due".
+* `BLOCKED_INJECTION` — a security event; folding it into an archive would bury the row a user most
+  needs.
+* `FAILED` — the most important thing in the feed.
+* `DEFERRED` — work that WILL happen, parked rather than skipped.
+
+Only the six `skipped_*` outcomes archive. A parametrized test asserts every declared `INERT_OUTCOMES`
+member classifies — the completeness check whose absence is precisely what let the table drift unread.
+
+`outcome_counts` deliberately still tallies suppressed rows: the tally answers a different question
+from the split, and a health rollup that under-counted skips could not explain why a trigger is quiet.
+
+- **REMAINING in AUTOMATION-SUBSTRATE:** the E4-blocked webhook fire endpoint (queue S123), `idle`
+  (Loops Phase 4), `web_watch`'s headless tier, a chat-turn event source reading `agent_scope` (S131),
+  and the FE affordance that renders this split (the API half is done; §5's Automations page owns the
+  UI).
