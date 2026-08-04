@@ -200,13 +200,23 @@ def _engaged_loops(_state: Any) -> bool:
 
 
 def _engaged_automation(state: Any) -> bool:
+    """Whether the user has any automation at all — clock, file watch, event, the lot.
+
+    🔴 Read the unified store (S111). This asked `state.crons`, which describes only the legacy
+    `crons.json` — a file nothing has written since S108. Measured: a home with a store trigger read
+    as NOT engaged with automation, so the legibility surface told a user with live automations that
+    they had none.
+    """
     from personalclaw.config.loader import config_dir
     from personalclaw.event_triggers import EventTriggerStore
+    from personalclaw.triggers.store import TriggerStore
 
     if EventTriggerStore(config_dir() / "event_triggers.json").load():
         return True
-    crons = getattr(state, "crons", None)
-    return bool(crons and crons.list_jobs(include_disabled=True))
+    try:
+        return bool(TriggerStore(base_dir=config_dir()).load())
+    except Exception:  # noqa: BLE001 - a legibility probe must never raise
+        return False
 
 
 def _engaged_tasks(_state: Any) -> bool:

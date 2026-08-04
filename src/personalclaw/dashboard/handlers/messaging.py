@@ -364,14 +364,23 @@ def _resolve_session_target(
     if not caller_session.startswith("cron:"):
         return None, None
     cron_id = caller_session.removeprefix("cron:")
-    jobs = state.crons.list_jobs(include_disabled=True)
-    job = next((j for j in jobs if j.id == cron_id), None)
-    if not job or not job.session_key:
+    # The unified store (S111). `state.crons` described only the legacy file, which nothing has
+    # written since S108 — so a cron created any way at all resolved to `(None, None)` here and its
+    # reply went nowhere. `session_key_of` strips the store's `pinned:` prefix, yielding exactly the
+    # legacy `job.session_key` value this function was written against.
+    from personalclaw.config.loader import config_dir
+    from personalclaw.triggers import schedule_view as _sv
+    from personalclaw.triggers.store import TriggerStore
+
+    row = TriggerStore(base_dir=config_dir()).get(cron_id)
+    if row is None:
+        return None, None
+    session_key = _sv.session_key_of(row.trigger)
+    if not session_key:
         return None, None
     # session_key is e.g. "dashboard:chat-3-1712793600" but session names
     # don't have the "dashboard:" prefix
-    session_name = job.session_key.removeprefix("dashboard:")
-    return session_name, job.name
+    return session_key.removeprefix("dashboard:"), row.trigger.name
 
 
 def _is_owner_user(owner_id: str, user_id: str) -> bool:
