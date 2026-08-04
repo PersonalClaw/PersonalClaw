@@ -936,3 +936,100 @@ class TestAutomationsInASnapshot:
             zip_bytes, _ = create_export_zip()
         names = zipfile.ZipFile(io.BytesIO(zip_bytes)).namelist()
         assert any(n.endswith("/crons.json") for n in names)
+
+
+# ── the inventory ⇄ snapshot drift guard (S113) ──
+
+#: Inventory entries the snapshot does NOT yet carry. Each is real missing coverage, PINNED so the
+#: list can only shrink — a new state file added without snapshot coverage fails the test below
+#: rather than silently joining a backlog nobody re-measures.
+#:
+#: 🔴 Found by cross-checking `durability.inventory.INVENTORY` (57 entries) against both snapshot
+#: paths while closing §7 item 9: **25 of 57 declared state files travelled in neither.** The
+#: automation domain is closed by this session; the remaining 22 belong to DURABILITY-AND-SYNC,
+#: whose §1 promises "every byte of state is enumerated in one inventory" and whose plan owns the
+#: export shards. Hand-listing them here would be a silent, unreviewed scope grab into that plan.
+_SNAPSHOT_COVERAGE_GAPS: frozenset[str] = frozenset(
+    {
+        # memory: the FAISS sidecar + its id map (rebuildable from memory.db, but a restore
+        # currently re-embeds from scratch)
+        "memory_faiss",
+        "memory_ids",
+        # knowledge: the store, its files and the lexicon
+        "knowledge_db",
+        "knowledge_files",
+        "lexicon_db",
+        # work: the loop DB, chat sessions, subagent records
+        "loops_db",
+        "sessions",
+        "subagents",
+        # automation: autonudge state — retires INTO the trigger store per §7 item 9, which is
+        # blocked on LOOPS-EVOLUTION Phase 4, so covering the file now would back up a format about
+        # to be replaced
+        "autonudge",
+        # platform
+        "prompt_snippets",
+        "extensions",
+        "models",
+        "acp_adapters",
+        "screenshots",
+        "crashes",
+        "folders",
+        "tags",
+        "tool_usage",
+        "tokenjuice_savings",
+        # config: the active-* bindings and tool prefs
+        "active_models",
+        "active_search_providers",
+        "active_prompts",
+        "tool_prefs",
+        "mcp",
+        # security: the audit log (append-only; a merge needs the dedup story S2 defines)
+        "security_events",
+    }
+)
+
+
+def _snapshot_source_text() -> str:
+    import personalclaw.portability as _port
+    import personalclaw.snapshot as _snap
+
+    return Path(_port.__file__).read_text() + Path(_snap.__file__).read_text()
+
+
+def test_every_automation_state_file_is_in_a_snapshot():
+    """🔴 The automation domain must be COMPLETE. This session's whole point: `triggers.json` was
+    declared in the inventory and carried by neither snapshot path, so `personalclaw snapshot` lost
+    every automation the user had."""
+    from personalclaw.durability import inventory as inv
+
+    src = _snapshot_source_text()
+    missing = [
+        e.id
+        for e in inv.INVENTORY
+        if e.domain == inv.DOMAIN_AUTOMATION
+        and e.path not in src
+        and e.id not in _SNAPSHOT_COVERAGE_GAPS
+    ]
+    assert not missing, f"automation state not carried by any snapshot path: {missing}"
+
+
+def test_the_snapshot_coverage_gap_list_can_only_shrink():
+    """A new state file added without snapshot coverage must FAIL here rather than joining a backlog
+    nobody re-measures. If you covered one, delete its entry; if you added state, cover it or add it
+    with a reason."""
+    from personalclaw.durability import inventory as inv
+
+    src = _snapshot_source_text()
+    uncovered = {e.id for e in inv.INVENTORY if e.path not in src}
+    new_gaps = uncovered - _SNAPSHOT_COVERAGE_GAPS
+    assert not new_gaps, (
+        f"state declared in the inventory but carried by NO snapshot path: {sorted(new_gaps)}. "
+        "Add it to a snapshot path, or to _SNAPSHOT_COVERAGE_GAPS with the reason."
+    )
+    stale = {
+        gap
+        for gap in _SNAPSHOT_COVERAGE_GAPS
+        if gap not in {e.id for e in inv.INVENTORY} or gap not in uncovered
+    }
+    assert not stale, f"these gaps are closed or gone — remove them from the list: {sorted(stale)}"
