@@ -66,6 +66,7 @@ GATE_ORDER: tuple[str, ...] = (
     "duty",
     "budget",
     "claim",
+    "slot",
     "yield",
     "capability",
 )
@@ -82,6 +83,10 @@ GATE_OUTCOMES: dict[str, str] = {
     "duty": Outcome.SKIPPED_GATE.value,
     "budget": Outcome.SKIPPED_BUDGET.value,
     "claim": Outcome.SKIPPED_OVERLAP.value,
+    # §3.5: "refuses over-capacity starts with a typed RESOURCE_BUSY … (a `deferred`
+    # ledger row)". DEFERRED rather than a skip: the slot frees on its own, so this fire
+    # is postponed by contention, not dropped by policy.
+    "slot": Outcome.DEFERRED.value,
     "yield": Outcome.DEFERRED.value,
     "capability": Outcome.REFUSED.value,
 }
@@ -123,6 +128,9 @@ class FireContext:
     #: module only honours it.
     user_active: bool = False
     yield_to_user: bool = False
+    #: `(slot, holder_trigger_id)` when a named resource slot this fire needs is held by
+    #: ANOTHER running trigger (§3.5). Supplied by `service.tick` from the claim store.
+    busy_slot: tuple[str, str] = ("", "")
 
 
 @dataclass
@@ -262,6 +270,29 @@ async def evaluate(ctx: FireContext) -> FireDecision:
     if claim is None:
         return _refuse("claim", claim_reason or "another fire holds the claim", passed)
     passed.append("claim")
+
+    # ── 5b. named resource slots (§3.5 / AUTO-R9 — S135) ──
+    #
+    # 🔴 `Trigger.resource_slots` was declared, persisted and round-tripped, and read by NOTHING —
+    # found by generalising S134's container audit across all 41 dataclasses in `triggers/`. §3.5
+    # requires the substrate to "serialize conflicting runs per slot and refuse over-capacity starts
+    # with a typed RESOURCE_BUSY + holder identity". So three triggers declaring `["local-llm"]` all
+    # ran a local model at once, which is the contention this exists to prevent on a machine shared
+    # with the interactive user.
+    #
+    # AFTER the claim, deliberately: a slot is only contended by a fire that would
+    # otherwise proceed,
+    # and checking earlier would refuse a fire the overlap gate was about to skip anyway — two
+    # reasons for one suppression, with the less useful one reported.
+    slot, holder = ctx.busy_slot
+    if slot:
+        return _refuse(
+            "slot",
+            f"resource slot {slot!r} is busy (held by {holder}); deferred until it frees",
+            passed,
+            claim=claim,
+        )
+    passed.append("slot")
 
     # ── 6. foreground yield / resource slots (§3.5) ──
     if ctx.yield_to_user and ctx.user_active:

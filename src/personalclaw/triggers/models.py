@@ -241,6 +241,67 @@ CLOCK_KINDS: frozenset[str] = frozenset({"cron", "at", "sequence", "interval"})
 MIN_CLOCK_INTERVAL_SECS = 900
 
 
+def _agent_scope_issues(spec: dict[str, Any] | None) -> list[Issue]:
+    """Structural issues in an `event` trigger's `agent_scope` (§1.4 decision 2 — S131).
+
+    🔴 MEASURED: `agent_scope` was declared in `SPEC_KEYS["event"]`, persisted, round-tripped —
+    and validated by nothing. Every one of these stored with `ok: True` and zero issues:
+
+        agent_scope="not-a-list"        # a bare string
+        agent_scope=[]                  # an empty list
+        agent_scope=[123]               # non-string entries
+        agent_scope=["nonexistent"]     # an agent that does not exist
+
+    Decision 2's recon note is explicit that the substrate "PRESERVES agent scoping as an optional
+    `spec.agent_scope` and does not silently introduce a global chat firing path". A field that
+    accepts any shape and is read by nothing does not preserve scoping — it *promises* it. That is
+    worse than its absence, because an author who sets it believes their trigger is scoped.
+
+    Structure only, matching `validate_spec`'s own contract: whether the named agent EXISTS is a
+    semantic question the config layer answers, and rejecting an agent id at author time would
+    refuse a trigger that becomes valid the moment the agent is installed. What is checked is the
+    shape a reader must be able to rely on.
+
+    An EMPTY list is an error rather than a warning, deliberately. In the legacy path an empty id
+    list means `fire_for_ids` fires NOTHING (its resolver returns `[]` on failure precisely so a
+    broken lookup cannot fall back to global firing). So `agent_scope: []` is an automation that can
+    never fire — silently, forever — which is exactly the inert row the never-throw validation
+    exists to make visible.
+    """
+    raw = (spec or {}).get("agent_scope")
+    if raw is None:
+        return []
+    if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
+        return [
+            Issue(
+                path="spec.agent_scope",
+                message="agent_scope must be a list of agent ids; a "
+                f"{type(raw).__name__} is refused rather than coerced, because a scope that "
+                "silently read as one agent would fence the wrong thing",
+                severity="error",
+            )
+        ]
+    if not raw:
+        return [
+            Issue(
+                path="spec.agent_scope",
+                message="agent_scope is empty, so this trigger can never fire for any agent — "
+                "remove the key to leave it unscoped, or name the agents it belongs to",
+                severity="error",
+            )
+        ]
+    bad = [entry for entry in raw if not isinstance(entry, str) or not entry.strip()]
+    if bad:
+        return [
+            Issue(
+                path="spec.agent_scope",
+                message=f"agent_scope entries must be non-empty agent ids; got {bad!r}",
+                severity="error",
+            )
+        ]
+    return []
+
+
 def validate_spec(kind: str, spec: dict[str, Any]) -> list[Issue]:
     """Structural issues in one kind's spec. NEVER raises.
 
@@ -330,6 +391,8 @@ def validate_spec(kind: str, spec: dict[str, Any]) -> list[Issue]:
         issues.append(
             Issue(path="spec.source", message="an event trigger needs a source", severity="error")
         )
+    if kind == "event":
+        issues.extend(_agent_scope_issues(spec))
     elif kind == "webhook" and not str((spec or {}).get("token_ref", "") or "").strip():
         # A webhook with no token is an unauthenticated fire endpoint. Refused at author time rather
         # than defaulted, because a generated default would be a secret nobody chose.
@@ -380,8 +443,24 @@ GATE_KEYS: frozenset[str] = frozenset(
 #: machine. Security fences are absent from this set on purpose: capabilities, the injection screen
 #: and fencing fail CLOSED, because the cost of skipping them is unbounded while the cost of a
 #: skipped budget check is one extra run.
+#: 🔴 TWO VOCABULARIES, and this set has to answer for BOTH (S130).
+#:
+#: MEASURED: `set(firepath.GATE_ORDER) & FAIL_OPEN_GATES` was **empty**. The names here were the
+#: per-trigger CAP KEYS a person edits (`cost_cap`, `rate_cap`, `duty_gate` — the `GATE_KEYS`
+#: vocabulary), while the fire path walks GATE names (`screen`, `quiet`, `duty`, `budget`, `claim`,
+#: `yield`, `capability`, `incident`). So every gate the engine actually runs read "closed",
+#: including
+#: `duty` — which §1.4 and `calendar.evaluate_duty` both require to fail OPEN, and which correctly
+#: DOES fail open in practice. The classifier disagreed with the code it was written to
+#: describe, and
+#: nothing outside tests read it, so nothing caught the drift.
+#:
+#: Both spellings are listed deliberately rather than renaming one side: a person's trigger config
+#: says `duty_gate` and the fire path's gate is `duty`, and both are correct in their own surface. A
+#: test asserts every `GATE_ORDER` entry resolves to the direction its gate actually implements.
 FAIL_OPEN_GATES: frozenset[str] = frozenset(
     {
+        # ── per-trigger cap keys (`GATE_KEYS` vocabulary — what a person edits) ──
         "cost_cap",
         "max_cost_usd_per_run",
         "max_actions_per_hour",
@@ -392,12 +471,39 @@ FAIL_OPEN_GATES: frozenset[str] = frozenset(
         # it fail-open explicitly — uninstalling the app that supplied it must not silently stop
         # every automation that referenced it. `evaluate_duty` is time-boxed for the same reason.
         "duty_gate",
+        # ── fire-path gate names (`firepath.GATE_ORDER` vocabulary — what the engine walks) ──
+        # `duty` is the same control as `duty_gate` above, under the name the walk uses.
+        "duty",
+        # `slot` (§3.5 — S135) belongs with the storm guards, not the fences: an unreadable
+        # claim store means "I cannot tell who holds the gpu", and refusing every slotted
+        # trigger over a filesystem hiccup would silence real automations. Contention costs
+        # a slow run; a stuck-closed slot gate costs the automation. It inherits
+        # `read_claim`'s own unreadable-reads-as-idle contract.
+        "slot",
+        # `incident` is the kill switch (S117). It inherits `incident_active()`'s own deliberate
+        # fail-open contract: an unreadable flag file must not halt every automation on a filesystem
+        # hiccup. The asymmetry against the fences below is the point — a stuck-closed kill switch
+        # silently stops work the user depends on and looks exactly like a broken scheduler.
+        "incident",
     }
+)
+
+#: Gates whose direction is asserted, not assumed. `budget` is deliberately CLOSED here even though
+#: §1.4's prose groups "budget/storm-guard" as fail-open, because §3.6 is more specific and the code
+#: follows it: "the budget check is fail-closed — an unreadable budget is not an unlimited one".
+#: The per-trigger CAP keys above stay open; the fire path's pre-claim budget READ is closed. Those
+#: are different questions about the same word, which is exactly why this is written down.
+FAIL_CLOSED_GATES: frozenset[str] = frozenset(
+    {"screen", "quiet", "budget", "claim", "yield", "capability", "idempotency"}
 )
 
 
 def gate_failure_mode(gate: str) -> str:
     """`open` or `closed` for one gate, when its own check cannot complete.
+
+    Accepts EITHER vocabulary — a per-trigger cap key (`duty_gate`, `cost_cap`) or a fire-path gate
+    name (`duty`, `budget`) — because callers legitimately hold one or the other and a classifier
+    that silently answered "closed" for the other namespace is what S130 found.
 
     Named as a function rather than left implicit so a caller cannot get it wrong by omission: the
     default for an unknown gate is CLOSED. A new gate that nobody classified should refuse the fire,
