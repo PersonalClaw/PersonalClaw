@@ -279,6 +279,43 @@ def current_run_key() -> str:
     return _CURRENT_RUN_KEY.get() or ""
 
 
+#: The run-scope CEILING for the ambient run, when the caller who started the run knows a
+#: tighter one than the operator's `max_tokens_per_run` default (S154).
+#:
+#: Ambient for the same reason `_CURRENT_RUN_KEY` is: a per-trigger `max_cost_usd_per_run`
+#: is known at the FIRE seam, while the guard that must enforce it is built by
+#: `provider_bridge` from provider config and never sees the trigger. Threading a budget
+#: down would touch the same 33 bridge call sites S153 measured.
+#:
+#: Unlimited by default, so a run that binds no ceiling keeps the operator's config value.
+_CURRENT_RUN_BUDGET: contextvars.ContextVar[Budget] = contextvars.ContextVar(
+    "personalclaw_current_run_budget", default=Budget()
+)
+
+
+def set_current_run_budget(budget: Budget):
+    """Bind a ceiling for the ambient run. Returns the token; reset() it when the run ends.
+
+    Token-scoped like `set_current_run_key` so a nested run restores the parent's ceiling
+    rather than losing it.
+    """
+    return _CURRENT_RUN_BUDGET.set(budget if isinstance(budget, Budget) else Budget())
+
+
+def reset_current_run_budget(token) -> None:
+    """Restore the prior run ceiling. NEVER raises — see `reset_current_run_key`."""
+    try:
+        _CURRENT_RUN_BUDGET.reset(token)
+    except Exception:  # noqa: BLE001 - a failed reset must not break a run's teardown
+        _CURRENT_RUN_BUDGET.set(Budget())
+
+
+def current_run_budget() -> Budget:
+    """The ambient run ceiling, or an unlimited Budget when no run bound one."""
+    got = _CURRENT_RUN_BUDGET.get()
+    return got if isinstance(got, Budget) else Budget()
+
+
 def get_meter() -> SpendMeter:
     """The shared spend meter for this gateway (lazy-created)."""
     global _METER

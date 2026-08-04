@@ -37,6 +37,7 @@ from personalclaw.guardrails.budgets import (
     Budget,
     BudgetVerdict,
     SpendMeter,
+    current_run_budget,
     current_run_key,
     get_meter,
 )
@@ -76,6 +77,7 @@ class ModelCallGuard(ModelProvider):
         timeout_secs: float = _DEFAULT_TIMEOUT_SECS,
         breaker: CircuitBreaker | None = None,
         budget: "Budget | None" = None,
+        run_budget: "Budget | None" = None,
         meter: "SpendMeter | None" = None,
         scan_mode: str = "warn",
     ) -> None:
@@ -88,6 +90,11 @@ class ModelCallGuard(ModelProvider):
         # Day-scope spend ceiling + the meter that accumulates it. A None budget
         # means "unlimited" (the safe default so nothing is capped unexpectedly).
         self._budget = budget if budget is not None else Budget()
+        # RUN-scope ceiling, checked against the AMBIENT run key (S154). Separate
+        # from the day budget because they answer different questions: the day
+        # budget bounds the machine, a run budget bounds one unattended run. A
+        # None run budget means unlimited, so an unscoped call behaves as before.
+        self._run_budget = run_budget if run_budget is not None else Budget()
         self._meter = meter if meter is not None else get_meter()
         # Outbound secret/PII scan mode: warn | redact | block. Forced to warn for
         # local providers by the wrap helper (content never leaves the machine).
@@ -191,6 +198,36 @@ class ModelCallGuard(ModelProvider):
                 limit = self._budget.max_tokens if dim == "tokens" else self._budget.max_dollars
                 spent = totals.tokens if dim == "tokens" else totals.dollars
                 raise BudgetExceededError("day", dim, float(limit), float(spent))
+
+        # 🔴 RUN-scope budget check — the ENFORCEMENT READ S153 left open (§3.6).
+        # S153 made a fire's spend ATTRIBUTABLE (`charge(run_key=…)`), and measured here:
+        # `check_run` answered "exceeded (200/150)" from the second call onward while four
+        # calls sailed through, because no code asked. `check_run` and
+        # `run_budget_from_config` were both implemented with zero production callers, and
+        # `BudgetExceededError` has always declared a "run" scope — every piece present,
+        # nothing connected.
+        #
+        # It lives HERE, beside the day check, rather than as a `firepath` gate: run totals
+        # accrue in-process as the run spends, and the fire path binds a FRESH per-fire key
+        # before the first call — so a pre-fire gate would read 0.0 every time and be inert
+        # by construction, the exact shape this program keeps finding.
+        run_key = current_run_key()
+        # The AMBIENT ceiling wins when the run bound one: a per-trigger
+        # `max_cost_usd_per_run` is a tighter, run-specific promise than the operator's
+        # `max_tokens_per_run` default, and the run seam is the only place that knows it.
+        rb = current_run_budget()
+        if rb.is_unlimited:
+            rb = self._run_budget
+        if run_key and not rb.is_unlimited:
+            verdict, reason = self._meter.check_run(run_key, rb)
+            if verdict is BudgetVerdict.EXCEEDED:
+                self._audit(audit_id, 1, FailureMode.BUDGET_EXCEEDED, 0.0, 0, 0, False, strategy)
+                await self._aclose(source)
+                totals = self._meter.run_totals(run_key)
+                dim = "tokens" if "token" in reason else "dollars"
+                lim = rb.max_tokens if dim == "tokens" else rb.max_dollars
+                spent = totals.tokens if dim == "tokens" else totals.dollars
+                raise BudgetExceededError("run", dim, float(lim), float(spent))
 
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._timeout_secs if self._timeout_secs > 0 else None
@@ -437,6 +474,7 @@ def wrap_model_call_guard(
     provider_name: str,
     model: str,
     budget: Budget | None = None,
+    run_budget: Budget | None = None,
     meter: SpendMeter | None = None,
     scan_mode: str = "warn",
     breaker: CircuitBreaker | None = None,
@@ -457,6 +495,7 @@ def wrap_model_call_guard(
         provider_name=provider_name,
         model=model,
         budget=budget,
+        run_budget=run_budget,
         meter=meter,
         scan_mode=effective_scan,
         breaker=breaker,
