@@ -1055,3 +1055,56 @@ Verified load-bearing: forcing `samples = 1` turns 7 of the 14 new tests red. Ga
   it needs a de-duplication decision, not a wiring), calibration emission + assessment (dead at BOTH
   ends — nothing emits `judge_verdict` and R6a's default-promotion path does not exist), the 3
   templates deferred at session 33, and the `code-project` product decision.
+
+### S146 — `isolation: cross_model` is unenforceable, and now it says so (R1)
+
+**DONE.** `judge_contract.Isolation` offers two levels, and the audit found they are **not equally
+real**:
+
+* **`fresh` is satisfied BY CONSTRUCTION.** A judge gate runs through `one_shot_completion`, which
+  builds a temporary instance rather than reusing the worker's session — so the worker's reasoning
+  trace is not in its context. Nothing to enforce, nothing to warn about.
+* **`cross_model` has NO SEAM.** Measured: `dispatch_gate` receives `(node, ctx, now, verify,
+  completion, tiers, mode)` and is **never told the producing stage's model**, and
+  `one_shot_completion` accepts a `use_case`, not a model — so there is no argument through which a
+  different model FAMILY could be demanded. `judge_actors.plan_judge_session` and
+  `validate_judge_model` implement the family comparison in full and have **no caller**.
+
+So a template asking for the strongest independence claim in the contract would silently receive the
+weaker one — the anti-rubber-stamping option, reading as satisfied.
+
+**Caught BEFORE it shipped, which is the useful part.** No bundled template declares `cross_model`
+today (all judges say `isolation: fresh` — verified against every shipped `workflow.json`). But the
+plan specifies `judge_isolation: cross_model` twice for templates that are still unbuilt: the
+deep-research template ("claims verified by a different model family") and `code-project`. Without
+this rule, the first of those to land would have shipped the claim quietly meaning fresh-session only.
+
+**DEVIATION — the honest fix here is a LINT, not enforcement.** Cross-family selection needs the
+worker's model threaded into the gate and a completion seam that accepts a model rather than a
+use-case; both are real plumbing this session did not have. Inventing a cross-family choice through a
+seam with no model argument would produce exactly the inert control this program keeps finding — a
+check that runs, reports independence, and cannot deliver it. So `WFL_UNENFORCEABLE_ISOLATION` makes
+the gap loud at authoring time and `plan_judge_session` stays ready for the day the plumbing lands.
+
+**A WARNING, not an error**, for two reasons: the declaration is aspirational rather than wrong, and
+the shipped library is held to `clean` — an error would block a template for asking for something
+better than it can get. A companion test asserts no shipped template makes the claim, so the two
+directions are pinned together: `test_every_judge_is_isolated_and_read_only` asserts the positive
+(`fresh`), and `test_no_shipped_template_declares_an_unenforceable_isolation` asserts the negative.
+
+**A correction I made mid-session, worth recording.** My first probe reported that
+`goal-pursuit-open-ended` declared `cross_model`. It does not — it declares `fresh`; I had read a
+stale value from an enum dump rather than the template. Re-measuring against the real JSON (and
+against `origin/main`) is what turned this from "a shipped template is lying" into "a future template
+would have". The rule is the same either way; the queue row would have been false.
+
+Verified load-bearing: removing the rule turns the flagging test red. Gate: `make lint`
+(black+isort+flake8+mypy, 691 files) green; `pytest -n 4 --dist worksteal` **16105 passed, 29 skipped,
+13 xfailed**. No `web/` change.
+
+- **STILL REMAINING in LOOPS-EVOLUTION:** cross-model isolation ENFORCEMENT (needs the worker model
+  threaded into `dispatch_gate` + a model-accepting completion seam — a real plumbing session, and the
+  reason this one shipped a lint); the middleware/steering run-path consumption (`loop_middleware` is
+  redundant with the shipped `resilience.check_breaker`, so it needs a de-duplication decision);
+  calibration emission + assessment (dead at BOTH ends); the 3 templates deferred at session 33; and
+  the `code-project` product decision.
