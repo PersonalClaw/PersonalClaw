@@ -1,10 +1,15 @@
 # Plan: Knowledge Library — Collections, Curation, and Reading
 
-**Status:** IN PROGRESS — Session 1 (collections + item curation) shipped 2026-07-29; **Session 2 COMPLETE** — T2.1 curation display/filters, T2.2 tags taxonomy (authoritative tag rows + hierarchy), T2.3 bulk ops, all shipped 2026-07-29. Session 3 (reading view, dedup, library home) not started. Created as DESIGNED — created 2026-07-18 (roadmap rev 10; owner ask: more library-management capabilities for knowledge articles)
-**Created:** 2026-07-18
-**Wave:** 2 (S1-2: collections + curation) + 3 (S3: reading experience + saved views)
-**Depends on:** nothing hard (builds on the shipped knowledge store). Coordinates with KNOWLEDGE-SYNTHESIS (5 — synthesis nodes produce library items), WATCHED-SOURCES (15 — watched sources land in collections), DESIGN-SYSTEM-CONSISTENCY (51 — the library UI is a flagship consistency surface), MEMORY-GRAPH-AND-VAULT (14 — knowledge-side graph is distinct: knowledge.db = the user's items).
-**Scope:** turn the knowledge base from a flat searchable list into a **managed library** — collections/shelves, curation lifecycle (read/unread/favorite/archive), taxonomy (tags → hierarchy + saved views), a real reading experience, dedup/merge, and bulk management. **Soul guardrail:** knowledge.db is *the user's personal items* (per the roadmap's Memory-vs-Knowledge boundary) — this plan is library UX over that store; it does NOT touch memory.db mechanics. Class **B** (knowledge.db schema additions → gate `knowledge_library` + migration, plan 31). Additive schema only; every existing item stays valid.
+**Status:** IN PROGRESS — Session 1 (collections + item curation) shipped 2026-07-29; **Session 2
+COMPLETE** — T2.1 curation display/filters, T2.2 tags taxonomy, T2.3 bulk ops, all 2026-07-29.
+**Session 3 PARTIAL** — T3.2's backend landed 2026-07-30 (`find_duplicates`/`merge_items` + the
+duplicates/merge routes) but has **no frontend consumer yet**; T3.1 (reading view) and T3.3 (library
+home) are not started.
+🔴 The 2026-07-29 indexing amendment (H1.1-H1.5: chunking, `sqlite-vec` ANN, backfill) is **NOT
+started** — `sqlite-vec` is absent from `pyproject.toml` and there is no `chunks` table, so the
+one-vector-per-item over `content[:1000]` with a brute-force cosine scan is still what ships.
+Status corrected 2026-08-04 by code audit. Created 2026-07-18 (roadmap rev 10; owner ask: more
+library-management capabilities for knowledge articles)
 
 ---
 

@@ -1,10 +1,17 @@
 # Plan: Chat Craft — Seven Chat-Surface Mechanics the Sibling Platforms Proved
 
-**Status:** DESIGNED — created 2026-07-26 (roadmap rev 12; owner ask: sibling-platform gap analysis greenlight — seven chat-surface improvements observed working on MeshClaw/KiroClaw, adapted to PersonalClaw's own architecture)
-**Created:** 2026-07-26
-**Wave:** 2 (S1-3: rewind + queue manners, find + quote, chips + smooth streaming) + 3 (S4: screen-snip + polish)
-**Depends on:** nothing hard (builds on the shipped chat runner, queue, variants, and coalescer). Coordinates with SESSION-MANAGEMENT (50 — its cross-session search is the sibling of S2's *within*-session find; share no code, share the "findable" tenet), DESIGN-SYSTEM-CONSISTENCY (51, shipped — every new control uses the primitives/tokens), FLUID-MOTION (52 — chips/find-bar motion inherits its tiers when it lands), DESKTOP-CAPABILITIES (45 — S4 leaves a named seam for its `screen_capture` bridge capability), AUTONOMY-GUARDRAILS (shipped — follow-up chips ride the background-call chokepoint).
-**Scope:** the chat surface already has fork/undo/variants/edit-resend, a FIFO queue with a stacked-card UI, select-to-quote, an rAF stream coalescer, and a macOS-only region capture — but each stops one step short of the mechanic the sibling platforms proved out. This plan finishes the seven: **(1) true rewind** — edit ANY past user message and replay from there, provider context rebuilt, old tail retained (fork-and-swap under the same slot); **(2) queue with manners** — per-queued-item "interrupt now" wired to the existing (currently frontend-orphaned) `/interrupt` endpoint; **(3) find-in-conversation** (Cmd+F within a session); **(4) quote-reply** upgraded to a floating toolbar with attribution; **(5) follow-up chips** — 2-3 suggested next messages after each reply via one cheap cancellable background call; **(6) screen-snip into chat** — browser-generic region capture beside the existing macOS-native path; **(7) smoother streaming** — the P15 coalescer gains word-boundary snapping and a user-facing `immediate|smooth` toggle. **Soul guardrail:** all seven are chat-surface *mechanics*, not new subsystems — no new stores beyond message-level metadata, no new model bindings (chips reuse the `_bg` lite session), streaming smoothness stays pure frontend, and every mechanic degrades to today's behavior when its precondition (model bound, API support, permission) is absent. Class **B-ish** only where rewind adds persisted message metadata — pre-LIFECYCLE-DOCTRINE, so that lands as a **plain clean break under the pre-1.0 banner** (tolerant reads, no gate/migration; CHANGELOG entry + snapshot advice in release notes).
+**Status:** IN PROGRESS — S1-S3 shipped 2026-07-27 (true rewind + queue interrupt-now,
+find-in-conversation + quote toolbar, follow-up chips + smooth streaming; see `## Execution log`).
+Verified wired: `chat_followups.py` ← `chat_runner.py`, `FindBar`/`FollowupChips` imported into
+`ChatPage.tsx`, the `chat_rewound`/`queue_promoted` WS handlers live, and `followup_chips` +
+`stream_reveal` round-tripped with FE controls.
+**S4 (screen-snip + polish + T4.5 optimizer) NOT started** — no `SnipOverlay.tsx`, no
+`getDisplayMedia` anywhere in `web/src`. The 2026-07-29 amendment (Branch affordance F1.1/F1.2 + the
+chat entry to the planning walkthrough F1.3/F1.4) is **NOT started**.
+⚠️ Note for whoever takes it: the ChatPage serialization this plan's order relied on was already
+broken — Agent-Routing and Artifacts-Evolution both landed ChatPage churn first, so re-read the recon
+before starting. Status corrected 2026-08-04 by code audit. Created 2026-07-26 (roadmap rev 12; owner
+ask: sibling-platform gap analysis greenlight)
 
 ---
 

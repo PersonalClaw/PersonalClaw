@@ -1,17 +1,15 @@
 # Plan: Session Management — Organize, Find, and Curate Conversations at Scale
 
 **Status:** DONE (except T2.1) — Session 1 (FTS5 cross-session search + match snippets) shipped
-2026-07-28; Session 2 T2.2/T2.3 (bulk ops + lifecycle + auto-archive) shipped 2026-07-29;
-Session 3 (retention surface, starters, redacted export) shipped 2026-07-30, which also fixed
-an S2 bug that made the auto-archive rule inert for non-resident sessions. **T2.1 (suggested
-organization) remains BLOCKED** on INBOX-NOTIFICATIONS-UNIFICATION owning the attention
-contract — see the Execution log. T1.3's sidebar windowing was re-scoped — there is no chat
-sidebar; see the Execution log. Created 2026-07-18
-(roadmap rev 10; owner ask: chat session management improvements)
-**Created:** 2026-07-18
-**Wave:** 2 (S1-2: search + organization) + 3 (S3: lifecycle + templates)
-**Depends on:** nothing hard (builds on the shipped session model). Coordinates with ONBOARDING-UX (43 — progressive disclosure of session features), DESIGN-SYSTEM-CONSISTENCY (51 — the chat sidebar is a flagship surface), INBOX-NOTIFICATIONS-UNIFICATION (42 — sessions surface needs-input items), CONTEXT-ECONOMY (12 — long-session compaction is upstream).
-**Scope:** the chat sidebar already has folders/tags/kanban/pin/color/fork/undo/variants/side-conversations — but at 100+ sessions it becomes a scroll. This plan makes conversations **findable, organizable at scale, and curatable through a lifecycle**: cross-session search, smart auto-organization, bulk operations, session lifecycle (active→archived→retention), templates/starters, and export/share. **Soul guardrail:** sessions are core-owned standalone entities (not pluggable) — this stays in core; the FIFO-queue, memory-mode, and history-rotation invariants are untouched. Class **B** where it adds persisted session metadata (gate `session_management` + migration).
+2026-07-28; Session 2 T2.2/T2.3 (bulk ops + lifecycle + auto-archive) shipped 2026-07-29; Session 3
+(retention surface, starters, redacted export) shipped 2026-07-30, which also fixed an S2 bug that
+made the auto-archive rule inert for non-resident sessions.
+🔴 **T2.1 (suggested organization) is NO LONGER BLOCKED (verified 2026-08-04).** Its stated blocker was
+that `emit_attention_item(kind="proposal")` did not exist and `InboxItem` had no `kind` field;
+INBOX-NOTIFICATIONS-UNIFICATION completed S1-S5 on 2026-07-30 and that contract is now live
+(`inbox.py::emit_attention_item`, `ItemKind.PROPOSAL`, `InboxItem.item_kind`, two shipping emitters).
+T2.1 is STARTABLE and remains the one unbuilt task. T1.3's sidebar windowing was re-scoped — there is
+no chat sidebar; see the Execution log. Created 2026-07-18
 
 ---
 

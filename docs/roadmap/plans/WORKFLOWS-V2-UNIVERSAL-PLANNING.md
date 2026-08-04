@@ -1,10 +1,14 @@
 # Plan: Universal Project Planning via Workflows v2
 
-**Status:** PROPOSED (rev 2 — research-integrated 2026-07-12)
-**Created:** 2026-07-11
-**Revised:** 2026-07-12 (18 approved research recommendations folded in; recon-corrected against code)
-**Depends on:** WORKFLOWS-V2.md (Slices 0-3), WORKFLOWS-V2-LOOPS-EVOLUTION.md (template library)
-**Scope:** Any type of project across all walks of life
+**Status:** DONE (backend) — sessions 40-45 shipped (PRs #178-#184, on `main`): `intent`, `matcher`,
+`grounding`, `patterns`, `generation`, `contracts`, `revision`, `rigor`, `grill_protocol`,
+`autonomy`, `preflight` — all reached live from `mcp_workflows.workflow_plan`, with the CI
+routing-fixture gate.
+**REMAINING:** `workflows/template_pipeline.py` and `workflows/eval_specs.py` have no production
+importer; the `suggest_template` chat tool is unregistered; the QuestionSlider/streaming review
+render, `revise{step_ref, comment}` as a resume verb, `source_session_id`, and criterion 9's
+watched-scratchpad path are unbuilt. Status corrected 2026-08-04 by code audit.
+(rev 2 — research-integrated 2026-07-12)
 
 ---
 

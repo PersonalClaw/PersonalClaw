@@ -1,19 +1,14 @@
 # Plan: External Access — Hardened Inbound Surface + External-Agent Capture Proxy
 
-**Status:** PROPOSED (created 2026-07-13 from research synthesis, promoted from backlog)
-**Amended 2026-07-18 (roadmap rev 9):** two extractions land EARLY, and this plan inherits
-them instead of building them: (1) **§3's curated read-only MCP server + the minimum
-viable slice of the §1 substrate** (single-surface bearer, loopback default, caps, audit,
-kill switch) ships as plan 41 [MCP-READONLY-INBOUND](MCP-READONLY-INBOUND.md) in Wave 0/1
-— when this plan lands, it generalizes that substrate to per-client identity/bindings and
-the remaining dialects rather than re-designing §1; (2) **the sender-trust substrate
-(§3's channel-transport half)** lands with plan 40 [CHANNEL-EXPANSION](CHANNEL-EXPANSION.md)
-Session 1 in Wave 1. Remaining scope (OpenAI dialect, control bridge, A2A, capture proxy,
-telemetry import, A/B replay) is unchanged, Wave 3.
-**Created:** 2026-07-13
-**Wave:** 3 — depends on AUTONOMY-GUARDRAILS (Wave 0/1: the inbound work rides its headless profile, spend metering, and incident kill switch) and on LEARNING-FLYWHEEL steps 1-3 (the capture arm feeds its staging tier + proposal queue). The A2A workflow-exposure slice additionally needs WORKFLOWS-V2 engine Slices 0-3.
-**Depends on:** AUTONOMY-GUARDRAILS (§2 ModelCallGuard chokepoint, §1.3 incident kill switch, §3 `headless` safety profile — referenced, never re-built here); WORKFLOWS-V2-LEARNING-FLYWHEEL §2.1/§2.2 (staging tier, LearningGate, capture_hygiene, proposal queue — the capture arm is an extension wave of that plan, per its own suggested home); WORKFLOWS-V2 engine for §5's A2A workflow exposure only.
-**Scope:** ONE fail-closed inbound endpoint seam on the gateway, with five dialects mounted on it — OpenAI-compatible API (outward: drive PClaw), curated read-only MCP server (outward), self-describing control bridge (outward, loopback), A2A gateway (outward), and the capture proxy (inward: PClaw learns from other agents) — plus the sender-trust substrate for channel transports, telemetry import, and a local A/B replay harness. NEW-10 and NEW-20 share the inbound-endpoint seam; it is designed ONCE (§1) and every dialect inherits it.
+**Status:** PROPOSED (created 2026-07-13 from research synthesis, promoted from backlog). Not started
+as of 2026-08-04 — but **§3's extracted slice HAS shipped under plan 41 MCP-READONLY-INBOUND**
+(`src/personalclaw/inbound/` + `POST /mcp` + six curated tools, PRs #75/#83/#116), so this plan
+inherits that substrate rather than building it. Every remaining dialect is unbuilt: the OpenAI
+`/v1/*` surface, the control bridge, A2A, the capture proxy, telemetry import, the A/B replay
+harness, and §9.5's headless `personalclaw run` (the existing `run` subcommand is `subagent spawn
+run`, a different thing).
+**Amended 2026-07-18 (roadmap rev 9):** two extractions land EARLY — §3's read-only MCP inbound became
+plan 41, and the trust seam precedes this plan per the workspace hard rules.
 
 ---
 

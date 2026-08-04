@@ -1,15 +1,15 @@
 # Plan: Multi-Tenant Entity Readiness — The Harness as a Good Citizen of Shared Stores
 
 **Status:** IN PROGRESS — Session 1 (username identity + author attribution) shipped 2026-07-28;
-Session 2 (mine-vs-everyone filters) shipped 2026-07-28; Session 3 (contributor provenance
-+ owner-weighted ranking) shipped 2026-07-30 — §2.4 satisfied by inspection. Sessions 4-5
-remain gated on AUTOMATION-SUBSTRATE.
-Rescoped 2026-07-14 — harness-side scope
-**Created:** 2026-07-14
-**Wave:** 0+3 — Sessions 1-3 (owner identity + per-entity multi-user tolerance) have no dependencies and can start today; Sessions 4-5 (trigger-store provider seam + proof-of-concept trigger-provider app) gate on AUTOMATION-SUBSTRATE steps 1-3 (`triggers.json` + one `TriggerService` — build one seam, not four).
-**Depends on:** AUTOMATION-SUBSTRATE steps 1-3 (Sessions 4-5 only). Sessions 1-3 depend on nothing.
-**Research:** `docs/roadmap/research/multi-tenancy-entity-audit.md` (code audit: seam inventory, tenancy-readiness matrix, harness-side readiness gaps) + `docs/roadmap/research/team-shared-harness-research.md` (verified ecosystem findings on shared stores).
-**Scope:** Make PersonalClaw's entities behave correctly when a pluggable provider is **multi-tenant in nature** — a task provider whose tasks aren't all assigned to this harness's owner, a trigger store containing triggers created by other people, a memory provider returning memories contributed by others. The harness recognizes two or more usernames circulating in the records it handles and treats each sensibly per entity. Sharing semantics, permissions, and coordination live at the shared-store / application design level — the harness only needs to behave correctly as one client among many.
+Session 2 (mine-vs-everyone filters) shipped 2026-07-28; Session 3 (contributor provenance +
+owner-weighted ranking) shipped 2026-07-30 — §2.4 satisfied by inspection.
+🔴 **Sessions 4-5 are UNGATED as of 2026-08-04 and not yet started.** Their stated prerequisite has
+landed: AUTOMATION-SUBSTRATE shipped `triggers.json` + the one service (`triggers/store.py`,
+`triggers/service.py`, S87-S131) and `ScheduleService` was deleted at S112, so the "build one seam,
+not four" condition is met. What §3 still needs, verified absent: `trigger` is NOT in
+`PROVIDER_TYPES` (`apps/manifest.py`) and has no `TriggerTypeHandler`, there is no
+`sdk/triggers.py`, and `triggers/models.py::Trigger` carries `created_by` but no `author` field for
+§2.2's owner-only-arms filter. Rescoped 2026-07-14 — harness-side scope
 
 ---
 

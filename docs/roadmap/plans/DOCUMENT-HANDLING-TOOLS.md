@@ -193,10 +193,6 @@ registerContentType({ id: 'docx', label: 'Word', icon: FileText, tone: tone('#2b
 
 ## Execution log
 
-_(empty — no session has run yet)_
-
-## Execution log
-
 - [2026-07-29][S1] **DONE (T1.1–T1.6).** The writer seam + docx/xlsx + the artifact kinds
   + the agent tools + the frontend registrations. PersonalClaw can now produce a real
   Word document and a real spreadsheet.

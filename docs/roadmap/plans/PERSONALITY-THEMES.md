@@ -1,10 +1,15 @@
 # Plan: Personality Themes — Themes That Carry Behavior, Not Just Color
 
-**Status:** DESIGNED — created 2026-07-26 (roadmap rev 12; owner ask: sibling-platform gap analysis greenlight — "personality themes as a brand play")
-**Created:** 2026-07-26
-**Wave:** 3
-**Depends on:** DESIGN-SYSTEM-CONSISTENCY (51 — shipped; the token/scheme system this plan layers on), FLUID-MOTION (52 — coordinates only: personality flourishes must ride the same `runtime.expressiveness`/reduced-motion dials, never a parallel motion system). Coordinates with SESSION-MANAGEMENT (50 — no overlap; the existing per-session `color_theme:"lumon"` persona precedent is *absorbed*, not duplicated) and APP-PLATFORM-EVOLUTION (48 — forward hook only: apps contributing personality themes via a provider seam is mentioned, not built).
-**Scope:** ~2 sessions. Today a theme is a **color identity** (`Scheme` in `web/src/design/schemes.ts` + server-persisted custom themes via `/api/themes`). This plan adds an orthogonal, strictly **additive** layer: a **personality theme** registry entry can carry *behavior* — assistant display-name override, logo/favicon swap, opt-in Web-Audio-synthesized sound cues (no audio files shipped), an optional decorative shell element (e.g. a reactive topbar console strip), and state-reactive flourishes (e.g. a distinct error-state overlay treatment). Ship **two first-party proofs**: a "retro terminal" personality and one playful placeholder (owner picks real brands/skins later — the plan stays generic). **Soul guardrail:** personality is a *presentation* layer over the existing token system — it NEVER weakens accessibility (WCAG AA contrast enforced by the same structural test that guards color schemes; `prefers-reduced-motion` always honored; sounds are opt-in and additionally gated behind reduced-motion=off), never touches core agent behavior beyond the already-sanitized `bot_name` seam, and has **zero effect when a standard theme is active** (the standard path stays byte-identical — no personality hooks execute). Provider-agnostic: everything lives in `web/src` + one existing config field; no vendor logic. Class **B** note: the only new persisted state is one localStorage key + reuse of the existing `agent.bot_name` config field and `/api/themes` store — pre-LIFECYCLE-DOCTRINE any shape change to the theme JSON is a plain clean break under the pre-1.0 banner (additive keys, tolerant reads — old theme files load unchanged).
+**Status:** IN PROGRESS — S1 shipped 2026-07-28 (the personality registry + identity behaviors:
+`design/personalities.ts` with a CLOSED typed `behavior` block and three entries, the new `phosphor`
+scheme inside the existing WCAG sweep, `app/personality.tsx` mounted in `main.tsx` with full restore,
+the Settings → Design `PersonalityPicker` with a propose-don't-write rename consent, and the T1.4
+backend clean break to a `_PERSONA_THEMES` set imported by `chat_handlers.py` so accepted values and
+injectable personas cannot drift).
+**S2 (sound cues, shell element, error treatments, proofs) NOT started** — no `design/soundCues.ts`,
+no `SHELL_ELEMENTS`/`TerminalStrip.tsx`, no personality variant on `ErrorBoundary`/`IncidentBanner`.
+Status corrected 2026-08-04 by code audit. Created 2026-07-26 (roadmap rev 12; owner ask:
+sibling-platform gap analysis greenlight — "personality themes as a brand play")
 
 ---
 

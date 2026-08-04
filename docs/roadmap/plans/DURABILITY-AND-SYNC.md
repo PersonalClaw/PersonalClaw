@@ -1,13 +1,14 @@
 # Plan: Durability & Sync — Deterministic Shards, Scheduled Snapshots, User-Owned Transport
 
-**Status:** IN PROGRESS — Session 1 (inventory + audit) and Session 2 (2a shards / 2b service / 2c settings surface) shipped 2026-07-27/29
-(S2a deterministic shards + `backup export|validate`; S2b scheduled snapshot service, tiered
-retention, restore drills). Remaining in S2: the restore endpoint + T2-M1/M2/M3 merge path.
-Sessions 3-5 (sync core, transports, time travel) not started.
-rev 2 — research-integrated 2026-07-12  
-**Created:** 2026-07-12  
-**Depends on:** nothing hard; composes with WORKFLOWS-V2-AUTOMATION-SUBSTRATE (system triggers absorb the snapshot schedule when it lands) and LEARNING-FLYWHEEL (memory-side entities gain shard coverage as they ship)  
-**Scope:** Give PersonalClaw's accumulated state a durability and multi-machine story: full-coverage backup, deterministic per-entity JSONL shards with a SHA manifest, a boot-started scheduled snapshot service with restore drills, workspace git time-travel, user-facing portability endpoints, and sync over user-owned transports delivered as pluggable providers
+**Status:** IN PROGRESS — Session 1 (inventory + audit) and Session 2 (2a shards / 2b service / 2c
+settings surface) shipped 2026-07-27/29: deterministic shards + `backup export|validate`, the
+boot-started snapshot service, tiered retention, restore drills, and the Backups settings panel.
+**Remaining in S2:** the restore endpoint (`POST /api/durability/restore` does not exist) and the
+T2-M1/M2/M3 merge path — `--mode merge` exists on the CLI but **NOTHING reads `StateEntry.merge`**, so
+the inventory-driven dispatch is unbuilt. 🔴 Also: **`audit_home()` has zero runtime callers**
+(test-only), so the claims-everything guard is inert and `model_calls.jsonl`/`spend.json` remain
+unclaimed by any snapshot or export. Sessions 3-5 (sync core, transports, time travel) not started.
+Audited 2026-08-04. (rev 2 — research-integrated 2026-07-12)
 
 ---
 

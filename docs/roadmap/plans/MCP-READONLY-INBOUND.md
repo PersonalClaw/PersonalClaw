@@ -1,12 +1,15 @@
 # Plan: MCP Read-Only Inbound — The Curated Query Surface, Extracted and Landed Early
 
-**Status:** IN PROGRESS — Session 1 (transport + auth + caps + audit, empty tool table) shipped
-2026-07-28; Session 2 (the five curated read-only tools) not started. Deepened 2026-07-18 with
-code recon (initial PROPOSED 2026-07-18; owner-approved extraction from EXTERNAL-ACCESS)
-**Created:** 2026-07-18
-**Wave:** 0/1 — pulled forward from Wave 3. "Point your IDE / other agents at your assistant" must not wait behind the five-dialect inbound program.
-**Depends on:** nothing hard (AUTONOMY-GUARDRAILS' incident flag is honored if present; a config kill switch suffices until it lands). EXTERNAL-ACCESS inherits this substrate rather than building its §1.
-**Scope:** ONE fail-closed, loopback-default, bearer-gated HTTP mount inside the existing gateway process, serving a hand-curated **read-only** MCP tool table. EXTERNAL-ACCESS §3 + the *minimum viable* slice of its §1. **Soul guardrail:** query-only with no path to writes, by construction — no generic passthrough to `_aggregated_call_tool`; an inbound request can never trigger an install, migration, config write, or store mutation. When in doubt whether a capability belongs here or in EXTERNAL-ACCESS, it belongs in EXTERNAL-ACCESS. The protocol handler is deliberately minimal (three JSON-RPC methods, no SSE streaming) — resist SDK-frameworkization.
+**Status:** IN PROGRESS — Session 1 (transport + auth + caps + audit) shipped 2026-07-28; **Session 2
+(six curated read-only tools + the fencing meta-test) shipped 2026-07-28**; the 2026-07-29
+protocol-currency amendment (G1.1-G1.4, `2024-11-05` → `2025-06-18` with real negotiation) shipped
+2026-07-30. `src/personalclaw/inbound/` is mounted from `dashboard/server.py` and `InboundConfig`
+round-trips; `inbound/tools.py` registers `memory_recall`, `knowledge_search`, `tasks_list`,
+`task_get`, `sessions_search` and `status`, each wrapped by `wrap_result` fencing.
+**REMAINING:** T2.6 (`docs/guides/use-from-your-ide.md` — the log defers it to the owner's client run)
+and V2's real-MCP-client validation. Status corrected 2026-08-04 by code audit (this line said
+Session 2 was not started). Deepened 2026-07-18 with code recon (initial PROPOSED 2026-07-18;
+owner-approved extraction from EXTERNAL-ACCESS)
 
 ---
 

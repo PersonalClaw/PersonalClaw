@@ -1,10 +1,22 @@
 # Plan: Discoverability & Launch — Existing in Both Search Channels
 
-**Status:** DESIGNED — deepened 2026-07-18 (initial PROPOSED 2026-07-18; owner direction: GitHub org + static website repo now; elaborate SEO/discoverability program; naming DECIDED: PersonalClaw everywhere, personalclaw.dev primary)
-**Created:** 2026-07-18
-**Wave:** 0 (Sessions 1-3, launch-gating) + 1 (Sessions 4-5, content program)
-**Depends on:** PUBLICATION (amended — org transfer is its S1 step 1; this plan's S1 executes together with it), DISTRIBUTION S2 (`/install` script content), SECURITY-LEGIBILITY (threat model page), CI-RELEASE-ENGINEERING S1 (badges must be green before any publicizing).
-**Scope:** the public surface — org, website, docs site, launch assets, and the content program for the two discovery channels that now dominate OSS adoption: classic search/GitHub browse, and **LLM recommendation** (models answer "best self-hosted AI assistant" from crawled READMEs, docs, comparisons, llms.txt). **Soul guardrail:** PLATFORM-LEGIBILITY's "no docs portal" guardrail governs *agent-facing docs-as-data* and stands; this is the *human* surface. One canonical source: site docs are **generated from the repo `docs/` tree at build time — never forked copies** (a drift check enforces it). No paid marketing, no growth hacking, no analytics beyond the host's default logs (zero-telemetry stance extends to the site: no trackers).
+**Status:** IN PROGRESS — S1 (claim + org migration) and S2 (docs site + machine-readable surface)
+DONE; S3 (launch assets) mostly done; S4-S5 (comparison/listing program, research republication) not
+started. Deepened 2026-07-18 (initial PROPOSED 2026-07-18; naming DECIDED: PersonalClaw everywhere,
+personalclaw.dev primary).
+**S1 done:** the org with three public repos, metadata set, no live `keyurgolani/` URLs left,
+personalclaw.dev over TLS with the CI quality floor.
+**S2 done (website `main`, PR #20, 2026-07-31):** Astro + Starlight serves `/docs` from
+`scripts/sync-docs.mjs`, a build-time sync of the pinned core docs — `src/content/docs/` is
+gitignored, so the site commits no copies (the drift rail holds). `llms.txt` + `llms-full.txt`,
+sitemap and OG meta shipped. **The source manifest is now `channel: released` with core and apps both
+pinned at v0.1.3 — the release flip is DONE**, the apps repo having been tagged v0.1.1-v0.1.3.
+**S3 partial:** screenshots ship reproducibly (`docs/screenshots/{light,dark}/*` + `capture.mjs` +
+`CAPTURE.md`) and the README/SHOWCASE rework landed. Still open: **T3.1's
+`tests_fixtures/demo-home/` demo seed does not exist** (only `empty` ships, and `CAPTURE.md`
+explicitly waits on it), the 60-90s capture, and T3.4's launch-post draft.
+**Open OWNER tasks:** social-preview images on both repos, the Show HN / Reddit posting, and the S5
+research-library preface approval. Status corrected 2026-08-04 by code audit.
 
 ---
 

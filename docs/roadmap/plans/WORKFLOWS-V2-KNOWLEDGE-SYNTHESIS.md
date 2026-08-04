@@ -1,10 +1,13 @@
 # Plan: Knowledge Artifact Synthesis via Workflow Nodes
 
-**Status:** PROPOSED (rev 2 — research-integrated 2026-07-12)  
-**Created:** 2026-07-11  
-**Revised:** 2026-07-12 (19 approved research recommendations folded in; memory/knowledge boundary made explicit)  
-**Depends on:** WORKFLOWS-V2.md (Slices 0-2), existing Knowledge store (`knowledge/store.py`)  
-**Scope:** How workflows produce, consume, incrementally update, and MAINTAIN knowledge
+**Status:** DONE — sessions 34-39 shipped (PRs #173-#177, on `main`): store semantics +
+`item_relations`, the `knowledge-persist`/`knowledge-retrieve` provider pair (registered in
+`action_providers/registry.py`, allowlisted in `validation.py` + `triggers/screen.py`, and consumed
+by 4 bundled templates), the long-run engine additions, consolidation/maintenance, contradiction +
+retrieval polish, and the template slate. `KnowledgeConfig` 4-point wired. `read_when` retrieval
+matching is live, so the S35 "NOT DONE" note is stale.
+**Residual:** the model-tier conflict pass is unwired to a live model. Status corrected 2026-08-04 by
+code audit. (rev 2 — research-integrated 2026-07-12)
 
 ---
 

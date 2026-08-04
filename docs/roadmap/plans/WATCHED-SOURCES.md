@@ -1,9 +1,15 @@
 # Plan: Watched Sources — Any Page, Feed, or Folder Becomes a Structured Item Stream
 
-**Status:** PROPOSED (rev 2 — research-integrated 2026-07-12)  
-**Created:** 2026-07-12  
-**Depends on:** WORKFLOWS-V2-AUTOMATION-SUBSTRATE step 1 (event bus) for §6; standalone otherwise. AUTOMATION-SUBSTRATE's `web_watch` trigger kind consumes this plan's source engine (see Division of Labor)  
-**Scope:** The missing front half of ingestion — manufacture a structured item stream from any web page, feed, or local directory, and make the knowledge-source provider seam real (the seam future Google Drive / Google Photos connectors plug into)
+**Status:** PROPOSED (rev 2 — research-integrated 2026-07-12). Not started — verified 2026-08-04: no
+`knowledge/sources/` package, no `sources` table, no feed layer, no `dir-source`, and §1.3's three
+named fixes are all undone (`knowledge_providers/registry.py::create_native_provider` still returns
+None; `detect_changes` is still caller-less).
+🔴 **PREMISE DRIFT — re-scope before starting.** This plan's Disposition table says
+AUTOMATION-SUBSTRATE's `web_watch` kind "CONSUMES this plan", but the consumer arrived FIRST:
+`triggers/web_poll.py` (S121) and `triggers/file_poll.py` (S93) shipped their own extraction, novelty
+seen-set, daily request budget and `net.fetch` routing, driven from the gateway's poll loops. So §2/§3/§4
+now overlap shipped code rather than feeding it — reconcile against what exists rather than
+re-deriving.
 
 ---
 

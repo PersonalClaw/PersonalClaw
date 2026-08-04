@@ -1,9 +1,16 @@
 # Plan: Work-Container Hierarchy — Project as the Sole Umbrella
 
-**Status:** PROPOSED (rev 2 — research-integrated 2026-07-12)
-**Created:** 2026-07-11
-**Depends on:** WORKFLOWS-V2.md Slices 0-4 (project_id threading + fork are already engine-level acceptance criteria there)
-**Companions:** WORKFLOWS-V2-UNIVERSAL-PLANNING (planner collapse), WORKFLOWS-V2-LOOPS-EVOLUTION (loop retirement), WORKFLOWS-V2-LEARNING-FLYWHEEL (consumes RunStats + verification-debt metrics from here)
+**Status:** IN PROGRESS — sessions 46-54 shipped the DECISION LAYERS (PRs #185-#193; the code is on
+`main` inside squashes): `containers`, `publish`, `batch_compile`, `workspace`, `worktrees`,
+`needs_input`, `introspection`, `project_export`.
+🔴 **BUT THE CALL SITES AND THE ENTIRE FE ARE MISSING** (AST audit 2026-08-04):
+`workflows/{worktrees,introspection,project_export,batch_compile}.py` have **zero production
+importers**; `containers`' board projection (`collect_sections`/`group_board`/`board_row`/
+`sweep_decision`/`attention_count`/`board_state_for`) has no caller; there is no
+`GET /api/projects/{id}/work` route and no React work board; `compile_batch` is never called from
+`mcp_subagents`. Provisioning I/O, setup/teardown execution and archive I/O are all
+decided-but-never-performed. Criteria 1/6/7/8/9 are structurally unmet. Status corrected 2026-08-04.
+(rev 2 — research-integrated 2026-07-12)
 
 ---
 

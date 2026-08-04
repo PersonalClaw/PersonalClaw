@@ -1,11 +1,12 @@
 # Plan: Workflows v2 — Composable Execution Platform
 
-**Status:** PROPOSED (rev 2 — research-integrated 2026-07-12)  
-**Created:** 2026-07-11  
-**Revised:** 2026-07-12 (21 approved research recommendations folded in; recon-corrected against code)  
-**Supersedes:** E4/EVOLVE-WORKFLOWS #28 (the current stateless SOP feature)  
-**Prerequisite:** None (self-contained clean break)  
-**Branch:** campaign/six-unexecuted-plans (target)
+**Status:** DONE — Slices 0-11b shipped (PRs #134-#161, on `main`). The engine is live-wired, not
+inert: 26 REST routes registered from `dashboard/server.py`, 19 `workflow_*` chat tools via
+`mcp_workflows`, 20 bundled templates, and the `web/src/pages/workflows/` cockpit.
+**REMAINING** (the 2026-07-26 amendment): WF2-A2's node-inspect endpoint, WF2-A3's inspector drawer
++ cached badge (`workflowFold.ts`'s `cached?` is declared and read by nothing), and §2's
+`artifact_inspect` + `{{nodes.x.artifact}}` offloading. Status corrected 2026-08-04 by code audit —
+this line had read PROPOSED since the plan was written. (rev 2 — research-integrated 2026-07-12)
 
 ---
 

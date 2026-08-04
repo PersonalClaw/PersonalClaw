@@ -1,10 +1,17 @@
 # Plan: Inbox/Notifications Unification — One Attention Store, One Configurable Delivery Layer
 
-**Status:** DESIGNED — deepened 2026-07-18 with code recon (initial PROPOSED 2026-07-18 from the owner-commissioned boundary investigation)
-**Created:** 2026-07-18
-**Wave:** 1 (S1-3) + 2 (S4-5). **Change class B** (persisted-state changes) — executed as a **maintainer clean break under the pre-1.0 banner**, per the standing owner ruling (see *Change discipline* below). It was previously framed as the first full exercise of LIFECYCLE-DOCTRINE; that framing described a methodology this plan does not need.
-**Depends on:** nothing hard — **buildable today** against code that exists. Coordinates with: LEARNING-FLYWHEEL §2.2 (its proposal queue lands AS inbox kind=proposal — one attention surface, not a fourth); PROACTIVE-ASSISTANT (the digest built here is its pulled-forward ambient slice); CHANNEL-EXPANSION (channel DM as a rules target; pairing prompts become `agent_request` items); MOBILE-COMPANION (the `push` target activates there).
-**Scope:** end state per the owner's model — **Inbox is THE durable attention store; Notifications is an ephemeral, per-(source, kind)-configurable delivery layer over it.** **Soul guardrail:** `DashboardState.notify()` remains the single delivery choke point (one path per concern) — this plan re-homes *policy and persistence*, never adds a second delivery pipeline. Real-time tool approvals stay session-modal for latency, mirroring into the inbox only when they outlive the prompt. The fail-open philosophy of the existing gate ("a broken settings file must not silence the system") is preserved in the rules engine.
+**Status:** IN PROGRESS — Sessions 1-5 shipped 2026-07-30 (PRs #111-#115): the typed kind registry
+(`notification_kinds.py`, 20 pairs, 26 emitters migrated, imported by 12 non-test modules), the rules
+store + evaluation as THE `notify()` delivery path, the inbox as the attention store
+(`item_kind`/`refs`/`SEEN`/`emit_attention_item` — now called from 7 distinct modules), the settings
+rules matrix + alert-fields backfill, and the daily digest + unread-badge demotion.
+**REMAINING:** the rev-12 verification-gate session (S6 — `notification_verify.py`,
+`NotificationKind.verifiable`, `ItemStatus.FILTERED`, all absent) and the rev-13 Proposals-contract
+session (S7 — C6 payload/apply dispatcher, app emission path, proposals lens, `permissions.proposals`).
+Note the Execution log is missing its Session 2 entry although `dfca975` (#112) shipped it — a log
+gap, not a code gap. Status corrected 2026-08-04 by code audit (this line had read DESIGNED).
+Deepened 2026-07-18 with code recon (initial PROPOSED 2026-07-18 from the owner-commissioned boundary
+investigation)
 
 ---
 
