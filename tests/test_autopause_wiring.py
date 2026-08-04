@@ -254,3 +254,118 @@ def test_a_QUARANTINED_trigger_is_never_resumed_by_a_clean_run(tmp_path, monkeyp
         exit_type=autopause.ExitType.OK.value, consecutive_failures=0, quarantined=True
     )
     assert decision.state == TriggerState.QUARANTINED.value
+
+
+# ── criterion 3's second clause: "and surfaces in the Runs inbox" (S141) ──
+
+
+class _State:
+    """Records `notify` calls.
+
+    Kwargs match `Delivery.to_notify_kwargs()`. A fake with the wrong shape records
+    nothing and looks exactly like the feature still being dead — S140's lesson.
+    """
+
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+
+    def notify(self, *, kind, title, body, meta=None):
+        self.sent.append({"kind": kind, "title": title, "body": body, "meta": meta or {}})
+        return True
+
+
+def _fire_with_state(tmp_path, monkeypatch, sequence, tid="clock:f") -> _State:
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    store = TriggerStore(base_dir=tmp_path)
+    store.upsert(
+        Trigger(
+            id=tid,
+            name="nightly index",
+            kind="clock",
+            enabled=True,
+            spec={"kind": "interval", "interval_secs": 60},
+            capabilities={"providers": ["notify"]},
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
+    )
+    state = _State()
+    provider = _Provider()
+    real = AP.get_action_provider
+    try:
+        AP.get_action_provider = lambda name: provider
+        orch = object.__new__(GatewayOrchestrator)
+        orch.dashboard_state = state
+        for mode in sequence:
+            provider.mode = mode
+            row = store.get(tid)
+            asyncio.run(orch._fire_store_trigger(row.trigger, {"trigger_id": tid}))
+    finally:
+        AP.get_action_provider = real
+    return state
+
+
+def _cards(state: _State) -> list[dict]:
+    return [n for n in state.sent if n["meta"].get("event") == "automation.needs_attention"]
+
+
+def test_an_AUTOPAUSED_trigger_surfaces_a_CARD(tmp_path, monkeypatch):
+    """🔴 Criterion 3's second clause.
+
+    `attention_card`, `inbox_fingerprint` and `is_duplicate_card` were all dead, so an
+    autopaused automation stopped SILENTLY — and a trigger that stops without saying so
+    is indistinguishable from one that finished.
+    """
+    cards = _cards(_fire_with_state(tmp_path, monkeypatch, ["fail"] * 5))
+    assert len(cards) == 1
+    assert cards[0]["meta"]["state"] == TriggerState.AUTOPAUSED.value
+
+
+def test_the_card_offers_ACTIONS(tmp_path, monkeypatch):
+    """An alert with no remedy is a notification the user can only dismiss."""
+    card = _cards(_fire_with_state(tmp_path, monkeypatch, ["fail"] * 5))[0]
+    assert "resume" in card["meta"]["actions"]
+
+
+def test_the_card_DEEP_LINKS_to_the_trigger(tmp_path, monkeypatch):
+    card = _cards(_fire_with_state(tmp_path, monkeypatch, ["fail"] * 5))[0]
+    assert card["meta"]["statusUrl"] == "#/triggers?open=clock:f"
+
+
+def test_the_card_is_NOT_re_alerted_on_every_later_fire(tmp_path, monkeypatch):
+    """🔴 Deduped on the card's FINGERPRINT — `(trigger_id, state)`.
+
+    Re-entering the same paused state must not re-alert; without this a paused trigger
+    would alert on every tick forever.
+    """
+    assert len(_cards(_fire_with_state(tmp_path, monkeypatch, ["fail"] * 8))) == 1
+
+
+def test_a_HEALTHY_trigger_surfaces_NO_card(tmp_path, monkeypatch):
+    assert _cards(_fire_with_state(tmp_path, monkeypatch, ["ok"] * 3)) == []
+
+
+def test_a_PARKED_trigger_surfaces_NO_card(tmp_path, monkeypatch):
+    """`attention_card` returns None for a parked trigger, deliberately.
+
+    Parking resolves on its own, so alerting would train the user to ignore the card
+    that matters.
+    """
+    assert _cards(_fire_with_state(tmp_path, monkeypatch, ["transport"] * 6)) == []
+
+
+def test_a_trigger_UNDER_budget_surfaces_no_card(tmp_path, monkeypatch):
+    assert _cards(_fire_with_state(tmp_path, monkeypatch, ["fail"] * 4)) == []
+
+
+def test_the_card_goes_through_STATE_NOTIFY():
+    """R18: no second notification path, so a muted channel stays muted."""
+    import inspect
+
+    src = inspect.getsource(GatewayOrchestrator._surface_attention_card)
+    assert "state.notify" in src
+
+
+def test_the_PAUSE_still_happens_without_a_dashboard(tmp_path, monkeypatch):
+    """A `--no-dashboard` gateway must still autopause, just without announcing it."""
+    trigger = _drive(tmp_path, monkeypatch, ["fail"] * 5)
+    assert trigger.enabled is False

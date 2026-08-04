@@ -980,6 +980,56 @@ class GatewayOrchestrator:
             # happened. After the refresh, so a slow chain never delays the view update.
             await self._fire_chained_triggers(trigger, payload)
 
+    def _surface_attention_card(self, trigger: Any, decision: Any) -> None:
+        """Put an autopaused/quarantined trigger in front of the user (crit 3 — S141).
+
+        🔴 `attention_card` returns None for a still-firing or parked trigger, which is why the
+        control flow here is "if card: send it" — the module deliberately makes it impossible to
+        write a card that says nothing.
+
+        Deduped on the card's own FINGERPRINT, not the delivery event id: a fingerprint is
+        `(trigger_id, state)`, so re-entering the same paused state does not re-alert, while a
+        trigger that goes autopaused → resumed → autopaused legitimately alerts twice.
+        `is_duplicate_card` owns that comparison; the seen-set lives here as the delivery one does.
+
+        Goes through `state.notify` like every other substrate notification (R18: no second path),
+        so a muted channel stays muted. Never raises — the pause already happened, and failing to
+        announce it must not undo it.
+        """
+        try:
+            from personalclaw.triggers import autopause
+
+            state = getattr(self, "dashboard_state", None)
+            if state is None:
+                return
+            card = autopause.attention_card(
+                trigger_id=str(getattr(trigger, "id", "") or ""),
+                trigger_name=str(getattr(trigger, "name", "") or ""),
+                decision=decision,
+                last_error=str(getattr(trigger, "last_error_summary", "") or ""),
+            )
+            if card is None:
+                return
+            if not hasattr(self, "_attention_fingerprints"):
+                self._attention_fingerprints: set[str] = set()
+            if autopause.is_duplicate_card(card.fingerprint, self._attention_fingerprints):
+                return
+            state.notify(
+                kind="warning",
+                title=card.title,
+                body=card.body,
+                meta={
+                    "event": "automation.needs_attention",
+                    "statusUrl": f"#/triggers?open={card.trigger_id}",
+                    "trigger_id": card.trigger_id,
+                    "state": card.state,
+                    "actions": list(card.actions),
+                },
+            )
+            self._attention_fingerprints.add(card.fingerprint)
+        except Exception:  # noqa: BLE001 - see the docstring
+            logger.debug("could not surface the attention card for %s", trigger, exc_info=True)
+
     def _deliver_fire_outcome(self, trigger: Any, *, ok: bool, error: str = "") -> None:
         """Notify the user about a completed fire, with a deep link (§R18 / crit 10 — S140).
 
@@ -1116,6 +1166,12 @@ class GatewayOrchestrator:
                     "trigger %s autopaused: %s", trigger_id, decision.reason or decision.state
                 )
             store.upsert(live)
+            # 🔴 Criterion 3's SECOND clause — "and surfaces in the Runs inbox" (S141).
+            # `attention_card`, `inbox_fingerprint` and `is_duplicate_card` were all dead: an
+            # autopaused automation stopped silently, and a trigger that stops without saying so is
+            # indistinguishable from one that finished. The card is what turns the state change into
+            # something the user can act on.
+            self._surface_attention_card(live, decision)
         except Exception:  # noqa: BLE001 - see the docstring
             logger.debug("could not record the fire outcome for %s", trigger, exc_info=True)
 
