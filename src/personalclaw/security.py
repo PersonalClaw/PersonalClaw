@@ -721,6 +721,79 @@ UNTRUSTED_OPEN = "<untrusted_content>"
 UNTRUSTED_CLOSE = "</untrusted_content>"
 
 
+#: Chat-template role/control tokens, neutralised in untrusted text (§7/R4 rule b).
+#:
+#: These are not prose — each is a wire-format marker a runtime uses to delimit turns, so untrusted
+#: text carrying one can forge a role boundary that no XML fence can describe. Grouped by the family
+#: that defines them so a reader can tell WHY each entry is here, and so adding a new provider's
+#: tokens is an obvious edit rather than an append to an anonymous list.
+#:
+#: Matched case-insensitively and neutralised by breaking the token, never by deleting it: dropping
+#: the span would silently change what the user's automation reads, and a reader seeing
+#: `[⁄INST]` in a fenced payload learns something true about the input.
+ROLE_TOKENS: tuple[str, ...] = (
+    # ChatML (OpenAI-style local templates, Qwen, many fine-tunes)
+    "<|im_start|>",
+    "<|im_end|>",
+    # Llama 3
+    "<|begin_of_text|>",
+    "<|end_of_text|>",
+    "<|start_header_id|>",
+    "<|end_header_id|>",
+    "<|eot_id|>",
+    "<|eom_id|>",
+    # Llama 2 / Mistral instruct
+    "[INST]",
+    "[/INST]",
+    "<<SYS>>",
+    "<</SYS>>",
+    # Generic sentinels shared across GPT-2-lineage tokenizers and Mistral/Gemma
+    "<|endoftext|>",
+    "<|endofprompt|>",
+    "<start_of_turn>",
+    "<end_of_turn>",
+    "<|user|>",
+    "<|assistant|>",
+    "<|system|>",
+    "</s>",
+    "<s>",
+)
+
+#: The character the token is broken WITH: U+2044 FRACTION SLASH and U+2223 DIVIDES render close to
+#: the originals so a human reads the payload unchanged, while a tokenizer does not match a control
+#: token. Deliberately NOT a zero-width character — the memory-write scanner flags those, and fenced
+#: text is sometimes persisted (`fence_untrusted`'s own docstring makes that point about escaping).
+_ROLE_TOKEN_SUBS: tuple[tuple[str, str], ...] = (("|", "∣"), ("/", "⁄"))
+
+
+def strip_role_tokens(text: str) -> str:
+    """Neutralise chat-template role tokens in `text` (§7/R4 rule b).
+
+    Breaks each token rather than deleting it, so the payload still reads the same to a human and
+    an automation summarising its input does not silently lose a span. A token with no `|` or `/`
+    to break (`[INST]`, `<<SYS>>`) is bracket-escaped instead, the same treatment
+    `fence_untrusted` already gives its own markers.
+
+    Case-insensitive: `<|IM_START|>` is the same wire token to a tokenizer that lowercases, and a
+    guard that only caught the canonical casing would be trivially bypassed.
+    """
+    if not text:
+        return text
+    import re as _re
+
+    def _neutralise(match: _re.Match[str]) -> str:
+        token = match.group(0)
+        for needle, replacement in _ROLE_TOKEN_SUBS:
+            if needle in token:
+                return token.replace(needle, replacement)
+        # No separator to break (`[INST]`, `<<SYS>>`, `<start_of_turn>`): escape the brackets, the
+        # same way the fence neutralises its own tag.
+        return token.replace("<", "&lt;").replace(">", "&gt;").replace("[", "&#91;")
+
+    pattern = "|".join(_re.escape(token) for token in ROLE_TOKENS)
+    return _re.sub(pattern, _neutralise, text, flags=_re.IGNORECASE)
+
+
 def fence_untrusted(text: str, *, source: str = "") -> str:
     """Wrap externally-sourced text so a model treats it as DATA, not instructions.
 
@@ -734,7 +807,17 @@ def fence_untrusted(text: str, *, source: str = "") -> str:
     Defends against a **fence-break**: content that itself contains the close marker (a
     crafted page trying to "escape" the fence and inject trailing instructions) has its
     markers neutralised before wrapping, so the fence can't be closed early. An empty /
-    whitespace-only input is returned unchanged (nothing to fence)."""
+    whitespace-only input is returned unchanged (nothing to fence).
+
+    Also neutralises **chat-template role tokens** (AUTOMATION-SUBSTRATE §7/R4 rule b).
+    The XML fence is a convention the model is ASKED to respect; a role token is part of
+    the wire format the runtime uses to mark who is speaking, so it can forge a turn
+    boundary the fence cannot describe. Measured before this existed: every one of
+    ChatML's ``<|im_start|>``, Llama-3's ``<|start_header_id|>``, Llama-2's ``[/INST]``
+    and ``<<SYS>>``, Mistral's ``</s>`` and the bare ``<|endoftext|>`` passed through
+    ``fence_untrusted`` intact. Local providers are exactly where that bites: a hosted
+    API rejects or escapes stray control tokens, while a local runtime applying its own
+    chat template will happily honour them."""
     if not text or not text.strip():
         return text
     # Neutralise any embedded fence markers so the content can't close the fence early
@@ -744,6 +827,7 @@ def fence_untrusted(text: str, *, source: str = "") -> str:
     safe = text.replace("<untrusted_content>", "&lt;untrusted_content&gt;").replace(
         "</untrusted_content>", "&lt;/untrusted_content&gt;"
     )
+    safe = strip_role_tokens(safe)
     label = f" source={source}" if source else ""
     return f"{UNTRUSTED_OPEN[:-1]}{label}>\n{safe}\n{UNTRUSTED_CLOSE}"
 
