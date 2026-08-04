@@ -233,7 +233,7 @@ export function Select({ value, onChange, options, disabled, name }: { value: st
 export { Segmented, type SegOption } from './Segmented'
 
 /** Tag / chip input — type + Enter (or comma) to add, × to remove. */
-export function ChipInput({ values, onChange, placeholder, max, suggestions }: { values: string[]; onChange: (v: string[]) => void; placeholder?: string; max?: number; suggestions?: string[] }) {
+export function ChipInput({ values, onChange, placeholder, max, suggestions, ariaLabel }: { values: string[]; onChange: (v: string[]) => void; placeholder?: string; max?: number; suggestions?: string[]; ariaLabel?: string }) {
   const [draft, setDraft] = useState('')
   const listId = useId()
   const labelId = useFieldLabelId()
@@ -254,7 +254,7 @@ export function ChipInput({ values, onChange, placeholder, max, suggestions }: {
         </span>
       ))}
       <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={values.length ? '' : placeholder}
-        list={remaining.length ? listId : undefined} name={`chip-${listId}`} aria-labelledby={labelId} aria-label={labelId ? undefined : 'Add a tag'}
+        list={remaining.length ? listId : undefined} name={`chip-${listId}`} aria-labelledby={labelId} aria-label={labelId ? undefined : ariaLabel ?? 'Add a tag'}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add() } else if (e.key === 'Backspace' && !draft && values.length) onChange(values.slice(0, -1)) }}
         onBlur={add}
         className="flex-1 min-w-[80px] bg-transparent text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none" />

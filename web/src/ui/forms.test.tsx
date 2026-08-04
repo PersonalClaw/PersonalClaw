@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, fireEvent, screen } from '@testing-library/react'
-import { TextInput, TextArea, Select, NumberField, Field, Checkbox } from './forms'
+import { TextInput, TextArea, Select, NumberField, Field, Checkbox, ChipInput } from './forms'
 
 // ── Standard-field scale invariant (design-system consistency S2/T2.3) ──────
 // The form family grew a principled size (sm/md/lg) × surface (container/high/
@@ -219,6 +219,71 @@ describe('NumberField', () => {
     expect(input.getAttribute('aria-label')).toBeNull()
     // Attribute selector, not `#id`: useId() ids contain colons (invalid in a #selector).
     expect(container.querySelector(`[id="${labelledby}"]`)?.textContent).toBe('Warm pool size')
+  })
+})
+
+// ── ChipInput: the accessible name of the draft field (#523) ──────────────────
+// ChipInput hardcoded its fallback name to 'Add a tag' and took no ariaLabel, so
+// its three non-tag call-sites (entity aliases, notification keywords, and the
+// two bare knowledge tag fields' non-tag siblings) announced "Add a tag".
+//
+// The precedence is three-deep, and which rung a call-site lands on depends on
+// WHICH `Field` wraps it — the load-bearing detail behind the bug:
+//   • `ui/forms`' Field publishes a label id via FieldLabelCtx → aria-labelledby
+//     wins, and ariaLabel is correctly not even emitted.
+//   • `pages/settings/settingsUI`' Field is a plain div with NO context provider,
+//     so a ChipInput inside one is effectively bare — labelId is undefined and
+//     the fallback literal is the ONLY name. That is why the aliases/keywords
+//     fields announced "Add a tag" despite looking labelled on screen.
+// So ariaLabel is the rung that rescues the settingsUI-Field and bare sites, and
+// is deliberately inert under a ui/forms Field.
+
+describe('ChipInput accessible name', () => {
+  const nameOf = (c: HTMLElement) => {
+    const input = c.querySelector('input')!
+    const lb = input.getAttribute('aria-labelledby')
+    return {
+      labelledby: lb,
+      ariaLabel: input.getAttribute('aria-label'),
+      // What a screen reader actually announces: aria-labelledby's resolved text
+      // outranks aria-label.
+      announced: lb ? (c.querySelector(`[id="${lb}"]`)?.textContent ?? null) : input.getAttribute('aria-label'),
+    }
+  }
+
+  it('falls back to "Add a tag" when bare and given no ariaLabel (preserved behavior)', () => {
+    // The two knowledge tag fields render outside any Field — genuinely tags, so
+    // the literal is correct there and must not shift.
+    const r = nameOf(render(<ChipInput values={[]} onChange={() => {}} />).container)
+    expect(r.labelledby).toBeNull()
+    expect(r.announced).toBe('Add a tag')
+  })
+
+  it('an explicit ariaLabel replaces the hardcoded literal when there is no Field label', () => {
+    const r = nameOf(render(<ChipInput values={[]} onChange={() => {}} ariaLabel="Add an alias" />).container)
+    expect(r.ariaLabel).toBe('Add an alias')
+    expect(r.announced).toBe('Add an alias')
+  })
+
+  it("a ui/forms Field's published label still outranks ariaLabel", () => {
+    // Existing precedence is unchanged: the visible label is the better name, so
+    // aria-label is not emitted at all (two competing names would be worse).
+    const r = nameOf(render(
+      <Field label="Tags"><ChipInput values={[]} onChange={() => {}} ariaLabel="Add an alias" /></Field>,
+    ).container)
+    expect(r.labelledby).toBeTruthy()
+    expect(r.ariaLabel).toBeNull()
+    expect(r.announced).toBe('Tags')
+  })
+
+  it('names the field even once a chip exists and blanks the placeholder', () => {
+    // placeholder={values.length ? '' : placeholder} — with a chip present the
+    // placeholder is gone, so the accessible name is the ONLY remaining name.
+    const { container } = render(
+      <ChipInput values={['nickname']} onChange={() => {}} placeholder="Alias, then Enter" ariaLabel="Add an alias" />,
+    )
+    expect(container.querySelector('input')!.getAttribute('placeholder')).toBe('')
+    expect(nameOf(container).announced).toBe('Add an alias')
   })
 })
 
