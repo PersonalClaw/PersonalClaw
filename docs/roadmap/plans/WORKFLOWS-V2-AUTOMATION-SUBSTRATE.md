@@ -4026,3 +4026,47 @@ the full backend gate stays green at 15979. No `web/dist` churn committed.
   meters for S133's four unmetered caps, and §3.5's `skip_if_active` / `acting_on` — undeclared in the
   entity, so new scope rather than a gap-fill. S132's archive split now has a rendering vocabulary; the
   did/suppressed FOLD affordance itself is still a §5 Automations-page task.
+
+### S138 — a resolved credential reached the run ledger in plaintext (criterion 11) — DONE
+
+**AUDITED FIRST: the dispatch half is sound.** Criterion 11 says `{{secret:KEY}}` *"never appears
+resolved in triggers.json, journals, ledger, or `automation_history` output"*. Driven end to end with a
+real secret through a real fire: `triggers.json` keeps the **placeholder**, the provider receives the
+**resolved** value (it must, to authenticate), and after the fire the resolved value appears in **no
+file** under the home. S115 built that correctly, and this session confirmed it rather than assuming it.
+
+**🔴 DISCOVERY: the ledger WRITE was unprotected.** The API's `_redact_run` cleans the response — and
+nothing cleaned the write. Measured with a run record whose `summary` carried a resolved credential,
+which is exactly what a `bash` action that echoes one produces:
+
+```
+PLAINTEXT on disk in: ['cron-history/_index.jsonl', 'cron-history/clock:a.jsonl']
+```
+
+Both files are 0600, but both are on disk, both are carried by `personalclaw snapshot` (S113), and both
+are readable by anything that can read the home. **Redacting only on read is a read-path control over a
+storage-path leak** — and the criterion says "ledger", not "ledger responses". The store wrote twice
+(per-job file with trace, cross-job index without), so a fix cleaning one would have left the other.
+
+**Fixed at `_append_sync`, the single funnel every run record passes through.** The per-call-site
+alternative is precisely how the injection-screen (S134) and capability-fence (S116) gaps happened. All
+three text fields are covered — and `error` was the one with neither a cap nor redaction, while being
+the likeliest in practice: a failed authenticated request echoes the token back in its error.
+
+**Reuses `security.redact_credentials` + `redact_exfiltration_urls`**, not a second regex set, so a
+pattern added there covers this automatically — the drift lesson S115 recorded for the workflow lint. A
+resolved token most often escapes inside a URL a command printed, hence both.
+
+**A redaction failure WITHHOLDS rather than storing raw**, and still writes the row. Losing a summary is
+recoverable; writing a credential to disk is not — and dropping the row entirely would hide the run,
+which is the silent drop criterion 8 bans. Both halves are tested.
+
+**False positives were the real risk** and are pinned: six ordinary summaries (`"Indexed 42 notes in
+1.2s"`, `"HTTP 200 from https://api.example.com/v1/items"`, `"commit a1b2c3d pushed to main"`, …) assert
+**byte-identical** output. This runs on every run record, and a rule that mangled real summaries would be
+worse than the leak — these are what a user reads to find out what their machine did.
+
+- **REMAINING in AUTOMATION-SUBSTRATE:** unchanged from S137 — the E4-blocked webhook fire endpoint
+  (queue S123), `idle` (Loops Phase 4), `web_watch`'s headless tier, a chat-turn event source reading
+  `agent_scope`, meters for the four unmetered caps, and §3.5's undeclared `skip_if_active` /
+  `acting_on`.
