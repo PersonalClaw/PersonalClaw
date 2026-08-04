@@ -189,7 +189,7 @@ def test_the_doctor_names_an_UNMETERED_cap():
     would be the inverted dependency S119 and S129 both refused, so the doctor says so instead."""
     from personalclaw.triggers.calendar import diagnose
 
-    rows = [{"id": "schedule:clock:x", "gates": {"cost_cap": 5.0, "max_runs_per_hour": 10}}]
+    rows = [{"id": "schedule:clock:x", "gates": {"cost_cap": 5.0, "max_cost_usd_per_run": 1.0}}]
     finding = next(
         f for f in diagnose(rows, known_workflows=None).findings if f.code == "unmetered_cap"
     )
@@ -244,10 +244,12 @@ def test_the_STORM_SPACING_gates_are_named_too():
     # `debounce_secs`/`cooldown_secs` were in this list at S150 and were WIRED at S151, so they must
     # no longer be reported as unmetered — reporting a working gate as broken is the same class of
     # lie as the silence S150 fixed, pointing the other way.
-    for key in ("rate_cap", "idempotency", "threshold"):
+    for key in ("idempotency", "threshold"):
         assert key in finding.detail, key
-    for wired in ("debounce_secs", "cooldown_secs"):
-        assert wired not in finding.detail, f"{wired} is enforced as of S151"
+    # Wired since S150 named them: debounce/cooldown at S151, the three hourly caps at S152. A key
+    # that has been wired must STOP being reported, or the doctor lies in the opposite direction.
+    for wired in ("debounce_secs", "cooldown_secs", "rate_cap"):
+        assert wired not in finding.detail, f"{wired} is enforced now"
     assert "NOT bounded" in finding.detail
 
 
@@ -288,6 +290,10 @@ def test_the_unmetered_set_and_the_gate_vocabulary_stay_in_step():
         "condition",
         "debounce_secs",
         "cooldown_secs",
+        # …and the three hourly caps, wired at S152 by `ScheduleRunStore.count_since`.
+        "rate_cap",
+        "max_runs_per_hour",
+        "max_actions_per_hour",
     }
     unclassified = set(GATE_KEYS) - enforced - set(UNMETERED_CAPS)
     assert not unclassified, (

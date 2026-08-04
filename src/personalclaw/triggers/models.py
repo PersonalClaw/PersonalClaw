@@ -490,7 +490,12 @@ FAIL_OPEN_GATES: frozenset[str] = frozenset(
         # asymmetry is the point — a stuck-closed spacing gate looks exactly like a dead trigger,
         # while a stuck-open one costs at most one duplicate run that the claim lock still bounds.
         "spacing",
-        # …and both cap keys under the spelling a person edits.
+        # `rate` (S152) is the hourly-cap gate. Fail-open for the same reason as `slot`: an
+        # unreadable ledger means "I cannot tell how often this fired", and suppressing every
+        # capped trigger over a filesystem hiccup would silence real automations. The cap's
+        # purpose — stop a RUNAWAY — still holds, because a runaway writes many good rows.
+        "rate",
+        # …and the cap keys under the spelling a person edits.
         "debounce_secs",
         "cooldown_secs",
     }
