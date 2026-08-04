@@ -45,12 +45,46 @@ from typing import Any, Awaitable, Callable
 #: surface, and the fail-open default means a timeout costs nothing but an unfiltered fire.
 DUTY_GATE_TIMEOUT_SECS = 2.0
 
-#: Cap keys that are validated and carried but have NO METER reading them (§3.6 — S133). `max_fires`
-#: is deliberately absent: S133 wired it against `run_count`. These four need per-run spend
-#: attribution or a windowed history query, neither of which exists on the fire path — so the doctor
-#: names them rather than letting a user believe a cost cap bounds their automation.
+#: Gate keys that are validated and carried but have NO METER reading them (§3.6 — S133, extended
+#: S150). `max_fires` is deliberately absent: S133 wired it against `run_count`, and `quiet_hours`,
+#: `skip_dates`, `duty_gate` and `condition` are all genuinely enforced on the fire path.
+#:
+#: 🔴 The FIVE storm-spacing keys were added S150 after a `GATE_KEYS` sweep found them declared and
+#: unread — and the asymmetry that made it worth a session: a user setting `cost_cap` was honestly
+#: told it is unmetered, while a user setting `debounce_secs: 300` got SILENCE and believed their
+#: automation was spacing its fires. `firepath`'s own module docstring names the order as
+#: "debounce/quiet/cooldown/condition", so three of the four gates it advertises are absent from
+#: `GATE_ORDER`.
+#:
+#: What each still needs, so this list shrinks for a reason rather than by guesswork:
+#:
+#: * `cost_cap` / `max_cost_usd_per_run` — per-run spend attribution. `guardrails.SpendMeter` has
+#:   the machinery (`charge(..., run_key=)`, `run_totals`) but its one production caller never
+#:   passes a `run_key`, so run-scope totals are permanently empty.
+#: * `max_runs_per_hour` / `max_actions_per_hour` / `rate_cap` — a WINDOWED history query.
+#:   `ScheduleRunStore.list_for_job` is offset/limit only, with no `since`;
+#:   `missed.within_rate_window` is the pure decision already waiting for that meter.
+#: * `debounce_secs` / `cooldown_secs` — a LAST-FIRE timestamp. The unified `Trigger` carries
+#:   `last_success_at`/`last_failure_at` but no `last_fired_at`, and a fire that was SUPPRESSED is
+#:   neither — so neither existing field can space fires without counting a blocked fire as a fire.
+#:   (The legacy `event_triggers.EventTrigger` DOES carry `last_fired_at`, which is why debounce
+#:   works there and not here.)
+#: * `idempotency` / `threshold` — R12 bundles them without pinning semantics; naming them keeps the
+#:   gap visible instead of letting a `threshold: 3` read as enforced.
+#:
+#: Naming beats implying: a user who set a cap believes their automation is bounded.
 UNMETERED_CAPS: frozenset[str] = frozenset(
-    {"cost_cap", "max_cost_usd_per_run", "max_runs_per_hour", "max_actions_per_hour"}
+    {
+        "cost_cap",
+        "max_cost_usd_per_run",
+        "max_runs_per_hour",
+        "max_actions_per_hour",
+        "debounce_secs",
+        "cooldown_secs",
+        "rate_cap",
+        "idempotency",
+        "threshold",
+    }
 )
 
 #: Day-of-week tokens, Monday-first to match `datetime.weekday()`. Named rather than positional so a
