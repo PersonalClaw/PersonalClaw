@@ -31,24 +31,74 @@ export function findSegments(turn: ChatTurn): string[] {
   return out
 }
 
+/** A case-insensitive match as offsets into the ORIGINAL (unfolded) text. */
+export interface TextMatch {
+  start: number // char offset into the original text
+  end: number // exclusive end offset into the original text
+}
+
+/** `text` lowercased, plus a per-code-unit map back to the original offsets.
+ *
+ *  Case folding is NOT length-preserving, so folded offsets are not original
+ *  offsets: `İ` (U+0130) lowercases to `i` + U+0307, growing 1 → 2 code units. It
+ *  is the only code point in Unicode that grows (and none shrink), but one is
+ *  enough — every offset after it drifts, and a drifted offset handed to
+ *  `Range.setEnd` throws. Uppercasing is no escape (`ß` → `SS`), so we keep the
+ *  map instead of assuming alignment.
+ *
+ *  `srcStart[i]` / `srcEnd[i]` bound the original character that produced folded
+ *  code unit `i`, so any match maps back to whole original characters and can
+ *  never point past the end of `text`. Iteration is by code point, so surrogate
+ *  pairs stay intact. */
+function foldWithMap(text: string): { folded: string; srcStart: number[]; srcEnd: number[] } {
+  let folded = ''
+  const srcStart: number[] = []
+  const srcEnd: number[] = []
+  let at = 0
+  for (const ch of text) {
+    const lower = ch.toLowerCase()
+    folded += lower
+    for (let i = 0; i < lower.length; i++) { srcStart.push(at); srcEnd.push(at + ch.length) }
+    at += ch.length
+  }
+  return { folded, srcStart, srcEnd }
+}
+
+/** Every case-insensitive occurrence of `query` in `text`, left to right, as
+ *  offsets into the ORIGINAL `text` — so `text.slice(start, end)` is always the
+ *  matched substring. Overlapping matches are NOT emitted (each match advances
+ *  past its own end). Empty/whitespace query → no matches.
+ *
+ *  Shared by the pure scanner below and by FindBar's DOM painter: both need the
+ *  identical offsets, and deriving them twice is how they drifted apart (#546). */
+export function findInText(text: string, query: string): TextMatch[] {
+  if (!query.trim()) return []
+  const needle = foldWithMap(query).folded
+  const { folded, srcStart, srcEnd } = foldWithMap(text)
+  const out: TextMatch[] = []
+  let from = 0
+  for (;;) {
+    const at = folded.indexOf(needle, from)
+    if (at < 0) break
+    out.push({ start: srcStart[at], end: srcEnd[at + needle.length - 1] })
+    from = at + needle.length
+  }
+  return out
+}
+
 /** All matches of `query` across the turns, in reading order (turn, then segment,
  *  then left-to-right within the segment). Empty/whitespace query → no matches.
  *  Overlapping matches are NOT emitted (each match advances past its own end), so
- *  a query of "aa" over "aaaa" yields two matches, matching find-bar convention. */
+ *  a query of "aa" over "aaaa" yields two matches, matching find-bar convention.
+ *  Offsets index the original segment text, never a case-folded copy (#546). */
 export function findMatches(turns: ChatTurn[], query: string): FindMatch[] {
-  const q = query.toLowerCase()
-  if (!q.trim()) return []
+  if (!query.trim()) return []
   const matches: FindMatch[] = []
   for (let ti = 0; ti < turns.length; ti++) {
     const segs = findSegments(turns[ti])
     for (let si = 0; si < segs.length; si++) {
-      const hay = segs[si].toLowerCase()
-      let from = 0
-      for (;;) {
-        const at = hay.indexOf(q, from)
-        if (at < 0) break
-        matches.push({ turnIndex: ti, segIndex: si, start: at, end: at + q.length })
-        from = at + q.length
+      for (const m of findInText(segs[si], query)) {
+        matches.push({ turnIndex: ti, segIndex: si, start: m.start, end: m.end })
       }
     }
   }
