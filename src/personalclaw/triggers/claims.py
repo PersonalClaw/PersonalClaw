@@ -166,3 +166,87 @@ def running_ids(*, now: float = 0.0, base_dir: Path | str | None = None) -> list
         if trigger_id and is_running(trigger_id, now=now, base_dir=base_dir):
             out.append(trigger_id)
     return out
+
+
+# ── named resource slots (§3.5 / AUTO-R9 — S135) ──
+
+
+def slot_holders(
+    store: Any, *, now: float = 0.0, base_dir: Path | str | None = None
+) -> dict[str, str]:
+    """`{slot_name: holding_trigger_id}` for every slot a RUNNING trigger holds.
+
+    🔴 WHY THIS EXISTS. `Trigger.resource_slots` was declared in the entity, persisted, round-tripped
+    by `to_dict`/`from_dict` — and read by **nothing**. Found by generalising S134's container audit
+    across all 41 dataclasses in `triggers/`: it was the only field with zero
+    non-declaration readers.
+    §3.5 is explicit: *"triggers/runs declare needs (`gpu`, `local-llm`); the substrate serializes
+    conflicting runs per slot and refuses over-capacity starts with a typed RESOURCE_BUSY + holder
+    identity (a `deferred` ledger row)."* So a user could declare `resource_slots: ["local-llm"]` on
+    three triggers and have all three run a local model at once — the exact contention §3.5
+    exists to
+    prevent on a machine shared with the interactive user.
+
+    Derived from the CLAIM STORE rather than a second sidecar, which is the design decision here: a
+    slot is held exactly as long as its trigger's run is, so claims already answer the
+    question. That
+    inherits read-time expiry (a crashed run does not hold `gpu` hostage forever) and cross-process
+    visibility for free — a separate slot file would need its own reaper and could disagree with the
+    claims about who is running.
+    """
+    now = now or time.time()
+    held: dict[str, str] = {}
+    for row in store.load():
+        trigger = row.trigger
+        # A row that does not PARSE contributes no holder. Found by a red test: a broken trigger
+        # declaring `gpu` otherwise blocks every real `gpu` fire forever, because it can never run
+        # and therefore never releases — a phantom holder is worse than an unserialized slot.
+        if not getattr(row, "ok", True):
+            continue
+        slots = getattr(trigger, "resource_slots", None)
+        if not slots or not isinstance(slots, (list, tuple)):
+            continue
+        if read_claim(trigger.id, now=now, base_dir=base_dir) is None:
+            continue
+        for slot in slots:
+            name = str(slot or "").strip()
+            # FIRST holder wins and is not overwritten: the answer to "who has the gpu" must be
+            # stable across two calls in one tick, and a later row silently replacing an earlier
+            # holder would make the refusal reason name the wrong trigger.
+            if name and name not in held:
+                held[name] = trigger.id
+    return held
+
+
+def busy_slot(
+    trigger: Any,
+    *,
+    holders: dict[str, str] | None = None,
+    store: Any = None,
+    now: float = 0.0,
+    base_dir: Path | str | None = None,
+) -> tuple[str, str]:
+    """The first slot this trigger wants but cannot have, as `(slot, holder_id)`; else `("", "")`.
+
+    Returns the HOLDER too, because §3.5 asks for "holder identity" in the refusal: "the gpu is
+    busy"
+    sends a user looking through every automation they own, while "held by clock:nightly-index" is
+    actionable.
+
+    A trigger never blocks on a slot IT already holds — re-entering its own slot is what a retry
+    inside one run looks like, and refusing that would deadlock a trigger against itself.
+    """
+    slots = getattr(trigger, "resource_slots", None)
+    if not slots or not isinstance(slots, (list, tuple)):
+        return ("", "")
+    if holders is None:
+        if store is None:
+            return ("", "")
+        holders = slot_holders(store, now=now, base_dir=base_dir)
+    tid = str(getattr(trigger, "id", "") or "")
+    for slot in slots:
+        name = str(slot or "").strip()
+        holder = holders.get(name, "")
+        if name and holder and holder != tid:
+            return (name, holder)
+    return ("", "")
