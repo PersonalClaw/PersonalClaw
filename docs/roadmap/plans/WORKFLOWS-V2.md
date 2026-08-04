@@ -1167,3 +1167,56 @@ Each slice is independently shippable and testable. Rev-2 scope grows the estima
   consumes them until Slice 6/7); `subworkflow` execution (Slice 10 — it returns a typed
   refusal rather than a silent skip); the effect ledger (Slice 3); mid-flight mutation
   (Slice 4). Retry currently re-runs a fresh attempt; mutation-hint injection is Slice 2.
+
+### S147 — the per-node stall window was declared by four templates and read by nothing (WF2-R5)
+
+**DONE.** Found by a mechanical sweep rather than by reading: every config key the bundled library
+declares (35 distinct) checked against every string literal in `src/personalclaw`. Two keys had no
+reader anywhere — `allow_failure` and `timeout_stall_secs` — and this session took the dangerous one.
+
+**Four shipped templates set a per-node stall window and every one was ignored:**
+
+| template | node | asks | actually got |
+|---|---|---|---|
+| `design-project` | `refine` | 600s | 300s |
+| `general-project` | `project` | 900s | 300s |
+| `goal-pursuit-open-ended` | `work` | 900s | 300s |
+| `goal-pursuit-verifiable` | `work` | 1200s | 300s |
+
+`_enforce_stall_timeouts` read `self.services.node_timeout_stall` and never looked at the node's own
+config, so the run-level default applied to everything.
+
+**This fails in the wrong direction, which is why it is worth a session.** `timeout_stall` exists to
+catch a node that has gone *silent*, not one that is merely *slow* — that distinction is the entire
+reason `engine._wait_with_progress` feeds a heartbeat while a nested run works. A `work` node whose
+author measured it needing twenty minutes was being cancelled at five, as a TIMEOUT, with a
+remediation pointing at a config key that would not have helped. The knob existed precisely to
+prevent that and had never applied.
+
+**A node may RAISE its window, never lower it.** The run-level value is the operator's floor for how
+long a silent node may sit; letting a bundled spec shorten it would let a template tighten an
+operator's policy from inside the library. So the effective window is `max(run_default, declared)`.
+
+**Zero/invalid falls back to the default rather than disabling the check.** A malformed knob must not
+switch a safety timeout off — the failure mode a `timeout_stall_secs: 0` would otherwise buy is an
+un-killable wedged node, which is strictly worse than a short window. An unknown node path falls back
+too, rather than raising inside the sweep.
+
+**A process note on measurement.** My first probe of `_node_stall_window` reported two failures. The
+implementation was correct; the probe passed a node **id** where the controller keys on a structural
+path (`root.children[0]`). Re-reading what `_walk` actually yields fixed the probe, not the code —
+worth recording because a wrong probe that "finds a bug" is how a correct implementation gets
+rewritten.
+
+The test reads the four real declarations out of the bundled library rather than restating them, so it
+keeps tracking the templates it is meant to protect; a hand-copied list would silently stop covering
+a template that changed its number.
+
+Verified load-bearing: reverting the per-node lookup turns 2 of the 9 new tests red. Gate: `make lint`
+(black+isort+flake8+mypy, 691 files) green; `pytest -n 4 --dist worksteal` **16114 passed, 29 skipped,
+13 xfailed**. No `web/` change.
+
+- **REMAINING from this sweep:** `allow_failure` is declared by `rich-ingest` and read by nothing —
+  the other unread key. It needs a decision about what tolerating a node failure MEANS for the
+  frontier (skip the dependents, or run them with a null input?), which is a contract question rather
+  than a wiring one, so it is recorded here rather than guessed at.
