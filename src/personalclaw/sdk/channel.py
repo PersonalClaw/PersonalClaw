@@ -107,12 +107,18 @@ from personalclaw.providers.use_cases import (  # noqa: F401
     save_use_case_settings,
 )
 
-# ── Scheduling ──
-from personalclaw.schedule import (  # noqa: F401
-    ScheduleService,
-    compute_next_run_ts,
-    format_schedule,
-)
+# ── Automations (the unified trigger store) ──
+#
+# `ScheduleService` is GONE (S112). A channel app's `/cron` surface reads and mutates automations
+# through the same store, projection and tool functions the API and the chat tools use, so there is
+# exactly one behaviour to reason about — a channel that kept its own scheduler view would drift
+# from the Automations page the moment either changed.
+#
+# `describe_cadence` replaces `format_schedule(job.schedule)`: it takes a `Trigger` and delegates to
+# the same shipped formatter, so the wording stays identical while the input becomes the store's.
+# `to_schedule_row` is the wire projection (id, enabled, message, next_run_ts, last_status) that the
+# API already publishes, which is what a list command needs.
+from personalclaw.schedule import compute_next_run_ts, format_schedule  # noqa: F401
 
 # ── Security + audit ──
 from personalclaw.security import (  # noqa: F401
@@ -140,5 +146,14 @@ from personalclaw.textfmt import extract_options, strip_thinking_tags  # noqa: F
 # ── Media + prompts + discovery ──
 from personalclaw.transcribe import is_available as stt_available  # noqa: F401
 from personalclaw.transcribe import transcribe_audio  # noqa: F401
+from personalclaw.triggers.models import Trigger  # noqa: F401
+from personalclaw.triggers.schedule_view import (  # noqa: F401
+    describe_cadence,
+    to_schedule_row,
+)
+from personalclaw.triggers.store import TriggerStore  # noqa: F401
+from personalclaw.triggers.tools import delete as delete_automation  # noqa: F401
+from personalclaw.triggers.tools import delete_all as delete_all_automations  # noqa: F401
+from personalclaw.triggers.tools import set_paused as set_automation_paused  # noqa: F401
 from personalclaw.tts.registry import active_voice_params  # noqa: F401
 from personalclaw.voice_reply import voice_reply  # noqa: F401

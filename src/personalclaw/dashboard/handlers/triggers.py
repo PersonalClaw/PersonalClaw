@@ -246,7 +246,7 @@ def _project_one(trigger: Any, *, start: Any, days: int) -> tuple[list[Any], boo
     SCHEDULER compares skip dates against the date in the trigger's OWN zone, so a grid on server
     time would strike the wrong column for any job that declares one.
     """
-    from personalclaw.triggers.arm import next_fire
+    from personalclaw.triggers.arm import cadence_next_fire as raw_next_fire
     from personalclaw.triggers.calendar import project_occurrences
     from personalclaw.triggers.service import to_epoch
 
@@ -269,7 +269,11 @@ def _project_one(trigger: Any, *, start: Any, days: int) -> tuple[list[Any], boo
         # NOTHING — a live 5-minute automation invisible on the week grid. Falling back to
         # `arm.next_fire` computes the same instant the tick will use, so the forecast is honest
         # whether or not the row happens to be armed yet.
-        first = to_epoch(getattr(trigger, "next_fire_at", "")) or next_fire(trigger)
+        # 🔴 The RAW cadence, not the skip-aware `next_fire` (S112). `project_occurrences` strikes
+        # a skipped column ITSELF (AUTO-A3's "struck columns"), so a stepper that already advanced
+        # past skipped days would hide exactly the slots the grid exists to show — the user would
+        # see a quiet week with no explanation instead of their holiday struck through.
+        first = to_epoch(getattr(trigger, "next_fire_at", "")) or raw_next_fire(trigger)
         if first <= 0:
             return [], False
         return project_occurrences(interval_secs=interval, first_fire_at=first, **common)
@@ -277,7 +281,7 @@ def _project_one(trigger: Any, *, start: Any, days: int) -> tuple[list[Any], boo
         return project_occurrences(
             interval_secs=0,
             first_fire_at=0,
-            next_after=lambda after: next_fire(trigger, now=after),
+            next_after=lambda after: raw_next_fire(trigger, now=after),
             **common,
         )
     # `at` is a single fire, and an elapsed one is not a forecast. Nothing to plot.

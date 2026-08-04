@@ -22,7 +22,6 @@ from personalclaw.schedule import ScheduleJob, make_agent_action
 def _make_state() -> DashboardState:
     state = DashboardState(
         sessions=MagicMock(count=0),
-        crons=MagicMock(),
         lessons=MagicMock(),
         start_time=time.time(),
     )

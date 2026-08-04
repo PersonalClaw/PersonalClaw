@@ -30,7 +30,6 @@ if TYPE_CHECKING:
         ConversationLog,
         HistoryConsolidator,
         LessonStore,
-        ScheduleService,
         SessionManager,
         SubagentManager,
     )
@@ -264,7 +263,6 @@ def _ws_csp_sources() -> str:
 
 async def start_dashboard(
     sessions: "SessionManager",
-    crons: "ScheduleService",
     lessons: "LessonStore",
     port: int = _DEFAULT_PORT,
     subagents: "SubagentManager | None" = None,
@@ -313,7 +311,6 @@ async def start_dashboard(
 
     state = DashboardState(
         sessions=sessions,
-        crons=crons,
         lessons=lessons,
         start_time=time.time(),
         subagents=subagents,
@@ -1710,7 +1707,6 @@ async def start_dashboard(
 
 async def start_api_server(
     sessions: "SessionManager",
-    crons: "ScheduleService",
     lessons: "LessonStore",
     port: int = _DEFAULT_PORT,
     subagents: "SubagentManager | None" = None,
@@ -1719,7 +1715,6 @@ async def start_api_server(
     """Start a minimal API-only server for MCP tool transport (no UI)."""
     state = DashboardState(
         sessions=sessions,
-        crons=crons,
         lessons=lessons,
         start_time=time.time(),
         subagents=subagents,

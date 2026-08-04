@@ -223,49 +223,37 @@ def test_the_iteration_sleep_is_bounded(monkeypatch, tmp_path):
 # ── 🔴 the cutover: exactly one clock engine ──
 
 
-def test_the_legacy_timer_can_load_without_arming(tmp_path):
-    """🔴 THE seam. `_arm_timer` is the only part of `ScheduleService` that fires anything; the rest
-    is the CRUD surface and run store the API still reads. `_running` stays False, which also keeps
-    `_load`'s own "restore timers from disk" branch from starting the legacy loop behind the
-    cutover's back."""
-    import json
+def test_boot_rotates_run_history_without_a_legacy_service():
+    """🔴 SUPERSEDED (S112). This asserted `load_without_timer` — the legacy service's boot call.
 
-    from personalclaw.schedule import ScheduleService
-
-    (tmp_path / "crons.json").write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "jobs": [
-                    {
-                        "id": "j1",
-                        "name": "N",
-                        "enabled": True,
-                        "schedule": {"kind": "every", "every_secs": 3600},
-                        "action": {"provider": "bash", "config": {"command": "x"}},
-                    }
-                ],
-            }
-        )
-    )
-    service = ScheduleService(base_dir=tmp_path)
-    asyncio.run(service.load_without_timer())
-    assert len(service.list_jobs(include_disabled=True)) == 1  # CRUD works
-    assert service._timer_task is None  # nothing fires
-    assert service._running is False
-
-
-def test_boot_does_not_arm_the_legacy_timer(tmp_path):
-    """🔴 The double-fire guard, asserted on the boot path's SOURCE. Measured on the owner's real
-    store: both engines hold `j-at` and `j-cron` after the migration, so arming both would fire each
-    of them twice. `start()` must not appear in the cron-init path."""
+    That method did two things: load `crons.json` (for CRUD nothing uses any more) and rotate run
+    history. Only the rotation was load-bearing, and `ScheduleRunStore` owns it, so boot calls that
+    directly and the class is gone.
+    """
     import inspect
 
     from personalclaw.gateway import GatewayOrchestrator
 
     src = inspect.getsource(GatewayOrchestrator._init_cron)
-    assert "load_without_timer" in src
-    assert "await self.cron_svc.start()" not in src
+    assert "ScheduleRunStore(config_dir()).rotate_all()" in src
+    assert "load_without_timer" not in src
+
+
+def test_boot_has_no_legacy_timer_left_to_arm(tmp_path):
+    """🔴 The double-fire guard, now unconditional. Measured on the owner's real store at the S100
+    cutover: both engines held `j-at` and `j-cron` after the migration, so arming both would
+    fire each twice. S100 stopped arming the legacy timer; S112 deleted the class that owned
+    it, so there is no second engine left to arm by accident."""
+    import inspect
+
+    from personalclaw.gateway import GatewayOrchestrator
+
+    src = inspect.getsource(GatewayOrchestrator._init_cron)
+    # Strip comments: the boot path still EXPLAINS what retired, and the property under test is
+    # about the CODE. Asserting on prose would make a docstring edit fail a behaviour test.
+    code = "\n".join(ln for ln in src.split("\n") if not ln.strip().startswith("#"))
+    assert "cron_svc" not in code
+    assert "ScheduleService(" not in code
 
 
 def test_boot_starts_the_clock_loop(tmp_path):
@@ -403,9 +391,12 @@ def test_the_legacy_refresh_callback_is_gone():
     """
     import inspect
 
-    from personalclaw.gateway import GatewayOrchestrator
-    from personalclaw.schedule import ScheduleService
+    import pytest
 
-    assert not hasattr(ScheduleService, "set_refresh_callback")
+    from personalclaw.gateway import GatewayOrchestrator
+
+    # S112 deleted the whole class, which is a stronger statement than "the method is gone".
+    with pytest.raises(ImportError):
+        from personalclaw.schedule import ScheduleService  # noqa: F401
     src = inspect.getsource(GatewayOrchestrator)
     assert "set_refresh_callback" not in src

@@ -75,7 +75,7 @@ from personalclaw.llm_helpers import (
     stream_and_collect,
 )
 from personalclaw.memory import MemoryStore
-from personalclaw.schedule import ScheduleJob, ScheduleService, build_schedule_session_context
+from personalclaw.schedule_history import ScheduleRunStore
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.session import BACKGROUND_KEY, SessionManager
@@ -310,7 +310,6 @@ class GatewayOrchestrator:
         self.ctx_builder: ContextBuilder | None = None
         self.conv_log: ConversationLog | None = None
         self.consolidator: HistoryConsolidator | None = None
-        self.cron_svc: ScheduleService | None = None
         self._file_watch_task: "asyncio.Task[None] | None" = None  # S93 file-watch poll loop
         self._clock_task: "asyncio.Task[None] | None" = None  # S100 unified clock loop
         self._reaper_task: "asyncio.Task[None] | None" = None  # S106 trigger reaper
@@ -738,221 +737,11 @@ class GatewayOrchestrator:
         indexed = memory.rebuild_index()
         logger.info("FTS index built: %d files", indexed)
 
-    async def _run_action_job(self, job: "ScheduleJob") -> str | None:
-        """Run a non-agent Schedule action via the action-provider registry.
-
-        Covers every provider except ``invoke-agent`` (which runs a full LLM turn
-        on the agent path). The deterministic ``bash`` / ``run-script`` providers
-        and any other registered action all dispatch here, so a scheduled trigger
-        and a lifecycle trigger execute the same action the same way.
-
-        Returns the result string (delivered by the caller) or None (silent).
-        Sets job.last_status/last_error/last_result so the run record + dedup
-        work, and auto-pauses the job after 5 consecutive failures.
-        """
-        from personalclaw.action_providers import ActionContext, get_action_provider
-        from personalclaw.action_providers.registry import _ensure_default_providers_registered
-
-        _ensure_default_providers_registered()
-        provider = get_action_provider(job.provider)
-        if provider is None:
-            job.last_status = "error"
-            job.last_error = f"unknown action provider {job.provider!r}"
-            # A config error, not a failure: no such provider will ever exist on
-            # retry, so waiting for 5 identical fires is 4 pointless runs (S68).
-            self._maybe_autopause(job, exit_type="config_error")
-            return None
-
-        config = job.action.get("config") or {}
-        # Dry-run replay (T9): inject observe-mode into the action config so the
-        # spawn-based providers run write-capable tools in preview-only mode. A
-        # shallow copy so the persisted action config is never mutated.
-        # A deterministic provider (bash/run-script/webhook/…) has NO observe
-        # mode — dispatching to it would execute the REAL side effects while the
-        # UI promises none. Refuse to execute and record a preview instead.
-        if getattr(job, "dry_run", False):
-            if not getattr(provider, "supports_dry_run", False):
-                job.last_status = "ok"
-                job.last_error = None
-                job.last_result = (
-                    f"[dry run] {provider.display_name} actions execute directly "
-                    f"(no observe mode) — not run. Would run with config: "
-                    f"{json.dumps({k: v for k, v in config.items() if k != 'dry_run'}, default=str)[:500]}"  # noqa: E501
-                )
-                job.last_outcome = "skip"
-                logger.info(
-                    "Action cron '%s': dry run refused for direct-execution provider %s (previewed only)",  # noqa: E501
-                    job.name,
-                    job.provider,
-                )
-                return None
-            config = {**config, "dry_run": True}
-        # The schedule's "what fires" maps to the action event; the prompt/last
-        # result is the free-form context a templated action can interpolate. The
-        # payload keys mirror schedule.SCHEDULE_VARS so a templated action resolves
-        # $last_result / $now / $timezone / $job_id / $job_name.
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-
-        from personalclaw.schedule import get_local_tz
-
-        now = time.time()
-        tz_name = job.timezone or get_local_tz()[0]
-        last_result = job.last_result or ""
-        try:
-            now_str = datetime.fromtimestamp(now, tz=ZoneInfo(tz_name)).isoformat()
-        except Exception:
-            now_str = datetime.fromtimestamp(now).isoformat()
-        ctx = ActionContext(
-            event=f"schedule:{job.id}",
-            context=last_result,
-            payload={
-                "job_id": job.id,
-                "job_name": job.name,
-                "session_key": f"cron:{job.id}",
-                "last_result": last_result,
-                "now": now_str,
-                "timezone": tz_name,
-            },
-        )
-        # zt_timeout overrides; else the mode default (300s command / 30s script /
-        # 30s for any other action). The deterministic providers also clamp via
-        # their sandbox helper, so this only matters when zt_timeout is unset.
-        if job.zt_timeout:
-            timeout = job.zt_timeout
-        elif job.provider == "bash":
-            timeout = 300
-        else:
-            timeout = 30
-
-        # Denylist gate (AUTONOMY-GUARDRAILS §1.2): a scheduled action's config is
-        # checked BEFORE dispatch, so an app-contributed provider inherits the
-        # denylist. A blocked action never executes.
-        from personalclaw.guardrails.denylist import enforce_action
-
-        _deny = enforce_action(job.provider, config, ctx)
-        if _deny.blocked:
-            job.last_status = "error"
-            job.last_error = f"blocked by guardrails denylist: {_deny.reason}"
-            job.last_outcome = "skip"
-            # A POLICY decision, not a failure — and NO autopause (S68). Measured
-            # before: five consecutive blocks set ``enabled = False``, so a
-            # denylist the operator configured on purpose silently disabled the
-            # user's trigger for behaving exactly as designed.
-            return None
-
-        self._running_script_ids.add(job.id)
-        logger.info(
-            "Action cron '%s' dispatch via %s (dry_run=%s)",
-            job.name,
-            job.provider,
-            getattr(job, "dry_run", False),
-        )
-        try:
-            result = await provider.execute(config, ctx, timeout=timeout)
-            logger.info(
-                "Action cron '%s' result: success=%s outcome=%r err=%r",
-                job.name,
-                result.success,
-                result.outcome,
-                result.error,
-            )
-        except Exception as exc:
-            # PLATFORM-LEGIBILITY §2: wrap a raising provider in the shared
-            # WHAT/WHY/FIX envelope so the run-record error is coded + actionable.
-            from personalclaw.action_providers import provider_failure
-
-            job.last_status = "error"
-            job.last_error = provider_failure(job.provider, exc).render()
-            # Classified from the exception: an auth/transport outage does not
-            # spend the failure budget, so a trigger is not still disabled after
-            # the user renews the credential (S68).
-            from personalclaw.triggers.autopause import classify_exception
-
-            self._maybe_autopause(job, exit_type=classify_exception(exc))
-            logger.exception("Action cron job '%s' (%s) failed", job.name, job.provider)
-            return None
-        finally:
-            self._running_script_ids.discard(job.id)
-
-        if result.success:
-            job.last_status = "ok"
-            job.last_error = None
-            job.last_result = (result.stdout or "").strip()
-            job.last_outcome = result.outcome or ""
-            job.consecutive_failures = 0
-            # A run-script action that signalled "done" sets delete_after_run; the
-            # provider reports it via outcome so one-shot scripts still self-remove.
-            if result.outcome == "done":
-                job.delete_after_run = True
-            if result.outcome == "skip":
-                return None  # silent success
-            return job.last_result or None
-        job.last_status = "error"
-        # A provider that populated the §2 envelope surfaces its WHAT/WHY/FIX text.
-        job.last_error = (
-            result.agent_error.render()
-            if result.agent_error is not None
-            else (result.error or result.stderr or f"exit {result.exit_code}")
-        )
-        job.last_result = (result.stdout or "").strip()
-        self._maybe_autopause(job)
-        return None
-
-    def _maybe_autopause(self, job: "ScheduleJob", *, exit_type: str = "") -> None:
-        """Apply the typed autopause decision for a failed fire (S68).
-
-        Generalized from "increment a counter at every call site" to the §3.7
-        taxonomy. What changed, measured by driving the old version directly:
-
-        * A **denylist block no longer counts at all.** Five consecutive blocks
-          used to set ``enabled = False``, so a policy the operator configured on
-          purpose disabled the user's trigger for working as designed. That call
-          site no longer calls this method.
-        * An **auth/transport outage does not spend the budget.** Burning
-          failures on an expired token leaves the automation disabled even after
-          the user fixes it.
-        * A **config error pauses on the first fire** — no such provider will
-          exist on retry, so four more fires are pointless.
-        * **Five true failures still pause**, exactly as before (the budget is
-          the same 5), so a job tuned against the old tolerance sees no change.
-
-        ``exit_type`` defaults to ``failed``, preserving the plain-failure path.
-        """
-        from personalclaw.triggers.autopause import ExitType as _Exit
-        from personalclaw.triggers.autopause import evaluate as _evaluate
-        from personalclaw.triggers.models import TriggerState as _State
-
-        decision = _evaluate(
-            exit_type=exit_type or _Exit.FAILED.value,
-            consecutive_failures=job.consecutive_failures or 0,
-            now=time.time(),
-        )
-        job.consecutive_failures = decision.consecutive_failures
-        if decision.state == _State.PARKED.value:
-            # A park must NOT touch ``enabled`` here. ``ScheduleJob`` has no
-            # ``retry_after`` field and the legacy scheduler has no clock-driven
-            # unpark sweep, so disabling would strand the trigger PERMANENTLY —
-            # strictly worse than the over-counting this fixes. On this path a
-            # park is advisory: the fire is not counted (the part that matters)
-            # and the job stays armed to retry on its own schedule. The real
-            # parked state lands when the trigger store owns the row.
-            logger.info(
-                "Cron job '%s' hit a transient outage (%s) — not counted",
-                job.name,
-                decision.reason,
-            )
-            return
-        if not decision.fires_automatically:
-            # ``enabled`` is what the legacy scheduler reads, so the decision has
-            # to land there for the pause to take effect at all.
-            job.enabled = False
-            logger.warning(
-                "Cron job '%s' stopped itself (%s): %s",
-                job.name,
-                decision.state,
-                decision.reason,
-            )
+    # 🔴 `_run_action_job` + `_maybe_autopause` retired with `ScheduleService` (S112). Both took
+    # a `ScheduleJob` and were reachable only from the deleted `_cron_callback` dispatcher. The
+    # substrate GENERALIZED both: action dispatch is `_fire_store_trigger`, and the autopause
+    # counter is `triggers/autopause.py`, which fixed the defect this pair carried (one counter
+    # incremented at four call sites with no way to tell a policy block from a real failure).
 
     def _day_budget_exceeded(self, *, context: str) -> bool:
         """True when the day-scope guardrail spend ceiling is already hit.
@@ -1167,465 +956,21 @@ class GatewayOrchestrator:
 
     async def _init_cron(self) -> None:
         """Initialize and start the cron service."""
-
-        async def _cron_callback(job: ScheduleJob) -> str | None:
-            # ── Incident kill switch (AUTONOMY-GUARDRAILS §1.3) ──
-            # During an incident ALL unattended fires are suspended (interactive chat
-            # is untouched — that's a separate path). Checked first, before any
-            # action dispatch or session build.
-            from personalclaw.guardrails.incident import incident_active
-
-            if incident_active():
-                job.last_outcome = "skip"
-                job.last_result = "[incident] skipped — incident mode active"
-                logger.info("Cron '%s' skipped: incident mode active", job.name)
-                return None
-
-            # ── Non-agent actions (no LLM, no ACP turn) ──
-            # Every provider except invoke-agent dispatches through the action
-            # registry and returns. This branch comes first so deterministic
-            # bash/run-script actions never build a session.
-            if job.provider and job.provider != "invoke-agent":
-                return await self._run_action_job(job)
-
-            # ── Day-budget guard (AUTONOMY-GUARDRAILS §1.1) ──
-            # An agent cron fire is unattended LLM work. If the day-scope spend
-            # ceiling is already exhausted, skip the fire + notify once (the job
-            # stays enabled and resumes automatically when the budget resets next
-            # day). Fail-open — a broken budget read must never wedge the cron loop.
-            if self._day_budget_exceeded(context=f"cron '{job.name}'"):
-                job.last_outcome = "skip"
-                job.last_result = "[budget] skipped — day spend ceiling reached"
-                return None
-
-            # helper picks stable vs ephemeral session key and
-            # decides whether to prepend last_result, based on job.persistent_session.
-            session_key, msg = build_schedule_session_context(job)
-
-            # Dry-run replay of an agent job (invoke-agent or legacy message cron):
-            # this path runs a FULL LLM turn on a possibly REUSED stable session —
-            # observe-mode can't be guaranteed (an already-live session keeps its
-            # real tools; ACP-dialect agents ignore the flag entirely). Refuse to
-            # execute and record a preview instead (T9 honesty — same contract as
-            # the deterministic action providers in _run_action_job).
-            if getattr(job, "dry_run", False):
-                job.last_result = (
-                    "[dry run] Agent triggers run a full LLM turn — not run. "
-                    f"Would send to session '{session_key}'"
-                    + (f" (agent {job.agent_id})" if job.agent_id else "")
-                    + f":\n{msg[:400]}"
-                )
-                job.last_outcome = "skip"
-                logger.info(
-                    "Cron '%s': dry run refused for agent path (previewed only)",
-                    job.name,
-                )
-                return None
-
-            # ── Sequential agent execution (Hub integration) ──
-            # When agent_sequence has multiple agents, run them sequentially
-            # with per-agent session keys and per-job env vars.
-            agents = job.agent_sequence if job.agent_sequence else []
-            if len(agents) > 1:
-                assert self.sessions is not None
-                assert self.ctx_builder is not None
-                result_text = "_No response._"
-                for agent in agents:
-                    agent_session_key = f"cron:{job.id}:{agent}"
-                    _acq = False
-                    try:
-                        client, is_new, _resumed = await self.sessions.get_or_create(
-                            agent_session_key,
-                            agent=agent,
-                            channel_id=job.channel,
-                            approval_policy=job.approval_mode,
-                            extra_env=job.env or None,
-                        )
-                        _acq = True
-                        full_message, _ = self.ctx_builder.build_message(msg, True, agent=agent)
-                        # Cron is UNATTENDED — assume no user is present, even if a
-                        # HITL prompt COULD be surfaced. So never wait on interactive
-                        # approval (it would hang until timeout-deny and fail tools);
-                        # run HOOK_BASED (security denylist/credential hooks still fire)
-                        # with no interactive callback → hook-neutral tools auto-approve.
-                        result_text = await stream_and_collect(
-                            client,
-                            full_message,
-                            approval_policy=(
-                                ToolApprovalPolicy.AUTO_APPROVE
-                                if job.approval_mode == "auto"
-                                else ToolApprovalPolicy.HOOK_BASED
-                            ),
-                            hooks=self.ctx_builder.hooks,
-                            on_tool_approval=None,
-                        )
-                        if not result_text:
-                            result_text = "_No response._"
-                        logger.info("Cron '%s': agent '%s' completed", job.name, agent)
-                    finally:
-                        if _acq:
-                            self.sessions.release(agent_session_key)
-                            await self.sessions.reset(agent_session_key)
-                job.last_result = result_text
-                return result_text
-
-            # ── Single-agent path ──
-
-            _acquired = False
-            try:
-                assert self.sessions is not None
-                assert self.ctx_builder is not None
-                client, is_new, _resumed = await self.sessions.get_or_create(
-                    session_key,
-                    agent=job.agent_id or None,
-                    channel_id=job.channel,
-                    approval_policy=job.approval_mode,
-                    extra_env=job.env or None,
-                )
-                _acquired = True
-                if job.acked_items:
-                    msg += (
-                        "\n\n[User has seen and acknowledged ALL of the following — "
-                        "do NOT repeat the same content]\n"
-                        + "\n".join(f"- {a}" for a in job.acked_items)
-                    )
-                full_message, _ = self.ctx_builder.build_message(
-                    msg,
-                    True,
-                    agent=job.agent_id or None,
-                )
-
-                # Cron is UNATTENDED — never wait on interactive approval (would hang
-                # to timeout-deny). HOOK_BASED keeps the security hooks; hook-neutral
-                # tools auto-approve since no user is present to answer.
-                result_text = await stream_and_collect(
-                    client,
-                    full_message,
-                    approval_policy=(
-                        ToolApprovalPolicy.AUTO_APPROVE
-                        if job.approval_mode == "auto"
-                        else ToolApprovalPolicy.HOOK_BASED
-                    ),
-                    hooks=self.ctx_builder.hooks,
-                    on_tool_approval=None,
-                )
-
-                if not result_text:
-                    result_text = "_No response._"
-
-                job.last_result = result_text
-
-                # ── Error deduplication ──
-                # Suppress channel delivery for repeated identical results to avoid spam.
-                rh = _result_hash(result_text)
-
-                # Clear failure dedup on any success, regardless of whether
-                # the success result itself is a dup. A successful run means
-                # the job recovered — next failure should always alert fresh.
-                job.last_failure_hash = ""
-                job.last_failure_at = 0.0
-                job.consecutive_failures = 0
-
-                if rh == job.last_posted_hash:
-                    job.consecutive_dupes += 1
-                    # Time-based reminder: re-post after 24h so persistent identical
-                    # results don't go unnoticed indefinitely.
-                    if time.time() - job.last_posted_at >= _SUCCESS_REMINDER_SECS:
-                        # NB: consecutive_dupes is captured here before the reset
-                        # at the post-delivery state update further below.
-                        result_text = (
-                            f"⚠️ Cron '{job.name}' has produced the same result"
-                            f" {job.consecutive_dupes} times in a row:\n\n{result_text}"
-                        )
-                    else:
-                        logger.info(
-                            "Cron '%s': duplicate result #%d — suppressing channel delivery",
-                            job.name,
-                            job.consecutive_dupes,
-                        )
-                        if self.dashboard_state:
-                            redacted_for_dash, _ = redact_exfiltration_urls(result_text)
-                            redacted_for_dash, _ = redact_credentials(redacted_for_dash)
-                            title = f"Cron: {job.name} (dup #{job.consecutive_dupes}, muted)"
-                            title, _ = redact_exfiltration_urls(title)
-                            title, _ = redact_credentials(title)
-                            self.dashboard_state.notify(
-                                notification_kinds.CRON,
-                                title,
-                                redacted_for_dash,
-                                meta={"job_id": job.id},
-                            )
-                        from personalclaw.sel import sel
-
-                        sel().log_tool_invocation(
-                            session_key=f"cron:{job.id}",
-                            tool_name="cron_dedup_suppress",
-                            outcome="suppressed",
-                            downstream_service="none",
-                        )
-                        return result_text
-
-                if job.silent:
-                    logger.info("Cron job '%s' silent — suppressing auto-delivery", job.name)
-                    from personalclaw.sel import sel
-
-                    sel().log_tool_invocation(
-                        session_key=f"cron:{job.id}",
-                        tool_name="cron_silent_suppress",
-                        outcome="suppressed",
-                        downstream_service="none",
-                    )
-                    return result_text
-
-                if self.dashboard_state:
-                    redacted_for_dash, _ = redact_exfiltration_urls(result_text)
-                    redacted_for_dash, _ = redact_credentials(redacted_for_dash)
-                    self.dashboard_state.notify(
-                        notification_kinds.CRON,
-                        f"Cron: {job.name}",
-                        redacted_for_dash,
-                        meta={"job_id": job.id},
-                    )
-                if self._channel_delivery is not None:
-                    try:
-                        # Resolve the target channel (the delivery impl retries a
-                        # transient DM-open internally); then deliver with the
-                        # channel's cron-ack affordance. Delivery is NOT retried to
-                        # avoid duplicates.
-                        channel = job.channel
-                        if not channel and (job.created_by or self._owner_id):
-                            channel = await self._channel_delivery.open_dm(
-                                job.created_by or self._owner_id
-                            )
-                        if channel:
-                            parent_ts = await self._channel_delivery.deliver_cron_result(
-                                channel,
-                                job.name,
-                                job.id,
-                                result_text,
-                                job.thread_ts or "",
-                            )
-                            thread_root = job.thread_ts or parent_ts
-                            # Store thread_ts so subagents can route replies here
-                            if thread_root and self.sessions:
-                                await self.sessions.set_thread(session_key, thread_root)
-                                await self.sessions.set_channel(session_key, channel)
-                            # Dedup state: only advance after confirmed delivery.
-                            job.last_posted_hash = rh
-                            job.consecutive_dupes = 0
-                            job.last_posted_at = time.time()
-                        else:
-                            logger.warning(
-                                "Cron '%s': no channel resolved, skipping notification", job.name
-                            )
-                    except Exception as channel_exc:
-                        logger.error(
-                            "Cron job '%s': channel delivery failed (job succeeded)",
-                            job.name,
-                            exc_info=True,
-                        )
-                        if self.dashboard_state:
-                            exc_msg, _ = redact_exfiltration_urls(str(channel_exc))
-                            exc_msg, _ = redact_credentials(exc_msg)
-                            self.dashboard_state.notify(
-                                notification_kinds.CRON,
-                                f"Cron: {job.name}",
-                                f"Job completed but channel delivery failed: {exc_msg}",
-                                meta={"job_id": job.id},
-                            )
-                # Session cleanup happens in finally block
-                return result_text
-            except Exception as exc:
-                # Attempt one retry for ACP process death before any dedup / alert.
-                exc_msg = str(exc).lower()
-                if (
-                    isinstance(exc, AcpError)
-                    and ("not running" in exc_msg or "process exited" in exc_msg)
-                    and not getattr(job, "_acp_retried", False)
-                    and self.sessions is not None
-                ):
-                    logger.warning(
-                        "Cron '%s': ACP process died, resetting session and retrying",
-                        job.name,
-                    )
-                    job._acp_retried = True  # type: ignore[attr-defined]
-                    try:
-                        if _acquired:
-                            self.sessions.release(session_key)
-                            _acquired = False
-                        await self.sessions.reset(session_key)
-                        return await _cron_callback(job)
-                    except Exception:
-                        pass  # retry failed — fall through to dedup + alert
-                    finally:
-                        job._acp_retried = False  # type: ignore[attr-defined]
-                logger.exception("Cron job '%s' failed", job.name)
-                # During an in-flight ACP retry (inner recursive _cron_callback
-                # call), suppress all notify/channel/dedup work — the outer
-                # invocation is authoritative and will handle notification
-                # for the retry's final failure. Without this guard, the
-                # inner call emits its own dashboard notify + channel alert
-                # and advances dedup state, duplicating the outer handler.
-                if getattr(job, "_acp_retried", False):
-                    raise
-                # ── Failure dedup: suppress repeated identical crash notifications ──
-                exc_summary = f"{type(exc).__name__}: {exc}"
-                exc_summary, _ = redact_exfiltration_urls(exc_summary)
-                exc_summary, _ = redact_credentials(exc_summary)
-                fh = _result_hash(exc_summary)
-                is_dup = fh == job.last_failure_hash
-                if is_dup and time.time() - job.last_failure_at < _FAILURE_REMINDER_SECS:
-                    job.consecutive_failures += 1
-                    logger.info(
-                        "Cron '%s': duplicate failure #%d — suppressing channel delivery",
-                        job.name,
-                        job.consecutive_failures,
-                    )
-                    # Dashboard notify is best-effort — never mask the original
-                    # exception if notification itself fails.
-                    try:
-                        if self.dashboard_state:
-                            title = (
-                                f"Cron: {job.name} (dup failure #{job.consecutive_failures}, muted)"
-                            )
-                            title, _ = redact_exfiltration_urls(title)
-                            title, _ = redact_credentials(title)
-                            self.dashboard_state.notify(
-                                notification_kinds.CRON,
-                                title,
-                                f"Job failed (suppressed — same error):\n{exc_summary}",
-                                meta={"job_id": job.id, "failure_hash": fh},
-                            )
-                    except Exception:
-                        logger.debug(
-                            "Dashboard notify failed in cron failure suppress path", exc_info=True
-                        )
-                    # SEL logging is best-effort — never mask the original
-                    # exception if audit logging itself fails.
-                    try:
-                        from personalclaw.sel import sel
-
-                        sel().log_tool_invocation(
-                            session_key=f"cron:{job.id}",
-                            tool_name="cron_failure_dedup_suppress",
-                            outcome="suppressed",
-                            downstream_service="none",
-                        )
-                    except Exception:
-                        logger.debug(
-                            "SEL logging failed in cron failure suppress path",
-                            exc_info=True,
-                        )
-                    raise
-                # First failure (or fresh failure after reminder window) — alert.
-                # Dashboard notify is best-effort — never mask the original
-                # exception if notification itself fails.
-                try:
-                    if self.dashboard_state:
-                        alert_title = f"Cron: {job.name}"
-                        alert_title, _ = redact_exfiltration_urls(alert_title)
-                        alert_title, _ = redact_credentials(alert_title)
-                        self.dashboard_state.notify(
-                            notification_kinds.CRON, alert_title, "Job failed"
-                        )
-                except Exception:
-                    logger.debug(
-                        "Dashboard notify failed in cron failure alert path", exc_info=True
-                    )
-                # Compute the count this alert represents (including itself) so
-                # the re-alert message can call out persistence.
-                new_count = job.consecutive_failures + 1 if is_dup else 1
-                if is_dup:
-                    fail_msg = (
-                        f"⏰ *Cron: {job.name}* ❌ _Job still failing"
-                        f" ({new_count} consecutive identical failures)"
-                        f" — check logs._"
-                    )
-                else:
-                    fail_msg = f"⏰ *Cron: {job.name}* ❌ _Job failed — check logs._"
-                channel_delivery_failed = False  # track real delivery exceptions only
-                # Silent jobs (all app-manifest crons) never deliver to a channel —
-                # their created_by is an "app:<name>" pseudo-user open_dm can't resolve.
-                if self._channel_delivery is not None and not job.silent:
-                    try:
-                        channel = job.channel
-                        if not channel and (job.created_by or self._owner_id):
-                            channel = await self._channel_delivery.open_dm(
-                                job.created_by or self._owner_id
-                            )
-                        if channel:
-                            fail_msg, _ = redact_exfiltration_urls(fail_msg)
-                            fail_msg, _ = redact_credentials(fail_msg)
-                            await self._channel_delivery.deliver_text(channel, fail_msg)
-                        else:
-                            logger.warning(
-                                "Cron '%s': no channel resolved for error notification", job.name
-                            )
-
-                    except Exception:
-                        channel_delivery_failed = True
-                        logger.error(
-                            "Cron job '%s': channel failure-notification delivery failed",
-                            job.name,
-                            exc_info=True,
-                        )
-                # Advance dedup state unless channel delivery raised. "No channel
-                # available" is treated as a skip (not a failure), so dedup still
-                # advances — otherwise every identical failure re-notifies the
-                # dashboard, which is what dedup is supposed to prevent.
-                if not channel_delivery_failed:
-                    job.last_failure_hash = fh
-                    job.last_failure_at = time.time()
-                    job.consecutive_failures = new_count
-                    # SEL logging is best-effort — never mask the original
-                    # exception if audit logging itself fails.
-                    try:
-                        from personalclaw.sel import sel
-
-                        sel().log_tool_invocation(
-                            session_key=f"cron:{job.id}",
-                            tool_name="cron_failure_alert",
-                            outcome="alerted",
-                            downstream_service=(
-                                "channel" if self._channel_delivery is not None else "none"
-                            ),
-                        )
-                    except Exception:
-                        logger.debug(
-                            "SEL logging failed in cron failure alert path",
-                            exc_info=True,
-                        )
-                raise
-            finally:
-                assert self.sessions is not None
-                if _acquired:
-                    self.sessions.release(session_key)
-                    # Defer session reset if subagents are still running or
-                    # mid-injection — _subagent_done will reset after the last one.
-                    has_pending = self.subagent_mgr and any(
-                        a.parent_session_key == session_key for a in self.subagent_mgr.running
-                    )
-                    has_injecting = self._cron_injecting.get(session_key, 0) > 0
-                    if has_pending or has_injecting:
-                        logger.info("Cron '%s': deferring reset, subagents pending", job.name)
-                        # leave the active-session registration in place so
-                        # the reaper can still target the ephemeral key if the deferred
-                        # reset hangs. _subagent_done will clear it after the real reset.
-                    else:
-                        await self.sessions.reset(session_key)
-                # Restore per-job env vars (single-agent path) — now handled via extra_env passthrough  # noqa: E501
-
-        self.cron_svc = ScheduleService(base_dir=config_dir(), on_job=_cron_callback)
+        # 🔴 The legacy cron DISPATCHER retired with `ScheduleService` (S112). It was the
+        # `on_job` callback: ~450 lines that resolved a channel, built a session, ran the turn
+        # and posted the result — reachable ONLY from the timer the S100 cutover stopped arming.
+        # Store-backed fires go through `_fire_store_trigger` (one dispatch for clock, file and
+        # event kinds), and the clock loop, reaper and run records are their own modules now.
         if self._no_crons:
-            logger.info("Cron scheduler disabled (--no-crons)")
+            logger.info("Automations disabled (--no-crons)")
         else:
-            # 🔴 THE CLOCK CUTOVER (S100). The unified tick loop is the sole clock engine, so the
-            # legacy timer is NOT armed — measured: after the boot migration both engines hold the
-            # same crons, and arming both would double-fire `j-at` and `j-cron` on the owner's real
-            # store. `load_without_timer` still loads the jobs and rotates run history, because the
-            # rest of `ScheduleService` remains the CRUD surface + run store the API reads until the
-            # writes re-point.
-            await self.cron_svc.load_without_timer()
+            # Rotate run history at boot — the ONE load-bearing thing the retired legacy service's
+            # boot call still did. `ScheduleRunStore` owns rotation, so it is called directly
+            # (S112).
+            try:
+                await ScheduleRunStore(config_dir()).rotate_all()
+            except Exception:
+                logger.debug("Run-history rotation at boot failed", exc_info=True)
             # The file-watch poll loop (S93): fires `file` triggers whose watched paths changed —
             # the runtime that makes S92's chat-created file automations actually run. Lives in the
             # else-branch so --no-crons disables it too (a file watch is unattended background work
@@ -1679,7 +1024,7 @@ class GatewayOrchestrator:
             except Exception:
                 logger.warning("digest-cron reconcile failed", exc_info=True)
             # The unified CLOCK LOOP (S100) — now the only thing that fires a clock trigger. The
-            # legacy timer above is deliberately not armed; see `load_without_timer`.
+            # legacy timer is gone entirely as of S112, along with the class that owned it.
             self._clock_task = asyncio.create_task(self._clock_loop())
             # The trigger REAPER (S106), replacing `ScheduleService.start_reaper`. That one swept a
             # dict written only by the retired timer's `_run_job_isolated`, so it has been provably
@@ -3054,7 +2399,6 @@ class GatewayOrchestrator:
     async def _init_dashboard(self) -> None:
         """Start the dashboard web server."""
         assert self.sessions is not None
-        assert self.cron_svc is not None
 
         configured_host, dashboard_port = parse_dashboard_url(self._cfg.dashboard.url)
         # --port override (literal int or "auto" for ephemeral)
@@ -3070,7 +2414,6 @@ class GatewayOrchestrator:
         self._local_only = is_local_bind(resolve_bind_host())
         self._dashboard_runner, self.dashboard_state = await start_dashboard(
             sessions=self.sessions,
-            crons=self.cron_svc,
             lessons=LessonStore(),
             port=dashboard_port,
             subagents=self.subagent_mgr,
@@ -3106,7 +2449,6 @@ class GatewayOrchestrator:
         from personalclaw.dashboard import start_api_server
 
         assert self.sessions is not None
-        assert self.cron_svc is not None
         configured_host, dashboard_port = parse_dashboard_url(self._cfg.dashboard.url)
         # --port override (literal int or "auto" for ephemeral)
         if self._port_override == "auto":
@@ -3121,7 +2463,6 @@ class GatewayOrchestrator:
         self._local_only = is_local_bind(resolve_bind_host())
         self._dashboard_runner, self.dashboard_state = await start_api_server(
             sessions=self.sessions,
-            crons=self.cron_svc,
             lessons=LessonStore(),
             port=dashboard_port,
             subagents=self.subagent_mgr,
@@ -3174,8 +2515,6 @@ class GatewayOrchestrator:
             await self.loop_watchdog.stop()
         if self.workflow_watchdog:
             await self.workflow_watchdog.stop()
-        if self.cron_svc:
-            await self.cron_svc.stop()
         for _task in (self._file_watch_task, self._clock_task, self._reaper_task):
             if _task is None:
                 continue
