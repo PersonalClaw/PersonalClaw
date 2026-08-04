@@ -3285,3 +3285,57 @@ separate concern owned by the action, not the poller.
   declared-but-unpolled state this session found for `web_watch` (measured: neither has a firing path).
   `idle` is gated on Loops Phase 4 by §7 item 9. `view` is pull-on-view and fires from a render, not a
   poll. Plus the headless tier and knowledge-store digest above.
+
+### S122 — the `run_completed` chain runtime (§7 item 8) — DONE
+
+**DISCOVERY: the third declared-but-unpolled kind in a row.** `run_completed` is in `KINDS`,
+`SPEC_KEYS` accepts `{source_trigger, source_def}`, the store persists it, `/api/triggers` lists it
+and the Automations page renders it. Nothing ever fired one. Driven with a real `clock:nightly` and a
+`run_completed:after` pointed at it:
+
+```
+clock tick considered: ['clock:nightly']    # the source fires
+file poller:           []
+web poller:            []
+→ run_completed:after is reached by NOTHING
+```
+
+So "when my nightly backup finishes, notify me" was creatable, listed, and permanently silent.
+
+**Chained from `_fire_store_trigger`, which is the point of the design.** That is the single place
+every store-backed run completes, so a chained fire inherits the same dispatch — and therefore the
+same gates, including S117's kill switch and S116's capability fence. A chain with its own dispatch
+path would be a second place for those controls to be forgotten, which is *exactly* how the
+`web_watch` gap happened. The chain also runs after `_push_trigger_refresh`, so a slow chain never
+delays the view update, and inside a `try/except` because chaining is a convenience layered on a
+completed run: letting it fail the run it followed would make chaining strictly worse than not
+chaining.
+
+**Two controls, not one.** A depth cap alone would be enough to bound the damage of A → B → A, but it
+would report an infinite loop as "too deep" — sending the user off to raise a limit that was never the
+problem. So the payload carries both a depth and the PATH of trigger ids already fired, and a repeat
+is named as a **cycle**. `MAX_CHAIN_DEPTH = 3`: A → B → C is a real workflow, deeper is almost always
+a mistake, and the cost of being wrong in the permissive direction is a fire loop.
+
+Depth and path live in the PAYLOAD, not a sidecar: a chain is a single logical cascade whose state
+lives exactly as long as it does. Persisting it would mean reconciling an abandoned chain's leftovers
+on every boot, and a chain interrupted by a restart should simply stop.
+
+**A chain with no `source_trigger` matches NOTHING.** The important direction: a chain that fired on
+every run in the system would be a fire storm authored by omission — a user leaving a field blank.
+
+**THE PATTERN EARNED A TEST.** Three kinds (`file` S93, `web_watch` S121, `run_completed` S122) shipped
+declared-and-inert, each found only by driving it. That is a pattern, not a coincidence, so
+`tests/test_triggers_chain.py` now carries `KIND_RUNTIMES`: every kind in `KINDS` must map to a live
+runtime or a stated reason, the table is checked for staleness in both directions, and each named
+runtime is asserted to actually exist. **It caught a defect on its first run** — my own entry named
+`personalclaw.event_triggers` (a module) rather than `execute_event_action` (the function), i.e. the
+table was already making a claim it could not back.
+
+**DEVIATION:** matching on run OUTCOME (`only_on: failed`) is not built. `SPEC_KEYS` declares only
+`{source_trigger, source_def}`, and adding a spec key the entity does not carry would be a fence
+nobody can author.
+
+- **REMAINING in §7 item 8:** `idle` (deferred to Loops Phase 4 by §7 item 9) and `webhook` (needs the
+  fire endpoint — see S119). `view` is pull-on-view and fires from a render, not a poll. Plus
+  `web_watch`'s headless tier and knowledge-store digest from S121.
