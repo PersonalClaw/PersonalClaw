@@ -97,7 +97,8 @@
         "config": {
           "kind": "judge",
           "risk": "safe",
-          "prompt": "The stored sources:\n{{nodes.recall.output.items | fenced_sources}}\n\nThe synthesis:\n{{nodes.synthesize.output.content}}\n\nIs every claim in the synthesis supported by those sources, or explicitly marked as a gap? A claim that reads as established but appears in no source is the failure to catch here."
+          "prompt": "The stored sources:\n{{nodes.recall.output.items | fenced_sources}}\n\nThe synthesis:\n{{nodes.synthesize.output.content}}\n\nIs every claim in the synthesis supported by those sources, or explicitly marked as a gap? A claim that reads as established but appears in no source is the failure to catch here.",
+          "evidence": "{{nodes.synthesize.output.content}}"
         }
       },
       {

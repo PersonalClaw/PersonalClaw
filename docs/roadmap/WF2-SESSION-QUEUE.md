@@ -1885,6 +1885,7 @@ the queue** — declared work, not new scope (see the ruling in the exhausted re
 | S140 | **The delivery contract was inert — a completed fire notified NOTHING** (§R18 / crit 10). `triggers/delivery.py` implements criterion 10 in full (statusUrl deep links, stable event ids, `is_duplicate`, destination formatting) and `build_delivery`'s only caller was `executor.delivery_for` — **which itself had no caller**. Two dead layers, same shape as S139. Driven: a completed fire produced no notification and no `statusUrl` anywhere under the home. Now wired through `state.notify` (R18: "the substrate does not build a second notification path", so a muted channel stays muted), both outcomes carry distinct typed events, and a retry of the same run is suppressed on stable `event_id` | AUTOMATION-SUBSTRATE R18 + crit 10 | ✅ DONE (#511) |
 | S141 | **Criterion 3's second clause — an autopaused automation stopped SILENTLY** (crit 3: "…and surfaces in the Runs inbox"). Found by a systematic sweep of all 59 public fns in `triggers/` for ones with no caller outside their own module: `attention_card`, `inbox_fingerprint` and `is_duplicate_card` were all dead. S139 made the pause happen; a trigger that stops without saying so is indistinguishable from one that finished. Now one card per pause, deduped on the FINGERPRINT `(trigger_id, state)` so re-entering the same state does not re-alert while autopaused→resumed→autopaused legitimately alerts twice; a PARKED trigger gets no card (parking resolves itself) | AUTOMATION-SUBSTRATE crit 3 | ✅ DONE (#516) |
 | S142 | **🔴 CRITERION 7 WAS DEAD IN FIVE LAYERS — a restart stampeded, lost fires and stranded approvals** (§3.1/§3.2/§3.4). Found by sweeping the criterion's chain for functions with no caller outside their own module. (1) **`service.boot` had ZERO callers** — boot ran only `migrate_and_arm`, which arms rows with NO `next_fire_at`, so an already-armed row that went overdue kept its stale past fire: measured, **10 of 10 minutely triggers overdue by an hour were due in the same instant** (the stampede `boot_recovery`'s per-id stagger exists to prevent). (2) `review_at_boot` + `catch_up_plan` read `last_fire_at`/`interval_secs`/`missed_last_slot`/`fires_automatically` and `Trigger.to_dict()` emits **none of the four** — so the review was EMPTY however long the lid was shut and every trigger answered "nothing was missed". (3) `drain_spooled_fires` had no caller (a sync-CLI fire sat on disk forever, the drop the spool was written to fix). (4) `wakeup.retry_queue` had no caller (a resume was built, classified REQUEUED, discarded — §3.2 forbids exactly that). (5) the loop's own drop check read `summary['dropped']`, a key `summary()` does not emit. Three of the five are a live reader asking for a name its producer never writes — worse than an unread constant, because the silence reads as "nothing wrong". **Two more bugs the wiring exposed**: the review was snapshot AFTER recovery overwrote the evidence (0 rows for 61 missed slots), and `missed_dropped` re-armed a 03:00 backup to **09:02** — firing off-schedule the very slot it had decided to drop | AUTOMATION-SUBSTRATE crit 7 + §3.1/§3.2/§3.4 | ✅ DONE (#533) |
+| S144 | **The JUDGE gate spent a model call on output there was provably nothing to judge** (LOOPS-EVOLUTION criterion 2). The plan names a free rule tier that "runs BEFORE any LLM judge call … the single biggest token saver in the plan", and `judge_pretier.run_pretier` implements it (mechanical length, failure-pattern regex, stub markers, structural checks) — but it shipped in session 30 with **NO caller** (AST-verified: zero production importers). Driven: an empty artifact, a whitespace artifact and a `TODO: implement` stub all reached the reasoning-tier judge and spent a completion. Now the gate screens its declared `evidence` first and short-circuits a rule-solvable rejection to a REJECT verdict carrying the pre-tier's `failure_class` (empty/stubbed/gave-up/tool-error) so the escalation ladder routes on WHY. **Additive by construction:** a judge that binds no `evidence` (every judge shipped before this) behaves exactly as before — screening it would reject a working gate as "nothing to judge". Adopted in 5 bundled templates (goal-pursuit-open-ended, knowledge-lint, knowledge-synthesis, publish-article, thesis-tracker). The existence gate (commits>0) defaults OFF unless the template supplies counts | AUTOMATION-SUBSTRATE (LOOPS-EVOLUTION crit 2) | ✅ DONE (#555) |
 
 **🔴 THE CLOCK CUTOVER'S REAL BLOCKER WAS NOT DOUBLE-FIRE — IT WAS THAT THE TICK COULD NOT ARM A
 CLOCK.** Measured on a real migrated store: `boot()` reported `rearmed: []`, `next_fire_at` stayed
@@ -1979,6 +1980,32 @@ was NOT force-pushed; the recovery lands as an ordinary fast-forward.
 
 **The check that would have caught it** is `git merge-base --is-ancestor <branch> origin/main`, not the
 PR's merged flag or `mergeStateStatus: CLEAN`. Branch cleanup is now gated on the former.
+
+## DECLARED WORK RE-EXHAUSTED — 2026-08-04 (after S143 #543, S144 #555)
+
+Two atomic sessions shipped since the block below, both closing a named criterion the 66-plan
+header audit surfaced: **S143** (crit 12 clause 1 — the system-scheduler handoff) and **S144**
+(LOOPS-EVOLUTION crit 2 — the free rule tier before the LLM judge).
+
+**Then I measured every remaining WF2-adjacent inert module the audit flagged and found NONE
+atomically completable.** Each fails the completability rule ("never start a plan you can only
+half-finish; never build a seam against a contract a not-yet-built plan will redefine"):
+
+| candidate | why it is NOT a clean atomic session |
+|---|---|
+| `judge_calibration` emission | dead at BOTH ends — nothing emits `judge_verdict`/`judge_divergence`, nothing consumes the `assess_gate` output, and R6a's default-promotion path (its only real consumer) does not exist. The structured judge it needs (`judge_contract.validate_verdict`) is itself uncalled. This is the plan's declared multi-session back half. |
+| `loop_middleware` run-path wiring | REDUNDANT, not merely inert — the RunController already consults `resilience.check_breaker` every iteration (crit 4's LLM-free 3-identical trip is met there). Wiring `check_middleware` too is a DUAL PATH, a clean-break violation. |
+| `learning/detectors.py`, `learning/accountability.py` | both dead at both ends (no producer emits into them, no consumer reads `revert_proposal`/`lesson_worthy`); crit 9's verdict has no surface. |
+| `workflows/template_pipeline.py`, `eval_specs.py` | no importer AND no producer (no session-reuse counter feeds promotion; no eval runner consumes a derived spec — `eval_specs`' own docstring defers the judge to LEARNING-FLYWHEEL). |
+| `batch_compile` / Work-Containers call sites + FE | a class-B ABSORB cutover of `mcp_subagents` batch plumbing, with the fan-out topology safety gaps the 2026-07-29 amendment is still settling + the `_validate_agent` silent-downgrade security finding (§367). Not one session. |
+| `triggers/pull_on_view` (`view` kind) | render-driven BY DESIGN (a test asserts the gateway never imports it); its gap is a whole FE tile-binding surface + a render endpoint, and no FE surface binds a `view` trigger today. Building the endpoint alone would be another dead seam. |
+
+**This is not an E1-E6 blocker** — it is the completability amendment working as intended. The
+remaining WF2 work is the engine program's declared MULTI-SESSION back halves (Loops-Evolution's
+calibration+steering, Work-Containers' call-sites+FE), each of which needs a coherent multi-session
+program or an owner scope decision, not a single atomic session bolted on. S123 remains the only
+numbered row, correctly BLOCKED (E4). The honest next move is an owner-scoped program, recorded in
+the workspace `ROADMAP.md` §5 stages 1-2, not a manufactured half-finish.
 
 ## DECLARED WORK EXHAUSTED — 2026-08-04 (S116-S137, PRs #366-#486)
 

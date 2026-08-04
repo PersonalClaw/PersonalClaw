@@ -510,6 +510,90 @@ class TestWaitAndGate:
         assert r.failure.failure_class == FailureClass.INTERNAL
 
 
+class TestJudgePreTier:
+    """The free rule tier that runs BEFORE any LLM judge call (LOOPS-EVOLUTION criterion 2 — S144).
+
+    The plan calls this "the single biggest token saver": anything rule-solvable — empty output, a
+    stub, a worker give-up — must never reach the probabilistic model. `judge_pretier.run_pretier`
+    shipped in session 30 with no caller; these tests pin the wiring, and each asserts the model was
+    NOT called on a rejection (the whole point is the saved completion).
+    """
+
+    async def _judge(self, cfg, *, evidence_present=True):
+        calls = {"n": 0}
+
+        async def completion(instruction, use_case=None, output_type=None):
+            calls["n"] += 1
+            return "PASS"
+
+        node = _n({"kind": "gate", "id": "j", "config": {"kind": "judge", **cfg}})
+        r = await dispatch_gate(node, _ctx(), now=0.0, completion=completion)
+        return r, calls["n"]
+
+    async def test_a_judge_with_NO_evidence_binding_is_unchanged(self) -> None:
+        """The additive contract: every judge shipped before S144 binds no `evidence`, so it must
+        behave exactly as before — reach the model. Screening it would reject a working gate as
+        "nothing to judge"."""
+        r, calls = await self._judge({"prompt": "does it meet the goal?"})
+        assert r.state == InstanceState.DONE
+        assert calls == 1
+
+    async def test_empty_evidence_is_rejected_without_a_model_call(self) -> None:
+        r, calls = await self._judge({"prompt": "judge it", "evidence": ""})
+        assert r.state == InstanceState.FAILED
+        assert calls == 0, "the model must NOT be called on a pre-tier rejection"
+        assert r.output["verdict"] == "REJECT"
+        assert r.output["failure_class"] == "empty_output"
+        assert r.output["pretier"] is True
+
+    async def test_a_stub_artifact_is_rejected_without_a_model_call(self) -> None:
+        r, calls = await self._judge({"prompt": "judge it", "evidence": "TODO: implement this"})
+        assert r.state == InstanceState.FAILED and calls == 0
+        assert r.output["failure_class"] == "stubbed_output"
+
+    async def test_a_worker_giveup_is_rejected_without_a_model_call(self) -> None:
+        r, calls = await self._judge(
+            {"prompt": "judge it", "evidence": "I was unable to complete this task."}
+        )
+        assert r.state == InstanceState.FAILED and calls == 0
+        assert r.output["failure_class"] == "worker_gave_up"
+
+    async def test_substantial_evidence_reaches_the_judge(self) -> None:
+        real = (
+            "The analysis shows a 12% improvement across three benchmarks, with the regression "
+            "isolated to the cache layer and fixed in commit abc123. Full methodology below."
+        )
+        r, calls = await self._judge({"prompt": "judge it", "evidence": real})
+        assert r.state == InstanceState.DONE
+        assert calls == 1, "real output must reach the judge, not be short-circuited"
+
+    async def test_min_chars_is_the_authors_substance_knob(self) -> None:
+        """A gate can demand more than the 20-char floor; below it, no model call."""
+        r, calls = await self._judge(
+            {"prompt": "judge it", "evidence": "short but real enough usually", "min_chars": 200}
+        )
+        assert r.state == InstanceState.FAILED and calls == 0
+        assert r.output["failure_class"] == "empty_output"
+
+    async def test_the_existence_gate_is_OFF_unless_counts_are_declared(self) -> None:
+        """A text-only judge must not be rejected for producing zero commits. The existence gate
+        only engages when the template supplies an `evidence_*` count."""
+        text = "A substantial, real deliverable with more than enough characters to judge here."
+        r_off, calls_off = await self._judge({"prompt": "j", "evidence": text})
+        assert r_off.state == InstanceState.DONE and calls_off == 1
+
+        r_on, calls_on = await self._judge(
+            {"prompt": "j", "evidence": text, "evidence_artifacts": 0, "evidence_commits": 0}
+        )
+        assert r_on.state == InstanceState.FAILED and calls_on == 0
+
+    async def test_a_rejection_is_terminal_not_retryable(self) -> None:
+        """A stub proven by rules will still be a stub on retry — the failure is non-recoverable, so
+        the engine escalates rather than spinning."""
+        r, _ = await self._judge({"prompt": "j", "evidence": "TODO"})
+        assert r.failure.recoverable is False
+
+
 class TestOutputContract:
     def test_must_be_json_accepts_objects_and_parseable_text(self) -> None:
         assert check_output_contract({"a": 1}, {"must_be_json": True}) == ""
