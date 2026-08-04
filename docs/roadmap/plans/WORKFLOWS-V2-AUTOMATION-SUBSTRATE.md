@@ -2800,3 +2800,61 @@ first run's 630 failures, which is why the number looked alarming and was not.
 - **What survives on purpose:** `ScheduleRunStore` (unchanged), `ScheduleJob`/`ScheduleDefinition`
   (the format the migration reads), and `crons.json` on disk read-only per §6 so
   `automation verify-migration` can still diff both sides.
+
+### S113 — Snapshot carries the automations (§7 step 9)
+
+**DONE.** §7 item 9 names this explicitly — "update `snapshot.py`/`portability.py` to carry
+`triggers.json` + the ledger" — with its own recon note: "today snapshot covers crons.json/hooks.json
+but NOT event_triggers.json". Declared work, and the last §7 item that was not blocked on
+LOOPS-EVOLUTION Phase 4.
+
+**🔴 THE DEFECT, measured before writing anything.** Driven against a home holding two automations, an
+event trigger and run history:
+
+    home holds: config.json, triggers.json, event_triggers.json, cron-history/
+    snapshot captured: MANIFEST.json, config.json          ← that is ALL
+
+`personalclaw snapshot` **silently lost every automation the user had**. It backed up `crons.json` —
+the legacy file nothing has written since S108, and a read-only migration source since S112 — while
+`triggers.json`, the sole source of automations since S101, never travelled. The release notes advise
+taking a snapshot before a breaking upgrade, which is the one moment it must not lose anything.
+
+Both snapshot paths had the gap independently: `portability.create_export_zip` (the zip export the
+dashboard uses) and `snapshot.py`'s `CORE_FILES["crons"]` (the CLI tar path). Both now carry
+`triggers.json`, `event_triggers.json` and the `cron-history/` run ledger, and `crons.json` stays
+because §6 keeps it read-only for `automation verify-migration` to diff.
+
+**Two more defects the round trip found:**
+
+1. **Export carried the run ledger; import IGNORED it.** A restored home showed its automations with
+   an EMPTY history — "never ran" for automations that have run for months, which is
+   indistinguishable from a broken fire path. `cron-history` joined the no-overwrite merged trees.
+   NO-OVERWRITE rather than append is deliberate: each file is one job's JSONL, and concatenating two
+   homes' rows would double-count runs that `_last_run_status` and the autopause counters read.
+2. **The lock files travelled.** `cron-history/.history.lock` shipped in the zip; a restored advisory
+   lock is one held by a process that does not exist on this machine. `.history.lock`,
+   `.triggers.lock` and `.crons.lock` joined `EXPORT_EXCLUDE`.
+
+**The merge semantics, and why.** Skip-by-NAME with a fresh id, mirroring the shipped `_merge_crons`:
+an id collision between two homes is meaningless (ids are slugs), while a name collision means the
+user already has that automation and a second copy would fire the same work twice. Event triggers key
+on PATTERN, which is their identity — they have no name.
+
+**🔴 An imported automation arrives PAUSED with runtime state stripped.** `next_fire_at` from another
+machine is a fire already scheduled elsewhere, and `run_count`/`last_success_at`/health describe runs
+this home never performed — so `RUNTIME_FIELDS` is dropped and `enabled` is forced False. The user
+chooses when a restored automation starts firing here, and importing cannot resurrect a fire that
+should have happened mid-move. Asserted from both directions: the imported row is paused and unarmed,
+and the home's OWN automations keep firing with their armed fire intact.
+
+**DEVIATION — the CLI component is renamed in its user-facing text, not its key.** `--components
+crons` still selects it (a rename would break a documented flag), but its description now reads
+"triggers.json + event_triggers.json + crons.json (automations)" and the restore prints
+`✅ automations`, because "crons" now names the legacy relic rather than the thing the user cares
+about. The size report sums all three.
+
+**A test-fixture finding worth recording.** `test_snapshot.py`'s fake home carried `crons.json` alone,
+so every snapshot test passed while the component backed up an empty relic. The fixture now seeds a
+real `TriggerStore` row plus an event trigger — which is what made the assertions meaningful. Same
+shape as the mock-vs-store lesson from S108/S110: a fixture that only contains what the code already
+handles cannot tell you what the code misses.

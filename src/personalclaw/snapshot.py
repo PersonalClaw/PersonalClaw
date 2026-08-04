@@ -88,7 +88,12 @@ def _audit(event_type: str, resources: str) -> None:
 
 CORE_FILES: dict[str, tuple[str, ...]] = {
     "memory": ("memory.db", "memory_index.db"),
-    "crons": ("crons.json",),
+    # 🔴 `triggers.json` + `event_triggers.json` (S113). This component held `crons.json` ALONE —
+    # the legacy file, which nothing has written since S108 and which S112's deletion left as a
+    # read-only migration source. So `personalclaw snapshot` backed up an empty relic and dropped
+    # every automation the user actually had. `crons.json` still travels because §6 keeps it
+    # read-only for `automation verify-migration` to diff.
+    "crons": ("crons.json", "triggers.json", "event_triggers.json"),
     "config": ("config.json", "session_map.json", "hooks.json", "project_dir", "workspace_dir"),
     "notifications": ("notifications.jsonl",),
     "security": ("sel_hmac.key", "telemetry_salt"),
@@ -166,7 +171,7 @@ def _everything_paths(pc: Path) -> list[str]:
 
 COMPONENT_HELP = {
     "memory": "memory.db, memory_index.db (semantic, episodic, knowledge graph)",
-    "crons": "crons.json (scheduled jobs)",
+    "crons": "triggers.json + event_triggers.json + crons.json (automations)",
     "config": "config.json, session_map.json, hooks.json, project_dir, workspace_dir",
     "skills": "skills/ directory",
     "workspace": "workspace/, plan_memory/ directories",
@@ -391,6 +396,8 @@ def snapshot_main(
                 "memory_db": _fsize(stage / "memory.db"),
                 "memory_index_db": _fsize(stage / "memory_index.db"),
                 "crons_json": _fsize(stage / "crons.json"),
+                "triggers_json": _fsize(stage / "triggers.json"),
+                "event_triggers_json": _fsize(stage / "event_triggers.json"),
                 "config_json": _fsize(stage / "config.json"),
                 "notifications_jsonl": _fsize(stage / "notifications.jsonl"),
                 "workspace_files": ws_files,
@@ -453,7 +460,10 @@ def _print_manifest(snap: Path) -> None:
         print(f"  From: {m.get('user', 'unknown')}@{m.get('hostname', 'unknown')}")
         c = m.get("contents", {})
         print(f"  Memory DB: {c.get('memory_db', 0) // 1024} KB")
-        print(f"  Crons: {c.get('crons_json', 0) // 1024} KB")
+        _auto_kb = (
+            c.get("triggers_json", 0) + c.get("event_triggers_json", 0) + c.get("crons_json", 0)
+        ) // 1024
+        print(f"  Automations: {_auto_kb} KB")
         print(f"  Workspace files: {c.get('workspace_files', 0)}")
         print(f"  Skills: {c.get('skill_count', 0)}")
         print(f"  Notifications: {c.get('notifications_jsonl', 0) // 1024} KB")
@@ -597,6 +607,88 @@ def _merge_crons(src_path: Path, dst_path: Path) -> None:
     print(f"  Cron jobs imported: {imported} (skipped {total - imported} duplicates)")
 
 
+def _merge_triggers(src_path: Path, dst_path: Path) -> None:
+    """Merge an imported `triggers.json` into the live one, skipping duplicates by NAME.
+
+    🔴 THE DEFECT THIS CLOSES (S113). `create_export_zip` carried `crons.json` and `hooks.json` and
+    NOT `triggers.json` — the store that has been the sole source of automations since S101, and
+    the only one since S112 deleted `ScheduleService`. Driven against a home holding two
+    automations, an event trigger and run history, the snapshot captured **`config.json` alone**.
+    So `personalclaw snapshot` silently lost every automation the user had — and the release notes
+    advise taking one before a breaking upgrade, the one moment it must not lose anything.
+
+    Skip-by-NAME with a fresh id, mirroring `_merge_crons`: an id collision between two homes is
+    meaningless (ids are slugs), while a name collision means the user already has that automation
+    and a second copy would fire it twice.
+
+    🔴 RUNTIME STATE IS DROPPED, deliberately. `next_fire_at` from another machine is a fire that was
+    already scheduled elsewhere, and `run_count`/`last_success_at`/health describe runs this home
+    never performed. An imported trigger arrives UNARMED and the boot sweep arms it here — which is
+    also why importing cannot resurrect a fire that should have happened during the move.
+    """
+    from personalclaw.triggers.store import RUNTIME_FIELDS
+
+    src = json.loads(src_path.read_text())
+    dst = json.loads(dst_path.read_text())
+    existing_names = {str(t.get("name") or "") for t in dst.get("triggers", [])}
+    existing_ids = {str(t.get("id") or "") for t in dst.get("triggers", [])}
+    imported = 0
+    for trigger in src.get("triggers", []):
+        name = str(trigger.get("name") or "")
+        if not name or name in existing_names:
+            continue
+        row = dict(trigger)
+        for field in RUNTIME_FIELDS:
+            row.pop(field, None)
+        base = str(row.get("id") or "") or "imported"
+        candidate = base
+        n = 2
+        while candidate in existing_ids:
+            candidate = f"{base}-{n}"
+            n += 1
+        row["id"] = candidate
+        # An imported automation must not fire until this home has armed it.
+        row["enabled"] = False
+        existing_ids.add(candidate)
+        existing_names.add(name)
+        dst.setdefault("triggers", []).append(row)
+        imported += 1
+    atomic_write(dst_path, json.dumps(dst, indent=2))
+    total = len(src.get("triggers", []))
+    print(
+        f"  Automations imported: {imported} (skipped {total - imported} duplicates) "
+        f"— imported rows arrive PAUSED; review and enable them"
+    )
+
+
+def _merge_event_triggers(src_path: Path, dst_path: Path) -> None:
+    """Merge `event_triggers.json`, skipping duplicates by PATTERN.
+
+    Carried for the same reason as the trigger store, and named in the plan's own recon note
+    ("today snapshot covers crons.json/hooks.json but NOT event_triggers.json"). An event trigger
+    has no name field, so the pattern is its identity.
+    """
+    src = json.loads(src_path.read_text())
+    dst = json.loads(dst_path.read_text())
+    src_rows = src if isinstance(src, list) else src.get("triggers", [])
+    dst_rows = dst if isinstance(dst, list) else dst.get("triggers", [])
+    existing = {str(t.get("pattern") or "") for t in dst_rows}
+    imported = 0
+    for trigger in src_rows:
+        pattern = str(trigger.get("pattern") or "")
+        if not pattern or pattern in existing:
+            continue
+        row = dict(trigger)
+        row["enabled"] = False
+        dst_rows.append(row)
+        existing.add(pattern)
+        imported += 1
+    payload = dst_rows if isinstance(dst, list) else {**dst, "triggers": dst_rows}
+    atomic_write(dst_path, json.dumps(payload, indent=2))
+    total = len(src_rows)
+    print(f"  Event triggers imported: {imported} (skipped {total - imported} duplicates)")
+
+
 def _merge_notifications(src_path: Path, dst_path: Path) -> None:
     existing: set[str] = set()
     with open(dst_path) as f:
@@ -690,14 +782,28 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
         print("  ✅ memory")
 
     if _want(components, "crons"):
+        st, dt = snap / "triggers.json", pc / "triggers.json"
+        if st.is_file():
+            if dt.is_file():
+                _merge_triggers(st, dt)
+            else:
+                shutil.copy2(str(st), str(dt))
+                print("  Automations: copied (no existing store)")
+        se, de = snap / "event_triggers.json", pc / "event_triggers.json"
+        if se.is_file():
+            if de.is_file():
+                _merge_event_triggers(se, de)
+            else:
+                shutil.copy2(str(se), str(de))
+                print("  Event triggers: copied (none existing)")
         sc, dc = snap / "crons.json", pc / "crons.json"
         if sc.is_file():
             if dc.is_file():
                 _merge_crons(sc, dc)
             else:
                 shutil.copy2(str(sc), str(dc))
-                print("  Crons: copied (no existing crons)")
-        print("  ✅ crons")
+                print("  Legacy crons: copied (no existing crons)")
+        print("  ✅ automations")
 
     if _want(components, "config"):
         for f in CORE_FILES["config"]:

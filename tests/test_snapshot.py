@@ -96,6 +96,35 @@ def _setup_fake_personalclaw(d: Path) -> None:
     (d / "plan_memory/plan1.json").write_text("plan data")
     (d / "skills/my-skill/SKILL.md").write_text("# My Skill")
 
+    # The unified trigger store + an event trigger (S113). The fake home carried `crons.json`
+    # ALONE, so every snapshot test passed while the component backed up a legacy relic nothing
+    # writes and dropped the automations the user actually has.
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
+
+    TriggerStore(base_dir=d).upsert(
+        Trigger(
+            id="clock:nightly",
+            name="Nightly backup",
+            kind="clock",
+            enabled=True,
+            spec={"kind": "cron", "expr": "0 3 * * *"},
+            workflow={"inline": {"provider": "bash", "config": {"command": "backup"}}},
+        )
+    )
+    (d / "event_triggers.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "e1",
+                    "pattern": "memory",
+                    "action_provider": "run-prompt",
+                    "action_config": {},
+                }
+            ]
+        )
+    )
+
 
 def _make_snapshot(src: Path, out: Path, extra_args: list[str] | None = None) -> Path:
     """Create a snapshot and return the tarball path. Caller must set PERSONALCLAW_HOME."""
@@ -136,6 +165,12 @@ class TestSnapshot:
         snap = snaps[0]
         assert (snap / "memory.db").is_file()
         assert (snap / "crons.json").is_file()
+        # 🔴 S113: the `crons` component held `crons.json` alone — the legacy file nothing has
+        # written since S108 — so `personalclaw snapshot` backed up an empty relic and dropped every
+        # automation the user had. `triggers.json` is the store; `event_triggers.json` was named in
+        # the plan's own recon note as missing alongside it.
+        assert (snap / "triggers.json").is_file(), "the automation store must travel"
+        assert (snap / "event_triggers.json").is_file()
         assert (snap / "config.json").is_file()
         assert (snap / "MANIFEST.json").is_file()
         assert (snap / "workspace/doc.md").is_file()
@@ -303,6 +338,44 @@ class TestRestoreMerge:
         ).fetchone()[0]
         assert val == '"modified"'
         conn.close()
+
+    def test_merge_restores_automations_from_the_store(self, env, monkeypatch):
+        """🔴 S113. The `crons` component restored `crons.json` only — the legacy file — so a
+        restore gave the user back an empty relic and none of their automations."""
+        from personalclaw.triggers.store import TriggerStore
+
+        _, _, tarball, tmp_path = env
+        dst = tmp_path / "dst-auto"
+        _setup_fake_personalclaw(dst)
+        # The destination renames its own copy, so the snapshot's row is a NEW name.
+        store = TriggerStore(base_dir=dst)
+        row = store.get("clock:nightly")
+        row.trigger.name = "My own backup"
+        store.upsert(row.trigger)
+
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(dst))
+        assert restore_main([str(tarball), "--mode", "merge"]) == 0
+
+        rows = TriggerStore(base_dir=dst).load()
+        names = sorted(r.trigger.name for r in rows)
+        assert names == ["My own backup", "Nightly backup"], names
+        # The home's own automation keeps firing; the imported one arrives paused.
+        by_name = {r.trigger.name: r.trigger for r in rows}
+        assert by_name["My own backup"].enabled is True
+        assert by_name["Nightly backup"].enabled is False
+
+    def test_merge_skips_an_automation_name_the_home_already_has(self, env, monkeypatch):
+        from personalclaw.triggers.store import TriggerStore
+
+        _, _, tarball, tmp_path = env
+        dst = tmp_path / "dst-dupe"
+        _setup_fake_personalclaw(dst)  # already holds "Nightly backup"
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(dst))
+        assert restore_main([str(tarball), "--mode", "merge"]) == 0
+
+        rows = TriggerStore(base_dir=dst).load()
+        assert [r.trigger.name for r in rows] == ["Nightly backup"]
+        assert rows[0].trigger.enabled is True, "the home's own row must not be paused by a restore"
 
     def test_merge_cron_dedup(self, env, monkeypatch):
         """TEST 8"""
