@@ -4127,3 +4127,43 @@ counted ALL ledger rows, which was over-broad the moment every fire writes one. 
   "surfaces in the Runs inbox" half is now possible — `attention_card` and `inbox_fingerprint` exist and
   the state is recorded — but wiring the CARD into the inbox is an INBOX-UNIFICATION surface, not a
   substrate one.
+
+### S140 — the delivery contract was inert (R18 / criterion 10) — DONE
+
+**DISCOVERY: two dead layers, the same shape as S139's autopause chain, found the same way.**
+`triggers/delivery.py` implements criterion 10 in full — `statusUrl` deep links, stable event ids for
+retry dedup, `is_duplicate`, destination formatting, the flat-text negotiation. Its `build_delivery`
+had exactly one caller, `executor.delivery_for` — **which itself had no caller at all**. Driven before
+writing: a completed fire produced no notification and no `statusUrl` anywhere under the home.
+
+That makes three consecutive sessions where a complete, well-designed decision module sat one missing
+call away from working (S139 autopause, this, and S134's screen before them). The modules are good; the
+seams were never closed.
+
+**Routed through `state.notify`, which is `deliver`'s own contract.** R18 says *"the substrate does not
+build a second notification path"*, so the existing `notification_allowed` gate and the per-(source,
+kind) rule both still apply — a trigger whose owner muted its channel stays muted. Asserted on the
+source, because the property is *which layer is called*.
+
+**The dedup set lives on the orchestrator**, which is the honest scope: `is_duplicate`'s own docstring
+says the caller owns the retry window because it is a transport concern. An in-memory set is exactly
+right for one gateway process; a persisted one would claim a durability this path does not have.
+
+**Verified end to end:** a successful fire notifies `automation.run.succeeded` with
+`statusUrl: #/triggers?open=clock:n`; a raising provider notifies `automation.run.failed`; the two
+carry distinct typed events (one label for both would make success unfilterable); a retry of the same
+`run_id` is suppressed while a new run still pings.
+
+**A methodology note worth keeping.** My first probe recorded **zero** notifications and looked exactly
+like the feature still being dead — the fake `state.notify` had a positional `(source, payload)`
+signature while `Delivery.to_notify_kwargs()` produces `kind`/`title`/`body`/`meta`. **A test double
+with the wrong shape reproduces the very bug you are trying to confirm you fixed.** Reading the real
+kwargs before trusting the probe is what distinguished the two, and the fake's docstring now records it.
+
+**Both no-op paths are tested rather than assumed:** a `--no-dashboard` gateway (no `dashboard_state`
+at all) and a notification bus that raises both leave the fire successful. The run already completed; a
+failed ping must not undo it.
+
+- **REMAINING in AUTOMATION-SUBSTRATE:** the E4-blocked webhook fire endpoint (queue S123), `idle`
+  (Loops Phase 4), `web_watch`'s headless tier, a chat-turn event source reading `agent_scope`, meters
+  for the four unmetered caps, and §3.5's undeclared `skip_if_active` / `acting_on`.
