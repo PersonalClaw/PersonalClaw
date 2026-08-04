@@ -43,6 +43,7 @@ def gw_and_cb() -> tuple[Any, Callable[[], Any], Callable[..., Any]]:
         captured_cb[0] = on_job
         svc = MagicMock()
         svc.start = AsyncMock()
+        svc.load_without_timer = AsyncMock()
         return svc
 
     return gw, lambda: captured_cb[0], capture_cron

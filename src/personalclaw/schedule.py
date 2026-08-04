@@ -540,6 +540,26 @@ class ScheduleService:
         self._arm_timer()
         logger.info("Cron service started with %d jobs", len(self._jobs))
 
+    async def load_without_timer(self) -> None:
+        """Load jobs + rotate run history WITHOUT arming the firing timer (§6 cutover — S100).
+
+        🔴 The clock cutover's seam. `_arm_timer` is the ONLY part of this class that fires anything;
+        the rest is the CRUD surface and the run-history store the `/api/triggers` facade reads. The
+        unified tick loop (`triggers/loop.py`) is now the sole clock engine, and measuring
+        showed why
+        that has to be exclusive: after the boot migration BOTH engines hold the same crons, so the
+        legacy timer would double-fire `j-at` and `j-cron` against the tick.
+
+        `_running` stays False, which is what keeps `_load`'s own "restore timers from disk" branch
+        (and every `_arm_timer` re-arm) from starting the legacy loop behind the cutover's back.
+        """
+        self._load()
+        try:
+            await self._run_store.rotate_all()
+        except Exception:
+            logger.debug("Run-history rotation on load failed", exc_info=True)
+        logger.info("Cron store loaded (timer NOT armed — the trigger tick owns the clock)")
+
     async def stop(self) -> None:
         """Stop the timer loop and cancel running jobs."""
         self._running = False

@@ -302,6 +302,7 @@ async def drain(
     *,
     limit: int = MAX_DRAIN,
     now: float = 0.0,
+    base_dir: Any = None,
 ) -> DrainResult:
     """Drain one session's inbox, running each payload. Returns every outcome.
 
@@ -313,6 +314,13 @@ async def drain(
     complete
     would make a backed-up queue invisible — the S65 rule this program keeps re-learning on
     new surfaces.
+
+    🔴 `base_dir` is threaded to `run_one` so the CLAIM IS RELEASED (S97). Measured while wiring the
+    clock loop: `drain` took no `base_dir`, so `run_one`'s release was a no-op on every
+    drained fire —
+    which meant `overlap: skip` would block a trigger for the full 1h claim expiry after its first
+    run. The claim release only works if the root reaches it, and the loop is the only caller that
+    knows which store this drain belongs to.
     """
     result = DrainResult(session_key=session_key)
     if sessions is None:
@@ -337,7 +345,11 @@ async def drain(
             continue
         result.outcomes.append(
             await run_one(
-                payload.get("payload") or payload, runner, session_key=session_key, now=now
+                payload.get("payload") or payload,
+                runner,
+                session_key=session_key,
+                now=now,
+                base_dir=base_dir,
             )
         )
 

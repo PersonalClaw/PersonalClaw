@@ -76,6 +76,7 @@ def _run_callback(gw, job, stream_result="done"):
             captured_cb = on_job
             svc = MagicMock()
             svc.start = AsyncMock()
+            svc.load_without_timer = AsyncMock()
             return svc
 
         mock_cron_cls.side_effect = capture_cron
@@ -284,6 +285,7 @@ def _run_callback_raising(gw, job, exc):
             captured_cb = on_job
             svc = MagicMock()
             svc.start = AsyncMock()
+            svc.load_without_timer = AsyncMock()
             return svc
 
         mock_cron_cls.side_effect = capture_cron
