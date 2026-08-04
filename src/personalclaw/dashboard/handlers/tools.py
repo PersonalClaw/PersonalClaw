@@ -48,7 +48,7 @@ async def api_tools_list(request: web.Request) -> web.Response:
        It's built per-runtime (cwd-bound) so it is NOT in the registry — enumerated
        directly here.
     2. The tool-provider REGISTRY (``list_all_tools``) — every registered in-process
-       provider, which already includes ``personalclaw-core``/``personalclaw-schedule``
+       provider, which already includes ``personalclaw-core``
        (registered via their bundled app.json → the same ``InProcessMcpToolProvider``
        the native loop uses) plus the entity categories (memory/artifacts/…). The
        generic ``mcp`` provider is skipped here — source 3 emits external MCP tools
@@ -151,7 +151,7 @@ async def api_tools_list(request: web.Request) -> web.Response:
         record_failure("personalclaw-filesystem", str(exc))
 
     # Source 2: the tool-provider REGISTRY — every registered in-process provider.
-    # This already includes personalclaw-core + personalclaw-schedule (registered via
+    # This already includes personalclaw-core (registered via
     # their bundled app.json as InProcessMcpToolProvider, which applies the same
     # infer_risk_from_name classification) plus the entity categories, so there is no
     # separate hardcoded core/schedule enumeration. Skip the generic "mcp" provider —

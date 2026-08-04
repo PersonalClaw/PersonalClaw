@@ -363,6 +363,25 @@ Delete an automation permanently. Requires confirm: true — pause it instead if
 }
 ```
 
+### `automation_delete_all`
+
+Delete every automation YOU created (created_by=agent), in one call. Requires confirm: true. Never touches automations the user made.
+
+**Response type:** `automation.delete_all.result`
+
+**Safety:** requires approval, risk: destructive
+
+**Parameters:**
+- `confirm` (boolean, required)
+
+**Example — Delete every automation you created:**
+
+```json
+{
+  "confirm": true
+}
+```
+
 ### `automation_history`
 
 Recent run/fire rows for an automation, with typed outcomes — to self-debug why an automation did or did not do something.
@@ -1044,227 +1063,6 @@ Load a saved Prompt and render it with variable values filled in, returning the 
   "vars": {
     "file": "server.py"
   }
-}
-```
-
-## personalclaw-schedule
-
-### `schedule_add`
-
-Add a scheduled cron job. Use when the user says 'every', 'daily', 'weekly', 'remind me', 'check regularly', or 'schedule'. Requires name + message, plus one of: every (seconds), cron_expr, at (unix timestamp), delay (seconds from now), or at_time (human string like '5pm', 'tomorrow 9am', 'in 2 hours').
-
-**Response type:** `schedule.job`
-
-**Safety:** requires approval, risk: caution
-
-**Parameters:**
-- `agent` (string, optional) — Agent name for this job (e.g. 'my-code-agent'). Empty or omitted uses the default personalclaw agent.
-- `approval_mode` (string, optional) — Tool approval mode for this job. 'auto' auto-approves all tools without prompting. Empty or omitted uses default hook-based approval.
-- `at` (number, optional) — Unix timestamp for one-shot job (auto-deletes after)
-- `at_time` (string, optional) — Human time string for one-shot job, parsed server-side. Examples: '5pm', '17:00', 'tomorrow 9:30am', 'in 2 hours', '2026-03-28 14:00'. Uses server local timezone. Prefer this over 'at' for absolute times.
-- `channel` (string, optional) — Channel ID to post results to (e.g. 'C0AP3QR7Z4M'). If omitted, posts in the originating thread/DM.
-- `command` (string, optional) — Zero-token shell command (runs deterministically in the sandbox, no LLM). Mutually exclusive with script.
-- `cron_expr` (string, optional) — Standard 5-field cron expression: "min hour dom month dow" where dow: 0=Sun,1=Mon..6=Sat (e.g. "0 9 * * 1-5" for weekdays at 9AM UTC, "30 15 * * 2,4" for Tue/Thu at 3:30PM UTC)
-- `delay` (number, optional) — Seconds from now for one-shot job (e.g. 120 for 2 minutes). Converted to 'at' internally. Prefer this over 'at'.
-- `every` (integer, optional) — Interval in seconds (min 60)
-- `message` (string, required) — Message to send to agent
-- `name` (string, required) — Job name
-- `persistent_session` (boolean, optional) — Whether this cron reuses one agent session across runs (True, default) or opens a fresh session per run (False). Set False for polling/scanner jobs with no conversational state — avoids unbounded context growth. Set True (or omit) for conversational reminders that should remember prior runs.
-- `script` (string, optional) — Zero-token Python script 'file.py:func' under ~/.personalclaw/crons/ (runs deterministically, no LLM). Mutually exclusive with command.
-- `silent` (boolean, optional) — When true, suppress automatic message delivery. The agent controls when to notify via send_message.
-- `skip_dates` (array, optional) — ISO dates to skip (e.g. ["2026-04-06", "2026-12-25"]). Job silently does not fire on these dates. Evaluated in job's timezone.
-- `strict_schedule` (boolean, optional) — When true, fire exactly on schedule with no jitter. Default false — jobs get random delay (0-20min hourly, 0-2h daily) to spread load.
-- `thread_ts` (string, optional) — Channel thread timestamp to reply in. Use with channel to post results as a thread reply instead of a new message.
-- `timezone` (string, optional) — IANA timezone for skip_dates evaluation (e.g. 'Europe/Luxembourg'). Falls back to global config timezone.
-- `zt_timeout` (integer, optional) — Timeout (s) for a zero-token script/command run. 0 = default (30s script / 300s command).
-
-**Example — Schedule a recurring daily message:**
-
-```json
-{
-  "cron_expr": "0 8 * * *",
-  "message": "Summarize my calendar and unread inbox",
-  "name": "morning-brief"
-}
-```
-
-**Example — Schedule a one-off reminder after a delay:**
-
-```json
-{
-  "delay": 3600,
-  "message": "Take a break",
-  "name": "stretch"
-}
-```
-
-### `schedule_list`
-
-List all scheduled cron jobs
-
-**Response type:** `schedule.list`
-
-**Safety:** requires approval
-
-**Parameters:**
-- _(no parameters)_
-
-**Example — List all scheduled jobs:**
-
-```json
-{}
-```
-
-### `schedule_natural`
-
-Schedule a RECURRING job from a plain-English cadence — e.g. 'every weekday at 9am', 'the first of each month', 'every 30 minutes'. The cadence is converted to a validated cron expression and the job is created. For a ONE-OFF time ('in 5 minutes', 'tomorrow 3pm') use schedule_add with delay/at/at_time instead.
-
-**Response type:** `schedule.job`
-
-**Safety:** requires approval, risk: caution
-
-**Parameters:**
-- `cadence` (string, required) — Plain-English recurring cadence (e.g. 'every weekday at 9am').
-- `channel` (string, optional) — Optional delivery channel id.
-- `message` (string, required) — The agent prompt to run on each fire.
-- `name` (string, required) — Job name
-- `silent` (boolean, optional) — Suppress delivery (run quietly).
-
-**Example — Schedule from a natural-language cadence:**
-
-```json
-{
-  "cadence": "every weekday at 9am",
-  "message": "Post my standup update",
-  "name": "standup"
-}
-```
-
-### `schedule_pause`
-
-Pause a cron job
-
-**Response type:** `schedule.job`
-
-**Safety:** requires approval, risk: caution
-
-**Parameters:**
-- `job_id` (string, required) — Job ID
-
-**Example — Pause a job without deleting it:**
-
-```json
-{
-  "job_id": "morning-brief"
-}
-```
-
-### `schedule_remove`
-
-Remove a cron job by ID
-
-**Response type:** `schedule.remove.result`
-
-**Safety:** requires approval, risk: destructive
-
-**Parameters:**
-- `job_id` (string, required) — Job ID
-
-**Example — Delete a scheduled job:**
-
-```json
-{
-  "job_id": "morning-brief"
-}
-```
-
-### `schedule_remove_all`
-
-Remove all cron jobs
-
-**Response type:** `schedule.remove.result`
-
-**Safety:** requires approval, risk: destructive
-
-**Parameters:**
-- _(no parameters)_
-
-**Example — Delete every scheduled job:**
-
-```json
-{}
-```
-
-### `schedule_resume`
-
-Resume a paused cron job
-
-**Response type:** `schedule.job`
-
-**Safety:** requires approval, risk: caution
-
-**Parameters:**
-- `job_id` (string, required) — Job ID
-
-**Example — Resume a paused job:**
-
-```json
-{
-  "job_id": "morning-brief"
-}
-```
-
-### `schedule_trigger`
-
-Fire a cron job immediately (on-demand), regardless of its schedule. Runs through the live gateway and returns at once; the run appears in execution history.
-
-**Response type:** `schedule.trigger.result`
-
-**Safety:** requires approval, risk: caution
-
-**Parameters:**
-- `job_id` (string, required) — Job ID to trigger now
-
-**Example — Fire a scheduled job right now:**
-
-```json
-{
-  "job_id": "morning-brief"
-}
-```
-
-### `schedule_update`
-
-Update an existing cron job's name, message, schedule, agent, or channel.
-
-**Response type:** `schedule.job`
-
-**Safety:** requires approval, risk: caution
-
-**Parameters:**
-- `agent` (string, optional) — New agent name
-- `approval_mode` (string, optional) — New tool approval mode
-- `channel` (string, optional) — New channel ID
-- `command` (string, optional) — Zero-token shell command (runs deterministically in the sandbox, no LLM). Mutually exclusive with script.
-- `cron_expr` (string, optional) — New cron expression
-- `every` (integer, optional) — New interval in seconds (min 60)
-- `job_id` (string, required) — Job ID to update
-- `message` (string, optional) — New message
-- `name` (string, optional) — New job name
-- `script` (string, optional) — Zero-token Python script 'file.py:func' under ~/.personalclaw/crons/ (runs deterministically, no LLM). Mutually exclusive with command.
-- `silent` (boolean, optional) — Whether the job runs silently
-- `skip_dates` (array, optional) — ISO dates to skip. Replaces existing list.
-- `strict_schedule` (boolean, optional) — When true, fire exactly on schedule with no jitter.
-- `thread_ts` (string, optional) — New thread timestamp to reply in.
-- `timezone` (string, optional) — IANA timezone for skip_dates evaluation.
-- `zt_timeout` (integer, optional) — Timeout (s) for a zero-token script/command run. 0 = default (30s script / 300s command).
-
-**Example — Change a job's schedule:**
-
-```json
-{
-  "cron_expr": "0 9 * * *",
-  "job_id": "morning-brief"
 }
 ```
 

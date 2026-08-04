@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from personalclaw.nl_to_cron import nl_to_cron, parse_cron_response
 
 
@@ -76,41 +78,55 @@ def test_nl_to_cron_llm_failure():
     assert expr == "" and "model" in err.lower()
 
 
-# ── tool dispatch (schedule_natural → validated cron → schedule_add) ──
+# ── tool dispatch (automation_create's `when` → validated cron → a store trigger) ──
+#
+# These drove `schedule_natural` until S109 retired the alias. The NL→cron bridge did not go away —
+# it moved to `tools.create`'s injected `cadence_to_cron` seam, which is the same contract with a
+# testable seam instead of a module-level monkeypatch.
 
 
-def test_schedule_natural_tool_registered():
-    from personalclaw.mcp_schedule import _list_tools
-    from personalclaw.validation import MCP_SCHEDULE_SCHEMAS
+def test_the_nl_cadence_bridge_is_reachable_from_automation_create(tmp_path):
+    from personalclaw.triggers import tools as T
+    from personalclaw.triggers.store import TriggerStore
 
-    assert "schedule_natural" in {t["name"] for t in _list_tools()}
-    assert "schedule_natural" in MCP_SCHEDULE_SCHEMAS
-
-
-def test_schedule_natural_dispatch(monkeypatch, tmp_path):
-    import personalclaw.mcp_schedule as ms
-
-    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    # stub the NL→cron conversion (no LLM) + capture the delegated schedule_add
-    monkeypatch.setattr(ms, "_nl_to_cron_blocking", lambda cadence: ("0 9 * * 1-5", ""))
-    out = ms._call_tool_inner(
-        "schedule_natural",
-        {"name": "Standup", "message": "post standup", "cadence": "weekdays 9am"},
+    store = TriggerStore(base_dir=tmp_path)
+    # The injected converter stands in for the model, exactly as `_nl_to_cron_blocking` was stubbed.
+    result = T.create(
+        store,
+        name="Standup",
+        when="every weekday at 9am",
+        message="post standup",
+        created_by="user",
+        cadence_to_cron=lambda cadence: ("0 9 * * 1-5", ""),
     )
-    assert not out.startswith("Error")
-    assert "0 9 * * 1-5" in out  # the derived cron is surfaced back
+    assert result.ok, result.text
+    assert "0 9 * * 1-5" in result.text  # the derived cron is surfaced back to the caller
+    assert store.load()[0].trigger.spec == {"kind": "cron", "expr": "0 9 * * 1-5"}
 
 
-def test_schedule_natural_conversion_error(monkeypatch, tmp_path):
-    import personalclaw.mcp_schedule as ms
+def test_a_conversion_error_is_surfaced_not_defaulted(tmp_path):
+    """🔴 The reason this seam exists: defaulting an unconvertible cadence to `* * * * *` would turn
+    "in 5 minutes" into a per-minute LLM turn."""
+    from personalclaw.triggers import tools as T
+    from personalclaw.triggers.store import TriggerStore
 
-    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    monkeypatch.setattr(
-        ms,
-        "_nl_to_cron_blocking",
-        lambda cadence: ("", "Not a recurring schedule — use a one-off time instead."),
+    store = TriggerStore(base_dir=tmp_path)
+    result = T.create(
+        store,
+        name="x",
+        when="every 5 minutes",
+        message="y",
+        created_by="user",
+        cadence_to_cron=lambda cadence: ("", "Not a recurring schedule — use a one-off time."),
     )
-    out = ms._call_tool_inner(
-        "schedule_natural", {"name": "x", "message": "y", "cadence": "in 5 minutes"}
-    )
-    assert out.startswith("Error") and "one-off" in out.lower()
+    assert not result.ok
+    assert "one-off" in result.text.lower()
+    assert store.load() == [], "a failed conversion must not persist a trigger"
+
+
+def test_the_retired_alias_is_not_registered():
+    from personalclaw.triggers.tools import TOOL_NAMES
+
+    assert not [n for n in TOOL_NAMES if n.startswith("schedule_")]
+    with pytest.raises(ModuleNotFoundError):
+        __import__("personalclaw.mcp_schedule")

@@ -78,8 +78,8 @@ suggestions; use one of those.
 ## 5. Worked patterns
 
 - **Create + wire a trigger:** register the follow-up with `hook_register`
-  (`hook_id`, `context_summary`), or schedule recurring work with `schedule_add`
-  / `schedule_natural`. Then read it back (§3).
+  (`hook_id`, `context_summary`), or schedule recurring work with
+  `automation_create`. Then read it back (§3).
 - **Add knowledge and verify retrieval:** `knowledge_create` (`type`, `title`,
   `content`) → `knowledge_search` for the title to confirm it's indexed.
 - **Bind a model to a use case:** `PUT /api/models/active/{use_case}` with body

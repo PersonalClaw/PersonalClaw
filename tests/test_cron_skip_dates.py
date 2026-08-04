@@ -1,7 +1,6 @@
 """Tests for cron skip_dates and timezone feature."""
 
 import time
-import uuid
 from calendar import timegm
 from datetime import datetime, timezone
 from pathlib import Path
@@ -128,74 +127,3 @@ class TestIsDueSkipWithEverySchedule:
         )
         # Should not crash; falls back to UTC and still skips
         assert not ScheduleService._is_due(job, time.time())
-
-
-class TestMcpCronSkipDates:
-    """Integration tests for skip_dates via MCP tool layer."""
-
-    def _cleanup(self, name: str) -> None:
-        svc = ScheduleService()
-        for j in svc.list_jobs():
-            if j.name == name:
-                svc.remove_job(j.id)
-
-    def test_cron_add_with_skip_dates(self, monkeypatch) -> None:
-        from personalclaw.mcp_schedule import _call_tool
-
-        name = f"skip-test-{uuid.uuid4().hex[:8]}"
-        self._cleanup(name)
-        monkeypatch.delenv("PERSONALCLAW_CHANNEL_ID", raising=False)
-
-        result = _call_tool(
-            "schedule_add",
-            {
-                "name": name,
-                "message": "hello",
-                "cron_expr": "0 9 * * 1-5",
-                "skip_dates": ["2026-04-06", "2026-12-25"],
-                "timezone": "Europe/Luxembourg",
-            },
-        )
-        assert "Added job" in result
-
-        svc = ScheduleService()
-        jobs = [j for j in svc.list_jobs() if j.name == name]
-        assert len(jobs) == 1
-        assert jobs[0].skip_dates == ["2026-04-06", "2026-12-25"]
-        assert jobs[0].timezone == "Europe/Luxembourg"
-
-        svc.remove_job(jobs[0].id)
-
-    def test_cron_update_skip_dates(self, monkeypatch) -> None:
-        from personalclaw.mcp_schedule import _call_tool
-
-        name = f"update-skip-{uuid.uuid4().hex[:8]}"
-        self._cleanup(name)
-        monkeypatch.delenv("PERSONALCLAW_CHANNEL_ID", raising=False)
-
-        result = _call_tool(
-            "schedule_add",
-            {"name": name, "message": "hello", "cron_expr": "0 9 * * *"},
-        )
-        assert "Added job" in result
-
-        svc = ScheduleService()
-        jobs = [j for j in svc.list_jobs() if j.name == name]
-        job_id = jobs[0].id
-
-        result = _call_tool(
-            "schedule_update",
-            {
-                "job_id": job_id,
-                "skip_dates": ["2026-05-01"],
-                "timezone": "Europe/Luxembourg",
-            },
-        )
-        assert "Updated" in result
-
-        svc = ScheduleService()
-        jobs = [j for j in svc.list_jobs() if j.id == job_id]
-        assert jobs[0].skip_dates == ["2026-05-01"]
-        assert jobs[0].timezone == "Europe/Luxembourg"
-
-        svc.remove_job(job_id)

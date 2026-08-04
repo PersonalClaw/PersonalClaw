@@ -142,7 +142,6 @@ def group_name_for_provider(provider: str) -> str:
 
         personalclaw-core            → core       (a core provider)
         personalclaw-filesystem      → core       (a core provider)
-        personalclaw-schedule        → schedule
         personalclaw-knowledge-tools → knowledge
         mcp-tools:github             → mcp:github
         openai-tools:work            → openai:work

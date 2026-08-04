@@ -462,9 +462,9 @@ async def api_mcp_active(request: web.Request) -> web.Response:
         spec = global_mcps.get(s.name, {})
         enabled = not (isinstance(spec, dict) and spec.get("disabled"))
         result.append({"name": s.name, "enabled": enabled})
-    # Also include personalclaw-schedule and personalclaw-core (always enabled)
+    # Also include personalclaw-core (always enabled)
     names = {r["name"] for r in result}
-    for builtin in ("personalclaw-schedule", "personalclaw-core"):
+    for builtin in ("personalclaw-core",):
         if builtin not in names:
             result.insert(0, {"name": builtin, "enabled": True})
     return web.json_response(result)

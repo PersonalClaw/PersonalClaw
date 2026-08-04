@@ -64,7 +64,9 @@ def test_tools_reference_lists_every_provider():
     tools_md = render_reference()["tools.md"]
     providers = {
         "personalclaw-core",
-        "personalclaw-schedule",
+        # `personalclaw-automation` replaces the retired `personalclaw-schedule` (S109) — the
+        # `automation_*` namespace over the unified trigger store.
+        "personalclaw-automation",
         "personalclaw-artifacts",
         "personalclaw-memory",
         "personalclaw-knowledge-tools",

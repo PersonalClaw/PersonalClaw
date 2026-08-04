@@ -42,18 +42,6 @@ def create_native_provider(config: dict[str, Any] | None = None) -> ToolProvider
     return InProcessMcpToolProvider()
 
 
-def create_schedule_provider(config: dict[str, Any] | None = None) -> ToolProvider:
-    """Extension factory for the ``personalclaw-schedule`` tool surface — in-process
-    over ``mcp_schedule`` (same dead-path fix as core)."""
-    from personalclaw.agents.native.tools import InProcessMcpToolProvider
-
-    return InProcessMcpToolProvider(
-        module="personalclaw.mcp_schedule",
-        provider_name="personalclaw-schedule",
-        display="PersonalClaw Schedule",
-    )
-
-
 def create_automation_provider(config: dict[str, Any] | None = None) -> ToolProvider:
     """Extension factory for the ``personalclaw-automation`` tool surface — in-process over
     ``mcp_automation`` (§4's `automation_*` namespace: create/list/update/pause/resume/run/
