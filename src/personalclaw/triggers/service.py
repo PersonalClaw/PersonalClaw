@@ -408,6 +408,11 @@ async def tick(
 
     from personalclaw.triggers import firepath as fp
 
+    # Named resource slots, read ONCE per tick (§3.5 — S135). Per-trigger would re-scan every claim
+    # for every due trigger; once per tick also makes the answer consistent within a tick, so two
+    # triggers wanting `local-llm` in the same wake cannot both be told it is free.
+    slot_map = claims.slot_holders(store, now=now, base_dir=base_dir)
+
     for trigger_id in due_ids(triggers, now=now):
         trigger = by_id.get(trigger_id)
         if trigger is None:
@@ -444,12 +449,26 @@ async def tick(
         ctx = fp.FireContext(
             trigger_id=trigger.id,
             gates=trigger.gates or {},
+            # 🔴 `payload_text` is deliberately LEFT EMPTY here (§7/R4 rule a — S134), and that is
+            # correct rather than the omission it looks like. A clock trigger carries no external
+            # content: at tick time there is a schedule and no payload. The screen's real input
+            # arrives with a POLLED payload — web_watch items, file changes — which is dispatched
+            # through `gateway._fire_store_trigger`, NOT through this walk. S134 screens there.
+            #
+            # Written down because the DEFAULT is what hid the gap: `payload_text=""` made
+            # `if ctx.payload_text:` false, so every clock fire's ledger row listed `screen` among
+            # the gates PASSED while the screen had never run on a single real fire.
             capabilities=trigger.capabilities,
             holder=f"tick:{int(now)}",
             overlap=str(getattr(trigger, "overlap", "skip") or "skip"),
             now=now,
             user_active=user_active,
             yield_to_user=bool(getattr(trigger, "yield_to_user", False)),
+            # 🔴 THE RESOURCE SLOT (§3.5 — S135). `resource_slots` was declared, persisted and
+            # round-tripped, and read by NOTHING — the only field in 41 trigger dataclasses with
+            # zero non-declaration readers. Supplied here from the claim store, so a fire that
+            # needs `local-llm` while another trigger holds it defers instead of contending.
+            busy_slot=claims.busy_slot(trigger, holders=slot_map),
             # 🔴 The EXISTING claim, read from the shared claim store. Measured: this was never
             # supplied, so `claim_fire` always saw `existing=None` and always granted — a trigger
             # whose previous run was still going fired again anyway, which is the precise failure
@@ -460,6 +479,12 @@ async def tick(
             # enforcement point — had never run on a single real fire. Exactly the `existing_claim`
             # defect one line up, in the gate directly below it.
             requested=screen.requested_capabilities(trigger),
+            # 🔴 THE BUDGET, actually supplied (§7 crit 8 / §3.6 — S133). Measured: `tick` never set
+            # either budget field, so `if ctx.budget_remaining is not None` was always False and the
+            # budget gate had NEVER refused a real fire — the third instance of this exact shape
+            # after S97's `existing_claim` and S116's `requested`. `gates.max_fires` was the
+            # user-visible cost: set to 2, a trigger fired 8 times in 8 slots.
+            budget_remaining=_budget_remaining(trigger),
         )
         decision = await fp.evaluate(ctx)
         row = fp.ledger_row(decision, ctx)
@@ -472,6 +497,20 @@ async def tick(
             # caller must release it"; the executor's drain releases on completion.
             if persist and decision.claim is not None:
                 claims.write_claim(decision.claim, base_dir=base_dir)
+            # The counter the budget READS. Nothing incremented `run_count` on this path, so even a
+            # wired budget would have compared against a permanent zero — a cap needs a meter.
+            # Incremented on a GRANTED fire, before dispatch: `max_fires` bounds attempts the
+            # substrate authorised, and deferring the increment to completion would let a storm of
+            # in-flight fires all pass a cap of one.
+            #
+            # 🔴 NOT persisted for a RETIRED trigger. Found by a red test rather than by reading: the
+            # retirement branch above `store.delete()`s a `delete_after_run` one-shot, and an
+            # unconditional upsert here RESURRECTED the row it had just removed — turning a retired
+            # one-shot back into a live trigger holding an elapsed slot, which is the storm S112's
+            # retirement exists to prevent. The in-memory count still rides along on the DueFire.
+            trigger.run_count = int(getattr(trigger, "run_count", 0) or 0) + 1
+            if persist and trigger.id not in result.retired:
+                store.upsert(trigger)
             result.fires.append(
                 DueFire(
                     trigger=trigger,
@@ -483,6 +522,40 @@ async def tick(
 
     result.next_sleep = sleep_for(list(by_id.values()), now=now)
     return result
+
+
+def _budget_remaining(trigger: Any) -> float | None:
+    """Fires this trigger may still make, or None when it declares no cap (§3.6 — S133).
+
+    🔴 WHY THIS EXISTS. `firepath`'s budget gate reads `ctx.budget_remaining`, and `tick` never set
+    it — so `if ctx.budget_remaining is not None` was always False and the gate had never refused a
+    real fire. Third instance of the same shape: S97's `existing_claim`, S116's `requested`, this.
+    The user-visible cost was `gates.max_fires`, which is declared in `GATE_KEYS`, validated,
+    carried by `LEGACY_FIELD_MAP` — and bounded nothing. Measured: `max_fires: 2` produced 8 fires
+    in 8 slots, identical to no cap at all.
+
+    Scoped deliberately to `max_fires`, the one cap with a meter that exists. `cost_cap` /
+    `max_cost_usd_per_run` need per-run spend attribution and `max_runs_per_hour` /
+    `max_actions_per_hour` need a windowed history query — neither exists on this path, and
+    inventing a meter to satisfy a cap would be the inverted dependency this program keeps refusing
+    (S119's webhook token, S129's rule (e)). A doctor finding names the still-unenforced caps
+    instead of implying they work.
+
+    None (no cap) rather than infinity: the gate distinguishes "no budget configured" from "budget
+    exhausted", and a sentinel would make an unset cap indistinguishable from a very large one.
+    """
+    gates = trigger.gates if isinstance(getattr(trigger, "gates", None), dict) else {}
+    try:
+        cap = int(gates.get("max_fires", 0) or 0)
+    except (TypeError, ValueError):
+        # A malformed cap is NOT treated as unlimited. `validate_gates` already reports the shape;
+        # here the safe reading of "I asked for a limit and typed it wrong" is zero allowance, which
+        # refuses visibly rather than running unbounded.
+        return 0.0
+    if cap <= 0:
+        return None
+    used = int(getattr(trigger, "run_count", 0) or 0)
+    return float(max(0, cap - used))
 
 
 def boot(store: Any, *, now: float = 0.0, persist: bool = True) -> dict[str, Any]:

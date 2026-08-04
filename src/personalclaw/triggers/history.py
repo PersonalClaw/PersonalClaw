@@ -40,7 +40,13 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from personalclaw.triggers.models import FIRE_OUTCOMES, FireRecord, Outcome, RunWeight
+from personalclaw.triggers.models import (
+    FIRE_OUTCOMES,
+    INERT_OUTCOMES,
+    FireRecord,
+    Outcome,
+    RunWeight,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -278,13 +284,46 @@ def feed_response(records: list[FireRecord], *, total: int | None = None) -> dic
     which rows are summaries rather than openable runs.
     """
     rows = [r.to_dict() for r in records]
+    did, suppressed = partition_inert(records)
     return {
         "runs": rows,
         "total": total if total is not None else len(rows),
         "kinds": sorted({r.trigger_id.split(":", 1)[0] for r in records if r.trigger_id}),
         # Named so a caller can render "3 of these are summaries" rather than implying 3 more runs.
         "summaries": sum(1 for r in records if r.incomplete),
+        # §1.3's archive split (S132). `runs` still carries EVERY row — a surface that lost the
+        # suppressed ones could not answer "why did my automation not run", and §7 criterion 8 bans
+        # silent drops. These two ids lists let a default view show work and fold the rest away.
+        "did_ids": [r.id for r in did],
+        "suppressed_ids": [r.id for r in suppressed],
+        "suppressed": len(suppressed),
     }
+
+
+def is_inert(record: FireRecord) -> bool:
+    """Whether this row is a suppression rather than work the machine DID (§1.3 — S132).
+
+    🔴 `INERT_OUTCOMES` was declared in `models.py` and read by NOTHING. §1.3 says inert outcomes
+    "collapse to ledger rows and archive out of the default inbox view — the runs inbox is for what
+    the machine DID", and measured: the unified feed returned every row undifferentiated, so a
+    minutely trigger suppressed by quiet hours buried the one fire that mattered under 1439 skips.
+    """
+    return record.outcome in INERT_OUTCOMES
+
+
+def partition_inert(records: list[FireRecord]) -> tuple[list[FireRecord], list[FireRecord]]:
+    """`(did_something, suppressed)` — §1.3's archive split.
+
+    A PARTITION rather than a filter, deliberately: the suppressed rows are the answer to "why did
+    my automation not run", so dropping them would replace one bad default with a worse one. §7
+    criterion 8 bans silent drops, and a row filtered out of the only surface that shows it is a
+    silent drop with extra steps. The caller renders them behind an "archived" affordance.
+    """
+    did: list[FireRecord] = []
+    suppressed: list[FireRecord] = []
+    for record in records:
+        (suppressed if is_inert(record) else did).append(record)
+    return did, suppressed
 
 
 def outcome_counts(records: list[FireRecord]) -> dict[str, int]:

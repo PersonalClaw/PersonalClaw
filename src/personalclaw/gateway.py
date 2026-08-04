@@ -367,7 +367,8 @@ class GatewayOrchestrator:
 
             # Resolve session: use explicit session, or try to find from active dashboard session
             # Heuristic fallback: picks first running session (dict insertion order). Not guaranteed
-            # to be the correct session for subagents, but explicit session param is the primary path.  # noqa: E501
+            # to be the correct session for subagents, but explicit session param
+            # is the primary path.  # noqa: E501
             resolved_session = ""
             if not resolved_session and self.dashboard_state and self.dashboard_state._sessions:
                 # Heuristic: pick first running session (insertion order)
@@ -884,6 +885,43 @@ class GatewayOrchestrator:
         if provider is None:
             logger.warning("trigger %s: unknown action provider %r", trigger.id, provider_name)
             return
+
+        # 🔴 THE INJECTION SCREEN, on the payload that actually carries untrusted text (§7/R4 rule a
+        # — S134). Measured: `FireContext.payload_text` defaulted to "" and `service.tick` never set
+        # it, so `evaluate`'s `if ctx.payload_text:` was permanently false — the
+        # screen had NEVER run
+        # on a real fire, while every ledger row listed `screen` among the gates
+        # PASSED. And the kinds
+        # that DO carry third-party prose (web_watch items, file changes) never reach that walk at
+        # all: they are dispatched straight here.
+        #
+        # Screened HERE rather than by threading a payload back into `tick`, because this is the one
+        # place every polled payload passes through on its way to a provider — the same reasoning
+        # S122 used for chaining. A blocked payload is NEVER auto-retried (`blocked_injection` is
+        # terminal by design), which is also why `payload_text_for` reads an allowlist of prose-
+        # carrying keys instead of screening ids and URLs that would produce false blocks.
+        from personalclaw.triggers.screen import payload_text_for
+        from personalclaw.triggers.screen import screen as screen_text
+
+        untrusted = payload_text_for(payload, kind=str(getattr(trigger, "kind", "") or ""))
+        if untrusted:
+            verdict = screen_text(untrusted)
+            if getattr(verdict, "verdict", "") == "blocked":
+                groups = ", ".join(getattr(verdict, "groups", ()) or ()) or "injection"
+                logger.warning(
+                    "trigger %s: payload blocked by the injection screen (%s); not retried",
+                    trigger.id,
+                    groups,
+                )
+                # 🔴 A TYPED LEDGER ROW, not just a log line (§7 crit 8 — S136). S134 wired the
+                # screen here and recorded the row as still owed: this path is not a `tick` fire,
+                # so nothing wrote one. A refusal only a log knows about is a silent drop by
+                # criterion 8's own definition — the user sees an automation that stopped, with the
+                # reason in a file they will not read. And `blocked_injection` NEVER auto-retries,
+                # so this row is the only record that will ever exist for this fire.
+                await self._record_blocked_fire(trigger, groups)
+                self._push_trigger_refresh()
+                return
         # 🔴 RESOLVE `{{secret:KEY}}` HERE, at dispatch (§7 item 6 / decision 11 — S115). Workflows
         # have carried this form since WF2-R14 and three surfaces tell the author to use it, but a
         # TRIGGER action passed the literal placeholder to the provider — measured: a bash command
@@ -931,6 +969,44 @@ class GatewayOrchestrator:
             # place for those controls to be forgotten, which is exactly how the `web_watch` gap
             # happened. After the refresh, so a slow chain never delays the view update.
             await self._fire_chained_triggers(trigger, payload)
+
+    async def _record_blocked_fire(self, trigger: Any, groups: str) -> None:
+        """Write the `blocked_injection` ledger row for a screened payload (§7 crit 8 — S136).
+
+        ASYNC because `ScheduleRunStore.append` is. mypy caught the sync version as an
+        unused coroutine — i.e. the row would never have been written at all, which is a
+        neater demonstration of this session's own theme than anything I could contrive.
+
+        Best-effort by construction: a bookkeeping failure must not change the SECURITY decision.
+        The payload is refused before this runs, so the worst case is a refusal with no row —
+        exactly what S134 shipped and this closes, never a re-opened hole.
+
+        The screened TEXT is deliberately not stored. Criterion 11's discipline generalises: a
+        blocked payload is hostile third-party content, and copying it into a store the UI renders
+        would move an injection attempt out of a refused fire and into a surface a human reads. The
+        matched GROUPS name the pattern class, which is what tells a real attack from a false
+        positive.
+        """
+        try:
+            import time as _time
+
+            from personalclaw.config.loader import config_dir
+            from personalclaw.schedule_history import ScheduleRun
+
+            now = _time.time()
+            await ScheduleRunStore(config_dir()).append(
+                ScheduleRun(
+                    run_id=f"blocked-{int(now * 1000)}",
+                    job_id=str(getattr(trigger, "id", "") or ""),
+                    trigger="blocked_injection",
+                    started_at=now,
+                    finished_at=now,
+                    status="blocked_injection",
+                    error=f"payload blocked by the injection screen ({groups}); never retried",
+                )
+            )
+        except Exception:  # noqa: BLE001 - bookkeeping must never alter a security decision
+            logger.debug("could not record the blocked-fire row for %s", trigger, exc_info=True)
 
     async def _fire_chained_triggers(self, trigger: Any, payload: dict[str, Any]) -> None:
         """Fire every `run_completed` trigger waiting on the run that just finished (S122).

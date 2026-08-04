@@ -275,6 +275,8 @@ def poll_one(
     the real novelty/budget/seed logic without a network call. The seam is the same one the executor
     and `ScheduleService` use for their runners.
     """
+    from personalclaw.security import fence_untrusted
+
     spec = trigger.spec if isinstance(trigger.spec, dict) else {}
     url = str(spec.get("url", "") or "").strip()
     if not url:
@@ -337,7 +339,21 @@ def poll_one(
             "new_count": len(fresh),
             # The raw item keys the fire is ABOUT, so the action can say what changed. Capped: a
             # payload carrying 400 urls is a prompt nobody can afford.
-            "new_items": [raw for _, raw in fresh[:20]],
+            #
+            # FENCED with provenance at the source (§7/R4 rule c — S127). These strings came off a
+            # third-party page, and S126 closed the template sink; fencing HERE additionally means
+            # any future consumer of the payload inherits the marker and the origin rather than
+            # having to know that `new_items` is untrusted.
+            "new_items": [
+                fence_untrusted(
+                    raw,
+                    source=f"web_watch:{trigger.id}",
+                    source_type="web_watch",
+                    source_id=url,
+                    transformation_path="poll:extract-items",
+                )
+                for _, raw in fresh[:20]
+            ],
         },
         fetched=True,
     )
