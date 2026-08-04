@@ -98,7 +98,8 @@
         "config": {
           "kind": "judge",
           "risk": "safe",
-          "prompt": "Thesis: {{inputs.thesis}}\nInvalidators: {{nodes.weigh.output.invalidators | json}}\nStanding: {{nodes.weigh.output.standing}}\n\nDoes this record name conditions that would actually falsify the thesis, and does the standing follow from the evidence rather than restating the thesis? A tracker whose invalidators are empty or unreachable has become a scrapbook."
+          "prompt": "Thesis: {{inputs.thesis}}\nInvalidators: {{nodes.weigh.output.invalidators | json}}\nStanding: {{nodes.weigh.output.standing}}\n\nDoes this record name conditions that would actually falsify the thesis, and does the standing follow from the evidence rather than restating the thesis? A tracker whose invalidators are empty or unreachable has become a scrapbook.",
+          "evidence": "{{nodes.weigh.output.standing}}"
         }
       },
       {

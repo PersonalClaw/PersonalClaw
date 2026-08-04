@@ -23,6 +23,7 @@ import pytest
 from personalclaw.workflows.bindings import BindingContext
 from personalclaw.workflows.engine import (
     DEFAULT_MODEL_TIERS,
+    MAX_JUDGE_SAMPLES,
     MAX_WF_DEPTH,
     check_output_contract,
     dispatch,
@@ -510,6 +511,90 @@ class TestWaitAndGate:
         assert r.failure.failure_class == FailureClass.INTERNAL
 
 
+class TestJudgePreTier:
+    """The free rule tier that runs BEFORE any LLM judge call (LOOPS-EVOLUTION criterion 2).
+
+    The plan calls this "the single biggest token saver": anything rule-solvable — empty output, a
+    stub, a worker give-up — must never reach the probabilistic model. `judge_pretier.run_pretier`
+    shipped in session 30 with no caller; these tests pin the wiring, and each asserts the model was
+    NOT called on a rejection (the whole point is the saved completion).
+    """
+
+    async def _judge(self, cfg, *, evidence_present=True):
+        calls = {"n": 0}
+
+        async def completion(instruction, use_case=None, output_type=None):
+            calls["n"] += 1
+            return "PASS"
+
+        node = _n({"kind": "gate", "id": "j", "config": {"kind": "judge", **cfg}})
+        r = await dispatch_gate(node, _ctx(), now=0.0, completion=completion)
+        return r, calls["n"]
+
+    async def test_a_judge_with_NO_evidence_binding_is_unchanged(self) -> None:
+        """The additive contract: every judge shipped before S144 binds no `evidence`, so it must
+        behave exactly as before — reach the model. Screening it would reject a working gate as
+        "nothing to judge"."""
+        r, calls = await self._judge({"prompt": "does it meet the goal?"})
+        assert r.state == InstanceState.DONE
+        assert calls == 1
+
+    async def test_empty_evidence_is_rejected_without_a_model_call(self) -> None:
+        r, calls = await self._judge({"prompt": "judge it", "evidence": ""})
+        assert r.state == InstanceState.FAILED
+        assert calls == 0, "the model must NOT be called on a pre-tier rejection"
+        assert r.output["verdict"] == "REJECT"
+        assert r.output["failure_class"] == "empty_output"
+        assert r.output["pretier"] is True
+
+    async def test_a_stub_artifact_is_rejected_without_a_model_call(self) -> None:
+        r, calls = await self._judge({"prompt": "judge it", "evidence": "TODO: implement this"})
+        assert r.state == InstanceState.FAILED and calls == 0
+        assert r.output["failure_class"] == "stubbed_output"
+
+    async def test_a_worker_giveup_is_rejected_without_a_model_call(self) -> None:
+        r, calls = await self._judge(
+            {"prompt": "judge it", "evidence": "I was unable to complete this task."}
+        )
+        assert r.state == InstanceState.FAILED and calls == 0
+        assert r.output["failure_class"] == "worker_gave_up"
+
+    async def test_substantial_evidence_reaches_the_judge(self) -> None:
+        real = (
+            "The analysis shows a 12% improvement across three benchmarks, with the regression "
+            "isolated to the cache layer and fixed in commit abc123. Full methodology below."
+        )
+        r, calls = await self._judge({"prompt": "judge it", "evidence": real})
+        assert r.state == InstanceState.DONE
+        assert calls == 1, "real output must reach the judge, not be short-circuited"
+
+    async def test_min_chars_is_the_authors_substance_knob(self) -> None:
+        """A gate can demand more than the 20-char floor; below it, no model call."""
+        r, calls = await self._judge(
+            {"prompt": "judge it", "evidence": "short but real enough usually", "min_chars": 200}
+        )
+        assert r.state == InstanceState.FAILED and calls == 0
+        assert r.output["failure_class"] == "empty_output"
+
+    async def test_the_existence_gate_is_OFF_unless_counts_are_declared(self) -> None:
+        """A text-only judge must not be rejected for producing zero commits. The existence gate
+        only engages when the template supplies an `evidence_*` count."""
+        text = "A substantial, real deliverable with more than enough characters to judge here."
+        r_off, calls_off = await self._judge({"prompt": "j", "evidence": text})
+        assert r_off.state == InstanceState.DONE and calls_off == 1
+
+        r_on, calls_on = await self._judge(
+            {"prompt": "j", "evidence": text, "evidence_artifacts": 0, "evidence_commits": 0}
+        )
+        assert r_on.state == InstanceState.FAILED and calls_on == 0
+
+    async def test_a_rejection_is_terminal_not_retryable(self) -> None:
+        """A stub proven by rules will still be a stub on retry — the failure is non-recoverable, so
+        the engine escalates rather than spinning."""
+        r, _ = await self._judge({"prompt": "j", "evidence": "TODO"})
+        assert r.failure.recoverable is False
+
+
 class TestOutputContract:
     def test_must_be_json_accepts_objects_and_parseable_text(self) -> None:
         assert check_output_contract({"a": 1}, {"must_be_json": True}) == ""
@@ -570,3 +655,115 @@ class TestDispatchTable:
         assert r.state == InstanceState.FAILED
         assert r.failure.failure_class == FailureClass.INTERNAL
         assert "supervisor" in r.failure.cause_plain
+
+
+class TestJudgeSamples:
+    """`judge_samples` was DECLARED by a shipped template and read by NOTHING.
+
+    `goal-pursuit-open-ended`'s terminal `accept` gate carries `judge_samples: 3`, and its own
+    prompt tells the model why: "three independent samples of you are being asked — a single
+    judgement on a
+    terminal accept was measured to be indistinguishable from noise." Measured against the live
+    gate: ONE sample was taken, and a model returning PASS,REJECT,REJECT accepted the run on the
+    first word.
+
+    The aggregation rule is `judge_contract.aggregate_samples`', restated over this gate's own
+    vocabulary rather than imported — `verify.Verdict` is PASS/RETRY/ESCALATE/REJECT while
+    `judge_contract.Verdict` is PASS/REJECT/REPLAN/ESCALATE/NEEDS_INPUT, and feeding one to the
+    other's aggregator is the cross-vocabulary defect S130 found in the fail-mode classifier.
+    """
+
+    _EVIDENCE = (
+        "A substantial deliverable with plenty of characters for the pre-tier to allow through."
+    )
+
+    async def _judge(self, cfg, seq):
+        calls = {"n": 0}
+
+        async def completion(instruction, use_case=None, output_type=None):
+            value = seq[min(calls["n"], len(seq) - 1)]
+            calls["n"] += 1
+            return value
+
+        node = _n(
+            {
+                "kind": "gate",
+                "id": "accept",
+                "config": {
+                    "kind": "judge",
+                    "prompt": "accept?",
+                    "evidence": self._EVIDENCE,
+                    **cfg,
+                },
+            }
+        )
+        r = await dispatch_gate(node, _ctx(), now=0.0, completion=completion)
+        return r, calls["n"]
+
+    async def test_no_declaration_takes_ONE_sample(self) -> None:
+        """A gate that never asked for sampling must not start paying for it."""
+        r, calls = await self._judge({}, ["PASS"])
+        assert calls == 1
+        assert r.state == InstanceState.DONE
+
+    async def test_a_one_of_three_pass_is_REJECTED(self) -> None:
+        """🔴 The defect, as a test: this accepted the run."""
+        r, calls = await self._judge({"judge_samples": 3}, ["PASS", "REJECT", "REJECT"])
+        assert calls == 3, "all three samples must actually be taken"
+        assert r.state == InstanceState.FAILED
+        assert r.output["verdict"] == "REJECT"
+
+    async def test_a_two_of_three_pass_is_ACCEPTED(self) -> None:
+        r, calls = await self._judge({"judge_samples": 3}, ["PASS", "PASS", "REJECT"])
+        assert calls == 3
+        assert r.state == InstanceState.DONE
+        assert r.output["verdict"] == "PASS"
+
+    async def test_any_ESCALATE_outweighs_a_pass_majority(self) -> None:
+        """An escalation names a contradiction the others did not see — a fact, not an opinion, so
+        outvoting it would discard the one sample that noticed."""
+        r, _ = await self._judge({"judge_samples": 3}, ["PASS", "PASS", "ESCALATE"])
+        assert r.state == InstanceState.ESCALATED
+        assert r.output["verdict"] == "ESCALATE"
+
+    async def test_a_split_between_retry_and_reject_prefers_REJECT(self) -> None:
+        """A REJECT stops and asks; a RETRY spins. The safe reading of a split is the one that
+        does not loop."""
+        r, _ = await self._judge({"judge_samples": 2}, ["RETRY", "REJECT"])
+        assert r.output["verdict"] == "REJECT"
+        assert r.failure.recoverable is False
+
+    async def test_unanimous_retry_stays_RETRY_and_recoverable(self) -> None:
+        r, _ = await self._judge({"judge_samples": 3}, ["RETRY", "RETRY", "RETRY"])
+        assert r.output["verdict"] == "RETRY"
+        assert r.failure.recoverable is True
+
+    async def test_an_unparseable_sample_fails_the_whole_gate(self) -> None:
+        """A terminal accept decided from 2 of 3 samples is a quieter version of the single-sample
+        bug this session exists to fix, so an unparseable sample stops the gate where it stands."""
+        r, calls = await self._judge({"judge_samples": 3}, ["PASS", "banana", "PASS"])
+        assert calls == 2, "it must stop at the bad sample, not press on"
+        assert r.state == InstanceState.FAILED
+        assert r.failure.failure_class == FailureClass.PROTOCOL
+
+    @pytest.mark.parametrize("raw", [0, -3, "x", None, 1.9])
+    async def test_an_invalid_count_floors_to_one(self, raw) -> None:
+        r, calls = await self._judge({"judge_samples": raw}, ["PASS"])
+        assert calls == 1
+        assert r.state == InstanceState.DONE
+
+    async def test_the_count_is_CLAMPED(self) -> None:
+        """Each sample is a full reasoning-tier completion on a gate that runs every loop iteration,
+        so an author typo must not quietly cost 30x."""
+        r, calls = await self._judge({"judge_samples": 30}, ["PASS"] * 30)
+        assert calls == MAX_JUDGE_SAMPLES
+        assert r.state == InstanceState.DONE
+
+    async def test_tokens_are_summed_over_EVERY_sample(self) -> None:
+        """🔴 Found in my own first draft: a 3-sample gate reported one sample's tokens, so the loop
+        breaker's `max_tokens` and the run cost cap under-counted 3x exactly where sampling makes a
+        gate most expensive. A meter that reads low on the expensive path is worse than none."""
+        one, _ = await self._judge({}, ["PASS"])
+        three, _ = await self._judge({"judge_samples": 3}, ["PASS", "PASS", "PASS"])
+        assert one.tokens > 0
+        assert three.tokens == one.tokens * 3

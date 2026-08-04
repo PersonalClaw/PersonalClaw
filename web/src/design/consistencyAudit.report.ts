@@ -11,7 +11,8 @@
 // companion test (consistencyAudit.test.ts) or import scanDrift() directly.
 
 import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { createRequire } from 'node:module'
+import { dirname, join, relative, resolve } from 'node:path'
 
 export type DriftCategory =
   | 'color'      // raw hex / rgb() / hsl() color literals
@@ -297,4 +298,147 @@ export function countInlineFontWeights(): { total: number; byFile: Record<string
     if (n) { byFile[rel] = n; total += n }
   }
   return { total, byFile }
+}
+
+// ── Inert-utility scan (issue #556) ─────────────────────────────────────────
+// A `text-*`/`bg-*`/`border-*` class naming a token that does not exist is not
+// a lint nit — it emits NO CSS at all, so the styling is silently absent and
+// the element renders at whatever it inherited. That is invisible to every
+// existing rail: token-lint checks raw hex/px (a wrong VALUE), primitive-
+// adoption checks bespoke elements, and TypeScript never sees inside a string.
+// ConflictPanel.tsx shipped five such classes (`text-muted`, `border-border`,
+// `bg-accent-subtle`, `text-accent`) and the panel had no visual hierarchy.
+//
+// The oracle is Tailwind itself, not a token-name list: we load the real design
+// system from design/tokens.css and ask it to compile each candidate. A class
+// that compiles to nothing is inert. Asking the compiler (rather than
+// regex-matching `--color-*` names) is what makes this correct for the whole
+// utility surface — variants (`hover:`, `group-hover/dock:`), opacity modifiers
+// (`/40`), arbitrary values (`text-[0.75rem]`, `border-l-[3px]`), non-color
+// utilities that share the prefixes (`text-center`, `border-t`, `bg-gradient-
+// to-br`) and static colors (`bg-white`) all resolve exactly as they do in the
+// build, so none of them can become a false positive.
+
+/** A utility class that Tailwind compiles to nothing — it emits no CSS. */
+export interface InertUtilityHit {
+  file: string        // relative to web/src
+  line: number
+  /** The full candidate as written, variants included (e.g. `hover:bg-surface-2`). */
+  utility: string
+  /** The bare utility with variants and any opacity modifier stripped. */
+  base: string
+}
+
+/** Compiles a Tailwind candidate against the app's real design system. */
+export type UtilityOracle = (candidate: string) => boolean
+
+/** Loads design/tokens.css into a live Tailwind design system and returns an
+ *  oracle that reports whether a candidate class emits any CSS. Tailwind's
+ *  loader is the same one @tailwindcss/vite drives at build time, so the answer
+ *  matches the shipped bundle by construction. */
+export async function loadUtilityOracle(): Promise<UtilityOracle> {
+  const { __unstable__loadDesignSystem } = await import('tailwindcss')
+  const require_ = createRequire(import.meta.url)
+  const entry = join(SRC, 'design/tokens.css')
+  const ds = await __unstable__loadDesignSystem(readFileSync(entry, 'utf8'), {
+    base: dirname(entry),
+    loadStylesheet: async (id: string, base: string) => {
+      // `@import "tailwindcss"` resolves through node, everything else is relative.
+      const path = id === 'tailwindcss' ? require_.resolve('tailwindcss/index.css') : resolve(base, id)
+      return { path, base: dirname(path), content: readFileSync(path, 'utf8') }
+    },
+    // tokens.css is pure CSS — a plugin/config import would mean the entry
+    // changed shape, and silently returning an empty module would make every
+    // plugin utility look inert. Fail loudly instead.
+    loadModule: async (id: string) => {
+      throw new Error(`inert-utility scan: unexpected JS import ${id} from tokens.css`)
+    },
+  })
+  return (candidate: string) => ds.candidatesToCss([candidate])[0] !== null
+}
+
+/** Class selectors hand-authored in design/*.css (`.text-shimmer`, `.glass`, …).
+ *  These are real CSS but Tailwind knows nothing about them, so they'd read as
+ *  inert. Reading the selectors keeps the exemption self-maintaining. */
+function handAuthoredClasses(): Set<string> {
+  const out = new Set<string>()
+  const dir = join(SRC, 'design')
+  for (const entry of readdirSync(dir)) {
+    if (!entry.endsWith('.css')) continue
+    const text = readFileSync(join(dir, entry), 'utf8')
+    for (const m of text.matchAll(/\.(-?[a-zA-Z_][\w-]*)/g)) out.add(m[1])
+  }
+  return out
+}
+
+/** Extracts the VALUE of every `className=`/`class=` attribute — a quoted
+ *  string, or a balanced-brace expression (template literals, ternaries,
+ *  concatenations). Scoping to these regions is what keeps prose, SVG attribute
+ *  allowlists (`'text-anchor'`) and doc-comment class names out of the scan. */
+function classAttributeRegions(text: string): { offset: number; body: string }[] {
+  const out: { offset: number; body: string }[] = []
+  const re = /\bclass(?:Name)?\s*=\s*/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text))) {
+    const i = m.index + m[0].length
+    if (text[i] === '{') {
+      let depth = 0
+      let j = i
+      for (; j < text.length; j++) {
+        if (text[j] === '{') depth++
+        else if (text[j] === '}') { depth--; if (!depth) break }
+      }
+      out.push({ offset: i + 1, body: text.slice(i + 1, j) })
+    } else if (text[i] === '"' || text[i] === "'" || text[i] === '`') {
+      const j = text.indexOf(text[i], i + 1)
+      if (j > 0) out.push({ offset: i + 1, body: text.slice(i + 1, j) })
+    }
+  }
+  return out
+}
+
+// Split a className body on characters that can't appear in a Tailwind class,
+// so each token is a WHOLE candidate — variants and modifiers attached. Handing
+// the compiler a whole token is essential: `bg-primary` alone is valid, so a
+// scanner that stripped `group-hover/handle:` off `group-hover/handle:bg-primary`
+// would test a different class than the one in the source.
+const CLASS_TOKEN_SPLIT = /[^A-Za-z0-9_@:./![\]%&>*+~(),#='"-]+|["'`]/
+// Only utilities in the three prefixes this guard covers (bare or after a variant).
+const SCANNED_PREFIX = /(?:^|:)!?-?(?:text|bg|border)-/
+
+/** Scans every `className` in web/src for utilities that compile to no CSS. */
+export async function scanInertUtilities(): Promise<InertUtilityHit[]> {
+  const isLive = await loadUtilityOracle()
+  const handAuthored = handAuthoredClasses()
+  const hits: InertUtilityHit[] = []
+  for (const file of walk(SRC)) {
+    const rel = relative(SRC, file).replace(/\\/g, '/')
+    const text = readFileSync(file, 'utf8')
+    const lineStarts = [0]
+    for (let i = 0; i < text.length; i++) if (text[i] === '\n') lineStarts.push(i + 1)
+    const lineAt = (idx: number) => {
+      let lo = 0
+      let hi = lineStarts.length - 1
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1
+        if (lineStarts[mid] <= idx) lo = mid
+        else hi = mid - 1
+      }
+      return lo + 1
+    }
+    for (const { offset, body } of classAttributeRegions(text)) {
+      let cursor = 0
+      for (const token of body.split(CLASS_TOKEN_SPLIT)) {
+        const at = body.indexOf(token, cursor)
+        cursor = at + token.length
+        if (!token || !SCANNED_PREFIX.test(token)) continue
+        const bare = token.replace(/^.*:/, '').replace(/^!/, '')
+        const base = bare.replace(/\/(?:\d+|\[[^\]]*\])$/, '')
+        if (handAuthored.has(base)) continue
+        if (isLive(token)) continue
+        hits.push({ file: rel, line: lineAt(offset + at), utility: token, base })
+      }
+    }
+  }
+  return hits
 }

@@ -1553,15 +1553,47 @@ class RunController:
                 self._apply(entry, result)
             self._persist_state()
 
+    def _node_stall_window(self, path: str) -> int:
+        """This node's stall window: its own `timeout_stall_secs`, else the run-level default.
+
+        🔴 The per-node override was DECLARED BY FOUR SHIPPED TEMPLATES AND READ BY NOTHING (S147).
+        `design-project.refine` asks 600s, `general-project.project` 900s,
+        `goal-pursuit-open-ended.work` 900s and `goal-pursuit-verifiable.work` 1200s — and
+        `_enforce_stall_timeouts` consulted only `services.node_timeout_stall`, so every one of them
+        silently got the 300s default and a legitimately slow node was killed as wedged.
+
+        That is the WRONG DIRECTION to fail in. `timeout_stall` is supposed to mean "silent", not
+        "slow" (the heartbeat in `engine._wait_with_progress` exists precisely to keep that
+        distinction), and a node whose author measured it needing 20 minutes being cancelled at 5 is
+        the failure the knob was added to prevent.
+
+        A node may only RAISE its window, never lower it below the run default: that value is the
+        operator's floor for how long a silent node may sit, and letting a template shorten it would
+        let a bundled spec tighten an operator's policy. Zero/invalid falls back to the default
+        rather than disabling the check — a malformed knob must not switch a safety timeout off.
+        """
+        node = dict(_walk(self.root)).get(_base_path(path))
+        default = int(self.services.node_timeout_stall or 0)
+        raw = (node.config or {}).get("timeout_stall_secs") if node is not None else None
+        try:
+            declared = int(raw) if raw is not None else 0
+        except (TypeError, ValueError):
+            declared = 0
+        return max(default, declared) if declared > 0 else default
+
     def _enforce_stall_timeouts(self) -> None:
         """Kill nodes that have gone silent. The stall knob is separate from the total
-        knob on purpose: a long-but-progressing node survives, a wedged one does not."""
-        stall = self.services.node_timeout_stall
-        if not stall or stall <= 0:
+        knob on purpose: a long-but-progressing node survives, a wedged one does not.
+
+        The window is PER NODE (`_node_stall_window`) — see that method for the four shipped
+        templates whose declared override was inert.
+        """
+        if not self.services.node_timeout_stall or self.services.node_timeout_stall <= 0:
             return
         now = time.time()
         for path, entry in list(self._inflight.items()):
-            if now - entry.last_progress < stall:
+            stall = self._node_stall_window(path)
+            if stall <= 0 or now - entry.last_progress < stall:
                 continue
             entry.task.cancel()
             self._inflight.pop(path, None)
@@ -1569,8 +1601,9 @@ class RunController:
             failure = Failure(
                 failure_class=FailureClass.TIMEOUT,
                 cause_plain=f"no progress for {stall}s (timeout_stall)",
-                remediation="the node produced no progress events; check the provider "
-                "or raise workflows.default_node_timeout_stall_secs",
+                remediation="the node produced no progress events; check the provider, raise this "
+                "node's `timeout_stall_secs`, or raise "
+                "workflows.default_node_timeout_stall_secs",
                 recoverable=True,
             )
             inst.state = InstanceState.FAILED

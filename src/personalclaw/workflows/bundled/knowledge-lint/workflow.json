@@ -126,7 +126,8 @@
                   "config": {
                     "kind": "judge",
                     "risk": "safe",
-                    "prompt": "The cluster's inputs were given in this prompt:\n{{item.prompt}}\n\nThe consolidated result:\n{{nodes.condense.output.content}}\n\nWas every distinct detail preserved, and were disagreements recorded rather than resolved? The doctrine is consolidate-never-generate: a fact that entered the cluster and is absent from the result has been destroyed, and no later pass can tell."
+                    "prompt": "The cluster's inputs were given in this prompt:\n{{item.prompt}}\n\nThe consolidated result:\n{{nodes.condense.output.content}}\n\nWas every distinct detail preserved, and were disagreements recorded rather than resolved? The doctrine is consolidate-never-generate: a fact that entered the cluster and is absent from the result has been destroyed, and no later pass can tell.",
+                    "evidence": "{{nodes.condense.output.content}}"
                   }
                 }
               ]

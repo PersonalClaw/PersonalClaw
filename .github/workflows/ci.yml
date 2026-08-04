@@ -74,9 +74,12 @@ jobs:
         # Includes the design-system consistency rails (plan DESIGN-SYSTEM-CONSISTENCY,
         # C1/T3.4): tokenLint.test.ts (token-lint-strict — no raw hex/px outside the
         # shrinking allowlist) + primitiveAdoption.test.ts (bespoke-chrome ratchet:
-        # raw <button>/<input>/dialog counts may only shrink). A new hardcoded value
-        # or a new bespoke element turns this step — and CI — red. (The axe-per-route
-        # a11y rail lives in web/e2e/ and mounts here once the harness auth-seed lands.)
+        # raw <button>/<input>/dialog counts may only shrink) + inertUtilities.test.ts
+        # (a text-*/bg-*/border-* class must compile to real CSS — a name with no
+        # token emits NOTHING and styles silently vanish). A new hardcoded value, a
+        # new bespoke element, or a new inert utility turns this step — and CI — red.
+        # (The axe-per-route a11y rail lives in web/e2e/ and mounts here once the
+        # harness auth-seed lands.)
         run: npm run test:web
       - name: build (tsc + vite)
         run: npm run build

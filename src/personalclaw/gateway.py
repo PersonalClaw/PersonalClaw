@@ -311,6 +311,7 @@ class GatewayOrchestrator:
         self.conv_log: ConversationLog | None = None
         self.consolidator: HistoryConsolidator | None = None
         self._file_watch_task: "asyncio.Task[None] | None" = None  # S93 file-watch poll loop
+        self._web_watch_task: "asyncio.Task[None] | None" = None  # S121 web_watch poll loop
         self._clock_task: "asyncio.Task[None] | None" = None  # S100 unified clock loop
         self._reaper_task: "asyncio.Task[None] | None" = None  # S106 trigger reaper
         self._running_script_ids: set[str] = set()  # zero-token jobs in flight
@@ -366,7 +367,8 @@ class GatewayOrchestrator:
 
             # Resolve session: use explicit session, or try to find from active dashboard session
             # Heuristic fallback: picks first running session (dict insertion order). Not guaranteed
-            # to be the correct session for subagents, but explicit session param is the primary path.  # noqa: E501
+            # to be the correct session for subagents, but explicit session param
+            # is the primary path.  # noqa: E501
             resolved_session = ""
             if not resolved_session and self.dashboard_state and self.dashboard_state._sessions:
                 # Heuristic: pick first running session (insertion order)
@@ -883,6 +885,59 @@ class GatewayOrchestrator:
         if provider is None:
             logger.warning("trigger %s: unknown action provider %r", trigger.id, provider_name)
             return
+
+        # 🔴 THE INJECTION SCREEN, on the payload that actually carries untrusted text (§7/R4 rule a
+        # — S134). `FireContext.payload_text` defaulted to "" and `service.tick` never set
+        # it, so `evaluate`'s `if ctx.payload_text:` was permanently false — the
+        # screen had NEVER run
+        # on a real fire, while every ledger row listed `screen` among the gates
+        # PASSED. And the kinds
+        # that DO carry third-party prose (web_watch items, file changes) never reach that walk at
+        # all: they are dispatched straight here.
+        #
+        # Screened HERE rather than by threading a payload back into `tick`, because this is the one
+        # place every polled payload passes through on its way to a provider — the same reasoning
+        # S122 used for chaining. A blocked payload is NEVER auto-retried (`blocked_injection` is
+        # terminal by design), which is also why `payload_text_for` reads an allowlist of prose-
+        # carrying keys instead of screening ids and URLs that would produce false blocks.
+        from personalclaw.triggers import screen as screen_mod
+        from personalclaw.triggers.screen import payload_text_for
+        from personalclaw.triggers.screen import screen as screen_text
+
+        untrusted = payload_text_for(payload, kind=str(getattr(trigger, "kind", "") or ""))
+        if untrusted:
+            verdict = screen_text(untrusted)
+            if getattr(verdict, "verdict", "") == "blocked":
+                groups = ", ".join(getattr(verdict, "groups", ()) or ()) or "injection"
+                logger.warning(
+                    "trigger %s: payload blocked by the injection screen (%s); not retried",
+                    trigger.id,
+                    groups,
+                )
+                # 🔴 A TYPED LEDGER ROW, not just a log line (§7 crit 8). S134 wired the
+                # screen here and recorded the row as still owed: this path is not a `tick` fire,
+                # so nothing wrote one. A refusal only a log knows about is a silent drop by
+                # criterion 8's own definition — the user sees an automation that stopped, with the
+                # reason in a file they will not read. And `blocked_injection` NEVER auto-retries,
+                # so this row is the only record that will ever exist for this fire.
+                await self._record_blocked_fire(trigger, groups)
+                self._push_trigger_refresh()
+                return
+            # 🔴 FENCE-AND-PROCEED, which nothing actually did (§7/R4 rule c).
+            # `Verdict.SUSPICIOUS` exists precisely so a payload can be fenced and still run —
+            # `screen_to_outcome` maps it to `ran` on the stated grounds that "the payload is FENCED
+            # and the run proceeds". Only `web_watch` fenced (at origin), so a
+            # `persona_hijack` payload from webhook/event/file reached the provider VERBATIM.
+            #
+            # Fenced for CLEAN too, not only suspicious: the screen is a pattern matcher and its
+            # clean verdict means "no known pattern", not "trustworthy". This text still crossed the
+            # trust boundary, and every other ingestion seam in the codebase fences it
+            # unconditionally (`web/fetch`, `inbox_service`, `event_triggers`, `bindings`). Fencing
+            # only what a matcher flagged would make the guarantee depend on the corpus being
+            # complete, which is the one thing a pattern corpus never is.
+            payload = screen_mod.fence_payload(
+                payload, kind=str(getattr(trigger, "kind", "") or ""), trigger_id=trigger.id
+            )
         # 🔴 RESOLVE `{{secret:KEY}}` HERE, at dispatch (§7 item 6 / decision 11). Workflows
         # have carried this form since WF2-R14 and three surfaces tell the author to use it, but a
         # TRIGGER action passed the literal placeholder to the provider — measured: a bash command
@@ -909,9 +964,66 @@ class GatewayOrchestrator:
             # per-action override lives in the config and is honoured by the provider itself (both
             # `bash` and `run-script` prefer `action_config["timeout"]`), so this is only the floor.
             timeout = 300 if provider_name == "bash" else 30
-            await provider.execute(config, ctx, timeout=timeout)
-        except Exception:  # noqa: BLE001 - a failed fire is logged, never crashes the loop
+            # 🔴 THE RESULT WAS DISCARDED (§3.7 / crit 3). `await provider.execute(...)` threw
+            # its return value away, so nothing on this path knew if a fire SUCCEEDED. Measured:
+            # six consecutive failing provider runs left `health_status: 'ok'` with an empty
+            # `last_failure_at` and `enabled: True` — criterion 3's "autopause after 5" could not
+            # possibly hold, because the whole `autopause` module (13 functions) was imported by NO
+            # production code and the counter it spends had no writer.
+            # 🔴 BIND the per-fire run scope so model spend is ATTRIBUTABLE.
+            # `SpendMeter.charge` has accepted `run_key=` since guardrails landed and its only
+            # production caller never passed one, so `run_totals` was permanently empty — which is
+            # why `cost_cap`/`max_cost_usd_per_run` sat in `UNMETERED_CAPS` for twenty sessions. A
+            # ContextVar rather than a parameter: the guard is built by `provider_bridge` from
+            # provider config and has no run identity, and threading one in would touch all 33 call
+            # sites that reach the bridge.
+            #
+            # Keyed per FIRE, not per trigger: `max_cost_usd_per_run` is a per-run cap, and a
+            # trigger-scoped key would accumulate across fires and make the second fire of a
+            # healthy automation look over budget. Reset in a `finally` so a raising
+            # provider cannot leak the scope into the next fire on this task.
+            #
+            # 🔴 S154 completes it: binding the KEY made spend attributable, and binding the
+            # CEILING beside it makes `max_cost_usd_per_run` enforceable. Both are ambient for
+            # the same reason — the guard is built from provider config and never sees the
+            # trigger. `run_budget_for` reads only `max_cost_usd_per_run`; `cost_cap` is a
+            # per-window promise with no durable per-window store, so it stays unmetered
+            # rather than being silently re-defined as per-run.
+            from personalclaw.guardrails.budgets import (
+                get_meter,
+                reset_current_run_budget,
+                reset_current_run_key,
+                set_current_run_budget,
+                set_current_run_key,
+            )
+            from personalclaw.triggers.calendar import run_budget_for
+
+            run_key = f"trigger:{trigger.id}:{int(time.time() * 1000)}"
+            run_token = set_current_run_key(run_key)
+            # `getattr` rather than `trigger.gates`, matching this path's house style (`kind`,
+            # `id`, `delivery` are all read the same way): the fire path is driven with partial
+            # trigger shapes, and a ceiling lookup must never be what turns a fire into an error.
+            budget_token = set_current_run_budget(run_budget_for(getattr(trigger, "gates", None)))
+            try:
+                result = await provider.execute(config, ctx, timeout=timeout)
+            finally:
+                reset_current_run_budget(budget_token)
+                reset_current_run_key(run_token)
+                # 🔴 DROP the per-fire counter. `SpendMeter.end_run` shipped with the module and
+                # had NO caller, and the per-FIRE keying turned that into a real leak:
+                # measured 5000 distinct keys retained after 5000 fires, held for the life of a
+                # gateway process that is meant to run for months. The cap is enforced DURING
+                # the run, so the total has no reader once the fire is over.
+                try:
+                    get_meter().end_run(run_key)
+                except Exception:  # noqa: BLE001 - bookkeeping must not mask a fire's outcome
+                    logger.debug("end_run failed for %s", run_key, exc_info=True)
+            await self._record_fire_outcome(trigger, result=result)
+            self._deliver_fire_outcome(trigger, ok=bool(getattr(result, "success", True)))
+        except Exception as exc:  # noqa: BLE001 - a failed fire is logged, never crashes the loop
             logger.warning("trigger %s: action failed", trigger.id, exc_info=True)
+            await self._record_fire_outcome(trigger, exc=exc)
+            self._deliver_fire_outcome(trigger, ok=False, error=f"{type(exc).__name__}: {exc}")
         finally:
             # 🔴 THE LIVE REFRESH. `ScheduleService._record_run` pushed `cron_history` so
             # the Executions/Logs views update without polling — and `_record_run` is reachable only
@@ -919,6 +1031,334 @@ class GatewayOrchestrator:
             # cutover a SCHEDULED fire updated no open view: the user watched a stale page until
             # navigating. In a `finally` because a FAILED fire is the one someone is watching for.
             self._push_trigger_refresh()
+            # 🔴 THE CHAIN. `run_completed` was a declared kind with NO firing path: measured,
+            # a `run_completed` trigger pointed at a real clock trigger was reached by nothing — not
+            # the tick, not either poller. So "when my nightly backup finishes, notify me" was
+            # creatable, listed in the UI, and permanently silent.
+            #
+            # Chained HERE because this is the single point every store-backed run completes, so a
+            # chain inherits the same dispatch — and therefore the same gates, including the kill
+            # switch and the capability fence. A chain with its own dispatch path would be a second
+            # place for those controls to be forgotten, which is exactly how the `web_watch` gap
+            # happened. After the refresh, so a slow chain never delays the view update.
+            await self._fire_chained_triggers(trigger, payload)
+
+    def _surface_missed_review(self, report: dict[str, Any]) -> None:
+        """Put the boot's missed-fire review in front of the user (§3.4 / crit 7 — S142).
+
+        Criterion 7 says "missed slots appear in the review card". §3.4's rule is REVIEW, don't lie
+        and don't storm: a boot that silently caught everything up is the storm, and one that says
+        nothing is the lie. So the review becomes ONE notification naming the count, not one per
+        missed slot — a laptop opened after a weekend would otherwise deliver hundreds.
+
+        Silent when nothing was missed, deliberately: "0 automations missed a run" on every restart
+        trains the user to dismiss the notification that matters. Goes through `state.notify` like
+        every other substrate notification (R18 — no second path), so a muted channel stays muted.
+        Never raises: the sweep already re-armed the schedule, and failing to announce it must not
+        undo that.
+        """
+        try:
+            state = getattr(self, "dashboard_state", None)
+            if state is None:
+                return
+            review = report.get("review") or {}
+            rows = review.get("rows") or []
+            summaries = review.get("summaries") or []
+            total = len(rows) + sum(int(s.get("count", 0) or 0) for s in summaries)
+            if total <= 0:
+                return
+            affected = len(
+                {str(r.get("trigger_id", "")) for r in rows}
+                | {str(s.get("trigger_id", "")) for s in summaries}
+            )
+            caught_up = [c for c in (report.get("catch_up") or []) if c.get("catching_up")]
+            body = (
+                f"{total} scheduled run{'s' if total != 1 else ''} were missed across "
+                f"{affected} automation{'s' if affected != 1 else ''} while PersonalClaw was not "
+                "running. Review them and choose what to run now."
+            )
+            if caught_up:
+                body += (
+                    f" {len(caught_up)} with catch-up enabled will fire once, staggered, "
+                    "on their own."
+                )
+            state.notify(
+                kind="info",
+                title="Missed scheduled runs",
+                body=body,
+                meta={
+                    "event": "automation.missed_review",
+                    "statusUrl": "#/triggers",
+                    "missed": total,
+                    "triggers": affected,
+                    "caught_up": len(caught_up),
+                    "truncated": bool(review.get("truncated")),
+                },
+            )
+        except Exception:  # noqa: BLE001 - see the docstring
+            logger.debug("could not surface the missed-fire review", exc_info=True)
+
+    def _surface_attention_card(self, trigger: Any, decision: Any) -> None:
+        """Put an autopaused/quarantined trigger in front of the user (crit 3 — S141).
+
+        🔴 `attention_card` returns None for a still-firing or parked trigger, which is why the
+        control flow here is "if card: send it" — the module deliberately makes it impossible to
+        write a card that says nothing.
+
+        Deduped on the card's own FINGERPRINT, not the delivery event id: a fingerprint is
+        `(trigger_id, state)`, so re-entering the same paused state does not re-alert, while a
+        trigger that goes autopaused → resumed → autopaused legitimately alerts twice.
+        `is_duplicate_card` owns that comparison; the seen-set lives here as the delivery one does.
+
+        Goes through `state.notify` like every other substrate notification (R18: no second path),
+        so a muted channel stays muted. Never raises — the pause already happened, and failing to
+        announce it must not undo it.
+        """
+        try:
+            from personalclaw.triggers import autopause
+
+            state = getattr(self, "dashboard_state", None)
+            if state is None:
+                return
+            card = autopause.attention_card(
+                trigger_id=str(getattr(trigger, "id", "") or ""),
+                trigger_name=str(getattr(trigger, "name", "") or ""),
+                decision=decision,
+                last_error=str(getattr(trigger, "last_error_summary", "") or ""),
+            )
+            if card is None:
+                return
+            if not hasattr(self, "_attention_fingerprints"):
+                self._attention_fingerprints: set[str] = set()
+            if autopause.is_duplicate_card(card.fingerprint, self._attention_fingerprints):
+                return
+            state.notify(
+                kind="warning",
+                title=card.title,
+                body=card.body,
+                meta={
+                    "event": "automation.needs_attention",
+                    "statusUrl": f"#/triggers?open={card.trigger_id}",
+                    "trigger_id": card.trigger_id,
+                    "state": card.state,
+                    "actions": list(card.actions),
+                },
+            )
+            self._attention_fingerprints.add(card.fingerprint)
+        except Exception:  # noqa: BLE001 - see the docstring
+            logger.debug("could not surface the attention card for %s", trigger, exc_info=True)
+
+    def _deliver_fire_outcome(self, trigger: Any, *, ok: bool, error: str = "") -> None:
+        """Notify the user about a completed fire, with a deep link (§R18 / crit 10 — S140).
+
+        🔴 WHY THIS EXISTS. `triggers/delivery.py` implements criterion 10 in full — `statusUrl`
+        deep links, stable event ids for retry dedup, `is_duplicate`, destination formatting — but
+        `build_delivery` had no caller outside `executor.delivery_for`, which itself had none.
+        Driven first: a completed fire produced no notification and no `statusUrl` anywhere under
+        the home. Two dead layers, the same shape as S139's autopause chain.
+
+        Routes through `state.notify`, which is `deliver`'s own contract: R18 says "the substrate
+        does not build a second notification path", so the existing `notification_allowed` gate and
+        the per-(source, kind) rule both still apply. A muted channel stays muted.
+
+        The dedup set lives on the orchestrator, which is the honest scope: the retry window is a
+        transport concern, and an in-memory set is right for one gateway process — a persisted one
+        would claim a durability this path does not have. `event_id` is stable across
+        retries by construction, so a redelivery inside the process is suppressed.
+
+        Never raises. A notification failure must not fail the run that already completed.
+        """
+        try:
+            from personalclaw.triggers import delivery as _delivery
+
+            state = getattr(self, "dashboard_state", None)
+            if state is None:
+                return
+            if not hasattr(self, "_delivered_event_ids"):
+                self._delivered_event_ids: set[str] = set()
+            note = _delivery.build_delivery(
+                trigger_id=str(getattr(trigger, "id", "") or ""),
+                trigger_name=str(getattr(trigger, "name", "") or ""),
+                ok=ok,
+                summary=error[:200],
+                destination=str(getattr(trigger, "delivery", "") or ""),
+            )
+            _delivery.deliver(state, note, delivered_ids=self._delivered_event_ids)
+        except Exception:  # noqa: BLE001 - see the docstring
+            logger.debug("could not deliver the fire outcome for %s", trigger, exc_info=True)
+
+    async def _record_fire_outcome(
+        self, trigger: Any, *, result: Any = None, exc: BaseException | None = None
+    ) -> None:
+        """Record a fire's outcome and autopause a failing trigger (§3.7 / crit 3 — S139).
+
+        🔴 WHY THIS EXISTS. `triggers/autopause.py` ships 13 functions implementing criterion 3 —
+        typed exits, a 5-failure budget, parking for transport outages, immediate pause for config
+        errors, the attention card — and **not one production module imported it**. Driven before
+        writing: six failing provider runs left the trigger `enabled`, `health_status: 'ok'`, and
+        an empty `last_failure_at`. The decision engine was complete and unreachable.
+
+        The counter is DERIVED from the run ledger, not stored on the row, because
+        `LEGACY_FIELD_MAP` says exactly that: *"autopause counter is derived from fire records"*. A
+        copy on the trigger would be a second truth that can disagree with the ledger it summarises.
+
+        Never raises. A bookkeeping failure must not turn a completed fire into a crashed one — the
+        outcome already happened, and losing the record is strictly better than losing the loop.
+        """
+        try:
+            from personalclaw.config.loader import config_dir
+            from personalclaw.schedule_history import ScheduleRun
+            from personalclaw.triggers import autopause
+            from personalclaw.triggers.models import TriggerState
+            from personalclaw.triggers.store import TriggerStore
+
+            trigger_id = str(getattr(trigger, "id", "") or "")
+            if not trigger_id:
+                return
+
+            if exc is not None:
+                # A RAISING provider is classified by exception type: auth → transport → config →
+                # failed, so a credential outage PARKS rather than spending the failure budget.
+                exit_type = autopause.classify_exception(exc)
+            elif result is not None and not bool(getattr(result, "success", True)):
+                # A provider that returned `success=False` without raising carries no exception to
+                # classify, so it reads as a plain FAILED — the fail-safe direction the module's own
+                # `classify_exception(None)` takes for an unrecognised error.
+                exit_type = autopause.ExitType.FAILED.value
+            else:
+                exit_type = autopause.ExitType.OK.value
+
+            # 🔴 WRITE THE ROW FIRST, then count. The counter reads the run
+            # ledger, and the store-backed fire path wrote NO row per fire — so the count was
+            # permanently 0 and a trigger could fail forever. `_record_run` died with
+            # `ScheduleService` and nothing replaced it on this path, which is why parking
+            # (stateless, from the exception type) worked while the BUDGET (stateful) did not.
+            store_runs = ScheduleRunStore(config_dir())
+            now = time.time()
+            await store_runs.append(
+                ScheduleRun(
+                    run_id=f"fire-{int(now * 1000)}",
+                    job_id=trigger_id,
+                    trigger=exit_type,
+                    started_at=now,
+                    finished_at=now,
+                    status="success" if exit_type == autopause.ExitType.OK.value else "failure",
+                    error="" if exc is None else f"{type(exc).__name__}: {exc}"[:200],
+                )
+            )
+            # 🔴 The count must be the streak BEFORE this fire: `evaluate` adds its own unit
+            # (`count = consecutive_failures + 1`, then pauses at the threshold). Counting the row
+            # just written would double-count and pause after FOUR failures — caught by driving the
+            # 4-then-success-then-1 sequence, which paused on the fourth.
+            runs, _total = await store_runs.list_for_job(trigger_id, 0, 20)
+            prior = max(0, autopause.consecutive_failures_from(runs) - 1)
+
+            decision = autopause.evaluate(
+                exit_type=exit_type,
+                consecutive_failures=prior,
+                now=time.time(),
+                quarantined=str(getattr(trigger, "state", "")) == TriggerState.QUARANTINED.value,
+            )
+
+            store = TriggerStore(base_dir=config_dir())
+            row = store.get(trigger_id)
+            if row is None:
+                return
+            live = row.trigger
+            live.health_status = decision.health
+            live.state = decision.state
+            from datetime import datetime, timezone
+
+            stamp = datetime.now(timezone.utc).isoformat()
+            if exit_type == autopause.ExitType.OK.value:
+                live.last_success_at = stamp
+            else:
+                live.last_failure_at = stamp
+                live.last_error_summary = decision.reason[:200]
+            # 🔴 The PAUSE itself, which is the whole point: a state the module classifies as
+            # needing attention must stop firing. Leaving `enabled` True while labelling the row
+            # "autopaused" would be the inert control this program keeps finding.
+            if autopause.needs_attention(decision.state):
+                live.enabled = False
+                logger.warning(
+                    "trigger %s autopaused: %s", trigger_id, decision.reason or decision.state
+                )
+            store.upsert(live)
+            # 🔴 Criterion 3's SECOND clause — "and surfaces in the Runs inbox".
+            # `attention_card`, `inbox_fingerprint` and `is_duplicate_card` were all dead: an
+            # autopaused automation stopped silently, and a trigger that stops without saying so is
+            # indistinguishable from one that finished. The card is what turns the state change into
+            # something the user can act on.
+            self._surface_attention_card(live, decision)
+        except Exception:  # noqa: BLE001 - see the docstring
+            logger.debug("could not record the fire outcome for %s", trigger, exc_info=True)
+
+    async def _record_blocked_fire(self, trigger: Any, groups: str) -> None:
+        """Write the `blocked_injection` ledger row for a screened payload (§7 crit 8 — S136).
+
+        ASYNC because `ScheduleRunStore.append` is. mypy caught the sync version as an
+        unused coroutine — i.e. the row would never have been written at all, which is a
+        neater demonstration of this session's own theme than anything I could contrive.
+
+        Best-effort by construction: a bookkeeping failure must not change the SECURITY decision.
+        The payload is refused before this runs, so the worst case is a refusal with no row —
+        exactly what S134 shipped and this closes, never a re-opened hole.
+
+        The screened TEXT is deliberately not stored. Criterion 11's discipline generalises: a
+        blocked payload is hostile third-party content, and copying it into a store the UI renders
+        would move an injection attempt out of a refused fire and into a surface a human reads. The
+        matched GROUPS name the pattern class, which is what tells a real attack from a false
+        positive.
+        """
+        try:
+            import time as _time
+
+            from personalclaw.config.loader import config_dir
+            from personalclaw.schedule_history import ScheduleRun
+
+            now = _time.time()
+            await ScheduleRunStore(config_dir()).append(
+                ScheduleRun(
+                    run_id=f"blocked-{int(now * 1000)}",
+                    job_id=str(getattr(trigger, "id", "") or ""),
+                    trigger="blocked_injection",
+                    started_at=now,
+                    finished_at=now,
+                    status="blocked_injection",
+                    error=f"payload blocked by the injection screen ({groups}); never retried",
+                )
+            )
+        except Exception:  # noqa: BLE001 - bookkeeping must never alter a security decision
+            logger.debug("could not record the blocked-fire row for %s", trigger, exc_info=True)
+
+    async def _fire_chained_triggers(self, trigger: Any, payload: dict[str, Any]) -> None:
+        """Fire every `run_completed` trigger waiting on the run that just finished (S122).
+
+        Never raises: a chain is a convenience layered on a completed run, and letting it fail the
+        run it followed would make chaining strictly worse than not chaining.
+
+        The depth cap and cycle detection live in `chain.next_fires`, which returns refusals as data
+        so they are logged rather than dropped — a chain that stopped silently is indistinguishable
+        from one that was never configured.
+        """
+        try:
+            from personalclaw.config.loader import config_dir
+            from personalclaw.triggers import chain
+            from personalclaw.triggers.store import TriggerStore
+
+            workflow = trigger.workflow if isinstance(trigger.workflow, dict) else {}
+            fires, refused = chain.next_fires(
+                TriggerStore(base_dir=config_dir()),
+                source_id=trigger.id,
+                source_payload=payload,
+                source_def=str(workflow.get("ref", "") or ""),
+            )
+            for row in refused:
+                logger.info("chain %s did not fire: %s", row["trigger_id"], row["reason"])
+            for chained, chained_payload in fires:
+                await self._fire_store_trigger(chained, chained_payload, event="trigger.chained")
+        except Exception:  # noqa: BLE001 - a chain must never fail the run it followed
+            logger.warning("chain dispatch failed after %s", trigger.id, exc_info=True)
 
     async def _file_watch_poll_loop(self) -> None:
         """Poll `file` triggers and fire the ones whose watched paths changed (§3 / crit 2 — S93).
@@ -953,6 +1393,48 @@ class GatewayOrchestrator:
                 raise
             except Exception:  # noqa: BLE001 - the loop must outlive any single poll's failure
                 logger.warning("file-watch poll loop iteration failed", exc_info=True)
+
+    async def _web_watch_poll_loop(self) -> None:
+        """Poll every `web_watch` trigger and fire the ones with NEW items (§7 item 8 — S121).
+
+        🔴 Measured before this existed: `web_watch` was a fully declared kind — creatable in chat
+        (`nl_kind` routes any URL to it), persisted, listed by `/api/triggers` and rendered on the
+        Automations page — and **nothing polled it**. The clock tick skips it (it has no
+        `next_fire_at`) and the file poller only reads `file`. So a user could ask for exactly what
+        the plan advertises, be told it worked, and never get a fire.
+
+        Deliberately mirrors `_file_watch_poll_loop` rather than inventing a second shape: same
+        incident-mode suspension (an unattended fire is an unattended fire), same per-trigger
+        isolation inside `poll_all`, and the same never-die contract — a loop that threw once and
+        stopped would silently retire every web watch the user has.
+
+        The skipped rows are LOGGED rather than dropped. §7 criterion 8 bans silent drops, and
+        "the daily request budget is spent" is exactly the kind of decision a user needs to find
+        when they ask why a watch went quiet.
+        """
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers import web_poll
+        from personalclaw.triggers.store import TriggerStore
+
+        store = TriggerStore(base_dir=config_dir())
+        while True:
+            try:
+                await asyncio.sleep(web_poll.POLL_INTERVAL_SECS)
+                from personalclaw.guardrails.incident import incident_active
+
+                if incident_active():
+                    continue
+                payloads, skipped = await asyncio.to_thread(
+                    web_poll.poll_all, store, now=time.time()
+                )
+                for row in skipped:
+                    logger.info("web_watch %s did not fire: %s", row["trigger_id"], row["reason"])
+                for payload in payloads:
+                    await self._fire_file_trigger(payload)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - the loop must outlive any single poll's failure
+                logger.warning("web_watch poll loop iteration failed", exc_info=True)
 
     async def _fire_file_trigger(self, payload: dict[str, Any]) -> None:
         """Run one file trigger's declared action (S93), through the shared store dispatch.
@@ -994,6 +1476,13 @@ class GatewayOrchestrator:
             # else-branch so --no-crons disables it too (a file watch is unattended background work
             # like a cron). Disjoint from ScheduleService, so no double-fire.
             self._file_watch_task = asyncio.create_task(self._file_watch_poll_loop())
+            # The web_watch poll loop. Same placement and the same reasoning as the file
+            # watch above: unattended background work, so `--no-crons` disables it too, and it is
+            # disjoint from every other firing path so it cannot double-fire. Measured before
+            # wiring: `web_watch` was creatable in chat, listed by the API and rendered in the UI,
+            # and NOTHING polled it — the clock tick skips it (no `next_fire_at`) and the file
+            # poller only reads `file`.
+            self._web_watch_task = asyncio.create_task(self._web_watch_poll_loop())
             # Import `crons.json` into the unified trigger store and arm the imported clocks.
             # `migrate_from_crons` was called by NOTHING outside tests, so `triggers.json`
             # was empty on a real machine — every cron lived only in the legacy file, which blocks
@@ -1041,6 +1530,30 @@ class GatewayOrchestrator:
                 reconcile_digest_cron(_trigger_store)
             except Exception:
                 logger.warning("digest-cron reconcile failed", exc_info=True)
+            # 🔴 THE BOOT SWEEP (criterion 7). `service.boot` is what recovers
+            # the exactly-one-upcoming invariant, STAGGERS an overdue population, and produces the
+            # missed-fire review. It had **zero callers**: boot ran `migrate_and_arm`, which only
+            # arms rows with NO `next_fire_at` (`needs_arming`), so a trigger that WAS armed and
+            # went overdue while the lid was shut was left with its stale past fire — and the first
+            # tick found it due. Measured on ten minutely triggers overdue by an hour: **10 of 10
+            # due in the same instant at boot**, the restart stampede `boot_recovery`'s
+            # deterministic per-id stagger exists to prevent (108-179s apart, when called).
+            #
+            # AFTER the reconcilers so an app-declared or digest cron written moments ago is swept
+            # too, and BEFORE the clock loop starts so no tick sees an unrecovered row.
+            try:
+                from personalclaw.triggers import service as _svc
+
+                boot_report = _svc.boot(_trigger_store)
+                logger.info(
+                    "trigger boot sweep: re-armed %d of %d, %d missed slots to review",
+                    len(boot_report.get("rearmed") or []),
+                    int(boot_report.get("total", 0) or 0),
+                    len((boot_report.get("review") or {}).get("rows") or []),
+                )
+                self._surface_missed_review(boot_report)
+            except Exception:
+                logger.warning("trigger boot sweep failed", exc_info=True)
             # The unified CLOCK LOOP — now the only thing that fires a clock trigger. The
             # legacy timer is gone entirely, along with the class that owned it.
             self._clock_task = asyncio.create_task(self._clock_loop())
@@ -2533,7 +3046,12 @@ class GatewayOrchestrator:
             await self.loop_watchdog.stop()
         if self.workflow_watchdog:
             await self.workflow_watchdog.stop()
-        for _task in (self._file_watch_task, self._clock_task, self._reaper_task):
+        for _task in (
+            self._file_watch_task,
+            self._web_watch_task,
+            self._clock_task,
+            self._reaper_task,
+        ):
             if _task is None:
                 continue
             _task.cancel()

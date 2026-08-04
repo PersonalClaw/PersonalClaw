@@ -183,7 +183,8 @@
           "prompt": "Terminal acceptance: does this deliverable meet the goal?\n\nDo not talk yourself into approving. This is the LAST check before the run reports success to the user — if you wave it through, nothing downstream catches it.\n\nThis is the last check before the run reports success, and three independent samples of you are being asked — a single judgement on a terminal accept was measured to be indistinguishable from noise.\n\nGoal:\n{{inputs.task}}\n\nSuccess criteria:\n{{inputs.success_criteria}}\n\nDeliverable:\n{{nodes.deliverable.output.report}}\n\nWhat it admits it could not establish:\n{{nodes.deliverable.output.could_not_establish}}\n\nAn honest gap is not a failure — a gap the deliverable hides is. Judge the work against the goal as stated, not against a better goal you would have set.\n\nReturn JSON: {\"reasoning\": string, \"verdict\": \"PASS\"|\"REJECT\", \"scores\": {criterion: integer}, \"proof\": string, \"evidence_refs\": [string], \"cannot_judge\": string}",
           "isolation": "fresh",
           "tools_posture": "verify",
-          "kind": "judge"
+          "kind": "judge",
+          "evidence": "{{nodes.deliverable.output.report}}"
         }
       }
     ]

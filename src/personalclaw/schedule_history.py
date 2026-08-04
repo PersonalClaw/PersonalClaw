@@ -98,6 +98,29 @@ class ScheduleRun:
         )
 
 
+def _redact_stored(text: str | None) -> str:
+    """Credential-redact a field on its way INTO the run ledger (criterion 11 — S138).
+
+    Never raises: a redaction failure must not lose the run record. The unredacted text is dropped
+    rather than stored in that case — losing a summary is recoverable, and writing a credential to
+    disk is not.
+
+    Reuses `security.redact_credentials`, the same matcher the read path and the SEL already use,
+    so a pattern added there covers this too. Composed with `redact_exfiltration_urls` because
+    a resolved token most often escapes inside a URL a command printed.
+    """
+    if not text:
+        return ""
+    try:
+        from personalclaw.security import redact_credentials, redact_exfiltration_urls
+
+        cleaned, _urls = redact_exfiltration_urls(str(text))
+        cleaned, _creds = redact_credentials(cleaned)
+        return cleaned
+    except Exception:  # noqa: BLE001 - see the docstring: drop rather than store raw
+        return "[redaction failed; text withheld]"
+
+
 class ScheduleRunStore:
     """JSONL-per-job store of :class:`ScheduleRun` records, owned by the service.
 
@@ -166,8 +189,20 @@ class ScheduleRunStore:
     # ── Write ─────────────────────────────────────────────────────────
 
     def _append_sync(self, run: ScheduleRun) -> None:
-        run.summary = (run.summary or "")[:_SUMMARY_CAP]
-        run.trace = (run.trace or "")[:_TRACE_CAP]
+        # 🔴 REDACT BEFORE WRITE (criterion 11). The criterion is explicit that
+        # `{{secret:KEY}}` "never appears resolved in triggers.json, journals, LEDGER, or
+        # `automation_history` output". The API's `_redact_run` cleans the response, but
+        # nothing cleaned the WRITE — a bash action that echoed a resolved credential put it in
+        # plaintext into `cron-history/<job>.jsonl` AND `_index.jsonl`, both 0600 but both on disk,
+        # both carried by `personalclaw snapshot`, and both readable by anything that reads
+        # the home. Redacting only on read is a read-path control over a storage-path leak.
+        #
+        # At the single write point, deliberately: `_append_sync` is the one funnel every run record
+        # passes through, so a future caller cannot forget it — the per-call-site alternative is how
+        # the screen and the fence gaps happened.
+        run.summary = _redact_stored(run.summary)[:_SUMMARY_CAP]
+        run.trace = _redact_stored(run.trace)[:_TRACE_CAP]
+        run.error = _redact_stored(run.error)
         job_path = self._job_path(run.job_id)
         with self._lock():
             self._dir.mkdir(parents=True, exist_ok=True)
@@ -210,6 +245,46 @@ class ScheduleRunStore:
         import asyncio
 
         return await asyncio.to_thread(self._list_for_job_sync, job_id, offset, limit)
+
+    def _count_since_sync(self, job_id: str, since: float, *, manual: bool) -> int:
+        rows = self._read_jsonl(self._job_path(job_id))
+        total = 0
+        for row in rows:
+            try:
+                started = float(row.get("started_at") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if started < since:
+                continue
+            # A MANUAL fire is excluded by default. §3.6 is explicit that "manual fires bypass the
+            # hourly cap" — the cap exists to stop the machine running away on its own, and a person
+            # clicking Run is not the machine running away. Counting their clicks toward the cap
+            # would let a user lock themselves out of their own automation.
+            if not manual and str(row.get("trigger") or "") == "manual":
+                continue
+            total += 1
+        return total
+
+    async def count_since(self, job_id: str, since: float, *, manual: bool = False) -> int:
+        """How many runs this job recorded at or after `since` (a UTC epoch).
+
+        🔴 THE WINDOWED QUERY three rate caps were waiting on (S152). `rate_cap`,
+        `max_runs_per_hour` and `max_actions_per_hour` were all validated, carried, and enforced by
+        NOTHING because this read did not exist — `list_for_job` is offset/limit only, so a caller
+        could page rows but not ask "how many in the last hour". S150 named that gap explicitly;
+        `missed.within_rate_window` has been the pure decision waiting for this number since S65.
+
+        Counts rows rather than paging them: the answer is one integer, and `list_for_job(0, 1000)`
+        would allocate a thousand dicts to compute it — on a path that runs on every fire.
+
+        A row with an unparseable `started_at` is SKIPPED rather than counted. Counting it would let
+        one malformed line push a trigger over its cap and suppress real work; skipping it can only
+        under-count, and the cap's own purpose (stop a runaway) still holds because a runaway writes
+        many well-formed rows.
+        """
+        import asyncio
+
+        return await asyncio.to_thread(self._count_since_sync, job_id, since, manual=manual)
 
     def _list_all_sync(
         self, offset: int, limit: int, job_id: str | None

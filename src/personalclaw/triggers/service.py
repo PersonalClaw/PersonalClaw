@@ -253,7 +253,11 @@ def plan_boot(triggers: list[Trigger], *, now: float) -> list[tuple[str, float, 
     the store is present-and-inert, which is why the cutover could not proceed.
     """
     from personalclaw.triggers.arm import next_fire
-    from personalclaw.triggers.scheduling import boot_recovery
+    from personalclaw.triggers.scheduling import (
+        BOOT_STAGGER_WINDOW_SECS,
+        boot_recovery,
+        jitter_offset,
+    )
 
     out: list[tuple[str, float, str]] = []
     for trigger in triggers:
@@ -269,12 +273,33 @@ def plan_boot(triggers: list[Trigger], *, now: float) -> list[tuple[str, float, 
                 continue
             out.append((trigger.id, armed, "armed from spec"))
             continue
+        catch_up = bool(getattr(trigger, "catch_up", False))
         new_at, reason = boot_recovery(
             next_fire_at=current,
             now=now,
             trigger_id=trigger.id,
-            catch_up=bool(getattr(trigger, "catch_up", False)),
+            catch_up=catch_up,
         )
+        # 🔴 `missed_dropped` RETURNS TO THE GRID when the grid is far enough away. Measured
+        # once the sweep was actually wired: a `catch_up: false` 03:00 daily backup, overdue because
+        # the laptop was shut, was re-armed by `boot_recovery` to **09:02** — so the slot the
+        # function had just decided to DROP fired six hours late anyway, off-schedule, and the
+        # trigger's own cron expression was ignored. Latent until now because nothing called
+        # `plan_boot`, so a wrong `next_fire_at` was never written; wiring the sweep would ship it.
+        #
+        # What changes is the ANCHOR, not the jitter: the drop path resumes from the trigger's own
+        # next real slot (`arm.next_fire`) instead of from `now`, and keeps the same deterministic
+        # per-id spread on top of it. §3.1 requires both — "recovered/re-armed on gateway boot" AND
+        # a stagger so a restart does not fire everything in one second — and dropping the jitter
+        # satisfies only the first. Six co-phased hourly triggers all resume to exactly
+        # `now + 3600` without it, so the stampede returns one interval later instead of being
+        # prevented. The jitter window (120s) is small against any real schedule, which is why
+        # spreading inside it is not the same thing as re-phasing.
+        if reason == "missed_dropped":
+            on_grid = next_fire(trigger, now=now)
+            if on_grid > 0:
+                new_at = on_grid + jitter_offset(trigger.id, BOOT_STAGGER_WINDOW_SECS)
+                reason = "missed_dropped_resumed_on_grid"
         out.append((trigger.id, new_at, reason))
     return out
 
@@ -395,7 +420,7 @@ async def tick(
     `~/.personalclaw`, where leftovers then blocked unrelated tests' fires. A claim describing
     one store must not live in another.
     """
-    from personalclaw.triggers import claims
+    from personalclaw.triggers import claims, screen
 
     now = now or time.time()
     base_dir = base_dir if base_dir is not None else getattr(store, "base_dir", None)
@@ -407,6 +432,11 @@ async def tick(
     by_id = {t.id: t for t in triggers}
 
     from personalclaw.triggers import firepath as fp
+
+    # Named resource slots, read ONCE per tick. Per-trigger would re-scan every claim
+    # for every due trigger; once per tick also makes the answer consistent within a tick, so two
+    # triggers wanting `local-llm` in the same wake cannot both be told it is free.
+    slot_map = claims.slot_holders(store, now=now, base_dir=base_dir)
 
     for trigger_id in due_ids(triggers, now=now):
         trigger = by_id.get(trigger_id)
@@ -444,17 +474,53 @@ async def tick(
         ctx = fp.FireContext(
             trigger_id=trigger.id,
             gates=trigger.gates or {},
+            # 🔴 `payload_text` is deliberately LEFT EMPTY here (§7/R4 rule a), and that is
+            # correct rather than the omission it looks like. A clock trigger carries no external
+            # content: at tick time there is a schedule and no payload. The screen's real input
+            # arrives with a POLLED payload — web_watch items, file changes — which is dispatched
+            # through `gateway._fire_store_trigger`, NOT through this walk. S134 screens there.
+            #
+            # Written down because the DEFAULT is what hid the gap: `payload_text=""` made
+            # `if ctx.payload_text:` false, so every clock fire's ledger row listed `screen` among
+            # the gates PASSED while the screen had never run on a single real fire.
             capabilities=trigger.capabilities,
             holder=f"tick:{int(now)}",
             overlap=str(getattr(trigger, "overlap", "skip") or "skip"),
             now=now,
             user_active=user_active,
             yield_to_user=bool(getattr(trigger, "yield_to_user", False)),
+            # 🔴 THE RESOURCE SLOT. `resource_slots` was declared, persisted and
+            # round-tripped, and read by NOTHING — the only field in 41 trigger dataclasses with
+            # zero non-declaration readers. Supplied here from the claim store, so a fire that
+            # needs `local-llm` while another trigger holds it defers instead of contending.
+            # 🔴 The SPACING meter. `debounce_secs`/`cooldown_secs` were declared in
+            # `GATE_KEYS` and read by nothing because no last-FIRE timestamp existed —
+            # `last_success_at`/`last_failure_at` describe an outcome, and a suppressed fire is
+            # neither. `_since_last_fire` returns None for a trigger that has never fired, which
+            # the gate reads as "nothing to space against" rather than "0 seconds ago".
+            # 🔴 The RATE meter. Three cap keys waited on a windowed history query that
+            # did not exist; `ScheduleRunStore.count_since` is it. Read per DUE trigger rather
+            # than once per tick because it is per-job JSONL — a tick with one due trigger must
+            # not scan every trigger's history. None (unreadable) is NOT zero: see the gate.
+            fires_in_window=await _fires_in_window(trigger, now=now),
+            since_last_fire=_since_last_fire(trigger, now=now),
+            busy_slot=claims.busy_slot(trigger, holders=slot_map),
             # 🔴 The EXISTING claim, read from the shared claim store. This was never
             # supplied, so `claim_fire` always saw `existing=None` and always granted — a trigger
             # whose previous run was still going fired again anyway, which is the precise failure
             # `overlap` exists to prevent. The gate was present, reviewed, and enforcing nothing.
             existing_claim=claims.read_claim(trigger.id, now=now, base_dir=base_dir),
+            # 🔴 WHAT THE TRIGGER ACTUALLY ASKS FOR. This was omitted, so `evaluate`'s
+            # `if ctx.requested:` was always false and the frozen-capability fence — decision 7's
+            # enforcement point — had never run on a single real fire. Exactly the `existing_claim`
+            # defect one line up, in the gate directly below it.
+            requested=screen.requested_capabilities(trigger),
+            # 🔴 THE BUDGET, actually supplied (§7 crit 8 / §3.6). `tick` never set
+            # either budget field, so `if ctx.budget_remaining is not None` was always False and the
+            # budget gate had NEVER refused a real fire — the third instance of this exact shape
+            # after the `existing_claim` and the `requested`. `gates.max_fires` was the
+            # user-visible cost: set to 2, a trigger fired 8 times in 8 slots.
+            budget_remaining=_budget_remaining(trigger),
         )
         decision = await fp.evaluate(ctx)
         row = fp.ledger_row(decision, ctx)
@@ -467,6 +533,26 @@ async def tick(
             # caller must release it"; the executor's drain releases on completion.
             if persist and decision.claim is not None:
                 claims.write_claim(decision.claim, base_dir=base_dir)
+            # The counter the budget READS. Nothing incremented `run_count` on this path, so even a
+            # wired budget would have compared against a permanent zero — a cap needs a meter.
+            # Incremented on a GRANTED fire, before dispatch: `max_fires` bounds attempts the
+            # substrate authorised, and deferring the increment to completion would let a storm of
+            # in-flight fires all pass a cap of one.
+            #
+            # 🔴 NOT persisted for a RETIRED trigger. Found by a red test rather than by reading: the
+            # retirement branch above `store.delete()`s a `delete_after_run` one-shot, and an
+            # unconditional upsert here RESURRECTED the row it had just removed — turning a retired
+            # one-shot back into a live trigger holding an elapsed slot, which is the storm S112's
+            # retirement exists to prevent. The in-memory count still rides along on the DueFire.
+            trigger.run_count = int(getattr(trigger, "run_count", 0) or 0) + 1
+            # The meter the SPACING gate reads. Written here and nowhere else, for the
+            # same reason `run_count` is: this is the one point a fire is GRANTED. Writing it
+            # at completion would let a burst of in-flight fires all see the same stale
+            # timestamp and every one pass a debounce; writing it on a SUPPRESSED fire would
+            # make a blocked fire space out the next real one.
+            trigger.last_fired_at = to_iso(now)
+            if persist and trigger.id not in result.retired:
+                store.upsert(trigger)
             result.fires.append(
                 DueFire(
                     trigger=trigger,
@@ -478,6 +564,87 @@ async def tick(
 
     result.next_sleep = sleep_for(list(by_id.values()), now=now)
     return result
+
+
+async def _fires_in_window(trigger: Any, *, now: float) -> int | None:
+    """Fires recorded in the last hour, or None when the ledger could not be read (S152).
+
+    Returns None — not 0 — on ANY failure. Zero would hand a runaway trigger a fresh allowance
+    every time the ledger hiccuped, which is the opposite of what a rate cap is for. The gate treats
+    None as fail-open (§1.4's storm-guard class) but the distinction is kept so a future session can
+    tighten it without first re-deriving why the two cases differ.
+
+    Skipped entirely when the trigger declares no hourly cap: this is a file read on the fire path,
+    and paying for it to answer a question nobody asked would tax every automation on the machine.
+    """
+    gates = getattr(trigger, "gates", None)
+    gates = gates if isinstance(gates, dict) else {}
+    if not any(gates.get(k) for k in ("rate_cap", "max_runs_per_hour", "max_actions_per_hour")):
+        return None
+    try:
+        from personalclaw.config.loader import config_dir
+        from personalclaw.schedule_history import ScheduleRunStore
+
+        return await ScheduleRunStore(config_dir()).count_since(trigger.id, now - 3600.0)
+    except Exception:  # noqa: BLE001 - an unreadable ledger must not break the tick
+        logger.debug("could not read the rate window for %s", getattr(trigger, "id", "?"))
+        return None
+
+
+def _since_last_fire(trigger: Any, *, now: float) -> float | None:
+    """Seconds since this trigger last fired, or None when it never has (S151).
+
+    None rather than 0.0, and rather than a large number: "never fired" is a different
+    fact from "fired long ago", and only None lets the spacing gate tell "nothing to
+    space against" from a real interval. Reading an absent timestamp as 0.0 would block
+    every trigger's FIRST fire behind its own debounce — a first-run deadlock.
+
+    A timestamp in the FUTURE (a clock that moved backwards, a hand-edited row) clamps to
+    0.0 rather than going negative. A negative "seconds since" compares as less than
+    every window and would suppress forever, so the safe reading is "it just fired":
+    one skipped fire, not a permanently dead trigger.
+    """
+    stamp = to_epoch(str(getattr(trigger, "last_fired_at", "") or ""))
+    if stamp <= 0:
+        return None
+    return max(0.0, now - stamp)
+
+
+def _budget_remaining(trigger: Any) -> float | None:
+    """Fires this trigger may still make, or None when it declares no cap (§3.6 — S133).
+
+    🔴 WHY THIS EXISTS. `firepath`'s budget gate reads `ctx.budget_remaining`, and `tick` never set
+    it — so `if ctx.budget_remaining is not None` was always False and the gate had never refused a
+    real fire. Third instance of the same shape: S97's `existing_claim`, S116's `requested`, this.
+    The user-visible cost was `gates.max_fires`, which is declared in `GATE_KEYS`, validated,
+    carried by `LEGACY_FIELD_MAP` — and bounded nothing. Measured: `max_fires: 2` produced 8 fires
+    in 8 slots, identical to no cap at all.
+
+    Scoped deliberately to `max_fires`. `max_runs_per_hour`/`max_actions_per_hour`/`rate_cap` got
+    their meter at S152 (the `rate` gate) and `cost_cap`/`max_cost_usd_per_run` got per-run spend
+    ATTRIBUTION at S153 — but attribution is not yet enforcement here: nothing on this path reads a
+    run's accrued dollars against the cap, so those two stay in `UNMETERED_CAPS`. Historic note:
+    `cost_cap` / `max_cost_usd_per_run` needed per-run spend attribution and `max_runs_per_hour` /
+    `max_actions_per_hour` need a windowed history query — neither exists on this path, and
+    inventing a meter to satisfy a cap would be the inverted dependency this program keeps refusing
+    (S119's webhook token, S129's rule (e)). A doctor finding names the still-unenforced caps
+    instead of implying they work.
+
+    None (no cap) rather than infinity: the gate distinguishes "no budget configured" from "budget
+    exhausted", and a sentinel would make an unset cap indistinguishable from a very large one.
+    """
+    gates = trigger.gates if isinstance(getattr(trigger, "gates", None), dict) else {}
+    try:
+        cap = int(gates.get("max_fires", 0) or 0)
+    except (TypeError, ValueError):
+        # A malformed cap is NOT treated as unlimited. `validate_gates` already reports the shape;
+        # here the safe reading of "I asked for a limit and typed it wrong" is zero allowance, which
+        # refuses visibly rather than running unbounded.
+        return 0.0
+    if cap <= 0:
+        return None
+    used = int(getattr(trigger, "run_count", 0) or 0)
+    return float(max(0, cap - used))
 
 
 def boot(store: Any, *, now: float = 0.0, persist: bool = True) -> dict[str, Any]:
@@ -492,12 +659,23 @@ def boot(store: Any, *, now: float = 0.0, persist: bool = True) -> dict[str, Any
     Also returns the missed-fire REVIEW rather than acting on it: §3.4 is "review, don't lie
     and don't
     storm", and a boot that silently caught up would be the storm. The caller surfaces the review.
+
+    🔴 THE REVIEW IS SNAPSHOT BEFORE RE-ARMING (S142), and that ordering is the whole function.
+    `plan_boot`'s recovery pushes an overdue `next_fire_at` into the stagger window, IN PLACE on the
+    same `Trigger` objects. Measured with the review taken afterwards: a trigger overdue by an hour
+    (61 missed minutely slots) reported **0 review rows** — because the missed anchor is derived
+    from `next_fire_at`, and by then that pointed into the FUTURE. Re-arming destroys the only
+    evidence that anything was missed, so the evidence has to be read first.
     """
     from personalclaw.triggers.missed import review_at_boot
 
     now = now or time.time()
     rows = store.load()
     triggers = [row.trigger for row in rows if getattr(row, "ok", True)]
+
+    # Snapshot BEFORE `plan_boot` re-arms — see the docstring.
+    review = review_at_boot([t.to_dict() for t in triggers], now=now)
+    caught_up = catch_up_at_boot(triggers, now=now)
 
     rearmed: list[dict[str, Any]] = []
     for trigger_id, new_at, reason in plan_boot(triggers, now=now):
@@ -510,13 +688,39 @@ def boot(store: Any, *, now: float = 0.0, persist: bool = True) -> dict[str, Any
                 store.upsert(trigger)
             rearmed.append({"id": trigger_id, "next_fire_at": new_at, "reason": reason})
 
-    review = review_at_boot([t.to_dict() for t in triggers], now=now)
     return {
         "rearmed": rearmed,
         "total": len(triggers),
         "review": review.to_dict() if hasattr(review, "to_dict") else {},
+        "catch_up": caught_up,
         "next_sleep": sleep_for(triggers, now=now),
     }
+
+
+def catch_up_at_boot(triggers: list[Trigger], *, now: float) -> list[dict[str, Any]]:
+    """Which triggers get an automatic catch-up fire at this boot, and why the rest do not.
+
+    A thin adapter over `missed.catch_up_plan` so `boot` reports one shape and the storm guards
+    live in exactly one place. Returns EVERY candidate including the refused ones: §3.4's rule is
+    that a `catch_up: true` trigger which did NOT catch up needs an explanation as much as one that
+    did, and a list of only the winners cannot answer "why not mine".
+
+    Snapshot before re-arming for the same reason the review is — `missed_last_slot` is "is the
+    armed fire in the past", which recovery makes false by design.
+    """
+    from personalclaw.triggers.missed import catch_up_plan
+
+    out: list[dict[str, Any]] = []
+    for trigger_id, fire_at, reason in catch_up_plan([t.to_dict() for t in triggers], now=now):
+        out.append(
+            {
+                "id": trigger_id,
+                "fire_at": fire_at,
+                "reason": reason,
+                "catching_up": fire_at > 0,
+            }
+        )
+    return out
 
 
 def drain_spooled_fires(*, limit: int = 500) -> tuple[list[Any], int]:

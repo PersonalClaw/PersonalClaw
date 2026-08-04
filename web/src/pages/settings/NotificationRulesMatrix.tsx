@@ -113,7 +113,7 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
                           hint="A match upgrades a quieter mode to Notify — it does not add delivery targets you didn't choose.">
                           <ChipInput values={r.conditions.keywords}
                             onChange={(v) => save(r.key, { conditions: { ...r.conditions, keywords: v } })}
-                            placeholder="add a keyword, Enter" />
+                            placeholder="add a keyword, Enter" ariaLabel="Add an escalation keyword" />
                         </Field>
                         <Row label="Escalate on name mention" hint="Upgrade when the text mentions you by name.">
                           <Toggle on={r.conditions.name_mention}

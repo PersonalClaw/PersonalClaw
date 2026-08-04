@@ -241,6 +241,67 @@ CLOCK_KINDS: frozenset[str] = frozenset({"cron", "at", "sequence", "interval"})
 MIN_CLOCK_INTERVAL_SECS = 900
 
 
+def _agent_scope_issues(spec: dict[str, Any] | None) -> list[Issue]:
+    """Structural issues in an `event` trigger's `agent_scope` (§1.4 decision 2 — S131).
+
+    🔴 MEASURED: `agent_scope` was declared in `SPEC_KEYS["event"]`, persisted, round-tripped —
+    and validated by nothing. Every one of these stored with `ok: True` and zero issues:
+
+        agent_scope="not-a-list"        # a bare string
+        agent_scope=[]                  # an empty list
+        agent_scope=[123]               # non-string entries
+        agent_scope=["nonexistent"]     # an agent that does not exist
+
+    Decision 2's recon note is explicit that the substrate "PRESERVES agent scoping as an optional
+    `spec.agent_scope` and does not silently introduce a global chat firing path". A field that
+    accepts any shape and is read by nothing does not preserve scoping — it *promises* it. That is
+    worse than its absence, because an author who sets it believes their trigger is scoped.
+
+    Structure only, matching `validate_spec`'s own contract: whether the named agent EXISTS is a
+    semantic question the config layer answers, and rejecting an agent id at author time would
+    refuse a trigger that becomes valid the moment the agent is installed. What is checked is the
+    shape a reader must be able to rely on.
+
+    An EMPTY list is an error rather than a warning, deliberately. In the legacy path an empty id
+    list means `fire_for_ids` fires NOTHING (its resolver returns `[]` on failure precisely so a
+    broken lookup cannot fall back to global firing). So `agent_scope: []` is an automation that can
+    never fire — silently, forever — which is exactly the inert row the never-throw validation
+    exists to make visible.
+    """
+    raw = (spec or {}).get("agent_scope")
+    if raw is None:
+        return []
+    if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
+        return [
+            Issue(
+                path="spec.agent_scope",
+                message="agent_scope must be a list of agent ids; a "
+                f"{type(raw).__name__} is refused rather than coerced, because a scope that "
+                "silently read as one agent would fence the wrong thing",
+                severity="error",
+            )
+        ]
+    if not raw:
+        return [
+            Issue(
+                path="spec.agent_scope",
+                message="agent_scope is empty, so this trigger can never fire for any agent — "
+                "remove the key to leave it unscoped, or name the agents it belongs to",
+                severity="error",
+            )
+        ]
+    bad = [entry for entry in raw if not isinstance(entry, str) or not entry.strip()]
+    if bad:
+        return [
+            Issue(
+                path="spec.agent_scope",
+                message=f"agent_scope entries must be non-empty agent ids; got {bad!r}",
+                severity="error",
+            )
+        ]
+    return []
+
+
 def validate_spec(kind: str, spec: dict[str, Any]) -> list[Issue]:
     """Structural issues in one kind's spec. NEVER raises.
 
@@ -330,6 +391,8 @@ def validate_spec(kind: str, spec: dict[str, Any]) -> list[Issue]:
         issues.append(
             Issue(path="spec.source", message="an event trigger needs a source", severity="error")
         )
+    if kind == "event":
+        issues.extend(_agent_scope_issues(spec))
     elif kind == "webhook" and not str((spec or {}).get("token_ref", "") or "").strip():
         # A webhook with no token is an unauthenticated fire endpoint. Refused at author time rather
         # than defaulted, because a generated default would be a secret nobody chose.
@@ -380,8 +443,24 @@ GATE_KEYS: frozenset[str] = frozenset(
 #: machine. Security fences are absent from this set on purpose: capabilities, the injection screen
 #: and fencing fail CLOSED, because the cost of skipping them is unbounded while the cost of a
 #: skipped budget check is one extra run.
+#: 🔴 TWO VOCABULARIES, and this set has to answer for BOTH.
+#:
+#: `set(firepath.GATE_ORDER) & FAIL_OPEN_GATES` was **empty**. The names here were the
+#: per-trigger CAP KEYS a person edits (`cost_cap`, `rate_cap`, `duty_gate` — the `GATE_KEYS`
+#: vocabulary), while the fire path walks GATE names (`screen`, `quiet`, `duty`, `budget`, `claim`,
+#: `yield`, `capability`, `incident`). So every gate the engine actually runs read "closed",
+#: including
+#: `duty` — which §1.4 and `calendar.evaluate_duty` both require to fail OPEN, and which correctly
+#: DOES fail open in practice. The classifier disagreed with the code it was written to
+#: describe, and
+#: nothing outside tests read it, so nothing caught the drift.
+#:
+#: Both spellings are listed deliberately rather than renaming one side: a person's trigger config
+#: says `duty_gate` and the fire path's gate is `duty`, and both are correct in their own surface. A
+#: test asserts every `GATE_ORDER` entry resolves to the direction its gate actually implements.
 FAIL_OPEN_GATES: frozenset[str] = frozenset(
     {
+        # ── per-trigger cap keys (`GATE_KEYS` vocabulary — what a person edits) ──
         "cost_cap",
         "max_cost_usd_per_run",
         "max_actions_per_hour",
@@ -392,12 +471,52 @@ FAIL_OPEN_GATES: frozenset[str] = frozenset(
         # it fail-open explicitly — uninstalling the app that supplied it must not silently stop
         # every automation that referenced it. `evaluate_duty` is time-boxed for the same reason.
         "duty_gate",
+        # ── fire-path gate names (`firepath.GATE_ORDER` vocabulary — what the engine walks) ──
+        # `duty` is the same control as `duty_gate` above, under the name the walk uses.
+        "duty",
+        # `slot` belongs with the storm guards, not the fences: an unreadable
+        # claim store means "I cannot tell who holds the gpu", and refusing every slotted
+        # trigger over a filesystem hiccup would silence real automations. Contention costs
+        # a slow run; a stuck-closed slot gate costs the automation. It inherits
+        # `read_claim`'s own unreadable-reads-as-idle contract.
+        "slot",
+        # `incident` is the kill switch. It inherits `incident_active()`'s own deliberate
+        # fail-open contract: an unreadable flag file must not halt every automation on a filesystem
+        # hiccup. The asymmetry against the fences below is the point — a stuck-closed kill switch
+        # silently stops work the user depends on and looks exactly like a broken scheduler.
+        "incident",
+        # `spacing` is debounce + cooldown, and it belongs with the storm guards for the same
+        # reason `rate_cap` does: a malformed `debounce_secs` must not SILENCE an automation. The
+        # asymmetry is the point — a stuck-closed spacing gate looks exactly like a dead trigger,
+        # while a stuck-open one costs at most one duplicate run that the claim lock still bounds.
+        "spacing",
+        # `rate` is the hourly-cap gate. Fail-open for the same reason as `slot`: an
+        # unreadable ledger means "I cannot tell how often this fired", and suppressing every
+        # capped trigger over a filesystem hiccup would silence real automations. The cap's
+        # purpose — stop a RUNAWAY — still holds, because a runaway writes many good rows.
+        "rate",
+        # …and the cap keys under the spelling a person edits.
+        "debounce_secs",
+        "cooldown_secs",
     }
+)
+
+#: Gates whose direction is asserted, not assumed. `budget` is deliberately CLOSED here even though
+#: the prose groups "budget/storm-guard" as fail-open, because §3.6 is more specific and the code
+#: follows it: "the budget check is fail-closed — an unreadable budget is not an unlimited one".
+#: The per-trigger CAP keys above stay open; the fire path's pre-claim budget READ is closed. Those
+#: are different questions about the same word, which is exactly why this is written down.
+FAIL_CLOSED_GATES: frozenset[str] = frozenset(
+    {"screen", "quiet", "budget", "claim", "yield", "capability", "idempotency"}
 )
 
 
 def gate_failure_mode(gate: str) -> str:
     """`open` or `closed` for one gate, when its own check cannot complete.
+
+    Accepts EITHER vocabulary — a per-trigger cap key (`duty_gate`, `cost_cap`) or a fire-path gate
+    name (`duty`, `budget`) — because callers legitimately hold one or the other and a classifier
+    that silently answered "closed" for the other namespace is what S130 found.
 
     Named as a function rather than left implicit so a caller cannot get it wrong by omission: the
     default for an unknown gate is CLOSED. A new gate that nobody classified should refuse the fire,
@@ -469,6 +588,20 @@ class Trigger:
     run_count: int = 0
     last_success_at: str = ""
     last_failure_at: str = ""
+    #: When this trigger last FIRED — set on a granted fire, beside `run_count`.
+    #:
+    #: 🔴 A THIRD timestamp, deliberately, and the reason is the whole point of the field. Spacing a
+    #: fire needs "when did this last fire", and neither existing timestamp answers it:
+    #: `last_success_at` and `last_failure_at` both describe an OUTCOME, and a fire that was
+    #: SUPPRESSED (quiet hours, budget, overlap) is neither — so debouncing off either one would
+    #: count a blocked fire as a fire and let a debounced trigger straight through. The legacy
+    #: `event_triggers.EventTrigger` carries exactly this field, which is why debounce works there
+    #: and not here (S150 measured that gap and named it).
+    #:
+    #: ISO, like every other timestamp on this entity. Absent on every row written,
+    #: which reads as "never fired" — the right answer for spacing: a trigger with no recorded
+    #: fire has nothing to space against, so its first fire is allowed.
+    last_fired_at: str = ""
     health_status: str = TriggerHealth.OK.value
     last_error_summary: str = ""
     state: str = TriggerState.ACTIVE.value
@@ -500,6 +633,7 @@ class Trigger:
             "run_count": self.run_count,
             "last_success_at": self.last_success_at,
             "last_failure_at": self.last_failure_at,
+            "last_fired_at": self.last_fired_at,
             "health_status": self.health_status,
             "last_error_summary": self.last_error_summary,
             "state": self.state,
@@ -523,6 +657,51 @@ def _known_fields() -> frozenset[str]:
     import dataclasses as _dc
 
     return frozenset(f.name for f in _dc.fields(Trigger))
+
+
+def _token_ref_issues(spec: Any) -> list[Issue]:
+    """WARN when a `webhook` trigger's `token_ref` holds the token itself (decision 12 — S119).
+
+    🔴 MEASURED. Decision 12 says webhook bearer tokens are "SHA-256-hashed at rest" and R14 says
+    "never verbatim in triggers.json". Driven against the real store:
+
+        spec: {"token_ref": "sk-LITERAL-SECRET-abc123"}
+          → the token appears VERBATIM in triggers.json, `ok: True`, zero warnings
+
+    S115's `_inline_credential_issues` would have caught that string — but it scans the WORKFLOW
+    only, and a webhook's token lives in `spec`. So the one field on the one kind whose entire
+    purpose is authentication was the field with no credential lint, and `triggers.json` is
+    snapshotted (S113), echoed into run records and rendered in the UI.
+
+    The name is the tell: `token_ref` is a REFERENCE. A value that is not a `{{secret:KEY}}`
+    reference is the token itself, which is what this flags.
+
+    A WARNING, not an error, for the reason S115 recorded: refusing would break every webhook a
+    user has already authored, which is exactly the population that most needs to keep working
+    while they migrate. `parse_trigger` already REFUSES a webhook with no `token_ref` at all — an
+    unauthenticated fire endpoint is a different and worse thing than a badly-stored token.
+    """
+    if not isinstance(spec, dict):
+        return []
+    raw = spec.get("token_ref")
+    if not isinstance(raw, str) or not raw.strip():
+        # Absent is handled by the kind's own required-field check, which errors rather than warns.
+        return []
+    from personalclaw.triggers.secrets import SECRET_REF_RE
+
+    if SECRET_REF_RE.fullmatch(raw.strip()):
+        return []
+    return [
+        Issue(
+            path="spec.token_ref",
+            message=(
+                "token_ref holds the token itself rather than a reference — store it with "
+                "`personalclaw auth` and reference it as {{secret:KEY}}, which is resolved at "
+                "dispatch and never written to triggers.json (which is snapshotted and rendered "
+                "in the UI)"
+            ),
+        )
+    ]
 
 
 def _inline_credential_issues(workflow: Any) -> list[Issue]:
@@ -603,6 +782,7 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
     issues.extend(validate_spec(kind, spec))
     issues.extend(validate_gates(gates))
     issues.extend(_inline_credential_issues(data.get("workflow")))
+    issues.extend(_token_ref_issues(data.get("spec")))
 
     if not str(data.get("id", "") or "").strip():
         issues.append(Issue(path="id", message="a trigger needs an id", severity="error"))
@@ -666,6 +846,7 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
         run_count=_int(data.get("run_count"), 0),
         last_success_at=str(data.get("last_success_at", "") or ""),
         last_failure_at=str(data.get("last_failure_at", "") or ""),
+        last_fired_at=str(data.get("last_fired_at", "") or ""),
         health_status=str(data.get("health_status", TriggerHealth.OK.value) or "ok"),
         last_error_summary=str(data.get("last_error_summary", "") or ""),
         state=state,

@@ -52,8 +52,8 @@ export function ConflictPanel() {
 function ConflictRow({ conflict }: { conflict: KnowledgeConflict }) {
   const proven = conflict.basis === 'deterministic'
   return (
-    <div className="rounded-lg border border-border bg-surface p-3 text-sm">
-      <div className="mb-2 flex items-center gap-2 text-xs text-muted">
+    <div className="rounded-lg border border-outline-variant bg-surface p-3 text-sm">
+      <div className="mb-2 flex items-center gap-2 text-xs text-on-surface-low">
         {proven
           ? <AlertTriangle size={13} className="text-warning" aria-hidden />
           : <Sparkles size={13} aria-hidden />}
@@ -76,7 +76,7 @@ function ConflictRow({ conflict }: { conflict: KnowledgeConflict }) {
         preferred={conflict.prefer === 'left'}
         label={conflict.item_title || conflict.left_item}
       />
-      <div className="my-1 pl-3 text-xs text-muted">versus</div>
+      <div className="my-1 pl-3 text-xs text-on-surface-low">versus</div>
       <ClaimSide
         text={conflict.right_claim}
         preferred={conflict.prefer === 'right'}
@@ -84,10 +84,10 @@ function ConflictRow({ conflict }: { conflict: KnowledgeConflict }) {
       />
 
       {conflict.detail && (
-        <div className="mt-2 text-xs text-muted">{conflict.detail}</div>
+        <div className="mt-2 text-xs text-on-surface-low">{conflict.detail}</div>
       )}
       {conflict.prefer === '' && (
-        <div className="mt-2 text-xs text-muted">
+        <div className="mt-2 text-xs text-on-surface-low">
           Both sources carry the same weight — this one needs a human call.
         </div>
       )}
@@ -100,12 +100,14 @@ function ClaimSide(
 ) {
   return (
     <div className="flex items-start gap-2">
-      <div className={`min-w-0 flex-1 ${preferred ? '' : 'text-muted'}`}>
+      <div className={`min-w-0 flex-1 ${preferred ? '' : 'text-on-surface-low'}`}>
         <div style={fvs(preferred ? 600 : 400)}>{text}</div>
-        <div className="mt-0.5 truncate text-xs text-muted">{label}</div>
+        <div className="mt-0.5 truncate text-xs text-on-surface-low">{label}</div>
       </div>
       {preferred && (
-        <span className="shrink-0 rounded bg-accent-subtle px-1.5 py-0.5 text-xs text-accent">
+        <span
+          className="shrink-0 rounded px-1.5 py-0.5 text-xs text-primary"
+          style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}>
           higher-trust source
         </span>
       )}

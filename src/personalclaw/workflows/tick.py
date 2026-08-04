@@ -168,6 +168,39 @@ def _is_success(st: InstanceState) -> bool:
     return st in SUCCESS_STATES
 
 
+def tolerate_failures(
+    children: list[Node], child_states: list[InstanceState]
+) -> list[InstanceState]:
+    """Mask a FAILED child that declared `allow_failure: true` to DEGRADED (S148).
+
+    🔴 `allow_failure` was DECLARED BY FIVE NODES IN A SHIPPED TEMPLATE AND READ BY NOTHING. All five
+    of `rich-ingest`'s extraction lenses set it, and they run in a `parallel` with `join: all` —
+    measured, `container_outcome([DONE]*4 + [FAILED], join=ALL)` is **FAILED**, so one flaky lens
+    discarded the four that had succeeded. Losing four lenses' extracted knowledge because a fifth
+    timed out is exactly the outcome the key exists to prevent.
+
+    **DEGRADED, not DONE**, and that is the whole design decision. `SUCCESS_STATES` already includes
+    DEGRADED, so the join proceeds — but the container does not claim clean success, and
+    `container_outcome`'s existing ALL branch already propagates "any DEGRADED child ⇒ DEGRADED
+    container". Masking to DONE instead would make a partial extraction indistinguishable from a
+    complete one, which is the silent-drop shape this program keeps finding: the run would report
+    success and nothing would ever say a lens was missing.
+
+    Only FAILED is masked. A CANCELLED child is a decision someone made and a BLOCKED one is waiting
+    on a human — tolerating either would convert a deliberate stop into a shrug.
+    """
+    if not children or len(children) != len(child_states):
+        return child_states
+    masked: list[InstanceState] = []
+    for child, state in zip(children, child_states):
+        tolerated = bool((getattr(child, "config", None) or {}).get("allow_failure"))
+        if tolerated and state == InstanceState.FAILED:
+            masked.append(InstanceState.DEGRADED)
+        else:
+            masked.append(state)
+    return masked
+
+
 def container_outcome(
     child_states: list[InstanceState], *, join: JoinMode = JoinMode.ALL, quorum: int = 0
 ) -> InstanceState:
@@ -812,7 +845,7 @@ def _derive(
             _derive(c, f"{path}.children[{i}]", states, edges, iterations, ctx)
             for i, c in enumerate(node.children)
         ]
-        return container_outcome(child_states)
+        return container_outcome(tolerate_failures(node.children, child_states))
 
     if kind == NodeKind.PARALLEL:
         cfg = node.config or {}
@@ -826,7 +859,9 @@ def _derive(
             for i, c in enumerate(node.children)
         ]
         return container_outcome(
-            child_states, join=join, quorum=quorum if isinstance(quorum, int) else 0
+            tolerate_failures(node.children, child_states),
+            join=join,
+            quorum=quorum if isinstance(quorum, int) else 0,
         )
 
     if kind == NodeKind.FOREACH:

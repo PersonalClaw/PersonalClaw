@@ -45,6 +45,80 @@ from typing import Any, Awaitable, Callable
 #: surface, and the fail-open default means a timeout costs nothing but an unfiltered fire.
 DUTY_GATE_TIMEOUT_SECS = 2.0
 
+#: Gate keys that are validated and carried but have NO METER reading them (§3.6 — S133, extended
+#: S150). `max_fires` is deliberately absent: S133 wired it against `run_count`, and `quiet_hours`,
+#: `skip_dates`, `duty_gate` and `condition` are all genuinely enforced on the fire path.
+#:
+#: 🔴 The FIVE storm-spacing keys were added S150 after a `GATE_KEYS` sweep found them declared and
+#: unread — and the asymmetry that made it worth a session: a user setting `cost_cap` was honestly
+#: told it is unmetered, while a user setting `debounce_secs: 300` got SILENCE and believed their
+#: automation was spacing its fires. `firepath`'s own module docstring names the order as
+#: "debounce/quiet/cooldown/condition", so three of the four gates it advertises are absent from
+#: `GATE_ORDER`.
+#:
+#: What each still needs, so this list shrinks for a reason rather than by guesswork:
+#:
+#: * `max_cost_usd_per_run` — **WIRED S154**, so deliberately absent from this set. S153 made a
+#:   fire's spend attributable; S154 added the enforcement READ, in `ModelCallGuard` beside the day
+#:   check rather than as a fire-path gate. That placement is forced by the meter: run totals accrue
+#:   in-process AS the run spends, and the fire seam binds a FRESH per-fire key before the first
+#:   call, so a pre-fire gate would read $0.00 every time and be inert by construction.
+#: * `cost_cap` — still named here, and for a DIFFERENT reason than it used to be. §3.6 defines it
+#:   as a PRE-CLAIM check "against a persistent per-window budget table", and `ScheduleRun` carries
+#:   no cost column, so there is nothing durable to sum a window over: `SpendMeter`'s run scope is
+#:   in-memory and dies with the process. Enforcing it off the per-run meter would silently redefine
+#:   a per-window cap as a per-run one — a control that runs but answers a different question, which
+#:   is worse than one that admits it is unmetered.
+#: * `max_runs_per_hour` / `max_actions_per_hour` / `rate_cap` — **WIRED S152**, so deliberately
+#:   absent. They needed a windowed history query; `ScheduleRunStore.count_since` is it, and
+#:   `firepath`'s `rate` gate delegates the decision to `missed.within_rate_window`.
+#: * `debounce_secs` / `cooldown_secs` — **WIRED S151**, so deliberately absent from this set. They
+#:   needed a last-FIRE timestamp (`last_success_at`/`last_failure_at` describe an OUTCOME, and a
+#:   SUPPRESSED fire is neither); `Trigger.last_fired_at` now supplies it, written beside
+#:   `run_count` at the single fire-grant point, and `firepath`'s `spacing` gate reads it.
+#: * `idempotency` / `threshold` — R12 bundles them without pinning semantics; naming them keeps the
+#:   gap visible instead of letting a `threshold: 3` read as enforced.
+#:
+#: Naming beats implying: a user who set a cap believes their automation is bounded.
+UNMETERED_CAPS: frozenset[str] = frozenset(
+    {
+        "cost_cap",
+        "idempotency",
+        "threshold",
+    }
+)
+
+
+def run_budget_for(gates: dict[str, Any] | None) -> Any:
+    """The RUN-scope ceiling a trigger's gates declare, or an unlimited Budget (S154).
+
+    Reads `max_cost_usd_per_run` only. `cost_cap` is deliberately NOT folded in: §3.6 defines it
+    per-WINDOW against a persistent table, and treating it as per-run would quietly enforce a
+    different promise than the one the user wrote down.
+
+    **Malformed values are ignored rather than defaulted** — the fail-OPEN direction §1.4 assigns
+    the per-trigger cap keys. A typo'd `max_cost_usd_per_run: "ten"` must not become a $0 ceiling
+    that refuses the trigger's first model call; a cap that silences an automation is the failure
+    mode that looks exactly like a broken scheduler. Zero/negative means unlimited, matching
+    `Budget`'s own convention.
+
+    **This is deliberately the OPPOSITE of `max_fires`**, whose malformed value fails CLOSED
+    (`service._budget_remaining` — S133). Not an inconsistency: `gate_failure_mode` classifies the
+    two keys differently, and each implementation follows its own entry. A bad `max_fires` costs one
+    visibly refused fire, recorded as a typed `skipped_budget` row a user can see; a bad
+    `max_cost_usd_per_run` would instead break every model call INSIDE a run that already started,
+    surfacing as a mid-run provider error rather than a legible refusal.
+    """
+    from personalclaw.guardrails.budgets import Budget
+
+    block = gates if isinstance(gates, dict) else {}
+    try:
+        dollars = float(block.get("max_cost_usd_per_run") or 0.0)
+    except (TypeError, ValueError):
+        return Budget()
+    return Budget(max_dollars=dollars) if dollars > 0 else Budget()
+
+
 #: Day-of-week tokens, Monday-first to match `datetime.weekday()`. Named rather than positional so a
 #: window reads as `{"days": ["sat", "sun"]}` — a list of integers in a config file is the kind of
 #: thing someone gets off by one.
@@ -794,6 +868,110 @@ def diagnose(
                     fix="add a quiet window, or drop the resolution setting",
                 )
             )
+
+        # 🔴 An UNFENCED write-capable action (decision 7). The fence is wired as of S116 and
+        # denies on an empty block, so a trigger authored before that ships carries
+        # `capabilities: {}`, requests a write-capable provider, and REFUSES on its next fire. The
+        # refusal is in the ledger, but the user's question is "why did my automation stop", and
+        # the doctor is where that gets answered. Re-saving the trigger freezes the grant.
+        raw_caps = entry.get("capabilities")
+        caps: dict[str, Any] = dict(raw_caps) if isinstance(raw_caps, dict) else {}
+        wf = entry.get("workflow")
+        if isinstance(wf, dict):
+            from personalclaw.triggers.screen import provider_is_read_only
+
+            inline = wf.get("inline") if isinstance(wf.get("inline"), dict) else None
+            action = str((inline or wf).get("provider") or "").strip()
+            granted = caps.get("providers") or []
+            if action and not provider_is_read_only(action) and action not in granted:
+                report.findings.append(
+                    Finding(
+                        trigger_id=tid,
+                        code="unfenced_write_action",
+                        detail=f"runs the write-capable action {action!r} with no capability "
+                        f"grant, so the frozen-capability fence refuses it",
+                        fix="re-save the automation to freeze its capability set, or switch it "
+                        "to a read-only action",
+                    )
+                )
+
+        # 🔴 A webhook token stored VERBATIM (decision 12). The store warns on the row, but
+        # `describe_store` only aggregates a warning COUNT and no surface names the offending
+        # trigger — so a warning nobody can act on is itself an inert control. Named here, where a
+        # user goes to ask what is wrong.
+        spec_block = entry.get("spec")
+        if isinstance(spec_block, dict):
+            from personalclaw.triggers.models import _token_ref_issues
+
+            # The lint decides IF; the doctor phrases its own detail and fix, because a doctor
+            # finding is read by a user asking "what is wrong with my automations" rather than by
+            # an author looking at one field.
+            if _token_ref_issues(spec_block):
+                report.findings.append(
+                    Finding(
+                        trigger_id=tid,
+                        code="verbatim_webhook_token",
+                        detail="stores its webhook bearer token verbatim in triggers.json, which "
+                        "is snapshotted, echoed into run records and rendered in the UI",
+                        fix="store it with `personalclaw auth` and set token_ref to "
+                        "{{secret:KEY}}, then rotate the exposed token",
+                    )
+                )
+
+        # 🔴 CAP KEYS that still enforce nothing. `max_fires` is wired,
+        # but `cost_cap`/`max_cost_usd_per_run` need per-run spend attribution and
+        # `max_runs_per_hour`/`max_actions_per_hour` need a windowed history query — neither meter
+        # exists on this path. Naming them beats implying they work: a user who set a cost cap
+        # believes their automation is bounded.
+        gate_block = entry.get("gates")
+        if isinstance(gate_block, dict):
+            unmetered = sorted(k for k in UNMETERED_CAPS if gate_block.get(k))
+            if unmetered:
+                report.findings.append(
+                    Finding(
+                        trigger_id=tid,
+                        code="unmetered_cap",
+                        detail=f"sets {', '.join(unmetered)}, which no meter reads yet — this "
+                        "automation is NOT bounded by that cap",
+                        fix="use gates.max_fires (enforced) to bound total fires, or remove the "
+                        "cap until its meter lands",
+                    )
+                )
+
+        # 🔴 An `agent_scope` that ENFORCES NOTHING (§1.4 decision 2). The key is declared,
+        # validated (as of this session) and persisted — but no fire path reads it, because the
+        # store-backed `event` kind fires on MEMORY events while agent scoping lives on the
+        # chat-turn hook path (`fire_for_ids`). An author who set it believes their trigger is
+        # fenced to one agent. Named here because that belief is the whole risk.
+        spec_scope = entry.get("spec")
+        if isinstance(spec_scope, dict) and spec_scope.get("agent_scope"):
+            report.findings.append(
+                Finding(
+                    trigger_id=tid,
+                    code="unenforced_agent_scope",
+                    detail="declares agent_scope, but no fire path reads it — this trigger is "
+                    "NOT limited to those agents",
+                    fix="remove agent_scope until the chat-turn event source lands, or use a "
+                    "lifecycle trigger referenced from the agent's own bindings",
+                )
+            )
+
+        # A `paths` fence that cannot bound anything. The user believes they scoped the
+        # automation; `*` covers the whole filesystem and a relative entry resolves against the
+        # GATEWAY's cwd, so it silently means something different depending on how it was started.
+        if caps.get("paths"):
+            from personalclaw.triggers.pathguard import unsafe_entries
+
+            for bad_path, why_unsafe in unsafe_entries(caps.get("paths")):
+                report.findings.append(
+                    Finding(
+                        trigger_id=tid,
+                        code="unbounded_path_fence",
+                        detail=f"allowlists the path {bad_path!r}, which {why_unsafe}",
+                        fix="replace it with an absolute directory (e.g. "
+                        "`/Users/you/notes/*`) so the fence bounds a real location",
+                    )
+                )
 
         duty = gates.get("duty_gate")
         if isinstance(duty, dict):

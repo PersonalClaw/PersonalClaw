@@ -68,6 +68,7 @@ def _trigger(tid="schedule:j1", **over):
         kind="clock",
         spec={"kind": "interval", "interval_secs": 3600},
         workflow={"provider": "run-prompt", "config": {}},
+        capabilities={"providers": ["run-prompt"]},
     )
     base.update(over)
     return Trigger(**base)
@@ -376,6 +377,7 @@ def test_a_real_tick_dispatches_through_to_the_session_queues(tmp_path):
                 enabled=True,
                 spec={"kind": "interval", "interval_secs": 3600},
                 workflow={"provider": "run-prompt", "config": {}},
+                capabilities={"providers": ["run-prompt"]},
                 next_fire_at=SVC.to_iso(NOW - 5),
             )
             for i in range(3)

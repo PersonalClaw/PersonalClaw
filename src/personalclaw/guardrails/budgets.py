@@ -25,6 +25,7 @@ memory entry or knowledge item (§7 boundary).
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import threading
@@ -223,6 +224,96 @@ def _ordinal_of(day_key: str) -> int | None:
 # ── Process-global meter (one per gateway) ───────────────────────────────────
 
 _METER: SpendMeter | None = None
+
+
+#: The AMBIENT run scope every model call charges against, when one is bound.
+#:
+#: 🔴 WHY A CONTEXTVAR, NOT A PARAMETER. `SpendMeter.charge` has accepted
+#: `run_key=` since guardrails landed, and its ONE production caller —
+#: `model_call.ModelCallGuard` — never passed one. So `run_totals` was
+#: permanently empty and every run-scoped cap read zero.
+#:
+#: The guard is built by `provider_bridge` from provider config alone and has no
+#: run identity; threading one in would touch all 33 call sites that reach the
+#: bridge. A ContextVar is what this codebase already uses for exactly this
+#: ambient-identity problem (`mcp_core._CURRENT_SESSION_KEY`,
+#: `builtin_tools._CURRENT_AGENT`), so one seam sets it and one seam reads it.
+#:
+#: 🔴 AND IT HAD A LIVE READER ALL ALONG. `resilience.remediation` caps its
+#: judgment lane with `run_totals("doctor").dollars >= max_cost_usd` — a read of
+#: a total nothing ever charged, so that cap has never bound. It is
+#: 0.0 on a fresh meter and stays 0.0 after any number of model calls.
+_CURRENT_RUN_KEY: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "personalclaw_current_run_key", default=""
+)
+
+
+def set_current_run_key(run_key: str):
+    """Bind the run scope model spend accrues to. Returns the token; reset() it when the run ends.
+
+    Scoped with a token rather than cleared to "", so nested runs (a trigger fire that spawns a
+    subagent) restore the parent's scope instead of losing it — the same contract
+    `mcp_core.set_current_session_key` uses.
+    """
+    return _CURRENT_RUN_KEY.set(run_key or "")
+
+
+def reset_current_run_key(token) -> None:
+    """Restore the prior run scope. NEVER raises — a failed reset must not break a run's teardown.
+
+    Catches `Exception`, not a tuple, and that is deliberate: my first version listed
+    `(ValueError, LookupError)` and a reused token raises **RuntimeError** ("Token has already been
+    used"), which a test caught immediately. This runs in a `finally` on the fire path, so anything
+    escaping here would replace a real provider error with a bookkeeping one — the caller would see
+    the wrong exception for the wrong reason. Falling back to `set("")` leaves the scope unbound,
+    which is the same state a call outside any run has.
+    """
+    try:
+        _CURRENT_RUN_KEY.reset(token)
+    except Exception:  # noqa: BLE001 - see the docstring
+        _CURRENT_RUN_KEY.set("")
+
+
+def current_run_key() -> str:
+    """The bound run scope, or "" when a call is not inside a tracked run."""
+    return _CURRENT_RUN_KEY.get() or ""
+
+
+#: The run-scope CEILING for the ambient run, when the caller who started the run knows a
+#: tighter one than the operator's `max_tokens_per_run` default.
+#:
+#: Ambient for the same reason `_CURRENT_RUN_KEY` is: a per-trigger `max_cost_usd_per_run`
+#: is known at the FIRE seam, while the guard that must enforce it is built by
+#: `provider_bridge` from provider config and never sees the trigger. Threading a budget
+#: down would touch the same 33 bridge call sites S153 measured.
+#:
+#: Unlimited by default, so a run that binds no ceiling keeps the operator's config value.
+_CURRENT_RUN_BUDGET: contextvars.ContextVar[Budget] = contextvars.ContextVar(
+    "personalclaw_current_run_budget", default=Budget()
+)
+
+
+def set_current_run_budget(budget: Budget):
+    """Bind a ceiling for the ambient run. Returns the token; reset() it when the run ends.
+
+    Token-scoped like `set_current_run_key` so a nested run restores the parent's ceiling
+    rather than losing it.
+    """
+    return _CURRENT_RUN_BUDGET.set(budget if isinstance(budget, Budget) else Budget())
+
+
+def reset_current_run_budget(token) -> None:
+    """Restore the prior run ceiling. NEVER raises — see `reset_current_run_key`."""
+    try:
+        _CURRENT_RUN_BUDGET.reset(token)
+    except Exception:  # noqa: BLE001 - a failed reset must not break a run's teardown
+        _CURRENT_RUN_BUDGET.set(Budget())
+
+
+def current_run_budget() -> Budget:
+    """The ambient run ceiling, or an unlimited Budget when no run bound one."""
+    got = _CURRENT_RUN_BUDGET.get()
+    return got if isinstance(got, Budget) else Budget()
 
 
 def get_meter() -> SpendMeter:
