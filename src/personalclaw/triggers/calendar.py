@@ -532,6 +532,7 @@ def project_occurrences(
     cap: int = MAX_OCCURRENCES_PER_TRIGGER,
     skip_dates: list[str] | None = None,
     tz_name: str = "",
+    next_after: Any = None,
 ) -> tuple[list[Occurrence], bool]:
     """Project one trigger's fires across the window. Returns `(occurrences, truncated)`.
 
@@ -554,8 +555,16 @@ def project_occurrences(
     about
     a moment in time — calling it 200 times for a projected week would be both slow and wrong (a
     calendar's answer for next Thursday is not knowable now).
+
+    **🔴 `next_after` closes the CRON GAP (S103).** This function took only `interval_secs`, so the
+    week grid OMITTED every cron trigger — its caller's own comment admitted it ("a cron trigger is
+    omitted rather than mis-plotted"). At the time that was right: nothing could iterate a cron's
+    fires. S96's `arm.next_fire` can, so a caller now passes a stepper — `next_after(t) -> float` —
+    and a cron plots on the same annotated grid as an interval. Omitting them made the week view a
+    forecast of only half the user's automations, silently.
     """
-    if interval_secs <= 0 or first_fire_at <= 0:
+    stepping = callable(next_after)
+    if not stepping and (interval_secs <= 0 or first_fire_at <= 0):
         return [], False
 
     from datetime import timezone as _tz
@@ -571,12 +580,20 @@ def project_occurrences(
 
     # Advance to the first fire inside the window rather than iterating from `first_fire_at`, which
     # for an old trigger with a 60s interval would be millions of no-op steps before the first slot.
-    at = first_fire_at
-    if at < start_ts:
-        skipped = int((start_ts - at) // interval_secs)
-        at += skipped * interval_secs
+    if stepping:
+        # A stepper answers "the next fire strictly after t", so the window entry is one call
+        # rather than arithmetic — and it is the ONLY correct way to advance a cron: a cron's
+        # spacing is not constant, so adding an interval would drift across months and DST.
+        at = float(next_after(start_ts - 1))
+        if at <= 0:
+            return [], False
+    else:
+        at = first_fire_at
         if at < start_ts:
-            at += interval_secs
+            skipped = int((start_ts - at) // interval_secs)
+            at += skipped * interval_secs
+            if at < start_ts:
+                at += interval_secs
 
     out: list[Occurrence] = []
     while at < end_ts:
@@ -604,7 +621,15 @@ def project_occurrences(
                 reason=reason,
             )
         )
-        at += interval_secs
+        if stepping:
+            nxt = float(next_after(at))
+            if nxt <= at:
+                # A stepper that does not advance would spin forever. Stopping is the honest
+                # response: the grid shows what it could project rather than hanging the request.
+                return out, False
+            at = nxt
+        else:
+            at += interval_secs
     return out, False
 
 

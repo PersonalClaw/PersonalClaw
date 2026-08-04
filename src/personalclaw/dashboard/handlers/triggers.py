@@ -111,6 +111,124 @@ def _trigger_store():
     return TriggerStore(base_dir=config_dir())
 
 
+def _week_triggers(state: DashboardState) -> list[Any]:
+    """Enabled clock triggers to plot, from the store (S103).
+
+    Only ENABLED ones: a disabled trigger has no fires, and drawing them would make the grid a wish
+    list rather than a forecast. Broken rows are excluded too — a row the entity refuses has no
+    knowable schedule, and plotting a guess is worse than an absence.
+
+    Falls back to projecting the legacy jobs while a home's migration has not run (retires with
+    `ScheduleService`), translating each into the store's shape so ONE projection serves both.
+    """
+    from personalclaw.triggers.models import Trigger
+
+    store = _trigger_store()
+    rows = [
+        row.trigger
+        for row in store.load()
+        if row.trigger.kind == "clock" and row.trigger.enabled and row.ok
+    ]
+    if rows:
+        return rows
+    out: list[Any] = []
+    for job in state.crons.list_jobs(include_disabled=True):
+        if not getattr(job, "enabled", False):
+            continue
+        schedule: Any = getattr(job, "schedule", None)
+        if schedule is None:
+            continue
+        kind = str(getattr(schedule, "kind", "") or "")
+        every = getattr(schedule, "every_secs", None)
+        expr = getattr(schedule, "cron_expr", None)
+        spec: dict[str, Any] = {}
+        if kind == "every" and every:
+            spec = {"kind": "interval", "interval_secs": float(every)}
+        elif kind == "cron" and expr:
+            spec = {"kind": "cron", "expr": str(expr)}
+        else:
+            continue
+        if getattr(job, "timezone", ""):
+            spec["timezone"] = str(job.timezone)
+        if getattr(job, "skip_dates", None):
+            spec["skip_dates"] = [str(d) for d in job.skip_dates]
+        # 🔴 CARRY THE INTERVAL ANCHOR. A legacy `every` job's grid position comes from
+        # `last_run_ts`/`created_ts`; dropping them left `first_fire_at=0` and the projection
+        # returned NOTHING for every legacy interval job — measured as `assert 0 == 24` against the
+        # shipped week-grid test. `created_at` is the store's own name for the same anchor, which is
+        # what `arm.next_fire` and `next_after_completion` both read.
+        anchor = float(getattr(job, "last_run_ts", 0) or getattr(job, "created_ts", 0) or 0)
+        if anchor > 0:
+            spec["created_at"] = anchor
+        trigger = Trigger(
+            id=job.id,
+            name=job.name,
+            kind="clock",
+            enabled=True,
+            spec=spec,
+            gates=getattr(job, "gates", None) or {},
+        )
+        if anchor > 0:
+            # Present the anchor as the armed fire too, so the interval path plots from the same
+            # instant the legacy scheduler would use rather than re-deriving one.
+            from personalclaw.triggers.service import to_iso as _to_iso
+
+            trigger.next_fire_at = _to_iso(anchor)
+        out.append(trigger)
+    return out
+
+
+def _project_one(trigger: Any, *, start: Any, days: int) -> tuple[list[Any], bool]:
+    """Project ONE clock trigger's fires across the window.
+
+    🔴 A CRON NOW PLOTS. The old caller skipped every non-interval trigger with its own admission
+    ("a cron trigger is omitted rather than mis-plotted"), which made the week view a forecast of
+    only half a user's automations — silently. S96's `arm.next_fire` can step a cron, so it is
+    passed to `project_occurrences` as `next_after`. An interval keeps the arithmetic path, because
+    a constant step is cheaper and exactly right for it.
+
+    `skip_dates` and `tz_name` are read off the trigger for the reason AUTO-A3 requires: the
+    SCHEDULER compares skip dates against the date in the trigger's OWN zone, so a grid on server
+    time would strike the wrong column for any job that declares one.
+    """
+    from personalclaw.triggers.arm import next_fire
+    from personalclaw.triggers.calendar import project_occurrences
+    from personalclaw.triggers.service import to_epoch
+
+    spec = trigger.spec if isinstance(getattr(trigger, "spec", None), dict) else {}
+    kind = str(spec.get("kind") or "")
+    interval = float(spec.get("interval_secs") or 0)
+    common = {
+        "trigger_id": f"{_SCHEDULE}:{trigger.id}",
+        "trigger_name": trigger.name,
+        "start": start,
+        "days": days,
+        "gates": getattr(trigger, "gates", None) or {},
+        "skip_dates": [str(d) for d in (spec.get("skip_dates") or [])],
+        "tz_name": str(spec.get("timezone") or ""),
+    }
+    if kind in ("interval", "sequence") and interval > 0:
+        # 🔴 An UNARMED row must still plot. Measured on the owner's real store: `j-every` is enabled
+        # with an empty `next_fire_at` (a re-enable does not arm until the next boot sweep), so
+        # reading only `next_fire_at` gave `first_fire_at=0` and `project_occurrences` returned
+        # NOTHING — a live 5-minute automation invisible on the week grid. Falling back to
+        # `arm.next_fire` computes the same instant the tick will use, so the forecast is honest
+        # whether or not the row happens to be armed yet.
+        first = to_epoch(getattr(trigger, "next_fire_at", "")) or next_fire(trigger)
+        if first <= 0:
+            return [], False
+        return project_occurrences(interval_secs=interval, first_fire_at=first, **common)
+    if kind == "cron" and spec.get("expr"):
+        return project_occurrences(
+            interval_secs=0,
+            first_fire_at=0,
+            next_after=lambda after: next_fire(trigger, now=after),
+            **common,
+        )
+    # `at` is a single fire, and an elapsed one is not a forecast. Nothing to plot.
+    return [], False
+
+
 def _arm_if_needed(store: Any, trigger_id: str) -> None:
     """Arm a clock trigger that has no next fire (S101).
 
@@ -1266,8 +1384,6 @@ async def api_triggers_week(request: web.Request) -> web.Response:
     """
     from datetime import datetime, timedelta
 
-    from personalclaw.triggers.calendar import project_occurrences
-
     state: DashboardState = request.app["state"]
     raw_start = (request.query.get("start") or "").strip()
     try:
@@ -1281,37 +1397,11 @@ async def api_triggers_week(request: web.Request) -> web.Response:
 
     occurrences: list[dict[str, Any]] = []
     truncated: list[str] = []
-    for job in state.crons.list_jobs(include_disabled=True):
-        if not job.enabled:
-            # Only enabled triggers are plotted: a disabled one has no fires, and drawing them
-            # would make the grid a wish list rather than a forecast.
-            continue
-        schedule = getattr(job, "schedule", None)
-        interval = float(getattr(schedule, "every_secs", 0) or 0)
-        if interval <= 0:
-            # `cron`/`at` recurrences need the shipped evaluator, which answers one fire at a time;
-            # the interval kinds are what this projection covers today. A cron trigger is omitted
-            # rather than mis-plotted — a wrong band is worse than a missing one here.
-            continue
-        first = float(getattr(job, "last_run_ts", 0) or getattr(job, "created_ts", 0) or 0)
-        rows, cut = project_occurrences(
-            trigger_id=f"{_SCHEDULE}:{job.id}",
-            trigger_name=job.name,
-            interval_secs=interval,
-            first_fire_at=first,
-            start=start,
-            days=days,
-            gates=getattr(job, "gates", None) or {},
-            # AUTO-A3's struck columns, and the zone they are struck in. Both are read off the job
-            # because the SCHEDULER reads them off the job: it compares `skip_dates` against the
-            # date in `_job_tz(job)`, so a grid on server time would strike the wrong column for
-            # any job with its own timezone. Measured: a Tokyo job's skip date silently missed.
-            skip_dates=list(getattr(job, "skip_dates", None) or []),
-            tz_name=str(getattr(job, "timezone", "") or ""),
-        )
+    for trigger in _week_triggers(state):
+        rows, cut = _project_one(trigger, start=start, days=days)
         occurrences.extend(row.to_dict() for row in rows)
         if cut:
-            truncated.append(f"{_SCHEDULE}:{job.id}")
+            truncated.append(f"{_SCHEDULE}:{trigger.id}")
 
     from personalclaw.schedule import get_local_tz
 
@@ -1359,15 +1449,34 @@ async def api_triggers_doctor(request: web.Request) -> web.Response:
         logger.debug("doctor: workflow defs unavailable", exc_info=True)
 
     rows: list[dict[str, Any]] = []
-    for job in state.crons.list_jobs(include_disabled=True):
-        rows.append(
-            {
-                "id": f"{_SCHEDULE}:{job.id}",
-                "gates": getattr(job, "gates", None) or {},
-                "workflow": getattr(job, "workflow", None) or {},
-                "spec": {"glob": getattr(job, "watch_glob", "") or ""},
-            }
-        )
+    # 🔴 §6's doctor re-point (S103): diagnosed from the STORE, where a `Trigger` carries `gates`,
+    # `workflow` and `spec` natively — a `ScheduleJob` had none of them by those names, so the old
+    # rows read `getattr(job, "workflow")` (always absent → always empty) and a `watch_glob` field
+    # that does not exist on a cron at all. The orphan-workflow and broad-glob checks were therefore
+    # scanning blanks for every schedule trigger: present, reviewed, and diagnosing nothing.
+    store = _trigger_store()
+    store_rows = [row for row in store.load() if row.trigger.kind == "clock"]
+    if store_rows:
+        for row in store_rows:
+            rows.append(
+                {
+                    "id": f"{_SCHEDULE}:{row.trigger.id}",
+                    "gates": row.trigger.gates or {},
+                    "workflow": row.trigger.workflow or {},
+                    "spec": dict(row.trigger.spec or {}),
+                }
+            )
+    else:
+        # Legacy fallback while a home's migration has not run (retires with `ScheduleService`).
+        for job in state.crons.list_jobs(include_disabled=True):
+            rows.append(
+                {
+                    "id": f"{_SCHEDULE}:{job.id}",
+                    "gates": getattr(job, "gates", None) or {},
+                    "workflow": getattr(job, "workflow", None) or {},
+                    "spec": {"glob": getattr(job, "watch_glob", "") or ""},
+                }
+            )
     for trigger in _event_store().load():
         rows.append(
             {

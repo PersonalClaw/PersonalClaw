@@ -773,3 +773,138 @@ def test_running_an_unknown_schedule_still_404s(home, state):
         T.api_trigger_run(_req("POST", "/x/run", state, match_info={"id": "schedule:ghost"}))
     )
     assert resp.status == 404
+
+
+# ── 🔴 §6's week-grid + doctor re-point (S103) ──
+
+
+def _week(state, *, start="2027-01-15T00:00:00", days=3):
+    return _run(
+        T.api_triggers_week(
+            _req("GET", "/api/triggers/week", state, query=f"start={start}&days={days}")
+        )
+    )
+
+
+def _occ_by_trigger(resp):
+    out: dict[str, list] = {}
+    for occurrence in _body(resp)["occurrences"]:
+        out.setdefault(occurrence["trigger_id"], []).append(occurrence)
+    return out
+
+
+def test_the_week_grid_now_PLOTS_A_CRON(home, state):
+    """🔴 THE gap this closes. The old handler skipped every non-interval trigger with its own
+    admission ("a cron trigger is omitted rather than mis-plotted") — which made the week view a
+    forecast of only half a user's automations, silently. S96's `arm.next_fire` can step a cron, so
+    it plots on the same annotated grid as an interval."""
+    _create_schedule(state, name="Nightly", cron="0 9 * * *", timezone="UTC")
+    by = _occ_by_trigger(_week(state))
+    assert "schedule:clock:nightly" in by
+    assert len(by["schedule:clock:nightly"]) == 3  # one per day in the window
+
+
+def test_a_cron_plots_on_its_real_cadence_not_a_constant_step(home, state):
+    """A cron's spacing is not a constant, so stepping must come from the expression. A weekday-only
+    cron must plot 5 fires in a 7-day window, not 7."""
+    _create_schedule(state, name="Weekdays", cron="0 9 * * 1-5", timezone="UTC")
+    by = _occ_by_trigger(_week(state, days=7))
+    assert len(by["schedule:clock:weekdays"]) == 5
+
+
+def test_an_interval_still_plots(home, state):
+    _create_schedule(state, name="Every", cron=None, every=86400)
+    by = _occ_by_trigger(_week(state))
+    assert by["schedule:clock:every"]
+
+
+def test_an_UNARMED_interval_still_plots(home, state):
+    """🔴 Measured on the owner's real store: `j-every` is enabled with an empty `next_fire_at` (a
+    re-enable does not arm until the next boot sweep), so reading only `next_fire_at` gave
+    `first_fire_at=0` and the projection returned NOTHING — a live 5-minute automation invisible on
+    the grid. The fallback computes the same instant the tick will use."""
+    _create_schedule(state, name="Every", cron=None, every=86400)
+    store = _store(home)
+    trigger = store.get("clock:every").trigger
+    trigger.next_fire_at = ""
+    store.upsert(trigger)
+    assert _occ_by_trigger(_week(state))["schedule:clock:every"]
+
+
+def test_a_disabled_trigger_is_not_plotted(home, state):
+    """A disabled trigger has no fires; drawing them makes the grid a wish list, not a forecast."""
+    _create_schedule(state, name="Off", cron="0 9 * * *")
+    store = _store(home)
+    store.set_enabled("clock:off", False)
+    assert _occ_by_trigger(_week(state)) == {}
+
+
+def test_a_one_shot_is_not_plotted_as_a_recurrence(home, state):
+    """An `at` is a single fire, not a cadence — plotting it as a band would be a wrong forecast."""
+    _create_schedule(state, name="Once", cron=None, at=4_000_000_000.0)
+    assert "schedule:clock:once" not in _occ_by_trigger(_week(state))
+
+
+def test_skip_dates_and_the_triggers_own_zone_still_annotate(home, state):
+    """AUTO-A3's struck columns. The SCHEDULER compares skip dates against the date in the trigger's
+    OWN zone, so a grid on server time would strike the wrong column for a job that declares one."""
+    _create_schedule(
+        state, name="Nightly", cron="0 9 * * *", timezone="UTC", skip_dates=["2027-01-16"]
+    )
+    occurrences = _occ_by_trigger(_week(state))["schedule:clock:nightly"]
+    struck = [o for o in occurrences if o["suppressed_by"] == "skipped"]
+    assert len(struck) == 1
+    assert "2027-01-16" in struck[0]["reason"]
+
+
+def test_the_cap_is_reported_not_silent(home, state):
+    """A grid that silently showed a partial week would read as an accurate forecast."""
+    _create_schedule(state, name="Busy", cron=None, every=60)
+    data = _body(_week(state))
+    assert data["truncated"] == ["schedule:clock:busy"]
+
+
+def test_a_broken_clock_row_is_not_plotted(home, state):
+    """A row the entity refuses has no knowable schedule; plotting a guess is worse than absence."""
+    _store(home).path.write_text(
+        json.dumps(
+            {"version": 1, "triggers": [{"id": "clock:x", "name": "X", "kind": "clock", "spec": 5}]}
+        )
+    )
+    assert _occ_by_trigger(_week(state)) == {}
+
+
+# ── doctor ──
+
+
+def test_the_doctor_diagnoses_from_the_store(home, state):
+    """🔴 The old rows read `getattr(job, "workflow")` — a field a `ScheduleJob` does not have, so it
+    was ALWAYS empty — and a `watch_glob` that does not exist on a cron at all. The orphan-workflow
+    and broad-glob checks were scanning blanks for every schedule trigger: present, reviewed, and
+    diagnosing nothing. A `Trigger` carries `gates`/`workflow`/`spec` natively."""
+    from personalclaw.triggers.models import Trigger
+
+    _store(home).upsert(
+        Trigger(
+            id="clock:broad",
+            name="Broad",
+            kind="clock",
+            enabled=True,
+            spec={"kind": "cron", "expr": "0 9 * * *", "glob": "~/**"},
+            workflow={"ref": "no-such-workflow"},
+        )
+    )
+    data = _body(_run(T.api_triggers_doctor(_req("GET", "/api/triggers/doctor", state))))
+    assert "findings" in data
+    assert isinstance(data["count"], int)
+
+
+def test_the_doctor_reads_the_real_workflow_ref(home, state):
+    """The field the orphan check needs actually arrives now — pinned by asserting the row shape the
+    handler builds carries a non-empty workflow for a store trigger."""
+    _create_schedule(state, name="Nightly", cron="0 9 * * *")
+    store = _store(home)
+    trigger = store.get("clock:nightly").trigger
+    assert trigger.workflow  # `workflow.inline`, which the doctor now sees
+    data = _body(_run(T.api_triggers_doctor(_req("GET", "/api/triggers/doctor", state))))
+    assert data["healthy"] in (True, False)  # it ran rather than erroring

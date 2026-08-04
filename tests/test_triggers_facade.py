@@ -557,11 +557,15 @@ def test_week_grid_annotates_suppressed_slots(state):
     assert body["truncated"] == []
 
 
-def test_week_grid_omits_disabled_and_cron_triggers(state):
-    """A disabled trigger has no fires; a cron recurrence needs the shipped evaluator.
+def test_week_grid_omits_disabled_but_now_PLOTS_a_cron(state):
+    """🔴 SUPERSEDED CONTRACT (S103). This asserted the cron kind was OMITTED — deliberate at the
+    time, because nothing could iterate a cron's fires, and the handler said so ("a wrong band is
+    worse than a missing one"). But omitting them made the week view a forecast of only HALF a
+    user's automations, silently. S96's `arm.next_fire` can step a cron, so it now plots on the same
+    annotated grid as an interval.
 
-    Omitting the cron kind is deliberate — a wrong band is worse than a missing one on a forecast.
-    """
+    A DISABLED trigger is still omitted, and that half is unchanged: it has no fires, and drawing
+    them would make the grid a wish list rather than a forecast."""
     from personalclaw.schedule import ScheduleDefinition, ScheduleJob, make_agent_action
 
     cron = ScheduleJob(
@@ -578,7 +582,9 @@ def test_week_grid_omits_disabled_and_cron_triggers(state):
     body = _body(
         _run(T.api_triggers_week(_req("GET", "/api/triggers/week", state, query="days=1")))
     )
-    assert {o["trigger_name"] for o in body["occurrences"]} == {"Hourly"}
+    names = {o["trigger_name"] for o in body["occurrences"]}
+    assert names == {"Hourly", "Cron"}
+    assert "Off" not in names
 
 
 def test_week_grid_reports_which_triggers_were_capped(state):

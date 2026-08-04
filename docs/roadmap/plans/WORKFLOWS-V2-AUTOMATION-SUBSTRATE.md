@@ -2207,3 +2207,47 @@ surface is its own session; this one took the firing path because it was the las
 one.
 
 4 tests (39 in the store-facade file). Gate: `make lint` clean, **15673 passed**, real home untouched.
+
+### S103 — Week grid + doctor re-point, and a cron finally plots (§6 / AUTO-A3 — stacked on S102)
+
+**DONE.** Both remaining pure-read facade surfaces now read the store, and each turned out to hide a
+defect that the re-point exposes rather than merely relocating.
+
+- **🔴 THE WEEK GRID OMITTED EVERY CRON.** The handler skipped all non-interval triggers with its own
+  admission: "a cron trigger is omitted rather than mis-plotted — a wrong band is worse than a missing
+  one." That was honest when nothing could iterate a cron's fires. **S96's `arm.next_fire` can**, so
+  the omission had become a forecast of only HALF a user's automations, silently. `project_occurrences`
+  now takes an injectable `next_after` stepper: a cron steps through its own expression, an interval
+  keeps the cheaper arithmetic path. Verified a weekday-only cron plots **5** fires in a 7-day window,
+  not 7 — a constant step would have drifted, which is why the stepper (not an averaged interval) is
+  the only correct mechanism across months and DST.
+- **🔴 THE DOCTOR WAS DIAGNOSING BLANKS.** Its rows read `getattr(job, "workflow")` — a field a
+  `ScheduleJob` does not have, so ALWAYS empty — and `watch_glob`, which does not exist on a cron at
+  all. So the orphan-workflow and broad-glob checks scanned empty values for every schedule trigger:
+  present, reviewed, and diagnosing nothing. A `Trigger` carries `gates`/`workflow`/`spec` natively,
+  so the store rows finally give those checks something real to read.
+- **🔴 A REGRESSION I INTRODUCED AND CAUGHT BY RUNNING.** My legacy-fallback translation dropped
+  `last_run_ts`/`created_ts`, which is a legacy `every` job's grid anchor — so `first_fire_at` was 0
+  and the projection returned NOTHING for every legacy interval job (`assert 0 == 24` against the
+  shipped week-grid test). Fixed by carrying the anchor as `spec.created_at` + the armed fire, which
+  is the same instant `arm.next_fire` and `next_after_completion` both read.
+- **🔴 AN UNARMED ROW MUST STILL PLOT.** Measured on the owner's real store: `j-every` is enabled with
+  an empty `next_fire_at` (a re-enable does not arm until the next boot sweep), so reading only
+  `next_fire_at` left a live 5-minute automation invisible on the grid. The projection falls back to
+  `arm.next_fire`, so the forecast is honest whether or not the row happens to be armed yet.
+- **Preserved, not re-derived:** skip dates and the trigger's OWN timezone still annotate (AUTO-A3's
+  struck columns — the scheduler compares against the trigger's zone, so a grid on server time would
+  strike the wrong column); the cap is still REPORTED per trigger rather than a bare bool; a disabled
+  trigger is still omitted; a broken row is not plotted (no knowable schedule, and a guess is worse
+  than an absence); an `at` is not plotted as a recurrence.
+- **DEVIATION:** `test_week_grid_omits_disabled_and_cron_triggers` asserted the cron omission. That
+  premise was true when written and is now the defect, so the test is renamed and rewritten to assert
+  a cron PLOTS while a disabled trigger is still omitted — same lesson as S96 and S100.
+
+13 tests (50 in the store-facade file; the facade's own 32 pass with the one rewritten). Gate:
+`make lint` clean, **15684 passed**, real home untouched.
+
+- **REMAINING on the `ScheduleService` retirement:** `api_trigger_test` + `api_trigger_history_all`
+  (the last two facade `list_jobs` reads), the run-record methods (a re-point onto `ScheduleRunStore`,
+  which survives), the session reaper trio, `status`/`set_refresh_callback`, and the two non-facade
+  callers (`suggestions.py`, `messaging.py`). One surface per session.
