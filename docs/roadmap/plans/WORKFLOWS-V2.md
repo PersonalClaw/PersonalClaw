@@ -1220,3 +1220,47 @@ Verified load-bearing: reverting the per-node lookup turns 2 of the 9 new tests 
   the other unread key. It needs a decision about what tolerating a node failure MEANS for the
   frontier (skip the dependents, or run them with a null input?), which is a contract question rather
   than a wiring one, so it is recorded here rather than guessed at.
+
+### S148 — `allow_failure` honoured: a tolerated lens degrades, it does not fail the run (WF2-R18)
+
+**DONE.** The second finding of S147's config sweep, and it closes that sweep. `rich-ingest` declares
+`allow_failure: true` on **all five** of its extraction lenses, which run in a `parallel` with
+`join: all`. Measured:
+
+```
+container_outcome([DONE, DONE, DONE, DONE, FAILED], join=ALL)  ->  FAILED
+```
+
+So one flaky lens **discarded the four that had succeeded** — the exact outcome the key exists to
+prevent, on the template that declares it five times over. Confirmed unread in **both** positions: the
+node config where the template puts it, and the `with` block LOOPS-EVOLUTION's log names as "the real
+form" (that block is the action-provider args, so it would not have applied to an `infer`/`stage` lens
+anyway).
+
+**DEGRADED, not DONE — the whole design decision.** `SUCCESS_STATES` already includes DEGRADED, so the
+join proceeds and the run continues. Masking to DONE would make a partial extraction
+indistinguishable from a complete one: the run would report success and nothing would ever say a lens
+was missing, which is the silent-drop shape this program keeps finding. `container_outcome`'s existing
+ALL branch already propagates "any DEGRADED child ⇒ DEGRADED container", so the honest verdict
+travels upward for free.
+
+**Only FAILED is masked.** A CANCELLED child is a decision someone made and a BLOCKED one is waiting
+on a human; tolerating either would convert a deliberate stop into a shrug. Asserted per state.
+
+**Tolerance is PER CHILD, not per container** — a tolerated lens failing must not excuse an intolerant
+sibling failing, or `allow_failure` on one node would silently weaken every node beside it.
+
+**The template turned out to be coherent end to end**, which is worth recording because it is what
+made DEGRADED the right answer rather than a compromise: every downstream consumer already reads
+`{{nodes.lens-X.output.items | default([])}}`, so a tolerated lens yields an empty list and
+`store-decisions`/`store-facts`/… proceed with what did extract. The test asserts that too — without
+the `| default([])`, tolerance would just move the failure one node later, and a future template
+edit that dropped it would silently reintroduce the bug.
+
+Verified load-bearing: removing the mask turns 2 of the 9 new tests red. Gate: `make lint`
+(black+isort+flake8+mypy, 691 files) green; `pytest -n 4 --dist worksteal` **16123 passed, 29 skipped,
+13 xfailed**. No `web/` change.
+
+**The config sweep is now closed** — both unread keys it found (`timeout_stall_secs` in S147,
+`allow_failure` here) are wired, and re-running the sweep reports no bundled config key without a
+reader.
