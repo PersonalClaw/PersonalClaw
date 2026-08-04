@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-08-04T04:01:45.294Z",
+  "generatedAt": "2026-08-04T19:49:30.716Z",
   "totals": {
     "driftHits": 7,
-    "filesScanned": 401,
+    "filesScanned": 402,
     "filesWithDrift": 6
   },
   "byCategory": {
@@ -129,14 +129,14 @@
       "detail": "2 raw-button, 5 raw-input"
     },
     {
-      "file": "pages/settings/ProjectionRulesPanel.tsx",
-      "score": 9,
-      "detail": "2 raw-button, 5 raw-input"
-    },
-    {
       "file": "pages/settings/bento.tsx",
       "score": 9,
       "detail": "4 raw-button, 1 raw-input"
+    },
+    {
+      "file": "pages/settings/ProjectionRulesPanel.tsx",
+      "score": 9,
+      "detail": "2 raw-button, 5 raw-input"
     },
     {
       "file": "pages/chat/PromptPalette.tsx",
@@ -283,11 +283,6 @@
       "raw-input": 1,
       "raw-dialog": 0
     },
-    "pages/ChatPage.tsx": {
-      "raw-button": 15,
-      "raw-input": 9,
-      "raw-dialog": 0
-    },
     "pages/agents/AgentDetail.tsx": {
       "raw-button": 1,
       "raw-input": 0,
@@ -298,6 +293,11 @@
       "raw-input": 0,
       "raw-dialog": 0
     },
+    "pages/apps/appConfigForm.tsx": {
+      "raw-button": 1,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
     "pages/apps/AppFrame.tsx": {
       "raw-button": 1,
       "raw-input": 0,
@@ -306,11 +306,6 @@
     "pages/apps/AppsSection.tsx": {
       "raw-button": 3,
       "raw-input": 0,
-      "raw-dialog": 0
-    },
-    "pages/apps/appConfigForm.tsx": {
-      "raw-button": 1,
-      "raw-input": 1,
       "raw-dialog": 0
     },
     "pages/artifacts/ArtifactCompare.tsx": {
@@ -356,6 +351,11 @@
     "pages/chat/ToolCard.tsx": {
       "raw-button": 2,
       "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/ChatPage.tsx": {
+      "raw-button": 15,
+      "raw-input": 9,
       "raw-dialog": 0
     },
     "pages/code/CodeCockpitPage.tsx": {
@@ -423,11 +423,6 @@
       "raw-input": 0,
       "raw-dialog": 0
     },
-    "pages/files/FilesSection.tsx": {
-      "raw-button": 4,
-      "raw-input": 2,
-      "raw-dialog": 0
-    },
     "pages/files/browse/FilePreviews.tsx": {
       "raw-button": 1,
       "raw-input": 0,
@@ -445,6 +440,11 @@
     },
     "pages/files/comments/CommentLayer.tsx": {
       "raw-button": 1,
+      "raw-input": 2,
+      "raw-dialog": 0
+    },
+    "pages/files/FilesSection.tsx": {
+      "raw-button": 4,
       "raw-input": 2,
       "raw-dialog": 0
     },
@@ -603,6 +603,11 @@
       "raw-input": 0,
       "raw-dialog": 0
     },
+    "pages/settings/bento.tsx": {
+      "raw-button": 4,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
     "pages/settings/DesignPanel.tsx": {
       "raw-button": 5,
       "raw-input": 0,
@@ -678,6 +683,11 @@
       "raw-input": 0,
       "raw-dialog": 0
     },
+    "pages/settings/settingsUI.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
     "pages/settings/UpdatesPanel.tsx": {
       "raw-button": 1,
       "raw-input": 0,
@@ -686,16 +696,6 @@
     "pages/settings/VoicePanel.tsx": {
       "raw-button": 5,
       "raw-input": 3,
-      "raw-dialog": 0
-    },
-    "pages/settings/bento.tsx": {
-      "raw-button": 4,
-      "raw-input": 1,
-      "raw-dialog": 0
-    },
-    "pages/settings/settingsUI.tsx": {
-      "raw-button": 1,
-      "raw-input": 0,
       "raw-dialog": 0
     },
     "pages/skills/SkillInspector.tsx": {
@@ -718,6 +718,11 @@
       "raw-input": 0,
       "raw-dialog": 0
     },
+    "pages/tasks/formControls.tsx": {
+      "raw-button": 3,
+      "raw-input": 2,
+      "raw-dialog": 0
+    },
     "pages/tasks/TaskDetail.tsx": {
       "raw-button": 5,
       "raw-input": 1,
@@ -726,11 +731,6 @@
     "pages/tasks/TasksListPage.tsx": {
       "raw-button": 5,
       "raw-input": 0,
-      "raw-dialog": 0
-    },
-    "pages/tasks/formControls.tsx": {
-      "raw-button": 3,
-      "raw-input": 2,
       "raw-dialog": 0
     },
     "pages/terminal/TerminalDrawer.tsx": {
@@ -748,6 +748,11 @@
       "raw-input": 0,
       "raw-dialog": 0
     },
+    "pages/tools/schema.tsx": {
+      "raw-button": 0,
+      "raw-input": 4,
+      "raw-dialog": 0
+    },
     "pages/tools/ToolInspector.tsx": {
       "raw-button": 1,
       "raw-input": 0,
@@ -761,11 +766,6 @@
     "pages/tools/ToolsPage.tsx": {
       "raw-button": 6,
       "raw-input": 1,
-      "raw-dialog": 0
-    },
-    "pages/tools/schema.tsx": {
-      "raw-button": 0,
-      "raw-input": 4,
       "raw-dialog": 0
     },
     "pages/triggers/ActionConfig.tsx": {

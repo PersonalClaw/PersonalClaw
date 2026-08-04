@@ -14,6 +14,7 @@ import { DagView } from '../tasks/DagView'
 import { layoutRunDag } from './runDag'
 import { tokenForNode } from './surfacingMeta'
 import { WorkflowAsk } from './WorkflowAsk'
+import { compareInstancePaths } from "../../lib/sort";
 
 /** One workflow run, live (WORKFLOWS-V2 Slice 7b).
  *
@@ -117,7 +118,7 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
   // Sorted by instance path so the list reads in the spec's own order, and indented to its
   // tree shape — a flat list of twenty node ids is unreadable on a real workflow.
   const nodes = useMemo(
-    () => [...(run?.nodes ?? [])].sort((a, b) => a.instance_path.localeCompare(b.instance_path)),
+    () => [...(run?.nodes ?? [])].sort((a, b) => compareInstancePaths(a.instance_path, b.instance_path)),
     [run],
   )
 

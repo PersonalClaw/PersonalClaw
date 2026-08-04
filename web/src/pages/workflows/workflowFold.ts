@@ -24,6 +24,7 @@
 
 import type { WorkflowNodeState, WorkflowRunDetailData } from '../../lib/api'
 import type { WorkflowLifecycleEvent } from './useWorkflowStream'
+import { compareInstancePaths } from "../../lib/sort";
 
 /** The envelope every published event carries (stamped at the controller's one publish
  *  seam, so a payload cannot be missing them). */
@@ -88,7 +89,7 @@ const TERMINAL_RUN = new Set(['complete', 'failed', 'cancelled', 'escalated'])
  *  snapshot is authoritative, so it RESETS the dedup and epoch state rather than merging
  *  into it. Merging would let a pre-snapshot epoch keep suppressing fresh events. */
 export function foldSnapshot(snap: WorkflowRunDetailData): WorkflowViewModel {
-  const nodes = [...(snap.nodes ?? [])].sort((a, b) => a.instance_path.localeCompare(b.instance_path))
+  const nodes = [...(snap.nodes ?? [])].sort((a, b) => compareInstancePaths(a.instance_path, b.instance_path))
   const done = nodes.filter((n) => TERMINAL_NODE.has(n.state)).length
   return {
     runId: snap.run_id,
@@ -261,7 +262,7 @@ function patchNode(
     ? vm.nodes.map((n) => (n.instance_path === path ? patched : n))
     // A node the snapshot did not contain (a foreach expanded after the snapshot) is
     // APPENDED and re-sorted, so a fan-out that grows mid-run still reads in spec order.
-    : [...vm.nodes, patched].sort((a, b) => a.instance_path.localeCompare(b.instance_path))
+    : [...vm.nodes, patched].sort((a, b) => compareInstancePaths(a.instance_path, b.instance_path))
 
   return { ...vm, nodes, nodeSeq }
 }
@@ -276,7 +277,7 @@ function applyProgress(vm: WorkflowViewModel, incoming: WorkflowNodeState[]): Wo
   }
   return {
     ...vm,
-    nodes: [...byPath.values()].sort((a, b) => a.instance_path.localeCompare(b.instance_path)),
+    nodes: [...byPath.values()].sort((a, b) => compareInstancePaths(a.instance_path, b.instance_path)),
   }
 }
 

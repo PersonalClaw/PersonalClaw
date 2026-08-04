@@ -1,6 +1,6 @@
 import type { WorkflowNodeState } from '../../lib/api'
 import { nodeDepth } from './workflowMeta'
-
+import { compareInstancePaths } from "../../lib/sort";
 /** Grouping a flat node list into collapsible containers (WF2 Slice 10b).
  *
  *  The run view renders one row per node INSTANCE, which is right until a spec fans out: the
@@ -45,7 +45,7 @@ const TERMINAL = new Set([
  *  the projection carries — asking the FE to re-parse the spec tree to render its own rows would
  *  put two sources of truth on screen. */
 export function buildTree(nodes: WorkflowNodeState[]): TreeRow[] {
-  const sorted = [...nodes].sort((a, b) => a.instance_path.localeCompare(b.instance_path))
+  const sorted = [...nodes].sort((a, b) => compareInstancePaths(a.instance_path, b.instance_path))
   return sorted.map((node) => {
     const prefix = `${node.instance_path}.`
     const descendants = sorted
