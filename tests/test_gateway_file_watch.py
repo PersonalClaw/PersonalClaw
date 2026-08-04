@@ -130,13 +130,28 @@ def test_the_poll_loop_is_started_in_init_cron(monkeypatch):
 
 def test_the_loop_lives_in_the_no_crons_else_branch(monkeypatch):
     """A file watch is unattended background work like a cron, so --no-crons must disable it too.
-    Pinning that it sits inside the else-branch (not before the guard)."""
+    Pinning that it sits inside the else-branch (not before the guard).
+
+    Anchored on the GUARD itself, not on `reconcile_digest_cron`. That proxy meant "the last thing
+    in the else-branch", and S108 moved the reconcilers AFTER the boot migration (they wrote a file
+    the clock engine never read), which broke the assertion without breaking the property. An anchor
+    that moves when unrelated code is reordered tests the layout, not the contract.
+    """
     import inspect
 
     src = inspect.getsource(G.GatewayOrchestrator._init_cron)
-    # The task creation must appear AFTER the `if self._no_crons:` guard's else path — i.e. after
-    # the digest-cron reconcile, which is the last thing in the else-branch.
-    assert src.index("_file_watch_task") > src.index("reconcile_digest_cron")
+    guard = src.index("if self._no_crons:")
+    assert src.index("_file_watch_task") > guard
+    # And every line of the task creation must be indented deeper than the guard, which is what
+    # actually makes it conditional rather than merely later in the function.
+    for line in src.split("\n"):
+        if "_file_watch_task = asyncio.create_task" in line:
+            indent = len(line) - len(line.lstrip())
+            guard_line = next(ln for ln in src.split("\n") if "if self._no_crons:" in ln)
+            assert indent > len(guard_line) - len(guard_line.lstrip())
+            break
+    else:  # pragma: no cover - the assertion above cannot be reached without the line
+        raise AssertionError("the file-watch task creation was not found")
 
 
 def test_shutdown_cancels_the_loop():

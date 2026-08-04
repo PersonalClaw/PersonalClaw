@@ -1629,25 +1629,6 @@ class GatewayOrchestrator:
             # rest of `ScheduleService` remains the CRUD surface + run store the API reads until the
             # writes re-point.
             await self.cron_svc.load_without_timer()
-            # Reconcile app-declared crons (untrusted-app sandbox P3): register the
-            # scheduled jobs enabled apps declare + are permitted (can_use_cron), and
-            # prune stale app:* jobs. Idempotent; apps loaded before this via the
-            # extension loader. Best-effort — never block the scheduler on it.
-            try:
-                from personalclaw.apps.app_crons import reconcile_app_crons
-
-                reconcile_app_crons(self.cron_svc)
-            except Exception:
-                logger.warning("app-cron reconcile failed", exc_info=True)
-            # The notification digest (plan 42 T5.1). Reconciled, not just created, so a
-            # schedule edited in Settings converges without the user knowing a cron exists.
-            # Respects --no-crons by living inside this else-branch.
-            try:
-                from personalclaw.action_providers.digest_provider import reconcile_digest_cron
-
-                reconcile_digest_cron(self.cron_svc)
-            except Exception:
-                logger.warning("digest-cron reconcile failed", exc_info=True)
             # The file-watch poll loop (S93): fires `file` triggers whose watched paths changed —
             # the runtime that makes S92's chat-created file automations actually run. Lives in the
             # else-branch so --no-crons disables it too (a file watch is unattended background work
@@ -1672,6 +1653,34 @@ class GatewayOrchestrator:
                 migrate_and_arm()
             except Exception:
                 logger.warning("trigger-store migration failed at boot", exc_info=True)
+            # 🔴 THE TWO SYSTEM RECONCILERS, now AFTER the migration and against the STORE (S108).
+            # Both used to write `crons.json` from BEFORE this point, which was doubly wrong: the
+            # clock engine reads the store only, and the migration that would have imported their
+            # writes had already run. Measured: an app's declared cron and the notification digest
+            # were both inert until the NEXT boot — so a freshly installed app's cron never ran on
+            # the session that installed it, and a digest schedule edited in Settings took two
+            # restarts. Ordered after the migration so a reconciler never fights an import over the
+            # same id.
+            from personalclaw.triggers.store import TriggerStore
+
+            _trigger_store = TriggerStore(base_dir=config_dir())
+            # App-declared crons (untrusted-app sandbox P3): register what enabled+permitted apps
+            # declare (can_use_cron) and prune stale `app:*` rows. Idempotent; apps are loaded
+            # before this by the extension loader. Best-effort — never block the scheduler on it.
+            try:
+                from personalclaw.apps.app_crons import reconcile_app_crons
+
+                reconcile_app_crons(_trigger_store)
+            except Exception:
+                logger.warning("app-cron reconcile failed", exc_info=True)
+            # The notification digest (plan 42 T5.1). Reconciled, not just created, so a schedule
+            # edited in Settings converges without the user knowing a cron exists.
+            try:
+                from personalclaw.action_providers.digest_provider import reconcile_digest_cron
+
+                reconcile_digest_cron(_trigger_store)
+            except Exception:
+                logger.warning("digest-cron reconcile failed", exc_info=True)
             # The unified CLOCK LOOP (S100) — now the only thing that fires a clock trigger. The
             # legacy timer above is deliberately not armed; see `load_without_timer`.
             self._clock_task = asyncio.create_task(self._clock_loop())

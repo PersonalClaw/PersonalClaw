@@ -631,39 +631,36 @@ def test_digest_singular_wording(home, tmp_path, monkeypatch):
 # ── T5.1: the digest cron ───────────────────────────────────────────────
 
 
-class _FakeJob:
-    """Mirrors the REAL ScheduleJob shape: the schedule lives on a nested
-    ScheduleDefinition (`job.schedule.cron_expr`), NOT as a flat `job.cron_expr`.
+def _digest_store(home):
+    from personalclaw.triggers.store import TriggerStore
 
-    An earlier version of this fake invented the flat attribute, which let a real bug
-    through — the reconcile read `getattr(job, "cron_expr", "")`, always got None, and would
-    have "converged" the schedule on every single startup. Using the real dataclass keeps the
-    fake honest.
-    """
-
-    def __init__(self, name, cron_expr="0 8 * * *", job_id="j1"):
-        from personalclaw.schedule import ScheduleDefinition
-
-        self.name = name
-        self.schedule = ScheduleDefinition(kind="cron", cron_expr=cron_expr)
-        self.id = job_id
+    return TriggerStore(base_dir=home)
 
 
-class _FakeCrons:
-    def __init__(self, jobs=()):
-        self.jobs = list(jobs)
-        self.added: list[dict] = []
-        self.updated: list[tuple] = []
+def _seed_digest(home, cron_expr="0 8 * * *"):
+    """A pre-existing digest trigger, written the way the reconciler writes it."""
+    from personalclaw.action_providers.digest_provider import DIGEST_JOB_NAME
+    from personalclaw.triggers.models import Trigger
 
-    def list_jobs(self, include_disabled=False):
-        return list(self.jobs)
+    store = _digest_store(home)
+    store.upsert(
+        Trigger(
+            id=DIGEST_JOB_NAME,
+            name=DIGEST_JOB_NAME,
+            kind="clock",
+            created_by="system",
+            spec={"kind": "cron", "expr": cron_expr},
+            workflow={"inline": {"provider": "notification-digest", "config": {}}},
+            delivery="none",
+        )
+    )
+    return store
 
-    def add_job(self, name, **kw):
-        self.added.append({"name": name, **kw})
-        return _FakeJob(name, kw.get("cron_expr", ""))
 
-    def update_job(self, job_id, **kw):
-        self.updated.append((job_id, kw))
+# 🔴 These tests drove a `_FakeCrons` double until S108, and passed the whole time the digest DID
+# NOT RUN: the reconciler wrote `crons.json`, which the clock engine never reads, so the digest was
+# inert until the next boot imported it and a schedule edited in Settings took two restarts. A fake
+# that records `add_job` calls cannot see that — only a real store can.
 
 
 def test_digest_cron_is_registered_when_absent(home):
@@ -672,27 +669,28 @@ def test_digest_cron_is_registered_when_absent(home):
         reconcile_digest_cron,
     )
 
-    crons = _FakeCrons()
-    reconcile_digest_cron(crons)
-    assert len(crons.added) == 1
-    job = crons.added[0]
-    assert job["name"] == DIGEST_JOB_NAME
-    assert job["cron_expr"] == nr.DEFAULT_DIGEST_SCHEDULE
+    store = _digest_store(home)
+    reconcile_digest_cron(store)
+    row = store.get(DIGEST_JOB_NAME)
+    assert row is not None
+    assert row.trigger.spec["expr"] == nr.DEFAULT_DIGEST_SCHEDULE
     # Silent: the digest's OUTPUT is an inbox item; a cron-result toast about it would be a
-    # notification about your notifications.
-    assert job["silent"] is True
-    assert job["action"]["provider"] == "notification-digest"
+    # notification about your notifications. `delivery: none` is the store's spelling.
+    assert row.trigger.delivery == "none"
+    inline = (row.trigger.workflow or {}).get("inline") or {}
+    assert inline.get("provider") == "notification-digest"
+    # 🔴 ARMED, which is the difference between a registered digest and one that runs.
+    assert row.trigger.next_fire_at
+    assert row.ok, row.errors
 
 
 def test_digest_cron_is_not_duplicated(home):
-    from personalclaw.action_providers.digest_provider import (
-        DIGEST_JOB_NAME,
-        reconcile_digest_cron,
-    )
+    from personalclaw.action_providers.digest_provider import reconcile_digest_cron
 
-    crons = _FakeCrons([_FakeJob(DIGEST_JOB_NAME, nr.DEFAULT_DIGEST_SCHEDULE)])
-    reconcile_digest_cron(crons)
-    assert crons.added == [] and crons.updated == []
+    store = _seed_digest(home, nr.DEFAULT_DIGEST_SCHEDULE)
+    before = len(store.load())
+    reconcile_digest_cron(store)
+    assert len(store.load()) == before
 
 
 def test_digest_cron_schedule_converges(home):
@@ -703,28 +701,85 @@ def test_digest_cron_schedule_converges(home):
     )
 
     _write_rules(home, {"digest": {"schedule": "30 6 * * 1-5"}})
-    crons = _FakeCrons([_FakeJob(DIGEST_JOB_NAME, "0 8 * * *")])
-    reconcile_digest_cron(crons)
-    assert crons.updated == [("j1", {"cron_expr": "30 6 * * 1-5"})]
+    store = _seed_digest(home, "0 8 * * *")
+    reconcile_digest_cron(store)
+    assert store.get(DIGEST_JOB_NAME).trigger.spec["expr"] == "30 6 * * 1-5"
 
 
-def test_digest_cron_ignores_unrelated_jobs(home):
+def test_a_converged_schedule_is_re_armed(home):
+    """🔴 The fire is computed FROM the expression, so converging the spec without re-arming would
+    leave the digest running on the schedule the user just replaced."""
+    from personalclaw.action_providers.digest_provider import (
+        DIGEST_JOB_NAME,
+        reconcile_digest_cron,
+    )
+
+    _write_rules(home, {"digest": {"schedule": "0 8 * * *"}})
+    store = _seed_digest(home, "0 8 * * *")
+    reconcile_digest_cron(store)
+    first = store.get(DIGEST_JOB_NAME).trigger.next_fire_at
+
+    _write_rules(home, {"digest": {"schedule": "45 21 * * *"}})
+    reconcile_digest_cron(store)
+    after = store.get(DIGEST_JOB_NAME).trigger
+    assert after.spec["expr"] == "45 21 * * *"
+    assert after.next_fire_at != first
+    assert after.next_fire_at.endswith("21:45:00+00:00")
+
+
+def test_converging_preserves_the_quietly_losable_spec_keys(home):
+    """`timezone`/`skip_dates`/`strict` must survive a schedule change — the same contract §1.3 and
+    S101 record for a cadence edit. Replacing the spec wholesale would drop a user's holidays."""
+    from personalclaw.action_providers.digest_provider import (
+        DIGEST_JOB_NAME,
+        reconcile_digest_cron,
+    )
+
+    store = _seed_digest(home, "0 8 * * *")
+    trigger = store.get(DIGEST_JOB_NAME).trigger
+    trigger.spec = {**trigger.spec, "timezone": "America/New_York", "skip_dates": ["2026-12-25"]}
+    store.upsert(trigger)
+
+    _write_rules(home, {"digest": {"schedule": "15 7 * * *"}})
+    reconcile_digest_cron(store)
+    spec = store.get(DIGEST_JOB_NAME).trigger.spec
+    assert spec["expr"] == "15 7 * * *"
+    assert spec["timezone"] == "America/New_York"
+    assert spec["skip_dates"] == ["2026-12-25"]
+
+
+def test_digest_cron_ignores_unrelated_triggers(home):
+    from personalclaw.action_providers.digest_provider import (
+        DIGEST_JOB_NAME,
+        reconcile_digest_cron,
+    )
+    from personalclaw.triggers.models import Trigger
+
+    store = _digest_store(home)
+    store.upsert(
+        Trigger(
+            id="clock:my-own-job",
+            name="my own job",
+            kind="clock",
+            spec={"kind": "cron", "expr": "0 9 * * *"},
+        )
+    )
+    reconcile_digest_cron(store)
+    ids = {row.trigger.id for row in store.load()}
+    assert DIGEST_JOB_NAME in ids, "it registers its own trigger"
+    assert "clock:my-own-job" in ids, "and leaves the user's alone"
+    assert store.get("clock:my-own-job").trigger.spec["expr"] == "0 9 * * *"
+
+
+def test_digest_cron_survives_a_broken_store(home):
+    from unittest.mock import MagicMock
+
     from personalclaw.action_providers.digest_provider import reconcile_digest_cron
 
-    crons = _FakeCrons([_FakeJob("my-own-job", "0 9 * * *", "other")])
-    reconcile_digest_cron(crons)
-    assert len(crons.added) == 1, "it registers its own job"
-    assert crons.updated == [], "and leaves the user's job alone"
-
-
-def test_digest_cron_survives_a_broken_scheduler(home):
-    from personalclaw.action_providers.digest_provider import reconcile_digest_cron
-
-    class _Broken:
-        def list_jobs(self, include_disabled=False):
-            raise OSError("scheduler down")
-
-    reconcile_digest_cron(_Broken())  # must not raise — startup must not break
+    broken = MagicMock()
+    broken.get.side_effect = OSError("triggers.json is gibberish")
+    reconcile_digest_cron(broken)  # must not raise — startup must not break
+    broken.upsert.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -772,29 +827,26 @@ def test_digest_provider_is_in_the_action_registry():
 
 
 def test_digest_cron_does_not_reconverge_on_every_startup(home):
-    """The schedule read must use the REAL nested field, or startup rewrites it forever.
+    """A matching schedule must not be rewritten, or startup churns the store forever.
 
-    Regression: reading a flat `job.cron_expr` always yields None, so the reconcile saw
-    None != "0 8 * * *" and issued an update on every boot — churning the job file and
-    logging a schedule change that never happened.
+    Regression this guards: the legacy read went through `job.schedule.cron_expr`, and reading a
+    FLAT `job.cron_expr` always yielded None — so the reconcile saw `None != "0 8 * * *"` and issued
+    an update on every boot, logging a schedule change that never happened. The store read
+    (`spec["expr"]`) is a plain dict key, which makes that whole class of near-miss impossible; this
+    asserts the OUTCOME (nothing changes) rather than the field name, so it stays honest either way.
+
+    (The `_FakeCrons`/`_FakeJob` doubles this used, plus the guard test that pinned their shape
+    against `ScheduleJob`, retire with the legacy read — S108.)
     """
     from personalclaw.action_providers.digest_provider import (
         DIGEST_JOB_NAME,
         reconcile_digest_cron,
     )
 
-    crons = _FakeCrons([_FakeJob(DIGEST_JOB_NAME, nr.DEFAULT_DIGEST_SCHEDULE)])
+    store = _seed_digest(home, nr.DEFAULT_DIGEST_SCHEDULE)
+    first = store.get(DIGEST_JOB_NAME).trigger
+    before = (first.spec.get("expr"), first.next_fire_at, len(store.load()))
     for _ in range(3):
-        reconcile_digest_cron(crons)
-    assert crons.updated == [], "a matching schedule must not be rewritten"
-    assert crons.added == []
-
-
-def test_fake_job_matches_the_real_schedule_shape():
-    """Guards the fake itself: if ScheduleJob's shape changes, this test fails loudly."""
-    from personalclaw.schedule import ScheduleJob
-
-    real = ScheduleJob(id="x", name="y")
-    assert hasattr(real, "schedule"), "the reconcile reads job.schedule.cron_expr"
-    assert not hasattr(real, "cron_expr"), "a flat attribute would make the fake a lie"
-    assert hasattr(real.schedule, "cron_expr")
+        reconcile_digest_cron(store)
+    after_row = store.get(DIGEST_JOB_NAME).trigger
+    assert (after_row.spec.get("expr"), after_row.next_fire_at, len(store.load())) == before

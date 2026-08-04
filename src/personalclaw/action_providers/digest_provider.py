@@ -60,14 +60,26 @@ def create_provider(config: dict[str, Any] | None = None) -> "NotificationDigest
     return NotificationDigestActionProvider()
 
 
-def reconcile_digest_cron(crons: Any) -> None:
-    """Make the digest cron exist and match the configured schedule. Idempotent.
+def reconcile_digest_cron(store: Any) -> None:
+    """Make the digest trigger exist and match the configured schedule. Idempotent.
 
-    Converges the schedule rather than only creating the job: the schedule lives in the rules
+    Converges the schedule rather than only creating the trigger: the schedule lives in the rules
     store, so a user who edits it in Settings must not have to know that a cron exists
     somewhere to be re-registered. Best-effort — a scheduler problem must never block startup.
+
+    **🔴 S108 — this wrote `crons.json`, so the digest DID NOT RUN.** The clock engine reads the
+    unified store only, and the boot migration that imports `crons.json` ran BEFORE this
+    reconciliation — so the digest trigger this function registered was inert until the NEXT boot
+    imported it, and a schedule edited in Settings took two restarts to take effect. Writes the
+    store directly now.
+
+    The row is built as a `Trigger` rather than through `tools.create` for the reason `app_crons`
+    records: convergence needs a DETERMINISTIC id, and `tools.create` mints its own unique slug, so
+    every restart would add another digest instead of recognizing its own.
     """
     from personalclaw import notification_rules
+    from personalclaw.triggers.arm import arm as _arm
+    from personalclaw.triggers.models import Trigger
 
     try:
         schedule = notification_rules.digest_settings()["schedule"]
@@ -76,38 +88,51 @@ def reconcile_digest_cron(crons: Any) -> None:
         return
 
     try:
-        existing = next(
-            (j for j in crons.list_jobs(include_disabled=True) if j.name == DIGEST_JOB_NAME),
-            None,
-        )
+        row = store.get(DIGEST_JOB_NAME)
     except Exception:
-        logger.debug("digest cron: could not list jobs", exc_info=True)
+        logger.debug("digest cron: could not read the trigger store", exc_info=True)
         return
 
-    action = {"provider": "notification-digest", "config": {}}
-    if existing is None:
+    if row is None:
         try:
-            crons.add_job(
-                DIGEST_JOB_NAME,
-                action=action,
-                cron_expr=schedule,
+            trigger = Trigger(
+                id=DIGEST_JOB_NAME,
+                name=DIGEST_JOB_NAME,
+                kind="clock",
+                enabled=True,
                 created_by="system",
-                # Silent: the digest's OUTPUT is an inbox item. A cron-result notification
-                # about it would be a notification about your notifications.
-                silent=True,
+                spec={"kind": "cron", "expr": schedule},
+                workflow={"inline": {"provider": "notification-digest", "config": {}}},
+                # `delivery: none` is the store's spelling of the legacy `silent=True`: the digest's
+                # OUTPUT is an inbox item, so a cron-result notification about it would be a
+                # notification about your notifications.
+                delivery="none",
             )
-            logger.info("registered the notification digest cron (%s)", schedule)
+            armed = _arm(trigger)
+            if armed:
+                trigger.next_fire_at = armed
+            store.upsert(trigger)
+            logger.info("registered the notification digest trigger (%s)", schedule)
         except Exception:
             logger.warning("digest cron: registration failed", exc_info=True)
         return
 
-    # The job stores its schedule under `job.schedule.cron_expr` (a ScheduleDefinition);
-    # `update_job` takes a flat `cron_expr=` kwarg. Reading a flat attribute off the job
-    # would always be None, so this would "converge" on every startup.
-    current = getattr(getattr(existing, "schedule", None), "cron_expr", None)
+    # The expression lives at `spec.expr` in the store (the legacy read went through
+    # `job.schedule.cron_expr`, and reading a FLAT attribute off the job always returned None —
+    # which made the old convergence fire on every single startup).
+    trigger = row.trigger
+    spec = trigger.spec if isinstance(trigger.spec, dict) else {}
+    current = spec.get("expr")
     if current != schedule:
         try:
-            crons.update_job(existing.id, cron_expr=schedule)
+            # Preserve the quietly-losable spec keys (`timezone`/`skip_dates`/`strict`) rather than
+            # replacing the spec wholesale — the same contract §1.3 and S101 record for a cadence
+            # edit. Re-armed because the next fire is computed FROM the expression.
+            trigger.spec = {**spec, "kind": "cron", "expr": schedule}
+            armed = _arm(trigger)
+            if armed:
+                trigger.next_fire_at = armed
+            store.upsert(trigger)
             logger.info("digest cron: schedule converged %s → %s", current, schedule)
         except Exception:
             logger.debug("digest cron: schedule update failed", exc_info=True)
