@@ -694,3 +694,82 @@ def test_delete_still_drops_the_run_history(home, state):
         )
     )
     state.crons.delete_runs.assert_awaited_once()
+
+
+# ── 🔴 §6's manual-run re-point (S102) ──
+
+
+def test_a_schedule_run_goes_through_the_store_path(home, state):
+    """🔴 A Run button and an autonomous tick must fire the same action the same way, so a
+    store-backed clock trigger routes through `_run_store` like every other store kind."""
+    _create_schedule(state)
+    resp = _run(
+        T.api_trigger_run(
+            _req(
+                "POST",
+                "/api/triggers/x/run",
+                state,
+                match_info={"id": "schedule:clock:nightly"},
+                query="dry_run=1",
+            )
+        )
+    )
+    data = _body(resp)
+    assert resp.status == 200
+    # The store path reports the gate plan; the legacy path reported {ok, name, dry_run}.
+    assert data["result"]["plan"]["executes"] is False
+    assert "screen" in data["result"]["plan"]["enforced"]
+
+
+def test_an_in_flight_claim_returns_409(home, state):
+    """🔴 `is_running` now comes from S97's CLAIM store, which is cross-process — the legacy
+    `is_running` read a process-local dict, so an API worker that does not own the scheduler loop
+    answered "idle" for a trigger that was actively running."""
+    import time as _time
+
+    from personalclaw.triggers import claims
+    from personalclaw.triggers.scheduling import Claim
+
+    _create_schedule(state)
+    claims.write_claim(
+        Claim(trigger_id="clock:nightly", holder="tick", claimed_at=_time.time()), base_dir=home
+    )
+    resp = _run(
+        T.api_trigger_run(
+            _req("POST", "/x/run", state, match_info={"id": "schedule:clock:nightly"})
+        )
+    )
+    assert resp.status == 409
+    assert _body(resp)["running"] is True
+
+
+def test_an_expired_claim_does_not_block_a_manual_run(home, state):
+    """Read-time expiry (S97): a crashed run must not make the Run button permanently unusable."""
+    from personalclaw.triggers import claims
+    from personalclaw.triggers.scheduling import CLAIM_MAX_DURATION_SECS, Claim
+
+    _create_schedule(state)
+    claims.write_claim(
+        Claim(trigger_id="clock:nightly", holder="dead", claimed_at=1.0), base_dir=home
+    )
+    assert CLAIM_MAX_DURATION_SECS > 0  # the expiry window the read applies
+    resp = _run(
+        T.api_trigger_run(
+            _req(
+                "POST",
+                "/x/run",
+                state,
+                match_info={"id": "schedule:clock:nightly"},
+                query="dry_run=1",
+            )
+        )
+    )
+    assert resp.status == 200
+
+
+def test_running_an_unknown_schedule_still_404s(home, state):
+    state.crons.list_jobs.return_value = []
+    resp = _run(
+        T.api_trigger_run(_req("POST", "/x/run", state, match_info={"id": "schedule:ghost"}))
+    )
+    assert resp.status == 404

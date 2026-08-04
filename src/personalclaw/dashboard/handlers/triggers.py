@@ -945,6 +945,20 @@ async def api_trigger_run(request: web.Request) -> web.Response:
         # while /test answered 400 "use /run" — a circular dead end with no way to fire an event
         # trigger by hand at all.
         return await _run_event(raw, request)
+    # 🔴 §6's manual-run re-point (S102). A store-backed clock trigger fires through the SAME path
+    # `_run_store` uses for every other store kind, so a Run button and an autonomous tick fire
+    # the same action the same way. `is_running` comes from S97's CLAIM store — cross-process, so
+    # an API worker that does not own the scheduler loop can still answer it (the legacy
+    # `is_running` read a process-local dict and was simply wrong here).
+    store = _trigger_store()
+    if store.get(raw) is not None:
+        from personalclaw.triggers import claims as _claims
+
+        if _claims.is_running(raw, base_dir=store.base_dir):
+            return web.json_response({"error": "already running", "running": True}, status=409)
+        return await _run_store(raw, request)
+
+    # Legacy fallback: a home whose migration has not run yet (retires with `ScheduleService`).
     job = next((j for j in state.crons.list_jobs(include_disabled=True) if j.id == raw), None)
     if not job:
         return web.json_response({"error": "not found"}, status=404)
